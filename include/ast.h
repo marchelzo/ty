@@ -37,7 +37,6 @@ struct statement {
         } type;
         struct location loc;
         union {
-                char *tag;
                 struct expression *expression;
                 struct expression *return_value;
                 vec(struct statement *) statements;
@@ -45,6 +44,11 @@ struct statement {
                         char *module;
                         char *as;
                 } import;
+                struct {
+                        char *name;
+                        int tag;
+                        vec(struct expression *) methods;
+                } tag;
                 struct {
                         struct statement *init;
                         struct expression *cond;

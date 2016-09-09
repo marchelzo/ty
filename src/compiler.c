@@ -259,21 +259,23 @@ locallydefined(struct scope const *scope, char const *name)
         return false;
 }
 
-inline static void
-definetag(char const *tag)
+inline static int
+definetag(struct statement *s)
 {
-        int t = tags_new(tag);
-
-        if (locallydefined(global, tag)) {
-                fail("%s is a built-in tag and cannot be re-declared", tag);
+        if (locallydefined(global, s->tag.name)) {
+                fail("%s is a built-in tag and cannot be re-declared", s->tag.name);
         }
 
-        if (locallydefined(state.global, tag)) {
-                fail("redeclaration of tag: %s", tag);
+        if (locallydefined(state.global, s->tag.name)) {
+                fail("redeclaration of tag: %s", s->tag.name);
         }
 
-        vec_push(state.global->identifiers, tag);
+        int t = tags_new(s->tag.name);
+
+        vec_push(state.global->identifiers, s->tag.name);
         vec_push(state.global->symbols, t);
+
+        return t;
 }
 
 inline static int
@@ -648,7 +650,10 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->expression);
                 break;
         case STATEMENT_TAG_DEFINITION:
-                definetag(s->tag);
+                s->tag.tag = definetag(s);
+                for (int i = 0; i < s->tag.methods.count; ++i) {
+                        symbolize_expression(scope, s->tag.methods.items[i]);
+                }
                 break;
         case STATEMENT_BLOCK:
                 scope = newscope(scope, false);
@@ -1728,6 +1733,15 @@ emit_statement(struct statement const *s)
         case STATEMENT_DEFINITION:
                 emit_assignment(s->target, s->value, 0);
                 emit_instr(INSTR_POP);
+                break;
+        case STATEMENT_TAG_DEFINITION:
+                for (int i = 0; i < s->tag.methods.count; ++i) {
+                        emit_instr(INSTR_FUNCTION);
+                        emit_function(s->tag.methods.items[i]);
+                        emit_instr(INSTR_DEFINE_METHOD);
+                        emit_int(s->tag.tag);
+                        emit_string(s->tag.methods.items[i]->name);
+                }
                 break;
         case STATEMENT_RETURN:
                 if (state.function_depth == 0) {

@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "value.h"
 #include "alloc.h"
 #include "log.h"
 #include "vec.h"
@@ -19,9 +20,15 @@ struct tags {
         vec(struct link) links;
 };
 
+struct method_table {
+        vec(char const *) names;
+        vec(struct value) methods;
+};
+
 static int tagcount = 0;
 static vec(struct tags *) lists;
 static vec(char const *) names;
+static vec(struct method_table) method_tables;
 
 static struct tags *
 mklist(int tag, struct tags *next)
@@ -51,7 +58,14 @@ int
 tags_new(char const *tag)
 {
         LOG("making new tag: %s -> %d", tag, tagcount);
+
         vec_push(names, tag);
+
+        struct method_table table;
+        vec_init(table.names);
+        vec_init(table.methods);
+        vec_push(method_tables, table);
+
         mklist(tagcount, lists.items[0]);
         return tagcount++;
 }
@@ -101,7 +115,7 @@ tags_first(int tags)
 char const *
 tags_wrap(char const *s, int tags)
 {
-        static vec(char) cs = { .items = 0, .count = 0, .capacity = 0 };
+        static vec(char) cs;
 
         struct tags *list = lists.items[tags];
         int n = 0;
@@ -130,4 +144,25 @@ char const *
 tags_name(int tag)
 {
         return names.items[tag - 1];
+}
+
+void
+tags_add_method(int tag, char const *name, struct value f)
+{
+        vec_push(method_tables.items[tag - 1].names, name);
+        vec_push(method_tables.items[tag - 1].methods, f);
+}
+
+struct value *
+tags_lookup_method(int tag, char const *name)
+{
+        struct method_table *t = &method_tables.items[tag - 1];
+
+        for (int i = 0; i < t->names.count; ++i) {
+                if (strcmp(t->names.items[i], name) == 0) {
+                        return &t->methods.items[i];
+                }
+        }
+
+        return NULL;
 }

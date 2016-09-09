@@ -3,6 +3,8 @@
 
 #include <stdbool.h>
 
+#include "value.h"
+
 void
 tags_init(void);
 
@@ -26,5 +28,11 @@ tags_wrap(char const *s, int tags);
 
 char const *
 tags_name(int tag);
+
+void
+tags_add_method(int tag, char const *name, struct value f);
+
+struct value *
+tags_lookup_method(int tag, char const *name);
 
 #endif

@@ -155,6 +155,45 @@ pushtarget(struct value *v)
         vec_push(targetstack, v);
 }
 
+inline static void
+callmethod(struct value *f, struct value *self)
+{
+        for (int i = 0; i < f->bound_symbols.count; ++i)
+                vars[f->bound_symbols.items[i]] = newvar(vars[f->bound_symbols.items[i]]);
+
+        bool has_self = self != NULL;
+
+        int n;
+
+        /* get the number of arguments passed */
+        READVALUE(n);
+
+        /* throw away ignored arguments */
+        while (n > f->param_symbols.count - has_self)
+                pop(), --n;
+
+        /* default missing parameters to nil */
+        for (int i = n; i < f->param_symbols.count - has_self; ++i)
+                vars[f->param_symbols.items[i + has_self]]->value = NIL;
+
+        /* fill in the rest of the arguments */
+        while (n --> 0)
+                vars[f->param_symbols.items[n + has_self]]->value = pop();
+
+        /* fill in 'self' / 'this' */
+        if (self != NULL)
+                vars[f->param_symbols.items[0]]->value = *self;
+
+        for (int i = 0; i < f->refs->count; ++i) {
+                struct reference ref = f->refs->refs[i];
+                LOG("resolving reference to %p", (void *) ref.pointer);
+                memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
+        }
+
+        vec_push(callstack, ip);
+        ip = f->code;
+}
+
 static void
 vm_exec(char *code)
 {
@@ -630,6 +669,12 @@ vm_exec(char *code)
                         *vp = binary_operator_subtraction(vp, &v);
                         push(*vp);
                         break;
+                CASE(DEFINE_METHOD)
+                    v = pop();
+                    READVALUE(tag);
+                    tags_add_method(tag, ip, v);
+                    ip += strlen(ip) + 1;
+                    break;
                 CASE(FUNCTION)
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
@@ -726,12 +771,23 @@ vm_exec(char *code)
                         
                         value = peek();
 
-                        if (value.type == VALUE_STRING) {
-                                ++gc_prevent;
-                                func = get_string_method(ip);
-                                if (func == NULL) {
-                                        vm_panic("call to non-existent string method: %s", ip);
+                        if (!(value.type & VALUE_TAGGED) && (value.type & (VALUE_STRING | VALUE_ARRAY))) {
+                                char const *type;
+
+                                switch (value.type) {
+                                case VALUE_STRING:
+                                        func = get_string_method(ip);
+                                        type = "string";
+                                        break;
+                                case VALUE_ARRAY:
+                                        func = get_array_method(ip);
+                                        type = "array";
+                                        break;
                                 }
+
+                                if (func == NULL)
+                                        vm_panic("call to non-existent %s method: %s", type, ip);
+
                                 ip += strlen(ip) + 1;
                                 vec_init(args);
                                 READVALUE(n);
@@ -749,70 +805,54 @@ vm_exec(char *code)
                                 break;
                         }
 
-                        if (value.type == VALUE_ARRAY) {
-                                ++gc_prevent;
-                                func = get_array_method(ip);
-                                if (func == NULL) {
-                                        vm_panic("call to non-existent array method: %s", ip);
-                                }
-                                ip += strlen(ip) + 1;
-                                READVALUE(n);
-                                vec_reserve(args, n);
-                                args.count = n;
-                                index = 0;
-                                for (struct value const *a = stack.items + stack.count - n - 1; index < n; ++index, ++a) {
-                                        LOG("argument %d: %s", index, value_show(a));
-                                        args.items[index] = *a;
-                                }
-                                v = func(&value, &args);
-                                args.count = 0;
-                                stack.count -= n;
-                                stack.items[stack.count - 1] = v;
-                                --gc_prevent;
-                                gc_alloc(0);
-                                break;
-                        }
-
                         /*
-                         * It's safe to pop the object from the stack, since this is a method call on an object.
-                         * The object is passed as the first parameter to the function, so it won't be GC'd.
+                         * Since this isn't on a string or an array, we can pop it without worrying about it
+                         * being GC'd.
                          */
                         --stack.count;
 
-                        if (value.type != VALUE_OBJECT) {
-                                vm_panic("attempt to call a method on a non-object");
+                        if (value.type & VALUE_TAGGED) {
+                                int tag = tags_first(value.tags);
+                                vp = tags_lookup_method(tag, ip);
+                                if (vp == NULL)
+                                        vm_panic("call to non-existent method on: %s\n", tags_name(tag), ip);
+
+                                ip += strlen(ip) + 1;
+
+                                value.tags = tags_pop(value.tags);
+                                value.type &= ~VALUE_TAGGED;
+
+                                callmethod(vp, &value);
+
+                                break;
                         }
+
+                        if (value.type == VALUE_TAG) {
+                                vp = tags_lookup_method(value.tag, ip);
+                                if (vp == NULL)
+                                        vm_panic("call to non-existent method on %s: %s\n", tags_name(value.tag), ip);
+
+                                ip += strlen(ip) + 1;
+                                
+                                callmethod(vp, NULL);
+                                
+                                break;
+                        }
+
+                        if (value.type != VALUE_OBJECT)
+                                vm_panic("attempt to call a method on a non-object");
 
                         vp = object_get_member(value.object, ip);
-                        if (vp == NULL) {
+                        if (vp == NULL)
                                 vm_panic("attempt to call a non-existent method: %s", ip);
-                        }
 
-                        if (vp->type != VALUE_FUNCTION) {
+                        if (vp->type != VALUE_FUNCTION)
                                 vm_panic("attempt to call a non-function as a method on an object: %s", ip);
-                        }
+
                         ip += strlen(ip) + 1;
 
-                        for (int i = 0; i < vp->bound_symbols.count; ++i) {
-                                vars[vp->bound_symbols.items[i]] = newvar(vars[vp->bound_symbols.items[i]]);
-                        }
-                        READVALUE(n);
-                        /* throw away ignored arguments */
-                        while (n > vp->param_symbols.count)
-                                pop(), --n;
-                        /* default missing parameters to nil */
-                        for (int i = n; i < vp->param_symbols.count; ++i)
-                                vars[vp->param_symbols.items[i]]->value = NIL;
-                        /* fill in the rest of the arguments */
-                        while (n --> 0)
-                                vars[vp->param_symbols.items[n]]->value = pop();
-                        for (int i = 0; i < vp->refs->count; ++i) {
-                                struct reference ref = vp->refs->refs[i];
-                                LOG("resolving reference to %p", (void *) ref.pointer);
-                                memcpy(vp->code + ref.offset, &ref.pointer, sizeof ref.pointer);
-                        }
-                        vec_push(callstack, ip);
-                        ip = vp->code;
+                        callmethod(vp, NULL);
+
                         break;
                 CASE(SAVE_STACK_POS)
                         vec_push(sp_stack, stack.count);

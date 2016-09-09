@@ -62,7 +62,7 @@ enum instruction {
         INSTR_RESTORE_STACK_POS,
 
         INSTR_TAG_PUSH,
-
+        INSTR_DEFINE_METHOD,
         INSTR_TRY_INDEX,
         INSTR_TRY_TAG_POP,
         INSTR_TRY_REGEX,

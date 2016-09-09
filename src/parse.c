@@ -221,6 +221,16 @@ tok(void)
         return token(0);
 }
 
+/*
+ * Push a token into the token stream, so that it will be returned by the next call
+ * to tok().
+ */
+inline static void
+unconsume(int type)
+{
+        vec_insert(tokens, ((struct token){ .type = type }), tokidx);
+}
+
 static void
 expect(int type)
 {
@@ -1588,9 +1598,28 @@ parse_tag_def(void)
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_TAG_DEFINITION;
-        s->tag = tok()->tag;
+        s->tag.name = tok()->tag;
+        vec_init(s->tag.methods);
 
         consume(TOKEN_TAG);
+
+        if (tok()->type == ';') {
+                consume(';');
+        } else {
+                consume('{');
+                while (tok()->type != '}') {
+
+                        /*
+                         * Push a 'function' keyword token back onto the stream so that we can
+                         * use the existing function parsing code to parse the method.
+                         */
+                        unconsume(TOKEN_KEYWORD);
+                        tok()->keyword = KEYWORD_FUNCTION;
+
+                        vec_push(s->tag.methods, prefix_function());
+                }
+                consume('}');
+        }
 
         return s;
 }
@@ -1930,4 +1959,15 @@ TEST(special_string)
 {
         claim(parse("let s = \"{a +}\";") == NULL);
         claim(parse("let s = \"{a + 4}\";") != NULL);
+}
+
+TEST(method_defs)
+{
+        claim(parse("tag Foo;") != NULL);
+        claim(parse("tag Baz {}") != NULL);
+        claim(parse("tag Baz { foo(a, b, c) { return 42 * 10; } }") != NULL);
+
+        claim(parse("tag Bar") == NULL);
+        claim(parse("tag Blah { 5 }") == NULL);
+        claim(parse("tag Blah {") == NULL);
 }

@@ -41,10 +41,14 @@
 #define vec_empty(v) \
     (((v).capacity = 0), ((v).count = 0), free((v).items), ((v).items = NULL))
 
+#define vec_insert(v, item, i) \
+        ((vec_reserve((v), (v).count + 1)), memmove((v).items + (i) + 1, (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), ++(v).count, ((v).items[(i)] = (item)))
+
 #define vec_len(v) ((v).count)
 
 #define vec_last(v) ((v).items + (v).count - 1)
 
-#define vec_reserve(v, n) if ((v).capacity < (n)) { (v).capacity = (n); resize((v).items, (v).capacity * (sizeof (*(v).items))); }
+#define vec_reserve(v, n) \
+        (((v).capacity < (n)) && (((v).capacity = (n)), resize((v).items, (v).capacity * (sizeof (*(v).items)))))
 
 #define vec_for_each(v, idx, name) for (size_t idx = 0; ((name) = vec_get((v), idx)), idx < (v).count; ++idx)
