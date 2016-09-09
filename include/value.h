@@ -60,7 +60,6 @@ struct ref_vector {
 
 struct value {
         enum {
-                VALUE_STRING           = 0,
                 VALUE_REGEX            = 1,
                 VALUE_INTEGER          = 2,
                 VALUE_REAL             = 4,
@@ -72,6 +71,7 @@ struct value {
                 VALUE_BUILTIN_FUNCTION = 256,
                 VALUE_TAG              = 512,
                 VALUE_TAGGED           = 1024,
+                VALUE_STRING           = 2048,
         } type;
         int tags;
         union {

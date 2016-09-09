@@ -13,6 +13,9 @@ struct value
 builtin_int(value_vector *args);
 
 struct value
+builtin_float(value_vector *args);
+
+struct value
 builtin_str(value_vector *args);
 
 struct value

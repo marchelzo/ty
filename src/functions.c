@@ -100,6 +100,36 @@ builtin_rand(value_vector *args)
 }
 
 struct value
+builtin_float(value_vector *args)
+{
+        ASSERT_ARGC("float()", 1);
+
+        struct value v = args->items[0];
+
+        switch (v.type) {
+        case VALUE_INTEGER: return REAL((float)v.integer);
+        case VALUE_REAL:    return v;
+        case VALUE_STRING:;
+                char buf[128];
+                char *end;
+                unsigned n = umin(v.bytes, 127);
+
+                memcpy(buf, v.string, n);
+                buf[n] = '\0';
+
+                errno = 0;
+                float f = strtof(buf, &end);
+
+                if (errno != 0 || *end != '\0')
+                        return NIL;
+
+                return REAL(f);
+        }
+
+        vm_panic("invalid type passed to float()");
+}
+
+struct value
 builtin_int(value_vector *args)
 {
         struct value v = INTEGER(0), a, s, b;
@@ -109,11 +139,12 @@ builtin_int(value_vector *args)
 
         char const *string = nbuf;
 
+        ASSERT_ARGC_3("int()", 0, 1, 2);
+
         switch (args->count) {
         case 0: v.integer = 0; return v;
         case 1:                goto coerce;
         case 2:                goto custom_base;
-        default:               vm_panic("the builtin int function takes 0, 1, or 2 arguments, but it was passed %zu", args->count);
         }
 
 coerce:

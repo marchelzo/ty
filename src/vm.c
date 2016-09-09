@@ -67,6 +67,7 @@ static struct {
         { .module = NULL,     .name = "read",              .fn = builtin_read                          },
         { .module = NULL,     .name = "rand",              .fn = builtin_rand                          },
         { .module = NULL,     .name = "int",               .fn = builtin_int                           },
+        { .module = NULL,     .name = "float",             .fn = builtin_float                         },
         { .module = NULL,     .name = "str",               .fn = builtin_str                           },
         { .module = NULL,     .name = "bool",              .fn = builtin_bool                          },
         { .module = NULL,     .name = "regex",             .fn = builtin_regex                         },
