@@ -389,7 +389,7 @@ builtin_os_open(value_vector *args)
         vec_push_n(pathbuf, path.string, path.bytes);
         vec_push(pathbuf, '\0');
 
-        int fd = open(pathbuf.items, O_RDWR | O_CREAT);
+        int fd = open(pathbuf.items, O_RDWR | O_CREAT, 0666);
 
         if (fd == -1)
                 return NIL;
