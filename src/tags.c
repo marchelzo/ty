@@ -99,7 +99,6 @@ tags_push(int n, int tag)
 int
 tags_pop(int n)
 {
-        LOG("trying to pop with n = %d", n);
         return lists.items[n]->next->n;
 }
 
@@ -129,15 +128,24 @@ tags_wrap(char const *s, int tags)
 
         vec_push_n(cs, s, strlen(s));
 
-        while (n --> 0) {
+        while (n --> 0)
                 vec_push(cs, ')');
-        }
 
         vec_push(cs, '\0');
 
         cs.count = 0;
 
         return cs.items;
+}
+
+int
+tags_lookup(char const *name)
+{
+     for (int i = 0; i < names.count; ++i)
+          if (strcmp(names.items[i], name) == 0)
+               return i + 1;
+
+     return -1;
 }
 
 char const *

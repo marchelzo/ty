@@ -1053,10 +1053,7 @@ array_pop(struct value *array, value_vector *args)
         vm_panic("the pop method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
 }
 
-static struct {
-        char const *name;
-        struct value (*func)(struct value *, value_vector *);
-} funcs[] = {
+DEFINE_METHOD_TABLE(
         { .name = "clone",        .func = array_clone          },
         { .name = "consumeWhile", .func = array_consume_while  },
         { .name = "drop",         .func = array_drop           },
@@ -1103,22 +1100,6 @@ static struct {
         { .name = "take!",        .func = array_take_mut       },
         { .name = "takeWhile",    .func = array_take_while     },
         { .name = "takeWhile!",   .func = array_take_while_mut },
-};
+);
 
-static size_t const nfuncs = sizeof funcs / sizeof funcs[0];
-
-struct value (*get_array_method(char const *name))(struct value *, value_vector *)
-{
-        int lo = 0,
-            hi = nfuncs - 1;
-
-        while (lo <= hi) {
-                int m = (lo + hi) / 2;
-                int c = strcmp(name, funcs[m].name);
-                if      (c < 0) hi = m - 1;
-                else if (c > 0) lo = m + 1;
-                else            return funcs[m].func;
-        }
-
-        return NULL;
-}
+DEFINE_METHOD_LOOKUP(array)

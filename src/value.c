@@ -17,13 +17,13 @@
 static struct value_array *array_chain;
 static struct ref_vector *ref_vector_chain;
 static struct string *string_chain;
+static struct blob *blob_chain;
 
 static bool
 arrays_equal(struct value const *v1, struct value const *v2)
 {
-        if (v1->array->count != v2->array->count) {
+        if (v1->array->count != v2->array->count)
                 return false;
-        }
 
         size_t n = v1->array->count;
 
@@ -129,6 +129,14 @@ value_hash(struct value const *val)
 char *
 show_array(struct value const *a)
 {
+        static vec(struct value_array *) show_arrays;
+
+        for (int i = 0; i < show_arrays.count; ++i)
+                if (show_arrays.items[i] == a->array)
+                        return sclone("[...]");
+
+        vec_push(show_arrays, a->array);
+
         size_t capacity = 1;
         size_t len = 1;
         size_t n;
@@ -144,21 +152,17 @@ show_array(struct value const *a)
                 strcpy(s + len, str); \
                 len += n;
 
-        if (a->array->count >= 1) {
-                char *val = value_show(&a->array->items[0]);
-                add(val);
-                free(val);
-        }
-
-        for (size_t i = 1; i < a->array->count; ++i) {
+        for (size_t i = 0; i < a->array->count; ++i) {
                 char *val = value_show(&a->array->items[i]);
-                add(", ");
+                add(i == 0 ? "" : ", ");
                 add(val);
                 free(val);
         }
 
         add("]");
 #undef add
+        
+        --show_arrays.count;
 
         return s;
 }
@@ -223,6 +227,9 @@ value_show(struct value const *v)
                 break;
         case VALUE_TAG:
                 s = tags_name(v->tag);
+                break;
+        case VALUE_BLOB:
+                snprintf(buffer, 1024, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
         default:
                 return sclone("UNKNOWN VALUE");
@@ -390,6 +397,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
         case VALUE_OBJECT:           if (v1->object != v2->object)                                                  return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
+        case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
         case VALUE_NIL:                                                                                                           break;
         }
 
@@ -452,8 +460,22 @@ value_mark(struct value *v)
         case VALUE_OBJECT:   object_mark(v->object);                          break;
         case VALUE_FUNCTION: function_mark_references(v);                     break;
         case VALUE_STRING:   if (v->gcstr != NULL) v->gcstr->mark |= GC_MARK; break;
+        case VALUE_BLOB:     v->blob->mark |= GC_MARK;                        break;
         default:                                                              break;
         }
+}
+
+struct blob *
+value_blob_new(void)
+{
+        struct blob *blob = gc_alloc(sizeof *blob);
+        blob->next = blob_chain;
+        blob->mark = GC_MARK;
+        blob_chain = blob;
+
+        vec_init(*blob);
+
+        return blob;
 }
 
 struct value_array *
@@ -540,6 +562,35 @@ value_array_sweep(void)
                         next->mark &= ~GC_MARK;
                 }
                 array = next;
+        }
+}
+
+void
+value_blob_sweep(void)
+{
+        while (blob_chain != NULL && blob_chain->mark == GC_NONE) {
+                struct blob *next = blob_chain->next;
+                vec_empty(*blob_chain);
+                free(blob_chain);
+                blob_chain = next;
+        }
+        if (blob_chain != NULL) {
+                blob_chain->mark &= ~GC_MARK;
+        }
+        for (struct blob *blob = blob_chain; blob != NULL && blob->next != NULL;) {
+                struct blob *next;
+                if (blob->next->mark == GC_NONE) {
+                        next = blob->next->next;
+                        vec_empty(*blob->next);
+                        free(blob->next);
+                        blob->next = next;
+                } else {
+                        next = blob->next;
+                }
+                if (next != NULL) {
+                        next->mark &= ~GC_MARK;
+                }
+                blob = next;
         }
 }
 

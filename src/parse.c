@@ -1450,7 +1450,7 @@ parse_match_statement(void)
 }
 
 static struct statement *
-parse_function_def(void)
+parse_function_definition(void)
 {
         struct statement *s = mkstmt();
         s->type = STATEMENT_DEFINITION;
@@ -1590,7 +1590,7 @@ parse_block(void)
 }
 
 static struct statement *
-parse_tag_def(void)
+parse_tag_definition(void)
 {
         consume_keyword(KEYWORD_TAG);
 
@@ -1633,10 +1633,10 @@ parse_export(void)
 
         struct statement *s;
 
-        if (tok()->keyword == KEYWORD_LET) {
-                s = parse_let_definition();
-        } else {
-                s = parse_function_def();
+        switch (tok()->keyword) {
+        case KEYWORD_LET: s = parse_let_definition();      break;
+        case KEYWORD_TAG: s = parse_tag_definition();      break;
+        default:          s = parse_function_definition(); break;
         }
 
         s->pub = true;
@@ -1704,11 +1704,11 @@ parse_statement(void)
 keyword:
 
         switch (tok()->keyword) {
-        case KEYWORD_TAG:      return parse_tag_def();
+        case KEYWORD_TAG:      return parse_tag_definition();
         case KEYWORD_FOR:      return parse_for_loop();
         case KEYWORD_WHILE:    return parse_while_loop();
         case KEYWORD_IF:       return parse_if_statement();
-        case KEYWORD_FUNCTION: return parse_function_def();
+        case KEYWORD_FUNCTION: return parse_function_definition();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
         case KEYWORD_LET:      return parse_let_definition();

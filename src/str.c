@@ -534,10 +534,7 @@ string_chars(struct value *string, value_vector *args)
         return result;
 }
 
-static struct {
-        char const *name;
-        struct value (*func)(struct value *, value_vector *);
-} funcs[] = {
+DEFINE_METHOD_TABLE(
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
         { .name = "len",       .func = string_length    },
@@ -548,22 +545,6 @@ static struct {
         { .name = "search",    .func = string_search    },
         { .name = "slice",     .func = string_slice     },
         { .name = "split",     .func = string_split     },
-};
+);
 
-static size_t const nfuncs = sizeof funcs / sizeof funcs[0];
-
-struct value (*get_string_method(char const *name))(struct value *, value_vector *)
-{
-        int lo = 0,
-            hi = nfuncs - 1;
-
-        while (lo <= hi) {
-                int m = (lo + hi) / 2;
-                int c = strcmp(name, funcs[m].name);
-                if      (c < 0) hi = m - 1;
-                else if (c > 0) lo = m + 1;
-                else            return funcs[m].func;
-        }
-
-        return NULL;
-}
+DEFINE_METHOD_LOOKUP(string)

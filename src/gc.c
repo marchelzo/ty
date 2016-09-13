@@ -28,6 +28,7 @@ gc_alloc(size_t n)
         value_array_sweep();
         value_ref_vector_sweep();
         value_string_sweep();
+        value_blob_sweep();
         vm_sweep_variables();
 
         allocated = 0;

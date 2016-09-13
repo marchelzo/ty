@@ -21,6 +21,7 @@
 #include "functions.h"
 #include "array.h"
 #include "str.h"
+#include "blob.h"
 #include "tags.h"
 
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
@@ -71,9 +72,15 @@ static struct {
         { .module = NULL,     .name = "str",               .fn = builtin_str                           },
         { .module = NULL,     .name = "bool",              .fn = builtin_bool                          },
         { .module = NULL,     .name = "regex",             .fn = builtin_regex                         },
+        { .module = NULL,     .name = "blob",              .fn = builtin_blob                          },
         { .module = NULL,     .name = "min",               .fn = builtin_min                           },
         { .module = NULL,     .name = "max",               .fn = builtin_max                           },
         { .module = NULL,     .name = "getenv",            .fn = builtin_getenv                        },
+        { .module = NULL,     .name = "setenv",            .fn = builtin_setenv                        },
+        { .module = "os",     .name = "open",              .fn = builtin_os_open                       },
+        { .module = "os",     .name = "close",             .fn = builtin_os_close                      },
+        { .module = "os",     .name = "read",              .fn = builtin_os_read                       },
+        { .module = "os",     .name = "write",             .fn = builtin_os_write                      },
         { .module = "json",   .name = "parse",             .fn = builtin_json_parse                    },
 };
 
@@ -280,9 +287,8 @@ vm_exec(char *code)
                         break;
                 CASE(TARGET_MEMBER)
                         v = pop();
-                        if (v.type != VALUE_OBJECT) {
+                        if (!(v.type & VALUE_OBJECT))
                                 vm_panic("assignment to member of non-object");
-                        }
                         pushtarget(object_put_member_if_not_exists(v.object, ip));
                         ip += strlen(ip) + 1;
                         break;
@@ -308,9 +314,6 @@ vm_exec(char *code)
                         }
                         break;
                 CASE(ASSIGN)
-                        if (peektarget() == &vars[0]->value) {
-                                LOG("ERROR: ASSIGNING TO PRINT");
-                        }
                         *poptarget() = peek();
                         break;
                 CASE(TAG_PUSH)
@@ -347,18 +350,16 @@ vm_exec(char *code)
                         READVALUE(n);
                         b = top()->array->count == n;
                         READVALUE(n);
-                        if (!b) {
+                        if (!b)
                                 ip += n;
-                        }
                         break;
                 CASE(TRY_ASSIGN_NON_NIL)
                         READVALUE(s);
                         READVALUE(n);
-                        if (top()->type == VALUE_NIL) {
+                        if (top()->type == VALUE_NIL)
                                 ip += n;
-                        } else {
+                        else
                                 vars[s]->value = peek();
-                        }
                         break;
                 CASE(TRY_REGEX)
                         READVALUE(s);
@@ -366,18 +367,16 @@ vm_exec(char *code)
                         READVALUE(n);
                         v = REGEX((pcre *) s);
                         v.extra = (pcre_extra *) s2;
-                        if (!value_apply_predicate(&v, top())) {
+                        if (!value_apply_predicate(&v, top()))
                                 ip += n;
-                        }
                         break;
                 CASE(TRY_INDEX)
                         READVALUE(index);
                         READVALUE(n);
-                        if (top()->type != VALUE_ARRAY || top()->array->count <= index) {
+                        if (top()->type != VALUE_ARRAY || top()->array->count <= index)
                                 ip += n;
-                        } else {
+                        else
                                 push(top()->array->items[index]);
-                        }
                         break;
                 CASE(TRY_TAG_POP)
                         READVALUE(tag);
@@ -436,9 +435,8 @@ vm_exec(char *code)
 
                         READVALUE(n);
                         vec_reserve(*v.array, n);
-                        for (int i = 0; i < n; ++i) {
+                        for (int i = 0; i < n; ++i)
                                 vec_push(*v.array, pop());
-                        }
 
                         push(v);
                         break;
@@ -466,16 +464,12 @@ vm_exec(char *code)
                         READVALUE(n);
                         LOG("n = %d", n);
                         k = 0;
-                        for (index = stack.count - n; index < stack.count; ++index) {
-                                LOG("adding bytes: %d", (int) stack.items[index].bytes);
+                        for (index = stack.count - n; index < stack.count; ++index)
                                 k += stack.items[index].bytes;
-                        }
-                        LOG("total bytes: %d", (int) k);
                         str = value_string_alloc(k);
                         v = STRING(str->data, k, str);
                         k = 0;
                         for (index = stack.count - n; index < stack.count; ++index) {
-                                LOG("adding string: %s", value_show(&stack.items[index]));
                                 memcpy(str->data + k, stack.items[index].string, stack.items[index].bytes);
                                 k += stack.items[index].bytes;
                         }
@@ -487,30 +481,24 @@ vm_exec(char *code)
                         READVALUE(r);
                         right = pop();
                         left = pop();
-                        if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER) {
+                        if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER)
                                 vm_panic("non-integer used as bound in range");
-                        }
                         v = ARRAY(value_array_new());
                         value_array_reserve(v.array, abs(right.integer - left.integer) + 2);
-                        if (left.integer < right.integer) {
-                                for (int i = left.integer + l; i <= right.integer + r; ++i) {
+                        if (left.integer < right.integer)
+                                for (int i = left.integer + l; i <= right.integer + r; ++i)
                                         v.array->items[v.array->count++] = INTEGER(i);
-                                }
-                        } else {
-                                for (int i = left.integer - l; i >= right.integer - r; --i) {
+                        else
+                                for (int i = left.integer - l; i >= right.integer - r; --i)
                                         v.array->items[v.array->count++] = INTEGER(i);
-                                }
-                        }
                         push(v);
                         break;
                 CASE(MEMBER_ACCESS)
                         v = pop();
-                        if (v.type != VALUE_OBJECT) {
+                        if (!(v.type & VALUE_OBJECT))
                                 vm_panic("member access on non-object");
-                        }
                         vp = object_get_member(v.object, ip);
                         ip += strlen(ip) + 1;
-
                         push((vp == NULL) ? NIL : *vp);
                         break;
                 CASE(SUBSCRIPT)
@@ -518,15 +506,12 @@ vm_exec(char *code)
                         container = pop();
 
                         if (container.type == VALUE_ARRAY) {
-                                if (subscript.type != VALUE_INTEGER) {
+                                if (subscript.type != VALUE_INTEGER)
                                         vm_panic("non-integer array index used in subscript expression");
-                                }
-                                if (subscript.integer < 0) {
+                                if (subscript.integer < 0)
                                         subscript.integer += container.array->count;
-                                }
-                                if (subscript.integer < 0 || subscript.integer >= container.array->count) {
+                                if (subscript.integer < 0 || subscript.integer >= container.array->count)
                                         vm_panic("array index out of range in subscript expression");
-                                }
                                 push(container.array->items[subscript.integer]);
                         } else if (container.type == VALUE_OBJECT) {
                                 vp = object_get_value(container.object, &subscript);
@@ -612,39 +597,34 @@ vm_exec(char *code)
                         ++vars[s]->value.integer;
                         break;
                 CASE(PRE_INC)
-                        if (peektarget()->type != VALUE_INTEGER) {
+                        if (peektarget()->type != VALUE_INTEGER)
                                 vm_panic("pre-increment applied to non-integer");
-                        }
                         ++peektarget()->integer;
                         push(*poptarget());
                         break;
                 CASE(POST_INC)
-                        if (peektarget()->type != VALUE_INTEGER) {
+                        if (peektarget()->type != VALUE_INTEGER)
                                 vm_panic("post-increment applied to non-integer");
-                        }
                         push(*peektarget());
                         ++poptarget()->integer;
                         break;
                 CASE(PRE_DEC)
-                        if (peektarget()->type != VALUE_INTEGER) {
+                        if (peektarget()->type != VALUE_INTEGER)
                                 vm_panic("pre-decrement applied to non-integer");
-                        }
                         --peektarget()->integer;
                         push(*poptarget());
                         break;
                 CASE(POST_DEC)
-                        if (peektarget()->type != VALUE_INTEGER) {
+                        if (peektarget()->type != VALUE_INTEGER)
                                 vm_panic("post-decrement applied to non-integer");
-                        }
                         push(*peektarget());
                         --poptarget()->integer;
                         break;
                 CASE(MUT_ADD)
                         vp = poptarget();
                         if (vp->type == VALUE_ARRAY) {
-                                if (top()->type != VALUE_ARRAY) {
+                                if (top()->type != VALUE_ARRAY)
                                         vm_panic("attempt to add non-array to array");
-                                }
                                 value_array_extend(vp->array, pop().array);
                         } else {
                                 v = pop();
@@ -721,12 +701,10 @@ vm_exec(char *code)
                         v = pop();
                         if (v.type == VALUE_FUNCTION) {
                                 for (int i = 0; i < v.bound_symbols.count; ++i) {
-                                        if (vars[v.bound_symbols.items[i]] == NULL) {
+                                        if (vars[v.bound_symbols.items[i]] == NULL)
                                                 vars[v.bound_symbols.items[i]] = newvar(NULL);
-                                        }
-                                        if (vars[v.bound_symbols.items[i]]->prev == NULL) {
+                                        if (vars[v.bound_symbols.items[i]]->prev == NULL)
                                                 vars[v.bound_symbols.items[i]]->prev = newvar(vars[v.bound_symbols.items[i]]);
-                                        }
                                         vars[v.bound_symbols.items[i]] = vars[v.bound_symbols.items[i]]->prev;
                                 }
                                 READVALUE(n);
@@ -734,9 +712,8 @@ vm_exec(char *code)
                                         pop();
                                         --n;
                                 }
-                                for (int i = n; i < v.param_symbols.count; ++i) {
+                                for (int i = n; i < v.param_symbols.count; ++i)
                                         vars[v.param_symbols.items[i]]->value = NIL;
-                                }
                                 while (n --> 0) {
                                         struct value v2 = pop();
                                         LOG("passing %s as argument %d", value_show(&v2), n);
@@ -753,16 +730,14 @@ vm_exec(char *code)
                                 READVALUE(n);
                                 vec_reserve(args, n);
                                 args.count = n;
-                                while (n --> 0) {
+                                while (n --> 0)
                                         args.items[n] = pop();
-                                }
                                 push(v.builtin_function(&args));
                                 args.count = 0;
                         } else if (v.type == VALUE_TAG) {
                                 READVALUE(n);
-                                if (n != 1) {
+                                if (n != 1)
                                         vm_panic("attempt to apply a tag to an invalid number of values");
-                                }
                                 top()->tags = tags_push(top()->tags, v.tag);
                         } else {
                                 vm_panic("attempt to call a non-function");
@@ -772,87 +747,72 @@ vm_exec(char *code)
                         
                         value = peek();
 
-                        if (!(value.type & VALUE_TAGGED) && (value.type & (VALUE_STRING | VALUE_ARRAY))) {
-                                char const *type;
+                        func = NULL;
+                        struct value *self = NULL;
 
-                                switch (value.type) {
-                                case VALUE_STRING:
-                                        func = get_string_method(ip);
-                                        type = "string";
-                                        break;
-                                case VALUE_ARRAY:
-                                        func = get_array_method(ip);
-                                        type = "array";
+                        char const *method = ip;
+                        ip += strlen(ip) + 1;
+
+                        for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
+                                vp = tags_lookup_method(tags_first(tags), method);
+                                if (vp != NULL) {
+                                        self = &value;
                                         break;
                                 }
+                        }
 
-                                if (func == NULL)
-                                        vm_panic("call to non-existent %s method: %s", type, ip);
+                        /*
+                         * If we get here and self is a null pointer, none of the value's tags (if it even had any)
+                         * supported the  method call, so we must now see if the inner value itself can handle the method
+                         * call.
+                         */
 
-                                ip += strlen(ip) + 1;
+                        if (self == NULL) switch (value.type & ~VALUE_TAGGED) {
+                        case VALUE_TAG:
+                                vp = tags_lookup_method(value.tag, method);
+                                break;
+                        case VALUE_OBJECT:
+                                vp = object_get_member(value.object, method);
+                                if (vp != NULL && vp->type != VALUE_FUNCTION)
+                                        vp = NULL;
+                                break;
+                        case VALUE_STRING:
+                                func = get_string_method(method);
+                                break;
+                        case VALUE_ARRAY:
+                                func = get_array_method(method);
+                                break;
+                        case VALUE_BLOB:
+                                func = get_blob_method(method);
+                                break;
+                        default:
+                                vp = NULL;
+                        }
+
+                        if (func != NULL) {
                                 vec_init(args);
                                 READVALUE(n);
                                 vec_reserve(args, n);
                                 args.count = n;
                                 index = 0;
-                                for (struct value const *a = stack.items + stack.count - n - 1; index < n; ++index, ++a) {
+
+                                for (struct value const *a = stack.items + stack.count - n - 1; index < n; ++index, ++a)
                                         args.items[index] = *a;
-                                }
+
+                                value.type &= ~VALUE_TAGGED;
+                                value.tags = 0;
+
                                 v = func(&value, &args);
                                 stack.count -= n;
                                 stack.items[stack.count - 1] = v;
                                 --gc_prevent;
                                 gc_alloc(0);
-                                break;
+                        } else if (vp != NULL) {
+                                --stack.count;
+                                callmethod(vp, self);
+                        } else {
+                                vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
                         }
-
-                        /*
-                         * Since this isn't on a string or an array, we can pop it without worrying about it
-                         * being GC'd.
-                         */
-                        --stack.count;
-
-                        if (value.type & VALUE_TAGGED) {
-                                int tag = tags_first(value.tags);
-                                vp = tags_lookup_method(tag, ip);
-                                if (vp == NULL)
-                                        vm_panic("call to non-existent method on: %s\n", tags_name(tag), ip);
-
-                                ip += strlen(ip) + 1;
-
-                                value.tags = tags_pop(value.tags);
-                                value.type &= ~VALUE_TAGGED;
-
-                                callmethod(vp, &value);
-
-                                break;
-                        }
-
-                        if (value.type == VALUE_TAG) {
-                                vp = tags_lookup_method(value.tag, ip);
-                                if (vp == NULL)
-                                        vm_panic("call to non-existent method on %s: %s\n", tags_name(value.tag), ip);
-
-                                ip += strlen(ip) + 1;
-                                
-                                callmethod(vp, NULL);
-                                
-                                break;
-                        }
-
-                        if (value.type != VALUE_OBJECT)
-                                vm_panic("attempt to call a method on a non-object");
-
-                        vp = object_get_member(value.object, ip);
-                        if (vp == NULL)
-                                vm_panic("attempt to call a non-existent method: %s", ip);
-
-                        if (vp->type != VALUE_FUNCTION)
-                                vm_panic("attempt to call a non-function as a method on an object: %s", ip);
-
-                        ip += strlen(ip) + 1;
-
-                        callmethod(vp, NULL);
 
                         break;
                 CASE(SAVE_STACK_POS)

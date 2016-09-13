@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "unicode.h"
 
@@ -44,7 +45,7 @@ next_utf8(const char *str, int len, uint32_t *cp)
 
         for (int i = 1; i < nbytes; i++) {
                 b0 = (str++)[0];
-                if(!b0)
+                if (!b0)
                         return -1;
 
                 *cp <<= 6;
@@ -52,6 +53,22 @@ next_utf8(const char *str, int len, uint32_t *cp)
         }
 
         return nbytes;
+}
+
+inline static bool
+utf8_valid(char const *str, int len)
+{
+        uint32_t cp;
+
+        while (len != 0) {
+                int n = next_utf8(str, len, &cp);
+                if (n == -1)
+                        return false;
+                len -= n;
+                str += n;
+        }
+
+        return true;
 }
 
 inline static int

@@ -15,6 +15,7 @@
 #define REAL(f)       ((struct value){ .type = VALUE_REAL,             .real             = (f), .tags = 0 })
 #define BOOLEAN(b)    ((struct value){ .type = VALUE_BOOLEAN,          .boolean          = (b), .tags = 0 })
 #define ARRAY(a)      ((struct value){ .type = VALUE_ARRAY,            .array            = (a), .tags = 0 })
+#define BLOB(b)       ((struct value){ .type = VALUE_BLOB,             .blob             = (b), .tags = 0 })
 #define OBJECT(o)     ((struct value){ .type = VALUE_OBJECT,           .object           = (o), .tags = 0 })
 #define REGEX(r)      ((struct value){ .type = VALUE_REGEX,            .regex            = (r), .tags = 0 })
 #define FUNCTION()    ((struct value){ .type = VALUE_FUNCTION,                                  .tags = 0 })
@@ -22,7 +23,34 @@
 #define TAG(t)        ((struct value){ .type = VALUE_TAG,              .tag              = (t), .tags = 0 })
 #define NIL           ((struct value){ .type = VALUE_NIL,                                       .tags = 0 })
 
-#define CALLABLE(v) (((v).type & (VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0)
+#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
+
+#define BUILTIN_OBJECT_TYPE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_STRING | VALUE_ARRAY | VALUE_BLOB)) != 0))
+
+#define DEFINE_METHOD_TABLE(...) \
+        static struct { \
+                char const *name; \
+                struct value (*func)(struct value *, value_vector *); \
+        } funcs[] = { __VA_ARGS__ }; \
+        static size_t const nfuncs = sizeof funcs / sizeof funcs[0]
+
+#define DEFINE_METHOD_LOOKUP(type) \
+        struct value (*get_ ## type ## _method(char const *name))(struct value *, value_vector *) \
+        { \
+                int lo = 0, \
+                    hi = nfuncs - 1; \
+\
+                while (lo <= hi) { \
+                        int m = (lo + hi) / 2; \
+                        int c = strcmp(name, funcs[m].name); \
+                        if      (c < 0) hi = m - 1; \
+                        else if (c > 0) lo = m + 1; \
+                        else            return funcs[m].func; \
+                } \
+\
+                return NULL; \
+        }
+
 
 #define NONE          TAG(1)
 
@@ -43,6 +71,15 @@ struct string {
         char data[];
 };
 
+struct blob {
+        unsigned char *items;
+        size_t count;
+        size_t capacity;
+
+        unsigned char mark;
+        struct blob *next;
+};
+
 struct reference {
         union {
                 uintptr_t symbol;
@@ -60,18 +97,19 @@ struct ref_vector {
 
 struct value {
         enum {
-                VALUE_REGEX            = 1,
-                VALUE_INTEGER          = 2,
-                VALUE_REAL             = 4,
-                VALUE_BOOLEAN          = 8,
-                VALUE_NIL              = 16,
-                VALUE_ARRAY            = 32,
-                VALUE_OBJECT           = 64,
-                VALUE_FUNCTION         = 128,
-                VALUE_BUILTIN_FUNCTION = 256,
-                VALUE_TAG              = 512,
-                VALUE_TAGGED           = 1024,
-                VALUE_STRING           = 2048,
+                VALUE_REGEX            = 1 << 0,
+                VALUE_INTEGER          = 1 << 2,
+                VALUE_REAL             = 1 << 3,
+                VALUE_BOOLEAN          = 1 << 4,
+                VALUE_NIL              = 1 << 5,
+                VALUE_ARRAY            = 1 << 6,
+                VALUE_OBJECT           = 1 << 7,
+                VALUE_FUNCTION         = 1 << 8,
+                VALUE_BUILTIN_FUNCTION = 1 << 9,
+                VALUE_TAG              = 1 << 10,
+                VALUE_TAGGED           = 1 << 11,
+                VALUE_STRING           = 1 << 12,
+                VALUE_BLOB             = 1 << 13
         } type;
         int tags;
         union {
@@ -82,6 +120,7 @@ struct value {
                 struct value_array *array;
                 struct object *object;
                 struct value (*builtin_function)(value_vector *);
+                struct blob *blob;
                 struct {
                         char const *string;
                         size_t bytes;
@@ -140,6 +179,9 @@ value_array_extend(struct value_array *, struct value_array const *);
 struct ref_vector *
 ref_vector_new(int n);
 
+struct blob *
+value_blob_new(void);
+
 void
 value_mark(struct value *v);
 
@@ -151,6 +193,9 @@ value_string_sweep(void);
 
 void
 value_ref_vector_sweep(void);
+
+void
+value_blob_sweep(void);
 
 void
 value_gc_reset(void);
@@ -188,9 +233,9 @@ value_array_reserve(struct value_array *a, int count)
         }
 
         struct value *new_items = gc_alloc(a->capacity * sizeof (struct value));
-        if (a->count != 0) {
+        if (a->count != 0)
                 memcpy(new_items, a->items, a->count * sizeof (struct value));
-        }
+
         a->items = new_items;
 }
 

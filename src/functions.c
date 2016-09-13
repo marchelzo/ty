@@ -4,6 +4,8 @@
 #include <limits.h>
 #include <string.h>
 
+#include <fcntl.h>
+
 #include "tags.h"
 #include "value.h"
 #include "vm.h"
@@ -127,6 +129,13 @@ builtin_float(value_vector *args)
         }
 
         vm_panic("invalid type passed to float()");
+}
+
+struct value
+builtin_blob(value_vector *args)
+{
+        ASSERT_ARGC("blob()", 0);
+        return BLOB(value_blob_new());
 }
 
 struct value
@@ -301,10 +310,37 @@ builtin_max(value_vector *args)
 }
 
 struct value
+builtin_setenv(value_vector *args)
+{
+        static vec(char) varbuf;
+        static vec(char) valbuf;
+
+        ASSERT_ARGC("setenv()", 2);
+
+        struct value var = args->items[0];
+        struct value val = args->items[1];
+
+        if (var.type != VALUE_STRING || val.type != VALUE_STRING)
+                vm_panic("both arguments to setenv() must be strings");
+
+        vec_push_n(varbuf, var.string, var.bytes);
+        vec_push(varbuf, '\0');
+
+        vec_push_n(valbuf, val.string, val.bytes);
+        vec_push(valbuf, '\0');
+
+        setenv(varbuf.items, valbuf.items, 1);
+
+        varbuf.count = 0;
+        valbuf.count = 0;
+
+        return NIL;
+}
+
+struct value
 builtin_getenv(value_vector *args)
 {
-        if (args->count != 1)
-                vm_panic("getenv() expects 1 argument but got: %zu", args->count);
+        ASSERT_ARGC("getenv()", 1);
 
         struct value var = args->items[0];
 
@@ -337,4 +373,99 @@ builtin_json_parse(value_vector *args)
                 vm_panic("non-string passed to json::parse()");
 
         return json_parse(json.string, json.bytes);
+}
+
+struct value
+builtin_os_open(value_vector *args)
+{
+        ASSERT_ARGC_2("os::open()", 1, 1);
+
+        struct value path = args->items[0];
+        if (path.type != VALUE_STRING)
+                vm_panic("the path passed to os::open() must be a string");
+        
+        static vec(char) pathbuf;
+
+        vec_push_n(pathbuf, path.string, path.bytes);
+        vec_push(pathbuf, '\0');
+
+        int fd = open(pathbuf.items, O_RDWR | O_CREAT);
+
+        if (fd == -1)
+                return NIL;
+        else
+                return INTEGER(fd);
+}
+
+struct value
+builtin_os_close(value_vector *args)
+{
+        ASSERT_ARGC("os::close()", 1);
+
+        struct value file = args->items[0];
+
+        if (file.type != VALUE_INTEGER)
+                vm_panic("the argument to os::close() must be an integer");
+
+        close(file.integer);
+
+        return NIL;
+}
+
+struct value
+builtin_os_read(value_vector *args)
+{
+        ASSERT_ARGC("os::read()", 3);
+
+        struct value file = args->items[0];
+        struct value blob = args->items[1];
+        struct value n = args->items[2]; 
+
+        if (file.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::read() must be an integer");
+
+        if (blob.type != VALUE_BLOB)
+                vm_panic("the second argument to os::read() must be a blob");
+
+        if (n.type != VALUE_INTEGER)
+                vm_panic("the third argument to os::read() must be an integer");
+
+        if (n.integer < 0)
+                vm_panic("the second argument to os::read() must be non-negative");
+
+        vec_reserve(*blob.blob, blob.blob->count + n.integer);
+
+        ssize_t nr = read(file.integer, blob.blob->items + blob.blob->count, n.integer);
+
+        if (nr != -1)
+                blob.blob->count += nr;
+
+        return INTEGER(nr);
+}
+
+struct value
+builtin_os_write(value_vector *args)
+{
+        ASSERT_ARGC("os::write()", 2);
+
+        struct value file = args->items[0];
+        struct value data = args->items[1];
+
+        if (file.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::write() must be an integer");
+
+        ssize_t n;
+
+        switch (data.type) {
+        case VALUE_BLOB:
+                n = write(file.integer, (char *)data.blob->items, data.blob->count);
+                break;
+        case VALUE_STRING:
+                n = write(file.integer, data.string, data.bytes);
+                break;
+        default:
+                vm_panic("invalid argument to os::write()");
+        }
+
+        return INTEGER(n);
 }

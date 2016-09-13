@@ -36,6 +36,7 @@ struct statement {
                 STATEMENT_IMPORT,
         } type;
         struct location loc;
+        bool pub;
         union {
                 struct expression *expression;
                 struct expression *return_value;
@@ -90,7 +91,6 @@ struct statement {
                 struct {
                         struct expression *target;
                         struct expression *value;
-                        bool pub;
                 };
         };
 };

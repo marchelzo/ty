@@ -44,6 +44,9 @@
 #define vec_insert(v, item, i) \
         ((vec_reserve((v), (v).count + 1)), memmove((v).items + (i) + 1, (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), ++(v).count, ((v).items[(i)] = (item)))
 
+#define vec_insert_n(v, elems, n, i) \
+        ((vec_reserve((v), (v).count + (n))), memmove((v).items + (i) + (n), (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), memcpy((v).items + (i), (elems), (n) * (sizeof (*(v).items))), (v).count += (n))
+
 #define vec_len(v) ((v).count)
 
 #define vec_last(v) ((v).items + (v).count - 1)

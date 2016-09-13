@@ -29,6 +29,9 @@ tags_wrap(char const *s, int tags);
 char const *
 tags_name(int tag);
 
+int
+tags_lookup(char const *name);
+
 void
 tags_add_method(int tag, char const *name, struct value f);
 

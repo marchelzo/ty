@@ -25,6 +25,9 @@ struct value
 builtin_regex(value_vector *args);
 
 struct value
+builtin_blob(value_vector *args);
+
+struct value
 builtin_max(value_vector *args);
 
 struct value
@@ -37,6 +40,21 @@ struct value
 builtin_getenv(value_vector *args);
 
 struct value
+builtin_setenv(value_vector *args);
+
+struct value
 builtin_json_parse(value_vector *args);
+
+struct value
+builtin_os_open(value_vector *args);
+
+struct value
+builtin_os_close(value_vector *args);
+
+struct value
+builtin_os_read(value_vector *args);
+
+struct value
+builtin_os_write(value_vector *args);
 
 #endif
