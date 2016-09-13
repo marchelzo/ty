@@ -23,7 +23,7 @@
 #include "tags.h"
 #include "vm.h"
 
-#define emit_instr(i) LOG("emitting instr: %s", #i); _emit_instr(i)
+#define emit_instr(i) do { LOG("emitting instr: %s", #i); _emit_instr(i); } while (false)
 
 #define PLACEHOLDER_JUMP(t, name) \
         emit_instr(t); \
@@ -31,8 +31,10 @@
         emit_int(0);
 
 #define PATCH_JUMP(name) \
-        jumpdistance = state.code.count - name - sizeof (int); \
-        memcpy(state.code.items + name, &jumpdistance, sizeof jumpdistance); \
+        do { \
+                jumpdistance = state.code.count - name - sizeof (int); \
+                memcpy(state.code.items + name, &jumpdistance, sizeof jumpdistance); \
+        } while (false)
 
 #define JUMP(loc) \
         emit_instr(INSTR_JUMP); \
@@ -855,9 +857,8 @@ emit_conditional_statement(struct statement const *s)
         emit_expression(s->conditional.cond);
         PLACEHOLDER_JUMP(INSTR_JUMP_IF, then_branch);
 
-        if (s->conditional.else_branch != NULL) {
+        if (s->conditional.else_branch != NULL)
                 emit_statement(s->conditional.else_branch);
-        }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, end);
 
@@ -964,9 +965,8 @@ emit_for_loop(struct statement const *s)
         vec_init(state.continues);
         vec_init(state.breaks);
 
-        if (s->for_loop.init != NULL) {
+        if (s->for_loop.init != NULL)
                 emit_statement(s->for_loop.init);
-        }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, skip_next);
 
