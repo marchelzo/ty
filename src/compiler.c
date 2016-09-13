@@ -634,8 +634,20 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 break;
         case STATEMENT_TAG_DEFINITION:
                 s->tag.tag = definetag(s);
-                for (int i = 0; i < s->tag.methods.count; ++i)
+                for (int i = 0; i < s->tag.methods.count; ++i) {
+                        /*
+                         * Here we temporarily set the method names to NULL. Say for example there is
+                         * a method named 'print'. Within the method body, we don't want 'print' to refer
+                         * to the method. Methods should only be accessible through tags or tagged values.
+                         * That is, standalone identifiers should never resolve to methods. By setting the
+                         * name to NULL before passing it to symbolize_expression, we avoid adding it as an
+                         * identifier to the scope of the method body.
+                         */
+                        char const *name = s->tag.methods.items[i]->name;
+                        s->tag.methods.items[i]->name = NULL;
                         symbolize_expression(scope, s->tag.methods.items[i]);
+                        s->tag.methods.items[i]->name = name;
+                }
                 break;
         case STATEMENT_BLOCK:
                 scope = newscope(scope, false);
