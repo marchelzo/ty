@@ -8,12 +8,13 @@ CFLAGS += $(shell pcre-config --cflags)
 CFLAGS += $(shell pcre-config --libs)
 CFLAGS += -lpthread
 CFLAGS += -lm
+CFLAGS += -lreadline
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 
 TEST_FILTER ?= "."
 
-BINARIES = repl interpreter
+BINARIES = ty
 
 ifdef NOLOG
         CFLAGS += -DPLUM_NO_LOG
@@ -48,12 +49,9 @@ endif
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 
-all: repl interpreter
+all: ty
 
-interpreter: $(OBJECTS) interpreter.c
-	$(CC) $(CFLAGS) -o $@ $^
-
-repl: $(OBJECTS) repl.c
+ty: $(OBJECTS) ty.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c
