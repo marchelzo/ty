@@ -378,18 +378,42 @@ builtin_json_parse(value_vector *args)
 struct value
 builtin_os_open(value_vector *args)
 {
-        ASSERT_ARGC_2("os::open()", 1, 1);
+        ASSERT_ARGC_2("os::open()", 2, 3);
 
         struct value path = args->items[0];
         if (path.type != VALUE_STRING)
                 vm_panic("the path passed to os::open() must be a string");
-        
+
         static vec(char) pathbuf;
 
         vec_push_n(pathbuf, path.string, path.bytes);
         vec_push(pathbuf, '\0');
 
-        int fd = open(pathbuf.items, O_RDWR | O_CREAT, 0666);
+        unsigned flags = 0;
+
+        struct value flags_array = args->items[1];
+        if (flags_array.type != VALUE_ARRAY)
+                vm_panic("the second argument to os::open() must be an array");
+
+        for (int i = 0; i < flags_array.array->count; ++i) {
+                struct value flag = flags_array.array->items[i];
+                if (flag.type != VALUE_INTEGER)
+                        vm_panic("non-integer passed as flag to os::open()");
+                flags |= (unsigned) flag.integer;
+        }
+
+        int fd;
+
+        if (flags & O_CREAT) {
+                if (args->count != 3)
+                        vm_panic("os::open() called with O_CREAT but no third argument");
+                if (args->items[2].type != VALUE_INTEGER)
+                        vm_panic("the third argument to os::open() must be an integer");
+                fd = open(pathbuf.items, flags, (mode_t) args->items[2].integer);
+        } else {
+                fd = open(pathbuf.items, flags);
+        }
+
 
         if (fd == -1)
                 return NIL;
@@ -468,4 +492,31 @@ builtin_os_write(value_vector *args)
         }
 
         return INTEGER(n);
+}
+
+struct value
+builtin_errno_get(value_vector *args)
+{
+        ASSERT_ARGC("errno::get()", 0);
+        return INTEGER(errno);
+}
+
+struct value
+builtin_errno_str(value_vector *args)
+{
+        ASSERT_ARGC_2("errno::str()", 0, 1);
+
+        int e;
+
+        if (args->count == 0) {
+                e = errno;
+        } else {
+                if (args->items[0].type != VALUE_INTEGER)
+                        vm_panic("the argument to errno::str() must be an integer");
+                e = args->items[0].integer;
+        }
+
+        char const *s = strerror(e);
+
+        return STRING_CLONE(s, strlen(s));
 }

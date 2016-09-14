@@ -19,11 +19,21 @@ repl(void)
         vm_init();
 
         for (char *line; line = readline("> "), line != NULL;) {
+
+                /*
+                 * Very bad.
+                 */
+                line = realloc(line, strlen(line) + 2);
+                strcat(line, "\n");
+
                 sprintf(buffer, "print(%s);", line);
                 if (vm_execute(buffer))
                         goto add;
                 if (strstr(vm_error(), "ParseError") != NULL && vm_execute(line))
                         goto add;
+
+                fprintf(stderr, "%s\n", vm_error());
+
                 continue;
         add:
                 add_history(line);

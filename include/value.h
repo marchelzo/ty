@@ -297,4 +297,22 @@ SOME(struct value v)
         return s;
 }
 
+inline static struct value
+OK(struct value v)
+{
+        struct value s = v;
+        s.tags = tags_push(s.tags, 3);
+        s.type |= VALUE_TAGGED;
+        return s;
+}
+
+inline static struct value
+ERR(struct value v)
+{
+        struct value s = v;
+        s.tags = tags_push(s.tags, 4);
+        s.type |= VALUE_TAGGED;
+        return s;
+}
+
 #endif

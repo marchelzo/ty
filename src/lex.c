@@ -69,17 +69,6 @@ mkid(char *id, char *module)
 }
 
 static struct token
-mktag(char *tag, char *module)
-{
-        return (struct token) {
-                .type = TOKEN_TAG,
-                .tag  = tag,
-                .module = module,
-                .loc  = startloc,
-        };
-}
-
-static struct token
 mkstring(char *string)
 {
         return (struct token) {
@@ -196,28 +185,22 @@ lexword(void)
         vec_init(module);
         vec_init(word);
 
-        bool tag = isupper(*chars);
-
         for (;;) {
-                while (isalnum(*chars) || *chars == '_') {
+                while (isalnum(*chars) || *chars == '_')
                         vec_push(word, nextchar());
-                }
 
                 if (chars[0] == ':' && chars[1] == ':') {
                         nextchar();
                         nextchar();
                         
-                        if (module.count != 0) {
+                        if (module.count != 0)
                                 vec_push(module, '/');
-                        }
 
                         vec_push_n(module, word.items, word.count);
                         word.count = 0;
 
                         if (!isalpha(*chars) && *chars != '_') {
                                 error("expected name after '::' in identifier");
-                        } else {
-                                tag = isupper(*chars);
                         }
                 } else {
                         break;
@@ -246,8 +229,6 @@ lexword(void)
         if (keyword = keyword_get_number(w), keyword != -1) {
                 keep_next_newline |= (keyword == KEYWORD_IMPORT);
                 return mkkw(keyword);
-        } else if (tag) {
-                return mktag(w, m);
         } else {
                 return mkid(w, m);
         }

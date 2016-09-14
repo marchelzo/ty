@@ -25,6 +25,8 @@
 
 #define emit_instr(i) do { LOG("emitting instr: %s", #i); _emit_instr(i); } while (false)
 
+#define GET_TAG(sym) (symbol_info.items[(sym)] & UINT16_MAX)
+
 #define PLACEHOLDER_JUMP(t, name) \
         emit_instr(t); \
         size_t name = state.code.count; \
@@ -48,9 +50,14 @@
  * LV_NONE - just an alias for none of the above being true.
  */
 enum {
-        LV_NONE = 0,
-        LV_DECL = 1,
-        LV_PUB  = 2,
+        LV_NONE = 1,
+        LV_DECL = 2,
+        LV_PUB  = 4,
+};
+
+enum {
+     SYMBOL_PUBLIC = 1 << 17,
+     SYMBOL_TAG    = 1 << 18,
 };
 
 /* expression location */
@@ -89,6 +96,7 @@ typedef vec(struct eloc)      location_vector;
 typedef vec(int)              symbol_vector;
 typedef vec(size_t)           offset_vector;
 typedef vec(char)             byte_vector;
+typedef vec(unsigned)         info_vector;
 
 /*
  * State which is local to a single compilation unit.
@@ -129,7 +137,7 @@ static vec(struct module) modules;
 static struct state state;
 
 static vec(location_vector) location_lists;
-static symbol_vector public_symbols;
+static info_vector symbol_info;
 
 static struct scope *global;
 static int global_count;
@@ -152,16 +160,11 @@ emit_expression(struct expression const *e);
 static void
 emit_assignment(struct expression *target, struct expression const *e, int i);
 
+static struct scope *
+get_import_scope(char const *);
+
 static void
 import_module(char *name, char *as);
-
-static char const *tags[] = {
-        "None",
-        "Some",
-        "Ok",
-        "Err",
-};
-static size_t tagcount = sizeof tags / sizeof tags[0];
 
 noreturn static void
 fail(char const *fmt, ...)
@@ -220,29 +223,6 @@ addref(int symbol)
         vec_push(state.refs, r);
 }
 
-/*
- * Is 'symbol' publicly visible?
- */
-static bool
-ispublic(int symbol)
-{
-        int lo = 0,
-            hi = public_symbols.count - 1;
-
-        while (lo <= hi) {
-                int m = (lo / 2) + (hi / 2) + (lo & hi & 1);
-                if (public_symbols.items[m] < symbol) {
-                        lo = m + 1;
-                } else if (public_symbols.items[m] > symbol) {
-                        hi = m - 1;
-                } else {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
 inline static bool
 locallydefined(struct scope const *scope, char const *name)
 {
@@ -269,12 +249,13 @@ addsymbol(struct scope *scope, char const *name, bool pub)
 
         vec_push(scope->identifiers, name);
         vec_push(scope->symbols, symbol);
+        vec_push(symbol_info, 0);
 
         if (scope->func != NULL)
                 vec_push(scope->func->func_symbols, symbol);
 
         if (pub)
-                vec_push(public_symbols, symbol);
+                symbol_info.items[symbol] |= SYMBOL_PUBLIC;
 
         LOG("adding symbol: %s -> %d", name, symbol);
         return symbol++;
@@ -289,12 +270,27 @@ definetag(struct statement *s)
         if (locallydefined(state.global, s->tag.name))
                 fail("redeclaration of tag: %s", s->tag.name);
 
+        int sym = addsymbol(state.global, s->tag.name, s->pub);
         int t = tags_new(s->tag.name);
 
-        vec_push(state.global->identifiers, s->tag.name);
-        vec_push(state.global->symbols, t);
+        symbol_info.items[sym] |= SYMBOL_TAG;
+        symbol_info.items[sym] |= t;
 
         return t;
+}
+
+inline static bool
+istag(struct expression const *e)
+{
+        assert(e->type == EXPRESSION_IDENTIFIER);
+
+        struct scope const *scope = (e->module == NULL) ? state.global : get_import_scope(e->module);
+
+        for (int i = 0; i < scope->identifiers.count; ++i)
+                if (strcmp(scope->identifiers.items[i], e->identifier) == 0)
+                        return symbol_info.items[scope->symbols.items[i]] & SYMBOL_TAG;
+        
+        return false;
 }
 
 inline static int
@@ -312,7 +308,7 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         while (scope != NULL) {
                 for (int i = 0; i < scope->identifiers.count; ++i) {
                         if (strcmp(scope->identifiers.items[i], name) == 0) {
-                                if (!isupper(name[0]) && scope->external && !ispublic(scope->symbols.items[i]))
+                                if (scope->external && !(symbol_info.items[scope->symbols.items[i]] & SYMBOL_PUBLIC))
                                         fail("reference to non-public external variable: %s", name);
                                 return scope->symbols.items[i];
                         }
@@ -416,7 +412,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, int flags)
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue(scope, target->tagged, flags);
-                target->tag = getsymbol(
+                target->symbol = getsymbol(
                         ((target->module == NULL) ? state.global : get_import_scope(target->module)),
                         target->identifier,
                         NULL
@@ -442,11 +438,30 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
+        if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
+                symbolize_expression(scope, e->function);
+                if (symbol_info.items[e->function->symbol] & SYMBOL_TAG) {
+                        struct expression *tagged = e->args.items[0];
+                        int symbol = e->function->symbol;
+                        e->type = EXPRESSION_TAG_APPLICATION;
+                        e->tagged = tagged;
+                        e->symbol = symbol;
+                }
+        }
+
+        if (e->type == EXPRESSION_IDENTIFIER && istag(e))
+                goto tag;
+
         state.loc = e->loc;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                e->symbol = addsymbol(scope, e->identifier, true);
+                if (locallydefined(scope, e->identifier)) {
+                        e->type = EXPRESSION_MUST_EQUAL;
+                        e->symbol = getsymbol(scope, e->identifier, NULL);
+                } else {
+                        e->symbol = addsymbol(scope, e->identifier, true);
+                }
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < e->elements.count; ++i)
@@ -460,14 +475,10 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                 e->symbol = addsymbol(scope, e->identifier, true);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                e->tag = getsymbol(
-                        ((e->module == NULL) ? state.global : get_import_scope(e->module)),
-                        e->identifier,
-                        NULL
-                );
                 symbolize_pattern(scope, e->tagged);
                 break;
         default:
+        tag:
                 symbolize_expression(scope, e);
         }
 }
@@ -475,9 +486,8 @@ symbolize_pattern(struct scope *scope, struct expression *e)
 static void
 symbolize_expression(struct scope *scope, struct expression *e)
 {
-        if (e == NULL) {
+        if (e == NULL)
                 return;
-        }
 
         state.loc = e->loc;
 
@@ -503,14 +513,14 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->high);
                 break;
         case EXPRESSION_TAG:
-                e->tag = getsymbol(
+                e->symbol = getsymbol(
                         ((e->module == NULL) ? state.global : get_import_scope(e->module)),
                         e->identifier,
                         NULL
                 );
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                e->tag = getsymbol(
+                e->symbol = getsymbol(
                         ((e->module == NULL) ? state.global : get_import_scope(e->module)),
                         e->identifier,
                         NULL
@@ -1022,6 +1032,12 @@ emit_try_match(struct expression const *pattern)
                         emit_int(0);
                 }
                 break;
+        case EXPRESSION_MUST_EQUAL:
+                emit_instr(INSTR_ENSURE_EQUALS_VAR);
+                emit_symbol(pattern->symbol);
+                vec_push(state.match_fails, state.code.count);
+                emit_int(0);
+                break;
         case EXPRESSION_VIEW_PATTERN:
                 emit_instr(INSTR_DUP);
                 emit_expression(pattern->left);
@@ -1032,7 +1048,8 @@ emit_try_match(struct expression const *pattern)
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < pattern->elements.count; ++i) {
-                        if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST) {
+                        if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST
+                         || pattern->elements.items[i]->type == EXPRESSION_REST_MUST_EQUAL) {
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_symbol(pattern->elements.items[i]->symbol);
                                 emit_int(i);
@@ -1064,7 +1081,7 @@ emit_try_match(struct expression const *pattern)
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_DUP);
                 emit_instr(INSTR_TRY_TAG_POP);
-                emit_int(pattern->tag);
+                emit_int(GET_TAG(pattern->symbol));
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
 
@@ -1437,7 +1454,7 @@ emit_assignment(struct expression *target, struct expression const *e, int i)
         case EXPRESSION_TAG_APPLICATION:
                 emit_expression(e);
                 emit_instr(INSTR_UNTAG_OR_DIE);
-                emit_int(target->tag);
+                emit_int(GET_TAG(target->symbol));
                 emit_target(target->tagged);
                 emit_instr(INSTR_ASSIGN);
                 break;
@@ -1470,7 +1487,7 @@ emit_expression(struct expression const *e)
         case EXPRESSION_TAG_APPLICATION:
                 emit_expression(e->tagged);
                 emit_instr(INSTR_TAG_PUSH);
-                emit_int(e->tag);
+                emit_int(GET_TAG(e->symbol));
                 break;
         case EXPRESSION_RANGE:
                 emit_expression(e->low);
@@ -1503,7 +1520,7 @@ emit_expression(struct expression const *e)
                 break;
         case EXPRESSION_TAG:
                 emit_instr(INSTR_TAG);
-                emit_int(e->tag);
+                emit_int(GET_TAG(e->symbol));
                 break;
         case EXPRESSION_REGEX:
                 emit_instr(INSTR_REGEX);
@@ -1759,6 +1776,13 @@ emit_new_globals(void)
                 if (global->func_symbols.items[i] >= builtin_count) {
                         emit_instr(INSTR_PUSH_VAR);
                         emit_symbol(global->func_symbols.items[i]);
+                        if (symbol_info.items[global->func_symbols.items[i]] & SYMBOL_TAG) {
+                                emit_instr(INSTR_TAG);
+                                emit_int(symbol_info.items[global->func_symbols.items[i]] & UINT16_MAX);
+                                emit_instr(INSTR_TARGET_VAR);
+                                emit_symbol(global->func_symbols.items[i]);
+                                emit_instr(INSTR_ASSIGN);
+                        }
                 }
         }
 
@@ -1889,16 +1913,10 @@ compiler_init(void)
         builtin_count = 0;
         global_count = 0;
         global = newscope(NULL, false);
-        vec_init(public_symbols);
-        vec_init(modules);
-
-        tags_init();
-        for (int i = 0; i < tagcount; ++i) {
-                vec_push(global->identifiers, tags[i]);
-                vec_push(global->symbols, tags_new(tags[i]));
-        }
 
         state = freshstate();
+
+        tags_init();
 }
 
 /*

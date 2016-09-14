@@ -70,6 +70,7 @@ enum instruction {
         INSTR_BAD_MATCH,
         INSTR_UNTAG_OR_DIE,
         INSTR_ENSURE_LEN,
+        INSTR_ENSURE_EQUALS_VAR,
 
         // binary operators
         INSTR_ADD,

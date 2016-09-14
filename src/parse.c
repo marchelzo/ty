@@ -343,30 +343,6 @@ prefix_special_string(void)
 }
 
 static struct expression *
-prefix_tag(void)
-{
-        expect(TOKEN_TAG);
-
-        struct expression *e = mkexpr();
-
-        e->type = EXPRESSION_TAG;
-        e->identifier = tok()->tag;
-        e->module = tok()->module;
-
-        consume(TOKEN_TAG);
-
-        lex_ctx = LEX_INFIX;
-        if (tok()->type == '(') {
-                consume('(');
-                e->type = EXPRESSION_TAG_APPLICATION;
-                e->tagged = parse_expr(0);
-                consume(')');
-        }
-
-        return e;
-}
-
-static struct expression *
 prefix_identifier(void)
 {
         expect(TOKEN_IDENTIFIER);
@@ -989,7 +965,6 @@ get_prefix_parser(void)
         case TOKEN_SPECIAL_STRING: return prefix_special_string;
         case TOKEN_REGEX:          return prefix_regex;
 
-        case TOKEN_TAG:        return prefix_tag;
         case TOKEN_IDENTIFIER: return prefix_identifier;
         case TOKEN_KEYWORD:    goto keyword;
 
@@ -1173,29 +1148,21 @@ parse_definition_lvalue(int context)
 
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = tok()->identifier;
-
-                if (tok()->module != NULL) {
-                        error("unexpected module qualifier in lvalue");
-                }
-
-                consume(TOKEN_IDENTIFIER);
-                break;
-        case TOKEN_TAG:
-                e = mkexpr();
-
-                e->type = EXPRESSION_TAG_APPLICATION;
-                e->identifier = tok()->tag;
                 e->module = tok()->module;
 
-                consume(TOKEN_TAG);
+                consume(TOKEN_IDENTIFIER);
 
-                lex_ctx = LEX_INFIX;
-
-                consume('(');
-                if (e->tagged = parse_definition_lvalue(LV_ANY), e->tagged == NULL) {
-                        goto error;
+                if (tok()->type == '(') {
+                     e->type = EXPRESSION_TAG_APPLICATION;
+                     lex_ctx = LEX_INFIX;
+                     consume('(');
+                     e->tagged = parse_definition_lvalue(LV_ANY);
+                     if (e->tagged == NULL)
+                             goto error;
+                    consume(')');
+                } else if (e->module != NULL) {
+                    error("unexpected module in lvalue");
                 }
-                consume(')');
 
                 break;
         case '[':
@@ -1502,9 +1469,8 @@ parse_let_definition(void)
         consume_keyword(KEYWORD_LET);
 
         struct expression *target = parse_definition_lvalue(LV_LET);
-        if (target == NULL) {
+        if (target == NULL)
                 error("failed to parse lvalue in 'let' definition");
-        }
 
         consume(TOKEN_EQ);
 
@@ -1594,14 +1560,14 @@ parse_tag_definition(void)
 {
         consume_keyword(KEYWORD_TAG);
 
-        expect(TOKEN_TAG);
+        expect(TOKEN_IDENTIFIER);
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_TAG_DEFINITION;
-        s->tag.name = tok()->tag;
+        s->tag.name = tok()->identifier;
         vec_init(s->tag.methods);
 
-        consume(TOKEN_TAG);
+        consume(TOKEN_IDENTIFIER);
 
         if (tok()->type == ';') {
                 consume(';');

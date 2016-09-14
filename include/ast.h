@@ -155,6 +155,8 @@ struct expression {
                 EXPRESSION_NIL,
 
                 EXPRESSION_LIST,
+
+                EXPRESSION_MUST_EQUAL,
         } type;
 
         char const *filename;
@@ -194,7 +196,6 @@ struct expression {
                         bool local;
                         struct expression *tagged;
                         int symbol;
-                        int tag;
                         char *module;
                         char *identifier;
                 };

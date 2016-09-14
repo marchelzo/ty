@@ -689,6 +689,22 @@ array_filter(struct value *array, value_vector *args)
 }
 
 static struct value
+array_contains(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("array.contains?() expects 1 argument but got %zu", args->count);
+
+        struct value v = args->items[0];
+
+        int n = array->array->count;
+        for (int i = 0; i < n; ++i)
+                if (value_test_equality(&v, &array->array->items[i]))
+                        return BOOLEAN(true);
+
+        return BOOLEAN(false);
+}
+
+static struct value
 array_each(struct value *array, value_vector *args)
 {
         if (args->count != 1) {
@@ -1056,6 +1072,7 @@ array_pop(struct value *array, value_vector *args)
 DEFINE_METHOD_TABLE(
         { .name = "clone",        .func = array_clone          },
         { .name = "consumeWhile", .func = array_consume_while  },
+        { .name = "contains?",    .func = array_contains       },
         { .name = "drop",         .func = array_drop           },
         { .name = "drop!",        .func = array_drop_mut       },
         { .name = "dropWhile",    .func = array_drop_while     },

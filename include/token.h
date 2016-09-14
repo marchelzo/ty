@@ -18,7 +18,6 @@ struct token {
                  */
                 TOKEN_KEYWORD = INT_MAX - 256,
                 TOKEN_IDENTIFIER,
-                TOKEN_TAG,
                 TOKEN_STRING,
                 TOKEN_SPECIAL_STRING,
                 TOKEN_REGEX,
@@ -89,10 +88,7 @@ struct token {
                 };
                 struct {
                         char *module;
-                        union {
-                                char *identifier;
-                                char *tag;
-                        };
+                        char *identifier;
                 };
                 char *operator;
                 char *string;

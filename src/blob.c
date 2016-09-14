@@ -164,16 +164,16 @@ blob_get(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_string(struct value *blob, value_vector *args)
+blob_str(struct value *blob, value_vector *args)
 {
         int start;
         int n;
 
         if (args->count > 0 && args->items[0].type != VALUE_INTEGER)
-                vm_panic("the first argument to blob.string() must be an integer");
+                vm_panic("the first argument to blob.str() must be an integer");
 
         if (args->count > 1 && args->items[1].type != VALUE_INTEGER)
-                vm_panic("the second argument to blob.string() must be an integer");
+                vm_panic("the second argument to blob.str() must be an integer");
 
         switch (args->count) {
         case 0:
@@ -189,11 +189,11 @@ blob_string(struct value *blob, value_vector *args)
                 n = args->items[1].integer;
                 break;
         default:
-                vm_panic("blob.string() expects 0, 1, or 2 arguments but got %zu", args->count);
+                vm_panic("blob.str() expects 0, 1, or 2 arguments but got %zu", args->count);
         }
 
         if (start < 0 || n < 0 || (n + start) > blob->blob->count)
-                vm_panic("invalid arguments to blob.string()");
+                vm_panic("invalid arguments to blob.str()");
 
         if (!utf8_valid((char *)blob->blob->items + start, n))
                 return NIL;
@@ -226,7 +226,7 @@ DEFINE_METHOD_TABLE(
         { .name = "search",   .func = blob_search    },
         { .name = "shrink",   .func = blob_shrink    },
         { .name = "size",     .func = blob_size      },
-        { .name = "string",   .func = blob_string    },
+        { .name = "str",      .func = blob_str       },
 );
 
 DEFINE_METHOD_LOOKUP(blob)

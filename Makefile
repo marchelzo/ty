@@ -8,7 +8,9 @@ CFLAGS += $(shell pcre-config --cflags)
 CFLAGS += $(shell pcre-config --libs)
 CFLAGS += -lpthread
 CFLAGS += -lm
+CFLAGS += -L/usr/local/lib
 CFLAGS += -lreadline
+CFLAGS += -lutf8proc
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 

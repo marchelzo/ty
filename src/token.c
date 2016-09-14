@@ -133,7 +133,6 @@ token_show_type(int type)
         case TOKEN_INC:            return "operator '++'";
         case TOKEN_DEC:            return "operator '--'";
         case TOKEN_IDENTIFIER:     return "identifier";
-        case TOKEN_TAG:            return "tag";
         case TOKEN_STRING:         return "string";
         case TOKEN_INTEGER:        return "integer";
         case TOKEN_REAL:           return "real";
@@ -149,7 +148,6 @@ token_show(struct token const *t)
 {
         switch (t->type) {
         case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
-        case TOKEN_TAG:        snprintf(token_show_buffer, 512, "tag '%s'", t->tag);                       break;
         case TOKEN_STRING:     snprintf(token_show_buffer, 512, "string '%s'", t->string);                 break;
         case TOKEN_INTEGER:    snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
         case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;

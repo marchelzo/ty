@@ -57,4 +57,10 @@ builtin_os_read(value_vector *args);
 struct value
 builtin_os_write(value_vector *args);
 
+struct value
+builtin_errno_get(value_vector *args);
+
+struct value
+builtin_errno_str(value_vector *args);
+
 #endif

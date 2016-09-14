@@ -1,5 +1,7 @@
 #include <string.h>
 
+#include <utf8proc.h>
+
 #include "utf8.h"
 #include "value.h"
 #include "util.h"
@@ -515,9 +517,8 @@ string_char(struct value *string, value_vector *args)
 static struct value
 string_chars(struct value *string, value_vector *args)
 {
-        if (args->count != 0) {
-                vm_panic("the str.chars() method on strings expects 0 arguments but got %zu", args->count);
-        }
+        if (args->count != 0)
+                vm_panic("str.chars() expects no arguments but got %zu", args->count);
 
         struct value result = ARRAY(value_array_new());
 
@@ -534,17 +535,73 @@ string_chars(struct value *string, value_vector *args)
         return result;
 }
 
+static struct value
+string_lower(struct value *string, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("str.lower() expects no arguments but got %zu", args->count);
+
+        utf8proc_int32_t c;
+
+        utf8proc_uint8_t *s = (utf8proc_uint8_t *) string->string;
+        size_t len = string->bytes;
+
+        size_t outlen = 0;
+        struct string *result = value_string_alloc(4 * string->bytes);
+
+        while (len > 0) {
+                int n = utf8proc_iterate(s, len, &c);
+                s += n;
+                len -= n;
+                c = utf8proc_tolower(c);
+                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result->data + outlen);
+        }
+
+        resize(result, sizeof *result + outlen);
+
+        return STRING(result->data, outlen, result);
+}
+
+static struct value
+string_upper(struct value *string, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("str.upper() expects no arguments but got %zu", args->count);
+
+        utf8proc_int32_t c;
+
+        utf8proc_uint8_t *s = (utf8proc_uint8_t *) string->string;
+        size_t len = string->bytes;
+
+        size_t outlen = 0;
+        struct string *result = value_string_alloc(4 * string->bytes);
+
+        while (len > 0) {
+                int n = utf8proc_iterate(s, len, &c);
+                s += n;
+                len -= n;
+                c = utf8proc_toupper(c);
+                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result->data + outlen);
+        }
+
+        resize(result, sizeof *result + outlen);
+
+        return STRING(result->data, outlen, result);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
         { .name = "len",       .func = string_length    },
-        { .name = "match",     .func = string_match     },
+        { .name = "lower",     .func = string_lower     },
+        { .name = "match!",    .func = string_match     },
         { .name = "match?",    .func = string_is_match  },
         { .name = "matches",   .func = string_matches   },
         { .name = "replace",   .func = string_replace   },
         { .name = "search",    .func = string_search    },
         { .name = "slice",     .func = string_slice     },
         { .name = "split",     .func = string_split     },
+        { .name = "upper",     .func = string_upper     },
 );
 
 DEFINE_METHOD_LOOKUP(string)
