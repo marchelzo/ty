@@ -1048,8 +1048,7 @@ emit_try_match(struct expression const *pattern)
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < pattern->elements.count; ++i) {
-                        if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST
-                         || pattern->elements.items[i]->type == EXPRESSION_REST_MUST_EQUAL) {
+                        if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST) {
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_symbol(pattern->elements.items[i]->symbol);
                                 emit_int(i);

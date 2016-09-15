@@ -16,10 +16,13 @@ CFLAGS += -Wno-unused-value
 
 TEST_FILTER ?= "."
 
-BINARIES = ty
+PROG := ty
+PREFIX ?= /usr/local
+
+bindir := /bin
 
 ifdef NOLOG
-        CFLAGS += -DPLUM_NO_LOG
+        CFLAGS += -DTY_NO_LOG
 endif
 
 ifndef RELEASE
@@ -28,8 +31,8 @@ ifndef RELEASE
         CFLAGS += -O0
 else
         CFLAGS += -Ofast
-        CFLAGS += -DPLUM_RELEASE
-        CFLAGS += -DPLUM_NO_LOG
+        CFLAGS += -DPTY_RELEASE
+        CFLAGS += -DTY_NO_LOG
 endif
 
 ifdef GENPROF
@@ -51,7 +54,7 @@ endif
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 
-all: ty
+all: $(PROG)
 
 ty: $(OBJECTS) ty.c
 	$(CC) $(CFLAGS) -o $@ $^
@@ -60,7 +63,7 @@ ty: $(OBJECTS) ty.c
 	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(BINARIES) src/*.o
+	rm -rf $(PROG) src/*.o
 
 .PHONY: test.c
 test.c: $(OBJECTS)
@@ -71,5 +74,5 @@ test: $(OBJECTS) test.c
 	$(CC) $(CFLAGS) -o $@ $^
 	time ./test
 
-install: interpreter
-	cp interpreter /usr/local/bin/ty
+install: $(PROG)
+	install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
