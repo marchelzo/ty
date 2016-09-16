@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
 
 #include "tags.h"
 #include "value.h"
@@ -385,7 +387,7 @@ builtin_os_open(value_vector *args)
                 vm_panic("the path passed to os::open() must be a string");
 
         static vec(char) pathbuf;
-
+        pathbuf.count = 0;
         vec_push_n(pathbuf, path.string, path.bytes);
         vec_push(pathbuf, '\0');
 
@@ -492,6 +494,162 @@ builtin_os_write(value_vector *args)
         }
 
         return INTEGER(n);
+}
+
+struct value
+builtin_os_spawn(value_vector *args)
+{
+        ASSERT_ARGC("os::spawn()", 1);
+
+        struct value cmd = args->items[0];
+        if (cmd.type != VALUE_ARRAY)
+                vm_panic("the argument to os::spawn() must be an array");
+
+        if (cmd.array->count == 0)
+                vm_panic("empty array passed to os::spawn()");
+
+        for (int i = 0; i < cmd.array->count; ++i)
+                if (cmd.array->items[i].type != VALUE_STRING)
+                        vm_panic("non-string in array passed to os::spawn()");
+
+        int in[2];
+        int out[2];
+        int err[2];
+        int exc[2];
+
+        if (pipe(in) == -1) {
+                return NIL;
+        }
+
+        if (pipe(out) == -1) {
+                close(in[0]);
+                close(in[1]);
+                return NIL;
+        }
+
+        if (pipe(err) == -1) {
+                close(in[0]);
+                close(in[1]);
+                close(out[0]);
+                close(out[1]);
+                return NIL;
+        }
+
+        if (pipe(exc) == -1) {
+                close(in[0]);
+                close(in[1]);
+                close(out[0]);
+                close(out[1]);
+                close(err[0]);
+                close(err[1]);
+                return NIL;
+        }
+
+        pid_t pid = fork();
+        switch (pid) {
+        case -1:
+                close(in[0]);
+                close(in[1]);
+                close(out[0]);
+                close(out[1]);
+                close(err[0]);
+                close(err[1]);
+                close(exc[0]);
+                close(exc[1]);
+                return NIL;
+        case 0:
+                close(in[1]);
+                close(out[0]);
+                close(err[0]);
+
+                if (dup2(in[0], STDIN_FILENO) == -1
+                ||  dup2(out[1], STDOUT_FILENO) == -1
+                ||  dup2(err[1], STDERR_FILENO) == -1) {
+                        write(exc[1], &errno, sizeof errno);
+                        exit(EXIT_FAILURE);
+                }
+
+                fcntl(exc[1], F_SETFD, FD_CLOEXEC);
+
+                vec(char *) args;
+                vec_init(args);
+
+                for (int i = 0; i < cmd.array->count; ++i) {
+                        char *arg = alloc(cmd.array->items[i].bytes + 1);
+                        memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes + 1);
+                        vec_push(args, arg);
+                }
+
+                vec_push(args, NULL);
+
+                if (execvp(args.items[0], args.items) == -1) {
+                        write(exc[1], &errno, sizeof errno);
+                        exit(EXIT_FAILURE);
+                }
+
+                return NIL;
+        default:
+                close(in[0]);
+                close(out[1]);
+                close(err[1]);
+                close(exc[1]);
+
+                int status;
+                if (read(exc[0], &status, sizeof status) != 0) {
+                        errno = status;
+                        close(in[1]);
+                        close(out[0]);
+                        close(err[0]);
+                        close(exc[0]);
+                        return NIL;
+                }
+
+                close(exc[0]);
+
+                struct object *result = object_new();
+                object_put_member(result, "stdin",  INTEGER(in[1]));
+                object_put_member(result, "stdout", INTEGER(out[0]));
+                object_put_member(result, "stderr", INTEGER(err[0]));
+                object_put_member(result, "pid",    INTEGER(pid));
+
+                return OBJECT(result);
+        }
+}
+
+struct value
+builtin_os_listdir(value_vector *args)
+{
+        ASSERT_ARGC("os::listdir()", 1);
+
+        struct value dir = args->items[0];
+        if (dir.type != VALUE_STRING)
+                vm_panic("the argument to os::listdir() must be a string");
+
+        static vec(char) dirbuf;
+        dirbuf.count = 0;
+        vec_push_n(dirbuf, dir.string, dir.bytes);
+        vec_push(dirbuf, '\0');
+
+        DIR *d = opendir(dirbuf.items);
+        if (d == NULL)
+                return NIL;
+
+        
+        struct value_array *files = value_array_new();
+
+        struct dirent *e;
+
+        /*
+         * Skip . and ..
+         */
+        e = readdir(d);
+        e = readdir(d);
+
+        while (e = readdir(d), e != NULL)
+                vec_push(*files, STRING_CLONE(e->d_name, strlen(e->d_name)));
+        closedir(d);
+
+        return ARRAY(files);
 }
 
 struct value

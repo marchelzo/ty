@@ -82,6 +82,8 @@ static struct {
         { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
         { .module = "os",     .name = "read",              .value = BUILTIN(builtin_os_read)                       },
         { .module = "os",     .name = "write",             .value = BUILTIN(builtin_os_write)                      },
+        { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
+        { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
         { .module = "os",     .name = "O_RDWR",            .value = INTEGER(O_RDWR)                                },
         { .module = "os",     .name = "O_CREAT",           .value = INTEGER(O_CREAT)                               },
         { .module = "os",     .name = "O_RDONLY",          .value = INTEGER(O_RDONLY)                              },

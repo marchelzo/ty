@@ -288,31 +288,4 @@ STRING_NOGC(char const *s, int n)
         };
 }
 
-inline static struct value
-SOME(struct value v)
-{
-        struct value s = v;
-        s.tags = tags_push(s.tags, 2);
-        s.type |= VALUE_TAGGED;
-        return s;
-}
-
-inline static struct value
-OK(struct value v)
-{
-        struct value s = v;
-        s.tags = tags_push(s.tags, 3);
-        s.type |= VALUE_TAGGED;
-        return s;
-}
-
-inline static struct value
-ERR(struct value v)
-{
-        struct value s = v;
-        s.tags = tags_push(s.tags, 4);
-        s.type |= VALUE_TAGGED;
-        return s;
-}
-
 #endif

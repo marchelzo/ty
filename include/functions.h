@@ -58,6 +58,12 @@ struct value
 builtin_os_write(value_vector *args);
 
 struct value
+builtin_os_listdir(value_vector *args);
+
+struct value
+builtin_os_spawn(value_vector *args);
+
+struct value
 builtin_errno_get(value_vector *args);
 
 struct value
