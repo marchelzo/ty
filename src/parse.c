@@ -93,10 +93,13 @@ static int tokidx = 0;
 enum lex_context lex_ctx = LEX_PREFIX;
 
 static int depth;
+static int dot_lambda_depth;
+static bool new_dot_lambda;
 
 static struct statement BREAK_STATEMENT    = { .type = STATEMENT_BREAK,    .loc = {42, 42} };
 static struct statement CONTINUE_STATEMENT = { .type = STATEMENT_CONTINUE, .loc = {42, 42} };
 static struct statement NULL_STATEMENT     = { .type = STATEMENT_NULL,     .loc = {42, 42} };
+
 
 static struct statement *
 parse_statement(void);
@@ -118,6 +121,9 @@ assignment_lvalue(struct expression *e);
 
 static struct expression *
 definition_lvalue(struct expression *e);
+
+static struct expression *
+infix_member_access(struct expression *e);
 
 inline static struct token *
 tok(void);
@@ -228,7 +234,7 @@ tok(void)
 inline static void
 unconsume(int type)
 {
-        vec_insert(tokens, ((struct token){ .type = type }), tokidx);
+        vec_insert(tokens, ((struct token){ .type = type, .loc = { 42, 42 } }), tokidx);
 }
 
 static void
@@ -643,6 +649,24 @@ prefix_array(void)
 }
 
 static struct expression *
+prefix_dot(void)
+{
+        if (dot_lambda_depth > 0 && !new_dot_lambda) {
+                struct expression *e = mkexpr();
+                e->type = EXPRESSION_IDENTIFIER;
+                e->identifier = "<object>";
+                return infix_member_access(e);
+        } else {
+                new_dot_lambda = false;
+                ++dot_lambda_depth;
+                unconsume(TOKEN_ARROW);
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->identifier = "<object>";
+                return prefix_identifier();
+        }
+}
+
+static struct expression *
 prefix_hash(void)
 {
         struct expression *e = mkexpr();
@@ -777,6 +801,7 @@ infix_member_access(struct expression *left)
                 return e;
         }
 
+        new_dot_lambda = true;
         e->type = EXPRESSION_METHOD_CALL;
         e->method_name = sclone(tok()->identifier);
         consume(TOKEN_IDENTIFIER);
@@ -786,20 +811,19 @@ infix_member_access(struct expression *left)
 
         lex_ctx = LEX_PREFIX;
 
-        if (tok()->type == ')') {
-                consume(')');
-                return e;
-        } else {
+        if (tok()->type == ')')
+                goto end;
+        else
                 vec_push(e->method_args, parse_expr(0));
-        }
 
         while (tok()->type == ',') {
                 consume(',');
                 vec_push(e->method_args, parse_expr(0));
         }
 
+end:
         consume(')');
-
+        new_dot_lambda = false;
         return e;
 }
 
@@ -974,6 +998,8 @@ get_prefix_parser(void)
         case '(':              return prefix_parenthesis;
         case '[':              return prefix_array;
         case '{':              return prefix_object;
+
+        case '.':              return prefix_dot;
 
         case TOKEN_BANG:       return prefix_bang;
         case TOKEN_AT:         return prefix_at;
@@ -1517,19 +1543,22 @@ parse_expr(int prec)
 
 
         parse_fn *f = get_prefix_parser();
-        if (f == NULL) {
+        if (f == NULL)
                 error("expected expression but found %s", token_show(tok()));
-        }
+
+        int old_dot_lambda_depth = dot_lambda_depth;
 
         e = f();
 
         while (prec < get_infix_prec()) {
                 f = get_infix_parser();
-                if (f == NULL) {
+                if (f == NULL)
                         error("unexpected token after expression: %s", token_show(tok()));
-                }
                 e = f(e);
         }
+
+        if (dot_lambda_depth > old_dot_lambda_depth)
+                --dot_lambda_depth;
 
         --depth;
 

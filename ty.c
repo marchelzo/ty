@@ -33,9 +33,7 @@ repl(void)
                         goto add;
 
                 fprintf(stderr, "%s\n", vm_error());
-
-                continue;
-        add:
+add:
                 add_history(line);
         }
 
