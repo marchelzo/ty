@@ -56,19 +56,17 @@ builtin_read(value_vector *args)
         ASSERT_ARGC("read()", 0);
 
         static vec(char) input;
+        input.count = 0;
 
         int c;
         while (c = getchar(), c != EOF && c != '\n') {
                 vec_push(input, c);
         }
 
-        int n = input.count;
-        input.count = 0;
-
-        if (n == 0)
+        if (input.count == 0 && c != '\n')
                 return NIL;
 
-        return STRING_CLONE(input.items, n);
+        return STRING_CLONE(input.items, input.count);
 }
 
 struct value

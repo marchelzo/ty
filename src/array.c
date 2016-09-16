@@ -70,32 +70,55 @@ array_slice_mut(struct value *array, value_vector *args)
 }
 
 static struct value
+array_zip(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("array.zip() expects 1 argument but got %zu", args->count);
+
+        struct value other = args->items[0];
+        if (other.type != VALUE_ARRAY)
+                vm_panic("the argument to array.zip() must be an array");
+
+        int n = min(array->array->count, other.array->count);
+
+        for (int i = 0; i < n; ++i) {
+                struct value_array *a = value_array_new();
+                vec_push(*a, array->array->items[i]);
+                vec_push(*a, other.array->items[i]);
+                array->array->items[i] = ARRAY(a);
+        }
+
+        /*
+         * TODO: implement something like this in vec.h
+         */
+        array->array->count = n;
+        resize(array->array->items, n * sizeof *array->array->items);
+
+        return *array;
+}
+
+static struct value
 array_slice(struct value *array, value_vector *args)
 {
-        if (args->count != 2) {
+        if (args->count != 2)
                 vm_panic("array.slice() expects 2 arguments but got %zu", args->count);
-        }
         
         struct value start = args->items[0];
         struct value count = args->items[1];
 
-        if (start.type != VALUE_INTEGER) {
+        if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to array.slice()");
-        }
 
-        if (count.type != VALUE_INTEGER) {
+        if (count.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as second argument to array.slice()");
-        }
 
         int s = start.integer;
         int n = count.integer;
 
-        if (s < 0) {
+        if (s < 0)
                 s += array->array->count;
-        }
-        if (s < 0) {
+        if (s < 0)
                 vm_panic("start index passed to array.slice() is out of range");
-        }
 
         s = min(s, array->array->count);
         n = min(n, array->array->count - s);
@@ -111,9 +134,8 @@ array_slice(struct value *array, value_vector *args)
 static struct value
 array_sort(struct value *array, value_vector *args)
 {
-        if (args->count != 0) {
+        if (args->count != 0)
                 vm_panic("the sort method on arrays expects no arguments but got %zu", args->count);
-        }
 
         qsort(array->array->items, array->array->count, sizeof (struct value), value_compare);
 
@@ -123,23 +145,20 @@ array_sort(struct value *array, value_vector *args)
 static struct value
 array_take_while_mut(struct value *array, value_vector *args)
 {
-        if (args->count != 1) {
+        if (args->count != 1)
                 vm_panic("array.takeWhile!() expects 1 argument but got %zu", args->count);
-        }
 
         struct value f = args->items[0];
 
-        if (!CALLABLE(f)) {
+        if (!CALLABLE(f))
                 vm_panic("non-callable predicate passed to array.takeWhile!()");
-        }
 
         int keep = 0;
         for (int i = 0; i < array->array->count; ++i) {
-                if (value_apply_predicate(&f, &array->array->items[i])) {
+                if (value_apply_predicate(&f, &array->array->items[i]))
                         ++keep;
-                } else {
+                else
                         break;
-                }
         }
 
         array->array->count = keep;
@@ -932,6 +951,13 @@ array_enumerated(struct value *array, value_vector *args)
 }
 
 static struct value
+array_zipped(struct value *array, value_vector *args)
+{
+        struct value clone = array_clone(array, &no_args);
+        return array_zip(&clone, args);
+}
+
+static struct value
 array_mapped(struct value *array, value_vector *args)
 {
         struct value clone = array_clone(array, &no_args);
@@ -1117,6 +1143,8 @@ DEFINE_METHOD_TABLE(
         { .name = "take!",        .func = array_take_mut       },
         { .name = "takeWhile",    .func = array_take_while     },
         { .name = "takeWhile!",   .func = array_take_while_mut },
+        { .name = "zip",          .func = array_zipped         },
+        { .name = "zip!",         .func = array_zip            },
 );
 
 DEFINE_METHOD_LOOKUP(array)
