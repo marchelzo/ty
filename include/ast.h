@@ -8,6 +8,7 @@
 
 #include "location.h"
 #include "vec.h"
+#include "scope.h"
 
 struct expression;
 struct value;
@@ -34,16 +35,18 @@ struct statement {
                 STATEMENT_NULL,
                 STATEMENT_EXPRESSION,
                 STATEMENT_IMPORT,
+                STATEMENT_EXPORT,
         } type;
         struct location loc;
-        bool pub;
         union {
                 struct expression *expression;
                 struct expression *return_value;
                 vec(struct statement *) statements;
+                vec(char *) exports;
                 struct {
                         char *module;
                         char *as;
+                        vec(char *) identifiers;
                 } import;
                 struct {
                         char *name;
@@ -54,7 +57,6 @@ struct statement {
                         struct statement *init;
                         struct expression *cond;
                         struct expression *next;
-
                         struct statement *body;
                 } for_loop;
                 struct {
@@ -195,7 +197,7 @@ struct expression {
                 struct {
                         bool local;
                         struct expression *tagged;
-                        int symbol;
+                        struct symbol *symbol;
                         char *module;
                         char *identifier;
                 };
@@ -215,10 +217,10 @@ struct expression {
                 };
                 struct {
                         char *name;
-                        int function_symbol;
+                        struct symbol *function_symbol;
                         vec(char *) params;
-                        vec(int) param_symbols;
-                        vec(int) bound_symbols;
+                        vec(struct symbol *) param_symbols;
+                        vec(struct symbol *) bound_symbols;
                         struct statement *body;
                 };
                 struct {

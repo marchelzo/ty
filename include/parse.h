@@ -8,6 +8,6 @@ char const *
 parse_error(void);
 
 struct statement **
-parse(char const *source);
+parse(char const *source, char const *file);
 
 #endif

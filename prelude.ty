@@ -1,0 +1,35 @@
+export Some, None, Ok, Err
+
+tag Some {
+     map(self, f) {
+          let Some(x) = self;
+          return Some(f(x));
+     }
+
+     flatMap(self, f) {
+          let Some(x) = self;
+          return f(x);
+     }
+}
+
+tag None {
+     map()     { return None; }
+     flatMap() { return None; }
+}
+
+tag Ok {
+     map(self, f) {
+          let Ok(x) = self;
+          return Ok(f(x));
+     }
+
+     flatMap(self, f) {
+          let Ok(x) = self;
+          return f(x);
+     }
+}
+
+tag Err {
+     map(self)     { return self; }
+     flatMap(self) { return self; }
+}

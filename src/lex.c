@@ -23,10 +23,12 @@ enum {
 struct location startloc;
 struct location loc;
 
-jmp_buf jb;
-bool keep_next_newline;
+static char const *filename;
 
-char errbuf[MAX_ERR_LEN + 1];
+static jmp_buf jb;
+static bool keep_next_newline;
+
+static char errbuf[MAX_ERR_LEN + 1];
 
 static vec(char const *) states;
 static char const *chars;
@@ -40,7 +42,7 @@ error(char const *fmt, ...)
         va_start(ap, fmt);
 
         char *err = errbuf;
-        err += sprintf(err, "SyntaxError at %d:%d: ", loc.line + 1, loc.col + 1);
+        err += sprintf(err, "SyntaxError %s:%d:%d: ", filename, loc.line + 1, loc.col + 1);
         err[vsnprintf(err, MAX_ERR_LEN, fmt, ap)] = '\0';
 
         va_end(ap);
@@ -227,7 +229,7 @@ lexword(void)
 
         int keyword;
         if (keyword = keyword_get_number(w), keyword != -1) {
-                keep_next_newline |= (keyword == KEYWORD_IMPORT);
+                keep_next_newline |= (keyword == KEYWORD_IMPORT || keyword == KEYWORD_EXPORT);
                 return mkkw(keyword);
         } else {
                 return mkid(w, m);
@@ -536,8 +538,9 @@ lex_error(void)
 }
 
 void
-lex_init(void)
+lex_init(char const *file)
 {
+        filename = file;
         loc = (struct location) { 0, 0 };
         keep_next_newline = false;
         vec_init(states);

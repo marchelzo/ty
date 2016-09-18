@@ -70,6 +70,9 @@ blob_search(struct value *blob, value_vector *args)
         if (start.integer < 0 || start.integer > blob->blob->count)
                 vm_panic("invalid offset passed to blob.search()");
 
+        if (blob->blob->count == 0)
+                return NIL;
+
         char const *haystack = (char const *) blob->blob->items + start.integer;
         int n = blob->blob->count - start.integer;
         char const *s;

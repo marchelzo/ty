@@ -44,7 +44,6 @@ struct variable {
 static struct variable *captured_chain;
 
 static jmp_buf jb;
-static bool jb_is_set;
 
 static struct variable **vars;
 static vec(struct value) stack;
@@ -53,7 +52,7 @@ static vec(size_t) sp_stack;
 static vec(struct value *) targetstack;
 static char *ip;
 
-static int symbolcount = 0;
+static int symbol_count = 0;
 
 static char const *filename;
 
@@ -133,7 +132,7 @@ add_builtins(void)
                 vars[i]->value = builtins[i].value;
         }
 
-        symbolcount = builtin_count;
+        symbol_count = builtin_count;
 }
 
 inline static struct value *
@@ -762,6 +761,7 @@ vm_exec(char *code)
                                 if (n != 1)
                                         vm_panic("attempt to apply a tag to an invalid number of values");
                                 top()->tags = tags_push(top()->tags, v.tag);
+                                top()->type |= VALUE_TAGGED;
                         } else {
                                 vm_panic("attempt to call a non-function");
                         }
@@ -859,14 +859,14 @@ vm_error(void)
         return err_msg;
 }
 
-void
+bool
 vm_init(void)
 {
         vec_init(stack);
         vec_init(callstack);
         vec_init(targetstack);
         vars = NULL;
-        symbolcount = 0;
+        symbol_count = 0;
 
         pcre_malloc = alloc;
 
@@ -876,6 +876,29 @@ vm_init(void)
         gc_reset();
 
         add_builtins();
+
+        char const *prelude = compiler_load_prelude();
+        if (prelude == NULL) {
+                err_msg = compiler_error();
+                return false;
+                
+        }
+
+        int new_symbol_count = compiler_symbol_count();
+        resize(vars, new_symbol_count * sizeof *vars);
+        while (symbol_count < new_symbol_count) {
+                LOG("SETTING %d TO NULL", symbol_count);
+                vars[symbol_count++] = NULL;
+        }
+
+        if (setjmp(jb) != 0) {
+                err_msg = err_buf;
+                return false;
+        }
+
+        vm_exec(prelude);
+
+        return true;
 }
 
 noreturn void
@@ -923,30 +946,28 @@ vm_execute_file(char const *path)
 bool
 vm_execute(char const *source)
 {
-        int oldsymcount = symbolcount;
+        if (filename == NULL)
+                filename = "<interactive>";
 
-        char *code = compiler_compile_source(source, &symbolcount, filename);
+        char *code = compiler_compile_source(source, filename);
         if (code == NULL) {
                 err_msg = compiler_error();
                 LOG("compiler error was: %s", err_msg);
                 return false;
         }
 
-        resize(vars, symbolcount * sizeof *vars);
-        for (int i = oldsymcount; i < symbolcount; ++i) {
-                LOG("SETTING %d TO NULL", i);
-                vars[i] = NULL;
+        int new_symbol_count = compiler_symbol_count();
+        resize(vars, new_symbol_count * sizeof *vars);
+        while (symbol_count < new_symbol_count) {
+                LOG("SETTING %d TO NULL", symbol_count);
+                vars[symbol_count++] = NULL;
         }
 
-        jb_is_set = true;
         if (setjmp(jb) != 0) {
                 vec_empty(stack);
                 err_msg = err_buf;
-                jb_is_set = false;
                 return false;
         }
-
-        jb_is_set = false;
 
         vm_exec(code);
 
@@ -1043,7 +1064,7 @@ vm_eval_function2(struct value *f, struct value *v1, struct value *v2)
 void
 vm_mark(void)
 {
-        for (int i = 0; i < symbolcount; ++i) {
+        for (int i = 0; i < symbol_count; ++i) {
                 for (struct variable *v = vars[i]; v != NULL; v = v->next) {
                         value_mark(&v->value);
                 }

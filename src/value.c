@@ -43,9 +43,8 @@ str_hash(char const *str, register int n)
 {
         unsigned long hash = 5381;
 
-        while (n > 0) {
+        while (n > 0)
                 hash = ((hash << 5) + hash) + str[--n]; /* hash * 33 + c */
-        }
 
         return hash;
 }

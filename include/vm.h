@@ -96,7 +96,7 @@ enum instruction {
         INSTR_KEYS,
 };
 
-void
+bool
 vm_init(void);
 
 char const *

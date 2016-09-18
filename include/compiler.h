@@ -11,7 +11,13 @@ void
 compiler_introduce_symbol(char const *, char const *);
 
 char *
-compiler_compile_source(char const *source, int *symbols, char const *filename);
+compiler_compile_source(char const *source, char const *filename);
+
+int
+compile_symbol_count(void);
+
+char *
+compiler_load_prelude(void);
 
 struct location
 compiler_get_location(char const *code, char const **file);

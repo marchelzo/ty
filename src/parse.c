@@ -96,6 +96,8 @@ static int depth;
 static int dot_lambda_depth;
 static bool new_dot_lambda;
 
+static char const *filename;
+
 static struct statement BREAK_STATEMENT    = { .type = STATEMENT_BREAK,    .loc = {42, 42} };
 static struct statement CONTINUE_STATEMENT = { .type = STATEMENT_CONTINUE, .loc = {42, 42} };
 static struct statement NULL_STATEMENT     = { .type = STATEMENT_NULL,     .loc = {42, 42} };
@@ -195,7 +197,7 @@ error(char const *fmt, ...)
                 int n = 0;
 
                 char *err = errbuf;
-                n += sprintf(err, "ParseError at %d:%d: ", tok()->loc.line + 1, tok()->loc.col + 1);
+                n += sprintf(err, "ParseError: %s:%d:%d: ", filename, tok()->loc.line + 1, tok()->loc.col + 1);
                 vsnprintf(err + n, MAX_ERR_LEN - n, fmt, ap);
 
                 va_end(ap);
@@ -1258,14 +1260,15 @@ parse_for_loop(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_FOR_LOOP;
 
-        consume('(');
-
         /*
          * First try to parse this as a for-each loop. If that fails, assume it's
          * a C-style for loop.
          */
-        struct expression *each_target = parse_definition_lvalue(LV_EACH);
-        if (each_target != NULL) {
+        if (tok()->type != '(') {
+                struct expression *each_target = parse_definition_lvalue(LV_EACH);
+                if (each_target == NULL)
+                        error("expected lvalue in for-each loop");
+
                 s->type = STATEMENT_EACH_LOOP;
                 s->each.target = each_target;
 
@@ -1273,28 +1276,26 @@ parse_for_loop(void)
 
                 s->each.array = parse_expr(0);
 
-                consume(')');
-
                 s->each.body = parse_statement();
 
                 return s;
         }
 
+        consume('(');
+
         s->for_loop.init = parse_statement();
 
-        if (tok()->type == ';') {
+        if (tok()->type == ';')
                 s->for_loop.cond = NULL;
-        } else {
+        else
                 s->for_loop.cond = parse_expr(0);
-        }
 
         consume(';');
 
-        if (tok()->type == ')') {
+        if (tok()->type == ')')
                 s->for_loop.next = NULL;
-        } else {
+        else
                 s->for_loop.next = parse_expr(0);
-        }
 
         consume(')');
 
@@ -1447,12 +1448,10 @@ parse_function_definition(void)
 {
         struct statement *s = mkstmt();
         s->type = STATEMENT_DEFINITION;
-        s->pub = false;
 
         struct expression *f = prefix_function();
-        if (f->name == NULL) {
+        if (f->name == NULL)
                 error("unnamed function definitions cannot be used as statements");
-        }
 
         struct expression *target = mkexpr();
         target->type = EXPRESSION_IDENTIFIER;
@@ -1490,7 +1489,6 @@ parse_let_definition(void)
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_DEFINITION;
-        s->pub = false;
 
         consume_keyword(KEYWORD_LET);
 
@@ -1624,17 +1622,21 @@ parse_export(void)
 {
         consume_keyword(KEYWORD_EXPORT);
 
-        expect(TOKEN_KEYWORD);
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_EXPORT;
 
-        struct statement *s;
+        vec_init(s->exports);
 
-        switch (tok()->keyword) {
-        case KEYWORD_LET: s = parse_let_definition();      break;
-        case KEYWORD_TAG: s = parse_tag_definition();      break;
-        default:          s = parse_function_definition(); break;
+        while (tok()->type == TOKEN_IDENTIFIER) {
+                vec_push(s->exports, tok()->identifier);
+                consume(TOKEN_IDENTIFIER);
+                if (tok()->type == ',')
+                        consume(',');
+                else
+                        expect(TOKEN_NEWLINE);
         }
 
-        s->pub = true;
+        consume(TOKEN_NEWLINE);
 
         return s;
 }
@@ -1667,14 +1669,31 @@ parse_import(void)
 
         s->import.module = module;
 
-        // TODO: maybe make 'as' an actual keyword
         if (tok()->type == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "as") == 0) {
                 consume(TOKEN_IDENTIFIER);
                 expect(TOKEN_IDENTIFIER);
                 s->import.as = tok()->identifier;
                 consume(TOKEN_IDENTIFIER);
         } else {
-                s->import.as = s->import.module;
+                s->import.as = module;
+        }
+
+        vec_init(s->import.identifiers);
+
+        if (tok()->type == '(') {
+                consume('(');
+                if (tok()->type == TOKEN_DOT_DOT) {
+                        consume(TOKEN_DOT_DOT);
+                        vec_push(s->import.identifiers, "..");
+                } else while (tok()->type == TOKEN_IDENTIFIER) {
+                        vec_push(s->import.identifiers, tok()->identifier);
+                        consume(TOKEN_IDENTIFIER);
+                        if (tok()->type == ',')
+                                consume(',');
+                        else
+                                expect(')');
+                }
+                consume(')');
         }
 
         consume(TOKEN_NEWLINE);
@@ -1707,7 +1726,6 @@ keyword:
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
         case KEYWORD_LET:      return parse_let_definition();
-        case KEYWORD_EXPORT:   return parse_export();
         case KEYWORD_BREAK:    return parse_break_statement();
         case KEYWORD_CONTINUE: return parse_continue_statement();
         default:               goto expression;
@@ -1730,18 +1748,20 @@ parse_error(void)
 }
 
 struct statement **
-parse(char const *source)
+parse(char const *source, char const *file)
 {
         vec(struct statement *) program;
         vec_init(program);
 
         depth = 0;
 
+        filename = file;
+
         vec_init(tokens);
         tokidx = 0;
         lex_ctx = LEX_PREFIX;
 
-        lex_init();
+        lex_init(file);
         lex_start(source);
 
         if (setjmp(jb) != 0) {
@@ -1750,12 +1770,14 @@ parse(char const *source)
                 return NULL;
         }
 
-        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT) {
+        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT)
                 vec_push(program, parse_import());
-        }
-        while (tok()->type != TOKEN_END) {
+
+        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT)
+                vec_push(program, parse_export());
+
+        while (tok()->type != TOKEN_END)
                 vec_push(program, parse_statement());
-        }
 
         vec_push(program, NULL);
 
@@ -1763,6 +1785,8 @@ parse(char const *source)
 
         return program.items;
 }
+
+#define parse(s) parse(s, "<test>")
 
 TEST(break_statement)
 {
