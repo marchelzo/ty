@@ -28,6 +28,8 @@ enum instruction {
         INSTR_ARRAY,
         INSTR_OBJECT,
         INSTR_NIL,
+        INSTR_THIS,
+        INSTR_POP_THIS,
         INSTR_TAG,
 
         INSTR_TO_STRING,

@@ -1,4 +1,5 @@
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
+{ .module = NULL,     .name = "die",               .value = BUILTIN(builtin_die)                           },
 { .module = NULL,     .name = "read",              .value = BUILTIN(builtin_read)                          },
 { .module = NULL,     .name = "rand",              .value = BUILTIN(builtin_rand)                          },
 { .module = NULL,     .name = "int",               .value = BUILTIN(builtin_int)                           },

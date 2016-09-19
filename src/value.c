@@ -27,16 +27,17 @@ arrays_equal(struct value const *v1, struct value const *v2)
 
         size_t n = v1->array->count;
 
-        for (size_t i = 0; i < n; ++i) {
-                if (!value_test_equality(&v1->array->items[i], &v2->array->items[i])) {
+        for (size_t i = 0; i < n; ++i)
+                if (!value_test_equality(&v1->array->items[i], &v2->array->items[i]))
                         return false;
-                }
-        }
 
         return true;
 }
 
-// These hash functions are based on djb's djb2 hash function, copied from http://www.cse.yorku.ca/~oz/hash.html
+/*
+ * These hash functions are based on djb's djb2 hash function,
+ * copied from http://www.cse.yorku.ca/~oz/hash.html
+ */
 
 static unsigned long
 str_hash(char const *str, register int n)

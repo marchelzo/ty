@@ -47,6 +47,7 @@ static jmp_buf jb;
 
 static struct variable **vars;
 static vec(struct value) stack;
+static vec(struct value) this_stack;
 static vec(char *) callstack;
 static vec(size_t) sp_stack;
 static vec(struct value *) targetstack;
@@ -150,19 +151,21 @@ callmethod(struct value *f, struct value *self)
         for (int i = 0; i < f->bound_symbols.count; ++i)
                 vars[f->bound_symbols.items[i]] = newvar(vars[f->bound_symbols.items[i]]);
 
-        bool has_self = self != NULL;
-
         int n;
 
         /* get the number of arguments passed */
         READVALUE(n);
 
+        bool has_self = (f->param_symbols.count > 0) && (self != NULL);
+
+        int params = f->param_symbols.count - has_self;
+
         /* throw away ignored arguments */
-        while (n > f->param_symbols.count - has_self)
+        while (n > params)
                 pop(), --n;
 
         /* default missing parameters to nil */
-        for (int i = n; i < f->param_symbols.count - has_self; ++i)
+        for (int i = n; i < params; ++i)
                 vars[f->param_symbols.items[i + has_self]]->value = NIL;
 
         /* fill in the rest of the arguments */
@@ -170,7 +173,7 @@ callmethod(struct value *f, struct value *self)
                 vars[f->param_symbols.items[n + has_self]]->value = pop();
 
         /* fill in 'self' / 'this' */
-        if (self != NULL)
+        if (has_self)
                 vars[f->param_symbols.items[0]]->value = *self;
 
         for (int i = 0; i < f->refs->count; ++i) {
@@ -248,6 +251,12 @@ vm_exec(char *code)
                                 ip += n;
                         }
                         break;
+                CASE(THIS)
+                        push(this_stack.items[this_stack.count - 1]);
+                        break;
+                CASE(POP_THIS)
+                        --this_stack.count;
+                        break;
                 CASE(JUMP_IF_NOT)
                         READVALUE(n);
                         v = pop();
@@ -317,7 +326,7 @@ vm_exec(char *code)
                         break;
                 CASE(UNTAG_OR_DIE)
                         READVALUE(tag);
-                        if (!tags_same(top()->tags, tag)) {
+                        if (!tags_same(tags_first(top()->tags), tag)) {
                                 vm_panic("failed to match %s against the tag %s", value_show(top()), tags_name(tag));
                         } else {
                                 top()->tags = tags_pop(top()->tags);
@@ -742,9 +751,19 @@ vm_exec(char *code)
                         char const *method = ip;
                         ip += strlen(ip) + 1;
 
+                        LOG("calling method: %s", method);
+
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method);
                                 if (vp != NULL) {
+                                        vec_push(this_stack, value);
+
+                                        LOG("found method: tags = %d", value.tags);
+
+                                        value.tags = tags_pop(tags);
+                                        if (value.tags == 0)
+                                                value.type &= ~VALUE_TAGGED;
+
                                         self = &value;
                                         break;
                                 }
@@ -759,6 +778,8 @@ vm_exec(char *code)
                         if (self == NULL) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method);
+                                if (vp != NULL)
+                                        vec_push(this_stack, NIL);
                                 break;
                         case VALUE_OBJECT:
                                 vp = object_get_member(value.object, method);

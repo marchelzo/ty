@@ -29,6 +29,7 @@ static struct {
         { "import",   KEYWORD_IMPORT   },
         { "export",   KEYWORD_EXPORT   },
         { "tag",      KEYWORD_TAG      },
+        { "this",     KEYWORD_THIS     },
         { "match",    KEYWORD_MATCH    },
 };
 

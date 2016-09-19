@@ -84,11 +84,9 @@ tags_push(int n, int tag)
 
         struct tags *t = lists.items[n];
 
-        for (int i = 0; i < t->links.count; ++i) {
-                if (t->links.items[i].tag == tag) {
+        for (int i = 0; i < t->links.count; ++i)
+                if (t->links.items[i].tag == tag)
                         return t->links.items[i].t->n;
-                }
-        }
 
         struct tags *new = mklist(tag, t);
         vec_push(t->links, ((struct link){ .t = new, .tag = tag }));

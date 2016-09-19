@@ -118,7 +118,7 @@ struct expression {
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
-
+                EXPRESSION_THIS,
                 EXPRESSION_RANGE,
 
                 EXPRESSION_MATCH,
@@ -222,6 +222,7 @@ struct expression {
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;
+                        bool is_method;
                 };
                 struct {
                         struct expression *function;

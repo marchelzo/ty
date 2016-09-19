@@ -51,6 +51,18 @@ builtin_print(value_vector *args)
 }
 
 struct value
+builtin_die(value_vector *args)
+{
+        ASSERT_ARGC("die()", 1);
+
+        struct value message = args->items[0];
+        if (message.type != VALUE_STRING)
+                vm_panic("the argument to die() must be a string");
+
+        vm_panic("%.*s", (int) message.bytes, message.string);
+}
+
+struct value
 builtin_read(value_vector *args)
 {
         ASSERT_ARGC("read()", 0);

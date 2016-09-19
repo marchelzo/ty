@@ -7,6 +7,9 @@ struct value
 builtin_print(value_vector *args);
 
 struct value
+builtin_die(value_vector *args);
+
+struct value
 builtin_rand(value_vector *args);
 
 struct value

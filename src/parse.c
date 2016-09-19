@@ -98,10 +98,9 @@ static bool new_dot_lambda;
 
 static char const *filename;
 
-static struct statement BREAK_STATEMENT    = { .type = STATEMENT_BREAK,    .loc = {42, 42} };
-static struct statement CONTINUE_STATEMENT = { .type = STATEMENT_CONTINUE, .loc = {42, 42} };
-static struct statement NULL_STATEMENT     = { .type = STATEMENT_NULL,     .loc = {42, 42} };
-
+static struct statement BREAK_STATEMENT    = { .type = STATEMENT_BREAK,    .loc = {42, 42}  };
+static struct statement CONTINUE_STATEMENT = { .type = STATEMENT_CONTINUE, .loc = {42, 42}  };
+static struct statement NULL_STATEMENT     = { .type = STATEMENT_NULL,     .loc = {42, 42}  };
 
 static struct statement *
 parse_statement(void);
@@ -550,6 +549,17 @@ prefix_parenthesis(void)
                 consume(')');
                 return e;
         }
+}
+
+static struct expression *
+prefix_this(void)
+{
+        consume_keyword(KEYWORD_THIS);
+
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_THIS;
+
+        return e;
 }
 
 static struct expression *
@@ -1019,6 +1029,7 @@ keyword:
         switch (tok()->keyword) {
         case KEYWORD_MATCH:    return prefix_match;
         case KEYWORD_FUNCTION: return prefix_function;
+        case KEYWORD_THIS:     return prefix_this;
         case KEYWORD_TRUE:     return prefix_true;
         case KEYWORD_FALSE:    return prefix_false;
         case KEYWORD_NIL:      return prefix_nil;

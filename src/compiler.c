@@ -82,6 +82,7 @@ struct state {
         offset_vector match_successes;
 
         int function_depth;
+        bool in_method;
 
         import_vector imports;
         vec(char *) exports;
@@ -307,6 +308,7 @@ freshstate(void)
         s.global = scope_new(global, false);
 
         s.function_depth = 0;
+        s.in_method = false;
 
         s.filename = NULL;
         s.loc = (struct location){ 0, 0 };
@@ -443,6 +445,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (int i = 0; i < e->expressions.count; ++i)
                         symbolize_expression(scope, e->expressions.items[i]);
                 break;
+        case EXPRESSION_THIS:
+                if (!state.in_method)
+                        fail("'this' used outside of a method context");
+                break;
         case EXPRESSION_RANGE:
                 symbolize_expression(scope, e->low);
                 symbolize_expression(scope, e->high);
@@ -528,6 +534,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_FUNCTION:
 
+                e->is_method = false;
+
                 if (e->name != NULL) {
                         scope = scope_new(scope, false);
                         e->function_symbol = addsymbol(scope, e->name);
@@ -593,7 +601,12 @@ symbolize_statement(struct scope *scope, struct statement *s)
                          */
                         char *name = s->tag.methods.items[i]->name;
                         s->tag.methods.items[i]->name = NULL;
+
+                        state.in_method = true;
                         symbolize_expression(scope, s->tag.methods.items[i]);
+                        s->tag.methods.items[i]->is_method = true;
+                        state.in_method = false;
+
                         s->tag.methods.items[i]->name = name;
                 }
                 break;
@@ -754,9 +767,11 @@ emit_function(struct expression const *e)
          */
         reference_vector refs_save = state.refs;
         symbol_vector syms_save = state.bound_symbols;
+        bool in_method_save = state.in_method;
         vec_init(state.refs);
         state.bound_symbols.items = e->bound_symbols.items;
         state.bound_symbols.count = e->bound_symbols.count;
+        state.in_method = e->is_method;
         ++state.function_depth;
 
 
@@ -801,6 +816,7 @@ emit_function(struct expression const *e)
 
         state.refs = refs_save;
         state.bound_symbols = syms_save;
+        state.in_method = in_method_save;
         --state.function_depth;
 
         if (e->function_symbol != NULL) {
@@ -1420,6 +1436,9 @@ emit_expression(struct expression const *e)
         case EXPRESSION_MATCH:
                 emit_match_expression(e);
                 break;
+        case EXPRESSION_THIS:
+                emit_instr(INSTR_THIS);
+                break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_expression(e->tagged);
                 emit_instr(INSTR_TAG_PUSH);
@@ -1690,6 +1709,8 @@ emit_statement(struct statement const *s)
                         emit_instr(INSTR_POP_VAR);
                         emit_symbol(state.bound_symbols.items[i]->symbol);
                 }
+                if (state.in_method)
+                        emit_instr(INSTR_POP_THIS);
                 emit_instr(INSTR_RETURN);
                 break;
         case STATEMENT_BREAK:

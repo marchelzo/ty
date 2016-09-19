@@ -75,6 +75,7 @@ struct token {
                         KEYWORD_EXPORT,
                         KEYWORD_TAG,
                         KEYWORD_MATCH,
+                        KEYWORD_THIS,
                 } keyword;
                 struct {
                         pcre *regex;
