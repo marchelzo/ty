@@ -1,0 +1,118 @@
+import os
+import errno
+
+export File
+
+tag File {
+
+     from (fd) {
+          return File({'buffer': blob(), 'bufferOffset': 0, 'fd': fd});
+     }
+
+     open(path, mode) {
+          let flags = match mode {
+               'r'  => [os::O_RDONLY],
+               'w'  => [os::O_WRONLY, os::O_CREAT, os::O_TRUNC],
+               'wx' => [os::O_WRONLY, os::O_CREAT],
+               'a'  => [os::O_WRONLY, os::O_CREAT, os::O_APPEND],
+               'r+' => [os::O_RDWR],
+               'w+' => [os::O_RDWR, os::O_CREAT, os::O_TRUNC],
+               'a+' => [os::O_RDWR, os::O_CREAT, os::O_APPEND],
+               _    => nil
+          };
+
+          if (flags == nil)
+               return Err(0);
+
+          let creat = flags.contains?(os::O_CREAT);
+
+          let fd = match creat {
+               true  => os::open(path, flags, 0666),
+               false => os::open(path, flags)
+          };
+
+          return match fd {
+               nil => Err(errno::get()),
+               fd  => Ok(File.from(fd))
+          };
+     }
+
+     close(self) {
+          self.buffer.clear();
+          return os::close(self.fd);
+     }
+
+     nextLine(self) {
+          let i = nil;
+
+          while ((i = self.buffer.search(self.bufferOffset, 10)) == nil) {
+               if (os::read(self.fd, self.buffer, 4096) <= 0) {
+                    if (self.buffer.size() == self.bufferOffset) {
+                         return nil;
+                    } else {
+                         let line = self.buffer.str(self.bufferOffset);
+                         self.bufferOffset = 0;
+                         return line;
+                    }
+               }
+          }
+
+          let line = self.buffer.str(self.bufferOffset, i - self.bufferOffset);
+
+          self.bufferOffset = i + 1;
+
+          if (self.bufferOffset > 65536) {
+               self.buffer.clear(0, self.bufferOffset);
+               self.bufferOffset = 0;
+          }
+
+          return line;
+     }
+
+     nextByte(self) {
+          if (self.buffer.size() == self.bufferOffset && os::read(self.fd, self.buffer, 4096) <= 0)
+               return nil;
+          else {
+               if (self.bufferOffset > 65536) {
+                    self.buffer.clear(0, self.bufferOffset);
+                    self.bufferOffset = 0;
+               }
+               return self.buffer.get(self.bufferOffset++);
+          }
+               
+     }
+
+     nextCodePoint(self) {
+          for (let n = 1; n <= min(8, self.buffer.size() - self.bufferOffset); ++n) {
+               if let c = self.buffer.str(self.bufferOffset, n) {
+                    self.bufferOffset += n;
+                    return c;
+               }
+          }
+
+          if (self.buffer.size() - self.bufferOffset >= 8)
+               return nil;
+
+          if (os::read(self.fd, self.buffer, 4096) <= 0)
+               return nil;
+
+          for (let n = 1; n <= min(8, self.buffer.size() - self.bufferOffset); ++n) {
+               if let c = self.buffer.str(self.bufferOffset, n) {
+                    self.bufferOffset += n;
+                    return c;
+               }
+          }
+
+          return nil;
+     }
+
+     slurp(path) {
+          return File.open(path, 'r').flatMap(function (f) {
+               while (os::read(f.fd, f.buffer, 4096) > 0)
+                    ;
+               let s = f.buffer.str();
+               f.close();
+               return Ok(s) if s != nil else Err(0);
+          });
+     }
+}

@@ -1331,9 +1331,7 @@ TEST(match)
 {
         vm_init();
 
-        if (!vm_execute("match 4 { 4 | false => print('oh no!');, 5 => print('oh dear!');, 4 => print('Yes!'); }")) {
-                printf("vm error: %s\n", vm_error());
-        }
+        vm_execute("match 4 { 4 | false => print('oh no!');, 5 => print('oh dear!');, 4 => print('Yes!'); }");
 }
 
 TEST(tagmatch)

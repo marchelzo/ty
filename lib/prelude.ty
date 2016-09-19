@@ -2,13 +2,11 @@ export Some, None, Ok, Err
 
 tag Some {
      map(self, f) {
-          let Some(x) = self;
-          return Some(f(x));
+          return Some(f(self));
      }
 
      flatMap(self, f) {
-          let Some(x) = self;
-          return f(x);
+          return f(self);
      }
 }
 
@@ -19,13 +17,11 @@ tag None {
 
 tag Ok {
      map(self, f) {
-          let Ok(x) = self;
-          return Ok(f(x));
+          return Ok(f(self));
      }
 
      flatMap(self, f) {
-          let Ok(x) = self;
-          return f(x);
+          return f(self);
      }
 }
 

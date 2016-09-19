@@ -429,21 +429,20 @@ string_match(struct value *string, value_vector *args)
 static struct value
 string_matches(struct value *string, value_vector *args)
 {
-        if (args->count != 1) {
+        if (args->count != 1)
                 vm_panic("the matches method on strings expects 1 argument but got %zu", args->count);
-        }
 
         struct value pattern = args->items[0];
 
-        if (pattern.type != VALUE_REGEX) {
+        if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the matches method on string");
-        }
 
         struct value result = ARRAY(value_array_new());
 
         static int ovec[30];
         char const *s = string->string;
         int len = string->bytes;
+        int offset = 0;
         int rc;
 
         while ((rc = pcre_exec(
@@ -460,7 +459,7 @@ string_matches(struct value *string, value_vector *args)
                 struct value match;
 
                 if (rc == 1) {
-                        match = STRING_VIEW(*string, ovec[0], ovec[1] - ovec[0]);
+                        match = STRING_VIEW(*string, offset + ovec[0], ovec[1] - ovec[0]);
                 } else {
                         match = ARRAY(value_array_new());
                         vec_reserve(*match.array, rc);
@@ -474,6 +473,7 @@ string_matches(struct value *string, value_vector *args)
                 vec_push(*result.array, match);
 
                 s += ovec[1];
+                offset += ovec[1];
                 len -= ovec[1];
         }
 

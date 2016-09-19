@@ -76,4 +76,4 @@ test: $(OBJECTS) test.c
 install: $(PROG)
 	install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
 	install -d $(HOME)/.ty
-	install -m644 prelude.ty $(HOME)/.ty
+	install -m644 lib/* $(HOME)/.ty
