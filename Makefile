@@ -1,7 +1,6 @@
 CC ?= gcc-5
 CFLAGS = -std=gnu11
 CFLAGS += -Wall
-CFLAGS += -pedantic
 CFLAGS += -Iinclude
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pcre-config --cflags)

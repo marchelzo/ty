@@ -615,6 +615,21 @@ builtin_os_spawn(value_vector *args)
 }
 
 struct value
+builtin_os_usleep(value_vector *args)
+{
+        ASSERT_ARGC("os::usleep()", 1);
+
+        struct value duration = args->items[0];
+        if (duration.type != VALUE_INTEGER)
+                vm_panic("the argument to os::usleep() must be an integer");
+
+        if (duration.integer < 0)
+                vm_panic("negative argument passed to os::usleep()");
+
+        return INTEGER(usleep(duration.integer));
+}
+
+struct value
 builtin_os_listdir(value_vector *args)
 {
         ASSERT_ARGC("os::listdir()", 1);
@@ -648,6 +663,36 @@ builtin_os_listdir(value_vector *args)
         closedir(d);
 
         return ARRAY(files);
+}
+
+struct value
+builtin_os_fcntl(value_vector *args)
+{
+        ASSERT_ARGC_2("os::fcntl()", 2, 3);
+
+        struct value fd = args->items[0];
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::fcntl() must be an integer");
+
+        struct value cmd = args->items[1];
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the second argument to os::fcntl() must be an integer");
+
+        if (args->count == 2)
+                return INTEGER(fcntl(fd.integer, cmd.integer));
+
+        struct value arg = args->items[2];
+        switch (cmd.integer) {
+        case F_DUPFD:
+        case F_DUPFD_CLOEXEC:
+        case F_SETFD:
+        case F_SETFL:
+                if (arg.type != VALUE_INTEGER)
+                        vm_panic("the third argument to os::fcntl() must be an integer when it is called with F_DUPFD");
+                return INTEGER(fcntl(fd.integer, cmd.integer, (int) arg.integer));
+        }
+
+        vm_panic("os::fcntl() functionality not implemented yet");
 }
 
 struct value

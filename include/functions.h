@@ -61,6 +61,12 @@ struct value
 builtin_os_listdir(value_vector *args);
 
 struct value
+builtin_os_usleep(value_vector *args);
+
+struct value
+builtin_os_fcntl(value_vector *args);
+
+struct value
 builtin_os_spawn(value_vector *args);
 
 struct value

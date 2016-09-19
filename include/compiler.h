@@ -14,7 +14,7 @@ char *
 compiler_compile_source(char const *source, char const *filename);
 
 int
-compile_symbol_count(void);
+compiler_symbol_count(void);
 
 char *
 compiler_load_prelude(void);

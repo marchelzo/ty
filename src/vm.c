@@ -64,42 +64,7 @@ static struct {
         char const *name;
         struct value value;
 } builtins[] = {
-        { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
-        { .module = NULL,     .name = "read",              .value = BUILTIN(builtin_read)                          },
-        { .module = NULL,     .name = "rand",              .value = BUILTIN(builtin_rand)                          },
-        { .module = NULL,     .name = "int",               .value = BUILTIN(builtin_int)                           },
-        { .module = NULL,     .name = "float",             .value = BUILTIN(builtin_float)                         },
-        { .module = NULL,     .name = "str",               .value = BUILTIN(builtin_str)                           },
-        { .module = NULL,     .name = "bool",              .value = BUILTIN(builtin_bool)                          },
-        { .module = NULL,     .name = "regex",             .value = BUILTIN(builtin_regex)                         },
-        { .module = NULL,     .name = "blob",              .value = BUILTIN(builtin_blob)                          },
-        { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
-        { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
-        { .module = NULL,     .name = "getenv",            .value = BUILTIN(builtin_getenv)                        },
-        { .module = NULL,     .name = "setenv",            .value = BUILTIN(builtin_setenv)                        },
-        { .module = "os",     .name = "open",              .value = BUILTIN(builtin_os_open)                       },
-        { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
-        { .module = "os",     .name = "read",              .value = BUILTIN(builtin_os_read)                       },
-        { .module = "os",     .name = "write",             .value = BUILTIN(builtin_os_write)                      },
-        { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
-        { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
-        { .module = "os",     .name = "O_RDWR",            .value = INTEGER(O_RDWR)                                },
-        { .module = "os",     .name = "O_CREAT",           .value = INTEGER(O_CREAT)                               },
-        { .module = "os",     .name = "O_RDONLY",          .value = INTEGER(O_RDONLY)                              },
-        { .module = "os",     .name = "O_WRONLY",          .value = INTEGER(O_WRONLY)                              },
-        { .module = "os",     .name = "O_TRUNC",           .value = INTEGER(O_TRUNC)                               },
-        { .module = "os",     .name = "O_APPEND",          .value = INTEGER(O_APPEND)                              },
-        { .module = "errno",  .name = "get",               .value = BUILTIN(builtin_errno_get)                     },
-        { .module = "errno",  .name = "str",               .value = BUILTIN(builtin_errno_str)                     },
-        { .module = "errno",  .name = "ENOENT",            .value = INTEGER(ENOENT)                                },
-        { .module = "errno",  .name = "ENOMEM",            .value = INTEGER(ENOMEM)                                },
-        { .module = "errno",  .name = "EINVAL",            .value = INTEGER(EINVAL)                                },
-        { .module = "errno",  .name = "EACCES",            .value = INTEGER(EACCES)                                },
-        { .module = "errno",  .name = "EINTR",             .value = INTEGER(EINTR)                                 },
-        { .module = "errno",  .name = "EAGAIN",            .value = INTEGER(EAGAIN)                                },
-        { .module = "errno",  .name = "ENOTDIR",           .value = INTEGER(ENOTDIR)                               },
-        { .module = "errno",  .name = "ENOSPC",            .value = INTEGER(ENOSPC)                                },
-        { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
+#include "builtins.h"
 };
 
 static int builtin_count = sizeof builtins / sizeof builtins[0];
@@ -877,7 +842,7 @@ vm_init(void)
 
         add_builtins();
 
-        char const *prelude = compiler_load_prelude();
+        char *prelude = compiler_load_prelude();
         if (prelude == NULL) {
                 err_msg = compiler_error();
                 return false;
