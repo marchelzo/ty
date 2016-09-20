@@ -40,12 +40,15 @@
         emit_instr(INSTR_JUMP); \
         emit_int(loc - state.code.count - sizeof (int));
 
+#define EXPR(...) ((struct expression){ .loc = { -1, -1 }, __VA_ARGS__ })
+
 struct eloc {
         union {
                 uintptr_t p;
                 size_t offset;
         };
-        struct expression const *e;
+        struct location loc;
+        char const *filename;
 };
 
 struct module {
@@ -178,16 +181,17 @@ slurp_module(char const *name)
 }
 
 static void
-add_location(struct expression const *e)
+add_location(struct location loc)
 {
-        if (e != NULL)
-                ((struct expression *)e)->filename = state.filename;
+        if (loc.line == -1 && loc.col == -1)
+                return;
 
         vec_push(
                 state.expression_locations,
                 ((struct eloc) {
                         .offset = state.code.count,
-                        .e = e
+                        .loc = loc,
+                        .filename = state.filename
                 })
         );
 }
@@ -331,9 +335,36 @@ get_import_scope(char const *name)
 }
 
 static void
+try_symbolize_application(struct scope *scope, struct expression *e)
+{
+        if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
+                symbolize_expression(scope, e->function);
+                if (e->function->symbol->tag != -1) {
+                        char *identifier = e->function->identifier;
+                        char *module = e->function->module;
+                        struct expression *tagged = e->args.items[0];
+                        struct symbol *symbol = e->function->symbol;
+                        e->type = EXPRESSION_TAG_APPLICATION;
+                        e->identifier = identifier;
+                        e->module = module;
+                        e->tagged = tagged;
+                        e->symbol = symbol;
+                }
+        } else if (e->type == EXPRESSION_TAG_APPLICATION) {
+                e->symbol = getsymbol(
+                        (e->module == NULL) ? scope : get_import_scope(e->module),
+                        e->identifier,
+                        NULL
+                );
+        }
+}
+
+static void
 symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
 {
         state.loc = target->loc;
+
+        try_symbolize_application(scope, target);
 
         switch (target->type) {
         case EXPRESSION_IDENTIFIER:
@@ -373,22 +404,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
-        if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
-                symbolize_expression(scope, e->function);
-                if (e->function->symbol->tag != -1) {
-                        struct expression *tagged = e->args.items[0];
-                        struct symbol *symbol = e->function->symbol;
-                        e->type = EXPRESSION_TAG_APPLICATION;
-                        e->tagged = tagged;
-                        e->symbol = symbol;
-                }
-        } else if (e->type == EXPRESSION_TAG_APPLICATION) {
-                e->symbol = getsymbol(
-                        (e->module == NULL) ? scope : get_import_scope(e->module),
-                        e->identifier,
-                        NULL
-                );
-        }
+        try_symbolize_application(scope, e);
 
         if (e->type == EXPRESSION_IDENTIFIER && istag(e))
                 goto tag;
@@ -1082,7 +1098,8 @@ emit_case(struct expression const *pattern, struct expression const *condition, 
 
         emit_instr(INSTR_RESTORE_STACK_POS);
 
-        emit_statement(s);
+        if (s != NULL)
+                emit_statement(s);
 
         emit_instr(INSTR_JUMP);
         vec_push(state.match_successes, state.code.count);
@@ -1339,9 +1356,9 @@ emit_each_loop(struct statement const *s)
 
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end);
 
-        struct expression array = { .type = EXPRESSION_IDENTIFIER, .symbol = array_sym, .local = true };
-        struct expression index = { .type = EXPRESSION_IDENTIFIER, .symbol = counter_sym, .local = true };
-        struct expression subscript = { .type = EXPRESSION_SUBSCRIPT, .container = &array, .subscript = &index };
+        struct expression array = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = array_sym, .local = true);
+        struct expression index = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = counter_sym, .local = true);
+        struct expression subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &array, .subscript = &index);
         emit_assignment(s->each.target, &subscript);
         emit_instr(INSTR_POP);
         emit_statement(s->each.body);
@@ -1388,42 +1405,43 @@ emit_target(struct expression *target)
 static void
 emit_assignment(struct expression *target, struct expression const *e)
 {
+
         struct symbol *tmp;
-        struct expression container, subscript;
+        struct expression container, index, subscript;
+
+        if (e != NULL)
+                emit_expression(e);
 
         switch (target->type) {
         case EXPRESSION_ARRAY:
                 tmp = tmpsymbol();
-                emit_expression(e);
                 emit_instr(INSTR_PUSH_VAR);
                 emit_symbol(tmp->symbol);
                 emit_instr(INSTR_TARGET_VAR);
                 emit_symbol(tmp->symbol);
                 emit_instr(INSTR_ASSIGN);
-                container = (struct expression){ .type = EXPRESSION_IDENTIFIER, .symbol = tmp, .local = true, .loc = {42, 42} };
-                for (int j = 0; j < target->elements.count; ++j) {
-                        subscript = (struct expression){ .type = EXPRESSION_INTEGER, .integer = j, .loc = {42, 42} };
-                        emit_assignment(target->elements.items[j], &(struct expression){ .type = EXPRESSION_SUBSCRIPT, .container = &container, .subscript = &subscript, .loc = {42, 42}});
+                container = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = tmp, .local = true);
+                index = EXPR(.type = EXPRESSION_INTEGER);
+                subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &container, .subscript = &index);
+                for (int i = 0; i < target->elements.count; ++i) {
+                        index.integer = i;
+                        emit_assignment(target->elements.items[i], &subscript);
                         emit_instr(INSTR_POP);
                 }
                 emit_instr(INSTR_POP_VAR);
                 emit_symbol(tmp->symbol);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                emit_expression(e);
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
-                emit_target(target->tagged);
-                emit_instr(INSTR_ASSIGN);
+                emit_assignment(target->tagged, NULL);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
-                emit_expression(e);
                 emit_instr(INSTR_DIE_IF_NIL);
                 emit_target(target);
                 emit_instr(INSTR_ASSIGN);
                 break;
         default:
-                emit_expression(e);
                 emit_target(target);
                 emit_instr(INSTR_ASSIGN);
         }
@@ -1433,7 +1451,7 @@ static void
 emit_expression(struct expression const *e)
 {
         state.loc = e->loc;
-        add_location(e);
+        add_location(e->loc);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -1798,6 +1816,7 @@ compile(char const *source)
         /*
          * Add all of the location information from this compliation unit to the global list.
          */
+        add_location((struct location){});
         patch_location_info();
         vec_push(location_lists, state.expression_locations);
 }
@@ -2021,7 +2040,7 @@ compiler_get_location(char const *code, char const **file)
         while (lo > 0 && (lo >= locs->count || locs->items[lo].p >= c))
                 --lo;
 
-        *file = locs->items[lo].e->filename;
+        *file = locs->items[lo].filename;
 
-        return locs->items[lo].e->loc;
+        return locs->items[lo].loc;
 }

@@ -1184,11 +1184,11 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_SUBSCRIPT:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_FUNCTION_CALL:
                 return e;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                for (size_t i = 0; i < e->elements.count; ++i)
                         e->elements.items[i] = assignment_lvalue(e->elements.items[i]);
-                }
                 return e;
         default:
                 error("expression is not a valid assignment lvalue");
