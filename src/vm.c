@@ -24,6 +24,7 @@
 #include "str.h"
 #include "blob.h"
 #include "tags.h"
+#include "utf8.h"
 
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
 #define CASE(i)      case INSTR_ ## i: LOG("executing instr: " #i);
@@ -287,15 +288,12 @@ vm_exec(char *code)
                         container = pop();
 
                         if (container.type == VALUE_ARRAY) {
-                                if (subscript.type != VALUE_INTEGER) {
+                                if (subscript.type != VALUE_INTEGER)
                                         vm_panic("non-integer array index used in subscript assignment");
-                                }
-                                if (subscript.integer < 0) {
+                                if (subscript.integer < 0)
                                         subscript.integer += container.array->count;
-                                }
-                                if (subscript.integer < 0 || subscript.integer >= container.array->count) {
+                                if (subscript.integer < 0 || subscript.integer >= container.array->count)
                                         vm_panic("array index out of range in subscript expression");
-                                }
                                 pushtarget(&container.array->items[subscript.integer]);
                         } else if (container.type == VALUE_OBJECT) {
                                 pushtarget(object_put_key_if_not_exists(container.object, subscript));
@@ -323,6 +321,10 @@ vm_exec(char *code)
                                 vars[s]->value = ARRAY(value_array_new());
                                 vec_push_n(*vars[s]->value.array, top()->array->items + index, top()->array->count - index);
                         }
+                        break;
+                CASE(DIE_IF_NIL)
+                        if (top()->type == VALUE_NIL)
+                                vm_panic("failed to match %s against the non-nil pattern", value_show(top()));
                         break;
                 CASE(UNTAG_OR_DIE)
                         READVALUE(tag);
@@ -491,9 +493,12 @@ vm_exec(char *code)
                         break;
                 CASE(MEMBER_ACCESS)
                         v = pop();
-                        if (!(v.type & VALUE_OBJECT))
+                        if (v.type == VALUE_NIL)
+                                vp = NULL;
+                        else if (!(v.type & VALUE_OBJECT))
                                 vm_panic("member access on non-object");
-                        vp = object_get_member(v.object, ip);
+                        else
+                                vp = object_get_member(v.object, ip);
                         ip += strlen(ip) + 1;
                         push((vp == NULL) ? NIL : *vp);
                         break;
@@ -512,6 +517,8 @@ vm_exec(char *code)
                         } else if (container.type == VALUE_OBJECT) {
                                 vp = object_get_value(container.object, &subscript);
                                 push((vp == NULL) ? NIL : *vp);
+                        } else if (container.type == VALUE_NIL) {
+                                push(NIL);
                         } else {
                                 vm_panic("attempt to subscript something other than an object or array");
                         }
@@ -736,6 +743,10 @@ vm_exec(char *code)
                                         vm_panic("attempt to apply a tag to an invalid number of values");
                                 top()->tags = tags_push(top()->tags, v.tag);
                                 top()->type |= VALUE_TAGGED;
+                        } else if (v.type == VALUE_NIL) {
+                                READVALUE(n);
+                                stack.count -= n;
+                                push(NIL);
                         } else {
                                 vm_panic("attempt to call a non-function");
                         }
@@ -795,6 +806,12 @@ vm_exec(char *code)
                         case VALUE_BLOB:
                                 func = get_blob_method(method);
                                 break;
+                        case VALUE_NIL:
+                                pop();
+                                READVALUE(n);
+                                stack.count -= n;
+                                push(NIL);
+                                continue;
                         }
 
                         if (func != NULL) {

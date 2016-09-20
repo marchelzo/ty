@@ -127,7 +127,7 @@ static void
 emit_expression(struct expression const *e);
 
 static void
-emit_assignment(struct expression *target, struct expression const *e, int i);
+emit_assignment(struct expression *target, struct expression const *e);
 
 static struct scope *
 get_import_scope(char const *);
@@ -276,12 +276,14 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
 }
 
 inline static struct symbol *
-tmpsymbol(int i)
+tmpsymbol()
 {
+        static int i;
         static char idbuf[8];
-        assert(i <= 9999999 && i >= 0);
 
-        sprintf(idbuf, "%d", i);
+        assert(i <= 9999999);
+
+        sprintf(idbuf, "%d", i++);
 
         if (scope_locally_defined(global, idbuf))
                 return scope_lookup(global, idbuf);
@@ -335,6 +337,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
 
         switch (target->type) {
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
                 if (decl) {
                         target->symbol = addsymbol(scope, target->identifier);
                         target->local = true;
@@ -398,6 +401,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                         e->type = EXPRESSION_MUST_EQUAL;
                         e->symbol = getsymbol(scope, e->identifier, NULL);
                 } else {
+        case EXPRESSION_MATCH_NOT_NIL:
                         e->symbol = addsymbol(scope, e->identifier);
                 }
                 break;
@@ -972,18 +976,19 @@ emit_try_match(struct expression const *pattern)
 {
         switch (pattern->type) {
         case EXPRESSION_IDENTIFIER:
-                /*
-                 * The special identifier '_' matches anything, even nil. Ordinary identifiers will _not_
-                 * match nil.
-                 */
                 if (strcmp(pattern->identifier, "_") == 0) {
                         /* nothing to do */
                 } else {
-                        emit_instr(INSTR_TRY_ASSIGN_NON_NIL);
+                        emit_instr(INSTR_TARGET_VAR);
                         emit_symbol(pattern->symbol->symbol);
-                        vec_push(state.match_fails, state.code.count);
-                        emit_int(0);
+                        emit_instr(INSTR_ASSIGN);
                 }
+                break;
+        case EXPRESSION_MATCH_NOT_NIL:
+                emit_instr(INSTR_TRY_ASSIGN_NON_NIL);
+                emit_symbol(pattern->symbol->symbol);
+                vec_push(state.match_fails, state.code.count);
+                emit_int(0);
                 break;
         case EXPRESSION_MUST_EQUAL:
                 emit_instr(INSTR_ENSURE_EQUALS_VAR);
@@ -1297,11 +1302,11 @@ emit_each_loop(struct statement const *s)
 
         emit_expression(s->each.array);
 
-        struct symbol *array_sym = tmpsymbol(0);
+        struct symbol *array_sym = tmpsymbol();
         emit_instr(INSTR_PUSH_VAR);
         emit_symbol(array_sym->symbol);
 
-        struct symbol *counter_sym = tmpsymbol(1);
+        struct symbol *counter_sym = tmpsymbol();
         emit_instr(INSTR_PUSH_VAR);
         emit_symbol(counter_sym->symbol);
 
@@ -1337,7 +1342,7 @@ emit_each_loop(struct statement const *s)
         struct expression array = { .type = EXPRESSION_IDENTIFIER, .symbol = array_sym, .local = true };
         struct expression index = { .type = EXPRESSION_IDENTIFIER, .symbol = counter_sym, .local = true };
         struct expression subscript = { .type = EXPRESSION_SUBSCRIPT, .container = &array, .subscript = &index };
-        emit_assignment(s->each.target, &subscript, 2);
+        emit_assignment(s->each.target, &subscript);
         emit_instr(INSTR_POP);
         emit_statement(s->each.body);
 
@@ -1356,6 +1361,7 @@ emit_target(struct expression *target)
 {
         switch (target->type) {
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
                 if (target->local) {
                         emit_instr(INSTR_TARGET_VAR);
                 } else {
@@ -1380,14 +1386,14 @@ emit_target(struct expression *target)
 }
 
 static void
-emit_assignment(struct expression *target, struct expression const *e, int i)
+emit_assignment(struct expression *target, struct expression const *e)
 {
         struct symbol *tmp;
         struct expression container, subscript;
 
         switch (target->type) {
         case EXPRESSION_ARRAY:
-                tmp = tmpsymbol(i);
+                tmp = tmpsymbol();
                 emit_expression(e);
                 emit_instr(INSTR_PUSH_VAR);
                 emit_symbol(tmp->symbol);
@@ -1397,7 +1403,7 @@ emit_assignment(struct expression *target, struct expression const *e, int i)
                 container = (struct expression){ .type = EXPRESSION_IDENTIFIER, .symbol = tmp, .local = true, .loc = {42, 42} };
                 for (int j = 0; j < target->elements.count; ++j) {
                         subscript = (struct expression){ .type = EXPRESSION_INTEGER, .integer = j, .loc = {42, 42} };
-                        emit_assignment(target->elements.items[j], &(struct expression){ .type = EXPRESSION_SUBSCRIPT, .container = &container, .subscript = &subscript, .loc = {42, 42}}, i + 1);
+                        emit_assignment(target->elements.items[j], &(struct expression){ .type = EXPRESSION_SUBSCRIPT, .container = &container, .subscript = &subscript, .loc = {42, 42}});
                         emit_instr(INSTR_POP);
                 }
                 emit_instr(INSTR_POP_VAR);
@@ -1408,6 +1414,12 @@ emit_assignment(struct expression *target, struct expression const *e, int i)
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
                 emit_target(target->tagged);
+                emit_instr(INSTR_ASSIGN);
+                break;
+        case EXPRESSION_MATCH_NOT_NIL:
+                emit_expression(e);
+                emit_instr(INSTR_DIE_IF_NIL);
+                emit_target(target);
                 emit_instr(INSTR_ASSIGN);
                 break;
         default:
@@ -1452,7 +1464,7 @@ emit_expression(struct expression const *e)
                 emit_int((e->flags & RANGE_EXCLUDE_RIGHT) ? -1 : 0);
                 break;
         case EXPRESSION_EQ:
-                emit_assignment(e->target, e->value, 0);
+                emit_assignment(e->target, e->value);
                 break;
         case EXPRESSION_INTEGER:
                 emit_instr(INSTR_INTEGER);
@@ -1686,7 +1698,7 @@ emit_statement(struct statement const *s)
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_DEFINITION:
-                emit_assignment(s->target, s->value, 0);
+                emit_assignment(s->target, s->value);
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_TAG_DEFINITION:

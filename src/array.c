@@ -98,6 +98,36 @@ array_zip(struct value *array, value_vector *args)
 }
 
 static struct value
+array_map_cons(struct value *array, value_vector *args)
+{
+        if (args->count != 2)
+                vm_panic("array.mapCons() expects 2 arguments but got %zu", args->count);
+
+        struct value k = args->items[0];
+        if (k.type != VALUE_INTEGER)
+                vm_panic("the first argument to array.mapCons() must be an integer");
+
+        if (k.integer <= 0)
+                vm_panic("the first argument to array.mapCons() must be positive");
+
+        struct value f = args->items[1];
+        if (!CALLABLE(f))
+                vm_panic("the second argument to array.mapCons() must be callable");
+
+        int n = array->array->count - k.integer + 1;
+
+        for (int i = 0; i < n; ++i) {
+                struct value_array *subseq = value_array_new();
+                vec_push_n(*subseq, array->array->items + i, k.integer);
+                array->array->items[i] = value_apply_callable(&f, &ARRAY(subseq));
+        }
+
+        array->array->count = n;
+
+        return *array;
+}
+
+static struct value
 array_slice(struct value *array, value_vector *args)
 {
         if (args->count != 2)
@@ -965,6 +995,13 @@ array_mapped(struct value *array, value_vector *args)
 }
 
 static struct value
+array_mapped_cons(struct value *array, value_vector *args)
+{
+        struct value clone = array_clone(array, &no_args);
+        return array_map_cons(&clone, args);
+}
+
+static struct value
 array_filtered(struct value *array, value_vector *args)
 {
         struct value clone = array_clone(array, &no_args);
@@ -1118,6 +1155,8 @@ DEFINE_METHOD_TABLE(
         { .name = "len",          .func = array_length         },
         { .name = "map",          .func = array_mapped         },
         { .name = "map!",         .func = array_map            },
+        { .name = "mapCons",      .func = array_mapped_cons    },
+        { .name = "mapCons!",     .func = array_map_cons       },
         { .name = "max",          .func = array_max            },
         { .name = "maxBy",        .func = array_max_by         },
         { .name = "min",          .func = array_min            },

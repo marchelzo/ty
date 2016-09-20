@@ -7,11 +7,7 @@
 #include "util.h"
 #include "vm.h"
 
-static struct stringpos limitpos = {
-        .columns = -1,
-        .column  = 0,
-        .lines   = -1,
-};
+static struct stringpos limitpos;
 static struct stringpos outpos;
 
 inline static void
@@ -54,9 +50,8 @@ next:
 static struct value
 string_length(struct value *string, value_vector *args)
 {
-        if (args->count != 0) {
+        if (args->count != 0)
                 vm_panic("str.len() expects no arguments but got %zu", args->count);
-        }
 
         stringcount(string->string, string->bytes, -1);
 
@@ -66,15 +61,13 @@ string_length(struct value *string, value_vector *args)
 static struct value
 string_slice(struct value *string, value_vector *args)
 {
-        if (args->count == 0 || args->count > 2) {
+        if (args->count == 0 || args->count > 2)
                 vm_panic("str.slice() expects 1 or 2 arguments but got %zu", args->count);
-        }
 
         struct value start = args->items[0];
 
-        if (start.type != VALUE_INTEGER) {
+        if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to str.slice()");
-        }
 
         char const *s = string->string;
         int i = start.integer;
@@ -82,13 +75,10 @@ string_slice(struct value *string, value_vector *args)
 
         if (args->count == 2) {
                 struct value len = args->items[1];
-                if (len.type != VALUE_INTEGER) {
+                if (len.type != VALUE_INTEGER)
                         vm_panic("non-integer passed as second argument to str.slice()");
-                }
-                if (len.integer < 0) {
+                if (len.integer < 0)
                         vm_panic("negative integer passed as second argument to str.slice()");
-                }
-
                 n = len.integer;
         } else {
                 n = -1;
@@ -114,63 +104,77 @@ string_slice(struct value *string, value_vector *args)
 static struct value
 string_search(struct value *string, value_vector *args)
 {
-        if (args->count != 1) {
-                vm_panic("str.search() expects 1 argument but got %zu", args->count);
-        }
+        if (args->count != 1 && args->count != 2)
+                vm_panic("str.search() expects 1 or 2 arguments but got %zu", args->count);
 
         struct value pattern = args->items[0];
 
-        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX) {
+        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
                 vm_panic("the pattern argument to str.search() must be a string or a regex");
+
+        int offset;
+        if (args->count == 1)
+                offset = 0;
+        else if (args->items[1].type == VALUE_INTEGER)
+                offset = args->items[1].integer;
+        else
+                vm_panic("the second argument to str.search() must be an integer");
+
+        if (offset < 0) {
+                stringcount(string->string, string->bytes, -1);
+                offset += outpos.graphemes;
         }
 
-        char const *s = string->string;
+        if (offset < 0)
+                vm_panic("invalid offset passed to str.search()");
+
+        stringcount(string->string, string->bytes, offset);
+        if (outpos.graphemes != offset)
+                return NIL;
+
+        char const *s = string->string + outpos.bytes;
+        int bytes = string->bytes - outpos.bytes;
+
         int n;
 
         if (pattern.type == VALUE_STRING) {
-                char const *match = memmem(s, string->bytes, pattern.string, pattern.bytes);
+                char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
 
-                if (match == NULL) {
+                if (match == NULL)
                         return NIL;
-                }
 
                 n = match - s;
         } else {
-                int len = string->bytes;
                 pcre *re = pattern.regex;
                 int rc;
                 int out[3];
 
-                rc = pcre_exec(re, NULL, s, len, 0, 0, out, 3);
+                rc = pcre_exec(re, NULL, s, bytes, 0, 0, out, 3);
 
-                if (rc == -1) {
+                if (rc == -1)
                         return NIL;
-                }
 
-                if (rc < -1) {
+                if (rc < -1)
                         vm_panic("error executing regular expression");
-                }
 
                 n = out[0];
         }
 
         stringcount(s, n, -1);
 
-        return INTEGER(outpos.graphemes);
+        return INTEGER(offset + outpos.graphemes);
 }
 
 static struct value
 string_split(struct value *string, value_vector *args)
 {
-        if (args->count != 1) {
+        if (args->count != 1)
                 vm_panic("the split method on strings expects 1 argument but got %zu", args->count);
-        }
 
         struct value pattern = args->items[0];
 
-        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING) {
+        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
                 vm_panic("invalid argument to the split method on string");
-        }
 
         struct value result = ARRAY(value_array_new());
 
@@ -180,14 +184,12 @@ string_split(struct value *string, value_vector *args)
                 char const *p = pattern.string;
                 int n = pattern.bytes;
 
-                if (n == 0) {
+                if (n == 0)
                         return result;
-                }
 
                 int i = 0;
-                while (i < len && is_prefix(s + i, len - i, p, n)) {
+                while (i < len && is_prefix(s + i, len - i, p, n))
                         i += n;
-                }
                 
                 while (i < len) {
 
@@ -200,9 +202,8 @@ string_split(struct value *string, value_vector *args)
 
                         vec_push(*result.array, str);
 
-                        while (i < len && is_prefix(s + i, len - i, p, n)) {
+                        while (i < len && is_prefix(s + i, len - i, p, n))
                                 i += n;
-                        }
                 }
         } else {
                 pcre *re = pattern.regex;
@@ -211,9 +212,8 @@ string_split(struct value *string, value_vector *args)
                 int out[3];
 
                 while (start < len) {
-                        if (pcre_exec(re, NULL, s, len, start, 0, out, 3) != 1) {
+                        if (pcre_exec(re, NULL, s, len, start, 0, out, 3) != 1)
                                 out[0] = out[1] = len;
-                        }
 
                         if (out[0] == out[1] && out[1] != len) {
                                 ++out[0];
@@ -221,12 +221,10 @@ string_split(struct value *string, value_vector *args)
                         }
 
                         int n = out[0] - start;
-                        if (n == 0) {
-                                goto next;
-                        }
 
-                        vec_push(*result.array, STRING_VIEW(*string, start, n));
-next:
+                        if (n > 0)
+                                vec_push(*result.array, STRING_VIEW(*string, start, n));
+
                         start = out[1];
                 }
         }
@@ -239,20 +237,17 @@ string_replace(struct value *string, value_vector *args)
 {
         static vec(char) chars = { .items = NULL, .count = 0, .capacity = 0 };
 
-        if (args->count != 2) {
+        if (args->count != 2)
                 vm_panic("the replace method on strings expects 2 arguments but got %zu", args->count);
-        }
 
         struct value pattern = args->items[0];
         struct value replacement = args->items[1];
 
-        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING) {
+        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
                 vm_panic("the pattern argument to string's replace method must be a regex or a string");
-        }
 
-        if (replacement.type != VALUE_STRING && !CALLABLE(replacement)) {
+        if (replacement.type != VALUE_STRING && !CALLABLE(replacement))
                 vm_panic("the replacement argument to string's replace method must be callable or a string");
-        }
 
         chars.count = 0;
 
@@ -260,9 +255,8 @@ string_replace(struct value *string, value_vector *args)
 
         if (pattern.type == VALUE_STRING) {
 
-                if (replacement.type != VALUE_STRING) {
+                if (replacement.type != VALUE_STRING)
                         vm_panic("non-string replacement passed to string's replace method with a string pattern");
-                }
 
                 char const *p = pattern.string;
                 char const *r = replacement.string;
@@ -324,9 +318,8 @@ string_replace(struct value *string, value_vector *args)
                         }
 
                         struct value repstr = vm_eval_function(&replacement, &match);
-                        if (repstr.type != VALUE_STRING) {
+                        if (repstr.type != VALUE_STRING)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
-                        }
 
                         vec_push_n(chars, repstr.string, repstr.bytes);
 
@@ -342,15 +335,13 @@ string_replace(struct value *string, value_vector *args)
 static struct value
 string_is_match(struct value *string, value_vector *args)
 {
-        if (args->count != 1) {
+        if (args->count != 1)
                 vm_panic("the match? method on strings expects 1 argument but got %zu", args->count);
-        }
 
         struct value pattern = args->items[0];
 
-        if (pattern.type != VALUE_REGEX) {
+        if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the match? method on string");
-        }
 
         int len = string->bytes;
         int rc;
@@ -366,9 +357,8 @@ string_is_match(struct value *string, value_vector *args)
                 0
         );
 
-        if (rc < -1) {
+        if (rc < -1)
                 vm_panic("error while executing regular expression");
-        }
 
         return BOOLEAN(rc != -1);
 }
@@ -376,15 +366,13 @@ string_is_match(struct value *string, value_vector *args)
 static struct value
 string_match(struct value *string, value_vector *args)
 {
-        if (args->count != 1) {
+        if (args->count != 1)
                 vm_panic("the match method on strings expects 1 argument but got %zu", args->count);
-        }
 
         struct value pattern = args->items[0];
 
-        if (pattern.type != VALUE_REGEX) {
+        if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the match method on string");
-        }
 
         static int ovec[30];
         int len = string->bytes;
@@ -401,13 +389,11 @@ string_match(struct value *string, value_vector *args)
                 30
         );
 
-        if (rc < -1) {
+        if (rc < -1)
                 vm_panic("error while executing regular expression");
-        }
 
-        if (rc == -1) {
+        if (rc == -1)
                 return NIL;
-        }
 
         struct value match;
 
@@ -418,9 +404,8 @@ string_match(struct value *string, value_vector *args)
                 vec_reserve(*match.array, rc);
 
                 int j = 0;
-                for (int i = 0; i < rc; ++i, j += 2) {
+                for (int i = 0; i < rc; ++i, j += 2)
                         vec_push(*match.array, STRING_VIEW(*string, ovec[j], ovec[j + 1] - ovec[j]));
-                }
         }
 
         return match;
@@ -487,29 +472,29 @@ string_matches(struct value *string, value_vector *args)
 static struct value
 string_char(struct value *string, value_vector *args)
 {
-        if (args->count != 1) {
+        if (args->count != 1)
                 vm_panic("the char method on strings expects 1 argument but got %zu", args->count);
-        }
 
         struct value i = args->items[0];
 
-        if (i.type != VALUE_INTEGER) {
+        if (i.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to the char method on string");
-        }
+
+        if (i.integer < 0)
+                i.integer += utf8_charcount(string->string, string->bytes);
+
 
         stringcount(string->string, string->bytes, i.integer);
 
-        if (outpos.graphemes != i.integer) {
+        if (outpos.graphemes != i.integer)
                 return NIL;
-        }
 
         int offset = outpos.bytes;
 
         stringcount(string->string + offset, string->bytes - offset, 1);
 
-        if (outpos.graphemes != 1) {
+        if (outpos.graphemes != 1)
                 return NIL;
-        }
 
         return STRING_VIEW(*string, offset, outpos.bytes);
 }
@@ -589,6 +574,113 @@ string_upper(struct value *string, value_vector *args)
         return STRING(result->data, outlen, result);
 }
 
+static struct value
+string_pad_left(struct value *string, value_vector *args)
+{
+        if (args->count != 1 && args->count != 2)
+                vm_panic("str.padLeft() expects 1 or 2 arguments but got %zu", args->count);
+
+        struct value len = args->items[0];
+        if (len.type != VALUE_INTEGER)
+                vm_panic("the first argument to str.padLeft() must be an integer");
+
+        stringcount(string->string, string->bytes, -1);
+        int string_len = outpos.graphemes;
+
+        if (string_len >= len.integer)
+                return *string;
+
+        char const *pad;
+        int pad_bytes;
+        int pad_len;
+
+        if (args->count == 1) {
+                pad = " ";
+                pad_bytes = pad_len = 1;
+        } else {
+                if (args->items[1].type != VALUE_STRING)
+                        vm_panic("the second argument to str.padLeft() must be a string");
+                pad = args->items[1].string;
+                pad_bytes = args->items[1].bytes;
+                stringcount(pad, pad_bytes, -1);
+                pad_len = outpos.graphemes;
+        }
+        
+        int n = (len.integer - string_len) / pad_len + 1;
+        struct string *result = value_string_alloc(string->bytes + pad_bytes * n);
+
+        int current = 0;
+        int bytes = 0;
+        while (current + pad_len <= len.integer - string_len) {
+                memcpy(result->data + bytes, pad, pad_bytes);
+                current += pad_len;
+                bytes += pad_bytes;
+        }
+
+        if (current != len.integer - string_len) {
+                stringcount(pad, pad_bytes, len.integer - string_len - current);
+                memcpy(result->data + bytes, pad, outpos.bytes);
+                bytes += outpos.bytes;
+        }
+
+        memcpy(result->data + bytes, string->string, string->bytes);
+        bytes += string->bytes;
+
+        return STRING(result->data, bytes, result);
+}
+
+static struct value
+string_pad_right(struct value *string, value_vector *args)
+{
+        if (args->count != 1 && args->count != 2)
+                vm_panic("str.padRight() expects 1 or 2 arguments but got %zu", args->count);
+
+        struct value len = args->items[0];
+        if (len.type != VALUE_INTEGER)
+                vm_panic("the first argument to str.padRight() must be an integer");
+
+        stringcount(string->string, string->bytes, -1);
+        int current = outpos.graphemes;
+
+        if (current >= len.integer)
+                return *string;
+
+        char const *pad;
+        int pad_bytes;
+        int pad_len;
+
+        if (args->count == 1) {
+                pad = " ";
+                pad_bytes = pad_len = 1;
+        } else {
+                if (args->items[1].type != VALUE_STRING)
+                        vm_panic("the second argument to str.padRight() must be a string");
+                pad = args->items[1].string;
+                pad_bytes = args->items[1].bytes;
+                stringcount(pad, pad_bytes, -1);
+                pad_len = outpos.graphemes;
+        }
+        
+        int n = (len.integer - current) / pad_len + 1;
+        struct string *result = value_string_alloc(string->bytes + pad_bytes * n);
+        int bytes = string->bytes;
+        memcpy(result->data, string->string, bytes);
+
+        while (current + pad_len <= len.integer) {
+                memcpy(result->data + bytes, pad, pad_bytes);
+                current += pad_len;
+                bytes += pad_bytes;
+        }
+
+        if (current != len.integer) {
+                stringcount(pad, pad_bytes, len.integer - current);
+                memcpy(result->data + bytes, pad, outpos.bytes);
+                bytes += outpos.bytes;
+        }
+
+        return STRING(result->data, bytes, result);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
@@ -597,6 +689,8 @@ DEFINE_METHOD_TABLE(
         { .name = "match!",    .func = string_match     },
         { .name = "match?",    .func = string_is_match  },
         { .name = "matches",   .func = string_matches   },
+        { .name = "padLeft",   .func = string_pad_left  },
+        { .name = "padRight",  .func = string_pad_right },
         { .name = "replace",   .func = string_replace   },
         { .name = "search",    .func = string_search    },
         { .name = "slice",     .func = string_slice     },

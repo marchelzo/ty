@@ -21,10 +21,15 @@ str_concat(struct value const *s1, struct value const *s2)
 struct value
 binary_operator_addition(struct value const *left, struct value const *right)
 {
+        
+        if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
+                return REAL(left->real + right->integer);
 
-        if (left->type != right->type) {
+        if (left->type == VALUE_INTEGER && right->type == VALUE_REAL)
+                return REAL(left->integer + right->real);
+
+        if (left->type != right->type)
                 vm_panic("the operands to + must have the same type");
-        }
 
         struct value v;
 
@@ -46,9 +51,14 @@ struct value
 binary_operator_multiplication(struct value const *left, struct value const *right)
 {
 
-        if (left->type != right->type) {
+        if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
+                return REAL(left->real * right->integer);
+
+        if (left->type == VALUE_INTEGER && right->type == VALUE_REAL)
+                return REAL(left->integer * right->real);
+
+        if (left->type != right->type)
                 vm_panic("the operands to * must have the same type");
-        }
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer * right->integer);
@@ -61,9 +71,14 @@ struct value
 binary_operator_division(struct value const *left, struct value const *right)
 {
 
-        if (left->type != right->type) {
+        if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
+                return REAL(left->real / right->integer);
+
+        if (left->type == VALUE_INTEGER && right->type == VALUE_REAL)
+                return REAL(left->integer / right->real);
+
+        if (left->type != right->type)
                 vm_panic("the operands to / must have the same type");
-        }
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer / right->integer);
@@ -76,9 +91,14 @@ struct value
 binary_operator_subtraction(struct value const *left, struct value const *right)
 {
 
-        if (left->type != right->type) {
+        if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
+                return REAL(left->real - right->integer);
+
+        if (left->type == VALUE_INTEGER && right->type == VALUE_REAL)
+                return REAL(left->integer - right->real);
+
+        if (left->type != right->type)
                 vm_panic("the operands to - must have the same type");
-        }
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer - right->integer);
@@ -92,9 +112,8 @@ struct value
 binary_operator_remainder(struct value const *left, struct value const *right)
 {
 
-        if (left->type != right->type) {
+        if (left->type != right->type)
                 vm_panic("the operands to - must have the same type");
-        }
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer % right->integer);

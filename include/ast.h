@@ -123,6 +123,7 @@ struct expression {
 
                 EXPRESSION_MATCH,
 
+                EXPRESSION_MATCH_NOT_NIL,
                 EXPRESSION_MATCH_REST,
                 EXPRESSION_VIEW_PATTERN,
 

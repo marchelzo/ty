@@ -71,9 +71,8 @@ builtin_read(value_vector *args)
         input.count = 0;
 
         int c;
-        while (c = getchar(), c != EOF && c != '\n') {
+        while (c = getchar(), c != EOF && c != '\n')
                 vec_push(input, c);
-        }
 
         if (input.count == 0 && c != '\n')
                 return NIL;
@@ -90,18 +89,15 @@ builtin_rand(value_vector *args)
 
         if (args->count == 1 && args->items[0].type == VALUE_ARRAY) {
                 int n = args->items[0].array->count;
-                if (n == 0) {
+                if (n == 0)
                         return NIL;
-                } else {
+                else
                         return args->items[0].array->items[rand() % n];
-                }
         }
 
-        for (int i = 0; i < args->count; ++i) {
-                if (args->items[i].type != VALUE_INTEGER) {
+        for (int i = 0; i < args->count; ++i)
+                if (args->items[i].type != VALUE_INTEGER)
                         vm_panic("non-integer passed as argument %d to rand", i + 1);
-                }
-        }
 
         switch (args->count) {
         case 0:  low = 0;                      high = RAND_MAX;               break;
@@ -212,9 +208,8 @@ string:
         char *end;
         intmax_t n = strtoimax(string, &end, base);
 
-        if (errno != 0 || *end != '\0') {
+        if (errno != 0 || *end != '\0')
                 return NIL;
-        }
 
         v.integer = n;
 
@@ -226,9 +221,8 @@ builtin_str(value_vector *args)
 {
         ASSERT_ARGC_2("str()", 0, 1);
 
-        if (args->count == 0) {
+        if (args->count == 0)
                 return STRING_NOGC(NULL, 0);
-        }
 
         struct value arg = args->items[0];
         if (arg.type == VALUE_STRING) {
@@ -284,18 +278,16 @@ builtin_regex(value_vector *args)
 struct value
 builtin_min(value_vector *args)
 {
-        if (args->count < 2) {
+        if (args->count < 2)
                 vm_panic("min() expects 2 or more arguments, but got %zu", args->count);
-        }
 
         struct value min, v;
         min = args->items[0];
 
         for (int i = 1; i < args->count; ++i) {
                 v = args->items[i];
-                if (value_compare(&v, &min) < 0) {
+                if (value_compare(&v, &min) < 0)
                         min = v;
-                }
         }
 
         return min;
@@ -304,18 +296,16 @@ builtin_min(value_vector *args)
 struct value
 builtin_max(value_vector *args)
 {
-        if (args->count < 2) {
+        if (args->count < 2)
                 vm_panic("max() expects 2 or more arguments, but got %zu", args->count);
-        }
 
         struct value max, v;
         max = args->items[0];
 
         for (int i = 1; i < args->count; ++i) {
                 v = args->items[i];
-                if (value_compare(&v, &max) > 0) {
+                if (value_compare(&v, &max) > 0)
                         max = v;
-                }
         }
 
         return max;
@@ -427,10 +417,7 @@ builtin_os_open(value_vector *args)
         }
 
 
-        if (fd == -1)
-                return NIL;
-        else
-                return INTEGER(fd);
+        return INTEGER(fd);
 }
 
 struct value
@@ -443,9 +430,7 @@ builtin_os_close(value_vector *args)
         if (file.type != VALUE_INTEGER)
                 vm_panic("the argument to os::close() must be an integer");
 
-        close(file.integer);
-
-        return NIL;
+        return INTEGER(close(file.integer));
 }
 
 struct value
@@ -672,6 +657,7 @@ builtin_os_listdir(value_vector *args)
 
         while (e = readdir(d), e != NULL)
                 vec_push(*files, STRING_CLONE(e->d_name, strlen(e->d_name)));
+
         closedir(d);
 
         return ARRAY(files);

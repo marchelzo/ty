@@ -45,6 +45,8 @@ enum instruction {
         INSTR_DUP,
         INSTR_LEN,
 
+        INSTR_DIE_IF_NIL,
+
         INSTR_PRE_INC,
         INSTR_POST_INC,
         INSTR_PRE_DEC,

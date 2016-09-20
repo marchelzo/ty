@@ -1,3 +1,6 @@
+#ifndef UTF8_H_INCLUDED
+#define UTF8_H_INCLUDED
+
 #include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
@@ -7,9 +10,6 @@
 struct stringpos {
         int bytes;
         int graphemes;
-        int lines;
-        int column;
-        int columns;
 };
 
 inline static int
@@ -75,23 +75,15 @@ inline static int
 utf8_count(char const *str, int len, struct stringpos *pos)
 {
         pos->bytes = 0;
-        pos->column = 0;
-        pos->columns = 0;
-        pos->lines = 0;
         pos->graphemes = 0;
 
         while (len != 0) {
 
-                if (*str == '\n') {
-
+                if (*str == '\n' || *str == '\r') {
                         str += 1;
                         len -= 1;
-
-                        pos->lines += 1;
-                        pos->column = 0;
                         pos->graphemes += 1;
                         pos->bytes += 1;
-
                         continue;
                 }
 
@@ -115,8 +107,6 @@ utf8_count(char const *str, int len, struct stringpos *pos)
 
                 pos->bytes += bytes;
                 pos->graphemes += is_grapheme;
-                pos->columns += width;
-                pos->column += width;
         }
 
         return 0;
@@ -126,34 +116,20 @@ inline static int
 utf8_stringcount(char const *str, int len, struct stringpos * restrict pos, struct stringpos const * restrict limit)
 {
         pos->bytes = 0;
-        pos->column = 0;
-        pos->columns = 0;
-        pos->lines = 0;
         pos->graphemes = 0;
 
         while (len != 0) {
 
-                if (*str == '\n') {
+                if (*str == '\n' || *str == '\r') {
 
                         if (pos->graphemes == limit->graphemes)
-                                break;
-
-                        if (pos->columns == limit->columns)
-                                break;
-
-                        if (limit->lines == 0)
                                 break;
 
                         str += 1;
                         len -= 1;
 
-                        pos->lines += 1;
-                        pos->column = 0;
                         pos->graphemes += 1;
                         pos->bytes += 1;
-
-                        if (pos->lines == limit->lines)
-                                break;
 
                         continue;
                 }
@@ -177,16 +153,12 @@ utf8_stringcount(char const *str, int len, struct stringpos * restrict pos, stru
                         break;
                 if (limit->graphemes != -1 && pos->graphemes + is_grapheme > limit->graphemes)
                         break;
-                if (limit->columns != -1 && pos->columns + width > limit->columns)
-                        break;
 
                 str += bytes;
                 len -= bytes;
 
                 pos->bytes += bytes;
                 pos->graphemes += is_grapheme;
-                pos->columns += width;
-                pos->column += width;
         }
 
         return 0;
@@ -227,32 +199,13 @@ utf8_copy_cols(char const * restrict str, int len, char * restrict out, int skip
 }
 
 inline static int
-utf8_columncount(char const * restrict str, int len)
-{
-        int cols = 0;
-
-        while (len != 0) {
-
-                uint32_t cp;
-                int bytes = next_utf8(str, len, &cp);
-                int width = mk_wcwidth(cp);
-
-                cols += width;
-                str += bytes;
-                len -= bytes;
-        }
-
-        return cols;
-}
-
-inline static int
 utf8_charcount(char const * restrict str, int len)
 {
         int chars = 0;
 
         while (len != 0) {
 
-                if (*str == '\n') {
+                if (*str == '\n' || *str == '\r') {
                         ++str;
                         --len;
                         ++chars;
@@ -276,7 +229,7 @@ utf8_nth_char(char const *str, int n, int *nb)
 {
         while (n > 0) {
 
-                if (*str == '\n') {
+                if (*str == '\n' || *str == '\r') {
                         str += 1;
                         --n;
                         continue;
@@ -296,7 +249,7 @@ utf8_nth_char(char const *str, int n, int *nb)
 
         for (;;) {
 
-                if (*str == '\n') {
+                if (*str == '\n' || *str == '\r') {
                         *nb = 1;
                         break;
                 }
@@ -330,3 +283,5 @@ utf8_next_char(char const *s, int n)
 
 	return ((char *)s) + bytes;
 }
+
+#endif

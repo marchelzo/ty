@@ -322,14 +322,23 @@ start:
                 case '\0': goto unterminated;
                 case '{':  goto expr;
                 case '\\':
-                           nextchar();
-                           if (*chars == '\0') goto unterminated;
-                           if (*chars == 'n') {
-                                   nextchar();
-                                   vec_push(str, '\n');
-                                   break;
-                           }
-                           // fallthrough
+                        nextchar();
+                        switch (*chars) {
+                        case '\0':
+                                goto unterminated;
+                        case 'n':
+                                nextchar();
+                                vec_push(str, '\n');
+                                continue;
+                        case 'r':
+                                nextchar();
+                                vec_push(str, '\r');
+                                continue;
+                        case 't':
+                                nextchar();
+                                vec_push(str, '\t');
+                                continue;
+                        }
                 default:
                            vec_push(str, nextchar());
                 }

@@ -49,6 +49,7 @@ struct token {
                 TOKEN_LT,
                 TOKEN_GT,
                 TOKEN_AT,
+                TOKEN_DOLLAR,
                 TOKEN_INC,
                 TOKEN_DEC,
                 TOKEN_NEWLINE,

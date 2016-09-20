@@ -350,6 +350,27 @@ prefix_special_string(void)
 }
 
 static struct expression *
+prefix_dollar(void)
+{
+        consume(TOKEN_DOLLAR);
+
+        struct expression *e = mkexpr();
+
+        expect(TOKEN_IDENTIFIER);
+
+        e->type = EXPRESSION_MATCH_NOT_NIL;
+        e->identifier = tok()->identifier;
+        e->module = tok()->module;
+
+        if (e->module != NULL)
+                error("unpexpected module in lvalue");
+
+        consume(TOKEN_IDENTIFIER);
+
+        return e;
+}
+
+static struct expression *
 prefix_identifier(void)
 {
         expect(TOKEN_IDENTIFIER);
@@ -1015,6 +1036,7 @@ get_prefix_parser(void)
 
         case TOKEN_BANG:       return prefix_bang;
         case TOKEN_AT:         return prefix_at;
+        case TOKEN_DOLLAR:     return prefix_dollar;
         case TOKEN_MINUS:      return prefix_minus;
         case TOKEN_INC:        return prefix_inc;
         case TOKEN_DEC:        return prefix_dec;
@@ -1158,6 +1180,7 @@ assignment_lvalue(struct expression *e)
 {
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_SUBSCRIPT:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_MEMBER_ACCESS:
@@ -1203,6 +1226,16 @@ parse_definition_lvalue(int context)
                     error("unexpected module in lvalue");
                 }
 
+                break;
+        case TOKEN_DOLLAR:
+                consume(TOKEN_DOLLAR);
+                e = mkexpr();
+                e->type = EXPRESSION_MATCH_NOT_NIL;
+                e->identifier = tok()->identifier;
+                e->module = tok()->module;
+                if (e->module != NULL)
+                        error("unexpected module in lvalue");
+                consume(TOKEN_IDENTIFIER);
                 break;
         case '[':
                 consume('[');
@@ -1444,7 +1477,6 @@ parse_match_statement(void)
                 } else {
                         vec_push(s->match.conds, NULL);
                 }
-
                 consume(TOKEN_FAT_ARROW);
                 vec_push(s->match.statements, parse_statement());
         }

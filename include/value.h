@@ -51,9 +51,6 @@
                 return NULL; \
         }
 
-
-#define NONE          TAG(1)
-
 typedef vec(struct value) value_vector;
 
 struct value_array {
@@ -109,7 +106,7 @@ struct value {
                 VALUE_TAG              = 1 << 10,
                 VALUE_TAGGED           = 1 << 11,
                 VALUE_STRING           = 1 << 12,
-                VALUE_BLOB             = 1 << 13
+                VALUE_BLOB             = 1 << 13,
         } type;
         int tags;
         union {
