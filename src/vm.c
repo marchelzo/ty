@@ -151,7 +151,6 @@ callmethod(struct value *f, struct value *self)
 {
         for (int i = 0; i < f->bound_symbols.count; ++i)
                 vars[f->bound_symbols.items[i]] = newvar(vars[f->bound_symbols.items[i]]);
-
         int n;
 
         /* get the number of arguments passed */
@@ -460,17 +459,57 @@ vm_exec(char *code)
                         break;
                 CASE(FOR_EACH)
                         v = pop();
-                        if (v.type != VALUE_ARRAY)
-                                vm_panic("for each loop on non-array");
                         READVALUE(n);
                         char *first = ip;
                         char instr = *ip;
-                        for (int i = 0; *first != INSTR_HALT && i < v.array->count; ++i) {
-                                push(v.array->items[i]);
-                                vm_exec(ip);
+
+                        switch (v.type) {
+                        case VALUE_ARRAY:
+                                for (int i = 0; *first != INSTR_HALT && i < v.array->count; ++i) {
+                                        push(v.array->items[i]);
+                                        vm_exec(ip);
+                                }
+                                break;
+                        case VALUE_OBJECT:
+                                for (int i = 0; i < OBJECT_NUM_BUCKETS; ++i) {
+                                        struct object_node *node = v.object->buckets[i];
+                                        while (node != NULL) {
+                                                push(node->key);
+                                                vm_exec(ip);
+                                                node = node->next;
+                                        }
+                                }
+                                break;
+                        default:
+                                vp = NULL;
+                                int tags;
+                                for (tags = v.tags; vp == NULL && tags != 0; tags = tags_pop(tags))
+                                        vp = tags_lookup_method(tags_first(tags), "__iter__");
+                                if (vp == NULL)
+                                        vm_panic("for-each loop on non-iterable value: %s", value_show(&v));
+                                vec_push(this_stack, v);
+                                v.tags = tags;
+                                if (v.tags == 0)
+                                        v.type &= ~VALUE_TAGGED;
+                                struct value iterator = vm_eval_function(vp, &v);
+                                vp = NULL;
+                                for (tags = iterator.tags; vp == NULL && tags != 0; tags = tags_pop(tags))
+                                        vp = tags_lookup_method(tags_first(tags), "__next__");
+                                if (vp == NULL)
+                                        vm_panic("__iter__() on %s returned a non-iterator", value_show(&v));
+                                v = iterator;
+                                iterator.tags = tags;
+                                if (iterator.tags == 0)
+                                        iterator.type &= ~VALUE_TAGGED;
+                                for (struct value item; vec_push(this_stack, v), (item = vm_eval_function(vp, &iterator)).type != VALUE_NIL;) {
+                                        push(item);
+                                        vm_exec(ip);
+                                }
                         }
+
                         *first = instr;
                         ip += + n;
+
                         break;
                 CASE(BREAK_EACH)
                         *save = INSTR_HALT;
@@ -1002,22 +1041,18 @@ vm_eval_function(struct value const *f, struct value *v)
                 vec_push(callstack, &halt);
 
                 for (int i = 0; i < f->bound_symbols.count; ++i) {
-                        if (vars[f->bound_symbols.items[i]] == NULL) {
+                        if (vars[f->bound_symbols.items[i]] == NULL)
                                 vars[f->bound_symbols.items[i]] = newvar(NULL);
-                        }
-                        if (vars[f->bound_symbols.items[i]]->prev == NULL) {
+                        if (vars[f->bound_symbols.items[i]]->prev == NULL)
                                 vars[f->bound_symbols.items[i]]->prev = newvar(vars[f->bound_symbols.items[i]]);
-                        }
                         vars[f->bound_symbols.items[i]] = vars[f->bound_symbols.items[i]]->prev;
                 }
 
-                if (f->param_symbols.count >= 1 && v != NULL) {
+                if (f->param_symbols.count >= 1 && v != NULL)
                         vars[f->param_symbols.items[0]]->value = *v;
-                }
 
-                for (int i = 1 - !v; i < f->param_symbols.count; ++i) {
+                for (int i = 1 - !v; i < f->param_symbols.count; ++i)
                         vars[f->param_symbols.items[i]]->value = NIL;
-                }
 
                 for (int i = 0; i < f->refs->count; ++i) {
                         struct reference ref = f->refs->refs[i];

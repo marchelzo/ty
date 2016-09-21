@@ -1,9 +1,11 @@
 #ifndef OBJECT_H_INCLUDED
 #define OBJECT_H_INCLUDED
 
-#include "value.h"
+enum {
+        OBJECT_NUM_BUCKETS = 128,
+};
 
-struct object;
+#include "value.h"
 
 struct object *
 object_new(void);

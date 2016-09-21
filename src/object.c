@@ -10,32 +10,12 @@
 #include "log.h"
 #include "gc.h"
 
-enum {
-        OBJECT_NUM_BUCKETS = 128,
-};
-
-struct object_hashmap_node {
-        struct value key;
-        struct value value;
-        struct object_hashmap_node *next;
-};
-
-struct object {
-        struct object_hashmap_node *buckets[OBJECT_NUM_BUCKETS];
-        size_t count;
-
-        unsigned char mark;
-        struct object *next;
-};
-
-static struct value nil = { .type = VALUE_NIL };
-
 static struct object *object_chain = NULL;
 
-static struct object_hashmap_node *
-mknode(struct value key, struct value value, struct object_hashmap_node *next)
+static struct object_node *
+mknode(struct value key, struct value value, struct object_node *next)
 {
-        struct object_hashmap_node *node = gc_alloc(sizeof *node);
+        struct object_node *node = gc_alloc(sizeof *node);
 
         node->key = key;
         node->value = value;
@@ -48,8 +28,8 @@ static void
 freeobj(struct object *obj)
 {
         for (int i = 0; i < OBJECT_NUM_BUCKETS; ++i) {
-                for (struct object_hashmap_node *node = obj->buckets[i]; node != NULL;) {
-                        struct object_hashmap_node *next = node->next;
+                for (struct object_node *node = obj->buckets[i]; node != NULL;) {
+                        struct object_node *next = node->next;
                         LOG("FREEING OBJECT NODE");
                         free(node);
                         node = next;
@@ -62,7 +42,7 @@ freeobj(struct object *obj)
 }
 
 static struct value *
-bucket_find(struct object_hashmap_node *node, struct value const *key)
+bucket_find(struct object_node *node, struct value const *key)
 {
         while (node != NULL) {
                 if (value_test_equality(&node->key, key)) {
@@ -129,7 +109,7 @@ object_put_key_if_not_exists(struct object *obj, struct value key)
                 return valueptr;
         } else {
                 obj->count += 1;
-                obj->buckets[bucket_index] = mknode(key, nil, obj->buckets[bucket_index]);
+                obj->buckets[bucket_index] = mknode(key, NIL, obj->buckets[bucket_index]);
                 return &obj->buckets[bucket_index]->value;
         }
 }
@@ -160,7 +140,7 @@ object_keys_array(struct object *obj)
         struct value_array *keys = value_array_new();
 
         for (int i = 0; i < OBJECT_NUM_BUCKETS; ++i) {
-                for (struct object_hashmap_node *node = obj->buckets[i]; node != NULL; node = node->next) {
+                for (struct object_node *node = obj->buckets[i]; node != NULL; node = node->next) {
                         vec_push(*keys, node->key);
                 }
         }
@@ -174,7 +154,7 @@ object_mark(struct object *obj)
         obj->mark |= GC_MARK;
 
         for (int i = 0; i < OBJECT_NUM_BUCKETS; ++i) {
-                for (struct object_hashmap_node *node = obj->buckets[i]; node != NULL; node = node->next) {
+                for (struct object_node *node = obj->buckets[i]; node != NULL; node = node->next) {
                         value_mark(&node->key);
                         value_mark(&node->value);
                 }

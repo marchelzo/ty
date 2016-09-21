@@ -7,9 +7,9 @@
 
 #include "vec.h"
 #include "ast.h"
-#include "object.h"
 #include "gc.h"
 #include "tags.h"
+#include "object.h"
 
 #define INTEGER(k)    ((struct value){ .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 })
 #define REAL(f)       ((struct value){ .type = VALUE_REAL,             .real             = (f), .tags = 0 })
@@ -135,6 +135,20 @@ struct value {
                         char *code;
                 };
         };
+};
+
+struct object_node {
+        struct value key;
+        struct value value;
+        struct object_node *next;
+};
+
+struct object {
+        struct object_node *buckets[OBJECT_NUM_BUCKETS];
+        size_t count;
+
+        unsigned char mark;
+        struct object *next;
 };
 
 unsigned long
