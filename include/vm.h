@@ -41,6 +41,8 @@ enum instruction {
         INSTR_SUBSCRIPT,
         INSTR_CALL,
         INSTR_CALL_METHOD,
+        INSTR_FOR_EACH,
+        INSTR_BREAK_EACH,
         INSTR_POP,
         INSTR_DUP,
         INSTR_LEN,

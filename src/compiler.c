@@ -86,6 +86,7 @@ struct state {
 
         int function_depth;
         bool in_method;
+        bool each_loop;
 
         import_vector imports;
         vec(char *) exports;
@@ -315,6 +316,7 @@ freshstate(void)
 
         s.function_depth = 0;
         s.in_method = false;
+        s.each_loop = false;
 
         s.filename = NULL;
         s.loc = (struct location){ 0, 0 };
@@ -932,6 +934,8 @@ emit_while_loop(struct statement const *s)
 {
         offset_vector cont_save = state.continues;
         offset_vector brk_save = state.breaks;
+        bool each_loop_save = state.each_loop;
+        state.each_loop = false;
         vec_init(state.continues);
         vec_init(state.breaks);
 
@@ -950,6 +954,7 @@ emit_while_loop(struct statement const *s)
 
         state.continues = cont_save;
         state.breaks = brk_save;
+        state.each_loop = each_loop_save;
 }
 
 static void
@@ -957,6 +962,8 @@ emit_for_loop(struct statement const *s)
 {
         offset_vector cont_save = state.continues;
         offset_vector brk_save = state.breaks;
+        bool each_loop_save = state.each_loop;
+        state.each_loop = false;
         vec_init(state.continues);
         vec_init(state.breaks);
 
@@ -985,6 +992,7 @@ emit_for_loop(struct statement const *s)
 
         state.continues = cont_save;
         state.breaks = brk_save;
+        state.each_loop = each_loop_save;
 }
 
 static void
@@ -1187,6 +1195,8 @@ emit_while_match(struct statement const *s)
         offset_vector brk_save = state.breaks;
         offset_vector cont_save = state.continues;
         offset_vector successes_save = state.match_successes;
+        bool each_loop_save = state.each_loop;
+        state.each_loop = false;
         vec_init(state.breaks);
         vec_init(state.continues);
         vec_init(state.match_successes);
@@ -1220,6 +1230,7 @@ emit_while_match(struct statement const *s)
         state.match_successes = successes_save;
         state.breaks = brk_save;
         state.continues = cont_save;
+        state.each_loop = each_loop_save;
 }
 
 static void
@@ -1228,6 +1239,8 @@ emit_while_let(struct statement const *s)
         offset_vector brk_save = state.breaks;
         offset_vector cont_save = state.continues;
         offset_vector successes_save = state.match_successes;
+        bool each_loop_save = state.each_loop;
+        state.each_loop = false;
         vec_init(state.breaks);
         vec_init(state.continues);
         vec_init(state.match_successes);
@@ -1259,6 +1272,7 @@ emit_while_let(struct statement const *s)
         state.match_successes = successes_save;
         state.breaks = brk_save;
         state.continues = cont_save;
+        state.each_loop = each_loop_save;
 }
 
 static void
@@ -1312,65 +1326,24 @@ emit_match_expression(struct expression const *e)
 static void
 emit_each_loop(struct statement const *s)
 {
-        offset_vector cont_save = state.continues;
-        offset_vector brk_save = state.breaks;
-        vec_init(state.continues);
-        vec_init(state.breaks);
+        bool each_loop_save = state.each_loop;
+        state.each_loop = true;
 
         emit_expression(s->each.array);
 
-        struct symbol *array_sym = tmpsymbol();
-        emit_instr(INSTR_PUSH_VAR);
-        emit_symbol(array_sym->symbol);
+        emit_instr(INSTR_FOR_EACH);
 
-        struct symbol *counter_sym = tmpsymbol();
-        emit_instr(INSTR_PUSH_VAR);
-        emit_symbol(counter_sym->symbol);
+        size_t start = state.code.count;
+        emit_int(0);
 
-        emit_instr(INSTR_TARGET_VAR);
-        emit_symbol(array_sym->symbol);
-        emit_instr(INSTR_ASSIGN);
-        emit_instr(INSTR_POP);
-
-        emit_instr(INSTR_INTEGER);
-        emit_integer(-1);
-
-        assert(array_sym->symbol != counter_sym->symbol);
-
-        emit_instr(INSTR_TARGET_VAR);
-        emit_symbol(counter_sym->symbol);
-        emit_instr(INSTR_ASSIGN);
-        emit_instr(INSTR_POP);
-
-        size_t begin = state.code.count;
-
-        emit_instr(INSTR_INC);
-        emit_symbol(counter_sym->symbol);
-
-        emit_instr(INSTR_LOAD_VAR);
-        emit_symbol(counter_sym->symbol);
-        emit_instr(INSTR_LOAD_VAR);
-        emit_symbol(array_sym->symbol);
-        emit_instr(INSTR_LEN);
-        emit_instr(INSTR_LT);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end);
-
-        struct expression array = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = array_sym, .local = true);
-        struct expression index = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = counter_sym, .local = true);
-        struct expression subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &array, .subscript = &index);
-        emit_assignment(s->each.target, &subscript);
-        emit_instr(INSTR_POP);
+        emit_assignment(s->each.target, NULL);
         emit_statement(s->each.body);
+        emit_instr(INSTR_HALT);
 
-        JUMP(begin);
+        int n = state.code.count - start - sizeof (int);
+        memcpy(state.code.items + start, &n, sizeof (int));
 
-        PATCH_JUMP(end);
-
-        patch_loop_jumps(begin, state.code.count);
-
-        state.continues = cont_save;
-        state.breaks = brk_save;
+        state.each_loop = each_loop_save;
 }
 
 static void
@@ -1744,14 +1717,22 @@ emit_statement(struct statement const *s)
                 emit_instr(INSTR_RETURN);
                 break;
         case STATEMENT_BREAK:
-                emit_instr(INSTR_JUMP);
-                vec_push(state.breaks, state.code.count);
-                emit_int(0);
+                if (state.each_loop) {
+                        emit_instr(INSTR_BREAK_EACH);
+                } else {
+                        emit_instr(INSTR_JUMP);
+                        vec_push(state.breaks, state.code.count);
+                        emit_int(0);
+                }
                 break;
-        case STATEMENT_CONTINUE:
-                emit_instr(INSTR_JUMP);
-                vec_push(state.continues, state.code.count);
-                emit_int(0);
+        case STATEMENT_CONTINUE: 
+                if (state.each_loop) {
+                        emit_instr(INSTR_HALT);
+                } else {
+                        emit_instr(INSTR_JUMP); 
+                        vec_push(state.continues, state.code.count);
+                        emit_int(0);
+                }
                 break;
         }
 }

@@ -458,6 +458,23 @@ vm_exec(char *code)
                         v = builtin_str(&(value_vector){ .items = &v, .count = 1 });
                         push(v);
                         break;
+                CASE(FOR_EACH)
+                        v = pop();
+                        if (v.type != VALUE_ARRAY)
+                                vm_panic("for each loop on non-array");
+                        READVALUE(n);
+                        char *first = ip;
+                        char instr = *ip;
+                        for (int i = 0; *first != INSTR_HALT && i < v.array->count; ++i) {
+                                push(v.array->items[i]);
+                                vm_exec(ip);
+                        }
+                        *first = instr;
+                        ip += + n;
+                        break;
+                CASE(BREAK_EACH)
+                        *save = INSTR_HALT;
+                        goto halt;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
                         LOG("n = %d", n);
@@ -850,6 +867,7 @@ vm_exec(char *code)
                         ip = *vec_pop(callstack);
                         break;
                 CASE(HALT)
+                halt:
                         ip = save;
                         return;
                 }
