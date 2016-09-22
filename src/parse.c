@@ -881,9 +881,8 @@ infix_arrow_function(struct expression *left)
          * If it's not a list, we need to make sure it's a valid definition lvalue.
          * For example, ([a, b, c] -> a + b * c) is allowed, but not ([a[0], b, c] -> b * c).
          */
-        if (left->type != EXPRESSION_LIST) {
+        if (left->type != EXPRESSION_LIST)
                 left = definition_lvalue(left);
-        }
 
         consume(TOKEN_ARROW);
 
@@ -1166,13 +1165,14 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_TAG_APPLICATION:
                 return e;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i) {
+                if (e->elements.count == 0)
+                        break;
+                for (size_t i = 0; i < e->elements.count; ++i)
                         e->elements.items[i] = assignment_lvalue(e->elements.items[i]);
-                }
                 return e;
-        default:
-                error("expression is not a valid definition lvalue");
         }
+
+        error("expression is not a valid definition lvalue");
 }
 
 static struct expression *
@@ -1638,6 +1638,18 @@ parse_tag_definition(void)
         vec_init(s->tag.methods);
 
         consume(TOKEN_IDENTIFIER);
+
+        if (tok()->type == ':') {
+                consume(':');
+                expect(TOKEN_IDENTIFIER);
+                s->tag.super = mkexpr();
+                s->tag.super->type = EXPRESSION_IDENTIFIER;
+                s->tag.super->identifier = tok()->identifier;
+                s->tag.super->module = tok()->module;
+                consume(TOKEN_IDENTIFIER);
+        } else {
+                s->tag.super = NULL;
+        }
 
         if (tok()->type == ';') {
                 consume(';');

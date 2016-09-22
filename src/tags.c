@@ -4,7 +4,12 @@
 #include "value.h"
 #include "alloc.h"
 #include "log.h"
+#include "util.h"
 #include "vec.h"
+
+enum {
+        METHOD_TABLE_SIZE = 16
+};
 
 struct tags;
 
@@ -20,9 +25,14 @@ struct tags {
         vec(struct link) links;
 };
 
-struct method_table {
+struct method_bucket {
+        vec(uint64_t) hashes;
         vec(char const *) names;
         vec(struct value) methods;
+};
+
+struct method_table {
+        struct method_bucket buckets[METHOD_TABLE_SIZE];
 };
 
 static int tagcount = 0;
@@ -62,9 +72,13 @@ tags_new(char const *tag)
         vec_push(names, tag);
 
         struct method_table table;
-        vec_init(table.names);
-        vec_init(table.methods);
         vec_push(method_tables, table);
+
+        for (int i = 0; i < METHOD_TABLE_SIZE; ++i) {
+                vec_init(method_tables.items[tagcount - 1].buckets[i].hashes);
+                vec_init(method_tables.items[tagcount - 1].buckets[i].names);
+                vec_init(method_tables.items[tagcount - 1].buckets[i].methods);
+        }
 
         mklist(tagcount, lists.items[0]);
         return tagcount++;
@@ -155,19 +169,60 @@ tags_name(int tag)
 void
 tags_add_method(int tag, char const *name, struct value f)
 {
-        vec_push(method_tables.items[tag - 1].names, name);
-        vec_push(method_tables.items[tag - 1].methods, f);
+        uint64_t h = strhash(name);
+        int i = h % METHOD_TABLE_SIZE;
+
+        struct value *m = tags_lookup_method(tag, name);
+        if (m != NULL) {
+                *m = f;
+                return;
+        }
+
+        vec_push(method_tables.items[tag - 1].buckets[i].hashes, h);
+        vec_push(method_tables.items[tag - 1].buckets[i].names, name);
+        vec_push(method_tables.items[tag - 1].buckets[i].methods, f);
+}
+
+void
+tags_copy_methods(int dst, int src)
+{
+        struct method_bucket *dt = method_tables.items[dst - 1].buckets;
+        struct method_bucket *st = method_tables.items[src - 1].buckets;
+
+        for (int i = 0; i < METHOD_TABLE_SIZE; ++i) {
+                if (st[i].hashes.count == 0)
+                        continue;
+                vec_push_n(
+                        dt[i].hashes,
+                        st[i].hashes.items,
+                        st[i].hashes.count
+                );
+                vec_push_n(
+                        dt[i].names,
+                        st[i].names.items,
+                        st[i].names.count
+                );
+                vec_push_n(
+                        dt[i].methods,
+                        st[i].methods.items,
+                        st[i].methods.count
+                );
+        }
 }
 
 struct value *
 tags_lookup_method(int tag, char const *name)
 {
-        struct method_table *t = &method_tables.items[tag - 1];
+        uint64_t h = strhash(name);
+        int i = h % METHOD_TABLE_SIZE;
 
-        for (int i = 0; i < t->names.count; ++i) {
-                if (strcmp(t->names.items[i], name) == 0) {
-                        return &t->methods.items[i];
-                }
+        struct method_bucket const *b = &method_tables.items[tag - 1].buckets[i];
+
+        for (int i = 0; i < b->hashes.count; ++i) {
+                if (b->hashes.items[i] != h)
+                        continue;
+                if (strcmp(b->names.items[i], name) == 0)
+                        return &b->methods.items[i];
         }
 
         return NULL;

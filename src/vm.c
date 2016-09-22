@@ -643,9 +643,12 @@ vm_exec(char *code)
                         left = pop();
                         push(binary_operator_greater_than_or_equal(&left, &right));
                         break;
-                CASE(KEYS)
+                CASE(GET_TAG)
                         v = pop();
-                        push(unary_operator_keys(&v));
+                        if (v.tags == 0)
+                                push(NIL);
+                        else
+                                push(TAG(tags_first(v.tags)));
                         break;
                 CASE(LEN)
                         v = pop();
@@ -715,6 +718,14 @@ vm_exec(char *code)
                     tags_add_method(tag, ip, v);
                     ip += strlen(ip) + 1;
                     break;
+                CASE(EXTEND_TAG)
+                {
+                        int src, dst;
+                        READVALUE(dst);
+                        READVALUE(src);
+                        tags_copy_methods(dst, src);
+                        break;
+                }
                 CASE(FUNCTION)
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
@@ -818,14 +829,10 @@ vm_exec(char *code)
                         char const *method = ip;
                         ip += strlen(ip) + 1;
 
-                        LOG("calling method: %s", method);
-
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method);
                                 if (vp != NULL) {
                                         vec_push(this_stack, value);
-
-                                        LOG("found method: tags = %d", value.tags);
 
                                         value.tags = tags_pop(tags);
                                         if (value.tags == 0)
@@ -846,7 +853,7 @@ vm_exec(char *code)
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method);
                                 if (vp != NULL)
-                                        vec_push(this_stack, NIL);
+                                        vec_push(this_stack, value);
                                 break;
                         case VALUE_OBJECT:
                                 vp = object_get_member(value.object, method);

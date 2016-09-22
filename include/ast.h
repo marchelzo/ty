@@ -51,6 +51,7 @@ struct statement {
                 struct {
                         char *name;
                         int tag;
+                        struct expression *super;
                         vec(struct expression *) methods;
                 } tag;
                 struct {

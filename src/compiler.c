@@ -611,6 +611,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->expression);
                 break;
         case STATEMENT_TAG_DEFINITION:
+                if (s->tag.super != NULL) {
+                        if (!istag(s->tag.super))
+                                fail("attempt to extend non-tag");
+                        symbolize_expression(scope, s->tag.super);
+                }
                 s->tag.tag = definetag(s);
                 for (int i = 0; i < s->tag.methods.count; ++i) {
                         /*
@@ -1602,7 +1607,7 @@ emit_expression(struct expression const *e)
                 break;
         case EXPRESSION_PREFIX_AT:
                 emit_expression(e->operand);
-                emit_instr(INSTR_KEYS);
+                emit_instr(INSTR_GET_TAG);
                 break;
         case EXPRESSION_PREFIX_MINUS:
                 emit_expression(e->operand);
@@ -1693,6 +1698,11 @@ emit_statement(struct statement const *s)
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_TAG_DEFINITION:
+                if (s->tag.super != NULL) {
+                        emit_instr(INSTR_EXTEND_TAG);
+                        emit_int(s->tag.tag);
+                        emit_int(s->tag.super->symbol->tag);
+                }
                 for (int i = 0; i < s->tag.methods.count; ++i) {
                         emit_instr(INSTR_FUNCTION);
                         emit_function(s->tag.methods.items[i]);

@@ -69,11 +69,9 @@ static struct {
 int
 operator_get_token_type(char const *s)
 {
-        for (size_t i = 0; i < sizeof operators / sizeof operators[0]; ++i) {
-                if (strcmp(s, operators[i].op) == 0) {
+        for (size_t i = 0; i < sizeof operators / sizeof operators[0]; ++i)
+                if (strcmp(s, operators[i].op) == 0)
                         return operators[i].toktype;
-                }
-        }
 
         return -1;
 }
@@ -81,11 +79,9 @@ operator_get_token_type(char const *s)
 int
 keyword_get_number(char const *s)
 {
-        for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; ++i) {
-                if (strcmp(s, keywords[i].string) == 0) {
+        for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; ++i)
+                if (strcmp(s, keywords[i].string) == 0)
                         return keywords[i].kw_num;
-                }
-        }
 
         return -1;
 }
@@ -93,11 +89,9 @@ keyword_get_number(char const *s)
 char const *
 keyword_show(int kw)
 {
-        for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; ++i) {
-                if (keywords[i].kw_num == kw) {
+        for (size_t i = 0; i < sizeof keywords / sizeof keywords[0]; ++i)
+                if (keywords[i].kw_num == kw)
                         return keywords[i].string;
-                }
-        }
 
         return NULL;
 }
@@ -124,6 +118,7 @@ token_show_type(int type)
         case TOKEN_FAT_ARROW:      return "token '=>'";
         case TOKEN_SQUIGGLY_ARROW: return "token '~>'";
         case TOKEN_DOT_DOT:        return "token '..'";
+        case TOKEN_DOLLAR:        return "token '$'";
         case TOKEN_AND:            return "operator '&&'";
         case TOKEN_OR:             return "operator '||'";
         case TOKEN_BIT_OR:         return "token '|'";

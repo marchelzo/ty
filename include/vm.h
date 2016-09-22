@@ -69,6 +69,7 @@ enum instruction {
 
         INSTR_TAG_PUSH,
         INSTR_DEFINE_METHOD,
+        INSTR_EXTEND_TAG,
         INSTR_TRY_INDEX,
         INSTR_TRY_TAG_POP,
         INSTR_TRY_REGEX,
@@ -99,7 +100,7 @@ enum instruction {
         // unary operators
         INSTR_NEG,
         INSTR_NOT,
-        INSTR_KEYS,
+        INSTR_GET_TAG,
 };
 
 bool

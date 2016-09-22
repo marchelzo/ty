@@ -3,24 +3,14 @@
 
 #include "scope.h"
 #include "alloc.h"
+#include "util.h"
 
 static int SYMBOL;
-
-static uint64_t
-hash(char const *s)
-{
-        uint64_t hash = 5381;
-
-        while (*s != '\0')
-                hash = ((hash << 5) + hash) + *s++; /* hash * 33 + c */
-
-        return hash;
-}
 
 inline static struct symbol *
 local_lookup(struct scope const *s, char const *id)
 {
-        uint64_t h = hash(id);
+        uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
 
         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next)
@@ -70,7 +60,7 @@ scope_locally_defined(struct scope const *s, char const *id)
 struct symbol *
 scope_add(struct scope *s, char const *id)
 {
-        uint64_t h = hash(id);
+        uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
 
         struct symbol *sym = alloc(sizeof *sym);
