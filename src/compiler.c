@@ -37,8 +37,10 @@
         } while (false)
 
 #define JUMP(loc) \
-        emit_instr(INSTR_JUMP); \
-        emit_int(loc - state.code.count - sizeof (int));
+        do { \
+                emit_instr(INSTR_JUMP); \
+                emit_int(loc - state.code.count - sizeof (int)); \
+        } while (false)
 
 #define EXPR(...) ((struct expression){ .loc = { -1, -1 }, __VA_ARGS__ })
 
@@ -78,6 +80,9 @@ struct state {
 
         symbol_vector bound_symbols;
         reference_vector refs;
+
+        int_vector check;
+        struct scope *check_scope;
         
         offset_vector breaks;
         offset_vector continues;
@@ -274,14 +279,20 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         if (s->scope->external && !s->public)
                 fail("reference to non-public external variable '%s'", name);
 
+        bool is_local = s->scope->function == scope->function;
+
         if (local != NULL)
-                *local = s->scope->function == scope->function;
+                *local = is_local;
+
+        if (!is_local && scope_is_subscope(s->scope, state.check_scope))
+                vec_push(state.check, s->symbol);
+
 
         return s;
 }
 
 inline static struct symbol *
-tmpsymbol()
+tmpsymbol(void)
 {
         static int i;
         static char idbuf[8];
@@ -306,6 +317,9 @@ freshstate(void)
         vec_init(s.refs);
         vec_init(s.bound_symbols);
 
+        vec_init(s.check);
+        s.check_scope = NULL;
+
         vec_init(s.breaks);
         vec_init(s.continues);
 
@@ -324,6 +338,21 @@ freshstate(void)
         vec_init(s.expression_locations);
 
         return s;
+}
+
+inline static bool
+is_loop(struct statement const *s)
+{
+        switch (s->type) {
+        case STATEMENT_FOR_LOOP:
+        case STATEMENT_WHILE_LOOP:
+        case STATEMENT_WHILE_LET:
+        case STATEMENT_EACH_LOOP:
+        case STATEMENT_WHILE_MATCH:
+                return true;
+        default:
+                return false;
+        }
 }
 
 static struct scope *
@@ -586,14 +615,23 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         symbolize_expression(scope, e->values.items[i]);
                 }
                 break;
+        case EXPRESSION_MATCH_REST:
+                fail("*<identifier> 'match-rest' pattern used outside of pattern context");
         }
 }
 
 static void
 symbolize_statement(struct scope *scope, struct statement *s)
 {
-        if (s == NULL) {
+        if (s == NULL)
                 return;
+
+        int_vector check_save = state.check;
+        struct scope *check_scope_save = state.check_scope;
+
+        if (is_loop(s)) {
+                vec_init(state.check);
+                state.check_scope = scope;
         }
 
         state.loc = s->loc;
@@ -642,8 +680,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 for (size_t i = 0; i < s->statements.count; ++i)
                         symbolize_statement(scope, s->statements.items[i]);
                 break;
-        case STATEMENT_MATCH:
         case STATEMENT_WHILE_MATCH:
+        case STATEMENT_MATCH:
                 symbolize_expression(scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
                         subscope = scope_new(scope, false);
@@ -651,12 +689,14 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_expression(subscope, s->match.conds.items[i]);
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }
+                s->match.check = state.check;
                 break;
         case STATEMENT_WHILE_LET:
                 symbolize_expression(scope, s->while_let.e);
                 subscope = scope_new(scope, false);
                 symbolize_pattern(subscope, s->while_let.pattern);
                 symbolize_statement(subscope, s->while_let.block);
+                s->while_let.check = state.check;
                 break;
         case STATEMENT_IF_LET:
                 symbolize_expression(scope, s->if_let.e);
@@ -671,16 +711,20 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->for_loop.cond);
                 symbolize_expression(scope, s->for_loop.next);
                 symbolize_statement(scope, s->for_loop.body);
+                s->for_loop.check = state.check;
                 break;
         case STATEMENT_EACH_LOOP:
                 scope = scope_new(scope, false);
                 symbolize_lvalue(scope, s->each.target, true);
                 symbolize_expression(scope, s->each.array);
                 symbolize_statement(scope, s->each.body);
+                s->each.check = state.check;
                 break;
         case STATEMENT_WHILE_LOOP:
+                scope = scope_new(scope, false);
                 symbolize_expression(scope, s->while_loop.cond);
                 symbolize_statement(scope, s->while_loop.body);
+                s->while_loop.check = state.check;
                 break;
         case STATEMENT_CONDITIONAL:
                 symbolize_expression(scope, s->conditional.cond);
@@ -695,9 +739,14 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(scope, s->target, true);
                 break;
         }
+
+        if (is_loop(s)) {
+                state.check_scope = check_scope_save;
+                state.check = check_save;
+        }
 }
 
-static void
+inline static void
 patch_jumps_to(offset_vector const *js, size_t location)
 {
         for (int i = 0; i < js->count; ++i) {
@@ -706,7 +755,7 @@ patch_jumps_to(offset_vector const *js, size_t location)
         }
 }
 
-static void
+inline static void
 patch_loop_jumps(size_t begin, size_t end)
 {
         patch_jumps_to(&state.continues, begin);
@@ -781,6 +830,15 @@ emit_string(char const *s)
         for (int i = 0; i < n; ++i) {
                 vec_push(state.code, s[i]);
         }
+}
+
+inline static void
+emit_checks(int_vector check)
+{
+        emit_instr(INSTR_CHECK_VARS);
+        emit_int(check.count);
+        for (int i = 0; i < check.count; ++i)
+                emit_symbol(check.items[i]);
 }
 
 static void
@@ -946,6 +1004,7 @@ emit_while_loop(struct statement const *s)
 
         size_t begin = state.code.count;
 
+        emit_checks(s->while_loop.check);
         emit_expression(s->while_loop.cond);
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end);
 
@@ -979,6 +1038,7 @@ emit_for_loop(struct statement const *s)
 
         size_t begin = state.code.count;
 
+        emit_checks(s->for_loop.check);
         emit_expression(s->for_loop.next);
         emit_instr(INSTR_POP);
 
@@ -1121,8 +1181,8 @@ emit_case(struct expression const *pattern, struct expression const *condition, 
         if (condition != NULL)
                 PATCH_JUMP(failcond);
 
-        emit_instr(INSTR_RESTORE_STACK_POS);
         patch_jumps_to(&state.match_fails, state.code.count);
+        emit_instr(INSTR_RESTORE_STACK_POS);
 
         state.match_fails = fails_save;
 }
@@ -1208,6 +1268,8 @@ emit_while_match(struct statement const *s)
 
         size_t begin = state.code.count;
 
+        emit_checks(s->match.check);
+
         emit_expression(s->match.e);
 
         for (int i = 0; i < s->match.patterns.count; ++i) {
@@ -1251,6 +1313,8 @@ emit_while_let(struct statement const *s)
         vec_init(state.match_successes);
 
         size_t begin = state.code.count;
+
+        emit_checks(s->while_let.check);
 
         emit_expression(s->while_let.e);
 
@@ -1340,6 +1404,8 @@ emit_each_loop(struct statement const *s)
 
         size_t start = state.code.count;
         emit_int(0);
+
+        emit_checks(s->each.check);
 
         emit_assignment(s->each.target, NULL);
         emit_statement(s->each.body);

@@ -114,6 +114,18 @@ scope_copy_public(struct scope *dst, struct scope const *src)
         return NULL;
 }
 
+bool
+scope_is_subscope(struct scope const *sub, struct scope const *scope)
+{
+        while (sub != NULL) {
+                if (sub->parent == scope)
+                        return true;
+                sub = sub->parent;
+        }
+
+        return false;
+}
+
 int
 scope_get_symbol(void)
 {

@@ -120,7 +120,7 @@ utf8_stringcount(char const *str, int len, struct stringpos * restrict pos, stru
 
         while (len != 0) {
 
-                if (*str == '\n' || *str == '\r') {
+                if (*str == '\n' || *str == '\r' || *str == '\t') {
 
                         if (pos->graphemes == limit->graphemes)
                                 break;
@@ -229,7 +229,7 @@ utf8_nth_char(char const *str, int n, int *nb)
 {
         while (n > 0) {
 
-                if (*str == '\n' || *str == '\r') {
+                if (*str == '\n' || *str == '\r' || *str == '\t') {
                         str += 1;
                         --n;
                         continue;
@@ -249,7 +249,7 @@ utf8_nth_char(char const *str, int n, int *nb)
 
         for (;;) {
 
-                if (*str == '\n' || *str == '\r') {
+                if (*str == '\n' || *str == '\r' || *str == '\t') {
                         *nb = 1;
                         break;
                 }
@@ -269,19 +269,14 @@ utf8_nth_char(char const *str, int n, int *nb)
         return result;
 }
 
-inline static char *
-utf8_next_char(char const *s, int n)
+inline static int 
+utf8_char_len(char const *s)
 {
-	if (n == 0)
-		return NULL;
-
-	if (*s == '\n')
-		return ((char *)s) + 1;
+	if (*s == '\n' || *s == '\t' || *s == '\r')
+		return 1;
 
 	uint32_t cp;
-	int bytes = next_utf8(s, 64, &cp);
-
-	return ((char *)s) + bytes;
+	return next_utf8(s, 64, &cp);
 }
 
 #endif

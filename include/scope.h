@@ -49,6 +49,9 @@ scope_lookup(struct scope const *s, char const *id);
 void
 scope_insert(struct scope *s, struct symbol *sym);
 
+bool
+scope_is_subscope(struct scope const *sub, struct scope const *scope);
+
 char const *
 scope_copy_public(struct scope *dst, struct scope const *src);
 

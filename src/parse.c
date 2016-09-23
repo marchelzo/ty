@@ -439,9 +439,9 @@ prefix_star(void)
 
         expect(TOKEN_IDENTIFIER);
         e->identifier = tok()->identifier;
-        if (tok()->module != NULL) {
+        if (tok()->module != NULL)
                 error("unexpected module qualifier in lvalue");
-        }
+
         consume(TOKEN_IDENTIFIER);
 
         return e;

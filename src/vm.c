@@ -231,6 +231,21 @@ vm_exec(char *code)
                         LOG("loading %d", (int) s);
                         push(vars[s]->value);
                         break;
+                CASE(CHECK_VARS)
+                        READVALUE(n);
+                        while (n --> 0) {
+                                READVALUE(s);
+                                if (vars[s]->captured) {
+                                        struct variable *next = vars[s]->next;
+                                        if (vars[s]->next != NULL)
+                                                vars[s]->next->prev = NULL;
+                                        vars[s]->next = captured_chain;
+                                        captured_chain = vars[s];
+                                        vars[s] = newvar(next);
+                                        vars[s]->value = captured_chain->value;
+                                }
+                        }
+                        break;
                 CASE(EXEC_CODE)
                         READVALUE(s);
                         vm_exec((char *) s);
@@ -370,6 +385,7 @@ vm_exec(char *code)
                 CASE(TRY_INDEX)
                         READVALUE(index);
                         READVALUE(n);
+                        LOG("trying to index: %s", value_show(top()));
                         if (top()->type != VALUE_ARRAY || top()->array->count <= index)
                                 ip += n;
                         else
@@ -480,6 +496,23 @@ vm_exec(char *code)
                                         }
                                 }
                                 break;
+                        case VALUE_BLOB:
+                                for (int i = 0; i < v.blob->count; ++i) {
+                                        push(INTEGER(v.blob->items[i]));
+                                        vm_exec(ip);
+                                }
+                                break;
+                        case VALUE_STRING:
+                        {
+                                int offset = 0;
+                                while (offset < v.bytes) {
+                                        int bytes = utf8_char_len(v.string + offset);
+                                        push(STRING_VIEW(v, offset, bytes));
+                                        vm_exec(ip);
+                                        offset += bytes;
+                                }
+                                break;
+                        }
                         default:
                                 vp = NULL;
                                 int tags;

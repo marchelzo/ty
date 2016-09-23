@@ -175,11 +175,23 @@ show_string(char const *s, size_t n)
 
         vec_push(v, '\'');
 
-        for (char const *c = s; c < s + n;) {
-                if (*c == '\'') {
-                        vec_push(v, '\\');
-                }
-                vec_push(v, *c++);
+        for (char const *c = s; c < s + n; ++c) switch (*c) {
+        case '\t':
+                vec_push(v, '\\');
+                vec_push(v, 't');
+                break;
+        case '\r':
+                vec_push(v, '\\');
+                vec_push(v, 'r');
+                break;
+        case '\n':
+                vec_push(v, '\\');
+                vec_push(v, 'n');
+                break;
+        case '\'':
+                vec_push(v, '\\');
+        default:
+                vec_push(v, *c);
         }
 
         vec_push(v, '\'');

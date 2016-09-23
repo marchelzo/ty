@@ -11,6 +11,7 @@ enum instruction {
         INSTR_LOAD_VAR,
         INSTR_LOAD_REF,
         INSTR_PUSH_VAR,
+        INSTR_CHECK_VARS,
         INSTR_POP_VAR,
         INSTR_TARGET_VAR,
         INSTR_TARGET_REF,

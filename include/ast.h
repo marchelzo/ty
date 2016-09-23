@@ -10,6 +10,8 @@
 #include "vec.h"
 #include "scope.h"
 
+typedef vec(int) int_vector;
+
 struct expression;
 struct value;
 
@@ -38,6 +40,7 @@ struct statement {
                 STATEMENT_EXPORT,
         } type;
         struct location loc;
+
         union {
                 struct expression *expression;
                 struct expression *return_value;
@@ -59,15 +62,18 @@ struct statement {
                         struct expression *cond;
                         struct expression *next;
                         struct statement *body;
+                        int_vector check;
                 } for_loop;
                 struct {
                         struct expression *target;
                         struct expression *array;
                         struct statement *body;
+                        int_vector check;
                 } each;
                 struct {
                         struct expression *cond;
                         struct statement *body;
+                        int_vector check;
                 } while_loop;
                 struct {
                         struct expression *cond;
@@ -79,11 +85,13 @@ struct statement {
                         vec(struct expression *) patterns;
                         vec(struct expression *) conds;
                         vec(struct statement *) statements;
+                        int_vector check;
                 } match;
                 struct {
                         struct expression *e;
                         struct expression *pattern;
                         struct statement *block;
+                        int_vector check;
                 } while_let;
                 struct {
                         struct expression *e;
