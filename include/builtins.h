@@ -1,3 +1,6 @@
+#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
+#define INT(k)    { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
 { .module = NULL,     .name = "die",               .value = BUILTIN(builtin_die)                           },
 { .module = NULL,     .name = "read",              .value = BUILTIN(builtin_read)                          },
@@ -43,6 +46,7 @@
 { .module = "os",     .name = "F_DUPFD_CLOEXEC",   .value = INTEGER(F_DUPFD_CLOEXEC)                       },
 { .module = "os",     .name = "F_GETOWN",          .value = INTEGER(F_GETOWN)                              },
 { .module = "os",     .name = "F_SETOWN",          .value = INTEGER(F_SETOWN)                              },
+#ifdef __APPLE__
 { .module = "os",     .name = "F_GETPATH",         .value = INTEGER(F_GETPATH)                             },
 { .module = "os",     .name = "F_PREALLOCATE",     .value = INTEGER(F_PREALLOCATE)                         },
 { .module = "os",     .name = "F_SETSIZE",         .value = INTEGER(F_SETSIZE)                             },
@@ -54,6 +58,7 @@
 { .module = "os",     .name = "F_FULLFSYNC",       .value = INTEGER(F_FULLFSYNC)                           },
 { .module = "os",     .name = "F_SETNOSIGPIPE",    .value = INTEGER(F_SETNOSIGPIPE)                        },
 { .module = "os",     .name = "F_GETNOSIGPIPE",    .value = INTEGER(F_GETNOSIGPIPE)                        },
+#endif
 { .module = "errno",  .name = "get",               .value = BUILTIN(builtin_errno_get)                     },
 { .module = "errno",  .name = "str",               .value = BUILTIN(builtin_errno_str)                     },
 { .module = "errno",  .name = "ENOENT",            .value = INTEGER(ENOENT)                                },
@@ -65,3 +70,6 @@
 { .module = "errno",  .name = "ENOTDIR",           .value = INTEGER(ENOTDIR)                               },
 { .module = "errno",  .name = "ENOSPC",            .value = INTEGER(ENOSPC)                                },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
+
+#undef INT
+#undef BUILTIN

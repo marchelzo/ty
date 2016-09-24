@@ -19,7 +19,6 @@
 #define OBJECT(o)     ((struct value){ .type = VALUE_OBJECT,           .object           = (o), .tags = 0 })
 #define REGEX(r)      ((struct value){ .type = VALUE_REGEX,            .regex            = (r), .tags = 0 })
 #define FUNCTION()    ((struct value){ .type = VALUE_FUNCTION,                                  .tags = 0 })
-#define BUILTIN(f)    ((struct value){ .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 })
 #define TAG(t)        ((struct value){ .type = VALUE_TAG,              .tag              = (t), .tags = 0 })
 #define NIL           ((struct value){ .type = VALUE_NIL,                                       .tags = 0 })
 

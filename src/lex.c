@@ -559,6 +559,13 @@ lex_init(char const *file)
 void
 lex_start(char const *s)
 {
+        /*
+         * Eat the shebang if there is one.
+         */
+        if (s[0] == '#' && s[1] == '!')
+                while (*s != '\0' && *s++ != '\n')
+                        ;
+
         vec_push(states, chars);
         chars = s;
 }
