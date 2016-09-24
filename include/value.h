@@ -52,6 +52,7 @@
         }
 
 typedef vec(struct value) value_vector;
+#define NO_ARGS ((value_vector){ .count = 0 })
 
 struct value_array {
         struct value *items;

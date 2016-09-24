@@ -296,9 +296,8 @@ value_apply_predicate(struct value *p, struct value *v)
                 b = vm_eval_function(p, v);
                 return value_truthy(&b);
         case VALUE_REGEX:
-                if (v->type != VALUE_STRING) {
+                if (v->type != VALUE_STRING)
                         vm_panic("regex applied as predicate to non-string");
-                }
                 {
                         char const *s = v->string;
                         int len = v->bytes;
@@ -315,9 +314,8 @@ value_apply_predicate(struct value *p, struct value *v)
                                 0
                         );
 
-                        if (rc < -1) {
+                        if (rc < -1)
                                 vm_panic("error while executing regular expression");
-                        }
 
                         return rc == 0;
                 }
@@ -336,9 +334,8 @@ value_apply_callable(struct value const *f, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
                 return vm_eval_function(f, v);
         case VALUE_REGEX:
-                if (v->type != VALUE_STRING) {
+                if (v->type != VALUE_STRING)
                         vm_panic("regex applied as predicate to non-string");
-                }
 
                 static int ovec[30];
                 char const *s = v->string;
@@ -356,13 +353,11 @@ value_apply_callable(struct value const *f, struct value *v)
                         30
                 );
 
-                if (rc < -1) {
+                if (rc < -1)
                         vm_panic("error while executing regular expression");
-                }
 
-                if (rc == -1) {
+                if (rc == -1)
                         return NIL;
-                }
 
                 struct value match;
 
@@ -370,12 +365,14 @@ value_apply_callable(struct value const *f, struct value *v)
                         match = STRING_VIEW(*v, ovec[0], ovec[1] - ovec[0]);
                 } else {
                         match = ARRAY(value_array_new());
-                        vec_reserve(*match.array, rc);
+                        NOGC(match.array);
+                        value_array_reserve(match.array, rc);
 
                         int j = 0;
-                        for (int i = 0; i < rc; ++i, j += 2) {
-                                vec_push(*match.array, STRING_VIEW(*v, ovec[j], ovec[j + 1] - ovec[j]));
-                        }
+                        for (int i = 0; i < rc; ++i, j += 2)
+                                value_array_push(match.array, STRING_VIEW(*v, ovec[j], ovec[j + 1] - ovec[j]));
+
+                        OKGC(match.array);
                 }
 
                 return match;
@@ -394,9 +391,8 @@ value_apply_callable(struct value const *f, struct value *v)
 bool
 value_test_equality(struct value const *v1, struct value const *v2)
 {
-        if (v1->type != v2->type) {
+        if (v1->type != v2->type)
                 return false;
-        }
 
         switch (v1->type & ~VALUE_TAGGED) {
         case VALUE_REAL:             if (v1->real != v2->real)                                                      return false; break;
@@ -413,9 +409,8 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_NIL:                                                                                                           break;
         }
 
-        if (v1->tags != v2->tags || !tags_same(v1->tags, v2->tags)) {
+        if (v1->tags != v2->tags)
                 return false;
-        }
 
         return true;
 }
@@ -425,17 +420,15 @@ value_array_mark(struct value_array *a)
 {
         a->mark |= GC_MARK;
 
-        for (int i = 0; i < a->count; ++i) {
+        for (int i = 0; i < a->count; ++i)
                 value_mark(&a->items[i]);
-        }
 }
 
-inline static void
+static void
 function_mark_references(struct value *v)
 {
-        for (int i = 0; i < v->refs->count; ++i) {
+        for (size_t i = 0; i < v->refs->count; ++i)
                 vm_mark_variable((struct variable *)v->refs->refs[i].pointer);
-        }
 
         v->refs->mark |= GC_MARK;
 }
@@ -557,9 +550,10 @@ value_array_sweep(void)
                 free(array_chain);
                 array_chain = next;
         }
-        if (array_chain != NULL) {
+
+        if (array_chain != NULL)
                 array_chain->mark &= ~GC_MARK;
-        }
+        
         for (struct value_array *array = array_chain; array != NULL && array->next != NULL;) {
                 struct value_array *next;
                 if (array->next->mark == GC_NONE) {
@@ -570,9 +564,8 @@ value_array_sweep(void)
                 } else {
                         next = array->next;
                 }
-                if (next != NULL) {
+                if (next != NULL)
                         next->mark &= ~GC_MARK;
-                }
                 array = next;
         }
 }
@@ -586,9 +579,8 @@ value_blob_sweep(void)
                 free(blob_chain);
                 blob_chain = next;
         }
-        if (blob_chain != NULL) {
+        if (blob_chain != NULL)
                 blob_chain->mark &= ~GC_MARK;
-        }
         for (struct blob *blob = blob_chain; blob != NULL && blob->next != NULL;) {
                 struct blob *next;
                 if (blob->next->mark == GC_NONE) {
@@ -599,9 +591,8 @@ value_blob_sweep(void)
                 } else {
                         next = blob->next;
                 }
-                if (next != NULL) {
+                if (next != NULL)
                         next->mark &= ~GC_MARK;
-                }
                 blob = next;
         }
 }
@@ -614,9 +605,8 @@ value_string_sweep(void)
                 free(string_chain);
                 string_chain = next;
         }
-        if (string_chain != NULL) {
+        if (string_chain != NULL)
                 string_chain->mark &= ~GC_MARK;
-        }
         for (struct string *str = string_chain; str != NULL && str->next != NULL;) {
                 struct string *next;
                 if (str->next->mark == GC_NONE) {
@@ -626,9 +616,8 @@ value_string_sweep(void)
                 } else {
                         next = str->next;
                 }
-                if (next != NULL) {
+                if (next != NULL)
                         next->mark &= ~GC_MARK;
-                }
                 str = next;
         }
 }
@@ -640,9 +629,8 @@ value_ref_vector_sweep(void)
                 free(ref_vector_chain);
                 ref_vector_chain = next;
         }
-        if (ref_vector_chain != NULL) {
+        if (ref_vector_chain != NULL)
                 ref_vector_chain->mark &= ~GC_MARK;
-        }
         for (struct ref_vector *ref_vector = ref_vector_chain; ref_vector != NULL && ref_vector->next != NULL;) {
                 struct ref_vector *next;
                 if (ref_vector->next->mark == GC_NONE) {
@@ -652,9 +640,8 @@ value_ref_vector_sweep(void)
                 } else {
                         next = ref_vector->next;
                 }
-                if (next != NULL) {
+                if (next != NULL)
                         next->mark &= ~GC_MARK;
-                }
                 ref_vector = next;
         }
 }

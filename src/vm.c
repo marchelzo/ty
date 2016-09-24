@@ -571,6 +571,7 @@ vm_exec(char *code)
                         if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER)
                                 vm_panic("non-integer used as bound in range");
                         v = ARRAY(value_array_new());
+                        push(v);
                         value_array_reserve(v.array, abs(right.integer - left.integer) + 2);
                         if (left.integer < right.integer)
                                 for (int i = left.integer + l; i <= right.integer + r; ++i)
@@ -578,7 +579,6 @@ vm_exec(char *code)
                         else
                                 for (int i = left.integer - l; i >= right.integer - r; --i)
                                         v.array->items[v.array->count++] = INTEGER(i);
-                        push(v);
                         break;
                 CASE(MEMBER_ACCESS)
                         v = pop();
@@ -595,7 +595,8 @@ vm_exec(char *code)
                         subscript = pop();
                         container = pop();
 
-                        if (container.type == VALUE_ARRAY) {
+                        switch (container.type) {
+                        case VALUE_ARRAY:
                                 if (subscript.type != VALUE_INTEGER)
                                         vm_panic("non-integer array index used in subscript expression");
                                 if (subscript.integer < 0)
@@ -603,12 +604,21 @@ vm_exec(char *code)
                                 if (subscript.integer < 0 || subscript.integer >= container.array->count)
                                         vm_panic("array index out of range in subscript expression");
                                 push(container.array->items[subscript.integer]);
-                        } else if (container.type == VALUE_OBJECT) {
+                                break;
+                        case VALUE_STRING:
+                                push(get_string_method("char")(&container, (&(value_vector){ .count = 1, .items = &subscript })));
+                                break;
+                        case VALUE_BLOB:
+                                push(get_blob_method("get")(&container, (&(value_vector){ .count = 1, .items = &subscript })));
+                                break;
+                        case VALUE_OBJECT:
                                 vp = object_get_value(container.object, &subscript);
                                 push((vp == NULL) ? NIL : *vp);
-                        } else if (container.type == VALUE_NIL) {
+                                break;
+                        case VALUE_NIL:
                                 push(NIL);
-                        } else {
+                                break;
+                        default:
                                 vm_panic("attempt to subscript something other than an object or array");
                         }
                         break;
@@ -786,6 +796,7 @@ vm_exec(char *code)
                         }
 
                         READVALUE(n);
+                        LOG("allocating ref vector");
                         v.refs = ref_vector_new(n);
                         LOG("function contains %d reference(s)", n);
                         for (int i = 0; i < n; ++i) {
@@ -924,10 +935,9 @@ vm_exec(char *code)
                                 value.tags = 0;
 
                                 v = func(&value, &args);
+
                                 stack.count -= n;
                                 stack.items[stack.count - 1] = v;
-                                --gc_prevent;
-                                gc_alloc(0);
                         } else if (vp != NULL) {
                                 --stack.count;
                                 callmethod(vp, self);
@@ -947,6 +957,7 @@ vm_exec(char *code)
                         break;
                 CASE(HALT)
                 halt:
+                        free(args.items);
                         ip = save;
                         return;
                 }
@@ -1064,6 +1075,7 @@ vm_execute(char const *source)
         }
 
         if (setjmp(jb) != 0) {
+                gc_clear_root_set();
                 vec_empty(stack);
                 err_msg = err_buf;
                 return false;
@@ -1174,6 +1186,8 @@ vm_mark(void)
 void
 vm_mark_variable(struct variable *v)
 {
+        if (v->mark & GC_MARK)
+                return;
         v->mark |= GC_MARK;
         value_mark(&v->value);
 }

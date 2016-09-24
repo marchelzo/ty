@@ -1,16 +1,15 @@
 #include <string.h>
 
 #include "value.h"
+#include "gc.h"
 #include "object.h"
 #include "vm.h"
 #include "log.h"
 
-enum {
-        GC_ALLOC_THRESHOLD = (1 << 22) // ~ 4 MB
-};
+#define GC_ALLOC_THRESHOLD (1ULL << 22)
 
 static size_t allocated = 0;
-int gc_prevent = 0;
+static vec(struct value *) root_set;
 
 void *
 gc_alloc(size_t n)
@@ -19,10 +18,12 @@ gc_alloc(size_t n)
 
         allocated += n;
 
-        if (allocated <= GC_ALLOC_THRESHOLD || gc_prevent != 0)
+        if (allocated <= GC_ALLOC_THRESHOLD)
                 return mem;
 
-        vm_mark();        
+        vm_mark();
+        for (int i = 0; i < root_set.count; ++i)
+                value_mark(root_set.items[i]);
 
         object_sweep();
         value_array_sweep();
@@ -39,8 +40,25 @@ gc_alloc(size_t n)
 void
 gc_reset(void)
 {
-        gc_prevent = 0;
         allocated = 0;
         value_gc_reset();
         object_gc_reset();
+}
+
+void
+gc_push(struct value *v)
+{
+        vec_push(root_set, v);
+}
+
+void
+gc_pop(void)
+{
+        --root_set.count;
+}
+
+void
+gc_clear_root_set(void)
+{
+        root_set.count = 0;
 }

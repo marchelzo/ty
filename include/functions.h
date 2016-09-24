@@ -40,6 +40,30 @@ struct value
 builtin_read(value_vector *args);
 
 struct value
+builtin_log2(value_vector *args);
+
+struct value
+builtin_pow(value_vector *args);
+
+struct value
+builtin_bit_and(value_vector *args);
+
+struct value
+builtin_bit_or(value_vector *args);
+
+struct value
+builtin_bit_xor(value_vector *args);
+
+struct value
+builtin_bit_shift_left(value_vector *args);
+
+struct value
+builtin_bit_shift_right(value_vector *args);
+
+struct value
+builtin_bit_complement(value_vector *args);
+
+struct value
 builtin_getenv(value_vector *args);
 
 struct value

@@ -312,6 +312,132 @@ builtin_max(value_vector *args)
 }
 
 struct value
+builtin_log2(value_vector *args)
+{
+        ASSERT_ARGC("math::log2()", 1);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the argument to math::log2() must be a float");
+
+        return REAL(log2f(x.real));
+}
+
+struct value
+builtin_pow(value_vector *args)
+{
+        ASSERT_ARGC("math::pow()", 2);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the first argument to math::pow() must be a float");
+
+        struct value y = args->items[1];
+        if (y.type == VALUE_INTEGER)
+                y = REAL(y.integer);
+        if (y.type != VALUE_REAL)
+                vm_panic("the second argument to math::pow() must be a float");
+
+        return REAL(powf(x.real, y.real));
+}
+
+struct value
+builtin_bit_and(value_vector *args)
+{
+        ASSERT_ARGC("bit::and()", 2);
+
+        struct value a = args->items[0];
+        if (a.type != VALUE_INTEGER)
+                vm_panic("the first argument to bit::and() must be an integer");
+
+        struct value b = args->items[1];
+        if (b.type != VALUE_INTEGER)
+                vm_panic("the second argument to bit::and() must be an integer");
+
+        return INTEGER(a.integer & b.integer);
+}
+
+struct value
+builtin_bit_or(value_vector *args)
+{
+        ASSERT_ARGC("bit::or()", 2);
+
+        struct value a = args->items[0];
+        if (a.type != VALUE_INTEGER)
+                vm_panic("the first argument to bit::or() must be an integer");
+
+        struct value b = args->items[1];
+        if (b.type != VALUE_INTEGER)
+                vm_panic("the second argument to bit::or() must be an integer");
+
+        return INTEGER(a.integer | b.integer);
+}
+
+struct value
+builtin_bit_xor(value_vector *args)
+{
+        ASSERT_ARGC("bit::xor()", 2);
+
+        struct value a = args->items[0];
+        if (a.type != VALUE_INTEGER)
+                vm_panic("the first argument to bit::xor() must be an integer");
+
+        struct value b = args->items[1];
+        if (b.type != VALUE_INTEGER)
+                vm_panic("the second argument to bit::xor() must be an integer");
+
+        return INTEGER(a.integer ^ b.integer);
+}
+
+struct value
+builtin_bit_shift_left(value_vector *args)
+{
+        ASSERT_ARGC("bit::shiftLeft()", 2);
+
+        struct value a = args->items[0];
+        if (a.type != VALUE_INTEGER)
+                vm_panic("the first argument to bit::shiftLeft() must be an integer");
+
+        struct value b = args->items[1];
+        if (b.type != VALUE_INTEGER)
+                vm_panic("the second argument to bit::shiftLeft() must be an integer");
+
+        return INTEGER(a.integer << b.integer);
+}
+
+struct value
+builtin_bit_shift_right(value_vector *args)
+{
+        ASSERT_ARGC("bit::shiftRight()", 2);
+
+        struct value a = args->items[0];
+        if (a.type != VALUE_INTEGER)
+                vm_panic("the first argument to bit::shiftRight() must be an integer");
+
+        struct value b = args->items[1];
+        if (b.type != VALUE_INTEGER)
+                vm_panic("the second argument to bit::shiftRight() must be an integer");
+
+        return INTEGER(a.integer >> b.integer);
+}
+
+struct value
+builtin_bit_complement(value_vector *args)
+{
+        ASSERT_ARGC("bit::complement()", 1);
+
+        struct value a = args->items[0];
+        if (a.type != VALUE_INTEGER)
+                vm_panic("the first argument to bit::complement() must be an integer");
+
+        return INTEGER(~a.integer);
+}
+
+struct value
 builtin_setenv(value_vector *args)
 {
         static vec(char) varbuf;

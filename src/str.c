@@ -177,6 +177,7 @@ string_split(struct value *string, value_vector *args)
                 vm_panic("invalid argument to the split method on string");
 
         struct value result = ARRAY(value_array_new());
+        NOGC(result.array);
 
         char const *s = string->string;
         int len = string->bytes;
@@ -185,7 +186,7 @@ string_split(struct value *string, value_vector *args)
                 int n = pattern.bytes;
 
                 if (n == 0)
-                        return result;
+                        goto end;
 
                 int i = 0;
                 while (i < len && is_prefix(s + i, len - i, p, n))
@@ -229,13 +230,15 @@ string_split(struct value *string, value_vector *args)
                 }
         }
 
+end:
+        OKGC(result.array);
         return result;
 }
 
 static struct value
 string_replace(struct value *string, value_vector *args)
 {
-        static vec(char) chars = { .items = NULL, .count = 0, .capacity = 0 };
+        static vec(char) chars;
 
         if (args->count != 2)
                 vm_panic("the replace method on strings expects 2 arguments but got %zu", args->count);
@@ -310,16 +313,18 @@ string_replace(struct value *string, value_vector *args)
                                 match = STRING_VIEW(*string, out[0], out[1] - out[0]);
                         } else {
                                 match = ARRAY(value_array_new());
+                                NOGC(match.array);
 
                                 int j = 0;
-                                for (int i = 0; i < rc; ++i, j += 2) {
+                                for (int i = 0; i < rc; ++i, j += 2)
                                         vec_push(*match.array, STRING_VIEW(*string, out[j], out[j + 1] - out[j]));
-                                }
                         }
 
                         struct value repstr = vm_eval_function(&replacement, &match);
                         if (repstr.type != VALUE_STRING)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
+
+                        OKGC(match.array);
 
                         vec_push_n(chars, repstr.string, repstr.bytes);
 
@@ -401,11 +406,14 @@ string_match(struct value *string, value_vector *args)
                 match = STRING_VIEW(*string, ovec[0], ovec[1] - ovec[0]);
         } else {
                 match = ARRAY(value_array_new());
-                vec_reserve(*match.array, rc);
+                NOGC(match.array);
+                value_array_reserve(match.array, rc);
 
                 int j = 0;
                 for (int i = 0; i < rc; ++i, j += 2)
                         vec_push(*match.array, STRING_VIEW(*string, ovec[j], ovec[j + 1] - ovec[j]));
+
+                OKGC(match.array);
         }
 
         return match;
@@ -423,6 +431,7 @@ string_matches(struct value *string, value_vector *args)
                 vm_panic("non-regex passed to the matches method on string");
 
         struct value result = ARRAY(value_array_new());
+        gc_push(&result);
 
         static int ovec[30];
         char const *s = string->string;
@@ -441,30 +450,30 @@ string_matches(struct value *string, value_vector *args)
                         30
                 )) > 0) {
 
-                struct value match;
-
                 if (rc == 1) {
-                        match = STRING_VIEW(*string, offset + ovec[0], ovec[1] - ovec[0]);
+                        value_array_push(result.array, STRING_VIEW(*string, offset + ovec[0], ovec[1] - ovec[0]));
                 } else {
-                        match = ARRAY(value_array_new());
-                        vec_reserve(*match.array, rc);
+                        struct value match = ARRAY(value_array_new());
+                        NOGC(match.array);
+
+                        value_array_reserve(match.array, rc);
 
                         int j = 0;
-                        for (int i = 0; i < rc; ++i, j += 2) {
-                                vec_push(*match.array, STRING_VIEW(*string, ovec[j], ovec[j + 1] - ovec[j]));
-                        }
-                }
+                        for (int i = 0; i < rc; ++i, j += 2)
+                                value_array_push(match.array, STRING_VIEW(*string, ovec[j], ovec[j + 1] - ovec[j]));
 
-                vec_push(*result.array, match);
+                        OKGC(match.array);
+
+                        value_array_push(result.array, match);
+                }
 
                 s += ovec[1];
                 offset += ovec[1];
                 len -= ovec[1];
         }
 
-        if (rc < -1) {
+        if (rc < -1)
                 vm_panic("error while executing regular expression");
-        }
 
         return result;
 }
@@ -506,6 +515,7 @@ string_chars(struct value *string, value_vector *args)
                 vm_panic("str.chars() expects no arguments but got %zu", args->count);
 
         struct value result = ARRAY(value_array_new());
+        NOGC(result.array);
 
         int i = 0;
         int n = string->bytes;
@@ -516,6 +526,8 @@ string_chars(struct value *string, value_vector *args)
                 i += outpos.bytes;
                 n -= outpos.bytes;
         }
+
+        OKGC(result.array);
 
         return result;
 }
