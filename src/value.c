@@ -509,15 +509,15 @@ void
 value_mark(struct value *v)
 {
         switch (v->type) {
-        case VALUE_METHOD:          MARK(v->this); value_mark(v->this);              break;
-        case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);              break;
-        case VALUE_ARRAY:           value_array_mark(v->array);                      break;
-        case VALUE_DICT:            dict_mark(v->dict);                              break;
-        case VALUE_FUNCTION:        function_mark_references(v);                     break;
-        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);            break;
-        case VALUE_OBJECT:          object_mark(v->object);                          break;
-        case VALUE_BLOB:            MARK(v->blob);                                   break;
-        default:                                                                     break;
+        case VALUE_METHOD:          MARK(v->this); value_mark(v->this);                break;
+        case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);                break;
+        case VALUE_ARRAY:           value_array_mark(v->array);                        break;
+        case VALUE_DICT:            dict_mark(v->dict);                                break;
+        case VALUE_FUNCTION:        if (v->refs != NULL) function_mark_references(v);  break;
+        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);              break;
+        case VALUE_OBJECT:          object_mark(v->object);                            break;
+        case VALUE_BLOB:            MARK(v->blob);                                     break;
+        default:                                                                       break;
         }
 }
 
@@ -592,7 +592,7 @@ TEST(hash)
 
 TEST(equality)
 {
-        vm_init();
+        vm_init(0, NULL);
 
         struct value v1 = BOOLEAN(true);
         struct value v2 = BOOLEAN(false);

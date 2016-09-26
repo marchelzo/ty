@@ -79,7 +79,7 @@ newvar(struct variable *next)
 static void
 add_builtins(int ac, char **av)
 {
-        resize(vars, sizeof *vars * builtin_count + 1);
+        resize(vars, sizeof *vars * (builtin_count + 1));
 
         for (int i = 0; i < builtin_count; ++i) {
                 compiler_introduce_symbol(builtins[i].module, builtins[i].name);
@@ -909,7 +909,7 @@ vm_exec(char *code)
                         ip += n;
 
                         READVALUE(n);
-                        v.refs = ref_vector_new(n);
+                        v.refs = (n == 0) ? NULL : ref_vector_new(n);
                         LOG("function contains %d reference(s)", n);
                         for (int i = 0; i < n; ++i) {
                                 READVALUE(s);

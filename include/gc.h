@@ -13,6 +13,8 @@
 #define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
 #define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
 
+extern bool GC_ENABLED;
+
 struct alloc {
         union {
                 struct {
@@ -70,5 +72,16 @@ gc_alloc_unregistered(size_t n, char type)
         return a->data;
 }
 
+inline static void
+gc_disable(void)
+{
+        GC_ENABLED = false;
+}
+
+inline static void
+gc_enable(void)
+{
+        GC_ENABLED = true;
+}
 
 #endif

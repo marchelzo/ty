@@ -11,7 +11,6 @@
 #include "vm.h"
 
 #define KW_DELIM(c) (strchr(" \n}],", c) != NULL)
-
 #define FAIL longjmp(jb, 1)
 
 static jmp_buf jb;
@@ -170,6 +169,10 @@ string(void)
                 FAIL;
 
         int n = str.count;
+
+        if (n == 0)
+                return STRING_NOGC(NULL, 0);
+
         char *s = value_string_alloc(n);
         memcpy(s, str.items, n);
 
@@ -251,21 +254,28 @@ json_parse(char const *s, int n)
         json = s;
         len = n;
 
-        if (setjmp(jb) != 0)
+        gc_disable();
+
+        if (setjmp(jb) != 0) {
+                gc_enable();
                 return NIL;
+        }
 
         struct value v = value();
         space();
 
         if (peek() != '\0')
-                return NIL;
+                v = NIL;
+
+        gc_enable();
+        gc_alloc(0);
 
         return v;
 }
 
 TEST(null)
 {
-        vm_init();
+        vm_init(0, NULL);
         char const *s = " null ";
         struct value v = json_parse(s, 6);
         claim(value_test_equality(&v, &NIL));
@@ -273,7 +283,7 @@ TEST(null)
 
 TEST(jtrue)
 {
-        vm_init();
+        vm_init(0, NULL);
         char const *s = " true";
         struct value v = json_parse(s, 5);
         claim(value_test_equality(&v, &BOOLEAN(true)));
@@ -281,7 +291,7 @@ TEST(jtrue)
 
 TEST(jfalse)
 {
-        vm_init();
+        vm_init(0, NULL);
         char const *s = " false";
         struct value v = json_parse(s, 6);
         claim(value_test_equality(&v, &BOOLEAN(false)));

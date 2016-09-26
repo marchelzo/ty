@@ -277,7 +277,7 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         if (s->scope->external && !s->public)
                 fail("reference to non-public external variable '%s'", name);
 
-        bool is_local = s->scope->function == scope->function;
+        bool is_local = (s->scope->function == scope->function) || (s->scope->function == global);
 
         if (local != NULL)
                 *local = is_local;

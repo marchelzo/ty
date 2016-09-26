@@ -13,6 +13,8 @@ static size_t allocated = 0;
 static vec(struct value *) root_set;
 static vec(struct alloc *) allocs;
 
+bool GC_ENABLED = true;
+
 inline static void
 collect(struct alloc *a)
 {
@@ -57,7 +59,7 @@ gc_alloc(size_t n)
 
         allocated += n;
 
-        if (allocated > GC_ALLOC_THRESHOLD)
+        if (allocated > GC_ALLOC_THRESHOLD && GC_ENABLED)
                 gc();
 
         return mem;
@@ -73,7 +75,7 @@ gc_alloc_object(size_t n, char type)
         a->mark = GC_NONE;
         a->type = type;
 
-        if (allocated > GC_ALLOC_THRESHOLD)
+        if (allocated > GC_ALLOC_THRESHOLD && GC_ENABLED)
                 gc();
 
         vec_push(allocs, a);
