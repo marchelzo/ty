@@ -859,7 +859,9 @@ builtin_os_fcntl(value_vector *args)
         struct value arg = args->items[2];
         switch (cmd.integer) {
         case F_DUPFD:
+#ifdef __APPLE__
         case F_DUPFD_CLOEXEC:
+#endif
         case F_SETFD:
         case F_SETFL:
                 if (arg.type != VALUE_INTEGER)
