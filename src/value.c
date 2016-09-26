@@ -541,7 +541,6 @@ struct array *
 value_array_clone(struct array const *a)
 {
         struct array *new = value_array_new();
-        NOGC(new);
 
         /*
          * If a is empty, then we'd end up passing a null pointer
@@ -549,6 +548,8 @@ value_array_clone(struct array const *a)
          */
         if (a->count == 0)
                 return new;
+
+        NOGC(new);
 
         new->count = a->count;
         new->capacity = a->count;
