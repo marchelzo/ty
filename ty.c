@@ -18,6 +18,9 @@ repl(void)
 
         for (char *line; line = readline("> "), line != NULL;) {
 
+		if (strspn(line, " \t\n") == strlen(line))
+			continue;
+
                 /*
                  * Very bad.
                  */
@@ -42,6 +45,7 @@ repl(void)
 
                 fprintf(stderr, "%s\n", vm_error());
 add:
+		line[strcspn(line, "\n")] = '\0';
                 add_history(line);
         }
 
