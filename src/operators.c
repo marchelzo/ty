@@ -140,9 +140,8 @@ struct value
 binary_operator_less_than(struct value const *left, struct value const *right)
 {
 
-        if (left->type != right->type) {
+        if (left->type != right->type)
                 vm_panic("< applied to operands of different types");
-        }
 
         switch (left->type) {
         case VALUE_INTEGER: return BOOLEAN(left->integer < right->integer);

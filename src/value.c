@@ -109,19 +109,21 @@ inline static unsigned long
 hash(struct value const *val)
 {
         switch (val->type) {
-        case VALUE_NIL:       return 0xDEADBEEFULL;
-        case VALUE_BOOLEAN:   return val->boolean ? 0xABCULL : 0xDEFULL;
-        case VALUE_STRING:    return str_hash(val->string, val->bytes);
-        case VALUE_INTEGER:   return int_hash(val->integer);
-        case VALUE_REAL:      return flt_hash(val->real);
-        case VALUE_ARRAY:     return ary_hash(val);
-        case VALUE_DICT:      return ptr_hash(val->dict);
-        case VALUE_OBJECT:    return ptr_hash(val->object);
-        case VALUE_METHOD:    return ptr_hash(val->method) ^ ptr_hash(val->this);
-        case VALUE_FUNCTION:  return ptr_hash(val->code);
-        case VALUE_REGEX:     return ptr_hash(val->regex);
-        case VALUE_TAG:       return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
-        case VALUE_CLASS:     return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
+        case VALUE_NIL:               return 0xDEADBEEFULL;
+        case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
+        case VALUE_STRING:            return str_hash(val->string, val->bytes);
+        case VALUE_INTEGER:           return int_hash(val->integer);
+        case VALUE_REAL:              return flt_hash(val->real);
+        case VALUE_ARRAY:             return ary_hash(val);
+        case VALUE_DICT:              return ptr_hash(val->dict);
+        case VALUE_OBJECT:            return ptr_hash(val->object);
+        case VALUE_METHOD:            return ptr_hash(val->method) ^ ptr_hash(val->this);
+        case VALUE_BUILTIN_METHOD:    return ptr_hash(val->builtin_method) ^ ptr_hash(val->this);
+        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->code);
+        case VALUE_FUNCTION:          return ptr_hash(val->builtin_function);
+        case VALUE_REGEX:             return ptr_hash(val->regex);
+        case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
+        case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
         default:              vm_panic("attempt to hash invalid value");
         }
 }
@@ -242,9 +244,12 @@ value_show(struct value const *v)
                 break;
         case VALUE_METHOD:
                 if (v->this == NULL)
-                        snprintf(buffer, 1024, "<method at %p>", (void *)v->method);
+                        snprintf(buffer, 1024, "<method '%s' at %p>", v->name, (void *)v->method);
                 else
-                        snprintf(buffer, 1024, "<method at %p bound to <value at %p>", (void *)v->method, (void *)v->this);
+                        snprintf(buffer, 1024, "<method '%s' at %p bound to <value at %p>>", v->name, (void *)v->method, (void *)v->this);
+                break;
+        case VALUE_BUILTIN_METHOD:
+                snprintf(buffer, 1024, "<bound builtin method '%s'>", v->name);
                 break;
         case VALUE_BUILTIN_FUNCTION:
                 snprintf(buffer, 1024, "<builtin function>");
@@ -278,6 +283,8 @@ value_compare(void const *_v1, void const *_v2)
         struct value const *v2 = _v2;
 
         if (v1->type != v2->type) {
+                printf("value 1: %s\n", value_show(v1));
+                printf("value 2: %s\n", value_show(v2));
                 vm_panic("attempt to compare values of different types");
         }
 
@@ -285,7 +292,14 @@ value_compare(void const *_v1, void const *_v2)
         case VALUE_INTEGER: return (v1->integer - v2->integer); // TODO
         case VALUE_REAL:    return round(v1->real - v2->real);
         case VALUE_STRING:  return memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
-        default:            vm_panic("attempt to compare values of invalid types");
+        case VALUE_ARRAY:
+                for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {
+                        int o = value_compare(&v1->array->items[i], &v2->array->items[i]);
+                        if (o != 0)
+                                return o;
+                }
+                return ((int)v1->array->count) - ((int)v2->array->count);
+        default:            vm_panic("attempt to compare values of invalid types: %s and %s", value_show(v1), value_show(v2));
         }
 }
 
@@ -359,6 +373,7 @@ value_apply_callable(struct value *f, struct value *v)
         case VALUE_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:
                 return vm_eval_function(f, v);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
@@ -441,6 +456,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_DICT:             if (v1->dict != v2->dict)                                                      return false; break;
         case VALUE_OBJECT:           if (v1->object != v2->object)                                                  return false; break;
         case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
+        case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || v1->this != v2->this)          return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
         case VALUE_NIL:                                                                                                           break;
@@ -472,11 +488,6 @@ function_mark_references(struct value *v)
                 value_mark(&var->value);
         }
 
-        if (v->this != NULL) {
-                MARK(v->this);
-                value_mark(v->this);
-        }
-
         MARK(v->refs);
 }
 
@@ -498,14 +509,15 @@ void
 value_mark(struct value *v)
 {
         switch (v->type) {
-        case VALUE_METHOD:   MARK(v->this); value_mark(v->this);              break;
-        case VALUE_ARRAY:    value_array_mark(v->array);                      break;
-        case VALUE_DICT:     dict_mark(v->dict);                              break;
-        case VALUE_FUNCTION: function_mark_references(v);                     break;
-        case VALUE_STRING:   if (v->gcstr != NULL) MARK(v->gcstr);            break;
-        case VALUE_OBJECT:   object_mark(v->object);                          break;
-        case VALUE_BLOB:     MARK(v->blob);                                   break;
-        default:                                                              break;
+        case VALUE_METHOD:          MARK(v->this); value_mark(v->this);              break;
+        case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);              break;
+        case VALUE_ARRAY:           value_array_mark(v->array);                      break;
+        case VALUE_DICT:            dict_mark(v->dict);                              break;
+        case VALUE_FUNCTION:        function_mark_references(v);                     break;
+        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);            break;
+        case VALUE_OBJECT:          object_mark(v->object);                          break;
+        case VALUE_BLOB:            MARK(v->blob);                                   break;
+        default:                                                                     break;
         }
 }
 
@@ -529,6 +541,7 @@ struct array *
 value_array_clone(struct array const *a)
 {
         struct array *new = value_array_new();
+        NOGC(new);
 
         /*
          * If a is empty, then we'd end up passing a null pointer
@@ -541,6 +554,8 @@ value_array_clone(struct array const *a)
         new->capacity = a->count;
         new->items = gc_alloc(sizeof *new->items * new->count);
         memcpy(new->items, a->items, sizeof *new->items * new->count);
+
+        OKGC(new);
 
         return new;
 }

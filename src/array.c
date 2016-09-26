@@ -697,9 +697,8 @@ array_min_by(struct value *array, value_vector *args)
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function2(&f, &v, &min);
-                        if ((r.type != VALUE_INTEGER && !value_truthy(&r)) || r.integer < 0) {
+                        if ((r.type != VALUE_INTEGER && !value_truthy(&r)) || r.integer < 0)
                                 min = v;
-                        }
 
                 }
         } else {
@@ -899,7 +898,7 @@ array_each(struct value *array, value_vector *args)
 
         struct value f = args->items[0];
 
-        if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION)
+        if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
                 vm_panic("non-function passed to the each method on array");
 
         int n = array->array->count;
@@ -1074,7 +1073,6 @@ array_sort_by(struct value *array, value_vector *args)
                 vm_panic("the sortBy method on arrays expects 1 argument but got %zu", args->count);
 
         struct value f = args->items[0];
-
         if (!CALLABLE(f))
                 vm_panic("non-function passed to the sortBy method on array");
 

@@ -1,10 +1,6 @@
 #ifndef DICT_H_INCLUDED
 #define DICT_H_INCLUDED
 
-enum {
-        DICT_NUM_BUCKETS = 128,
-};
-
 #include "value.h"
 
 struct dict *
@@ -36,5 +32,7 @@ dict_mark(struct dict *obj);
 
 void
 dict_free(struct dict *obj);
+
+struct value (*get_dict_method(char const *))(struct value *, value_vector *);
 
 #endif

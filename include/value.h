@@ -11,23 +11,23 @@ struct value;
 #include "ast.h"
 #include "gc.h"
 #include "tags.h"
-#include "dict.h"
 
-#define INTEGER(k)       ((struct value){ .type = VALUE_INTEGER,        .integer   = (k),                              .tags = 0 })
-#define REAL(f)          ((struct value){ .type = VALUE_REAL,           .real      = (f),                              .tags = 0 })
-#define BOOLEAN(b)       ((struct value){ .type = VALUE_BOOLEAN,        .boolean   = (b),                              .tags = 0 })
-#define ARRAY(a)         ((struct value){ .type = VALUE_ARRAY,          .array     = (a),                              .tags = 0 })
-#define BLOB(b)          ((struct value){ .type = VALUE_BLOB,           .blob      = (b),                              .tags = 0 })
-#define DICT(d)          ((struct value){ .type = VALUE_DICT,           .dict      = (d),                              .tags = 0 })
-#define REGEX(r)         ((struct value){ .type = VALUE_REGEX,          .regex     = (r),                              .tags = 0 })
-#define FUNCTION()       ((struct value){ .type = VALUE_FUNCTION,                                                      .tags = 0 })
-#define TAG(t)           ((struct value){ .type = VALUE_TAG,            .tag       = (t),                              .tags = 0 })
-#define CLASS(c)         ((struct value){ .type = VALUE_CLASS,          .class     = (c), .object = NULL,              .tags = 0 })
-#define OBJECT(o, c)     ((struct value){ .type = VALUE_OBJECT,         .object    = (o), .class  = (c),               .tags = 0 })
-#define METHOD(n, m, t)  ((struct value){ .type = VALUE_METHOD,         .method    = (m), .this   = (t), .name = (n),  .tags = 0 })
-#define NIL              ((struct value){ .type = VALUE_NIL,                                                           .tags = 0 })
+#define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                              .tags = 0 })
+#define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                              .tags = 0 })
+#define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                              .tags = 0 })
+#define ARRAY(a)                 ((struct value){ .type = VALUE_ARRAY,          .array          = (a),                              .tags = 0 })
+#define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                              .tags = 0 })
+#define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                              .tags = 0 })
+#define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                              .tags = 0 })
+#define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                           .tags = 0 })
+#define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                              .tags = 0 })
+#define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c), .object = NULL,              .tags = 0 })
+#define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o), .class  = (c),               .tags = 0 })
+#define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m), .this   = (t), .name = (n),  .tags = 0 })
+#define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m), .this   = (t), .name = (n),  .tags = 0 })
+#define NIL                      ((struct value){ .type = VALUE_NIL,                                                                .tags = 0 })
 
-#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
+#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
 
 #define BUILTIN_OBJECT_TYPE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_STRING | VALUE_ARRAY | VALUE_BLOB)) != 0))
 
@@ -96,10 +96,11 @@ enum {
         VALUE_FUNCTION         = 1 << 10,
         VALUE_METHOD           = 1 << 11,
         VALUE_BUILTIN_FUNCTION = 1 << 12,
-        VALUE_TAG              = 1 << 13,
-        VALUE_STRING           = 1 << 14,
-        VALUE_BLOB             = 1 << 15,
-        VALUE_TAGGED           = 1 << 16,
+        VALUE_BUILTIN_METHOD   = 1 << 13,
+        VALUE_TAG              = 1 << 14,
+        VALUE_STRING           = 1 << 15,
+        VALUE_BLOB             = 1 << 16,
+        VALUE_TAGGED           = 1 << 17,
 };
 
 struct value {
@@ -119,9 +120,12 @@ struct value {
                         struct table *object;
                 };
                 struct {
-                        char const *name;
-                        struct value *method;
                         struct value *this;
+                        union {
+                                struct value *method;
+                                struct value (*builtin_method)(struct value *, value_vector *);
+                        };
+                        char const *name;
                 };
                 struct {
                         char const *string;
@@ -149,8 +153,10 @@ struct dict_node {
         struct dict_node *next;
 };
 
+#define DICT_NUM_BUCKETS 128
 struct dict {
         struct dict_node *buckets[DICT_NUM_BUCKETS];
+        struct value *dflt;
         size_t count;
 };
 

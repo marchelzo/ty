@@ -56,10 +56,6 @@ table_copy(struct table *dst, struct table const *src)
                         st[i].values.items,
                         st[i].values.count
                 );
-                /*
-                for (int m = 0; m < dt[i].values.count; ++m)
-                        dt[i].values.items[m].tags = dst;
-                */
         }
 }
 

@@ -601,13 +601,51 @@ vm_exec(char *code)
                         if (vp != NULL)
                                 break;
 
+                        struct value *this;
+
                         switch (v.type & ~VALUE_TAGGED) {
                         case VALUE_NIL:
                                 push(NIL);
                                 break;
                         case VALUE_DICT:
-                                vp = dict_get_member(v.dict, member);
-                                push((vp == NULL) ? NIL : *vp);
+                                func = get_dict_method(member);
+                                if (func == NULL)
+                                        vm_panic("reference to non-existent method '%s' on dict", member);
+                                v.type = VALUE_ARRAY;
+                                v.tags = 0;
+                                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                *this = v;
+                                push(BUILTIN_METHOD(member, func, this));
+                                break;
+                        case VALUE_ARRAY:
+                                func = get_array_method(member);
+                                if (func == NULL)
+                                        vm_panic("reference to non-existent method '%s' on array", member);
+                                v.type = VALUE_ARRAY;
+                                v.tags = 0;
+                                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                *this = v;
+                                push(BUILTIN_METHOD(member, func, this));
+                                break;
+                        case VALUE_STRING:
+                                func = get_string_method(member);
+                                if (func == NULL)
+                                        vm_panic("reference to non-existent method '%s' on string", member);
+                                v.type = VALUE_STRING;
+                                v.tags = 0;
+                                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                *this = v;
+                                push(BUILTIN_METHOD(member, func, this));
+                                break;
+                        case VALUE_BLOB:
+                                func = get_blob_method(member);
+                                if (func == NULL)
+                                        vm_panic("reference to non-existent method '%s' on blob", member);
+                                v.type = VALUE_BLOB;
+                                v.tags = 0;
+                                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                *this = v;
+                                push(BUILTIN_METHOD(member, func, this));
                                 break;
                         case VALUE_OBJECT:
                                 vp = table_lookup(v.object, member);
@@ -617,7 +655,7 @@ vm_exec(char *code)
                                 }
                                 vp = class_lookup_method(v.class, member);
                                 if (vp != NULL) {
-                                        struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                        this = gc_alloc_object(sizeof *this, GC_VALUE);
                                         *this = v;
                                         push(METHOD(member, vp, this));
                                         break;
@@ -715,22 +753,23 @@ vm_exec(char *code)
                 CASE(LT)
                         right = pop();
                         left = pop();
-                        push(binary_operator_less_than(&left, &right));
+                        push(BOOLEAN(value_compare(&left, &right) < 0));
                         break;
                 CASE(GT)
                         right = pop();
                         left = pop();
-                        push(binary_operator_greater_than(&left, &right));
+                        push(BOOLEAN(value_compare(&left, &right) > 0));
                         break;
                 CASE(LEQ)
                         right = pop();
                         left = pop();
-                        push(binary_operator_less_than_or_equal(&left, &right));
+                        push(BOOLEAN(value_compare(&left, &right) <= 0));
                         break;
                 CASE(GEQ)
                         right = pop();
                         left = pop();
-                        push(binary_operator_greater_than_or_equal(&left, &right));
+                        push(BOOLEAN(value_compare(&left, &right) >= 0));
+                        break;
                         break;
                 CASE(GET_TAG)
                         v = pop();
@@ -911,6 +950,20 @@ vm_exec(char *code)
                         case VALUE_METHOD:
                                 call(v.method, v.this, n, false);
                                 break;
+                        case VALUE_BUILTIN_METHOD:
+                                vec_reserve(args, n);
+                                args.count = n;
+                                index = 0;
+
+                                for (struct value const *a = stack.items + stack.count - n - 1; index < n; ++index, ++a)
+                                        args.items[index] = *a;
+
+                                value = v.builtin_method(v.this, &args);
+
+                                stack.count -= n;
+                                stack.items[stack.count - 1] = value;
+
+                                break;
                         case VALUE_NIL:
                                 stack.count -= n;
                                 push(NIL);
@@ -953,13 +1006,11 @@ vm_exec(char *code)
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method);
                                 break;
-                        case VALUE_DICT:
-                                vp = dict_get_member(value.dict, method);
-                                if (vp != NULL && vp->type != VALUE_FUNCTION)
-                                        vp = NULL;
-                                break;
                         case VALUE_STRING:
                                 func = get_string_method(method);
+                                break;
+                        case VALUE_DICT:
+                                func = get_dict_method(method);
                                 break;
                         case VALUE_ARRAY:
                                 func = get_array_method(method);
@@ -981,7 +1032,6 @@ vm_exec(char *code)
                         }
 
                         if (func != NULL) {
-                                vec_init(args);
                                 READVALUE(n);
                                 vec_reserve(args, n);
                                 args.count = n;
@@ -1160,6 +1210,11 @@ vm_eval_function(struct value *f, struct value *v)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 return f->builtin_function(&(value_vector){
+                        .count = v != NULL,
+                        .items = v
+                });
+        case VALUE_BUILTIN_METHOD:
+                return f->builtin_method(f->this, &(value_vector){
                         .count = v != NULL,
                         .items = v
                 });
