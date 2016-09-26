@@ -16,8 +16,6 @@ repl(void)
 {
         static char buffer[8192];
 
-        vm_init();
-
         for (char *line; line = readline("> "), line != NULL;) {
 
                 /*
@@ -54,12 +52,12 @@ int
 main(int argc, char **argv)
 {
 
+        vm_init(argc, argv);
+
         if (argc <= 1 && isatty(0))
                 repl();
           
         char const *file = (argc > 1 && strcmp(argv[1], "-") != 0) ? argv[1] : "/dev/stdin";
-
-        vm_init();
 
         if (!vm_execute_file(file)) {
                 fprintf(stderr, "%s\n", vm_error());

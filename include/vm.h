@@ -104,7 +104,7 @@ enum instruction {
 };
 
 bool
-vm_init(void);
+vm_init(int ac, char **av);
 
 char const *
 vm_error(void);

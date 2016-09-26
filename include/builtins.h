@@ -34,6 +34,7 @@
 { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
 { .module = "os",     .name = "fcntl",             .value = BUILTIN(builtin_os_fcntl)                      },
 { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
+{ .module = "os",     .name = "connect",           .value = BUILTIN(builtin_os_connect)                    },
 { .module = "os",     .name = "usleep",            .value = BUILTIN(builtin_os_usleep)                     },
 { .module = "os",     .name = "O_RDWR",            .value = INT(O_RDWR)                                    },
 { .module = "os",     .name = "O_CREAT",           .value = INT(O_CREAT)                                   },

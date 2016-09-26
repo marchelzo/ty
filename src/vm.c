@@ -77,9 +77,9 @@ newvar(struct variable *next)
  * first built-in function should have symbol 0. I think this is ok.
  */
 static void
-add_builtins(void)
+add_builtins(int ac, char **av)
 {
-        resize(vars, sizeof *vars * builtin_count);
+        resize(vars, sizeof *vars * builtin_count + 1);
 
         for (int i = 0; i < builtin_count; ++i) {
                 compiler_introduce_symbol(builtins[i].module, builtins[i].name);
@@ -87,7 +87,17 @@ add_builtins(void)
                 vars[i]->value = builtins[i].value;
         }
 
-        symbol_count = builtin_count;
+        struct array *args = value_array_new();
+        NOGC(args);
+
+        for (int i = 1; i < ac; ++i)
+                value_array_push(args, STRING_NOGC(av[i], strlen(av[i])));
+
+        compiler_introduce_symbol("os", "args");
+        vars[builtin_count] = newvar(NULL);
+        vars[builtin_count]->value = ARRAY(args);
+
+        symbol_count = builtin_count + 1;
 }
 
 inline static struct value *
@@ -1081,7 +1091,7 @@ vm_error(void)
 }
 
 bool
-vm_init(void)
+vm_init(int ac, char **av)
 {
         vec_init(stack);
         vec_init(callstack);
@@ -1095,7 +1105,7 @@ vm_init(void)
 
         compiler_init();
 
-        add_builtins();
+        add_builtins(ac, av);
 
         char *prelude = compiler_load_prelude();
         if (prelude == NULL) {
@@ -1264,7 +1274,7 @@ TEST(let)
 {
         char const *source = "let a = 5;";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1276,7 +1286,7 @@ TEST(loop)
 {
         char const *source = "let a = 0; for (let i = 0; i < 10; i = i + 1) a = a + 2;";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1289,7 +1299,7 @@ TEST(func)
 {
         char const *source = "let a = 0; let f = function () { a = a + 1; }; f(); f();";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1302,7 +1312,7 @@ TEST(stress) // OFF
 {
         char const *source = "let n = 0; for (let i = 0; i < 1000000; i = i + 1) { n = n + 1; }";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1315,7 +1325,7 @@ TEST(stress2) // OFF
 {
         char const *source = "let n = 0; for (let i = 0; i < 1000000; i = i + 1) { n = n + (function () return 1;)(); }";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1328,7 +1338,7 @@ TEST(array)
 {
         char const *source = "let a = [1, 2 + 2, 16];";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1346,7 +1356,7 @@ TEST(object)
 {
         char const *source = "let o = {'test': 'hello'};";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1360,7 +1370,7 @@ TEST(member_access)
 {
         char const *source = "let o = {'test': 'hello'}; let h = o.test;";
 
-        vm_init();
+        vm_init(0, NULL);
 
         if (!vm_execute(source)) {
                 printf("error: %s\n", vm_error());
@@ -1374,7 +1384,7 @@ TEST(subscript)
 {
         char const *source = "let o = {'test': 'hello'}; let h = o['test'];";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1386,7 +1396,7 @@ TEST(array_lvalue)
 {
         char const *source = "let [a, [b, c]] = [4, [10, 16]];";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1404,7 +1414,7 @@ TEST(array_subscript)
 {
         char const *source = "let a = [4, 5, 6]; a[0] = 42; let b = a[0];";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1416,7 +1426,7 @@ TEST(func_with_args)
 {
         char const *source = "let a = 0; let f = function (k) { return k + 10; }; a = f(32);";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1428,7 +1438,7 @@ TEST(if_else)
 {
         char const *source = "let [a, b] = [nil, nil]; if (false) { a = 48; } else { a = 42; } if (true) { b = 42; } else { b = 98; }";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1443,7 +1453,7 @@ TEST(recursive_func)
 {
         char const *source = "let a = 0; function f(k) if (k == 1) return 1; else return k * f(k - 1); a = f(5);";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1456,7 +1466,7 @@ TEST(method_call)
 {
         char const *source = "let o = nil; o = {'name': 'foobar', 'getName': function () { return o.name; }}; o = o.getName();";
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute(source);
 
@@ -1466,27 +1476,27 @@ TEST(method_call)
 
 TEST(print)
 {
-        vm_init();
+        vm_init(0, NULL);
         vm_execute("print(45);");
 }
 
 
 TEST(each)
 {
-        vm_init();
+        vm_init(0, NULL);
         claim(vm_execute("let o = { 'name': 'Bob', 'age':  19 };"));
         claim(vm_execute("for (k in @o) { print(k); print(o[k]); print('---'); }"));
 }
 
 TEST(bench)
 {
-        vm_init();
+        vm_init(0, NULL);
         vm_execute("for (let i = 0; i < 1000; i = i + 1) { let [a, b, c] = [{}, {}, {}]; }");
 }
 
 TEST(factorial)
 {
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute("let f = function (k) if (k == 1) return 1; else return k * f(k - 1);;");
         vm_execute("f(5);");
@@ -1494,7 +1504,7 @@ TEST(factorial)
 
 TEST(match)
 {
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute("match 4 { 4 | false => print('oh no!');, 5 => print('oh dear!');, 4 => print('Yes!'); }");
 }
@@ -1502,13 +1512,13 @@ TEST(match)
 TEST(tagmatch)
 {
 
-        vm_init();
+        vm_init(0, NULL);
 
         vm_execute("tag Add; match Add(4) { Add(k) => print(k); }");
 }
 
 TEST(matchrest)
 {
-        vm_init();
+        vm_init(0, NULL);
         vm_execute("match [4, 5, 6] { [4, *xs] => print(xs); }");
 }

@@ -109,6 +109,9 @@ struct value
 builtin_os_spawn(value_vector *args);
 
 struct value
+builtin_os_connect(value_vector *args);
+
+struct value
 builtin_errno_get(value_vector *args);
 
 struct value

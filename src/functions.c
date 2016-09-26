@@ -7,6 +7,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/types.h>
+#include <netdb.h>
+#include <sys/socket.h>
 
 #include "tags.h"
 #include "value.h"
@@ -15,6 +18,7 @@
 #include "util.h"
 #include "json.h"
 #include "dict.h"
+#include "object.h"
 
 static char buffer[1024];
 
@@ -784,14 +788,67 @@ builtin_os_spawn(value_vector *args)
 
                 close(exc[0]);
 
-                struct dict *result = dict_new();
-                dict_put_member(result, "stdin",  INTEGER(in[1]));
-                dict_put_member(result, "stdout", INTEGER(out[0]));
-                dict_put_member(result, "stderr", INTEGER(err[0]));
-                dict_put_member(result, "pid",    INTEGER(pid));
+                struct table *result = object_new();
 
-                return DICT(result);
+                table_add(result, "stdin",  INTEGER(in[1]));
+                table_add(result, "stdout", INTEGER(out[0]));
+                table_add(result, "stderr", INTEGER(err[0]));
+                table_add(result, "pid",    INTEGER(pid));
+
+                return OBJECT(result, 0);
         }
+}
+
+struct value
+builtin_os_connect(value_vector *args)
+{
+        static vec(char) host;
+        static vec(char) port;
+
+        host.count = 0;
+        port.count = 0;
+
+        ASSERT_ARGC("os::connect()", 2);
+
+        struct value h = args->items[0];
+        if (h.type != VALUE_STRING)
+                vm_panic("the first argument to os::connect() must be a string");
+
+        vec_push_n(host, h.string, h.bytes);
+        vec_push(host, '\0');
+
+        struct value p = args->items[1];
+        switch (p.type) {
+        case VALUE_STRING:
+                vec_push_n(port, p.string, p.bytes);
+                vec_push(port, '\0');
+                break;
+        case VALUE_INTEGER:
+                vec_reserve(port, 16);
+                snprintf(port.items, 16, "%d", (int) p.integer);
+                break;
+        default:
+                vm_panic("the second argument to os::connect() must be a string or an int");
+        }
+
+        struct addrinfo hints, *result;
+        int conn;
+
+        memset(&hints, 0, sizeof hints);
+
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        if (getaddrinfo(host.items, port.items, &hints, &result) != 0)
+                return NIL;
+        if ((conn = socket(result->ai_family, result->ai_socktype, result->ai_protocol)) == -1)
+                return NIL;
+        if (connect(conn, result->ai_addr, result->ai_addrlen) == -1) {
+                close(conn);
+                return NIL;
+        }
+
+        return INTEGER(conn);
 }
 
 struct value

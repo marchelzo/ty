@@ -2020,6 +2020,7 @@ void
 compiler_init(void)
 {
         tags_init();
+        class_new("Object");
         state = freshstate();
         global = state.global;
 }
