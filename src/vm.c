@@ -475,6 +475,7 @@ vm_exec(char *code)
                 CASE(FOR_EACH)
                         v = pop();
                         READVALUE(n);
+
                         char *first = ip;
                         char instr = *ip;
 
@@ -488,9 +489,9 @@ vm_exec(char *code)
                                 gc_pop();
                                 break;
                         case VALUE_DICT:
-                                for (int i = 0; i < DICT_NUM_BUCKETS; ++i) {
+                                for (int i = 0; i < DICT_NUM_BUCKETS && *first != INSTR_HALT; ++i) {
                                         struct dict_node *node = v.dict->buckets[i];
-                                        while (node != NULL) {
+                                        while (node != NULL && *first != INSTR_HALT) {
                                                 push(node->key);
                                                 vm_exec(ip);
                                                 node = node->next;
@@ -498,7 +499,7 @@ vm_exec(char *code)
                                 }
                                 break;
                         case VALUE_BLOB:
-                                for (int i = 0; i < v.blob->count; ++i) {
+                                for (int i = 0; i < v.blob->count && *first != INSTR_HALT; ++i) {
                                         push(INTEGER(v.blob->items[i]));
                                         vm_exec(ip);
                                 }
@@ -506,7 +507,7 @@ vm_exec(char *code)
                         case VALUE_STRING:
                         {
                                 int offset = 0;
-                                while (offset < v.bytes) {
+                                while (offset < v.bytes && *first != INSTR_HALT) {
                                         int bytes = utf8_char_len(v.string + offset);
                                         push(STRING_VIEW(v, offset, bytes));
                                         vm_exec(ip);
@@ -533,7 +534,7 @@ vm_exec(char *code)
 
                                 gc_push(&iterator);
 
-                                while (item.type != VALUE_NIL) {
+                                while (item.type != VALUE_NIL && *first != INSTR_HALT) {
                                         push(item);
                                         vm_exec(ip);
                                         call(vp, &iterator, 0, true);
