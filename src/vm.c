@@ -170,7 +170,7 @@ call(struct value *f, struct value *self, int n, bool exec)
         if (has_self)
                 vars[f->symbols[0]]->value = *self;
 
-        for (int i = 0; i < f->refs->count; ++i) {
+        if (f->refs != NULL) for (int i = 0; i < f->refs->count; ++i) {
                 struct reference ref = f->refs->refs[i];
                 LOG("resolving reference to %p", (void *) ref.pointer);
                 memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
@@ -858,7 +858,8 @@ vm_exec(char *code)
                         READVALUE(n);
                         while (n --> 0) {
                                 v = pop();
-                                NOGC(v.refs);
+                                if (v.refs != NULL)
+                                        NOGC(v.refs);
                                 tags_add_method(tag, ip, v);
                                 ip += strlen(ip) + 1;
                         }
@@ -874,7 +875,8 @@ vm_exec(char *code)
                         READVALUE(n);
                         while (n --> 0) {
                                 v = pop();
-                                NOGC(v.refs);
+                                if (v.refs != NULL)
+                                        NOGC(v.refs);
                                 class_add_method(class, ip, v);
                                 ip += strlen(ip) + 1;
                         }
