@@ -47,10 +47,10 @@
 { .module = "os",     .name = "F_GETFL",           .value = INT(F_GETFL)                                   },
 { .module = "os",     .name = "F_SETFL",           .value = INT(F_SETFL)                                   },
 { .module = "os",     .name = "F_DUPFD",           .value = INT(F_DUPFD)                                   },
+#ifdef __APPLE__
 { .module = "os",     .name = "F_DUPFD_CLOEXEC",   .value = INT(F_DUPFD_CLOEXEC)                           },
 { .module = "os",     .name = "F_GETOWN",          .value = INT(F_GETOWN)                                  },
 { .module = "os",     .name = "F_SETOWN",          .value = INT(F_SETOWN)                                  },
-#ifdef __APPLE__
 { .module = "os",     .name = "F_GETPATH",         .value = INT(F_GETPATH)                                 },
 { .module = "os",     .name = "F_PREALLOCATE",     .value = INT(F_PREALLOCATE)                             },
 { .module = "os",     .name = "F_SETSIZE",         .value = INT(F_SETSIZE)                                 },
