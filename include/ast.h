@@ -13,9 +13,13 @@
 typedef vec(int) int_vector;
 
 struct expression;
-struct value;
 
-struct environment;
+struct class_definition {
+        int symbol;
+        char *name;
+        struct expression *super;
+        vec(struct expression *) methods;
+};
 
 struct statement {
         enum {
@@ -23,6 +27,7 @@ struct statement {
                 STATEMENT_EACH_LOOP,
                 STATEMENT_DEFINITION,
                 STATEMENT_TAG_DEFINITION,
+                STATEMENT_CLASS_DEFINITION,
                 STATEMENT_WHILE_LOOP,
                 STATEMENT_WHILE_MATCH,
                 STATEMENT_WHILE_LET,
@@ -40,7 +45,6 @@ struct statement {
                 STATEMENT_EXPORT,
         } type;
         struct location loc;
-
         union {
                 struct expression *expression;
                 struct expression *return_value;
@@ -51,12 +55,10 @@ struct statement {
                         char *as;
                         vec(char *) identifiers;
                 } import;
-                struct {
-                        char *name;
-                        int tag;
-                        struct expression *super;
-                        vec(struct expression *) methods;
-                } tag;
+                union {
+                        struct class_definition tag;
+                        struct class_definition class;
+                };
                 struct {
                         struct statement *init;
                         struct expression *cond;
@@ -120,14 +122,13 @@ struct expression {
                 EXPRESSION_MEMBER_ACCESS,
                 EXPRESSION_SUBSCRIPT,
                 EXPRESSION_ARRAY,
-                EXPRESSION_OBJECT,
+                EXPRESSION_DICT,
                 EXPRESSION_METHOD_CALL,
                 EXPRESSION_IDENTIFIER,
                 EXPRESSION_TAG,
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
-                EXPRESSION_THIS,
                 EXPRESSION_RANGE,
 
                 EXPRESSION_MATCH,

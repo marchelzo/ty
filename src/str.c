@@ -201,7 +201,7 @@ string_split(struct value *string, value_vector *args)
                                 ++i;
                         }
 
-                        vec_push(*result.array, str);
+                        value_array_push(result.array, str);
 
                         while (i < len && is_prefix(s + i, len - i, p, n))
                                 i += n;
@@ -224,7 +224,7 @@ string_split(struct value *string, value_vector *args)
                         int n = out[0] - start;
 
                         if (n > 0)
-                                vec_push(*result.array, STRING_VIEW(*string, start, n));
+                                value_array_push(result.array, STRING_VIEW(*string, start, n));
 
                         start = out[1];
                 }
@@ -544,19 +544,17 @@ string_lower(struct value *string, value_vector *args)
         size_t len = string->bytes;
 
         size_t outlen = 0;
-        struct string *result = value_string_alloc(4 * string->bytes);
+        char *result = value_string_alloc(4 * string->bytes);
 
         while (len > 0) {
                 int n = utf8proc_iterate(s, len, &c);
                 s += n;
                 len -= n;
                 c = utf8proc_tolower(c);
-                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result->data + outlen);
+                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result + outlen);
         }
 
-        resize(result, sizeof *result + outlen);
-
-        return STRING(result->data, outlen, result);
+        return STRING(result, outlen, result);
 }
 
 static struct value
@@ -571,19 +569,17 @@ string_upper(struct value *string, value_vector *args)
         size_t len = string->bytes;
 
         size_t outlen = 0;
-        struct string *result = value_string_alloc(4 * string->bytes);
+        char *result = value_string_alloc(4 * string->bytes);
 
         while (len > 0) {
                 int n = utf8proc_iterate(s, len, &c);
                 s += n;
                 len -= n;
                 c = utf8proc_toupper(c);
-                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result->data + outlen);
+                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result + outlen);
         }
 
-        resize(result, sizeof *result + outlen);
-
-        return STRING(result->data, outlen, result);
+        return STRING(result, outlen, result);
 }
 
 static struct value
@@ -619,26 +615,26 @@ string_pad_left(struct value *string, value_vector *args)
         }
         
         int n = (len.integer - string_len) / pad_len + 1;
-        struct string *result = value_string_alloc(string->bytes + pad_bytes * n);
+        char *result = value_string_alloc(string->bytes + pad_bytes * n);
 
         int current = 0;
         int bytes = 0;
         while (current + pad_len <= len.integer - string_len) {
-                memcpy(result->data + bytes, pad, pad_bytes);
+                memcpy(result + bytes, pad, pad_bytes);
                 current += pad_len;
                 bytes += pad_bytes;
         }
 
         if (current != len.integer - string_len) {
                 stringcount(pad, pad_bytes, len.integer - string_len - current);
-                memcpy(result->data + bytes, pad, outpos.bytes);
+                memcpy(result + bytes, pad, outpos.bytes);
                 bytes += outpos.bytes;
         }
 
-        memcpy(result->data + bytes, string->string, string->bytes);
+        memcpy(result + bytes, string->string, string->bytes);
         bytes += string->bytes;
 
-        return STRING(result->data, bytes, result);
+        return STRING(result, bytes, result);
 }
 
 static struct value
@@ -674,23 +670,23 @@ string_pad_right(struct value *string, value_vector *args)
         }
         
         int n = (len.integer - current) / pad_len + 1;
-        struct string *result = value_string_alloc(string->bytes + pad_bytes * n);
+        char *result = value_string_alloc(string->bytes + pad_bytes * n);
         int bytes = string->bytes;
-        memcpy(result->data, string->string, bytes);
+        memcpy(result, string->string, bytes);
 
         while (current + pad_len <= len.integer) {
-                memcpy(result->data + bytes, pad, pad_bytes);
+                memcpy(result + bytes, pad, pad_bytes);
                 current += pad_len;
                 bytes += pad_bytes;
         }
 
         if (current != len.integer) {
                 stringcount(pad, pad_bytes, len.integer - current);
-                memcpy(result->data + bytes, pad, outpos.bytes);
+                memcpy(result + bytes, pad, outpos.bytes);
                 bytes += outpos.bytes;
         }
 
-        return STRING(result->data, bytes, result);
+        return STRING(result, bytes, result);
 }
 
 DEFINE_METHOD_TABLE(

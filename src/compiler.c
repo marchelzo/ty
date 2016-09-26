@@ -15,12 +15,13 @@
 #include "util.h"
 #include "value.h"
 #include "ast.h"
-#include "object.h"
+#include "dict.h"
 #include "functions.h"
 #include "test.h"
 #include "lex.h"
 #include "parse.h"
 #include "tags.h"
+#include "class.h"
 #include "vm.h"
 
 #define emit_instr(i) do { LOG("emitting instr: %s", #i); _emit_instr(i); } while (false)
@@ -238,22 +239,8 @@ addsymbol(struct scope *scope, char const *name)
         return s;
 }
 
-inline static int
-definetag(struct statement *s)
-{
-        if (scope_locally_defined(state.global, s->tag.name))
-                fail("redeclaration of tag: %s", s->tag.name);
-
-        struct symbol *sym = scope_add(state.global, s->tag.name);
-        sym->tag = tags_new(s->tag.name);
-
-        LOG("adding tag symbol: %s -> %d", s->tag.name, sym->symbol);
-
-        return sym->tag;
-}
-
 inline static bool
-istag(struct expression const *e)
+is_tag(struct expression const *e)
 {
         assert(e->type == EXPRESSION_IDENTIFIER);
 
@@ -261,6 +248,17 @@ istag(struct expression const *e)
         struct symbol *sym = scope_lookup(scope, e->identifier);
 
         return sym != NULL && sym->tag != -1;
+}
+
+inline static bool
+is_class(struct expression const *e)
+{
+        assert(e->type == EXPRESSION_IDENTIFIER);
+
+        struct scope const *scope = (e->module == NULL) ? state.global : get_import_scope(e->module);
+        struct symbol *sym = scope_lookup(scope, e->identifier);
+
+        return sym != NULL && sym->class != -1;
 }
 
 inline static struct symbol *
@@ -366,6 +364,30 @@ get_import_scope(char const *name)
 }
 
 static void
+symbolize_methods(struct scope *scope, struct expression **ms, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                /*
+                 * Here we temporarily set the method names to NULL. Say for example there is
+                 * a method named 'print'. Within the method body, we don't want 'print' to refer
+                 * to the method. Methods should only be accessible through tags or tagged values.
+                 * That is, standalone identifiers should never resolve to methods. By setting the
+                 * name to NULL before passing it to symbolize_expression, we avoid adding it as an
+                 * identifier to the scope of the method body.
+                 */
+                char *name = ms[i]->name;
+                ms[i]->name = NULL;
+
+                state.in_method = true;
+                symbolize_expression(scope, ms[i]);
+                ms[i]->is_method = true;
+                state.in_method = false;
+
+                ms[i]->name = name;
+        }
+}
+
+static void
 try_symbolize_application(struct scope *scope, struct expression *e)
 {
         if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
@@ -437,7 +459,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
 
         try_symbolize_application(scope, e);
 
-        if (e->type == EXPRESSION_IDENTIFIER && istag(e))
+        if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
                 goto tag;
 
         state.loc = e->loc;
@@ -495,10 +517,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
                         symbolize_expression(scope, e->expressions.items[i]);
-                break;
-        case EXPRESSION_THIS:
-                if (!state.in_method)
-                        fail("'this' used outside of a method context");
                 break;
         case EXPRESSION_RANGE:
                 symbolize_expression(scope, e->low);
@@ -609,7 +627,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (size_t i = 0; i < e->elements.count; ++i)
                         symbolize_expression(scope, e->elements.items[i]);
                 break;
-        case EXPRESSION_OBJECT:
+        case EXPRESSION_DICT:
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(scope, e->keys.items[i]);
                         symbolize_expression(scope, e->values.items[i]);
@@ -637,6 +655,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
         state.loc = s->loc;
 
         struct scope *subscope;
+        struct symbol *sym;
 
         switch (s->type) {
         case STATEMENT_IMPORT:
@@ -648,32 +667,31 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_EXPRESSION:
                 symbolize_expression(scope, s->expression);
                 break;
+        case STATEMENT_CLASS_DEFINITION:
+                if (scope_locally_defined(state.global, s->class.name))
+                        fail("redeclaration of class: %s", s->class.name);
+                if (s->class.super != NULL) {
+                        symbolize_expression(scope, s->class.super);
+                        if (!is_class(s->class.super))
+                                fail("attempt to extend non-class");
+                }
+                sym = scope_add(state.global, s->class.name);
+                sym->class = class_new(s->class.name);
+                s->class.symbol = sym->class;
+                symbolize_methods(scope, s->class.methods.items, s->class.methods.count);
+                break;
         case STATEMENT_TAG_DEFINITION:
+                if (scope_locally_defined(state.global, s->tag.name))
+                        fail("redeclaration of tag: %s", s->tag.name);
                 if (s->tag.super != NULL) {
-                        if (!istag(s->tag.super))
-                                fail("attempt to extend non-tag");
                         symbolize_expression(scope, s->tag.super);
+                        if (!is_tag(s->tag.super))
+                                fail("attempt to extend non-tag");
                 }
-                s->tag.tag = definetag(s);
-                for (int i = 0; i < s->tag.methods.count; ++i) {
-                        /*
-                         * Here we temporarily set the method names to NULL. Say for example there is
-                         * a method named 'print'. Within the method body, we don't want 'print' to refer
-                         * to the method. Methods should only be accessible through tags or tagged values.
-                         * That is, standalone identifiers should never resolve to methods. By setting the
-                         * name to NULL before passing it to symbolize_expression, we avoid adding it as an
-                         * identifier to the scope of the method body.
-                         */
-                        char *name = s->tag.methods.items[i]->name;
-                        s->tag.methods.items[i]->name = NULL;
-
-                        state.in_method = true;
-                        symbolize_expression(scope, s->tag.methods.items[i]);
-                        s->tag.methods.items[i]->is_method = true;
-                        state.in_method = false;
-
-                        s->tag.methods.items[i]->name = name;
-                }
+                sym = scope_add(state.global, s->tag.name);
+                sym->tag = tags_new(s->tag.name);
+                s->tag.symbol = sym->tag;
+                symbolize_methods(scope, s->tag.methods.items, s->tag.methods.count);
                 break;
         case STATEMENT_BLOCK:
                 scope = scope_new(scope, false);
@@ -773,9 +791,8 @@ emit_int(int k)
 {
         LOG("emitting int: %d", k);
         char const *s = (char *) &k;
-        for (int i = 0; i < sizeof (int); ++i) {
+        for (int i = 0; i < sizeof (int); ++i)
                 vec_push(state.code, s[i]);
-        }
 }
 
 inline static void
@@ -783,9 +800,8 @@ emit_symbol(uintptr_t sym)
 {
         LOG("emitting symbol: %"PRIuPTR, sym);
         char const *s = (char *) &sym;
-        for (int i = 0; i < sizeof (uintptr_t); ++i) {
+        for (int i = 0; i < sizeof (uintptr_t); ++i)
                 vec_push(state.code, s[i]);
-        }
 }
 
 inline static void
@@ -794,9 +810,8 @@ emit_integer(intmax_t k)
         
         LOG("emitting integer: %"PRIiMAX, k);
         char const *s = (char *) &k;
-        for (int i = 0; i < sizeof (intmax_t); ++i) {
+        for (int i = 0; i < sizeof (intmax_t); ++i)
                 vec_push(state.code, s[i]);
-        }
 }
 
 inline static void
@@ -805,9 +820,8 @@ emit_boolean(bool b)
         
         LOG("emitting boolean: %s", b ? "true" : "false");
         char const *s = (char *) &b;
-        for (int i = 0; i < sizeof (bool); ++i) {
+        for (int i = 0; i < sizeof (bool); ++i)
                 vec_push(state.code, s[i]);
-        }
 }
 
 inline static void
@@ -827,9 +841,8 @@ emit_string(char const *s)
         
         LOG("emitting string: %s", s);
         size_t n = strlen(s) + 1;
-        for (int i = 0; i < n; ++i) {
+        for (int i = 0; i < n; ++i)
                 vec_push(state.code, s[i]);
-        }
 }
 
 inline static void
@@ -859,12 +872,15 @@ emit_function(struct expression const *e)
         state.in_method = e->is_method;
         ++state.function_depth;
 
-
+        emit_int(e->param_symbols.count);
         emit_int(e->bound_symbols.count);
-        for (int i = 0; i < e->bound_symbols.count; ++i) {
-                LOG("bound sym: %d", e->bound_symbols.items[i]->symbol);
-                emit_symbol(e->bound_symbols.items[i]->symbol);
-        }
+
+        while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
+                vec_push(state.code, 0x00);
+        vec_push(state.code, 0xFF);
+
+        for (int i = 0; i < e->bound_symbols.count; ++i)
+                emit_int(e->bound_symbols.items[i]->symbol);
 
         /*
          * Write an int to the emitted code just to make some room.
@@ -888,10 +904,6 @@ emit_function(struct expression const *e)
         int bytes = state.code.count - size_offset - sizeof (int);
         LOG("bytes in func = %d", bytes);
         memcpy(state.code.items + size_offset, &bytes, sizeof (int));
-
-        emit_int(e->param_symbols.count);
-        for (int i = 0; i < e->param_symbols.count; ++i)
-                emit_symbol(e->param_symbols.items[i]->symbol);
 
         emit_int(state.refs.count);
         for (int i = 0; i < state.refs.count; ++i) {
@@ -1510,9 +1522,6 @@ emit_expression(struct expression const *e)
         case EXPRESSION_MATCH:
                 emit_match_expression(e);
                 break;
-        case EXPRESSION_THIS:
-                emit_instr(INSTR_THIS);
-                break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_expression(e->tagged);
                 emit_instr(INSTR_TAG_PUSH);
@@ -1563,12 +1572,12 @@ emit_expression(struct expression const *e)
                 emit_instr(INSTR_ARRAY);
                 emit_int(e->elements.count);
                 break;
-        case EXPRESSION_OBJECT:
+        case EXPRESSION_DICT:
                 for (int i = e->keys.count - 1; i >= 0; --i) {
                         emit_expression(e->keys.items[i]);
                         emit_expression(e->values.items[i]);
                 }
-                emit_instr(INSTR_OBJECT);
+                emit_instr(INSTR_DICT);
                 emit_int(e->keys.count);
                 break;
         case EXPRESSION_NIL:
@@ -1764,18 +1773,34 @@ emit_statement(struct statement const *s)
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_TAG_DEFINITION:
-                if (s->tag.super != NULL) {
-                        emit_instr(INSTR_EXTEND_TAG);
-                        emit_int(s->tag.tag);
-                        emit_int(s->tag.super->symbol->tag);
-                }
                 for (int i = 0; i < s->tag.methods.count; ++i) {
                         emit_instr(INSTR_FUNCTION);
                         emit_function(s->tag.methods.items[i]);
-                        emit_instr(INSTR_DEFINE_METHOD);
-                        emit_int(s->tag.tag);
-                        emit_string(s->tag.methods.items[i]->name);
                 }
+
+                emit_instr(INSTR_DEFINE_TAG);
+                emit_int(s->tag.symbol);
+                emit_int(s->tag.super == NULL ? -1 : s->tag.super->symbol->tag);
+                emit_int(s->tag.methods.count);
+
+                for (int i = s->tag.methods.count; i > 0; --i)
+                        emit_string(s->tag.methods.items[i - 1]->name);
+
+                break;
+        case STATEMENT_CLASS_DEFINITION:
+                for (int i = 0; i < s->class.methods.count; ++i) {
+                        emit_instr(INSTR_FUNCTION);
+                        emit_function(s->class.methods.items[i]);
+                }
+
+                emit_instr(INSTR_DEFINE_CLASS);
+                emit_int(s->class.symbol);
+                emit_int(s->class.super == NULL ? -1 : s->class.super->symbol->class);
+                emit_int(s->class.methods.count);
+
+                for (int i = s->class.methods.count; i > 0; --i)
+                        emit_string(s->class.methods.items[i - 1]->name);
+
                 break;
         case STATEMENT_RETURN:
                 if (state.function_depth == 0)
@@ -1788,8 +1813,6 @@ emit_statement(struct statement const *s)
                         emit_instr(INSTR_POP_VAR);
                         emit_symbol(state.bound_symbols.items[i]->symbol);
                 }
-                if (state.in_method)
-                        emit_instr(INSTR_POP_THIS);
                 emit_instr(INSTR_RETURN);
                 break;
         case STATEMENT_BREAK:
@@ -1827,6 +1850,14 @@ emit_new_globals(void)
                                 emit_instr(INSTR_TARGET_VAR);
                                 emit_symbol(s->symbol);
                                 emit_instr(INSTR_ASSIGN);
+                                emit_instr(INSTR_POP);
+                        } else if (s->class != -1) {
+                                emit_instr(INSTR_CLASS);
+                                emit_int(s->class);
+                                emit_instr(INSTR_TARGET_VAR);
+                                emit_symbol(s->symbol);
+                                emit_instr(INSTR_ASSIGN);
+                                emit_instr(INSTR_POP);
                         }
                 }
         }

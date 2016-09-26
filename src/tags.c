@@ -6,10 +6,7 @@
 #include "log.h"
 #include "util.h"
 #include "vec.h"
-
-enum {
-        METHOD_TABLE_SIZE = 16
-};
+#include "table.h"
 
 struct tags;
 
@@ -25,20 +22,10 @@ struct tags {
         vec(struct link) links;
 };
 
-struct method_bucket {
-        vec(uint64_t) hashes;
-        vec(char const *) names;
-        vec(struct value) methods;
-};
-
-struct method_table {
-        struct method_bucket buckets[METHOD_TABLE_SIZE];
-};
-
 static int tagcount = 0;
 static vec(struct tags *) lists;
 static vec(char const *) names;
-static vec(struct method_table) method_tables;
+static vec(struct table) tables;
 
 static struct tags *
 mklist(int tag, struct tags *next)
@@ -58,9 +45,6 @@ mklist(int tag, struct tags *next)
 void
 tags_init(void)
 {
-        vec_init(lists);
-        vec_init(names);
-        tagcount = 0;
         mklist(tagcount++, NULL);
 }
 
@@ -71,14 +55,9 @@ tags_new(char const *tag)
 
         vec_push(names, tag);
 
-        struct method_table table;
-        vec_push(method_tables, table);
-
-        for (int i = 0; i < METHOD_TABLE_SIZE; ++i) {
-                vec_init(method_tables.items[tagcount - 1].buckets[i].hashes);
-                vec_init(method_tables.items[tagcount - 1].buckets[i].names);
-                vec_init(method_tables.items[tagcount - 1].buckets[i].methods);
-        }
+        struct table table;
+        table_init(&table);
+        vec_push(tables, table);
 
         mklist(tagcount, lists.items[0]);
         return tagcount++;
@@ -169,61 +148,22 @@ tags_name(int tag)
 void
 tags_add_method(int tag, char const *name, struct value f)
 {
-        uint64_t h = strhash(name);
-        int i = h % METHOD_TABLE_SIZE;
-
-        struct value *m = tags_lookup_method(tag, name);
-        if (m != NULL) {
-                *m = f;
-                return;
-        }
-
-        vec_push(method_tables.items[tag - 1].buckets[i].hashes, h);
-        vec_push(method_tables.items[tag - 1].buckets[i].names, name);
-        vec_push(method_tables.items[tag - 1].buckets[i].methods, f);
+        LOG("tag = %d", tag);
+        LOG("adding method %s to tag %s", name, names.items[tag - 1]);
+        table_add(&tables.items[tag - 1], name, f);
 }
 
 void
 tags_copy_methods(int dst, int src)
 {
-        struct method_bucket *dt = method_tables.items[dst - 1].buckets;
-        struct method_bucket *st = method_tables.items[src - 1].buckets;
-
-        for (int i = 0; i < METHOD_TABLE_SIZE; ++i) {
-                if (st[i].hashes.count == 0)
-                        continue;
-                vec_push_n(
-                        dt[i].hashes,
-                        st[i].hashes.items,
-                        st[i].hashes.count
-                );
-                vec_push_n(
-                        dt[i].names,
-                        st[i].names.items,
-                        st[i].names.count
-                );
-                vec_push_n(
-                        dt[i].methods,
-                        st[i].methods.items,
-                        st[i].methods.count
-                );
-        }
+        struct table *dt = &tables.items[dst - 1];
+        struct table const *st = &tables.items[src - 1];
+        table_copy(dt, st);
 }
 
 struct value *
 tags_lookup_method(int tag, char const *name)
 {
-        uint64_t h = strhash(name);
-        int i = h % METHOD_TABLE_SIZE;
-
-        struct method_bucket const *b = &method_tables.items[tag - 1].buckets[i];
-
-        for (int i = 0; i < b->hashes.count; ++i) {
-                if (b->hashes.items[i] != h)
-                        continue;
-                if (strcmp(b->names.items[i], name) == 0)
-                        return &b->methods.items[i];
-        }
-
-        return NULL;
+        struct table const *t = &tables.items[tag - 1];
+        return table_lookup(t, name);
 }

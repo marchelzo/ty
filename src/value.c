@@ -8,16 +8,13 @@
 #include "value.h"
 #include "test.h"
 #include "util.h"
+#include "dict.h"
 #include "object.h"
 #include "tags.h"
+#include "class.h"
 #include "log.h"
 #include "gc.h"
 #include "vm.h"
-
-static struct value_array *array_chain;
-static struct ref_vector *ref_vector_chain;
-static struct string *string_chain;
-static struct blob *blob_chain;
 
 static bool
 arrays_equal(struct value const *v1, struct value const *v2)
@@ -108,28 +105,37 @@ ary_hash(struct value const *a)
         return hash;
 }
 
-unsigned long
-value_hash(struct value const *val)
+inline static unsigned long
+hash(struct value const *val)
 {
         switch (val->type) {
-        case VALUE_NIL:       return 1;
-        case VALUE_BOOLEAN:   return val->boolean ? 2 : 3;
+        case VALUE_NIL:       return 0xDEADBEEFULL;
+        case VALUE_BOOLEAN:   return val->boolean ? 0xABCULL : 0xDEFULL;
         case VALUE_STRING:    return str_hash(val->string, val->bytes);
         case VALUE_INTEGER:   return int_hash(val->integer);
         case VALUE_REAL:      return flt_hash(val->real);
         case VALUE_ARRAY:     return ary_hash(val);
+        case VALUE_DICT:      return ptr_hash(val->dict);
         case VALUE_OBJECT:    return ptr_hash(val->object);
+        case VALUE_METHOD:    return ptr_hash(val->method) ^ ptr_hash(val->this);
         case VALUE_FUNCTION:  return ptr_hash(val->code);
         case VALUE_REGEX:     return ptr_hash(val->regex);
+        case VALUE_TAG:       return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
+        case VALUE_CLASS:     return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
+        default:              vm_panic("attempt to hash invalid value");
         }
+}
 
-        assert(false);
+unsigned long
+value_hash(struct value const *val)
+{
+        return (((unsigned long)val->tags) << 14) * hash(val);
 }
 
 char *
 show_array(struct value const *a)
 {
-        static vec(struct value_array *) show_arrays;
+        static vec(struct array *) show_arrays;
 
         for (int i = 0; i < show_arrays.count; ++i)
                 if (show_arrays.items[i] == a->array)
@@ -204,7 +210,7 @@ char *
 value_show(struct value const *v)
 {
         static char buffer[1024];
-        char const *s = buffer;
+        char *s = NULL;
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
@@ -228,26 +234,41 @@ value_show(struct value const *v)
         case VALUE_REGEX:
                 snprintf(buffer, 1024, "/%s/", v->pattern);
                 break;
-        case VALUE_OBJECT:
-                snprintf(buffer, 1024, "<object at %p>", (void *) v->object);
+        case VALUE_DICT:
+                snprintf(buffer, 1024, "<dict at %p>", (void *) v->dict);
                 break;
         case VALUE_FUNCTION:
                 snprintf(buffer, 1024, "<function at %p>", (void *) v->code);
                 break;
+        case VALUE_METHOD:
+                if (v->this == NULL)
+                        snprintf(buffer, 1024, "<method at %p>", (void *)v->method);
+                else
+                        snprintf(buffer, 1024, "<method at %p bound to <value at %p>", (void *)v->method, (void *)v->this);
+                break;
         case VALUE_BUILTIN_FUNCTION:
                 snprintf(buffer, 1024, "<builtin function>");
                 break;
+        case VALUE_CLASS:
+                snprintf(buffer, 1024, "<class %s>", class_name(v->class));
+                break;
+        case VALUE_OBJECT:
+                snprintf(buffer, 1024, "<%s object at %p>", class_name(v->class), (void *)v->object);
+                break;
         case VALUE_TAG:
-                s = tags_name(v->tag);
+                snprintf(buffer, 1024, "%s", tags_name(v->tag));
                 break;
         case VALUE_BLOB:
                 snprintf(buffer, 1024, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
         default:
-                return sclone("UNKNOWN VALUE");
+                return sclone("< !!! >");
         }
 
-        return sclone(tags_wrap(s, v->tags));
+        char *result = sclone(tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0));
+        free(s);
+
+        return result;
 }
 
 int
@@ -280,7 +301,10 @@ value_truthy(struct value const *v)
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
         case VALUE_BUILTIN_FUNCTION: return true;
+        case VALUE_DICT:             return true;
+        case VALUE_CLASS:            return true;
         case VALUE_OBJECT:           return true;
+        case VALUE_METHOD:           return true;
         default:                     return false;
         }
 }
@@ -321,17 +345,20 @@ value_apply_predicate(struct value *p, struct value *v)
                 }
         case VALUE_TAG:
                 return tags_first(v->tags) == p->tag;
+        case VALUE_CLASS:
+                return v->type == VALUE_OBJECT && v->class == p->class;
         default:
                 vm_panic("invalid type of value used as a predicate");
         }
 }
 
 struct value
-value_apply_callable(struct value const *f, struct value *v)
+value_apply_callable(struct value *f, struct value *v)
 {
         switch (f->type) {
         case VALUE_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
+        case VALUE_METHOD:
                 return vm_eval_function(f, v);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
@@ -383,6 +410,14 @@ value_apply_callable(struct value const *f, struct value *v)
                         result.type |= VALUE_TAGGED;
                         return result;
                 }
+        case VALUE_CLASS:
+                {
+                        struct value result = OBJECT(object_new(), f->class);
+                        struct value *init = class_lookup_method(f->class, "init");
+                        if (init != NULL)
+                                vm_eval_function(&METHOD(NULL, init, &result), v);
+                        return result;
+                }
         default:
                 vm_panic("invalid type of value used as a predicate");
         }
@@ -403,7 +438,9 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_REGEX:            if (v1->regex != v2->regex)                                                    return false; break;
         case VALUE_FUNCTION:         if (v1->code != v2->code)                                                      return false; break;
         case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
+        case VALUE_DICT:             if (v1->dict != v2->dict)                                                      return false; break;
         case VALUE_OBJECT:           if (v1->object != v2->object)                                                  return false; break;
+        case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
         case VALUE_NIL:                                                                                                           break;
@@ -416,56 +453,58 @@ value_test_equality(struct value const *v1, struct value const *v2)
 }
 
 inline static void
-value_array_mark(struct value_array *a)
+value_array_mark(struct array *a)
 {
-        a->mark |= GC_MARK;
+        MARK(a);
 
         for (int i = 0; i < a->count; ++i)
                 value_mark(&a->items[i]);
 }
 
-static void
+inline static void
 function_mark_references(struct value *v)
 {
-        for (size_t i = 0; i < v->refs->count; ++i)
-                vm_mark_variable((struct variable *)v->refs->refs[i].pointer);
+        for (size_t i = 0; i < v->refs->count; ++i) {
+                struct variable *var = (struct variable *)v->refs->refs[i].pointer;
+                if (MARKED(var))
+                        continue;
+                MARK(var);
+                value_mark(&var->value);
+        }
 
-        v->refs->mark |= GC_MARK;
+        if (v->this != NULL) {
+                MARK(v->this);
+                value_mark(v->this);
+        }
+
+        MARK(v->refs);
 }
 
-struct string *
-value_clone_string(char const *s, int n)
+char *
+value_clone_string(char const *src, int n)
 {
-        struct string *str = gc_alloc(sizeof *str + n);
-        str->mark = GC_MARK;
-        str->next = string_chain;
-        string_chain = str;
-
-        memcpy(str->data, s, n);
-
-        return str;
+        char *s = gc_alloc_object(n, GC_STRING);
+        memcpy(s, src, n);
+        return s;
 }
 
-struct string *
+char *
 value_string_alloc(int n)
 {
-        struct string *str = gc_alloc(sizeof *str + n);
-        str->mark = GC_MARK;
-        str->next = string_chain;
-        string_chain = str;
-
-        return str;
+        return gc_alloc_object(n, GC_STRING);
 }
 
 void
 value_mark(struct value *v)
 {
         switch (v->type) {
+        case VALUE_METHOD:   MARK(v->this); value_mark(v->this);              break;
         case VALUE_ARRAY:    value_array_mark(v->array);                      break;
-        case VALUE_OBJECT:   object_mark(v->object);                          break;
+        case VALUE_DICT:     dict_mark(v->dict);                              break;
         case VALUE_FUNCTION: function_mark_references(v);                     break;
-        case VALUE_STRING:   if (v->gcstr != NULL) v->gcstr->mark |= GC_MARK; break;
-        case VALUE_BLOB:     v->blob->mark |= GC_MARK;                        break;
+        case VALUE_STRING:   if (v->gcstr != NULL) MARK(v->gcstr);            break;
+        case VALUE_OBJECT:   object_mark(v->object);                          break;
+        case VALUE_BLOB:     MARK(v->blob);                                   break;
         default:                                                              break;
         }
 }
@@ -473,33 +512,23 @@ value_mark(struct value *v)
 struct blob *
 value_blob_new(void)
 {
-        struct blob *blob = gc_alloc(sizeof *blob);
-        blob->next = blob_chain;
-        blob->mark = GC_MARK;
-        blob_chain = blob;
-
+        struct blob *blob = gc_alloc_object(sizeof *blob, GC_BLOB);
         vec_init(*blob);
-
         return blob;
 }
 
-struct value_array *
+struct array *
 value_array_new(void)
 {
-        struct value_array *a = gc_alloc(sizeof *a);
-        a->next = array_chain;
-        a->mark = GC_MARK;
-        array_chain = a;
-
+        struct array *a = gc_alloc_object(sizeof *a, GC_ARRAY);
         vec_init(*a);
-
         return a;
 }
 
-struct value_array *
-value_array_clone(struct value_array const *a)
+struct array *
+value_array_clone(struct array const *a)
 {
-        struct value_array *new = value_array_new();
+        struct array *new = value_array_new();
 
         /*
          * If a is empty, then we'd end up passing a null pointer
@@ -510,14 +539,14 @@ value_array_clone(struct value_array const *a)
 
         new->count = a->count;
         new->capacity = a->count;
-        new->items = alloc(sizeof *new->items * new->count);
+        new->items = gc_alloc(sizeof *new->items * new->count);
         memcpy(new->items, a->items, sizeof *new->items * new->count);
 
         return new;
 }
 
 void
-value_array_extend(struct value_array *a, struct value_array const *other)
+value_array_extend(struct array *a, struct array const *other)
 {
         int n = a->count + other->count;
 
@@ -532,124 +561,9 @@ value_array_extend(struct value_array *a, struct value_array const *other)
 struct ref_vector *
 ref_vector_new(int n)
 {
-        struct ref_vector *v = gc_alloc(sizeof *v + sizeof (struct reference) * n);
+        struct ref_vector *v = gc_alloc_object(sizeof *v + sizeof (struct reference) * n, GC_REF_VECTOR);
         v->count = n;
-        v->mark = GC_MARK;
-        v->next = ref_vector_chain;
-        ref_vector_chain = v;
-
         return v;
-}
-
-void
-value_array_sweep(void)
-{
-        while (array_chain != NULL && array_chain->mark == GC_NONE) {
-                struct value_array *next = array_chain->next;
-                vec_empty(*array_chain);
-                free(array_chain);
-                array_chain = next;
-        }
-
-        if (array_chain != NULL)
-                array_chain->mark &= ~GC_MARK;
-        
-        for (struct value_array *array = array_chain; array != NULL && array->next != NULL;) {
-                struct value_array *next;
-                if (array->next->mark == GC_NONE) {
-                        next = array->next->next;
-                        vec_empty(*array->next);
-                        free(array->next);
-                        array->next = next;
-                } else {
-                        next = array->next;
-                }
-                if (next != NULL)
-                        next->mark &= ~GC_MARK;
-                array = next;
-        }
-}
-
-void
-value_blob_sweep(void)
-{
-        while (blob_chain != NULL && blob_chain->mark == GC_NONE) {
-                struct blob *next = blob_chain->next;
-                vec_empty(*blob_chain);
-                free(blob_chain);
-                blob_chain = next;
-        }
-        if (blob_chain != NULL)
-                blob_chain->mark &= ~GC_MARK;
-        for (struct blob *blob = blob_chain; blob != NULL && blob->next != NULL;) {
-                struct blob *next;
-                if (blob->next->mark == GC_NONE) {
-                        next = blob->next->next;
-                        vec_empty(*blob->next);
-                        free(blob->next);
-                        blob->next = next;
-                } else {
-                        next = blob->next;
-                }
-                if (next != NULL)
-                        next->mark &= ~GC_MARK;
-                blob = next;
-        }
-}
-
-void
-value_string_sweep(void)
-{
-        while (string_chain != NULL && string_chain->mark == GC_NONE) {
-                struct string *next = string_chain->next;
-                free(string_chain);
-                string_chain = next;
-        }
-        if (string_chain != NULL)
-                string_chain->mark &= ~GC_MARK;
-        for (struct string *str = string_chain; str != NULL && str->next != NULL;) {
-                struct string *next;
-                if (str->next->mark == GC_NONE) {
-                        next = str->next->next;
-                        free(str->next);
-                        str->next = next;
-                } else {
-                        next = str->next;
-                }
-                if (next != NULL)
-                        next->mark &= ~GC_MARK;
-                str = next;
-        }
-}
-void
-value_ref_vector_sweep(void)
-{
-        while (ref_vector_chain != NULL && ref_vector_chain->mark == GC_NONE) {
-                struct ref_vector *next = ref_vector_chain->next;
-                free(ref_vector_chain);
-                ref_vector_chain = next;
-        }
-        if (ref_vector_chain != NULL)
-                ref_vector_chain->mark &= ~GC_MARK;
-        for (struct ref_vector *ref_vector = ref_vector_chain; ref_vector != NULL && ref_vector->next != NULL;) {
-                struct ref_vector *next;
-                if (ref_vector->next->mark == GC_NONE) {
-                        next = ref_vector->next->next;
-                        free(ref_vector->next);
-                        ref_vector->next = next;
-                } else {
-                        next = ref_vector->next;
-                }
-                if (next != NULL)
-                        next->mark &= ~GC_MARK;
-                ref_vector = next;
-        }
-}
-
-void
-value_gc_reset(void)
-{
-        array_chain = NULL;
 }
 
 TEST(hash)

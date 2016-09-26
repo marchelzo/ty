@@ -27,11 +27,10 @@ enum instruction {
         INSTR_STRING,
         INSTR_REGEX,
         INSTR_ARRAY,
-        INSTR_OBJECT,
+        INSTR_DICT,
         INSTR_NIL,
-        INSTR_THIS,
-        INSTR_POP_THIS,
         INSTR_TAG,
+        INSTR_CLASS,
 
         INSTR_TO_STRING,
         INSTR_CONCAT_STRINGS,
@@ -69,8 +68,8 @@ enum instruction {
         INSTR_RESTORE_STACK_POS,
 
         INSTR_TAG_PUSH,
-        INSTR_DEFINE_METHOD,
-        INSTR_EXTEND_TAG,
+        INSTR_DEFINE_TAG,
+        INSTR_DEFINE_CLASS,
         INSTR_TRY_INDEX,
         INSTR_TRY_TAG_POP,
         INSTR_TRY_REGEX,
@@ -116,12 +115,6 @@ vm_panic(char const *fmt, ...);
 void
 vm_mark(void);
 
-void
-vm_mark_variable(struct variable *);
-
-void
-vm_sweep_variables(void);
-
 bool
 vm_execute(char const *source);
 
@@ -129,7 +122,7 @@ bool
 vm_execute_file(char const *path);
 
 struct value
-vm_eval_function(struct value const * restrict f, struct value * restrict v);
+vm_eval_function(struct value *f, struct value * restrict v);
 
 struct value
 vm_eval_function2(struct value *f, struct value *v1, struct value *v2);

@@ -535,7 +535,7 @@ array_groups_of(struct value *array, value_vector *args)
         int n = 0;
         int i = 0;
         while (i + size.integer < array->array->count) {
-                struct value_array *group = value_array_new();
+                struct array *group = value_array_new();
                 NOGC(group);
                 vec_push_n(*group, array->array->items + i, size.integer);
                 OKGC(group);
@@ -544,7 +544,7 @@ array_groups_of(struct value *array, value_vector *args)
         }
 
         if (i != array->array->count) {
-                struct value_array *last = value_array_new();
+                struct array *last = value_array_new();
                 NOGC(last);
                 vec_push_n(*last, array->array->items + i, array->array->count - i);
                 OKGC(last);
@@ -617,8 +617,6 @@ array_group(struct value *array, value_vector *args)
                 OKGC(group.array);
                 array->array->items[len++] = group;
         }
-
-        gc_pop();
 
         array->array->count = len;
         shrink(array);
@@ -695,7 +693,7 @@ array_min_by(struct value *array, value_vector *args)
 
         r = k = NIL;
 
-        if (f.type == VALUE_FUNCTION && f.param_symbols.count > 1) {
+        if (f.type == VALUE_FUNCTION && f.params > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function2(&f, &v, &min);
@@ -764,7 +762,7 @@ array_max_by(struct value *array, value_vector *args)
 
         k = r = NIL;
 
-        if (f.type == VALUE_FUNCTION && f.param_symbols.count > 1) {
+        if (f.type == VALUE_FUNCTION && f.params > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function2(&f, &v, &max);
@@ -1082,7 +1080,7 @@ array_sort_by(struct value *array, value_vector *args)
 
         comparison_fn = &f;
 
-        if (f.type == VALUE_FUNCTION && f.param_symbols.count > 1)
+        if (f.type == VALUE_FUNCTION && f.params > 1)
                 qsort(array->array->items, array->array->count, sizeof (struct value), compare_by2);
         else
                 qsort(array->array->items, array->array->count, sizeof (struct value), compare_by);

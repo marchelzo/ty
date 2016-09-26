@@ -573,17 +573,6 @@ prefix_parenthesis(void)
 }
 
 static struct expression *
-prefix_this(void)
-{
-        consume_keyword(KEYWORD_THIS);
-
-        struct expression *e = mkexpr();
-        e->type = EXPRESSION_THIS;
-
-        return e;
-}
-
-static struct expression *
 prefix_true(void)
 {
         consume_keyword(KEYWORD_TRUE);
@@ -738,7 +727,7 @@ prefix_object(void)
         consume('{');
 
         struct expression *e = mkexpr();
-        e->type = EXPRESSION_OBJECT;
+        e->type = EXPRESSION_DICT;
 
         vec_init(e->keys);
         vec_init(e->values);
@@ -1050,7 +1039,6 @@ keyword:
         switch (tok()->keyword) {
         case KEYWORD_MATCH:    return prefix_match;
         case KEYWORD_FUNCTION: return prefix_function;
-        case KEYWORD_THIS:     return prefix_this;
         case KEYWORD_TRUE:     return prefix_true;
         case KEYWORD_FALSE:    return prefix_false;
         case KEYWORD_NIL:      return prefix_nil;
@@ -1626,14 +1614,16 @@ parse_block(void)
 }
 
 static struct statement *
-parse_tag_definition(void)
+parse_class_definition(void)
 {
-        consume_keyword(KEYWORD_TAG);
+        bool tag = tok()->keyword == KEYWORD_TAG;
+
+        consume_keyword(tag ? KEYWORD_TAG : KEYWORD_CLASS);
 
         expect(TOKEN_IDENTIFIER);
 
         struct statement *s = mkstmt();
-        s->type = STATEMENT_TAG_DEFINITION;
+        s->type = tag ? STATEMENT_TAG_DEFINITION : STATEMENT_CLASS_DEFINITION;
         s->tag.name = tok()->identifier;
         vec_init(s->tag.methods);
 
@@ -1651,7 +1641,7 @@ parse_tag_definition(void)
                 s->tag.super = NULL;
         }
 
-        if (tok()->type == ';') {
+        if (tag && tok()->type == ';') {
                 consume(';');
         } else {
                 consume('{');
@@ -1773,7 +1763,8 @@ parse_statement(void)
 keyword:
 
         switch (tok()->keyword) {
-        case KEYWORD_TAG:      return parse_tag_definition();
+        case KEYWORD_CLASS:    return parse_class_definition();
+        case KEYWORD_TAG:      return parse_class_definition();
         case KEYWORD_FOR:      return parse_for_loop();
         case KEYWORD_WHILE:    return parse_while_loop();
         case KEYWORD_IF:       return parse_if_statement();
@@ -1912,14 +1903,14 @@ TEST(object_literal)
         struct statement *s = parse("1 + {};")[0];
         claim(s->type == STATEMENT_EXPRESSION);
         claim(s->expression->type == EXPRESSION_PLUS);
-        claim(s->expression->right->type == EXPRESSION_OBJECT);
+        claim(s->expression->right->type == EXPRESSION_DICT);
         claim(s->expression->right->keys.count == 0);
         claim(s->expression->right->values.count == 0);
 
         s = parse("1 + {4 + 3: 'test'};")[0];
         claim(s->type == STATEMENT_EXPRESSION);
         claim(s->expression->type == EXPRESSION_PLUS);
-        claim(s->expression->right->type == EXPRESSION_OBJECT);
+        claim(s->expression->right->type == EXPRESSION_DICT);
         claim(s->expression->right->keys.count == 1);
         claim(s->expression->right->values.count == 1);
         claim(s->expression->right->keys.items[0]->type == EXPRESSION_PLUS);

@@ -14,23 +14,23 @@ static struct {
         int kw_num;
 } keywords[] = {
         { "break",    KEYWORD_BREAK    },
+        { "class",    KEYWORD_CLASS    },
         { "continue", KEYWORD_CONTINUE },
         { "else",     KEYWORD_ELSE     },
+        { "export",   KEYWORD_EXPORT   },
+        { "false",    KEYWORD_FALSE    },
         { "for",      KEYWORD_FOR      },
         { "function", KEYWORD_FUNCTION },
         { "if",       KEYWORD_IF       },
+        { "import",   KEYWORD_IMPORT   },
         { "in",       KEYWORD_IN       },
         { "let",      KEYWORD_LET      },
-        { "return",   KEYWORD_RETURN   },
-        { "while",    KEYWORD_WHILE    },
-        { "true",     KEYWORD_TRUE     },
-        { "false",    KEYWORD_FALSE    },
-        { "nil",      KEYWORD_NIL      },
-        { "import",   KEYWORD_IMPORT   },
-        { "export",   KEYWORD_EXPORT   },
-        { "tag",      KEYWORD_TAG      },
-        { "this",     KEYWORD_THIS     },
         { "match",    KEYWORD_MATCH    },
+        { "nil",      KEYWORD_NIL      },
+        { "return",   KEYWORD_RETURN   },
+        { "tag",      KEYWORD_TAG      },
+        { "true",     KEYWORD_TRUE     },
+        { "while",    KEYWORD_WHILE    },
 };
 
 static struct {

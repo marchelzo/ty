@@ -3,19 +3,19 @@
 #include "alloc.h"
 #include "value.h"
 #include "operators.h"
-#include "object.h"
+#include "dict.h"
 #include "vm.h"
 
 static struct value
 str_concat(struct value const *s1, struct value const *s2)
 {
         size_t n = s1->bytes + s2->bytes;
-        struct string *s = value_string_alloc(n);
+        char *s = value_string_alloc(n);
 
-        memcpy(s->data, s1->string, s1->bytes);
-        memcpy(s->data + s1->bytes, s2->string, s2->bytes);
+        memcpy(s, s1->string, s1->bytes);
+        memcpy(s + s1->bytes, s2->string, s2->bytes);
 
-        return STRING(s->data, n, s);
+        return STRING(s, n, s);
 }
 
 struct value
@@ -215,14 +215,4 @@ unary_operator_negate(struct value const *operand)
         } else {
                 vm_panic("the operand to unary - must be numeric");
         }
-}
-
-struct value
-unary_operator_keys(struct value const *operand)
-{
-        if (operand->type != VALUE_OBJECT) {
-                vm_panic("the operand to @ must be an object");
-        }
-
-        return object_keys_array(operand->object);
 }

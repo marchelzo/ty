@@ -5,7 +5,7 @@
 
 #include "test.h"
 #include "value.h"
-#include "object.h"
+#include "dict.h"
 #include "util.h"
 #include "vec.h"
 #include "vm.h"
@@ -170,12 +170,12 @@ string(void)
                 FAIL;
 
         int n = str.count;
-        struct string *s = value_string_alloc(n);
-        memcpy(s->data, str.items, n);
+        char *s = value_string_alloc(n);
+        memcpy(s, str.items, n);
 
         vec_empty(str);
 
-        return STRING(s->data, n, s);
+        return STRING(s, n, s);
 }
 
 static struct value
@@ -184,7 +184,7 @@ array(void)
         if (next() != '[')
                 FAIL;
 
-        struct value_array *a = value_array_new();
+        struct array *a = value_array_new();
 
         while (peek() != '\0' && peek() != ']') {
                 vec_push(*a, value());
@@ -205,7 +205,7 @@ object(void)
         if (next() != '{')
                 FAIL;
         
-        struct object *obj = object_new();
+        struct dict *obj = dict_new();
 
         while (peek() != '\0' && peek() != '}') {
                 space();
@@ -214,7 +214,7 @@ object(void)
                 if (next() != ':')
                         FAIL;
                 struct value val = value();
-                object_put_value(obj, key, val);
+                dict_put_value(obj, key, val);
                 space();
                 if (peek() != '}' && next() != ',')
                         FAIL;
@@ -223,7 +223,7 @@ object(void)
         if (next() != '}')
                 FAIL;
 
-        return OBJECT(obj);
+        return DICT(obj);
 }
 
 static struct value

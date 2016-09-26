@@ -14,6 +14,7 @@ struct symbol {
         char const *identifier;
         int symbol;
         int tag;
+        int class;
         bool public;
 
         struct scope *scope;

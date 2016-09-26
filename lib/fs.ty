@@ -3,10 +3,26 @@ import errno
 
 export File
 
-tag File {
+class FileIterator {
+     init(self, f) {
+          self.file = f;
+     }
+
+     __next__(self) {
+          return self.file.nextLine();
+     }
+}
+
+class File {
+
+     init(self, buffer, offset, fd) {
+          self.buffer = buffer;
+          self.offset = offset;
+          self.fd = fd;
+     }
 
      from (fd) {
-          return File({'buffer': blob(), 'bufferOffset': 0, 'fd': fd});
+          return File(blob(), 0, fd);
      }
 
      open(path, mode) {
@@ -45,60 +61,60 @@ tag File {
      nextLine(self) {
           let i = nil;
 
-          while ((i = self.buffer.search(self.bufferOffset, 10)) == nil) {
+          while ((i = self.buffer.search(self.offset, 10)) == nil) {
                if (os::read(self.fd, self.buffer, 4096) <= 0) {
-                    if (self.buffer.size() == self.bufferOffset) {
+                    if (self.buffer.size() == self.offset) {
                          return nil;
                     } else {
-                         let line = self.buffer.str(self.bufferOffset);
-                         self.bufferOffset = 0;
+                         let line = self.buffer.str(self.offset);
+                         self.offset = 0;
                          return line;
                     }
                }
           }
 
-          let line = self.buffer.str(self.bufferOffset, i - self.bufferOffset);
+          let line = self.buffer.str(self.offset, i - self.offset);
 
-          self.bufferOffset = i + 1;
+          self.offset = i + 1;
 
-          if (self.bufferOffset > 65536) {
-               self.buffer.clear(0, self.bufferOffset);
-               self.bufferOffset = 0;
+          if (self.offset > 65536) {
+               self.buffer.clear(0, self.offset);
+               self.offset = 0;
           }
 
           return line;
      }
 
      nextByte(self) {
-          if (self.buffer.size() == self.bufferOffset && os::read(self.fd, self.buffer, 4096) <= 0)
+          if (self.buffer.size() == self.offset && os::read(self.fd, self.buffer, 4096) <= 0)
                return nil;
           else {
-               if (self.bufferOffset > 65536) {
-                    self.buffer.clear(0, self.bufferOffset);
-                    self.bufferOffset = 0;
+               if (self.offset > 65536) {
+                    self.buffer.clear(0, self.offset);
+                    self.offset = 0;
                }
-               return self.buffer.get(self.bufferOffset++);
+               return self.buffer.get(self.offset++);
           }
                
      }
 
      nextCodePoint(self) {
-          for (let n = 1; n <= min(8, self.buffer.size() - self.bufferOffset); ++n) {
-               if let c = self.buffer.str(self.bufferOffset, n) {
-                    self.bufferOffset += n;
+          for (let n = 1; n <= min(8, self.buffer.size() - self.offset); ++n) {
+               if let c = self.buffer.str(self.offset, n) {
+                    self.offset += n;
                     return c;
                }
           }
 
-          if (self.buffer.size() - self.bufferOffset >= 8)
+          if (self.buffer.size() - self.offset >= 8)
                return nil;
 
           if (os::read(self.fd, self.buffer, 4096) <= 0)
                return nil;
 
-          for (let n = 1; n <= min(8, self.buffer.size() - self.bufferOffset); ++n) {
-               if let c = self.buffer.str(self.bufferOffset, n) {
-                    self.bufferOffset += n;
+          for (let n = 1; n <= min(8, self.buffer.size() - self.offset); ++n) {
+               if let c = self.buffer.str(self.offset, n) {
+                    self.offset += n;
                     return c;
                }
           }
@@ -106,13 +122,18 @@ tag File {
           return nil;
      }
 
-     slurp(path) {
-          return File.open(path, 'r').flatMap(function (f) {
-               while (os::read(f.fd, f.buffer, 4096) > 0)
-                    ;
-               let s = f.buffer.str();
-               f.close();
-               return Ok(s) if s != nil else Err(0);
-          });
+     __iter__(self) {
+          return FileIterator(self);
      }
+}
+
+
+function slurp(path) {
+     return File.open(path, 'r').flatMap(function (f) {
+          while (os::read(f.fd, f.buffer, 4096) > 0)
+               ;
+          let s = f.buffer.str();
+          f.close();
+          return Ok(s) if s != nil else Err(0);
+     });
 }

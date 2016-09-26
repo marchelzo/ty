@@ -48,7 +48,4 @@ unary_operator_negate(struct value const *operand);
 struct value
 unary_operator_not(struct value const *operand);
 
-struct value
-unary_operator_keys(struct value const *operand);
-
 #endif

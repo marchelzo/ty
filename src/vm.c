@@ -12,7 +12,7 @@
 #include "vm.h"
 #include "util.h"
 #include "gc.h"
-#include "object.h"
+#include "dict.h"
 #include "value.h"
 #include "alloc.h"
 #include "compiler.h"
@@ -24,6 +24,8 @@
 #include "str.h"
 #include "blob.h"
 #include "tags.h"
+#include "object.h"
+#include "class.h"
 #include "utf8.h"
 
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
@@ -31,24 +33,10 @@
 
 static char halt = INSTR_HALT;
 
-struct variable {
-        bool mark;
-        bool captured;
-        struct variable *prev;
-        struct value value;
-        struct variable *next;
-};
-
-/*
- * Linked-list of captured variables which is traversed during garbage-collection.
- */
-static struct variable *captured_chain;
-
 static jmp_buf jb;
 
 static struct variable **vars;
 static vec(struct value) stack;
-static vec(struct value) this_stack;
 static vec(char *) callstack;
 static vec(size_t) sp_stack;
 static vec(struct value *) targetstack;
@@ -71,15 +59,15 @@ static struct {
 
 static int builtin_count = sizeof builtins / sizeof builtins[0];
 
-static struct variable *
+static void
+vm_exec(char *code);
+
+inline static struct variable *
 newvar(struct variable *next)
 {
-        struct variable *v = alloc(sizeof *v);
-        v->mark = GC_MARK;
-        v->captured = false;
+        struct variable *v = gc_alloc_unregistered(sizeof *v, GC_VARIABLE);
         v->prev = NULL;
         v->next = next;
-
         return v;
 }
 
@@ -147,18 +135,14 @@ pushtarget(struct value *v)
 }
 
 inline static void
-callmethod(struct value *f, struct value *self)
+call(struct value *f, struct value *self, int n, bool exec)
 {
-        for (int i = 0; i < f->bound_symbols.count; ++i)
-                vars[f->bound_symbols.items[i]] = newvar(vars[f->bound_symbols.items[i]]);
-        int n;
+        for (int i = 0; i < f->bound; ++i)
+                vars[f->symbols[i]] = newvar(vars[f->symbols[i]]);
 
-        /* get the number of arguments passed */
-        READVALUE(n);
+        bool has_self = (f->params > 0) && (self != NULL);
 
-        bool has_self = (f->param_symbols.count > 0) && (self != NULL);
-
-        int params = f->param_symbols.count - has_self;
+        int params = f->params - has_self;
 
         /* throw away ignored arguments */
         while (n > params)
@@ -166,15 +150,15 @@ callmethod(struct value *f, struct value *self)
 
         /* default missing parameters to nil */
         for (int i = n; i < params; ++i)
-                vars[f->param_symbols.items[i + has_self]]->value = NIL;
+                vars[f->symbols[i + has_self]]->value = NIL;
 
         /* fill in the rest of the arguments */
         while (n --> 0)
-                vars[f->param_symbols.items[n + has_self]]->value = pop();
+                vars[f->symbols[n + has_self]]->value = pop();
 
         /* fill in 'self' / 'this' */
         if (has_self)
-                vars[f->param_symbols.items[0]]->value = *self;
+                vars[f->symbols[0]]->value = *self;
 
         for (int i = 0; i < f->refs->count; ++i) {
                 struct reference ref = f->refs->refs[i];
@@ -182,8 +166,13 @@ callmethod(struct value *f, struct value *self)
                 memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
         }
 
-        vec_push(callstack, ip);
-        ip = f->code;
+        if (exec) {
+                vec_push(callstack, &halt);
+                vm_exec(f->code);
+        } else {
+                vec_push(callstack, ip);
+                ip = f->code;
+        }
 }
 
 static void
@@ -199,7 +188,7 @@ vm_exec(char *code)
         int n, index, tag, l, r;
 
         struct value left, right, v, key, value, container, subscript, *vp;
-        struct string *str;
+        char *str;
 
         value_vector args;
         vec_init(args);
@@ -219,10 +208,9 @@ vm_exec(char *code)
                         READVALUE(s);
                         next = vars[s]->next;
                         if (vars[s]->captured) {
+                                gc_register(vars[s]);
                                 LOG("detaching captured variable");
                                 vars[s]->next->prev = NULL;
-                                vars[s]->next = captured_chain;
-                                captured_chain = vars[s];
                         }
                         vars[s] = next;
                         break;
@@ -236,13 +224,12 @@ vm_exec(char *code)
                         while (n --> 0) {
                                 READVALUE(s);
                                 if (vars[s]->captured) {
-                                        struct variable *next = vars[s]->next;
+                                        struct variable *next = newvar(vars[s]->next);
                                         if (vars[s]->next != NULL)
-                                                vars[s]->next->prev = NULL;
-                                        vars[s]->next = captured_chain;
-                                        captured_chain = vars[s];
-                                        vars[s] = newvar(next);
-                                        vars[s]->value = captured_chain->value;
+                                                vars[s]->next->prev = vars[s]->prev;
+                                        gc_register(vars[s]);
+                                        next->value = vars[s]->value;
+                                        vars[s] = next;
                                 }
                         }
                         break;
@@ -266,12 +253,6 @@ vm_exec(char *code)
                                 ip += n;
                         }
                         break;
-                CASE(THIS)
-                        push(this_stack.items[this_stack.count - 1]);
-                        break;
-                CASE(POP_THIS)
-                        --this_stack.count;
-                        break;
                 CASE(JUMP_IF_NOT)
                         READVALUE(n);
                         v = pop();
@@ -294,7 +275,11 @@ vm_exec(char *code)
                         v = pop();
                         if (!(v.type & VALUE_OBJECT))
                                 vm_panic("assignment to member of non-object");
-                        pushtarget(object_put_member_if_not_exists(v.object, ip));
+                        vp = table_lookup(v.object, ip);
+                        if (vp != NULL)
+                                pushtarget(vp);
+                        else
+                                pushtarget(table_add(v.object, ip, NIL));
                         ip += strlen(ip) + 1;
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -309,8 +294,8 @@ vm_exec(char *code)
                                 if (subscript.integer < 0 || subscript.integer >= container.array->count)
                                         vm_panic("array index out of range in subscript expression");
                                 pushtarget(&container.array->items[subscript.integer]);
-                        } else if (container.type == VALUE_OBJECT) {
-                                pushtarget(object_put_key_if_not_exists(container.object, subscript));
+                        } else if (container.type == VALUE_DICT) {
+                                pushtarget(dict_put_key_if_not_exists(container.dict, subscript));
                         } else {
                                 vm_panic("attempt to perform subscript assignment on something other than an object or array");
                         }
@@ -430,6 +415,10 @@ vm_exec(char *code)
                         push(STRING_NOGC(ip, n));
                         ip += n + 1;
                         break;
+                CASE(CLASS)
+                        READVALUE(tag);
+                        push(CLASS(tag));
+                        break;
                 CASE(TAG)
                         READVALUE(tag);
                         push(TAG(tag));
@@ -453,14 +442,14 @@ vm_exec(char *code)
 
                         push(v);
                         break;
-                CASE(OBJECT)
-                        v = OBJECT(object_new());
+                CASE(DICT)
+                        v = DICT(dict_new());
 
                         READVALUE(n);
                         for (int i = 0; i < n; ++i) {
                                 value = pop();
                                 key = pop();
-                                object_put_value(v.object, key, value);
+                                dict_put_value(v.dict, key, value);
                         }
 
                         push(v);
@@ -481,14 +470,16 @@ vm_exec(char *code)
 
                         switch (v.type) {
                         case VALUE_ARRAY:
+                                gc_push(&v);
                                 for (int i = 0; *first != INSTR_HALT && i < v.array->count; ++i) {
                                         push(v.array->items[i]);
                                         vm_exec(ip);
                                 }
+                                gc_pop();
                                 break;
-                        case VALUE_OBJECT:
-                                for (int i = 0; i < OBJECT_NUM_BUCKETS; ++i) {
-                                        struct object_node *node = v.object->buckets[i];
+                        case VALUE_DICT:
+                                for (int i = 0; i < DICT_NUM_BUCKETS; ++i) {
+                                        struct dict_node *node = v.dict->buckets[i];
                                         while (node != NULL) {
                                                 push(node->key);
                                                 vm_exec(ip);
@@ -513,31 +504,40 @@ vm_exec(char *code)
                                 }
                                 break;
                         }
-                        default:
-                                vp = NULL;
-                                int tags;
-                                for (tags = v.tags; vp == NULL && tags != 0; tags = tags_pop(tags))
-                                        vp = tags_lookup_method(tags_first(tags), "__iter__");
+                        case VALUE_OBJECT:
+                        {
+                                vp = class_lookup_method(v.class, "__iter__");
                                 if (vp == NULL)
-                                        vm_panic("for-each loop on non-iterable value: %s", value_show(&v));
-                                vec_push(this_stack, v);
-                                v.tags = tags;
-                                if (v.tags == 0)
-                                        v.type &= ~VALUE_TAGGED;
-                                struct value iterator = vm_eval_function(vp, &v);
-                                vp = NULL;
-                                for (tags = iterator.tags; vp == NULL && tags != 0; tags = tags_pop(tags))
-                                        vp = tags_lookup_method(tags_first(tags), "__next__");
-                                if (vp == NULL)
-                                        vm_panic("__iter__() on %s returned a non-iterator", value_show(&v));
-                                v = iterator;
-                                iterator.tags = tags;
-                                if (iterator.tags == 0)
-                                        iterator.type &= ~VALUE_TAGGED;
-                                for (struct value item; vec_push(this_stack, v), (item = vm_eval_function(vp, &iterator)).type != VALUE_NIL;) {
+                                        goto non_iter;
+
+                                call(vp, &v, 0, true);
+                                struct value iterator = pop();
+
+                                if (iterator.type != VALUE_OBJECT || (vp = class_lookup_method(iterator.class, "__next__")) == NULL)
+                                        vm_panic("__iter__ returned a non-iterator");
+
+                                gc_push(&v);
+
+                                call(vp, &iterator, 0, true);
+                                struct value item = pop();
+
+                                gc_push(&iterator);
+
+                                while (item.type != VALUE_NIL) {
                                         push(item);
                                         vm_exec(ip);
+                                        call(vp, &iterator, 0, true);
+                                        item = pop();
                                 }
+
+                                gc_pop();
+                                gc_pop();
+
+                                break;
+                        }
+                        default:
+                        non_iter:
+                                vm_panic("for-each on non-iterable value");
                         }
 
                         *first = instr;
@@ -554,10 +554,10 @@ vm_exec(char *code)
                         for (index = stack.count - n; index < stack.count; ++index)
                                 k += stack.items[index].bytes;
                         str = value_string_alloc(k);
-                        v = STRING(str->data, k, str);
+                        v = STRING(str, k, str);
                         k = 0;
                         for (index = stack.count - n; index < stack.count; ++index) {
-                                memcpy(str->data + k, stack.items[index].string, stack.items[index].bytes);
+                                memcpy(str + k, stack.items[index].string, stack.items[index].bytes);
                                 k += stack.items[index].bytes;
                         }
                         stack.count -= n - 1;
@@ -582,14 +582,60 @@ vm_exec(char *code)
                         break;
                 CASE(MEMBER_ACCESS)
                         v = pop();
-                        if (v.type == VALUE_NIL)
-                                vp = NULL;
-                        else if (!(v.type & VALUE_OBJECT))
-                                vm_panic("member access on non-object");
-                        else
-                                vp = object_get_member(v.object, ip);
+
+                        char const *member = ip;
                         ip += strlen(ip) + 1;
-                        push((vp == NULL) ? NIL : *vp);
+
+                        vp = NULL;
+                        if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(tags)) {
+                                vp = tags_lookup_method(tags_first(tags), member);
+                                if (vp != NULL)  {
+                                        struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                        *this = v;
+                                        this->tags = tags;
+                                        push(METHOD(member, vp, this));
+                                        break;
+                                }
+                        }
+
+                        if (vp != NULL)
+                                break;
+
+                        switch (v.type & ~VALUE_TAGGED) {
+                        case VALUE_NIL:
+                                push(NIL);
+                                break;
+                        case VALUE_DICT:
+                                vp = dict_get_member(v.dict, member);
+                                push((vp == NULL) ? NIL : *vp);
+                                break;
+                        case VALUE_OBJECT:
+                                vp = table_lookup(v.object, member);
+                                if (vp != NULL) {
+                                        push(*vp);
+                                        break;
+                                }
+                                vp = class_lookup_method(v.class, member);
+                                if (vp != NULL) {
+                                        struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
+                                        *this = v;
+                                        push(METHOD(member, vp, this));
+                                        break;
+                                }
+                                vm_panic("attempt to access non-existent member '%s' of %s", member, value_show(&v));
+                                break;
+                        case VALUE_TAG:
+                                vp = tags_lookup_method(v.tag, member);
+                                push(vp == NULL ? NIL : *vp);
+                                break;
+                        case VALUE_CLASS:
+                                vp = class_lookup_method(v.class, member);
+                                push(vp == NULL ? NIL : *vp);
+                                break;
+                        default:
+                                vm_panic("member access on value of invalid type: %s", value_show(&v));
+                        }
+
                         break;
                 CASE(SUBSCRIPT)
                         subscript = pop();
@@ -611,8 +657,8 @@ vm_exec(char *code)
                         case VALUE_BLOB:
                                 push(get_blob_method("get")(&container, (&(value_vector){ .count = 1, .items = &subscript })));
                                 break;
-                        case VALUE_OBJECT:
-                                vp = object_get_value(container.object, &subscript);
+                        case VALUE_DICT:
+                                vp = dict_get_value(container.dict, &subscript);
                                 push((vp == NULL) ? NIL : *vp);
                                 break;
                         case VALUE_NIL:
@@ -755,48 +801,65 @@ vm_exec(char *code)
                         *vp = binary_operator_subtraction(vp, &v);
                         push(*vp);
                         break;
-                CASE(DEFINE_METHOD)
-                    v = pop();
-                    READVALUE(tag);
-                    tags_add_method(tag, ip, v);
-                    ip += strlen(ip) + 1;
-                    break;
-                CASE(EXTEND_TAG)
+                CASE(DEFINE_TAG)
                 {
-                        int src, dst;
-                        READVALUE(dst);
-                        READVALUE(src);
-                        tags_copy_methods(dst, src);
+                        int tag, super, n;
+                        READVALUE(tag);
+                        READVALUE(super);
+                        READVALUE(n);
+                        while (n --> 0) {
+                                v = pop();
+                                NOGC(v.refs);
+                                tags_add_method(tag, ip, v);
+                                ip += strlen(ip) + 1;
+                        }
+                        if (super != -1)
+                                tags_copy_methods(tag, super);
+                        break;
+                }
+                CASE(DEFINE_CLASS)
+                {
+                        int class, super, n;
+                        READVALUE(class);
+                        READVALUE(super);
+                        READVALUE(n);
+                        while (n --> 0) {
+                                v = pop();
+                                NOGC(v.refs);
+                                class_add_method(class, ip, v);
+                                ip += strlen(ip) + 1;
+                        }
+                        if (super != -1)
+                                class_copy_methods(class, super);
                         break;
                 }
                 CASE(FUNCTION)
+                {
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
+                        v.this = NULL;
 
-                        READVALUE(n);
-                        vec_init(v.bound_symbols);
-                        vec_reserve(v.bound_symbols, n);
-                        LOG("function has %d bound symbol(s)", n);
-                        for (int i = 0; i < n; ++i) {
-                                READVALUE(s);
-                                vec_push(v.bound_symbols, s);
-                        }
+                        int params;
+                        int bound;
+
+                        READVALUE(params);
+                        READVALUE(bound);
+
+                        v.bound = bound;
+                        v.params = params;
+
+                        while (*ip != ((char)0xFF))
+                                ++ip;
+                        ++ip;
+
+                        v.symbols = (int *) ip;
+                        ip += bound * sizeof (int);
 
                         READVALUE(n);
                         v.code = ip;
                         ip += n;
 
                         READVALUE(n);
-                        vec_init(v.param_symbols);
-                        vec_reserve(v.param_symbols, n);
-                        LOG("function has %d parameter(s)", n);
-                        for (int i = 0; i < n; ++i) {
-                                READVALUE(s);
-                                vec_push(v.param_symbols, s);
-                        }
-
-                        READVALUE(n);
-                        LOG("allocating ref vector");
                         v.refs = ref_vector_new(n);
                         LOG("function contains %d reference(s)", n);
                         for (int i = 0; i < n; ++i) {
@@ -811,56 +874,51 @@ vm_exec(char *code)
 
                         push(v);
                         break;
+                }
                 CASE(CALL)
                         v = pop();
-                        if (v.type == VALUE_FUNCTION) {
-                                for (int i = 0; i < v.bound_symbols.count; ++i) {
-                                        if (vars[v.bound_symbols.items[i]] == NULL)
-                                                vars[v.bound_symbols.items[i]] = newvar(NULL);
-                                        if (vars[v.bound_symbols.items[i]]->prev == NULL)
-                                                vars[v.bound_symbols.items[i]]->prev = newvar(vars[v.bound_symbols.items[i]]);
-                                        vars[v.bound_symbols.items[i]] = vars[v.bound_symbols.items[i]]->prev;
-                                }
-                                READVALUE(n);
-                                while (n > v.param_symbols.count) {
-                                        pop();
-                                        --n;
-                                }
-                                for (int i = n; i < v.param_symbols.count; ++i)
-                                        vars[v.param_symbols.items[i]]->value = NIL;
-                                while (n --> 0) {
-                                        struct value v2 = pop();
-                                        LOG("passing %s as argument %d", value_show(&v2), n);
-                                        vars[v.param_symbols.items[n]]->value = v2;
-                                }
-                                for (int i = 0; i < v.refs->count; ++i) {
-                                        struct reference ref = v.refs->refs[i];
-                                        LOG("resolving reference to %p", (void *) ref.pointer);
-                                        memcpy(v.code + ref.offset, &ref.pointer, sizeof ref.pointer);
-                                }
-                                vec_push(callstack, ip);
-                                ip = v.code;
-                        } else if (v.type == VALUE_BUILTIN_FUNCTION) {
-                                READVALUE(n);
+                        READVALUE(n);
+
+                        switch (v.type) {
+                        case VALUE_FUNCTION:
+                                call(&v, NULL, n, false);
+                                break;
+                        case VALUE_BUILTIN_FUNCTION:
                                 vec_reserve(args, n);
                                 args.count = n;
                                 while (n --> 0)
                                         args.items[n] = pop();
                                 push(v.builtin_function(&args));
                                 args.count = 0;
-                        } else if (v.type == VALUE_TAG) {
-                                READVALUE(n);
+                                break;
+                        case VALUE_TAG:
                                 if (n != 1)
                                         vm_panic("attempt to apply a tag to an invalid number of values");
                                 top()->tags = tags_push(top()->tags, v.tag);
                                 top()->type |= VALUE_TAGGED;
-                        } else if (v.type == VALUE_NIL) {
-                                READVALUE(n);
+                                break;
+                        case VALUE_CLASS:
+                                value = OBJECT(object_new(), v.class);
+                                vp = class_lookup_method(v.class, "init");
+                                if (vp != NULL) {
+                                        call(vp, &value, n, true);
+                                        pop();
+                                } else {
+                                        stack.count -= n;
+                                }
+                                push(value);
+                                break;
+                        case VALUE_METHOD:
+                                call(v.method, v.this, n, false);
+                                break;
+                        case VALUE_NIL:
                                 stack.count -= n;
                                 push(NIL);
-                        } else {
-                                vm_panic("attempt to call a non-function");
+                                break;
+                        default:
+                                vm_panic("attempt to call non-callable value %s", value_show(&v));
                         }
+
                         break;
                 CASE(CALL_METHOD)
                         
@@ -876,7 +934,6 @@ vm_exec(char *code)
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method);
                                 if (vp != NULL) {
-                                        vec_push(this_stack, value);
 
                                         value.tags = tags_pop(tags);
                                         if (value.tags == 0)
@@ -892,15 +949,12 @@ vm_exec(char *code)
                          * supported the  method call, so we must now see if the inner value itself can handle the method
                          * call.
                          */
-
                         if (self == NULL) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method);
-                                if (vp != NULL)
-                                        vec_push(this_stack, value);
                                 break;
-                        case VALUE_OBJECT:
-                                vp = object_get_member(value.object, method);
+                        case VALUE_DICT:
+                                vp = dict_get_member(value.dict, method);
                                 if (vp != NULL && vp->type != VALUE_FUNCTION)
                                         vp = NULL;
                                 break;
@@ -912,6 +966,11 @@ vm_exec(char *code)
                                 break;
                         case VALUE_BLOB:
                                 func = get_blob_method(method);
+                                break;
+                        case VALUE_OBJECT:
+                                self = &value;
+                        case VALUE_CLASS:
+                                vp = class_lookup_method(value.class, method);
                                 break;
                         case VALUE_NIL:
                                 pop();
@@ -940,7 +999,8 @@ vm_exec(char *code)
                                 stack.items[stack.count - 1] = v;
                         } else if (vp != NULL) {
                                 --stack.count;
-                                callmethod(vp, self);
+                                READVALUE(n);
+                                call(vp, self, n, false);
                         } else {
                                 vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
                         }
@@ -984,7 +1044,6 @@ vm_init(void)
         srand(time(NULL));
 
         compiler_init();
-        gc_reset();
 
         add_builtins();
 
@@ -992,7 +1051,6 @@ vm_init(void)
         if (prelude == NULL) {
                 err_msg = compiler_error();
                 return false;
-                
         }
 
         int new_symbol_count = compiler_symbol_count();
@@ -1087,136 +1145,64 @@ vm_execute(char const *source)
 }
 
 struct value
-vm_eval_function(struct value const *f, struct value *v)
+vm_eval_function(struct value *f, struct value *v)
 {
-        if (f->type == VALUE_FUNCTION) {
-                vec_push(callstack, &halt);
-
-                for (int i = 0; i < f->bound_symbols.count; ++i) {
-                        if (vars[f->bound_symbols.items[i]] == NULL)
-                                vars[f->bound_symbols.items[i]] = newvar(NULL);
-                        if (vars[f->bound_symbols.items[i]]->prev == NULL)
-                                vars[f->bound_symbols.items[i]]->prev = newvar(vars[f->bound_symbols.items[i]]);
-                        vars[f->bound_symbols.items[i]] = vars[f->bound_symbols.items[i]]->prev;
-                }
-
-                if (f->param_symbols.count >= 1 && v != NULL)
-                        vars[f->param_symbols.items[0]]->value = *v;
-
-                for (int i = 1 - !v; i < f->param_symbols.count; ++i)
-                        vars[f->param_symbols.items[i]]->value = NIL;
-
-                for (int i = 0; i < f->refs->count; ++i) {
-                        struct reference ref = f->refs->refs[i];
-                        LOG("resolving reference to %p", (void *) ref.pointer);
-                        memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
-                }
-                
-                vm_exec(f->code);
-
+        switch (f->type) {
+        case VALUE_FUNCTION:
+                if (v != NULL)
+                        push(*v);
+                call(f, NULL, v != NULL, true);
                 return pop();
-        } else {
-                if (v == NULL)
-                        return f->builtin_function(&(value_vector){ .count = 0 });
-                else
-                        return f->builtin_function(&(value_vector){ .count = 1, .items = v });
+        case VALUE_METHOD:
+                if (v != NULL)
+                        push(*v);
+                call(f->method, f->this, v != NULL, true);
+                return pop();
+        case VALUE_BUILTIN_FUNCTION:
+                return f->builtin_function(&(value_vector){
+                        .count = v != NULL,
+                        .items = v
+                });
+        default:
+                abort();
         }
 }
 
 struct value
 vm_eval_function2(struct value *f, struct value *v1, struct value *v2)
 {
-        if (f->type == VALUE_FUNCTION ){
-                vec_push(callstack, &halt);
+        value_vector args;
 
-                for (int i = 0; i < f->bound_symbols.count; ++i) {
-                        if (vars[f->bound_symbols.items[i]] == NULL) {
-                                vars[f->bound_symbols.items[i]] = newvar(NULL);
-                        }
-                        if (vars[f->bound_symbols.items[i]]->prev == NULL) {
-                                vars[f->bound_symbols.items[i]]->prev = newvar(vars[f->bound_symbols.items[i]]);
-                        }
-                        vars[f->bound_symbols.items[i]] = vars[f->bound_symbols.items[i]]->prev;
-                }
-
-                if (f->param_symbols.count >= 1) {
-                        vars[f->param_symbols.items[0]]->value = *v1;
-                }
-
-                if (f->param_symbols.count >= 2) {
-                        vars[f->param_symbols.items[1]]->value = *v2;
-                }
-
-                for (int i = 2; i < f->param_symbols.count; ++i) {
-                        vars[f->param_symbols.items[i]]->value = NIL;
-                }
-
-                for (int i = 0; i < f->refs->count; ++i) {
-                        struct reference ref = f->refs->refs[i];
-                        LOG("resolving reference to %p", (void *) ref.pointer);
-                        memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
-                }
-                
-                vm_exec(f->code);
-
+        switch (f->type) {
+        case VALUE_FUNCTION:
+                push(*v1);
+                push(*v2);
+                call(f, NULL, 2, true);
                 return pop();
-        } else {
-                value_vector args;
+        case VALUE_METHOD:
+                push(*v1);
+                push(*v2);
+                call(f->method, f->this, 2, true);
+                return pop();
+        case VALUE_BUILTIN_FUNCTION:
                 vec_init(args);
                 vec_push(args, *v1);
                 vec_push(args, *v2);
                 return f->builtin_function(&args);
+        default:
+                abort();
         }
 }
 
 void
 vm_mark(void)
 {
-        for (int i = 0; i < symbol_count; ++i) {
-                for (struct variable *v = vars[i]; v != NULL; v = v->next) {
+        for (int i = 0; i < symbol_count; ++i)
+                for (struct variable *v = vars[i]; v != NULL; v = v->next)
                         value_mark(&v->value);
-                }
-        }
 
-        for (int i = 0; i < stack.count; ++i) {
+        for (int i = 0; i < stack.count; ++i)
                 value_mark(&stack.items[i]);
-        }
-}
-
-void
-vm_mark_variable(struct variable *v)
-{
-        if (v->mark & GC_MARK)
-                return;
-        v->mark |= GC_MARK;
-        value_mark(&v->value);
-}
-
-void
-vm_sweep_variables(void)
-{
-        while (captured_chain != NULL && captured_chain->mark == GC_NONE) {
-                struct variable *next = captured_chain->next;
-                free(captured_chain);
-                captured_chain = next;
-        }
-        if (captured_chain != NULL) {
-                captured_chain->mark &= ~GC_MARK;
-        }
-        for (struct variable *var = captured_chain; var != NULL && var->next != NULL;) {
-                struct variable *next;
-                if (var->next->mark == GC_NONE) {
-                        next = var->next->next;
-                        free(var->next);
-                        var->next = next;
-                } else {
-                        next = var->next;
-                }
-                if (next != NULL) {
-                        next->mark &= ~GC_NONE;
-                }
-                var = next;
-        }
 }
 
 TEST(let)
@@ -1309,8 +1295,8 @@ TEST(object)
 
         vm_execute(source);
 
-        claim(vars[0 + builtin_count]->value.type == VALUE_OBJECT);
-        struct value *v = object_get_member(vars[0 + builtin_count]->value.object, "test");
+        claim(vars[0 + builtin_count]->value.type == VALUE_DICT);
+        struct value *v = dict_get_member(vars[0 + builtin_count]->value.dict, "test");
         claim(v != NULL);
         claim(strcmp(v->string, "hello") == 0);
 }

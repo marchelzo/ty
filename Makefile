@@ -1,5 +1,5 @@
 CC ?= gcc-5
-CFLAGS = -std=gnu11
+CFLAGS = -std=c11
 CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -isystem/usr/local/include

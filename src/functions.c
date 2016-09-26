@@ -172,7 +172,7 @@ coerce:
         case VALUE_REAL:    v.integer = a.real;                         return v;
         case VALUE_BOOLEAN: v.integer = a.boolean;                      return v;
         case VALUE_ARRAY:   v.integer = a.array->count;                 return v;
-        case VALUE_OBJECT:  v.integer = object_item_count(a.object);    return v;
+        case VALUE_DICT:    v.integer = dict_item_count(a.dict);        return v;
         case VALUE_STRING:  base = 10; memcpy(nbuf, a.string, a.bytes); goto string;
         default:                                                        return NIL;
         }
@@ -312,6 +312,34 @@ builtin_max(value_vector *args)
 }
 
 struct value
+builtin_exp(value_vector *args)
+{
+        ASSERT_ARGC("math::exp()", 1);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the argument to math::exp() must be a float");
+
+        return REAL(expf(x.real));
+}
+
+struct value
+builtin_log(value_vector *args)
+{
+        ASSERT_ARGC("math::log()", 1);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the argument to math::log() must be a float");
+
+        return REAL(logf(x.real));
+}
+
+struct value
 builtin_log2(value_vector *args)
 {
         ASSERT_ARGC("math::log2()", 1);
@@ -343,6 +371,34 @@ builtin_pow(value_vector *args)
                 vm_panic("the second argument to math::pow() must be a float");
 
         return REAL(powf(x.real, y.real));
+}
+
+struct value
+builtin_sqrt(value_vector *args)
+{
+        ASSERT_ARGC("math::sqrt()", 1);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the argument to math::sqrt() must be a float");
+
+        return REAL(sqrtf(x.real));
+}
+
+struct value
+builtin_cbrt(value_vector *args)
+{
+        ASSERT_ARGC("math::cbrt()", 1);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the argument to math::cbrt() must be a float");
+
+        return REAL(cbrtf(x.real));
 }
 
 struct value
@@ -727,13 +783,13 @@ builtin_os_spawn(value_vector *args)
 
                 close(exc[0]);
 
-                struct object *result = object_new();
-                object_put_member(result, "stdin",  INTEGER(in[1]));
-                object_put_member(result, "stdout", INTEGER(out[0]));
-                object_put_member(result, "stderr", INTEGER(err[0]));
-                object_put_member(result, "pid",    INTEGER(pid));
+                struct dict *result = dict_new();
+                dict_put_member(result, "stdin",  INTEGER(in[1]));
+                dict_put_member(result, "stdout", INTEGER(out[0]));
+                dict_put_member(result, "stderr", INTEGER(err[0]));
+                dict_put_member(result, "pid",    INTEGER(pid));
 
-                return OBJECT(result);
+                return DICT(result);
         }
 }
 
@@ -771,18 +827,13 @@ builtin_os_listdir(value_vector *args)
                 return NIL;
 
         
-        struct value_array *files = value_array_new();
+        struct array *files = value_array_new();
 
         struct dirent *e;
 
-        /*
-         * Skip . and ..
-         */
-        e = readdir(d);
-        e = readdir(d);
-
         while (e = readdir(d), e != NULL)
-                vec_push(*files, STRING_CLONE(e->d_name, strlen(e->d_name)));
+                if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0)
+                        vec_push(*files, STRING_CLONE(e->d_name, strlen(e->d_name)));
 
         closedir(d);
 

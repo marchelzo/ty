@@ -46,6 +46,18 @@ struct value
 builtin_pow(value_vector *args);
 
 struct value
+builtin_cbrt(value_vector *args);
+
+struct value
+builtin_sqrt(value_vector *args);
+
+struct value
+builtin_exp(value_vector *args);
+
+struct value
+builtin_log(value_vector *args);
+
+struct value
 builtin_bit_and(value_vector *args);
 
 struct value

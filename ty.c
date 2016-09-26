@@ -24,6 +24,16 @@ repl(void)
                  * Very bad.
                  */
                 line = realloc(line, strlen(line) + 2);
+
+                if (line[0] == ':') {
+                        if (line[1] == '!')
+                                system(line + 2);
+                        else if (!vm_execute_file(line + 1))
+                                fprintf(stderr, "%s\n", vm_error());
+                        goto add;
+
+                }
+
                 strcat(line, "\n");
 
                 sprintf(buffer, "print(%s);", line);
