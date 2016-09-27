@@ -123,6 +123,36 @@ array_pop(struct value *array, value_vector *args)
 }
 
 static struct value
+array_swap(struct value *array, value_vector *args)
+{
+        if (args->count != 2)
+                vm_panic("array.swap() expects 2 arguments but got %zu", args->count);
+
+        struct value i = args->items[0];
+        struct value j = args->items[1];
+
+        if (i.type != VALUE_INTEGER || j.type != VALUE_INTEGER)
+                vm_panic("the arguments to array.swap() must be integers");
+
+        if (i.integer < 0)
+                i.integer += array->array->count;
+
+        if (j.integer < 0)
+                j.integer += array->array->count;
+
+        if (i.integer < 0 || i.integer >= array->array->count
+         || j.integer < 0 || j.integer >= array->array->count) {
+                vm_panic("invalid indices passed to array.swap(): (%d, %d)", (int) i.integer, (int) j.integer);
+           }
+
+        struct value tmp = array->array->items[i.integer];
+        array->array->items[i.integer] = array->array->items[j.integer];
+        array->array->items[j.integer] = tmp;
+
+        return *array;
+}
+
+static struct value
 array_slice_mut(struct value *array, value_vector *args)
 {
         if (args->count != 2)
@@ -1178,6 +1208,7 @@ DEFINE_METHOD_TABLE(
         { .name = "sortBy",       .func = array_sort_by_no_mut       },
         { .name = "sortBy!",      .func = array_sort_by              },
         { .name = "sum",          .func = array_sum                  },
+        { .name = "swap",         .func = array_swap                 },
         { .name = "take",         .func = array_take                 },
         { .name = "take!",        .func = array_take_mut             },
         { .name = "takeWhile",    .func = array_take_while           },

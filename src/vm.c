@@ -968,7 +968,7 @@ vm_exec(char *code)
                                 args.count = n;
                                 index = 0;
 
-                                for (struct value const *a = stack.items + stack.count - n - 1; index < n; ++index, ++a)
+                                for (struct value const *a = stack.items + stack.count - n; index < n; ++index, ++a)
                                         args.items[index] = *a;
 
                                 value = v.builtin_method(v.this, &args);
