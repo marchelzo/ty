@@ -809,9 +809,7 @@ emit_integer(intmax_t k)
 {
         
         LOG("emitting integer: %"PRIiMAX, k);
-        char const *s = (char *) &k;
-        for (int i = 0; i < sizeof (intmax_t); ++i)
-                vec_push(state.code, s[i]);
+        vec_push_n(state.code, (char const *)&k, sizeof k);
 }
 
 inline static void
@@ -829,10 +827,7 @@ emit_float(float f)
 {
         
         LOG("emitting float: %f", f);
-        char const *s = (char *) &f;
-        for (int i = 0; i < sizeof (float); ++i) {
-                vec_push(state.code, s[i]);
-        }
+        vec_push_n(state.code, (char const *)&f, sizeof f);
 }
 
 inline static void
@@ -840,9 +835,7 @@ emit_string(char const *s)
 {
         
         LOG("emitting string: %s", s);
-        size_t n = strlen(s) + 1;
-        for (int i = 0; i < n; ++i)
-                vec_push(state.code, s[i]);
+        vec_push_n(state.code, s, strlen(s) + 1);
 }
 
 inline static void

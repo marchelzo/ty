@@ -54,8 +54,6 @@ enum instruction {
         INSTR_PRE_DEC,
         INSTR_POST_DEC,
 
-        INSTR_INC,
-
         INSTR_FUNCTION,
         INSTR_JUMP,
         INSTR_JUMP_IF,

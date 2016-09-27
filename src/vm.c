@@ -468,8 +468,10 @@ vm_exec(char *code)
                         push(NIL);
                         break;
                 CASE(TO_STRING)
-                        v = pop();
-                        v = builtin_str(&(value_vector){ .items = &v, .count = 1 });
+                        args.count = 0;
+                        vec_push(args, *top());
+                        v = builtin_str(&args);
+                        pop();
                         push(v);
                         break;
                 CASE(FOR_EACH)
@@ -792,10 +794,6 @@ vm_exec(char *code)
                 CASE(LEN)
                         v = pop();
                         push(INTEGER(v.array->count)); // TODO
-                        break;
-                CASE(INC) // only used for internal (hidden) variables
-                        READVALUE(s);
-                        ++vars[s]->value.integer;
                         break;
                 CASE(PRE_INC)
                         if (peektarget()->type != VALUE_INTEGER)
