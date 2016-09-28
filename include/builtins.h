@@ -46,6 +46,8 @@
 { .module = "os",     .name = "dup2",              .value = BUILTIN(builtin_os_dup2)                       },
 { .module = "os",     .name = "poll",              .value = BUILTIN(builtin_os_poll)                       },
 { .module = "os",     .name = "kill",              .value = BUILTIN(builtin_os_kill)                       },
+{ .module = "os",     .name = "exit",              .value = BUILTIN(builtin_os_exit)                       },
+{ .module = "os",     .name = "exec",              .value = BUILTIN(builtin_os_exec)                       },
 { .module = "os",     .name = "getpid",            .value = BUILTIN(builtin_os_getpid)                     },
 { .module = "os",     .name = "getppid",           .value = BUILTIN(builtin_os_getppid)                    },
 { .module = "os",     .name = "getuid",            .value = BUILTIN(builtin_os_getuid)                     },

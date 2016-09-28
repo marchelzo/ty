@@ -466,9 +466,10 @@ symbolize_pattern(struct scope *scope, struct expression *e)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                if (scope_locally_defined(scope, e->identifier)) {
+                if (scope_locally_defined(scope, e->identifier) || e->module != NULL) {
                         e->type = EXPRESSION_MUST_EQUAL;
-                        e->symbol = getsymbol(scope, e->identifier, NULL);
+                        struct scope *s = (e->module == NULL) ? scope : get_import_scope(e->module);
+                        e->symbol = getsymbol(s, e->identifier, NULL);
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
                         e->symbol = addsymbol(scope, e->identifier);

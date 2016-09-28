@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <string.h>
+#include <stdnoreturn.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -11,6 +12,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <poll.h>
+#include <signal.h>
 
 #include "tags.h"
 #include "value.h"
@@ -1012,6 +1014,48 @@ SETID(setuid)
 SETID(seteuid)
 SETID(setgid)
 SETID(setegid)
+
+noreturn struct value
+builtin_os_exit(value_vector *args)
+{
+        ASSERT_ARGC("os::exit()", 1);
+
+        struct value status = args->items[0];
+        if (status.type != VALUE_INTEGER)
+                vm_panic("the argument to os::exit() must be an integer");
+
+        exit(status.integer);
+}
+
+struct value
+builtin_os_exec(value_vector *args)
+{
+        ASSERT_ARGC("os::exec()", 1);
+
+        struct value cmd = args->items[0];
+        if (cmd.type != VALUE_ARRAY)
+                vm_panic("the argument to os::spawn() must be an array");
+
+        if (cmd.array->count == 0)
+                vm_panic("empty array passed to os::spawn()");
+
+        for (int i = 0; i < cmd.array->count; ++i)
+                if (cmd.array->items[i].type != VALUE_STRING)
+                        vm_panic("non-string in array passed to os::spawn()");
+
+        vec(char *) argv;
+        vec_init(argv);
+
+        for (int i = 0; i < cmd.array->count; ++i) {
+                char *arg = alloc(cmd.array->items[i].bytes + 1);
+                memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes + 1);
+                vec_push(argv, arg);
+        }
+
+        vec_push(argv, NULL);
+
+        return INTEGER(execvp(argv.items[0], argv.items));
+}
 
 struct value
 builtin_os_kill(value_vector *args)
