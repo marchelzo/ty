@@ -58,6 +58,27 @@ struct value
 builtin_log(value_vector *args);
 
 struct value
+builtin_atan2(value_vector *args);
+
+struct value
+builtin_atan(value_vector *args);
+
+struct value
+builtin_asin(value_vector *args);
+
+struct value
+builtin_acos(value_vector *args);
+
+struct value
+builtin_tan(value_vector *args);
+
+struct value
+builtin_sin(value_vector *args);
+
+struct value
+builtin_cos(value_vector *args);
+
+struct value
 builtin_bit_and(value_vector *args);
 
 struct value
@@ -107,6 +128,18 @@ builtin_os_fcntl(value_vector *args);
 
 struct value
 builtin_os_spawn(value_vector *args);
+
+struct value
+builtin_os_fork(value_vector *args);
+
+struct value
+builtin_os_pipe(value_vector *args);
+
+struct value
+builtin_os_dup2(value_vector *args);
+
+struct value
+builtin_os_poll(value_vector *args);
 
 struct value
 builtin_os_connect(value_vector *args);

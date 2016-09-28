@@ -290,7 +290,7 @@ value_compare(void const *_v1, void const *_v2)
 
         switch (v1->type) {
         case VALUE_INTEGER: return (v1->integer - v2->integer); // TODO
-        case VALUE_REAL:    return round(v1->real - v2->real);
+        case VALUE_REAL:    return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
         case VALUE_STRING:  return memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
         case VALUE_ARRAY:
                 for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {

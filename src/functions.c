@@ -10,6 +10,7 @@
 #include <sys/types.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <poll.h>
 
 #include "tags.h"
 #include "value.h"
@@ -377,6 +378,48 @@ builtin_pow(value_vector *args)
 
         return REAL(powf(x.real, y.real));
 }
+
+struct value
+builtin_atan2(value_vector *args)
+{
+        ASSERT_ARGC("math::atan2()", 2);
+
+        struct value x = args->items[0];
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the first argument to math::atan2() must be a float");
+
+        struct value y = args->items[1];
+        if (y.type == VALUE_INTEGER)
+                y = REAL(y.integer);
+        if (y.type != VALUE_REAL)
+                vm_panic("the second argument to math::atan2() must be a float");
+
+        return REAL(atan2(x.real, y.real));
+}
+
+#define MATH_WRAP(func)                                 \
+        struct value                                    \
+        builtin_ ## func (value_vector *args)           \
+        {                                               \
+                ASSERT_ARGC("math::" #func "()", 1);    \
+                                                        \
+                struct value x = args->items[0];        \
+                if (x.type == VALUE_INTEGER)            \
+                        x = REAL(x.integer);            \
+                if (x.type != VALUE_REAL)               \
+                        vm_panic("the argument to math::" #func "() must be a float"); \
+                                                        \
+                return REAL(func ## f (x.real));        \
+        }
+
+MATH_WRAP(cos)
+MATH_WRAP(sin)
+MATH_WRAP(tan)
+MATH_WRAP(acos)
+MATH_WRAP(asin)
+MATH_WRAP(atan)
 
 struct value
 builtin_sqrt(value_vector *args)
@@ -797,6 +840,91 @@ builtin_os_spawn(value_vector *args)
 
                 return OBJECT(result, 0);
         }
+}
+
+struct value
+builtin_os_fork(value_vector *args)
+{
+        ASSERT_ARGC("os::fork()", 0);
+        return INTEGER(fork());
+}
+
+struct value
+builtin_os_pipe(value_vector *args)
+{
+        ASSERT_ARGC("os::pipe()", 0);
+
+        int p[2];
+
+        if (pipe(p) == -1)
+                return NIL;
+
+        struct array *fds = value_array_new();
+
+        value_array_push(fds, INTEGER(p[0]));
+        value_array_push(fds, INTEGER(p[1]));
+
+        return ARRAY(fds);
+}
+
+struct value
+builtin_os_dup2(value_vector *args)
+{
+        ASSERT_ARGC("os::dup2()", 2);
+
+        struct value old = args->items[0];
+        struct value new = args->items[1];
+
+        if (old.type != VALUE_INTEGER || new.type != VALUE_INTEGER)
+                vm_panic("the arguments to os::dup2() must be integers");
+
+        return INTEGER(dup2(old.integer, new.integer));
+}
+
+struct value
+builtin_os_poll(value_vector *args)
+{
+        ASSERT_ARGC("os::poll()", 2);
+
+        struct value fds = args->items[0];
+        struct value timeout = args->items[1];
+
+        if (fds.type != VALUE_ARRAY)
+                vm_panic("the first argument to os::poll() must be an array");
+
+        if (timeout.type != VALUE_INTEGER)
+                vm_panic("the second argument to os::poll() must be an integer");
+
+        static vec(struct pollfd) pfds;
+        pfds.count = 0;
+
+        vec_reserve(pfds, fds.array->count);
+
+        struct value *v;
+        for (int i = 0; i < fds.array->count; ++i) {
+                if (fds.array->items[i].type != VALUE_DICT)
+                        vm_panic("non-dict in fds array passed to os::poll()");
+                v = dict_get_member(fds.array->items[i].dict, "fd");
+                if (v == NULL || v->type != VALUE_INTEGER)
+                        vm_panic("all dicts in the fds array passed to os::poll() must have an integer value under the key 'fd'");
+                pfds.items[i].fd = v->integer;
+                v = dict_get_member(fds.array->items[i].dict, "events");
+                if (v != NULL && v->type == VALUE_INTEGER)
+                        pfds.items[i].events = v->integer;
+                else
+                        pfds.items[i].events = POLLIN;
+        }
+
+        pfds.count = fds.array->count;
+
+        int ret = poll(pfds.items, pfds.count, timeout.integer);
+        if (ret <= 0)
+                return INTEGER(ret);
+
+        for (int i = 0; i < fds.array->count; ++i)
+                dict_put_member(fds.array->items[i].dict, "revents", INTEGER(pfds.items[i].revents));
+
+        return INTEGER(ret);
 }
 
 struct value

@@ -8,6 +8,9 @@
 #include <stdnoreturn.h>
 
 #include <pcre.h>
+#include <poll.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "vm.h"
 #include "util.h"
