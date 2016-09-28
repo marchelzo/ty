@@ -1014,6 +1014,20 @@ SETID(setgid)
 SETID(setegid)
 
 struct value
+builtin_os_kill(value_vector *args)
+{
+        ASSERT_ARGC("os::kill()", 2);
+
+        struct value pid = args->items[0];
+        struct value sig = args->items[1];
+
+        if (pid.type != VALUE_INTEGER || sig.type != VALUE_INTEGER)
+                vm_panic("both arguments to os::kill() must be integers");
+
+        return INTEGER(kill(pid.integer, sig.integer));
+}
+
+struct value
 builtin_os_connect(value_vector *args)
 {
         static vec(char) host;

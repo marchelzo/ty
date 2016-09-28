@@ -11,6 +11,7 @@
 #include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "vm.h"
 #include "util.h"

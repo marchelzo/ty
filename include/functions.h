@@ -206,6 +206,9 @@ struct value
 builtin_os_setegid(value_vector *args);
 
 struct value
+builtin_os_kill(value_vector *args);
+
+struct value
 builtin_errno_get(value_vector *args);
 
 struct value

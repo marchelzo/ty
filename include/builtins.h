@@ -45,6 +45,7 @@
 { .module = "os",     .name = "pipe",              .value = BUILTIN(builtin_os_pipe)                       },
 { .module = "os",     .name = "dup2",              .value = BUILTIN(builtin_os_dup2)                       },
 { .module = "os",     .name = "poll",              .value = BUILTIN(builtin_os_poll)                       },
+{ .module = "os",     .name = "kill",              .value = BUILTIN(builtin_os_kill)                       },
 { .module = "os",     .name = "getpid",            .value = BUILTIN(builtin_os_getpid)                     },
 { .module = "os",     .name = "getppid",           .value = BUILTIN(builtin_os_getppid)                    },
 { .module = "os",     .name = "getuid",            .value = BUILTIN(builtin_os_getuid)                     },
@@ -122,5 +123,100 @@
 { .module = "errno",  .name = "EPERM",             .value = INT(EPERM)                                     },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 
+#ifdef SIGHUP
+{ .module = "os",      .name = "SIGHUP",                 .value = INT(SIGHUP)                              },
+#endif
+#ifdef SIGINT
+{ .module = "os",      .name = "SIGINT",                 .value = INT(SIGINT)                              },
+#endif
+#ifdef SIGQUIT
+{ .module = "os",      .name = "SIGQUIT",                 .value = INT(SIGQUIT)                              },
+#endif
+#ifdef SIGILL
+{ .module = "os",      .name = "SIGILL",                 .value = INT(SIGILL)                              },
+#endif
+#ifdef SIGTRAP
+{ .module = "os",      .name = "SIGTRAP",                 .value = INT(SIGTRAP)                              },
+#endif
+#ifdef SIGABRT
+{ .module = "os",      .name = "SIGABRT",                 .value = INT(SIGABRT)                              },
+#endif
+#ifdef SIGEMT
+{ .module = "os",      .name = "SIGEMT",                 .value = INT(SIGEMT)                              },
+#endif
+#ifdef SIGFPE
+{ .module = "os",      .name = "SIGFPE",                 .value = INT(SIGFPE)                              },
+#endif
+#ifdef SIGKILL
+{ .module = "os",      .name = "SIGKILL",                 .value = INT(SIGKILL)                              },
+#endif
+#ifdef SIGBUS
+{ .module = "os",      .name = "SIGBUS",                 .value = INT(SIGBUS)                              },
+#endif
+#ifdef SIGSEGV
+{ .module = "os",      .name = "SIGSEGV",                 .value = INT(SIGSEGV)                              },
+#endif
+#ifdef SIGSYS
+{ .module = "os",      .name = "SIGSYS",                 .value = INT(SIGSYS)                              },
+#endif
+#ifdef SIGPIPE
+{ .module = "os",      .name = "SIGPIPE",                 .value = INT(SIGPIPE)                              },
+#endif
+#ifdef SIGALRM
+{ .module = "os",      .name = "SIGALRM",                 .value = INT(SIGALRM)                              },
+#endif
+#ifdef SIGTERM
+{ .module = "os",      .name = "SIGTERM",                 .value = INT(SIGTERM)                              },
+#endif
+#ifdef SIGURG
+{ .module = "os",      .name = "SIGURG",                 .value = INT(SIGURG)                              },
+#endif
+#ifdef SIGSTOP
+{ .module = "os",      .name = "SIGSTOP",                 .value = INT(SIGSTOP)                              },
+#endif
+#ifdef SIGTSTP
+{ .module = "os",      .name = "SIGTSTP",                 .value = INT(SIGTSTP)                              },
+#endif
+#ifdef SIGCONT
+{ .module = "os",      .name = "SIGCONT",                 .value = INT(SIGCONT)                              },
+#endif
+#ifdef SIGCHLD
+{ .module = "os",      .name = "SIGCHLD",                 .value = INT(SIGCHLD)                              },
+#endif
+#ifdef SIGTTIN
+{ .module = "os",      .name = "SIGTTIN",                 .value = INT(SIGTTIN)                              },
+#endif
+#ifdef SIGTTOU
+{ .module = "os",      .name = "SIGTTOU",                 .value = INT(SIGTTOU)                              },
+#endif
+#ifdef SIGIO
+{ .module = "os",      .name = "SIGIO",                 .value = INT(SIGIO)                              },
+#endif
+#ifdef SIGXCPU
+{ .module = "os",      .name = "SIGXCPU",                 .value = INT(SIGXCPU)                              },
+#endif
+#ifdef SIGXFSZ
+{ .module = "os",      .name = "SIGXFSZ",                 .value = INT(SIGXFSZ)                              },
+#endif
+#ifdef SIGVTALRM
+{ .module = "os",      .name = "SIGVTALRM",                 .value = INT(SIGVTALRM)                              },
+#endif
+#ifdef SIGPROF
+{ .module = "os",      .name = "SIGPROF",                 .value = INT(SIGPROF)                              },
+#endif
+#ifdef SIGWINCH
+{ .module = "os",      .name = "SIGWINCH",                 .value = INT(SIGWINCH)                              },
+#endif
+#ifdef SIGINFO
+{ .module = "os",      .name = "SIGINFO",                 .value = INT(SIGINFO)                              },
+#endif
+#ifdef SIGUSR1
+{ .module = "os",      .name = "SIGUSR1",                 .value = INT(SIGUSR1)                              },
+#endif
+#ifdef SIGUSR2
+{ .module = "os",      .name = "SIGUSR2",                 .value = INT(SIGUSR2)                              },
+#endif
+
 #undef INT
 #undef BUILTIN
+
