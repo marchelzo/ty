@@ -45,6 +45,29 @@
 { .module = "os",     .name = "pipe",              .value = BUILTIN(builtin_os_pipe)                       },
 { .module = "os",     .name = "dup2",              .value = BUILTIN(builtin_os_dup2)                       },
 { .module = "os",     .name = "poll",              .value = BUILTIN(builtin_os_poll)                       },
+{ .module = "os",     .name = "getpid",            .value = BUILTIN(builtin_os_getpid)                     },
+{ .module = "os",     .name = "getppid",           .value = BUILTIN(builtin_os_getppid)                    },
+{ .module = "os",     .name = "getuid",            .value = BUILTIN(builtin_os_getuid)                     },
+{ .module = "os",     .name = "geteuid",           .value = BUILTIN(builtin_os_geteuid)                    },
+{ .module = "os",     .name = "getgid",            .value = BUILTIN(builtin_os_getgid)                     },
+{ .module = "os",     .name = "getegid",           .value = BUILTIN(builtin_os_getegid)                    },
+{ .module = "os",     .name = "setuid",            .value = BUILTIN(builtin_os_setuid)                     },
+{ .module = "os",     .name = "seteuid",           .value = BUILTIN(builtin_os_seteuid)                    },
+{ .module = "os",     .name = "setgid",            .value = BUILTIN(builtin_os_setgid)                     },
+{ .module = "os",     .name = "setegid",           .value = BUILTIN(builtin_os_setegid)                    },
+{ .module = "os",     .name = "waitpid",           .value = BUILTIN(builtin_os_waitpid)                    },
+{ .module = "os",     .name = "WIFSTOPPED",        .value = BUILTIN(builtin_os_WIFSTOPPED)                 },
+{ .module = "os",     .name = "WIFEXITED",         .value = BUILTIN(builtin_os_WIFEXITED)                  },
+{ .module = "os",     .name = "WEXITSTATUS",       .value = BUILTIN(builtin_os_WEXITSTATUS)                },
+{ .module = "os",     .name = "WIFSIGNALED",       .value = BUILTIN(builtin_os_WIFSIGNALED)                },
+{ .module = "os",     .name = "WTERMSIG",          .value = BUILTIN(builtin_os_WTERMSIG)                   },
+{ .module = "os",     .name = "WSTOPSIG",          .value = BUILTIN(builtin_os_WSTOPSIG)                   },
+#ifdef WCOREDUMP
+{ .module = "os",     .name = "WCOREDUMP",         .value = BUILTIN(builtin_os_WCOREDUMP)                  },
+#endif
+#ifdef WIFCONTINUED
+{ .module = "os",     .name = "WIFCONTINUED",      .value = BUILTIN(builtin_os_WIFCONTINUED)               },
+#endif
 { .module = "os",     .name = "connect",           .value = BUILTIN(builtin_os_connect)                    },
 { .module = "os",     .name = "usleep",            .value = BUILTIN(builtin_os_usleep)                     },
 { .module = "os",     .name = "POLLIN",            .value = INT(POLLIN)                                    },
@@ -59,6 +82,11 @@
 { .module = "os",     .name = "O_TRUNC",           .value = INT(O_TRUNC)                                   },
 { .module = "os",     .name = "O_APPEND",          .value = INT(O_APPEND)                                  },
 { .module = "os",     .name = "O_NONBLOCK",        .value = INT(O_NONBLOCK)                                },
+{ .module = "os",     .name = "WNOHANG",           .value = INT(WNOHANG)                                   },
+{ .module = "os",     .name = "WUNTRACED",         .value = INT(WUNTRACED)                                 },
+#ifdef WCONTINUED
+{ .module = "os",     .name = "WCONTINUED",        .value = INT(WCONTINUED)                                },
+#endif
 { .module = "os",     .name = "F_SETFD",           .value = INT(F_SETFD)                                   },
 { .module = "os",     .name = "F_GETFD",           .value = INT(F_GETFD)                                   },
 { .module = "os",     .name = "F_GETFL",           .value = INT(F_GETFL)                                   },
@@ -91,6 +119,7 @@
 { .module = "errno",  .name = "ENOTDIR",           .value = INT(ENOTDIR)                                   },
 { .module = "errno",  .name = "ENOSPC",            .value = INT(ENOSPC)                                    },
 { .module = "errno",  .name = "EFAULT",            .value = INT(EFAULT)                                    },
+{ .module = "errno",  .name = "EPERM",             .value = INT(EPERM)                                     },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 
 #undef INT

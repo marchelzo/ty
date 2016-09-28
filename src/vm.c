@@ -22,7 +22,6 @@
 #include "test.h"
 #include "log.h"
 #include "operators.h"
-#include "functions.h"
 #include "array.h"
 #include "str.h"
 #include "blob.h"
@@ -30,6 +29,7 @@
 #include "object.h"
 #include "class.h"
 #include "utf8.h"
+#include "functions.h"
 
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
 #define CASE(i)      case INSTR_ ## i: LOG("executing instr: " #i);

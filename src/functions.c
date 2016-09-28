@@ -928,6 +928,92 @@ builtin_os_poll(value_vector *args)
 }
 
 struct value
+builtin_os_waitpid(value_vector *args)
+{
+        ASSERT_ARGC("os::waitpid()", 2);
+
+        struct value pid = args->items[0];
+        struct value flags = args->items[1];
+
+        if (pid.type != VALUE_INTEGER || flags.type != VALUE_INTEGER)
+                vm_panic("both arguments to os::waitpid() must be integers");
+
+        int status;
+        int ret = waitpid(pid.integer, &status, flags.integer);
+
+        if (ret <= 0)
+                return INTEGER(ret);
+
+        struct array *result = value_array_new();
+        NOGC(result);
+
+        value_array_push(result, INTEGER(ret));
+        value_array_push(result, INTEGER(status));
+
+        OKGC(result);
+
+        return ARRAY(result);
+}
+
+#define WAITMACRO(name) \
+        struct value \
+        builtin_os_ ## name(value_vector *args) \
+        { \
+                ASSERT_ARGC("os::" #name, 1); \
+        \
+                struct value status = args->items[0]; \
+                if (status.type != VALUE_INTEGER) \
+                        vm_panic("the argument to os::" #name "() must be an integer"); \
+        \
+                int s = status.integer; \
+        \
+                return INTEGER(name(s)); \
+        }
+
+WAITMACRO(WIFEXITED)
+WAITMACRO(WEXITSTATUS)
+WAITMACRO(WIFSIGNALED)
+WAITMACRO(WTERMSIG)
+WAITMACRO(WIFSTOPPED)
+WAITMACRO(WSTOPSIG)
+#ifdef WIFCONTINUED
+WAITMACRO(WIFCONTINUED)
+#endif
+#ifdef WCOREDUMP
+WAITMACRO(WCOREDUMP)
+#endif
+
+#define GETID(name) \
+        struct value \
+        builtin_os_ ## name (value_vector *args) \
+        { \
+                ASSERT_ARGC("os::" #name, 0); \
+                return INTEGER(name()); \
+        }
+
+#define SETID(name) \
+        struct value \
+        builtin_os_ ## name (value_vector *args) \
+        { \
+                ASSERT_ARGC("os::" #name, 1); \
+                struct value id = args->items[0]; \
+                if (id.type != VALUE_INTEGER) \
+                        vm_panic("the argument to os::" #name "() must be an integer"); \
+                return INTEGER(name(id.integer)); \
+        }
+
+GETID(getpid)
+GETID(getppid)
+GETID(getuid)
+GETID(geteuid)
+GETID(getgid)
+GETID(getegid)
+SETID(setuid)
+SETID(seteuid)
+SETID(setgid)
+SETID(setegid)
+
+struct value
 builtin_os_connect(value_vector *args)
 {
         static vec(char) host;

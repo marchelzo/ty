@@ -145,6 +145,67 @@ struct value
 builtin_os_connect(value_vector *args);
 
 struct value
+builtin_os_waitpid(value_vector *args);
+
+struct value
+builtin_os_WIFEXITED(value_vector *args);
+
+struct value
+builtin_os_WIFSIGNALED(value_vector *args);
+
+#ifdef WIFCONTINUED
+struct value
+builtin_os_WIFCONTINUED(value_vector *args);
+#endif
+
+struct value
+builtin_os_WIFSTOPPED(value_vector *args);
+
+#ifdef WCOREDUMP
+struct value
+builtin_os_WCOREDUMP(value_vector *args);
+#endif
+
+struct value
+builtin_os_WEXITSTATUS(value_vector *args);
+
+struct value
+builtin_os_WTERMSIG(value_vector *args);
+
+struct value
+builtin_os_WSTOPSIG(value_vector *args);
+
+struct value
+builtin_os_getpid(value_vector *args);
+
+struct value
+builtin_os_getppid(value_vector *args);
+
+struct value
+builtin_os_getuid(value_vector *args);
+
+struct value
+builtin_os_geteuid(value_vector *args);
+
+struct value
+builtin_os_getgid(value_vector *args);
+
+struct value
+builtin_os_getegid(value_vector *args);
+
+struct value
+builtin_os_setuid(value_vector *args);
+
+struct value
+builtin_os_seteuid(value_vector *args);
+
+struct value
+builtin_os_setgid(value_vector *args);
+
+struct value
+builtin_os_setegid(value_vector *args);
+
+struct value
 builtin_errno_get(value_vector *args);
 
 struct value
