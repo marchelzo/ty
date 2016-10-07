@@ -420,7 +420,7 @@ lexnum(void)
                 error("invalid numeric literal: %c%s", tolower(err[0]), err + 1);
         }
 
-        if (*end == '.') {
+        if (*end == '.' && end[1] != '.') {
                 errno = 0;
                 float real = strtof(chars, &end);
 
@@ -429,22 +429,19 @@ lexnum(void)
                         error("invalid numeric literal: %c%s", tolower(err[0]), err + 1);
                 }
 
-                if (isalnum(*end)) {
+                if (isalnum(*end))
                         error("invalid trailing character after numeric literal: %c", *end);
-                }
 
                 num = mkreal(real);
         } else {
-                if (isalnum(*end)) {
+                if (isalnum(*end))
                         error("invalid trailing character after numeric literal: %c", *end);
-                }
 
                 num = mkinteger(integer);
         }
 
-        while (chars != end) {
+        while (chars != end)
                 nextchar();
-        }
 
         return num;
 }

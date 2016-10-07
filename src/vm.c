@@ -212,7 +212,7 @@ vm_exec(char *code)
         intmax_t k;
         bool b;
         float f;
-        int n, index, tag, l, r;
+        int n, index, tag;
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
@@ -657,8 +657,6 @@ vm_exec(char *code)
                         stack.items[stack.count - 1] = v;
                         break;
                 CASE(RANGE)
-                        READVALUE(l);
-                        READVALUE(r);
                         right = pop();
                         left = pop();
                         if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER)
@@ -667,10 +665,10 @@ vm_exec(char *code)
                         push(v);
                         value_array_reserve(v.array, abs(right.integer - left.integer) + 2);
                         if (left.integer < right.integer)
-                                for (int i = left.integer + l; i <= right.integer + r; ++i)
+                                for (int i = left.integer; i < right.integer; ++i)
                                         v.array->items[v.array->count++] = INTEGER(i);
                         else
-                                for (int i = left.integer - l; i >= right.integer - r; --i)
+                                for (int i = left.integer; i > right.integer; --i)
                                         v.array->items[v.array->count++] = INTEGER(i);
                         break;
                 CASE(MEMBER_ACCESS)

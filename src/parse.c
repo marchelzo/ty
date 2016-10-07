@@ -545,27 +545,6 @@ prefix_parenthesis(void)
                 consume(')');
 
                 return list;
-        } else if (tok()->type == TOKEN_DOT_DOT) {
-                /* It's a range */
-                struct expression *range = mkexpr();
-                range->flags = RANGE_EXCLUDE_LEFT;
-                range->type = EXPRESSION_RANGE;
-                range->low = e;
-
-                consume(TOKEN_DOT_DOT);
-
-                range->high = parse_expr(0);
-
-                if (tok()->type == ')') {
-                        range->flags |= RANGE_EXCLUDE_RIGHT;
-                        consume(')');
-                } else if (tok()->type == ']') {
-                        consume(']');
-                } else {
-                        error("expected ')' or ']' to close range");
-                }
-
-                return range;
         } else {
                 consume(')');
                 return e;
@@ -636,28 +615,6 @@ prefix_array(void)
                 return e;
         } else {
                 vec_push(e->elements, parse_expr(0));
-        }
-
-        /*
-         * Maybe it's a range?
-         */
-        if (tok()->type == TOKEN_DOT_DOT) {
-                consume(TOKEN_DOT_DOT);
-                e->type = EXPRESSION_RANGE;
-                e->low = e->elements.items[0];
-                e->flags = 0;
-                e->high = parse_expr(0);
-
-                if (tok()->type == ')') {
-                        e->flags |= RANGE_EXCLUDE_RIGHT;
-                        consume(')');
-                } else if (tok()->type == ']') {
-                        consume(']');
-                } else {
-                        error("expected ')' or ']' to close range");
-                }
-
-                return e;
         }
 
         while (tok()->type == ',') {
@@ -979,6 +936,8 @@ BINARY_OPERATOR(percent, PERCENT, 8, false)
 BINARY_OPERATOR(plus,    PLUS,    7, false)
 BINARY_OPERATOR(minus,   MINUS,   7, false)
 
+BINARY_OPERATOR(range,   DOT_DOT, 6, false)
+
 BINARY_OPERATOR(lt,      LT,      6, false)
 BINARY_OPERATOR(gt,      GT,      6, false)
 BINARY_OPERATOR(geq,     GEQ,     6, false)
@@ -1060,6 +1019,7 @@ get_infix_parser(void)
         case TOKEN_DEC:            return postfix_dec;
         case TOKEN_ARROW:          return infix_arrow_function;
         case TOKEN_SQUIGGLY_ARROW: return infix_squiggly_arrow;
+        case TOKEN_DOT_DOT:        return infix_range;
         case TOKEN_PLUS_EQ:        return infix_plus_eq;
         case TOKEN_STAR_EQ:        return infix_star_eq;
         case TOKEN_DIV_EQ:         return infix_div_eq;
@@ -1110,6 +1070,8 @@ get_infix_prec(void)
         case TOKEN_MINUS:          return 7;
         case TOKEN_PLUS:           return 7;
 
+        case TOKEN_DOT_DOT:        return 6;
+
         case TOKEN_GEQ:            return 6;
         case TOKEN_LEQ:            return 6;
         case TOKEN_GT:             return 6;
@@ -1129,7 +1091,7 @@ get_infix_prec(void)
         case TOKEN_MINUS_EQ:       return 1;
         case TOKEN_ARROW:          return 1;
 
-        // this may need to have lower precedence at; I'm not sure yet.
+        /* this may need to have lower precedence at; I'm not sure yet. */
         case TOKEN_SQUIGGLY_ARROW: return 1;
 
         case TOKEN_KEYWORD:        goto keyword;

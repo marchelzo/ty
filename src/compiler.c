@@ -28,7 +28,7 @@
 
 #define PLACEHOLDER_JUMP(t, name) \
         emit_instr(t); \
-        size_t name = state.code.count; \
+        name = state.code.count; \
         emit_int(0);
 
 #define PATCH_JUMP(name) \
@@ -526,10 +526,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (int i = 0; i < e->expressions.count; ++i)
                         symbolize_expression(scope, e->expressions.items[i]);
                 break;
-        case EXPRESSION_RANGE:
-                symbolize_expression(scope, e->low);
-                symbolize_expression(scope, e->high);
-                break;
         case EXPRESSION_TAG:
                 e->symbol = getsymbol(
                         ((e->module == NULL) ? state.global : get_import_scope(e->module)),
@@ -567,6 +563,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_GEQ:
         case EXPRESSION_DBL_EQ:
         case EXPRESSION_NOT_EQ:
+        case EXPRESSION_DOT_DOT:
                 symbolize_expression(scope, e->left);
                 symbolize_expression(scope, e->right);
                 break;
@@ -948,12 +945,12 @@ static void
 emit_conditional_statement(struct statement const *s)
 {
         emit_expression(s->conditional.cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF, then_branch);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t then_branch);
 
         if (s->conditional.else_branch != NULL)
                 emit_statement(s->conditional.else_branch);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, end);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
         PATCH_JUMP(then_branch);
 
@@ -967,11 +964,11 @@ emit_conditional_expression(struct expression const *e)
 {
         emit_expression(e->cond);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, false_branch);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t false_branch);
 
         emit_expression(e->then);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, end);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
         PATCH_JUMP(false_branch);
 
@@ -986,7 +983,7 @@ emit_and(struct expression const *left, struct expression const *right)
         emit_expression(left);
         emit_instr(INSTR_DUP);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, left_false);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t left_false);
 
         emit_instr(INSTR_POP);
         emit_expression(right);
@@ -1000,7 +997,7 @@ emit_or(struct expression const *left, struct expression const *right)
         emit_expression(left);
         emit_instr(INSTR_DUP);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF, left_true);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t left_true);
 
         emit_instr(INSTR_POP);
         emit_expression(right);
@@ -1051,7 +1048,7 @@ emit_try(struct statement const *s)
 
         emit_statement(s->try.s);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, end);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -1097,7 +1094,7 @@ emit_while_loop(struct statement const *s)
 
         emit_checks(s->while_loop.check);
         emit_expression(s->while_loop.cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t end);
 
         emit_statement(s->while_loop.body);
 
@@ -1128,24 +1125,30 @@ emit_for_loop(struct statement const *s)
         if (s->for_loop.init != NULL)
                 emit_statement(s->for_loop.init);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, skip_next);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t skip_next);
 
         size_t begin = state.code.count;
 
         emit_checks(s->for_loop.check);
-        emit_expression(s->for_loop.next);
-        emit_instr(INSTR_POP);
+        if (s->for_loop.next != NULL) {
+                emit_expression(s->for_loop.next);
+                emit_instr(INSTR_POP);
+        }
 
         PATCH_JUMP(skip_next);
 
-        emit_expression(s->for_loop.cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end_jump);
+        size_t end_jump;
+        if (s->for_loop.cond != NULL) {
+                emit_expression(s->for_loop.cond);
+                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end_jump);
+        }
 
         emit_statement(s->for_loop.body);
 
         JUMP(begin);
 
-        PATCH_JUMP(end_jump);
+        if (s->for_loop.cond != NULL)
+                PATCH_JUMP(end_jump);
 
         patch_loop_jumps(begin, state.code.count);
 
@@ -1377,7 +1380,7 @@ emit_while_match(struct statement const *s)
         /*
          * If nothing matches, we jump out of the loop.
          */
-        PLACEHOLDER_JUMP(INSTR_JUMP, finished);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
 
         patch_jumps_to(&state.match_successes, state.code.count);
 
@@ -1423,7 +1426,7 @@ emit_while_let(struct statement const *s)
         /*
          * We failed to match, so we jump out.
          */
-        PLACEHOLDER_JUMP(INSTR_JUMP, finished);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
 
         patch_jumps_to(&state.match_successes, state.code.count);
 
@@ -1620,12 +1623,10 @@ emit_expression(struct expression const *e)
                 emit_instr(INSTR_TAG_PUSH);
                 emit_int(e->symbol->tag);
                 break;
-        case EXPRESSION_RANGE:
-                emit_expression(e->low);
-                emit_expression(e->high);
+        case EXPRESSION_DOT_DOT:
+                emit_expression(e->left);
+                emit_expression(e->right);
                 emit_instr(INSTR_RANGE);
-                emit_int((e->flags & RANGE_EXCLUDE_LEFT) ? 1 : 0);
-                emit_int((e->flags & RANGE_EXCLUDE_RIGHT) ? -1 : 0);
                 break;
         case EXPRESSION_EQ:
                 emit_assignment(e->target, e->value);

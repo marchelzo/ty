@@ -138,7 +138,7 @@ struct expression {
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
-                EXPRESSION_RANGE,
+                EXPRESSION_DOT_DOT,
 
                 EXPRESSION_MATCH,
 
@@ -208,11 +208,6 @@ struct expression {
                 struct {
                         vec(char *) strings;
                         vec(struct expression *) expressions;
-                };
-                struct {
-                        enum { RANGE_EXCLUDE_LEFT = 1, RANGE_EXCLUDE_RIGHT = 2 } flags;
-                        struct expression *low;
-                        struct expression *high;
                 };
                 struct {
                         bool local;
