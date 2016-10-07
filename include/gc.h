@@ -61,6 +61,12 @@ gc_pop(void);
 void
 gc_clear_root_set(void);
 
+void
+gc_truncate_root_set(size_t n);
+
+size_t
+gc_root_set_count(void);
+
 inline static void *
 gc_alloc_unregistered(size_t n, char type)
 {

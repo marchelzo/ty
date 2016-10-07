@@ -77,6 +77,10 @@ struct token {
                         KEYWORD_TAG,
                         KEYWORD_CLASS,
                         KEYWORD_MATCH,
+                        KEYWORD_TRY,
+                        KEYWORD_CATCH,
+                        KEYWORD_FINALLY,
+                        KEYWORD_THROW,
                 } keyword;
                 struct {
                         pcre *regex;

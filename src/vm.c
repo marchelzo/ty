@@ -39,14 +39,26 @@ static char halt = INSTR_HALT;
 
 static jmp_buf jb;
 
+struct try {
+        jmp_buf jb;
+        int sp;
+        int gc;
+        int cs;
+        int ts;
+        char *catch;
+        char *finally;
+        char *end;
+};
+
 static struct variable **vars;
 static vec(struct value) stack;
 static vec(char *) callstack;
 static vec(size_t) sp_stack;
 static vec(struct value *) targetstack;
+static vec(struct try) try_stack;
 static char *ip;
 
-static int symbol_count = 0;
+static int symbol_count;
 
 static char const *filename;
 
@@ -72,6 +84,7 @@ newvar(struct variable *next)
         struct variable *v = gc_alloc_unregistered(sizeof *v, GC_VARIABLE);
         v->prev = NULL;
         v->next = next;
+        v->try = try_stack.count;
         return v;
 }
 
@@ -213,6 +226,8 @@ vm_exec(char *code)
 
         for (;;) {
                 switch (*ip++) {
+                CASE(NOP)
+                        continue;
                 CASE(PUSH_VAR)
                         READVALUE(s);
                         LOG("new var for %d", (int) s);
@@ -220,11 +235,13 @@ vm_exec(char *code)
                         break;
                 CASE(POP_VAR)
                         READVALUE(s);
+                        LOG("popping %d", (int) s);
                         next = vars[s]->next;
                         if (vars[s]->captured) {
                                 gc_register(vars[s]);
                                 LOG("detaching captured variable");
-                                vars[s]->next->prev = NULL;
+                                if (vars[s]->next != NULL)
+                                        vars[s]->next->prev = vars[s]->prev;
                         }
                         vars[s] = next;
                         break;
@@ -351,6 +368,65 @@ vm_exec(char *code)
                 CASE(BAD_MATCH)
                         vm_panic("expression did not match any patterns in match expression");
                         break;
+                CASE(THROW)
+                {
+                        if (try_stack.count == 0)
+                                vm_panic("uncaught exception: %s", value_show(top()));
+
+                        struct try *t = vec_last(try_stack);
+
+                        v = pop();
+                        stack.count = t->sp;
+                        push(v);
+
+                        targetstack.count = t->ts;
+                        callstack.count = t->cs;
+                        ip = t->catch;
+
+                        for (int i = 0; i < symbol_count; ++i) {
+                                while (vars[i] != NULL && vars[i]->try >= try_stack.count) {
+                                        if (vars[i]->captured && vars[i]->next != NULL)
+                                                vars[i]->next->prev = vars[i]->prev;
+                                        vars[i] = vars[i]->next;
+                                }
+                        }
+
+                        gc_truncate_root_set(t->gc);
+
+                        longjmp(t->jb, 1);
+                        /* unreachable */
+                }
+                CASE(FINALLY)
+                {
+                        struct try *t = vec_pop(try_stack);
+                        if (t->finally == NULL)
+                                break;
+                        *t->end = INSTR_HALT;
+                        vm_exec(t->finally);
+                        *t->end = INSTR_NOP;
+                        break;
+                }
+                CASE(POP_TRY)
+                        --try_stack.count;
+                        break;
+                CASE(TRY)
+                {
+                        READVALUE(n);
+                        struct try t;
+                        if (setjmp(t.jb) != 0)
+                                break;
+                        t.catch = ip + n;
+                        READVALUE(n);
+                        t.finally = (n == -1) ? NULL : ip + n;
+                        READVALUE(n);
+                        t.end = (n == -1) ? NULL : ip + n;
+                        t.sp = stack.count;
+                        t.gc = gc_root_set_count();
+                        t.cs = callstack.count;
+                        t.ts = targetstack.count;
+                        vec_push(try_stack, t);
+                        break;
+                }
                 CASE(ENSURE_LEN)
                         READVALUE(n);
                         b = top()->array->count == n;
@@ -976,7 +1052,7 @@ vm_exec(char *code)
                                 value = v.builtin_method(v.this, &args);
 
                                 stack.count -= n;
-                                stack.items[stack.count - 1] = value;
+                                push(value);
 
                                 break;
                         case VALUE_NIL:

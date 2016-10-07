@@ -31,6 +31,10 @@ static struct {
         { "tag",      KEYWORD_TAG      },
         { "true",     KEYWORD_TRUE     },
         { "while",    KEYWORD_WHILE    },
+        { "try",      KEYWORD_TRY      },
+        { "catch",    KEYWORD_CATCH    },
+        { "finally",  KEYWORD_FINALLY  },
+        { "throw",    KEYWORD_THROW    },
 };
 
 static struct {

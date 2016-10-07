@@ -106,3 +106,15 @@ gc_clear_root_set(void)
 {
         root_set.count = 0;
 }
+
+void
+gc_truncate_root_set(size_t n)
+{
+        root_set.count = n;
+}
+
+size_t
+gc_root_set_count(void)
+{
+        return root_set.count;
+}

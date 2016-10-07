@@ -91,8 +91,10 @@ struct state {
         offset_vector match_successes;
 
         int function_depth;
-        bool in_method;
         bool each_loop;
+
+        uint64_t try;
+        uint64_t loop;
 
         import_vector imports;
         vec(char *) exports;
@@ -121,6 +123,8 @@ static vec(location_vector) location_lists;
 static struct scope *global;
 static int global_count;
 
+static uint64_t t;
+
 static void
 symbolize_statement(struct scope *scope, struct statement *s);
 
@@ -138,6 +142,9 @@ emit_expression(struct expression const *e);
 
 static void
 emit_assignment(struct expression *target, struct expression const *e);
+
+static void
+emit_case(struct expression const *pattern, struct expression const *condition, struct statement const *s);
 
 static struct scope *
 get_import_scope(char const *);
@@ -327,8 +334,10 @@ freshstate(void)
         s.global = scope_new(global, false);
 
         s.function_depth = 0;
-        s.in_method = false;
         s.each_loop = false;
+
+        s.try = 0;
+        s.loop = 0;
 
         s.filename = NULL;
         s.loc = (struct location){ 0, 0 };
@@ -378,10 +387,8 @@ symbolize_methods(struct scope *scope, struct expression **ms, int n)
                 char *name = ms[i]->name;
                 ms[i]->name = NULL;
 
-                state.in_method = true;
                 symbolize_expression(scope, ms[i]);
                 ms[i]->is_method = true;
-                state.in_method = false;
 
                 ms[i]->name = name;
         }
@@ -699,6 +706,24 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 for (size_t i = 0; i < s->statements.count; ++i)
                         symbolize_statement(scope, s->statements.items[i]);
                 break;
+        case STATEMENT_THROW:
+                symbolize_expression(scope, s->throw);
+                break;
+        case STATEMENT_TRY:
+        {
+                symbolize_statement(scope_new(scope, false), s->try.s);
+
+                for (int i = 0; i < s->try.patterns.count; ++i) {
+                        struct scope *catch = scope_new(scope, false);
+                        symbolize_pattern(catch, s->try.patterns.items[i]);
+                        symbolize_statement(catch, s->try.handlers.items[i]);
+                }
+
+                symbolize_statement(scope, s->try.finally);
+
+                break;
+
+        }
         case STATEMENT_WHILE_MATCH:
         case STATEMENT_MATCH:
                 symbolize_expression(scope, s->match.e);
@@ -859,12 +884,13 @@ emit_function(struct expression const *e)
          */
         reference_vector refs_save = state.refs;
         symbol_vector syms_save = state.bound_symbols;
-        bool in_method_save = state.in_method;
         vec_init(state.refs);
         state.bound_symbols.items = e->bound_symbols.items;
         state.bound_symbols.count = e->bound_symbols.count;
-        state.in_method = e->is_method;
         ++state.function_depth;
+        uint64_t loop_save = state.loop;
+        uint64_t try_save = state.try;
+        state.loop = state.try = 0;
 
         emit_int(e->param_symbols.count);
         emit_int(e->bound_symbols.count);
@@ -907,8 +933,9 @@ emit_function(struct expression const *e)
 
         state.refs = refs_save;
         state.bound_symbols = syms_save;
-        state.in_method = in_method_save;
         --state.function_depth;
+        state.loop = loop_save;
+        state.try = try_save;
 
         if (e->function_symbol != NULL) {
                 emit_instr(INSTR_TARGET_VAR);
@@ -999,12 +1026,70 @@ emit_special_string(struct expression const *e)
 }
 
 static void
+emit_throw(struct statement const *s)
+{
+        emit_expression(s->throw);
+        emit_instr(INSTR_THROW);
+}
+
+static void
+emit_try(struct statement const *s)
+{
+        emit_instr(INSTR_TRY);
+
+        size_t catch_offset = state.code.count;
+        emit_int(0);
+
+        size_t finally_offset = state.code.count;
+        emit_int(-1);
+
+        size_t end_offset = state.code.count;
+        emit_int(-1);
+
+        uint64_t try_save = state.try;
+        state.try = ++t;
+
+        emit_statement(s->try.s);
+
+        PLACEHOLDER_JUMP(INSTR_JUMP, end);
+
+        offset_vector successes_save = state.match_successes;
+        vec_init(state.match_successes);
+
+        PATCH_JUMP(catch_offset);
+
+        for (int i = 0; i < s->try.patterns.count; ++i)
+                emit_case(s->try.patterns.items[i], NULL, s->try.handlers.items[i]);
+
+        emit_instr(INSTR_FINALLY);
+        emit_instr(INSTR_THROW);
+
+        patch_jumps_to(&state.match_successes, state.code.count);
+        PATCH_JUMP(end);
+
+        state.match_successes = successes_save;
+
+        state.try = try_save;
+
+        if (s->try.finally != NULL) {
+                PATCH_JUMP(finally_offset);
+                emit_statement(s->try.finally);
+                PATCH_JUMP(end_offset);
+                emit_instr(INSTR_NOP);
+        }
+
+        emit_instr(INSTR_POP_TRY);
+}
+
+static void
 emit_while_loop(struct statement const *s)
 {
         offset_vector cont_save = state.continues;
         offset_vector brk_save = state.breaks;
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
+        uint64_t loop_save = state.loop;
+        state.loop = loop_save;
         vec_init(state.continues);
         vec_init(state.breaks);
 
@@ -1025,6 +1110,7 @@ emit_while_loop(struct statement const *s)
         state.continues = cont_save;
         state.breaks = brk_save;
         state.each_loop = each_loop_save;
+        state.loop = loop_save;
 }
 
 static void
@@ -1034,6 +1120,8 @@ emit_for_loop(struct statement const *s)
         offset_vector brk_save = state.breaks;
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
+        uint64_t loop_save = state.loop;
+        state.loop = ++t;
         vec_init(state.continues);
         vec_init(state.breaks);
 
@@ -1064,6 +1152,7 @@ emit_for_loop(struct statement const *s)
         state.continues = cont_save;
         state.breaks = brk_save;
         state.each_loop = each_loop_save;
+        state.loop = loop_save;
 }
 
 static void
@@ -1268,6 +1357,8 @@ emit_while_match(struct statement const *s)
         offset_vector successes_save = state.match_successes;
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
+        uint64_t loop_save = state.loop;
+        state.loop = loop_save;
         vec_init(state.breaks);
         vec_init(state.continues);
         vec_init(state.match_successes);
@@ -1304,6 +1395,7 @@ emit_while_match(struct statement const *s)
         state.breaks = brk_save;
         state.continues = cont_save;
         state.each_loop = each_loop_save;
+        state.loop = loop_save;
 }
 
 static void
@@ -1314,6 +1406,8 @@ emit_while_let(struct statement const *s)
         offset_vector successes_save = state.match_successes;
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
+        uint64_t loop_save = state.loop;
+        state.loop = loop_save;
         vec_init(state.breaks);
         vec_init(state.continues);
         vec_init(state.match_successes);
@@ -1348,6 +1442,7 @@ emit_while_let(struct statement const *s)
         state.breaks = brk_save;
         state.continues = cont_save;
         state.each_loop = each_loop_save;
+        state.loop = loop_save;
 }
 
 static void
@@ -1404,6 +1499,9 @@ emit_each_loop(struct statement const *s)
         bool each_loop_save = state.each_loop;
         state.each_loop = true;
 
+        uint64_t loop_save = state.loop;
+        state.loop = ++t;
+
         emit_expression(s->each.array);
 
         emit_instr(INSTR_FOR_EACH);
@@ -1421,6 +1519,7 @@ emit_each_loop(struct statement const *s)
         memcpy(state.code.items + start, &n, sizeof (int));
 
         state.each_loop = each_loop_save;
+        state.loop = loop_save;
 }
 
 static void
@@ -1796,6 +1895,12 @@ emit_statement(struct statement const *s)
                         emit_string(s->class.methods.items[i - 1]->name);
 
                 break;
+        case STATEMENT_TRY:
+                emit_try(s);
+                break;
+        case STATEMENT_THROW:
+                emit_throw(s);
+                break;
         case STATEMENT_RETURN:
                 if (state.function_depth == 0)
                         fail("invalid 'return' statement (not inside of a function)");
@@ -1807,9 +1912,13 @@ emit_statement(struct statement const *s)
                         emit_instr(INSTR_POP_VAR);
                         emit_symbol(state.bound_symbols.items[i]->symbol);
                 }
+                if (state.try)
+                        emit_instr(INSTR_FINALLY);
                 emit_instr(INSTR_RETURN);
                 break;
         case STATEMENT_BREAK:
+                if (state.try > state.loop)
+                        emit_instr(INSTR_FINALLY);
                 if (state.each_loop) {
                         emit_instr(INSTR_BREAK_EACH);
                 } else {
@@ -1819,6 +1928,8 @@ emit_statement(struct statement const *s)
                 }
                 break;
         case STATEMENT_CONTINUE: 
+                if (state.try > state.loop)
+                        emit_instr(INSTR_FINALLY);
                 if (state.each_loop) {
                         emit_instr(INSTR_HALT);
                 } else {

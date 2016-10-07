@@ -1663,6 +1663,49 @@ parse_class_definition(void)
 }
 
 static struct statement *
+parse_throw(void)
+{
+        consume_keyword(KEYWORD_THROW);
+
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_THROW;
+        s->throw = parse_expr(0);
+
+        consume(';');
+
+        return s;
+}
+
+static struct statement *
+parse_try(void)
+{
+        consume_keyword(KEYWORD_TRY);
+
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_TRY;
+
+        s->try.s = parse_statement();
+
+        vec_init(s->try.patterns);
+        vec_init(s->try.handlers);
+
+        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_CATCH) {
+                consume_keyword(KEYWORD_CATCH);
+                vec_push(s->try.patterns, parse_expr(0));
+                vec_push(s->try.handlers, parse_statement());
+        }
+
+        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FINALLY) {
+                consume_keyword(KEYWORD_FINALLY);
+                s->try.finally = parse_statement();
+        } else {
+                s->try.finally = NULL;
+        }
+
+        return s;
+}
+
+static struct statement *
 parse_export(void)
 {
         consume_keyword(KEYWORD_EXPORT);
@@ -1774,6 +1817,8 @@ keyword:
         case KEYWORD_LET:      return parse_let_definition();
         case KEYWORD_BREAK:    return parse_break_statement();
         case KEYWORD_CONTINUE: return parse_continue_statement();
+        case KEYWORD_TRY:      return parse_try();
+        case KEYWORD_THROW:    return parse_throw();
         default:               goto expression;
         }
 

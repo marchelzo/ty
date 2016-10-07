@@ -8,6 +8,8 @@
 struct variable;
 
 enum instruction {
+        INSTR_NOP,
+
         INSTR_LOAD_VAR,
         INSTR_LOAD_REF,
         INSTR_PUSH_VAR,
@@ -64,6 +66,11 @@ enum instruction {
 
         INSTR_SAVE_STACK_POS,
         INSTR_RESTORE_STACK_POS,
+
+        INSTR_THROW,
+        INSTR_TRY,
+        INSTR_POP_TRY,
+        INSTR_FINALLY,
 
         INSTR_TAG_PUSH,
         INSTR_DEFINE_TAG,

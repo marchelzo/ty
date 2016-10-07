@@ -36,6 +36,8 @@ struct statement {
                 STATEMENT_CONDITIONAL,
                 STATEMENT_RETURN,
                 STATEMENT_CONTINUE,
+                STATEMENT_THROW,
+                STATEMENT_TRY,
                 STATEMENT_BREAK,
                 STATEMENT_BLOCK,
                 STATEMENT_HALT,
@@ -48,6 +50,7 @@ struct statement {
         union {
                 struct expression *expression;
                 struct expression *return_value;
+                struct expression *throw;
                 vec(struct statement *) statements;
                 vec(char *) exports;
                 struct {
@@ -82,6 +85,12 @@ struct statement {
                         struct statement *then_branch;
                         struct statement *else_branch;
                 } conditional;
+                struct {
+                        struct statement *s;
+                        vec(struct expression *) patterns;
+                        vec(struct statement *) handlers;
+                        struct statement *finally;
+                } try;
                 struct {
                         struct expression *e;
                         vec(struct expression *) patterns;

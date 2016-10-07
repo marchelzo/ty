@@ -165,6 +165,7 @@ struct variable {
         struct variable *prev;
         struct variable *next;
         bool captured;
+        int try;
 };
 
 unsigned long
