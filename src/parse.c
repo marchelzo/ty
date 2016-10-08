@@ -646,6 +646,24 @@ prefix_dot(void)
 }
 
 static struct expression *
+prefix_range(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_DOT_DOT;
+
+        struct expression *zero = mkexpr();
+        zero->type = EXPRESSION_INTEGER;
+        zero->integer = 0;
+
+        consume(TOKEN_DOT_DOT);
+
+        e->left = zero;
+        e->right = parse_expr(0);
+
+        return e;
+}
+
+static struct expression *
 prefix_hash(void)
 {
         struct expression *e = mkexpr();
@@ -969,28 +987,30 @@ get_prefix_parser(void)
         case TOKEN_SPECIAL_STRING: return prefix_special_string;
         case TOKEN_REGEX:          return prefix_regex;
 
-        case TOKEN_IDENTIFIER: return prefix_identifier;
-        case TOKEN_KEYWORD:    goto keyword;
+        case TOKEN_IDENTIFIER:     return prefix_identifier;
+        case TOKEN_KEYWORD:        goto keyword;
 
-        case TOKEN_BIT_OR:     return prefix_implicit_lambda;
-        case '#':              return prefix_hash;
+        case TOKEN_BIT_OR:         return prefix_implicit_lambda;
+        case '#':                  return prefix_hash;
 
-        case '(':              return prefix_parenthesis;
-        case '[':              return prefix_array;
-        case '{':              return prefix_object;
+        case '(':                  return prefix_parenthesis;
+        case '[':                  return prefix_array;
+        case '{':                  return prefix_object;
 
-        case '.':              return prefix_dot;
+        case '.':                  return prefix_dot;
 
-        case TOKEN_BANG:       return prefix_bang;
-        case TOKEN_AT:         return prefix_at;
-        case TOKEN_DOLLAR:     return prefix_dollar;
-        case TOKEN_MINUS:      return prefix_minus;
-        case TOKEN_INC:        return prefix_inc;
-        case TOKEN_DEC:        return prefix_dec;
+        case TOKEN_DOT_DOT:        return prefix_range;
 
-        case TOKEN_STAR:       return prefix_star;
+        case TOKEN_BANG:           return prefix_bang;
+        case TOKEN_AT:             return prefix_at;
+        case TOKEN_DOLLAR:         return prefix_dollar;
+        case TOKEN_MINUS:          return prefix_minus;
+        case TOKEN_INC:            return prefix_inc;
+        case TOKEN_DEC:            return prefix_dec;
 
-        default:               return NULL;
+        case TOKEN_STAR:           return prefix_star;
+
+        default:                   return NULL;
         }
 
 keyword:
@@ -1146,7 +1166,7 @@ assignment_lvalue(struct expression *e)
 }
 
 /*
- * This is kind of a hack.
+ * This is awful.
  */
 static struct expression *
 parse_definition_lvalue(int context)

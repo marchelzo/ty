@@ -498,6 +498,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                 break;
         default:
         tag:
+                LOG("symbolizing expression");
                 symbolize_expression(scope, e);
         }
 }
@@ -744,7 +745,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 subscope = scope_new(scope, false);
                 symbolize_pattern(subscope, s->if_let.pattern);
                 symbolize_statement(subscope, s->if_let.then);
-                symbolize_statement(scope, s->if_let.otherwise); // note that this is not done in the subscope
+                symbolize_statement(scope, s->if_let.otherwise); /* note that this is not done in the subscope */
                 break;
         case STATEMENT_FOR_LOOP:
                 scope = scope_new(scope, false);
