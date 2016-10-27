@@ -142,9 +142,11 @@ struct expression {
 
                 EXPRESSION_MATCH,
 
+                EXPRESSION_TICK,
                 EXPRESSION_MATCH_NOT_NIL,
                 EXPRESSION_MATCH_REST,
                 EXPRESSION_VIEW_PATTERN,
+
 
                 EXPRESSION_PLUS,
                 EXPRESSION_MINUS,

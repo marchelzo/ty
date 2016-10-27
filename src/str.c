@@ -479,6 +479,26 @@ string_matches(struct value *string, value_vector *args)
 }
 
 static struct value
+string_byte(struct value *string, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("str.byte() expects 1 argument but got %zu", args->count);
+
+        struct value i = args->items[0];
+
+        if (i.type != VALUE_INTEGER)
+                vm_panic("non-integer passed to str.byte()");
+
+        if (i.integer < 0)
+                i.integer += string->bytes;
+
+        if (i.integer < 0 || i.integer >= string->bytes)
+                return NIL; /* TODO: maybe panic */
+
+        return INTEGER(string->string[i.integer]);
+}
+
+static struct value
 string_char(struct value *string, value_vector *args)
 {
         if (args->count != 1)
@@ -690,6 +710,7 @@ string_pad_right(struct value *string, value_vector *args)
 }
 
 DEFINE_METHOD_TABLE(
+        { .name = "byte",      .func = string_byte      },
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
         { .name = "len",       .func = string_length    },

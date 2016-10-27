@@ -1,5 +1,6 @@
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+#define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
 
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
 { .module = NULL,     .name = "die",               .value = BUILTIN(builtin_die)                           },
@@ -28,6 +29,7 @@
 { .module = "math",   .name = "tan",               .value = BUILTIN(builtin_tan)                           },
 { .module = "math",   .name = "sqrt",              .value = BUILTIN(builtin_sqrt)                          },
 { .module = "math",   .name = "cbrt",              .value = BUILTIN(builtin_cbrt)                          },
+{ .module = "math",   .name = "PI",                .value = FLOAT(3.1415926535f)                           },
 { .module = "bit",    .name = "and",               .value = BUILTIN(builtin_bit_and)                       },
 { .module = "bit",    .name = "or",                .value = BUILTIN(builtin_bit_or)                        },
 { .module = "bit",    .name = "xor",               .value = BUILTIN(builtin_bit_xor)                       },
@@ -48,6 +50,7 @@
 { .module = "os",     .name = "kill",              .value = BUILTIN(builtin_os_kill)                       },
 { .module = "os",     .name = "exit",              .value = BUILTIN(builtin_os_exit)                       },
 { .module = "os",     .name = "exec",              .value = BUILTIN(builtin_os_exec)                       },
+{ .module = "os",     .name = "utime",             .value = BUILTIN(builtin_os_utime)                      },
 { .module = "os",     .name = "getpid",            .value = BUILTIN(builtin_os_getpid)                     },
 { .module = "os",     .name = "getppid",           .value = BUILTIN(builtin_os_getppid)                    },
 { .module = "os",     .name = "getuid",            .value = BUILTIN(builtin_os_getuid)                     },
@@ -220,5 +223,6 @@
 #endif
 
 #undef INT
+#undef FLOAT
 #undef BUILTIN
 

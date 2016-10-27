@@ -51,6 +51,8 @@ struct try {
 };
 
 static struct variable **vars;
+static bool *used;
+
 static vec(struct value) stack;
 static vec(char *) callstack;
 static vec(size_t) sp_stack;
@@ -84,8 +86,17 @@ newvar(struct variable *next)
         struct variable *v = gc_alloc_unregistered(sizeof *v, GC_VARIABLE);
         v->prev = NULL;
         v->next = next;
-        v->try = try_stack.count;
         return v;
+}
+
+inline static void
+pushvar(int s)
+{
+        if (vars[s] == NULL || used[s])
+                vars[s] = newvar(vars[s]);
+
+        vars[s]->try = try_stack.count;
+        used[s] = true;
 }
 
 /*
@@ -97,6 +108,7 @@ static void
 add_builtins(int ac, char **av)
 {
         resize(vars, sizeof *vars * (builtin_count + 1));
+        resize(used, sizeof *used * (builtin_count + 1));
 
         for (int i = 0; i < builtin_count; ++i) {
                 compiler_introduce_symbol(builtins[i].module, builtins[i].name);
@@ -165,7 +177,7 @@ inline static void
 call(struct value *f, struct value *self, int n, bool exec)
 {
         for (int i = 0; i < f->bound; ++i)
-                vars[f->symbols[i]] = newvar(vars[f->symbols[i]]);
+                pushvar(f->symbols[i]);
 
         bool has_self = (f->params > 0) && (self != NULL);
 
@@ -230,20 +242,22 @@ vm_exec(char *code)
                         continue;
                 CASE(PUSH_VAR)
                         READVALUE(s);
-                        LOG("new var for %d", (int) s);
-                        vars[s] = newvar(vars[s]);
+                        pushvar(s);
                         break;
                 CASE(POP_VAR)
                         READVALUE(s);
-                        LOG("popping %d", (int) s);
                         next = vars[s]->next;
                         if (vars[s]->captured) {
                                 gc_register(vars[s]);
-                                LOG("detaching captured variable");
                                 if (vars[s]->next != NULL)
                                         vars[s]->next->prev = vars[s]->prev;
+                                if (vars[s]->prev != NULL)
+                                        vars[s]->prev->next = vars[s]->next;
                         }
-                        vars[s] = next;
+                        if (next == NULL && !vars[s]->captured)
+                                used[s] = false;
+                        else
+                                vars[s] = next;
                         break;
                 CASE(LOAD_VAR)
                         READVALUE(s);
@@ -1194,8 +1208,10 @@ vm_init(int ac, char **av)
 
         int new_symbol_count = compiler_symbol_count();
         resize(vars, new_symbol_count * sizeof *vars);
+        resize(used, new_symbol_count * sizeof *used);
         while (symbol_count < new_symbol_count) {
                 LOG("SETTING %d TO NULL", symbol_count);
+                used[symbol_count] = false;
                 vars[symbol_count++] = NULL;
         }
 
@@ -1266,8 +1282,10 @@ vm_execute(char const *source)
 
         int new_symbol_count = compiler_symbol_count();
         resize(vars, new_symbol_count * sizeof *vars);
+        resize(used, new_symbol_count * sizeof *used);
         while (symbol_count < new_symbol_count) {
                 LOG("SETTING %d TO NULL", symbol_count);
+                used[symbol_count] = false;
                 vars[symbol_count++] = NULL;
         }
 
@@ -1319,9 +1337,11 @@ vm_eval_function2(struct value *f, struct value *v1, struct value *v2)
 
         switch (f->type) {
         case VALUE_FUNCTION:
+                LOG("CALLING FUNCTION 2");
                 push(*v1);
                 push(*v2);
                 call(f, NULL, 2, true);
+                LOG("DONE FUNCTION 2");
                 return pop();
         case VALUE_METHOD:
                 push(*v1);

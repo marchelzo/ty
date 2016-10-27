@@ -33,7 +33,7 @@ static char errbuf[MAX_ERR_LEN + 1];
 static vec(char const *) states;
 static char const *chars;
 
-static char const *opchars = "/=<~|!@$%^&*-+>";
+static char const *opchars = "/=<~|!@%^&*-+>";
 
 noreturn static void
 error(char const *fmt, ...)
@@ -177,7 +177,7 @@ skipspace(void)
         return ret;
 }
 
-// lexes an identifier or a keyword
+/* lexes an identifier or a keyword */
 static struct token
 lexword(void)
 {
@@ -187,23 +187,25 @@ lexword(void)
         vec_init(module);
         vec_init(word);
 
+        bool has_module = false;
+
         for (;;) {
                 while (isalnum(*chars) || *chars == '_')
                         vec_push(word, nextchar());
 
-                if (chars[0] == ':' && chars[1] == ':') {
+                if (chars[0] == ':' && chars[1] == ':' && ++has_module) {
                         nextchar();
                         nextchar();
                         
                         if (module.count != 0)
                                 vec_push(module, '/');
 
-                        vec_push_n(module, word.items, word.count);
+                        if (word.count != 0)
+                                vec_push_n(module, word.items, word.count);
                         word.count = 0;
 
-                        if (!isalpha(*chars) && *chars != '_') {
+                        if (!isalpha(*chars) && *chars != '_')
                                 error("expected name after '::' in identifier");
-                        }
                 } else {
                         break;
                 }
@@ -212,15 +214,11 @@ lexword(void)
         /*
          * Identifiers are allowed to end in '?' or '!'. e.g., [1, 2, 3].map!(a -> a + 1)
          */
-        if (*chars == '!') {
+        if (*chars == '!' || *chars == '?')
                 vec_push(word, nextchar());
-        } else if (*chars == '?') {
-                vec_push(word, nextchar());
-        }
 
-        if (module.count != 0) {
+        if (has_module != 0)
                 vec_push(module, '\0');
-        }
 
         vec_push(word, '\0');
 
@@ -491,20 +489,18 @@ lexcomment(void)
                 nextchar();
         }
 
-        if (level != 0) {
+        if (level != 0)
                 error("unterminated comment");
-        }
 
-        // skip the final /
+        /* skip the final / */
         nextchar();
 }
 
 struct token
 lex_token(enum lex_context ctx)
 {
-        if (setjmp(jb) != 0) {
+        if (setjmp(jb) != 0)
                 return (struct token) { .type = TOKEN_ERROR, .loc = loc };
-        }
 
         while (*chars != '\0') {
                 startloc = loc;
@@ -512,10 +508,10 @@ lex_token(enum lex_context ctx)
                         lexcomment();
                 } else if (ctx == LEX_PREFIX && chars[0] == '/') {
                         return lexregex();
+                } else if (isalpha(*chars) || *chars == '_' || (chars[0] == ':' && chars[1] == ':')) {
+                        return lexword();
                 } else if (contains(opchars, *chars)) {
                         return lexop();
-                } else if (isalpha(*chars) || *chars == '_') {
-                        return lexword();
                 } else if (isdigit(*chars)) {
                         return lexnum();
                 } else if (*chars == '\'') {

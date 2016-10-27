@@ -61,7 +61,6 @@ static struct {
         { "<",  TOKEN_LT             },
         { ">",  TOKEN_GT             },
         { "@",  TOKEN_AT             },
-        { "$",  TOKEN_DOLLAR         },
         { "++", TOKEN_INC            },
         { "--", TOKEN_DEC            },
         { "+=", TOKEN_PLUS_EQ        },
@@ -122,7 +121,6 @@ token_show_type(int type)
         case TOKEN_FAT_ARROW:      return "token '=>'";
         case TOKEN_SQUIGGLY_ARROW: return "token '~>'";
         case TOKEN_DOT_DOT:        return "token '..'";
-        case TOKEN_DOLLAR:        return "token '$'";
         case TOKEN_AND:            return "operator '&&'";
         case TOKEN_OR:             return "operator '||'";
         case TOKEN_BIT_OR:         return "token '|'";

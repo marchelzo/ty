@@ -352,7 +352,7 @@ prefix_special_string(void)
 static struct expression *
 prefix_dollar(void)
 {
-        consume(TOKEN_DOLLAR);
+        consume('$');
 
         struct expression *e = mkexpr();
 
@@ -628,12 +628,34 @@ prefix_array(void)
 }
 
 static struct expression *
+prefix_tick(void)
+{
+        consume('`');
+
+        expect(TOKEN_IDENTIFIER);
+
+        if (tok()->module != NULL)
+                error("unexpected module qualifier in ` pattern");
+
+        struct expression *e = mkexpr();
+
+        e->type = EXPRESSION_TICK;
+        e->identifier = tok()->identifier;
+        e->module = NULL;
+
+        consume(TOKEN_IDENTIFIER);
+
+        return e;
+}
+
+static struct expression *
 prefix_dot(void)
 {
         if (dot_lambda_depth > 0 && !new_dot_lambda) {
                 struct expression *e = mkexpr();
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = "<object>";
+                e->module = NULL;
                 return infix_member_access(e);
         } else {
                 new_dot_lambda = false;
@@ -641,6 +663,7 @@ prefix_dot(void)
                 unconsume(TOKEN_ARROW);
                 unconsume(TOKEN_IDENTIFIER);
                 tok()->identifier = "<object>";
+                tok()->module = NULL;
                 return prefix_identifier();
         }
 }
@@ -712,15 +735,23 @@ prefix_object(void)
                 return e;
         } else {
                 vec_push(e->keys, parse_expr(0));
-                consume(':');
-                vec_push(e->values, parse_expr(0));
+                if (tok()->type == ':') {
+                        consume(':');
+                        vec_push(e->values, parse_expr(0));
+                } else {
+                        vec_push(e->values, NULL);
+                }
         }
 
         while (tok()->type == ',') {
                 consume(',');
                 vec_push(e->keys, parse_expr(0));
-                consume(':');
-                vec_push(e->values, parse_expr(0));
+                if (tok()->type == ':') {
+                        consume(':');
+                        vec_push(e->values, parse_expr(0));
+                } else {
+                        vec_push(e->values, NULL);
+                }
         }
 
         consume('}');
@@ -997,13 +1028,14 @@ get_prefix_parser(void)
         case '[':                  return prefix_array;
         case '{':                  return prefix_object;
 
+        case '$':                  return prefix_dollar;
         case '.':                  return prefix_dot;
-
+        case '`':                  return prefix_tick;
+        
         case TOKEN_DOT_DOT:        return prefix_range;
 
         case TOKEN_BANG:           return prefix_bang;
         case TOKEN_AT:             return prefix_at;
-        case TOKEN_DOLLAR:         return prefix_dollar;
         case TOKEN_MINUS:          return prefix_minus;
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
@@ -1166,7 +1198,7 @@ assignment_lvalue(struct expression *e)
 }
 
 /*
- * This is awful.
+ * This is kind of a hack.
  */
 static struct expression *
 parse_definition_lvalue(int context)
@@ -1185,11 +1217,15 @@ parse_definition_lvalue(int context)
                 consume(TOKEN_IDENTIFIER);
 
                 if (tok()->type == '(') {
-                     e->type = EXPRESSION_TAG_APPLICATION;
+                     struct expression *f = mkexpr();
+                     f->type = EXPRESSION_FUNCTION_CALL;
+                     f->function = e;
+                     e = f;
                      lex_ctx = LEX_INFIX;
                      consume('(');
-                     e->tagged = parse_definition_lvalue(LV_ANY);
-                     if (e->tagged == NULL)
+                     vec_init(f->args);
+                     vec_push(f->args, parse_definition_lvalue(LV_ANY));
+                     if (f->args.items[0] == NULL)
                              goto error;
                     consume(')');
                 } else if (e->module != NULL) {
@@ -1197,8 +1233,10 @@ parse_definition_lvalue(int context)
                 }
 
                 break;
-        case TOKEN_DOLLAR:
-                consume(TOKEN_DOLLAR);
+        case '`':
+                return prefix_tick();
+        case '$':
+                consume('$');
                 e = mkexpr();
                 e->type = EXPRESSION_MATCH_NOT_NIL;
                 e->identifier = tok()->identifier;

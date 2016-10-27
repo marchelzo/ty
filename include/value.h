@@ -156,7 +156,7 @@ struct dict_node {
 #define DICT_NUM_BUCKETS 128
 struct dict {
         struct dict_node *buckets[DICT_NUM_BUCKETS];
-        struct value *dflt;
+        struct value dflt;
         size_t count;
 };
 

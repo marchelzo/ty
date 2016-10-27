@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <poll.h>
 #include <signal.h>
 
@@ -1015,6 +1016,17 @@ SETID(seteuid)
 SETID(setgid)
 SETID(setegid)
 
+struct value
+builtin_os_utime(value_vector *args)
+{
+        ASSERT_ARGC("os::utime()", 0);
+
+        struct timeval t;
+        gettimeofday(&t, NULL);
+
+        return INTEGER(t.tv_usec + t.tv_sec * (INTMAX_C(1000000)));
+}
+
 noreturn struct value
 builtin_os_exit(value_vector *args)
 {
@@ -1034,14 +1046,14 @@ builtin_os_exec(value_vector *args)
 
         struct value cmd = args->items[0];
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os::spawn() must be an array");
+                vm_panic("the argument to os::exec() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os::spawn()");
+                vm_panic("empty array passed to os::exec()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os::spawn()");
+                        vm_panic("non-string in array passed to os::exec()");
 
         vec(char *) argv;
         vec_init(argv);

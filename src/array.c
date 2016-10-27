@@ -220,6 +220,41 @@ array_zip(struct value *array, value_vector *args)
 }
 
 static struct value
+array_zip_with(struct value *array, value_vector *args)
+{
+        if (args->count != 2)
+                vm_panic("array.zipWith() expects 2 arguments but got %zu", args->count);
+
+        struct value f = args->items[0];
+        if (!CALLABLE(f))
+                vm_panic("the first argument to array.zipWith() must be callable");
+
+        struct value other = args->items[1];
+        if (other.type != VALUE_ARRAY)
+                vm_panic("the argument to array.zip() must be an array");
+
+        int n = min(array->array->count, other.array->count);
+
+        struct value a;
+        gc_push(&a);
+
+        for (int i = 0; i < n; ++i) {
+                a = vm_eval_function2(&f, &array->array->items[i], &other.array->items[i]);
+                array->array->items[i] = a;
+        }
+
+        gc_pop();
+
+        /*
+         * TODO: implement something like this in vec.h
+         */
+        array->array->count = n;
+        shrink(array);
+
+        return *array;
+}
+
+static struct value
 array_map_cons(struct value *array, value_vector *args)
 {
         if (args->count != 2)
@@ -294,12 +329,66 @@ array_slice(struct value *array, value_vector *args)
 static struct value
 array_sort(struct value *array, value_vector *args)
 {
-        if (args->count != 0)
-                vm_panic("the sort method on arrays expects no arguments but got %zu", args->count);
+        int i;
+        int n;
 
-        qsort(array->array->items, array->array->count, sizeof (struct value), value_compare);
+        switch (args->count) {
+        case 0:
+                i = 0;
+                n = array->array->count;
+                break;
+        case 2:
+                if (args->items[1].type != VALUE_INTEGER)
+                        vm_panic("the second argument to array.sort() must be an integer");
+                n = args->items[1].integer;
+        case 1:
+                if (args->items[0].type != VALUE_INTEGER)
+                        vm_panic("the first argument to array.sort() must be an integer");
+                i = args->items[0].integer;
+                if (args->count == 1)
+                        n = array->array->count - i;
+                break;
+        default:
+                vm_panic("array.sort() expects 0, 1, or 2 arguments but got %zu", args->count);
+        }
+
+        if (i < 0)
+                i += array->array->count;
+
+        if (n < 0 || i < 0 || i + n > array->array->count)
+                vm_panic("invalid index passed to array.sort()");
+
+        qsort(array->array->items + i, n, sizeof (struct value), value_compare);
 
         return *array;
+}
+
+static struct value
+array_next_permutation(struct value *array, value_vector *args)
+{
+#define CMP(i, j) value_compare(&array->array->items[i], &array->array->items[j])
+        if (args->count != 0)
+                vm_panic("array.nextPermutation() expects no arguments but got %zu", args->count);
+
+        for (int i = array->array->count - 1; i > 0; --i) {
+                if (CMP(i - 1, i) < 0) {
+                        int j = i;
+                        for (int k = i + 1; k < array->array->count; ++k)
+                                if (CMP(k, j) < 0 && CMP(k, i - 1) > 0)
+                                        j = k;
+
+                        struct value t = array->array->items[i - 1];
+                        array->array->items[i - 1] = array->array->items[j];
+                        array->array->items[j] = t;
+
+                        array_sort(array, &(value_vector){ .count = 1, .items = &INTEGER(i) });
+
+                        return *array;
+                }
+        }
+
+        return NIL;
+#undef CMP
 }
 
 static struct value
@@ -924,6 +1013,22 @@ array_contains(struct value *array, value_vector *args)
 }
 
 static struct value
+array_search(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("array.search() expects 1 argument but got %zu", args->count);
+
+        struct value v = args->items[0];
+
+        int n = array->array->count;
+        for (int i = 0; i < n; ++i)
+                if (value_test_equality(&v, &array->array->items[i]))
+                        return INTEGER(i);
+
+        return NIL;
+}
+
+static struct value
 array_each(struct value *array, value_vector *args)
 {
         if (args->count != 1)
@@ -1157,64 +1262,71 @@ DEFINE_NO_MUT(shuffle);
 DEFINE_NO_MUT(sort);
 DEFINE_NO_MUT(sort_by);
 DEFINE_NO_MUT(zip);
+DEFINE_NO_MUT(zip_with);
+DEFINE_NO_MUT(next_permutation);
 
 DEFINE_METHOD_TABLE(
-        { .name = "clone",        .func = array_clone                },
-        { .name = "consumeWhile", .func = array_consume_while        },
-        { .name = "contains?",    .func = array_contains             },
-        { .name = "drop",         .func = array_drop                 },
-        { .name = "drop!",        .func = array_drop_mut             },
-        { .name = "dropWhile",    .func = array_drop_while           },
-        { .name = "dropWhile!",   .func = array_drop_while_mut       },
-        { .name = "each",         .func = array_each                 },
-        { .name = "enumerate",    .func = array_enumerate_no_mut     },
-        { .name = "enumerate!",   .func = array_enumerate            },
-        { .name = "filter",       .func = array_filter_no_mut        },
-        { .name = "filter!",      .func = array_filter               },
-        { .name = "foldLeft",     .func = array_fold_left            },
-        { .name = "foldRight",    .func = array_fold_right           },
-        { .name = "group",        .func = array_group_no_mut         },
-        { .name = "group!",       .func = array_group                },
-        { .name = "groupBy",      .func = array_group_by_no_mut      },
-        { .name = "groupBy!",     .func = array_group_by             },
-        { .name = "groupsOf",     .func = array_groups_of_no_mut     },
-        { .name = "groupsOf!",    .func = array_groups_of            },
-        { .name = "insert",       .func = array_insert               },
-        { .name = "intersperse",  .func = array_intersperse_no_mut   },
-        { .name = "intersperse!", .func = array_intersperse          },
-        { .name = "len",          .func = array_length               },
-        { .name = "map",          .func = array_map_no_mut           },
-        { .name = "map!",         .func = array_map                  },
-        { .name = "mapCons",      .func = array_map_cons_no_mut      },
-        { .name = "mapCons!",     .func = array_map_cons             },
-        { .name = "max",          .func = array_max                  },
-        { .name = "maxBy",        .func = array_max_by               },
-        { .name = "min",          .func = array_min                  },
-        { .name = "minBy",        .func = array_min_by               },
-        { .name = "pop",          .func = array_pop                  },
-        { .name = "push",         .func = array_push                 },
-        { .name = "reverse",      .func = array_reverse_no_mut       },
-        { .name = "reverse!",     .func = array_reverse              },
-        { .name = "scanLeft",     .func = array_scan_left_no_mut     },
-        { .name = "scanLeft!",    .func = array_scan_left            },
-        { .name = "scanRight",    .func = array_scan_right_no_mut    },
-        { .name = "scanRight!",   .func = array_scan_right           },
-        { .name = "shuffle",      .func = array_shuffle_no_mut       },
-        { .name = "shuffle!",     .func = array_shuffle              },
-        { .name = "slice",        .func = array_slice                },
-        { .name = "slice!",       .func = array_slice_mut            },
-        { .name = "sort",         .func = array_sort_no_mut          },
-        { .name = "sort!",        .func = array_sort                 },
-        { .name = "sortBy",       .func = array_sort_by_no_mut       },
-        { .name = "sortBy!",      .func = array_sort_by              },
-        { .name = "sum",          .func = array_sum                  },
-        { .name = "swap",         .func = array_swap                 },
-        { .name = "take",         .func = array_take                 },
-        { .name = "take!",        .func = array_take_mut             },
-        { .name = "takeWhile",    .func = array_take_while           },
-        { .name = "takeWhile!",   .func = array_take_while_mut       },
-        { .name = "zip",          .func = array_zip_no_mut           },
-        { .name = "zip!",         .func = array_zip                  },
+        { .name = "clone",             .func = array_clone                   },
+        { .name = "consumeWhile",      .func = array_consume_while           },
+        { .name = "contains?",         .func = array_contains                },
+        { .name = "drop",              .func = array_drop                    },
+        { .name = "drop!",             .func = array_drop_mut                },
+        { .name = "dropWhile",         .func = array_drop_while              },
+        { .name = "dropWhile!",        .func = array_drop_while_mut          },
+        { .name = "each",              .func = array_each                    },
+        { .name = "enumerate",         .func = array_enumerate_no_mut        },
+        { .name = "enumerate!",        .func = array_enumerate               },
+        { .name = "filter",            .func = array_filter_no_mut           },
+        { .name = "filter!",           .func = array_filter                  },
+        { .name = "foldLeft",          .func = array_fold_left               },
+        { .name = "foldRight",         .func = array_fold_right              },
+        { .name = "group",             .func = array_group_no_mut            },
+        { .name = "group!",            .func = array_group                   },
+        { .name = "groupBy",           .func = array_group_by_no_mut         },
+        { .name = "groupBy!",          .func = array_group_by                },
+        { .name = "groupsOf",          .func = array_groups_of_no_mut        },
+        { .name = "groupsOf!",         .func = array_groups_of               },
+        { .name = "insert",            .func = array_insert                  },
+        { .name = "intersperse",       .func = array_intersperse_no_mut      },
+        { .name = "intersperse!",      .func = array_intersperse             },
+        { .name = "len",               .func = array_length                  },
+        { .name = "map",               .func = array_map_no_mut              },
+        { .name = "map!",              .func = array_map                     },
+        { .name = "mapCons",           .func = array_map_cons_no_mut         },
+        { .name = "mapCons!",          .func = array_map_cons                },
+        { .name = "max",               .func = array_max                     },
+        { .name = "maxBy",             .func = array_max_by                  },
+        { .name = "min",               .func = array_min                     },
+        { .name = "minBy",             .func = array_min_by                  },
+        { .name = "nextPermutation",   .func = array_next_permutation_no_mut },
+        { .name = "nextPermutation!",  .func = array_next_permutation        },
+        { .name = "pop",               .func = array_pop                     },
+        { .name = "push",              .func = array_push                    },
+        { .name = "reverse",           .func = array_reverse_no_mut          },
+        { .name = "reverse!",          .func = array_reverse                 },
+        { .name = "scanLeft",          .func = array_scan_left_no_mut        },
+        { .name = "scanLeft!",         .func = array_scan_left               },
+        { .name = "scanRight",         .func = array_scan_right_no_mut       },
+        { .name = "scanRight!",        .func = array_scan_right              },
+        { .name = "search",            .func = array_search                  },
+        { .name = "shuffle",           .func = array_shuffle_no_mut          },
+        { .name = "shuffle!",          .func = array_shuffle                 },
+        { .name = "slice",             .func = array_slice                   },
+        { .name = "slice!",            .func = array_slice_mut               },
+        { .name = "sort",              .func = array_sort_no_mut             },
+        { .name = "sort!",             .func = array_sort                    },
+        { .name = "sortBy",            .func = array_sort_by_no_mut          },
+        { .name = "sortBy!",           .func = array_sort_by                 },
+        { .name = "sum",               .func = array_sum                     },
+        { .name = "swap",              .func = array_swap                    },
+        { .name = "take",              .func = array_take                    },
+        { .name = "take!",             .func = array_take_mut                },
+        { .name = "takeWhile",         .func = array_take_while              },
+        { .name = "takeWhile!",        .func = array_take_while_mut          },
+        { .name = "zip",               .func = array_zip_no_mut              },
+        { .name = "zip!",              .func = array_zip                     },
+        { .name = "zipWith",           .func = array_zip_with_no_mut         },
+        { .name = "zipWith!",          .func = array_zip_with                },
 );
 
 DEFINE_METHOD_LOOKUP(array)

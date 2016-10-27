@@ -251,7 +251,7 @@ is_tag(struct expression const *e)
 {
         assert(e->type == EXPRESSION_IDENTIFIER);
 
-        struct scope const *scope = (e->module == NULL) ? state.global : get_import_scope(e->module);
+        struct scope const *scope = (e->module == NULL || *e->module == '\0') ? state.global : get_import_scope(e->module);
         struct symbol *sym = scope_lookup(scope, e->identifier);
 
         return sym != NULL && sym->tag != -1;
@@ -262,7 +262,7 @@ is_class(struct expression const *e)
 {
         assert(e->type == EXPRESSION_IDENTIFIER);
 
-        struct scope const *scope = (e->module == NULL) ? state.global : get_import_scope(e->module);
+        struct scope const *scope = (e->module == NULL || *e->module == '\0') ? state.global : get_import_scope(e->module);
         struct symbol *sym = scope_lookup(scope, e->identifier);
 
         return sym != NULL && sym->class != -1;
@@ -284,7 +284,7 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         if (s->scope->external && !s->public)
                 fail("reference to non-public external variable '%s'", name);
 
-        bool is_local = (s->scope->function == scope->function) || (s->scope->function == global);
+        bool is_local = (s->scope->function == scope->function) || (s->scope == global) || (s->scope->parent == global);
 
         if (local != NULL)
                 *local = is_local;
@@ -412,7 +412,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                 }
         } else if (e->type == EXPRESSION_TAG_APPLICATION) {
                 e->symbol = getsymbol(
-                        (e->module == NULL) ? scope : get_import_scope(e->module),
+                        (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module),
                         e->identifier,
                         NULL
                 );
@@ -439,7 +439,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue(scope, target->tagged, decl);
                 target->symbol = getsymbol(
-                        ((target->module == NULL) ? state.global : get_import_scope(target->module)),
+                        ((target->module == NULL || *target->module == '\0') ? state.global : get_import_scope(target->module)),
                         target->identifier,
                         NULL
                 );
@@ -475,7 +475,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         case EXPRESSION_IDENTIFIER:
                 if (scope_locally_defined(scope, e->identifier) || e->module != NULL) {
                         e->type = EXPRESSION_MUST_EQUAL;
-                        struct scope *s = (e->module == NULL) ? scope : get_import_scope(e->module);
+                        struct scope *s = (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module);
                         e->symbol = getsymbol(s, e->identifier, NULL);
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
@@ -498,7 +498,6 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                 break;
         default:
         tag:
-                LOG("symbolizing expression");
                 symbolize_expression(scope, e);
         }
 }
@@ -517,7 +516,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_IDENTIFIER:
                 LOG("symbolizing var: %s%s%s", (e->module == NULL ? "" : e->module), (e->module == NULL ? "" : "::"), e->identifier);
                 e->symbol = getsymbol(
-                        ((e->module == NULL) ? scope : get_import_scope(e->module)),
+                        ((e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module)),
                         e->identifier,
                         &e->local
                 );
@@ -529,14 +528,14 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_TAG:
                 e->symbol = getsymbol(
-                        ((e->module == NULL) ? state.global : get_import_scope(e->module)),
+                        ((e->module == NULL || *e->module == '\0') ? state.global : get_import_scope(e->module)),
                         e->identifier,
                         NULL
                 );
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 e->symbol = getsymbol(
-                        ((e->module == NULL) ? state.global : get_import_scope(e->module)),
+                        ((e->module == NULL || *e->module) ? state.global : get_import_scope(e->module)),
                         e->identifier,
                         NULL
                 );
@@ -1516,6 +1515,7 @@ emit_each_loop(struct statement const *s)
         emit_checks(s->each.check);
 
         emit_assignment(s->each.target, NULL);
+        emit_instr(INSTR_POP);
         emit_statement(s->each.body);
         emit_instr(INSTR_HALT);
 
@@ -1670,7 +1670,10 @@ emit_expression(struct expression const *e)
         case EXPRESSION_DICT:
                 for (int i = e->keys.count - 1; i >= 0; --i) {
                         emit_expression(e->keys.items[i]);
-                        emit_expression(e->values.items[i]);
+                        if (e->values.items[i] == NULL)
+                                emit_instr(INSTR_NIL);
+                        else
+                                emit_expression(e->values.items[i]);
                 }
                 emit_instr(INSTR_DICT);
                 emit_int(e->keys.count);

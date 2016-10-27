@@ -51,17 +51,28 @@ dict_new(void)
                 dict->buckets[i] = NULL;
 
         dict->count = 0;
-        dict->dflt = NULL;
+        dict->dflt = NIL;
 
         return dict;
 }
 
 struct value *
-dict_get_value(struct dict const *d, struct value const *key)
+dict_get_value(struct dict *d, struct value *key)
 {
         unsigned bucket_index = value_hash(key) % DICT_NUM_BUCKETS;
         struct value *v = bucket_find(d->buckets[bucket_index], key);
-        return (v != NULL) ? v : d->dflt;
+
+        if (v != NULL)
+                return v;
+
+        if (d->dflt.type != VALUE_NIL) {
+                struct value dflt = value_apply_callable(&d->dflt, key);
+                d->count += 1;
+                d->buckets[bucket_index] = mknode(*key, dflt, d->buckets[bucket_index]);
+                return &d->buckets[bucket_index]->value;
+        }
+
+        return NULL;
 }
 
 void
@@ -83,7 +94,7 @@ dict_put_key_if_not_exists(struct dict *d, struct value key)
 {
         unsigned bucket_index = value_hash(&key) % DICT_NUM_BUCKETS;
         struct value *valueptr = bucket_find(d->buckets[bucket_index], &key);
-        struct value v = (d->dflt == NULL) ? NIL : *d->dflt;
+        struct value v = d->dflt.type == VALUE_NIL ? NIL : value_apply_callable(&d->dflt, &key);
 
         if (valueptr != NULL) {
                 return valueptr;
@@ -101,7 +112,7 @@ dict_put_member_if_not_exists(struct dict *d, char const *member)
 }
 
 struct value *
-dict_get_member(struct dict const *d, char const *key)
+dict_get_member(struct dict *d, char const *key)
 {
         struct value string = STRING_NOGC(key, strlen(key));
         return dict_get_value(d, &string);
@@ -119,8 +130,8 @@ dict_mark(struct dict *d)
 {
         MARK(d);
 
-        if (d->dflt != NULL)
-                value_mark(d->dflt);
+        if (d->dflt.type != VALUE_NIL)
+                value_mark(&d->dflt);
 
         for (int i = 0; i < DICT_NUM_BUCKETS; ++i) {
                 for (struct dict_node *node = d->buckets[i]; node != NULL; node = node->next) {
@@ -133,8 +144,6 @@ dict_mark(struct dict *d)
 void
 dict_free(struct dict *d)
 {
-        free(d->dflt);
-
         for (int i = 0; i < DICT_NUM_BUCKETS; ++i) {
                 for (struct dict_node *node = d->buckets[i]; node != NULL;) {
                         struct dict_node *next = node->next;
@@ -148,20 +157,34 @@ static struct value
 dict_default(struct value *d, value_vector *args)
 {
         if (args->count == 0)
-                return (d->dict->dflt == NULL ? NIL : *d->dict->dflt);
+                return d->dict->dflt;
 
         if (args->count != 1)
                 vm_panic("dict.default() expects 1 or 0 arguments but got %zu", args->count);
 
-        if (d->dict->dflt == NULL)
-                d->dict->dflt = alloc(sizeof (struct value));
+        if (!CALLABLE(args->items[0]))
+                vm_panic("the argument to dict.default() must be callable");
 
-        *d->dict->dflt = args->items[0];
+        d->dict->dflt = args->items[0];
 
         return *d;
 }
 
+static struct value
+dict_contains(struct value *d, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("dict.contains() expects 1 argument but got %zu", args->count);
+
+        struct value *key = &args->items[0];
+        unsigned bucket_index = value_hash(key) % DICT_NUM_BUCKETS;
+        struct value *v = bucket_find(d->dict->buckets[bucket_index], key);
+
+        return BOOLEAN(v != NULL);
+}
+
 DEFINE_METHOD_TABLE(
+        { .name = "contains?",    .func = dict_contains      },
         { .name = "default",      .func = dict_default       },
 );
 

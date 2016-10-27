@@ -25,10 +25,14 @@ blob_clear(struct value *blob, value_vector *args)
                 break;
         case 1:
                 start = args->items[0].integer;
+                if (start < 0)
+                        start += blob->blob->count;
                 n = blob->blob->count - start;
                 break;
         case 2:
                 start = args->items[0].integer;
+                if (start < 0)
+                        start += blob->blob->count;
                 n = args->items[1].integer;
                 break;
         default:
@@ -140,7 +144,7 @@ blob_push(struct value *blob, value_vector *args)
                 vm_panic("invalid argument passed to blob.push()");
         }
 
-        return NIL;
+        return *blob;
 }
 
 static struct value
@@ -164,6 +168,44 @@ blob_get(struct value *blob, value_vector *args)
                 vm_panic("invalid index passed to blob.get()");
 
         return INTEGER(blob->blob->items[i.integer]);
+}
+
+static struct value
+blob_fill(struct value *blob, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("blob.fill() expects no arguments but got %zu", args->count);
+
+        if (blob->blob->items == NULL)
+                return NIL;
+
+        memset(blob->blob->items + blob->blob->count, 0, blob->blob->capacity - blob->blob->count);
+        blob->blob->count = blob->blob->capacity;
+
+        return NIL;
+}
+
+static struct value
+blob_set(struct value *blob, value_vector *args)
+{
+        if (args->count != 2)
+                vm_panic("blob.set() expects 2 arguments but got %zu", args->count);
+
+        struct value i = args->items[0];
+        if (i.type != VALUE_INTEGER)
+                vm_panic("the argument to blob.get() must be an integer");
+        if (i.integer < 0)
+                i.integer += blob->blob->count;
+        if (i.integer < 0 || i.integer >= blob->blob->count)
+                vm_panic("invalid index passed to blob.get()");
+        
+        struct value arg = args->items[1];
+        if (arg.type != VALUE_INTEGER || arg.integer < 0 || arg.integer > UCHAR_MAX)
+                vm_panic("invalid integer passed to blob.set()");
+
+        blob->blob->items[i.integer] = arg.integer;
+
+        return NIL;
 }
 
 static struct value
@@ -223,10 +265,12 @@ blob_reserve(struct value *blob, value_vector *args)
 
 DEFINE_METHOD_TABLE(
         { .name = "clear",    .func = blob_clear     },
+        { .name = "fill",     .func = blob_fill      },
         { .name = "get",      .func = blob_get       },
         { .name = "push",     .func = blob_push      },
         { .name = "reserve",  .func = blob_reserve   },
         { .name = "search",   .func = blob_search    },
+        { .name = "set",      .func = blob_set       },
         { .name = "shrink",   .func = blob_shrink    },
         { .name = "size",     .func = blob_size      },
         { .name = "str",      .func = blob_str       },
