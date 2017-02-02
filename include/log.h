@@ -6,13 +6,13 @@
 #include <stdio.h>
 
 #ifndef TY_NO_LOG
-#define LOG(...) ( \
+#define LOG(...) do { \
                         flock(2, LOCK_EX), \
                         fprintf(stderr, "(%d) ", getpid()), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
                         flock(2, LOCK_UN) \
-                )
+                } while (0)
 #else
 #define LOG(...) ;
 #endif

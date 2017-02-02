@@ -171,7 +171,28 @@ string_split(struct value *string, value_vector *args)
         if (args->count != 1)
                 vm_panic("the split method on strings expects 1 argument but got %zu", args->count);
 
+        char const *s = string->string;
+        int len = string->bytes;
+
         struct value pattern = args->items[0];
+
+        if (pattern.type == VALUE_INTEGER) {
+                int i = pattern.integer;
+                int n = utf8_charcount(s, len);
+                if (i < 0)
+                        i += n;
+                if (i < 0)
+                        i = 0;
+                if (i > n)
+                        i = n;
+                stringcount(s, len, i);
+                struct array *parts = value_array_new();
+                NOGC(parts);
+                value_array_push(parts, STRING_VIEW(*string, 0, outpos.bytes));
+                value_array_push(parts, STRING_VIEW(*string, outpos.bytes, len - outpos.bytes));
+                OKGC(parts);
+                return ARRAY(parts);
+        }
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
                 vm_panic("invalid argument to the split method on string");
@@ -179,8 +200,6 @@ string_split(struct value *string, value_vector *args)
         struct value result = ARRAY(value_array_new());
         NOGC(result.array);
 
-        char const *s = string->string;
-        int len = string->bytes;
         if (pattern.type == VALUE_STRING) {
                 char const *p = pattern.string;
                 int n = pattern.bytes;
@@ -460,7 +479,7 @@ string_matches(struct value *string, value_vector *args)
 
                         int j = 0;
                         for (int i = 0; i < rc; ++i, j += 2)
-                                value_array_push(match.array, STRING_VIEW(*string, ovec[j], ovec[j + 1] - ovec[j]));
+                                value_array_push(match.array, STRING_VIEW(*string, ovec[j] + offset, ovec[j + 1] - ovec[j]));
 
                         OKGC(match.array);
 

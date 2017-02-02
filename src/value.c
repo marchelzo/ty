@@ -108,7 +108,7 @@ ary_hash(struct value const *a)
 inline static unsigned long
 hash(struct value const *val)
 {
-        switch (val->type) {
+        switch (val->type & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADBEEFULL;
         case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
         case VALUE_STRING:            return str_hash(val->string, val->bytes);

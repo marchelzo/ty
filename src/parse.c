@@ -1225,6 +1225,10 @@ parse_definition_lvalue(int context)
                      consume('(');
                      vec_init(f->args);
                      vec_push(f->args, parse_definition_lvalue(LV_ANY));
+                     while (tok()->type == ',') {
+                             consume(',');
+                             vec_push(f->args, parse_definition_lvalue(LV_ANY));
+                     }
                      if (f->args.items[0] == NULL)
                              goto error;
                     consume(')');
@@ -1661,6 +1665,14 @@ parse_class_definition(void)
                 s->tag.super = NULL;
         }
 
+        /* Hack to allow comma-separated tag declarations */
+        if (tag && tok()->type == ',' && token(1)->type == TOKEN_IDENTIFIER) {
+                consume(',');
+                unconsume(TOKEN_KEYWORD);
+                tok()->keyword = KEYWORD_TAG;
+                unconsume(';');
+        }
+                
         if (tag && tok()->type == ';') {
                 consume(';');
         } else {

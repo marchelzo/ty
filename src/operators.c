@@ -113,11 +113,11 @@ binary_operator_remainder(struct value const *left, struct value const *right)
 {
 
         if (left->type != right->type)
-                vm_panic("the operands to - must have the same type");
+                vm_panic("the operands to % must have the same type");
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer % right->integer);
-        default:            vm_panic("the operands to - must be integers");
+        default:            vm_panic("the operands to % must be integers");
         }
 
 }

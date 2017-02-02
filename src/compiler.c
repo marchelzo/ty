@@ -402,13 +402,23 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                 if (e->function->symbol->tag != -1) {
                         char *identifier = e->function->identifier;
                         char *module = e->function->module;
-                        struct expression *tagged = e->args.items[0];
+                        struct expression **tagged = e->args.items;
+                        int tagc = e->args.count;
                         struct symbol *symbol = e->function->symbol;
                         e->type = EXPRESSION_TAG_APPLICATION;
                         e->identifier = identifier;
                         e->module = module;
-                        e->tagged = tagged;
                         e->symbol = symbol;
+                        if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
+                                e->tagged = tagged[0];
+                        } else {
+                                struct expression *items = alloc(sizeof *items);
+                                items->type = EXPRESSION_ARRAY;
+                                vec_init(items->elements);
+                                for (int i = 0; i < tagc; ++i)
+                                        vec_push(items->elements, tagged[i]);
+                                e->tagged = items;
+                        }
                 }
         } else if (e->type == EXPRESSION_TAG_APPLICATION) {
                 e->symbol = getsymbol(
@@ -496,9 +506,13 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_pattern(scope, e->tagged);
                 break;
-        default:
         tag:
                 symbolize_expression(scope, e);
+                e->type = EXPRESSION_MUST_EQUAL;
+                break;
+        default:
+                symbolize_expression(scope, e);
+                break;
         }
 }
 
@@ -887,7 +901,8 @@ emit_function(struct expression const *e)
         ++state.function_depth;
         uint64_t loop_save = state.loop;
         uint64_t try_save = state.try;
-        state.loop = state.try = 0;
+        uint64_t each_loop_save = state.each_loop;
+        state.loop = state.try = state.each_loop = 0;
 
         emit_int(e->param_symbols.count);
         emit_int(e->bound_symbols.count);
@@ -933,6 +948,7 @@ emit_function(struct expression const *e)
         --state.function_depth;
         state.loop = loop_save;
         state.try = try_save;
+        state.each_loop = each_loop_save;
 
         if (e->function_symbol != NULL) {
                 emit_instr(INSTR_TARGET_VAR);
@@ -1913,6 +1929,11 @@ emit_statement(struct statement const *s)
                         emit_expression(s->return_value);
                 else
                         emit_instr(INSTR_NIL);
+                /* returning from within a for-each loop must be handled specially */
+                if (state.each_loop) {
+                        emit_instr(INSTR_HALT);
+                        break;
+                }
                 for (int i = 0; i < state.bound_symbols.count; ++i) {
                         emit_instr(INSTR_POP_VAR);
                         emit_symbol(state.bound_symbols.items[i]->symbol);

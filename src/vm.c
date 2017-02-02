@@ -575,17 +575,20 @@ vm_exec(char *code)
                         char *first = ip;
                         char instr = *ip;
 
+                        size_t sc = stack.count;
+
                         switch (v.type) {
+#define COND (*first != INSTR_HALT && stack.count == sc)
                         case VALUE_ARRAY:
                                 gc_push(&v);
-                                for (int i = 0; *first != INSTR_HALT && i < v.array->count; ++i) {
+                                for (int i = 0; i < v.array->count && COND; ++i) {
                                         push(v.array->items[i]);
                                         vm_exec(ip);
                                 }
                                 gc_pop();
                                 break;
                         case VALUE_DICT:
-                                for (int i = 0; i < DICT_NUM_BUCKETS && *first != INSTR_HALT; ++i) {
+                                for (int i = 0; i < DICT_NUM_BUCKETS && COND; ++i) {
                                         struct dict_node *node = v.dict->buckets[i];
                                         while (node != NULL && *first != INSTR_HALT) {
                                                 push(node->key);
@@ -595,7 +598,7 @@ vm_exec(char *code)
                                 }
                                 break;
                         case VALUE_BLOB:
-                                for (int i = 0; i < v.blob->count && *first != INSTR_HALT; ++i) {
+                                for (int i = 0; i < v.blob->count && COND; ++i) {
                                         push(INTEGER(v.blob->items[i]));
                                         vm_exec(ip);
                                 }
@@ -603,7 +606,7 @@ vm_exec(char *code)
                         case VALUE_STRING:
                         {
                                 int offset = 0;
-                                while (offset < v.bytes && *first != INSTR_HALT) {
+                                while (offset < v.bytes && COND) {
                                         int bytes = utf8_char_len(v.string + offset);
                                         push(STRING_VIEW(v, offset, bytes));
                                         vm_exec(ip);
@@ -630,7 +633,7 @@ vm_exec(char *code)
 
                                 gc_push(&iterator);
 
-                                while (item.type != VALUE_NIL && *first != INSTR_HALT) {
+                                while (item.type != VALUE_NIL && COND) {
                                         push(item);
                                         vm_exec(ip);
                                         call(vp, &iterator, 0, true);
@@ -645,10 +648,15 @@ vm_exec(char *code)
                         default:
                         non_iter:
                                 vm_panic("for-each on non-iterable value");
+#undef COND
                         }
 
                         *first = instr;
-                        ip += + n;
+
+                        if (stack.count != sc)
+                                goto ret;
+                        else
+                                ip += + n;
 
                         break;
                 CASE(BREAK_EACH)
@@ -1034,10 +1042,20 @@ vm_exec(char *code)
                                 args.count = 0;
                                 break;
                         case VALUE_TAG:
-                                if (n != 1)
-                                        vm_panic("attempt to apply a tag to an invalid number of values");
-                                top()->tags = tags_push(top()->tags, v.tag);
-                                top()->type |= VALUE_TAGGED;
+                                if (n == 1) {
+                                        top()->tags = tags_push(top()->tags, v.tag);
+                                        top()->type |= VALUE_TAGGED;
+                                } else {
+                                        struct array *items = value_array_new();
+                                        vec_reserve(*items, n);
+                                        items->count = n;
+                                        while (n --> 0)
+                                                items->items[n] = pop();
+                                        value = ARRAY(items);
+                                        value.type |= VALUE_TAGGED;
+                                        value.tags = tags_push(value.tags, v.tag);
+                                        push(value);
+                                }
                                 break;
                         case VALUE_CLASS:
                                 value = OBJECT(object_new(), v.class);
@@ -1052,6 +1070,13 @@ vm_exec(char *code)
                                 break;
                         case VALUE_METHOD:
                                 call(v.method, v.this, n, false);
+                                break;
+                        case VALUE_REGEX:
+                                if (n != 1)
+                                        vm_panic("attempt to apply a regex to an invalid number of values");
+                                if (top()->type != VALUE_STRING)
+                                        vm_panic("attempt to apply a regex to a non-string: %s", value_show(top()));
+                                stack.items[stack.count - 1] = get_string_method("match!")(top(), &(value_vector){ .count = 1, .items = &v });
                                 break;
                         case VALUE_BUILTIN_METHOD:
                                 vec_reserve(args, n);
@@ -1086,6 +1111,8 @@ vm_exec(char *code)
 
                         char const *method = ip;
                         ip += strlen(ip) + 1;
+
+                        LOG("calling method %s", method);
 
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method);
@@ -1164,8 +1191,10 @@ vm_exec(char *code)
                         break;
                 CASE(RESTORE_STACK_POS)
                         stack.count = *vec_pop(sp_stack);
+                        LOG("restored stack pos. top = %s", value_show(top()));
                         break;
                 CASE(RETURN)
+                ret:
                         ip = *vec_pop(callstack);
                         break;
                 CASE(HALT)
@@ -1337,11 +1366,9 @@ vm_eval_function2(struct value *f, struct value *v1, struct value *v2)
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                LOG("CALLING FUNCTION 2");
                 push(*v1);
                 push(*v2);
                 call(f, NULL, 2, true);
-                LOG("DONE FUNCTION 2");
                 return pop();
         case VALUE_METHOD:
                 push(*v1);
@@ -1471,9 +1498,8 @@ TEST(member_access)
 
         vm_init(0, NULL);
 
-        if (!vm_execute(source)) {
+        if (!vm_execute(source))
                 printf("error: %s\n", vm_error());
-        }
 
         claim(vars[1 + builtin_count]->value.type == VALUE_STRING);
         claim(strcmp(vars[1 + builtin_count]->value.string, "hello") == 0);

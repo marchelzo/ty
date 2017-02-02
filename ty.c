@@ -5,18 +5,32 @@
 #include <stdnoreturn.h>
 
 #include <unistd.h>
+#include <fcntl.h>
 
 #include <readline/readline.h>
 #include <readline/history.h>
 
 #include "vm.h"
 
+static bool use_readline = true;
+
+static char *
+readln(void)
+{
+        static char buffer[8192];
+
+        if (use_readline)
+                return readline("> ");
+        else
+                return fgets(buffer, sizeof buffer, stdin);
+}
+
 noreturn static void
 repl(void)
 {
         static char buffer[8192];
 
-        for (char *line; line = readline("> "), line != NULL;) {
+        for (char *line; line = readln(), line != NULL;) {
 
 		if (strspn(line, " \t\n") == strlen(line))
 			continue;
@@ -24,7 +38,8 @@ repl(void)
                 /*
                  * Very bad.
                  */
-                line = realloc(line, strlen(line) + 2);
+                if (use_readline)
+                        line = realloc(line, strlen(line) + 2);
 
                 if (line[0] == ':') {
                         if (line[1] == '!')
@@ -45,8 +60,13 @@ repl(void)
 
                 fprintf(stderr, "%s\n", vm_error());
 add:
-		line[strcspn(line, "\n")] = '\0';
-                add_history(line);
+                if (use_readline) {
+                        line[strcspn(line, "\n")] = '\0';
+                        add_history(line);
+                }
+
+
+                fflush(stdout);
         }
 
         exit(EXIT_SUCCESS);
@@ -58,7 +78,9 @@ main(int argc, char **argv)
 
         vm_init(argc, argv);
 
-        if (argc <= 1 && isatty(0))
+        use_readline = isatty(0);
+
+        if (argc <= 1)
                 repl();
           
         char const *file = (argc > 1 && strcmp(argv[1], "-") != 0) ? argv[1] : "/dev/stdin";

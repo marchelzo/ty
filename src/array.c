@@ -611,6 +611,35 @@ array_sum(struct value *array, value_vector *args)
 }
 
 static struct value
+array_join(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("array.join() expects 1 argument but got %zu", args->count);
+
+        if (array->array->count == 0)
+                return NIL;
+
+        struct value sep = args->items[0];
+        if (sep.type != VALUE_STRING)
+                vm_panic("the argument to array.join() must be a string");
+
+        struct value sum, v;
+        sum = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[0] });
+
+        gc_push(&sum);
+
+        for (int i = 1; i < array->array->count; ++i) {
+                v = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[i] });
+                sum = binary_operator_addition(&sum, &sep);
+                sum = binary_operator_addition(&sum, &v);
+        }
+
+        gc_pop();
+
+        return sum;
+}
+
+static struct value
 array_consume_while(struct value *array, value_vector *args)
 {
         if (args->count != 2)
@@ -1289,6 +1318,7 @@ DEFINE_METHOD_TABLE(
         { .name = "insert",            .func = array_insert                  },
         { .name = "intersperse",       .func = array_intersperse_no_mut      },
         { .name = "intersperse!",      .func = array_intersperse             },
+        { .name = "join",              .func = array_join                    },
         { .name = "len",               .func = array_length                  },
         { .name = "map",               .func = array_map_no_mut              },
         { .name = "map!",              .func = array_map                     },

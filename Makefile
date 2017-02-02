@@ -30,7 +30,7 @@ ifndef RELEASE
         CFLAGS += -O0
 else
         CFLAGS += -Ofast
-        CFLAGS += -DPTY_RELEASE
+        CFLAGS += -DTY_RELEASE
         CFLAGS += -DTY_NO_LOG
 endif
 
