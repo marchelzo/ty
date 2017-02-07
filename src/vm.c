@@ -13,6 +13,9 @@
 #include <unistd.h>
 #include <signal.h>
 
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include "vm.h"
 #include "util.h"
 #include "gc.h"
@@ -1320,7 +1323,10 @@ vm_execute(char const *source)
 
         if (setjmp(jb) != 0) {
                 gc_clear_root_set();
-                vec_empty(stack);
+                stack.count = 0;
+                sp_stack.count = 0;
+                try_stack.count = 0;
+                targetstack.count = 0;
                 err_msg = err_buf;
                 return false;
         }

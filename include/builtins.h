@@ -88,8 +88,12 @@
 { .module = "os",     .name = "O_TRUNC",           .value = INT(O_TRUNC)                                   },
 { .module = "os",     .name = "O_APPEND",          .value = INT(O_APPEND)                                  },
 { .module = "os",     .name = "O_NONBLOCK",        .value = INT(O_NONBLOCK)                                },
+#ifdef WNOHANG
 { .module = "os",     .name = "WNOHANG",           .value = INT(WNOHANG)                                   },
+#endif
+#ifdef WUNTRACED
 { .module = "os",     .name = "WUNTRACED",         .value = INT(WUNTRACED)                                 },
+#endif
 #ifdef WCONTINUED
 { .module = "os",     .name = "WCONTINUED",        .value = INT(WCONTINUED)                                },
 #endif
