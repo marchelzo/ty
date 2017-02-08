@@ -4,14 +4,15 @@ CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pcre-config --cflags)
-CFLAGS += $(shell pcre-config --libs)
-CFLAGS += -lpthread
-CFLAGS += -lm
-CFLAGS += -L/usr/local/lib
-CFLAGS += -lreadline
-CFLAGS += -lutf8proc
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
+CFLAGS += -D_GNU_SOURCE
+LDFLAGS = -L/usr/local/lib
+LDFLAGS = -lpthread
+LDFLAGS += -lm
+LDFLAGS += -lreadline
+LDFLAGS += -lutf8proc
+LDFLAGS += $(shell pcre-config --libs)
 
 TEST_FILTER ?= "."
 
@@ -56,7 +57,7 @@ OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 all: $(PROG)
 
 ty: $(OBJECTS) ty.c
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<

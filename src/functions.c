@@ -9,8 +9,9 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/types.h>
-#include <netdb.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
+#include <netdb.h>
 #include <sys/time.h>
 #include <poll.h>
 #include <signal.h>
