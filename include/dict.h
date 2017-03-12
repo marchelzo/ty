@@ -6,9 +6,6 @@
 struct dict *
 dict_new(void);
 
-size_t
-dict_item_count(struct dict const *obj);
-
 struct value *
 dict_get_value(struct dict *obj, struct value *key);
 

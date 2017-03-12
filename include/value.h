@@ -147,17 +147,13 @@ struct value {
         };
 };
 
-struct dict_node {
-        struct value key;
-        struct value value;
-        struct dict_node *next;
-};
-
-#define DICT_NUM_BUCKETS 128
 struct dict {
-        struct dict_node *buckets[DICT_NUM_BUCKETS];
-        struct value dflt;
+        unsigned long *hashes;
+        struct value *keys;
+        struct value *values;
+        size_t size;
         size_t count;
+        struct value dflt;
 };
 
 struct variable {

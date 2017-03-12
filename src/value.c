@@ -36,8 +36,8 @@ arrays_equal(struct value const *v1, struct value const *v2)
  * copied from http://www.cse.yorku.ca/~oz/hash.html
  */
 
-static unsigned long
-str_hash(char const *str, register int n)
+inline static unsigned long
+str_hash(char const *str, int n)
 {
         unsigned long hash = 5381;
 
@@ -47,7 +47,7 @@ str_hash(char const *str, register int n)
         return hash;
 }
 
-static unsigned long
+inline static unsigned long
 int_hash(intmax_t k)
 {
         unsigned long hash = 5381;
@@ -62,7 +62,7 @@ int_hash(intmax_t k)
         return hash;
 }
 
-static unsigned long
+inline static unsigned long
 ptr_hash(void const *p)
 {
         unsigned long hash = 5381;
@@ -77,7 +77,7 @@ ptr_hash(void const *p)
         return hash;
 }
 
-static unsigned long
+inline static unsigned long
 flt_hash(float flt)
 {
         unsigned long hash = 5381;
@@ -124,14 +124,14 @@ hash(struct value const *val)
         case VALUE_REGEX:             return ptr_hash(val->regex);
         case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
         case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
-        default:              vm_panic("attempt to hash invalid value");
+        default:                      vm_panic("attempt to hash invalid value");
         }
 }
 
 unsigned long
 value_hash(struct value const *val)
 {
-        return (((unsigned long)val->tags) << 14) * hash(val);
+        return (((unsigned long)val->tags) << 14) + hash(val);
 }
 
 char *

@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "value.h"
+#include "dict.h"
 #include "log.h"
 #include "functions.h"
 #include "operators.h"
@@ -496,6 +497,39 @@ array_drop_while(struct value *array, value_vector *args)
         result.array->count = n;
 
         return result;
+}
+
+static struct value
+array_uniq(struct value *array, value_vector *args)
+{
+        struct value *f = NULL;
+
+        if (args->count == 1)
+                f = &args->items[0];
+        else if (args->count != 0)
+                vm_panic("array.uniq() expects 0 or 1 arguments but got %zu", args->count);
+
+        if (f != NULL && !CALLABLE(*f))
+                vm_panic("the argument to array.uniq() must be callable");
+
+        struct value d = DICT(dict_new());
+        gc_push(&d);
+
+        int n = 0;
+        for (int i = 0; i < array->array->count; ++i) {
+                struct value e = array->array->items[i];
+                struct value k = (f == NULL) ? e : vm_eval_function(f, &e);
+                struct value *v = dict_put_key_if_not_exists(d.dict, k);
+                if (v->type == VALUE_NIL) {
+                        *v = e;
+                        array->array->items[n++] = e;
+                }
+        }
+
+        gc_pop();
+        array->array->count = n;
+
+        return *array;
 }
 
 static struct value
@@ -1290,6 +1324,7 @@ DEFINE_NO_MUT(scan_right);
 DEFINE_NO_MUT(shuffle);
 DEFINE_NO_MUT(sort);
 DEFINE_NO_MUT(sort_by);
+DEFINE_NO_MUT(uniq);
 DEFINE_NO_MUT(zip);
 DEFINE_NO_MUT(zip_with);
 DEFINE_NO_MUT(next_permutation);
@@ -1353,6 +1388,8 @@ DEFINE_METHOD_TABLE(
         { .name = "take!",             .func = array_take_mut                },
         { .name = "takeWhile",         .func = array_take_while              },
         { .name = "takeWhile!",        .func = array_take_while_mut          },
+        { .name = "uniq",              .func = array_uniq_no_mut             },
+        { .name = "uniq!",             .func = array_uniq                    },
         { .name = "zip",               .func = array_zip_no_mut              },
         { .name = "zip!",              .func = array_zip                     },
         { .name = "zipWith",           .func = array_zip_with_no_mut         },

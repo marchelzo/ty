@@ -11,65 +11,91 @@
 #include "vm.h"
 #include "gc.h"
 
-static struct dict_node *
-mknode(struct value key, struct value value, struct dict_node *next)
-{
-        struct dict_node *node = gc_alloc(sizeof *node);
-
-        node->key = key;
-        node->value = value;
-        node->next = next;
-
-        return node;
-}
-
-static struct value *
-bucket_find(struct dict_node *node, struct value const *key)
-{
-        while (node != NULL) {
-                if (value_test_equality(&node->key, key))
-                        return &node->value;
-                else
-                        node = node->next;
-        }
-
-        return NULL;
-}
-
-size_t
-dict_item_count(struct dict const *d)
-{
-        return d->count;
-}
-
 struct dict *
 dict_new(void)
 {
         struct dict *dict = gc_alloc_object(sizeof *dict, GC_DICT);
 
-        for (int i = 0; i < DICT_NUM_BUCKETS; ++i)
-                dict->buckets[i] = NULL;
-
+        dict->size = 16;
         dict->count = 0;
         dict->dflt = NIL;
+        dict->hashes = alloc(sizeof (unsigned long [16]));
+        dict->keys = alloc(sizeof (struct value [16]));
+        dict->values = alloc(sizeof (struct value [16]));
+
+        memset(dict->keys, 0, sizeof (struct value [16]));
 
         return dict;
+}
+
+inline static size_t
+find_spot(size_t size, unsigned long const *hs, struct value const *vs, unsigned long h, struct value const *v)
+{
+        size_t mask = size - 1;
+        size_t i = h & mask;
+
+        while (vs[i].type != 0 && (hs[i] != h || !value_test_equality(&vs[i], v)))
+                i = (i + 1) & mask;
+
+        return i;
+}
+
+inline static void
+grow(struct dict *d)
+{
+        size_t oldsz = d->size;
+        d->size = oldsz << 2;
+
+        unsigned long *hashes = alloc(sizeof (unsigned long [d->size]));
+        struct value *keys = alloc(sizeof (struct value [d->size]));
+        struct value *values = alloc(sizeof (struct value [d->size]));
+
+        memset(keys, 0, sizeof (struct value [d->size]));
+        
+        for (size_t i = 0; i < oldsz; ++i) {
+                if (d->keys[i].type == 0)
+                        continue;
+                size_t j = find_spot(d->size, hashes, keys, d->hashes[i], &d->keys[i]);
+                hashes[j] = d->hashes[i];
+                keys[j] = d->keys[i];
+                values[j] = d->values[i];
+        }
+
+        free(d->hashes);
+        free(d->keys);
+        free(d->values);
+
+        d->hashes = hashes;
+        d->keys = keys;
+        d->values = values;
+}
+
+inline static void
+put(struct dict *d, size_t i, unsigned long h, struct value k, struct value v)
+{
+        if (4 * d->count >= d->size)
+                grow(d);
+
+        d->hashes[i] = h;
+        d->keys[i] = k;
+        d->values[i] = v;
+
+        d->count += 1;
 }
 
 struct value *
 dict_get_value(struct dict *d, struct value *key)
 {
-        unsigned bucket_index = value_hash(key) % DICT_NUM_BUCKETS;
-        struct value *v = bucket_find(d->buckets[bucket_index], key);
+        unsigned long h = value_hash(key);
+        size_t i = find_spot(d->size, d->hashes, d->keys, h, key);
 
-        if (v != NULL)
-                return v;
+        if (d->keys[i].type != 0)
+                return &d->values[i];
 
         if (d->dflt.type != VALUE_NIL) {
                 struct value dflt = value_apply_callable(&d->dflt, key);
-                d->count += 1;
-                d->buckets[bucket_index] = mknode(*key, dflt, d->buckets[bucket_index]);
-                return &d->buckets[bucket_index]->value;
+                put(d, i, h, *key, dflt);
+                return &d->values[i];
         }
 
         return NULL;
@@ -78,31 +104,25 @@ dict_get_value(struct dict *d, struct value *key)
 void
 dict_put_value(struct dict *d, struct value key, struct value value)
 {
-        unsigned bucket_index = value_hash(&key) % DICT_NUM_BUCKETS;
-        struct value *valueptr = bucket_find(d->buckets[bucket_index], &key);
-        
-        if (valueptr == NULL) {
-                d->count += 1;
-                d->buckets[bucket_index] = mknode(key, value, d->buckets[bucket_index]);
-        } else {
-                *valueptr = value;
-        }
+        unsigned long h = value_hash(&key);
+        size_t i = find_spot(d->size, d->hashes, d->keys, h, &key);
+
+        if (d->keys[i].type != 0)
+                d->values[i] = value;
+
+        put(d, i, h, key, value);
 }
 
 struct value *
 dict_put_key_if_not_exists(struct dict *d, struct value key)
 {
-        unsigned bucket_index = value_hash(&key) % DICT_NUM_BUCKETS;
-        struct value *valueptr = bucket_find(d->buckets[bucket_index], &key);
-        struct value v = d->dflt.type == VALUE_NIL ? NIL : value_apply_callable(&d->dflt, &key);
+        unsigned long h = value_hash(&key);
+        size_t i = find_spot(d->size, d->hashes, d->keys, h, &key);
 
-        if (valueptr != NULL) {
-                return valueptr;
-        } else {
-                d->count += 1;
-                d->buckets[bucket_index] = mknode(key, v, d->buckets[bucket_index]);
-                return &d->buckets[bucket_index]->value;
-        }
+        if (d->keys[i].type == 0)
+                put(d, i, h, key, NIL);
+
+        return &d->values[i];
 }
 
 struct value *
@@ -133,10 +153,10 @@ dict_mark(struct dict *d)
         if (d->dflt.type != VALUE_NIL)
                 value_mark(&d->dflt);
 
-        for (int i = 0; i < DICT_NUM_BUCKETS; ++i) {
-                for (struct dict_node *node = d->buckets[i]; node != NULL; node = node->next) {
-                        value_mark(&node->key);
-                        value_mark(&node->value);
+        for (size_t i = 0; i < d->size; ++i) {
+                if (d->keys[i].type != 0) {
+                        value_mark(&d->keys[i]);
+                        value_mark(&d->values[i]);
                 }
         }
 }
@@ -144,13 +164,9 @@ dict_mark(struct dict *d)
 void
 dict_free(struct dict *d)
 {
-        for (int i = 0; i < DICT_NUM_BUCKETS; ++i) {
-                for (struct dict_node *node = d->buckets[i]; node != NULL;) {
-                        struct dict_node *next = node->next;
-                        free(node);
-                        node = next;
-                }
-        }
+        free(d->hashes);
+        free(d->keys);
+        free(d->values);
 }
 
 static struct value
@@ -177,15 +193,65 @@ dict_contains(struct value *d, value_vector *args)
                 vm_panic("dict.contains() expects 1 argument but got %zu", args->count);
 
         struct value *key = &args->items[0];
-        unsigned bucket_index = value_hash(key) % DICT_NUM_BUCKETS;
-        struct value *v = bucket_find(d->dict->buckets[bucket_index], key);
+        unsigned long h = value_hash(key);
+        size_t i = find_spot(d->dict->size, d->dict->hashes, d->dict->keys, h, key);
 
-        return BOOLEAN(v != NULL);
+        return BOOLEAN(d->dict->keys[i].type != 0);
+}
+
+static struct value
+dict_keys(struct value *d, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("dict.keys() expects 0 argument but got %zu", args->count);
+
+        struct value keys = ARRAY(value_array_new());
+
+        gc_push(&keys);
+
+        for (size_t i = 0; i < d->dict->size; ++i)
+                if (d->dict->keys[i].type != 0)
+                        value_array_push(keys.array, d->dict->keys[i]);
+
+        gc_pop();
+
+        return keys;
+}
+
+static struct value
+dict_values(struct value *d, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("dict.values() expects 0 argument but got %zu", args->count);
+
+        struct value values = ARRAY(value_array_new());
+
+        gc_push(&values);
+
+        for (size_t i = 0; i < d->dict->size; ++i)
+                if (d->dict->keys[i].type != 0)
+                        value_array_push(values.array, d->dict->values[i]);
+
+        gc_pop();
+
+        return values;
+}
+
+static struct value
+dict_len(struct value *d, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("dict.len() expects 0 argument but got %zu", args->count);
+
+        return INTEGER(d->dict->count);
 }
 
 DEFINE_METHOD_TABLE(
         { .name = "contains?",    .func = dict_contains      },
         { .name = "default",      .func = dict_default       },
+        { .name = "keys",         .func = dict_keys          },
+        { .name = "len",          .func = dict_len           },
+        { .name = "values",       .func = dict_values        },
 );
 
 DEFINE_METHOD_LOOKUP(dict);

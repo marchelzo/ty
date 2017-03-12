@@ -182,7 +182,7 @@ coerce:
         case VALUE_REAL:    v.integer = a.real;                         return v;
         case VALUE_BOOLEAN: v.integer = a.boolean;                      return v;
         case VALUE_ARRAY:   v.integer = a.array->count;                 return v;
-        case VALUE_DICT:    v.integer = dict_item_count(a.dict);        return v;
+        case VALUE_DICT:    v.integer = a.dict->count;                  return v;
         case VALUE_STRING:  base = 10; memcpy(nbuf, a.string, a.bytes); goto string;
         default:                                                        return NIL;
         }

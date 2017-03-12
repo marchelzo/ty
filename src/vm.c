@@ -591,12 +591,10 @@ vm_exec(char *code)
                                 gc_pop();
                                 break;
                         case VALUE_DICT:
-                                for (int i = 0; i < DICT_NUM_BUCKETS && COND; ++i) {
-                                        struct dict_node *node = v.dict->buckets[i];
-                                        while (node != NULL && *first != INSTR_HALT) {
-                                                push(node->key);
+                                for (int i = 0; i < v.dict->size && COND; ++i) {
+                                        if (v.dict->keys[i].type != 0) {
+                                                push(v.dict->keys[i]);
                                                 vm_exec(ip);
-                                                node = node->next;
                                         }
                                 }
                                 break;

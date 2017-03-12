@@ -57,10 +57,12 @@ OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 all: $(PROG)
 
 ty: $(OBJECTS) ty.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	@echo cc $^
+	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	@echo cc $<
+	@$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
 	rm -rf $(PROG) src/*.o
