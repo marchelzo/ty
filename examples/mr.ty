@@ -1,0 +1,42 @@
+class A {
+    init(self) {
+        self.i = 0;
+    }
+
+    __iter__(self) {
+        return self;
+    }
+
+    __next__(self) {
+        if (self.i++ < 10) return self.i;
+        for k in (..3) {
+            print(k);
+            if (rand() % 3 == k) return k;
+        }
+    }
+}
+
+class B {
+    init(self) {
+        self.i = 0;
+        self.a = A();
+    }
+
+    __iter__(self) {
+        return self;
+    }
+
+    __next__(self) {
+        for k in self.a {
+            return k;
+        }
+    }
+}
+
+function f() {
+    print('hi');
+}
+
+for k in B() {
+    f();
+}

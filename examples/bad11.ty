@@ -1,0 +1,13 @@
+for _ in ..10000 {
+    match [1, 2, 3] {
+         [1, x, 4] => {
+              print('first');
+         },
+         [1, x, *xs] | xs.len() >= 1 => {
+              print("second: x = {x}, xs = {xs}");
+         },
+         a => {
+              print("third: a = {a}");
+         }
+    }
+}

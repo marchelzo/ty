@@ -1,0 +1,11 @@
+import fs
+
+let path = 'hello.txt';
+
+if let f = fs::File.open(path) {
+     while let line = f.nextLine() {
+          print(line);
+     }
+} else {
+     print("Failed to open '{path}'");
+}

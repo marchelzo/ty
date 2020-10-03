@@ -1,0 +1,13 @@
+import pq
+
+let h = pq::Heap();
+
+h.push(1, 'First');
+h.push(3, 'Third');
+h.push(2, 'Second');
+h.push(0, 'Really first!');
+h.push(5, 'Last!');
+
+while let $item = h.pop() {
+     print(item);
+}

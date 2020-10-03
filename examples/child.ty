@@ -1,0 +1,25 @@
+import os
+
+let [r, w] = os::pipe();
+
+match os::fork() {
+        0   => {
+                os::close(r);
+                os::dup2(w, 1);
+                os::exec(['bash', '-c', 'while true; do echo test && sleep 0.5; done']);
+        },
+        pid => {
+                os::close(w);
+                let b = blob();
+                for (let i = 0; i < 5; ++i) {
+                        os::read(r, b, 128);
+                        os::write(1, b);
+                        b.clear();
+                }
+                os::kill(pid, os::SIGTERM);
+                let [_, status] = os::waitpid(pid, 0);
+                if (os::WIFSIGNALED(status)) {
+                        print("Child was killed by signal {os::WTERMSIG(status)}");
+                }
+        }
+}

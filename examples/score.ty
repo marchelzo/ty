@@ -1,0 +1,5 @@
+import fs
+
+let Ok(s) = fs::slurp('/dev/stdin');
+
+print(s.matches(/\d+\/\d+/).map(.split('/')[0]).map(int).sum());

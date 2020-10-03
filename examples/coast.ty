@@ -1,0 +1,43 @@
+let n = int(read());
+
+let map = [];
+while let line = read() {
+     map.push(line);
+}
+
+let width = map.map(.len()).max();
+let height = map.len();
+
+map.map!(function (s) {
+     let row = s.chars().map!(|int(# == '*')|);
+     while (row.len() < width)
+          row.push(0);
+     return row;
+});
+
+let toCover = map.map(.sum()).sum();
+
+let used = 0;
+while (toCover > 0) {
+
+     let best = nil;
+     let cover = -1;
+
+     for (let y = 0; y <= height - n; ++y) {
+          for (let x = 0; x <= width - n; ++x) {
+               let c = [0 .. n).map(dx -> [0 .. n).map(dy -> map[y + dy][x + dx]).sum()).sum();
+               if (c > cover)
+                    [best, cover] = [[x, y], c];
+          }
+     }
+
+     let [x, y] = best;
+     for (let dx = 0; dx < n; ++dx)
+          for (let dy = 0; dy < n; ++dy)
+               map[y + dy][x + dx] = 0;
+
+     toCover -= cover;
+     ++used;
+}
+
+print(used);

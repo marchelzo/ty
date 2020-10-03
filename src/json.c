@@ -178,7 +178,7 @@ string(void)
 
         vec_empty(str);
 
-        return STRING(s, n, s);
+        return STRING(s, n);
 }
 
 static struct value

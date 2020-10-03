@@ -11,6 +11,7 @@
 #include <readline/history.h>
 
 #include "vm.h"
+#include "gc.h"
 
 static bool use_readline = true;
 

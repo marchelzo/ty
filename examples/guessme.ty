@@ -1,0 +1,16 @@
+import os
+
+let n = rand(int(os::args[1]));
+let say = s -> os::write(1, s + "\n");
+
+while let $guess = read() {
+        guess = int(guess);
+        if (guess > n)
+                say('Too high!');
+        else if (guess < n)
+                say('Too low!');
+        else
+                break;
+}
+
+say('You win!');

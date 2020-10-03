@@ -134,7 +134,7 @@ symbolize_pattern(struct scope *scope, struct expression *e);
 static void
 symbolize_expression(struct scope *scope, struct expression *e);
 
-static void
+static bool
 emit_statement(struct statement const *s);
 
 static void
@@ -143,7 +143,7 @@ emit_expression(struct expression const *e);
 static void
 emit_assignment(struct expression *target, struct expression const *e);
 
-static void
+static bool
 emit_case(struct expression const *pattern, struct expression const *condition, struct statement const *s);
 
 static struct scope *
@@ -164,8 +164,10 @@ fail(char const *fmt, ...)
         int n;
         if (state.filename == NULL)
                 n = sprintf(err_buf, "CompileError: %d:%d: ", state.loc.line + 1,state.loc.col + 1);
-        else
+        else if (scope_is_subscope(state.global, global))
                 n = sprintf(err_buf, "CompileError: %s:%d:%d: ", state.filename, state.loc.line + 1,state.loc.col + 1);
+        else
+                n = sprintf(err_buf, "CompileError: module '%s':%d:%d: ", state.filename, state.loc.line + 1,state.loc.col + 1);
 
         vsnprintf(err_buf + n, sizeof err_buf - n, fmt, ap);
         err_msg = err_buf;
@@ -247,6 +249,12 @@ addsymbol(struct scope *scope, char const *name)
 }
 
 inline static bool
+is_call(struct expression const *e)
+{
+        return e->type == EXPRESSION_METHOD_CALL || e->type == EXPRESSION_FUNCTION_CALL;
+}
+
+inline static bool
 is_tag(struct expression const *e)
 {
         assert(e->type == EXPRESSION_IDENTIFIER);
@@ -300,7 +308,7 @@ inline static struct symbol *
 tmpsymbol(void)
 {
         static int i;
-        static char idbuf[8];
+        static char idbuf[16];
 
         assert(i <= 9999999);
 
@@ -465,6 +473,11 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
         case EXPRESSION_MEMBER_ACCESS:
                 symbolize_expression(scope, target->object);
                 break;
+        case EXPRESSION_LIST:
+                for (int i = 0; i < target->es.count; ++i) {
+                        symbolize_lvalue(scope, target->es.items[i], decl);
+                }
+                break;
         }
 }
 
@@ -575,9 +588,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_LEQ:
         case EXPRESSION_GT:
         case EXPRESSION_GEQ:
+        case EXPRESSION_CMP:
         case EXPRESSION_DBL_EQ:
         case EXPRESSION_NOT_EQ:
         case EXPRESSION_DOT_DOT:
+        case EXPRESSION_DOT_DOT_DOT:
                 symbolize_expression(scope, e->left);
                 symbolize_expression(scope, e->right);
                 break;
@@ -650,6 +665,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(scope, e->keys.items[i]);
                         symbolize_expression(scope, e->values.items[i]);
+                }
+                break;
+        case EXPRESSION_LIST:
+                for (int i = 0; i < e->es.count; ++i) {
+                        symbolize_expression(scope, e->es.items[i]);
                 }
                 break;
         case EXPRESSION_MATCH_REST:
@@ -787,11 +807,22 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_statement(scope, s->conditional.else_branch);
                 break;
         case STATEMENT_RETURN:
-                symbolize_expression(scope, s->return_value);
+                for (int i = 0; i < s->returns.count; ++i) {
+                    symbolize_expression(scope, s->returns.items[i]);
+                }
                 break;
         case STATEMENT_DEFINITION:
-                symbolize_expression(scope, s->value);
+                if (s->value->type == EXPRESSION_LIST) {
+                        for (int i = 0; i < s->value->es.count; ++i) {
+                                symbolize_expression(scope, s->value->es.items[i]);
+                        }
+                } else {
+                        symbolize_expression(scope, s->value);
+                }
                 symbolize_lvalue(scope, s->target, true);
+                break;
+        case STATEMENT_FUNCTION_DEFINITION:
+                symbolize_expression(scope, s->value);
                 break;
         }
 
@@ -821,6 +852,12 @@ inline static void
 _emit_instr(char c)
 {
         vec_push(state.code, c);
+}
+
+inline static char
+last_instr(void)
+{
+        return state.code.items[state.code.count - 1];
 }
 
 inline static void
@@ -926,12 +963,16 @@ emit_function(struct expression const *e)
          */
         size_t start_offset = state.code.count;
 
-        emit_statement(e->body);
+        bool returns = emit_statement(e->body);
 
         /*
-         * Add an implicit 'return nil;' in case the function doesn't explicitly return in its body.
+         * Add an implicit 'return nil;' if the function doesn't explicitly return in its body.
          */
-        emit_statement(&(struct statement){ .type = STATEMENT_RETURN, .return_value = NULL, .loc = {42, 42} });
+        if (!returns) {
+            struct statement empty = { .type = STATEMENT_RETURN, .loc = state.loc };
+            vec_init(empty.returns);
+            emit_statement(&empty);
+        }
 
         int bytes = state.code.count - size_offset - sizeof (int);
         LOG("bytes in func = %d", bytes);
@@ -957,22 +998,26 @@ emit_function(struct expression const *e)
         }
 }
 
-static void
+static bool
 emit_conditional_statement(struct statement const *s)
 {
+        bool returns = false;
+
         emit_expression(s->conditional.cond);
         PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t then_branch);
 
         if (s->conditional.else_branch != NULL)
-                emit_statement(s->conditional.else_branch);
+                returns |= emit_statement(s->conditional.else_branch);
 
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
         PATCH_JUMP(then_branch);
 
-        emit_statement(s->conditional.then_branch);
+        returns &= emit_statement(s->conditional.then_branch);
 
         PATCH_JUMP(end);
+
+        return returns;
 }
 
 static void
@@ -1038,14 +1083,15 @@ emit_special_string(struct expression const *e)
         emit_int(2 * e->expressions.count + 1);
 }
 
-static void
+static bool
 emit_throw(struct statement const *s)
 {
         emit_expression(s->throw);
         emit_instr(INSTR_THROW);
+        return true;
 }
 
-static void
+static bool
 emit_try(struct statement const *s)
 {
         emit_instr(INSTR_TRY);
@@ -1062,7 +1108,7 @@ emit_try(struct statement const *s)
         uint64_t try_save = state.try;
         state.try = ++t;
 
-        emit_statement(s->try.s);
+        bool returns = emit_statement(s->try.s);
 
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
@@ -1072,7 +1118,7 @@ emit_try(struct statement const *s)
         PATCH_JUMP(catch_offset);
 
         for (int i = 0; i < s->try.patterns.count; ++i)
-                emit_case(s->try.patterns.items[i], NULL, s->try.handlers.items[i]);
+                returns &= emit_case(s->try.patterns.items[i], NULL, s->try.handlers.items[i]);
 
         emit_instr(INSTR_FINALLY);
         emit_instr(INSTR_THROW);
@@ -1086,12 +1132,16 @@ emit_try(struct statement const *s)
 
         if (s->try.finally != NULL) {
                 PATCH_JUMP(finally_offset);
-                emit_statement(s->try.finally);
+                returns &= emit_statement(s->try.finally);
                 PATCH_JUMP(end_offset);
                 emit_instr(INSTR_NOP);
+        } else {
+                returns = false;
         }
 
         emit_instr(INSTR_POP_TRY);
+
+        return returns;
 }
 
 static void
@@ -1266,7 +1316,7 @@ emit_try_match(struct expression const *pattern)
         }
 }
 
-static void
+static bool
 emit_case(struct expression const *pattern, struct expression const *condition, struct statement const *s)
 {
         offset_vector fails_save = state.match_fails;
@@ -1284,9 +1334,12 @@ emit_case(struct expression const *pattern, struct expression const *condition, 
         }
 
         emit_instr(INSTR_RESTORE_STACK_POS);
+        emit_instr(INSTR_POP);
 
-        if (s != NULL)
-                emit_statement(s);
+        bool returns = false;
+        if (s != NULL) {
+                returns |= emit_statement(s);
+        }
 
         emit_instr(INSTR_JUMP);
         vec_push(state.match_successes, state.code.count);
@@ -1299,6 +1352,8 @@ emit_case(struct expression const *pattern, struct expression const *condition, 
         emit_instr(INSTR_RESTORE_STACK_POS);
 
         state.match_fails = fails_save;
+
+        return returns;
 }
 
 static void
@@ -1343,7 +1398,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
         state.match_fails = fails_save;
 }
 
-static void
+static bool
 emit_match_statement(struct statement const *s)
 {
         offset_vector successes_save = state.match_successes;
@@ -1351,9 +1406,11 @@ emit_match_statement(struct statement const *s)
 
         emit_expression(s->match.e);
 
+        bool returns = true;
+
         for (int i = 0; i < s->match.patterns.count; ++i) {
                 LOG("emitting case %d", i + 1);
-                emit_case(s->match.patterns.items[i], s->match.conds.items[i], s->match.statements.items[i]);
+                returns &= emit_case(s->match.patterns.items[i], s->match.conds.items[i], s->match.statements.items[i]);
         }
 
         /*
@@ -1363,9 +1420,9 @@ emit_match_statement(struct statement const *s)
 
         patch_jumps_to(&state.match_successes, state.code.count);
 
-        emit_instr(INSTR_POP);
-
         state.match_successes = successes_save;
+
+        return returns;
 }
 
 static void
@@ -1396,6 +1453,7 @@ emit_while_match(struct statement const *s)
         /*
          * If nothing matches, we jump out of the loop.
          */
+        emit_instr(INSTR_POP);
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
 
         patch_jumps_to(&state.match_successes, state.code.count);
@@ -1407,8 +1465,6 @@ emit_while_match(struct statement const *s)
 
         PATCH_JUMP(finished);
         patch_loop_jumps(begin, state.code.count);
-
-        emit_instr(INSTR_POP);
 
         state.match_successes = successes_save;
         state.breaks = brk_save;
@@ -1426,7 +1482,7 @@ emit_while_let(struct statement const *s)
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
         uint64_t loop_save = state.loop;
-        state.loop = loop_save;
+        state.loop = ++t;
         vec_init(state.breaks);
         vec_init(state.continues);
         vec_init(state.match_successes);
@@ -1449,7 +1505,6 @@ emit_while_let(struct statement const *s)
         /*
          * We matched, so we iterate again.
          */
-        emit_instr(INSTR_POP);
         JUMP(begin);
 
         PATCH_JUMP(finished);
@@ -1464,7 +1519,7 @@ emit_while_let(struct statement const *s)
         state.loop = loop_save;
 }
 
-static void
+static bool
 emit_if_let(struct statement const *s)
 {
         offset_vector successes_save = state.match_successes;
@@ -1472,16 +1527,21 @@ emit_if_let(struct statement const *s)
 
         emit_expression(s->if_let.e);
 
-        emit_case(s->if_let.pattern, NULL, s->if_let.then);
-
-        if (s->if_let.otherwise != NULL)
-                emit_statement(s->if_let.otherwise);
-
-        patch_jumps_to(&state.match_successes, state.code.count);
+        bool returns = emit_case(s->if_let.pattern, NULL, s->if_let.then);
 
         emit_instr(INSTR_POP);
 
+        if (s->if_let.otherwise != NULL) {
+                returns &= emit_statement(s->if_let.otherwise);
+        } else {
+                returns = false;
+        }
+
+        patch_jumps_to(&state.match_successes, state.code.count);
+
         state.match_successes = successes_save;
+
+        return returns;
 }
 
 static void
@@ -1510,36 +1570,6 @@ emit_match_expression(struct expression const *e)
         patch_jumps_to(&state.match_successes, state.code.count);
 
         state.match_successes = successes_save;
-}
-
-static void
-emit_each_loop(struct statement const *s)
-{
-        bool each_loop_save = state.each_loop;
-        state.each_loop = true;
-
-        uint64_t loop_save = state.loop;
-        state.loop = ++t;
-
-        emit_expression(s->each.array);
-
-        emit_instr(INSTR_FOR_EACH);
-
-        size_t start = state.code.count;
-        emit_int(0);
-
-        emit_checks(s->each.check);
-
-        emit_assignment(s->each.target, NULL);
-        emit_instr(INSTR_POP);
-        emit_statement(s->each.body);
-        emit_instr(INSTR_HALT);
-
-        int n = state.code.count - start - sizeof (int);
-        memcpy(state.code.items + start, &n, sizeof (int));
-
-        state.each_loop = each_loop_save;
-        state.loop = loop_save;
 }
 
 static void
@@ -1572,13 +1602,86 @@ emit_target(struct expression *target)
 }
 
 static void
+emit_for_each(struct statement const *s)
+{
+        bool each_loop_save = state.each_loop;
+        state.each_loop = true;
+
+        uint64_t loop_save = state.loop;
+        state.loop = ++t;
+
+        offset_vector brk_save = state.breaks;
+        offset_vector cont_save = state.continues;
+        offset_vector successes_save = state.match_successes;
+        vec_init(state.breaks);
+        vec_init(state.continues);
+        vec_init(state.match_successes);
+
+        emit_instr(INSTR_PUSH_INDEX);
+        if (s->each.target->type == EXPRESSION_LIST) {
+                emit_int((int)s->each.target->es.count);
+        } else {
+                emit_int(1);
+        }
+
+        emit_expression(s->each.array);
+
+        size_t start = state.code.count;
+        emit_checks(s->each.check);
+
+        for (int i = 0; i < s->each.target->es.count; ++i) {
+                emit_target(s->each.target->es.items[i]);
+        }
+
+        emit_instr(INSTR_SENTINEL);
+        emit_instr(INSTR_CLEAR_RC);
+        emit_instr(INSTR_GET_NEXT);
+        emit_instr(INSTR_READ_INDEX);
+        emit_instr(INSTR_MULTI_ASSIGN);
+        emit_int((int)s->each.target->es.count);
+        emit_instr(INSTR_NIL);
+        emit_instr(INSTR_EQ);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t stop);
+        emit_statement(s->each.body);
+        JUMP(start);
+        PATCH_JUMP(stop);
+        patch_loop_jumps(start, state.code.count);
+        emit_instr(INSTR_POP);
+        emit_instr(INSTR_POP);
+
+        state.match_successes = successes_save;
+        state.breaks = brk_save;
+        state.continues = cont_save;
+        state.each_loop = each_loop_save;
+        state.loop = loop_save;
+}
+
+static bool
+check_multi(struct expression *target, struct expression const *e, int *n)
+{
+        if (is_call(e))
+                return true;
+
+        if (e->type != EXPRESSION_LIST)
+                return false;
+
+        for (*n = 0; *n < e->es.count; ++*n) {
+                if (is_call(e->es.items[*n]))
+                        return true;
+        }
+
+        return *n == e->es.count;
+}
+
+static void
 emit_assignment(struct expression *target, struct expression const *e)
 {
 
         struct symbol *tmp;
         struct expression container, index, subscript;
+        int n;
 
-        if (e != NULL)
+        if (e != NULL && target->type != EXPRESSION_LIST)
                 emit_expression(e);
 
         switch (target->type) {
@@ -1609,6 +1712,35 @@ emit_assignment(struct expression *target, struct expression const *e)
                 emit_instr(INSTR_DIE_IF_NIL);
                 emit_target(target);
                 emit_instr(INSTR_ASSIGN);
+                break;
+        case EXPRESSION_LIST:
+                if (!check_multi(target, e, &n)) {
+                        fail("wrong number of values on RHS of assignment. expected %d but found %d", target->es.count, n);
+                }
+
+                for (int i = 0; i < target->es.count; ++i) {
+                        emit_target(target->es.items[i]);
+                }
+
+                emit_instr(INSTR_SENTINEL);
+
+                if (e->type == EXPRESSION_LIST) for (int i = 0; i < e->es.count; ++i) {
+                        if (is_call(e->es.items[i])) {
+                                emit_instr(INSTR_CLEAR_RC);
+                                emit_expression(e->es.items[i]);
+                                emit_instr(INSTR_GET_EXTRA);
+                        } else {
+                                emit_expression(e->es.items[i]);
+                        }
+                } else {
+                        emit_instr(INSTR_CLEAR_RC);
+                        emit_expression(e);
+                        emit_instr(INSTR_GET_EXTRA);
+                }
+
+                emit_instr(INSTR_MULTI_ASSIGN);
+                emit_int((int)target->es.count);
+
                 break;
         default:
                 emit_target(target);
@@ -1644,6 +1776,11 @@ emit_expression(struct expression const *e)
                 emit_expression(e->left);
                 emit_expression(e->right);
                 emit_instr(INSTR_RANGE);
+                break;
+        case EXPRESSION_DOT_DOT_DOT:
+                emit_expression(e->left);
+                emit_expression(e->right);
+                emit_instr(INSTR_INCRANGE);
                 break;
         case EXPRESSION_EQ:
                 emit_assignment(e->target, e->value);
@@ -1780,6 +1917,11 @@ emit_expression(struct expression const *e)
                 emit_expression(e->right);
                 emit_instr(INSTR_GEQ);
                 break;
+        case EXPRESSION_CMP:
+                emit_expression(e->left);
+                emit_expression(e->right);
+                emit_instr(INSTR_CMP);
+                break;
         case EXPRESSION_DBL_EQ:
                 emit_expression(e->left);
                 emit_expression(e->right);
@@ -1844,27 +1986,29 @@ emit_expression(struct expression const *e)
         }
 }
 
-static void
+static bool
 emit_statement(struct statement const *s)
 {
         state.loc = s->loc;
+        bool returns = false;
 
         switch (s->type) {
         case STATEMENT_BLOCK:
-                for (int i = 0; i < s->statements.count; ++i)
-                        emit_statement(s->statements.items[i]);
+                for (int i = 0; !returns && i < s->statements.count; ++i) {
+                        returns |= emit_statement(s->statements.items[i]);
+                }
                 break;
         case STATEMENT_MATCH:
-                emit_match_statement(s);
+                returns |= emit_match_statement(s);
                 break;
         case STATEMENT_CONDITIONAL:
-                emit_conditional_statement(s);
+                returns |= emit_conditional_statement(s);
                 break;
         case STATEMENT_FOR_LOOP:
                 emit_for_loop(s);
                 break;
         case STATEMENT_EACH_LOOP:
-                emit_each_loop(s);
+                emit_for_each(s);
                 break;
         case STATEMENT_WHILE_LOOP:
                 emit_while_loop(s);
@@ -1876,13 +2020,14 @@ emit_statement(struct statement const *s)
                 emit_while_let(s);
                 break;
         case STATEMENT_IF_LET:
-                emit_if_let(s);
+                returns |= emit_if_let(s);
                 break;
         case STATEMENT_EXPRESSION:
                 emit_expression(s->expression);
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_DEFINITION:
+        case STATEMENT_FUNCTION_DEFINITION:
                 emit_assignment(s->target, s->value);
                 emit_instr(INSTR_POP);
                 break;
@@ -1917,54 +2062,57 @@ emit_statement(struct statement const *s)
 
                 break;
         case STATEMENT_TRY:
-                emit_try(s);
+                returns |= emit_try(s);
                 break;
         case STATEMENT_THROW:
-                emit_throw(s);
+                returns |= emit_throw(s);
                 break;
         case STATEMENT_RETURN:
                 if (state.function_depth == 0)
                         fail("invalid 'return' statement (not inside of a function)");
-                if (s->return_value != NULL)
-                        emit_expression(s->return_value);
-                else
-                        emit_instr(INSTR_NIL);
                 /* returning from within a for-each loop must be handled specially */
                 if (state.each_loop) {
-                        emit_instr(INSTR_HALT);
-                        break;
+                        emit_instr(INSTR_POP);
+                        emit_instr(INSTR_POP);
                 }
+
+                if (s->returns.count > 0) for (int i = 0; i < s->returns.count; ++i) {
+                        emit_expression(s->returns.items[i]);
+                } else { 
+                        emit_instr(INSTR_NIL);
+                }
+
                 for (int i = 0; i < state.bound_symbols.count; ++i) {
                         emit_instr(INSTR_POP_VAR);
                         emit_symbol(state.bound_symbols.items[i]->symbol);
                 }
                 if (state.try)
                         emit_instr(INSTR_FINALLY);
-                emit_instr(INSTR_RETURN);
+                if (s->returns.count > 1) {
+                        emit_instr(INSTR_MULTI_RETURN);
+                        emit_int((int)s->returns.count - 1);
+                } else {
+                        emit_instr(INSTR_RETURN);
+                }
+                returns = true;
                 break;
         case STATEMENT_BREAK:
                 if (state.try > state.loop)
                         emit_instr(INSTR_FINALLY);
-                if (state.each_loop) {
-                        emit_instr(INSTR_BREAK_EACH);
-                } else {
-                        emit_instr(INSTR_JUMP);
-                        vec_push(state.breaks, state.code.count);
-                        emit_int(0);
-                }
+                emit_instr(INSTR_JUMP);
+                vec_push(state.breaks, state.code.count);
+                emit_int(0);
                 break;
         case STATEMENT_CONTINUE: 
                 if (state.try > state.loop)
                         emit_instr(INSTR_FINALLY);
-                if (state.each_loop) {
-                        emit_instr(INSTR_HALT);
-                } else {
-                        emit_instr(INSTR_JUMP); 
-                        vec_push(state.continues, state.code.count);
-                        emit_int(0);
-                }
+                emit_instr(INSTR_JUMP); 
+                vec_push(state.continues, state.code.count);
+                emit_int(0);
                 break;
         }
+
+        return returns;
 }
 
 static void
@@ -2015,6 +2163,13 @@ compile(char const *source)
                 longjmp(jb, 1);
         }
 
+        for (size_t i = 0; p[i] != NULL; ++i) {
+                if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
+                        symbolize_lvalue(state.global, p[i]->target, true);
+                        p[i]->value->name = NULL;
+                }
+        }
+
         for (size_t i = 0; p[i] != NULL; ++i)
                 symbolize_statement(state.global, p[i]);
 
@@ -2027,8 +2182,35 @@ compile(char const *source)
 
         emit_new_globals();
 
-        for (size_t i = 0; p[i] != NULL; ++i)
+        /* 
+         * Move all function definitions to the beginning so that top-level functions have file scope.
+         * This allows us to write programs such as
+         *
+         *      f();
+         *
+         *      function f() {
+         *              g('Hello, world!');
+         *      }
+         *
+         *      function g(s) {
+         *              print(s);
+         *      }
+         *
+         * without getting an error due to f and g being referenced before they're defined.
+         *
+         */
+        size_t fi = 0;
+        for (size_t i = 0; p[i] != NULL; ++i) {
+                if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
+                        struct statement *s = p[fi];
+                        p[fi++] = p[i];
+                        p[i] = s;
+                }
+        }
+
+        for (size_t i = 0; p[i] != NULL; ++i) {
                 emit_statement(p[i]);
+        }
 
         emit_instr(INSTR_HALT);
 
@@ -2077,16 +2259,7 @@ import_module(struct statement const *s)
         if (module_scope != NULL)
                 goto import;
 
-        char pathbuf[512];
-        char const *home = getenv("HOME");
-        if (home == NULL)
-                fail("unable to get $HOME from the environment");
-
-        snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
-
-        char *source = slurp(pathbuf);
-        if (source == NULL)
-                fail("failed to read file: %s", pathbuf);
+        char *source = slurp_module(name);
 
         /*
          * Save the current compiler state so we can restore it after compiling
@@ -2094,7 +2267,7 @@ import_module(struct statement const *s)
          */
         struct state save = state;
         state = freshstate();
-        state.filename = pathbuf;
+        state.filename = name;
 
         compile(source);
 

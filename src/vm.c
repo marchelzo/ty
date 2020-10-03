@@ -35,8 +35,15 @@
 #include "utf8.h"
 #include "functions.h"
 
+#define TY_LOG_VERBOSE 1
+
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
-#define CASE(i)      case INSTR_ ## i: LOG("executing instr: " #i);
+
+#if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
+  #define CASE(i) case INSTR_ ## i: loc = compiler_get_location(ip, &fname); LOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
+#else
+  #define CASE(i) case INSTR_ ## i:
+#endif
 
 static char halt = INSTR_HALT;
 
@@ -57,9 +64,9 @@ static struct variable **vars;
 static bool *used;
 
 static vec(struct value) stack;
-static vec(char *) callstack;
+static vec(char *) calls;
 static vec(size_t) sp_stack;
-static vec(struct value *) targetstack;
+static vec(struct value *) targets;
 static vec(struct try) try_stack;
 static char *ip;
 
@@ -87,6 +94,8 @@ inline static struct variable *
 newvar(struct variable *next)
 {
         struct variable *v = gc_alloc_unregistered(sizeof *v, GC_VARIABLE);
+        v->captured = false;
+        v->try = try_stack.count;
         v->prev = NULL;
         v->next = next;
         return v;
@@ -97,7 +106,7 @@ pushvar(int s)
 {
         if (vars[s] == NULL || used[s])
                 vars[s] = newvar(vars[s]);
-
+        
         vars[s]->try = try_stack.count;
         used[s] = true;
 }
@@ -135,13 +144,12 @@ add_builtins(int ac, char **av)
 inline static struct value *
 top(void)
 {
-        return &stack.items[stack.count - 1];
+        return &stack.items[stack.count] - 1;
 }
 
 inline static struct value
 pop(void)
 {
-        LOG("popping %s", value_show(top()));
         return *vec_pop(stack);
 }
 
@@ -154,30 +162,29 @@ peek(void)
 inline static void
 push(struct value v)
 {
-        LOG("pushing %s", value_show(&v));
         vec_push(stack, v);
 }
 
 inline static struct value *
 poptarget(void)
 {
-        return *vec_pop(targetstack);
+        return *vec_pop(targets);
 }
 
 inline static struct value *
 peektarget(void)
 {
-        return targetstack.items[targetstack.count - 1];
+        return targets.items[targets.count - 1];
 }
 
 inline static void
 pushtarget(struct value *v)
 {
-        vec_push(targetstack, v);
+        vec_push(targets, v);
 }
 
 inline static void
-call(struct value *f, struct value *self, int n, bool exec)
+call(struct value const *f, struct value const *self, int n, bool exec)
 {
         for (int i = 0; i < f->bound; ++i)
                 pushvar(f->symbols[i]);
@@ -187,16 +194,18 @@ call(struct value *f, struct value *self, int n, bool exec)
         int params = f->params - has_self;
 
         /* throw away ignored arguments */
-        while (n > params)
+        while (n > params) {
                 pop(), --n;
+        }
 
         /* default missing parameters to nil */
         for (int i = n; i < params; ++i)
                 vars[f->symbols[i + has_self]]->value = NIL;
 
         /* fill in the rest of the arguments */
-        while (n --> 0)
+        while (n --> 0) {
                 vars[f->symbols[n + has_self]]->value = pop();
+        }
 
         /* fill in 'self' / 'this' */
         if (has_self)
@@ -204,15 +213,15 @@ call(struct value *f, struct value *self, int n, bool exec)
 
         if (f->refs != NULL) for (int i = 0; i < f->refs->count; ++i) {
                 struct reference ref = f->refs->refs[i];
-                LOG("resolving reference to %p", (void *) ref.pointer);
+                //LOG("resolving reference to %p", (void *) ref.pointer);
                 memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
         }
 
         if (exec) {
-                vec_push(callstack, &halt);
+                vec_push(calls, &halt);
                 vm_exec(f->code);
         } else {
-                vec_push(callstack, ip);
+                vec_push(calls, ip);
                 ip = f->code;
         }
 }
@@ -227,7 +236,7 @@ vm_exec(char *code)
         intmax_t k;
         bool b;
         float f;
-        int n, index, tag;
+        int n, i, tag, rc = 0;
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
@@ -238,6 +247,11 @@ vm_exec(char *code)
         struct value (*func)(struct value *, value_vector *);
 
         struct variable *next;
+
+#ifdef TY_LOG_VERBOSE
+        struct location loc;
+        char const *fname;
+#endif
 
         for (;;) {
                 switch (*ip++) {
@@ -264,7 +278,6 @@ vm_exec(char *code)
                         break;
                 CASE(LOAD_VAR)
                         READVALUE(s);
-                        LOG("loading %d", (int) s);
                         push(vars[s]->value);
                         break;
                 CASE(CHECK_VARS)
@@ -273,8 +286,10 @@ vm_exec(char *code)
                                 READVALUE(s);
                                 if (vars[s]->captured) {
                                         struct variable *next = newvar(vars[s]->next);
+                                        // TODO: figure out what is happening here
                                         if (vars[s]->next != NULL)
-                                                vars[s]->next->prev = vars[s]->prev;
+                                                //vars[s]->next->prev = vars[s]->prev;
+                                                vars[s]->next->prev = next;
                                         gc_register(vars[s]);
                                         next->value = vars[s]->value;
                                         vars[s] = next;
@@ -290,14 +305,12 @@ vm_exec(char *code)
                         break;
                 CASE(JUMP)
                         READVALUE(n);
-                        LOG("JUMPING %d", n);
                         ip += n;
                         break;
                 CASE(JUMP_IF)
                         READVALUE(n);
                         v = pop();
                         if (value_truthy(&v)) {
-                                LOG("JUMPING %d", n);
                                 ip += n;
                         }
                         break;
@@ -305,18 +318,15 @@ vm_exec(char *code)
                         READVALUE(n);
                         v = pop();
                         if (!value_truthy(&v)) {
-                                LOG("JUMPING %d", n);
                                 ip += n;
                         }
                         break;
                 CASE(TARGET_VAR)
                         READVALUE(s);
-                        LOG("targetting %d", (int) s);
                         pushtarget(&vars[s]->value);
                         break;
                 CASE(TARGET_REF)
                         READVALUE(s);
-                        LOG("ref = %p", (void *) s);
                         pushtarget(&((struct variable *) s)->value);
                         break;
                 CASE(TARGET_MEMBER)
@@ -358,15 +368,15 @@ vm_exec(char *code)
                         break;
                 CASE(ARRAY_REST)
                         READVALUE(s);
-                        READVALUE(index);
+                        READVALUE(i);
                         READVALUE(n);
                         if (top()->type != VALUE_ARRAY) {
                                 LOG("cannot do rest: top is not an array");
                                 ip += n;
                         } else {
-                                LOG("Assigning rest to: %d", (int) s);
+                                //LOG("Assigning rest to: %d", (int) s);
                                 vars[s]->value = ARRAY(value_array_new());
-                                vec_push_n(*vars[s]->value.array, top()->array->items + index, top()->array->count - index);
+                                vec_push_n(*vars[s]->value.array, top()->array->items + i, top()->array->count - i);
                         }
                         break;
                 CASE(DIE_IF_NIL)
@@ -396,11 +406,11 @@ vm_exec(char *code)
                         stack.count = t->sp;
                         push(v);
 
-                        targetstack.count = t->ts;
-                        callstack.count = t->cs;
+                        targets.count = t->ts;
+                        calls.count = t->cs;
                         ip = t->catch;
 
-                        for (int i = 0; i < symbol_count; ++i) {
+                        for (i = 0; i < symbol_count; ++i) {
                                 while (vars[i] != NULL && vars[i]->try >= try_stack.count) {
                                         if (vars[i]->captured && vars[i]->next != NULL)
                                                 vars[i]->next->prev = vars[i]->prev;
@@ -439,8 +449,8 @@ vm_exec(char *code)
                         t.end = (n == -1) ? NULL : ip + n;
                         t.sp = stack.count;
                         t.gc = gc_root_set_count();
-                        t.cs = callstack.count;
-                        t.ts = targetstack.count;
+                        t.cs = calls.count;
+                        t.ts = targets.count;
                         vec_push(try_stack, t);
                         break;
                 }
@@ -475,22 +485,22 @@ vm_exec(char *code)
                                 ip += n;
                         break;
                 CASE(TRY_INDEX)
-                        READVALUE(index);
+                        READVALUE(i);
                         READVALUE(n);
-                        LOG("trying to index: %s", value_show(top()));
-                        if (top()->type != VALUE_ARRAY || top()->array->count <= index)
+                        //LOG("trying to index: %s", value_show(top()));
+                        if (top()->type != VALUE_ARRAY || top()->array->count <= i)
                                 ip += n;
                         else
-                                push(top()->array->items[index]);
+                                push(top()->array->items[i]);
                         break;
                 CASE(TRY_TAG_POP)
                         READVALUE(tag);
                         READVALUE(n);
                         if (!tags_same(top()->tags, tag)) {
-                                LOG("failed tag pop");
+                                //LOG("failed tag pop");
                                 ip += n;
                         } else {
-                                LOG("tag pop successful");
+                                //LOG("tag pop successful");
                                 top()->tags = tags_pop(top()->tags);
                                 if (top()->tags == 0) {
                                         top()->type &= ~VALUE_TAGGED;
@@ -502,7 +512,7 @@ vm_exec(char *code)
                         break;
                 CASE(LOAD_REF)
                         READVALUE(s);
-                        LOG("reference is: %p", (void *) s);
+                        //LOG("reference is: %p", (void *) s);
                         push(((struct variable *) s)->value);
                         break;
                 CASE(INTEGER)
@@ -544,7 +554,7 @@ vm_exec(char *code)
 
                         READVALUE(n);
                         vec_reserve(*v.array, n);
-                        for (int i = 0; i < n; ++i)
+                        for (i = 0; i < n; ++i)
                                 vec_push(*v.array, pop());
 
                         push(v);
@@ -553,7 +563,7 @@ vm_exec(char *code)
                         v = DICT(dict_new());
 
                         READVALUE(n);
-                        for (int i = 0; i < n; ++i) {
+                        for (i = 0; i < n; ++i) {
                                 value = pop();
                                 key = pop();
                                 dict_put_value(v.dict, key, value);
@@ -571,110 +581,111 @@ vm_exec(char *code)
                         pop();
                         push(v);
                         break;
-                CASE(FOR_EACH)
-                        v = pop();
-                        READVALUE(n);
-
-                        char *first = ip;
-                        char instr = *ip;
-
-                        size_t sc = stack.count;
-
+                CASE(GET_NEXT)
+                        v = top()[-1];
+                        i = top()[-2].i++;
                         switch (v.type) {
-#define COND (*first != INSTR_HALT && stack.count == sc)
                         case VALUE_ARRAY:
-                                gc_push(&v);
-                                for (int i = 0; i < v.array->count && COND; ++i) {
+                                if (i < v.array->count) {
                                         push(v.array->items[i]);
-                                        vm_exec(ip);
+                                } else {
+                                        push(NIL);
                                 }
-                                gc_pop();
                                 break;
                         case VALUE_DICT:
-                                for (int i = 0; i < v.dict->size && COND; ++i) {
-                                        if (v.dict->keys[i].type != 0) {
-                                                push(v.dict->keys[i]);
-                                                vm_exec(ip);
-                                        }
+                                off = top()[-2].off;
+                                while (off < v.dict->size && v.dict->keys[off].type == 0) ++off;
+                                if (off < v.dict->size) {
+                                        top()[-2].off = off + 1;
+                                        push(v.dict->keys[off]);
+                                        push(v.dict->values[off]);
+                                        rc = 1;
+                                        pop();
+                                } else {
+                                        push(NIL);
+                                }
+                                break;
+                        case VALUE_OBJECT:
+                                if ((vp = class_lookup_method(v.class, "__next__")) != NULL) {
+                                        push(INTEGER(i));
+                                        call(vp, &v, 1, false);
+                                } else if ((vp = class_lookup_method(v.class, "__iter__")) != NULL) {
+                                        static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN };
+                                        pop();
+                                        pop();
+                                        --top()->i;
+                                        /* Have to repeat this instruction */
+                                        vec_push(calls, ip - 1);
+                                        call(vp, &v, 0, false);
+                                        vec_last(calls)[0] = iter_fix;
+                                        continue;
+                                } else {
+                                        goto NoIter;
                                 }
                                 break;
                         case VALUE_BLOB:
-                                for (int i = 0; i < v.blob->count && COND; ++i) {
+                                if (i < v.blob->count) {
                                         push(INTEGER(v.blob->items[i]));
-                                        vm_exec(ip);
+                                } else {
+                                        push(NIL);
                                 }
                                 break;
                         case VALUE_STRING:
-                        {
-                                int offset = 0;
-                                while (offset < v.bytes && COND) {
-                                        int bytes = utf8_char_len(v.string + offset);
-                                        push(STRING_VIEW(v, offset, bytes));
-                                        vm_exec(ip);
-                                        offset += bytes;
+                                vp = top() - 2;
+                                if ((off = vp->off) < v.bytes) {
+                                        vp->off += (n = utf8_char_len(v.string + off));
+                                        push(STRING_VIEW(v, off, n));
+                                } else {
+                                        push(NIL); 
                                 }
                                 break;
-                        }
-                        case VALUE_OBJECT:
-                        {
-                                vp = class_lookup_method(v.class, "__iter__");
-                                if (vp == NULL)
-                                        goto non_iter;
-
-                                call(vp, &v, 0, true);
-                                struct value iterator = pop();
-
-                                if (iterator.type != VALUE_OBJECT || (vp = class_lookup_method(iterator.class, "__next__")) == NULL)
-                                        vm_panic("__iter__ returned a non-iterator");
-
-                                gc_push(&v);
-
-                                call(vp, &iterator, 0, true);
-                                struct value item = pop();
-
-                                gc_push(&iterator);
-
-                                while (item.type != VALUE_NIL && COND) {
-                                        push(item);
-                                        vm_exec(ip);
-                                        call(vp, &iterator, 0, true);
-                                        item = pop();
-                                }
-
-                                gc_pop();
-                                gc_pop();
-
-                                break;
-                        }
                         default:
-                        non_iter:
-                                vm_panic("for-each on non-iterable value");
-#undef COND
+                        NoIter:
+                                vm_panic("for-each loop on non-iterable value");
                         }
-
-                        *first = instr;
-
-                        if (stack.count != sc)
-                                goto ret;
-                        else
-                                ip += + n;
-
                         break;
-                CASE(BREAK_EACH)
-                        *save = INSTR_HALT;
-                        goto halt;
+                CASE(PUSH_INDEX)
+                        READVALUE(n);
+                        push(INDEX(0, 0, n));
+                        break;
+                CASE(READ_INDEX)
+                        k = top()[-3].integer - 1;
+                        stack.count += rc;
+                        push(INTEGER(k));
+                        break;
+                CASE(SENTINEL)
+                        push(SENTINEL);
+                        break;
+                CASE(CLEAR_RC)
+                        rc = 0;
+                        break;
+                CASE(GET_EXTRA)
+                        stack.count += rc;
+                        break;
+                CASE(MULTI_ASSIGN)
+                        READVALUE(n);
+                        for (i = 0, vp = top(); pop().type != VALUE_SENTINEL; ++i)
+                                ;
+                        for (int j = targets.count - n; n > 0; --n, --targets.count) {
+                                if (i > 0) {
+                                        *targets.items[j++] = vp[-(--i)];
+                                } else {
+                                        *targets.items[j++] = NIL;
+                                }
+                        }
+                        push(top()[2]);
+                        break;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
-                        LOG("n = %d", n);
                         k = 0;
-                        for (index = stack.count - n; index < stack.count; ++index)
-                                k += stack.items[index].bytes;
+                        for (i = stack.count - n; i < stack.count; ++i)
+                                k += stack.items[i].bytes;
                         str = value_string_alloc(k);
-                        v = STRING(str, k, str);
+                        v = STRING(str, k);
                         k = 0;
-                        for (index = stack.count - n; index < stack.count; ++index) {
-                                memcpy(str + k, stack.items[index].string, stack.items[index].bytes);
-                                k += stack.items[index].bytes;
+                        for (i = stack.count - n; i < stack.count; ++i) {
+                                memcpy(str + k, stack.items[i].string, stack.items[i].bytes);
+                                k += stack.items[i].bytes;
                         }
                         stack.count -= n - 1;
                         stack.items[stack.count - 1] = v;
@@ -686,12 +697,27 @@ vm_exec(char *code)
                                 vm_panic("non-integer used as bound in range");
                         v = ARRAY(value_array_new());
                         push(v);
-                        value_array_reserve(v.array, abs(right.integer - left.integer) + 2);
+                        value_array_reserve(v.array, labs(right.integer - left.integer) + 2);
                         if (left.integer < right.integer)
                                 for (int i = left.integer; i < right.integer; ++i)
                                         v.array->items[v.array->count++] = INTEGER(i);
                         else
                                 for (int i = left.integer; i > right.integer; --i)
+                                        v.array->items[v.array->count++] = INTEGER(i);
+                        break;
+                CASE(INCRANGE)
+                        right = pop();
+                        left = pop();
+                        if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER)
+                                vm_panic("non-integer used as bound in range");
+                        v = ARRAY(value_array_new());
+                        push(v);
+                        value_array_reserve(v.array, labs(right.integer - left.integer) + 2);
+                        if (left.integer < right.integer)
+                                for (int i = left.integer; i <= right.integer; ++i)
+                                        v.array->items[v.array->count++] = INTEGER(i);
+                        else
+                                for (int i = left.integer; i >= right.integer; --i)
                                         v.array->items[v.array->count++] = INTEGER(i);
                         break;
                 CASE(MEMBER_ACCESS)
@@ -884,6 +910,10 @@ vm_exec(char *code)
                         left = pop();
                         push(BOOLEAN(value_compare(&left, &right) >= 0));
                         break;
+                CASE(CMP)
+                        right = pop();
+                        left = pop();
+                        push(INTEGER(value_compare(&left, &right)));
                         break;
                 CASE(GET_TAG)
                         v = pop();
@@ -897,28 +927,38 @@ vm_exec(char *code)
                         push(INTEGER(v.array->count)); // TODO
                         break;
                 CASE(PRE_INC)
-                        if (peektarget()->type != VALUE_INTEGER)
-                                vm_panic("pre-increment applied to non-integer");
-                        ++peektarget()->integer;
+                        switch (peektarget()->type) {
+                        case VALUE_INTEGER: ++peektarget()->integer; break;
+                        case VALUE_REAL:    ++peektarget()->real;    break;
+                        default:            vm_panic("pre-increment applied to invalid type");
+                        }
                         push(*poptarget());
                         break;
                 CASE(POST_INC)
-                        if (peektarget()->type != VALUE_INTEGER)
-                                vm_panic("post-increment applied to non-integer");
                         push(*peektarget());
-                        ++poptarget()->integer;
+                        switch (peektarget()->type) {
+                        case VALUE_INTEGER: ++peektarget()->integer; break;
+                        case VALUE_REAL:    ++peektarget()->real;    break;
+                        default:            vm_panic("post-increment applied to invalid type");
+                        }
+                        poptarget();
                         break;
                 CASE(PRE_DEC)
-                        if (peektarget()->type != VALUE_INTEGER)
-                                vm_panic("pre-decrement applied to non-integer");
-                        --peektarget()->integer;
+                        switch (peektarget()->type) {
+                        case VALUE_INTEGER: --peektarget()->integer; break;
+                        case VALUE_REAL:    --peektarget()->real;    break;
+                        default:            vm_panic("pre-decrement applied to invalid type");
+                        }
                         push(*poptarget());
                         break;
                 CASE(POST_DEC)
-                        if (peektarget()->type != VALUE_INTEGER)
-                                vm_panic("post-decrement applied to non-integer");
                         push(*peektarget());
-                        --poptarget()->integer;
+                        switch (peektarget()->type) {
+                        case VALUE_INTEGER: --peektarget()->integer; break;
+                        case VALUE_REAL:    --peektarget()->real;    break;
+                        default:            vm_panic("post-decrement applied to invalid type");
+                        }
+                        poptarget();
                         break;
                 CASE(MUT_ADD)
                         vp = poptarget();
@@ -1012,14 +1052,14 @@ vm_exec(char *code)
 
                         READVALUE(n);
                         v.refs = (n == 0) ? NULL : ref_vector_new(n);
-                        LOG("function contains %d reference(s)", n);
+                        //LOG("function contains %d reference(s)", n);
                         for (int i = 0; i < n; ++i) {
                                 READVALUE(s);
                                 READVALUE(off);
                                 vars[s]->captured = true;
                                 struct reference ref = { .pointer = (uintptr_t) vars[s], .offset = off };
-                                LOG("it refers to symbol %d", (int) s);
-                                LOG("it refers to pointer %p", (void *) ref.pointer);
+                                //LOG("it refers to symbol %d", (int) s);
+                                //LOG("it refers to pointer %p", (void *) ref.pointer);
                                 v.refs->refs[i] = ref;
                         }
 
@@ -1029,7 +1069,8 @@ vm_exec(char *code)
                 CASE(CALL)
                         v = pop();
                         READVALUE(n);
-
+                Call:
+                        gc_push(&v);
                         switch (v.type) {
                         case VALUE_FUNCTION:
                                 call(&v, NULL, n, false);
@@ -1082,10 +1123,10 @@ vm_exec(char *code)
                         case VALUE_BUILTIN_METHOD:
                                 vec_reserve(args, n);
                                 args.count = n;
-                                index = 0;
+                                i = 0;
 
-                                for (struct value const *a = stack.items + stack.count - n; index < n; ++index, ++a)
-                                        args.items[index] = *a;
+                                for (struct value const *a = stack.items + stack.count - n; i < n; ++i, ++a)
+                                        args.items[i] = *a;
 
                                 value = v.builtin_method(v.this, &args);
 
@@ -1100,7 +1141,7 @@ vm_exec(char *code)
                         default:
                                 vm_panic("attempt to call non-callable value %s", value_show(&v));
                         }
-
+                        gc_pop();
                         break;
                 CASE(CALL_METHOD)
                         
@@ -1113,16 +1154,14 @@ vm_exec(char *code)
                         char const *method = ip;
                         ip += strlen(ip) + 1;
 
-                        LOG("calling method %s", method);
+                        READVALUE(n);
 
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method);
                                 if (vp != NULL) {
-
                                         value.tags = tags_pop(tags);
                                         if (value.tags == 0)
                                                 value.type &= ~VALUE_TAGGED;
-
                                         self = &value;
                                         break;
                                 }
@@ -1149,27 +1188,31 @@ vm_exec(char *code)
                         case VALUE_BLOB:
                                 func = get_blob_method(method);
                                 break;
-                        case VALUE_OBJECT:
-                                self = &value;
-                        case VALUE_CLASS:
+                        case VALUE_CLASS: /* lol */
                                 vp = class_lookup_method(value.class, method);
+                                break;
+                        case VALUE_OBJECT:
+                                vp = class_lookup_method(value.class, method);
+                                if (vp == NULL) {
+                                        vp = table_lookup(value.object, method);
+                                } else {
+                                        self = &value;
+                                }
                                 break;
                         case VALUE_NIL:
                                 pop();
-                                READVALUE(n);
                                 stack.count -= n;
                                 push(NIL);
                                 continue;
                         }
 
                         if (func != NULL) {
-                                READVALUE(n);
                                 vec_reserve(args, n);
                                 args.count = n;
-                                index = 0;
+                                i = 0;
 
-                                for (struct value const *a = stack.items + stack.count - n - 1; index < n; ++index, ++a)
-                                        args.items[index] = *a;
+                                for (struct value const *a = stack.items + stack.count - n - 1; i < n; ++i, ++a)
+                                        args.items[i] = *a;
 
                                 value.type &= ~VALUE_TAGGED;
                                 value.tags = 0;
@@ -1179,29 +1222,35 @@ vm_exec(char *code)
                                 stack.count -= n;
                                 stack.items[stack.count - 1] = v;
                         } else if (vp != NULL) {
+                                if (value.type == VALUE_CLASS || value.type == VALUE_OBJECT || self != NULL) {
+                                        v = METHOD(method, vp, self);
+                                } else {
+                                        v = *vp;
+                                }
                                 --stack.count;
-                                READVALUE(n);
-                                call(vp, self, n, false);
+                                goto Call;
                         } else {
                                 vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
                         }
-
                         break;
                 CASE(SAVE_STACK_POS)
                         vec_push(sp_stack, stack.count);
                         break;
                 CASE(RESTORE_STACK_POS)
                         stack.count = *vec_pop(sp_stack);
-                        LOG("restored stack pos. top = %s", value_show(top()));
+                        //LOG("restored stack pos. top = %s", value_show(top()));
                         break;
+                CASE(MULTI_RETURN)
+                        READVALUE(rc);
+                        stack.count -= rc;
                 CASE(RETURN)
-                ret:
-                        ip = *vec_pop(callstack);
+                        ip = *vec_pop(calls);
+                        LOG("returning: ip = %p", ip);
                         break;
                 CASE(HALT)
-                halt:
                         free(args.items);
                         ip = save;
+                        LOG("halting: ip = %p", ip);
                         return;
                 }
         }
@@ -1217,8 +1266,8 @@ bool
 vm_init(int ac, char **av)
 {
         vec_init(stack);
-        vec_init(callstack);
-        vec_init(targetstack);
+        vec_init(calls);
+        vec_init(targets);
         vars = NULL;
         symbol_count = 0;
 
@@ -1240,7 +1289,7 @@ vm_init(int ac, char **av)
         resize(vars, new_symbol_count * sizeof *vars);
         resize(used, new_symbol_count * sizeof *used);
         while (symbol_count < new_symbol_count) {
-                LOG("SETTING %d TO NULL", symbol_count);
+                //LOG("SETTING %d TO NULL", symbol_count);
                 used[symbol_count] = false;
                 vars[symbol_count++] = NULL;
         }
@@ -1314,7 +1363,7 @@ vm_execute(char const *source)
         resize(vars, new_symbol_count * sizeof *vars);
         resize(used, new_symbol_count * sizeof *used);
         while (symbol_count < new_symbol_count) {
-                LOG("SETTING %d TO NULL", symbol_count);
+                //LOG("SETTING %d TO NULL", symbol_count);
                 used[symbol_count] = false;
                 vars[symbol_count++] = NULL;
         }
@@ -1324,7 +1373,7 @@ vm_execute(char const *source)
                 stack.count = 0;
                 sp_stack.count = 0;
                 try_stack.count = 0;
-                targetstack.count = 0;
+                targets.count = 0;
                 err_msg = err_buf;
                 return false;
         }
@@ -1335,7 +1384,7 @@ vm_execute(char const *source)
 }
 
 struct value
-vm_eval_function(struct value *f, struct value *v)
+vm_eval_function(struct value const *f, struct value const *v)
 {
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -1351,12 +1400,12 @@ vm_eval_function(struct value *f, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
                 return f->builtin_function(&(value_vector){
                         .count = v != NULL,
-                        .items = v
+                        .items = (struct value *)v
                 });
         case VALUE_BUILTIN_METHOD:
                 return f->builtin_method(f->this, &(value_vector){
                         .count = v != NULL,
-                        .items = v
+                        .items = (struct value *)v
                 });
         default:
                 abort();
@@ -1364,7 +1413,7 @@ vm_eval_function(struct value *f, struct value *v)
 }
 
 struct value
-vm_eval_function2(struct value *f, struct value *v1, struct value *v2)
+vm_eval_function2(struct value const *f, struct value const *v1, struct value const *v2)
 {
         value_vector args;
 
@@ -1392,9 +1441,11 @@ vm_eval_function2(struct value *f, struct value *v1, struct value *v2)
 void
 vm_mark(void)
 {
-        for (int i = 0; i < symbol_count; ++i)
-                for (struct variable *v = vars[i]; v != NULL; v = v->next)
+        for (int i = 0; i < symbol_count; ++i) if (used[i]) {
+                for (struct variable *v = vars[i]; v != NULL; v = v->next) {
                         value_mark(&v->value);
+                }
+        }
 
         for (int i = 0; i < stack.count; ++i)
                 value_mark(&stack.items[i]);

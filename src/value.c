@@ -266,6 +266,8 @@ value_show(struct value const *v)
         case VALUE_BLOB:
                 snprintf(buffer, 1024, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
+        case VALUE_SENTINEL:
+                return "<sentinel>";
         default:
                 return sclone("< !!! >");
         }
@@ -282,11 +284,8 @@ value_compare(void const *_v1, void const *_v2)
         struct value const *v1 = _v1;
         struct value const *v2 = _v2;
 
-        if (v1->type != v2->type) {
-                printf("value 1: %s\n", value_show(v1));
-                printf("value 2: %s\n", value_show(v2));
+        if (v1->type != v2->type)
                 vm_panic("attempt to compare values of different types");
-        }
 
         switch (v1->type) {
         case VALUE_INTEGER: return (v1->integer - v2->integer); // TODO
@@ -299,7 +298,17 @@ value_compare(void const *_v1, void const *_v2)
                                 return o;
                 }
                 return ((int)v1->array->count) - ((int)v2->array->count);
-        default:            vm_panic("attempt to compare values of invalid types: %s and %s", value_show(v1), value_show(v2));
+        case VALUE_OBJECT:;
+                struct value const *cmpfn = class_lookup_method(v1->class, "<=>");
+                if (cmpfn == NULL)
+                        goto Fail;
+                struct value v = vm_eval_function2(cmpfn, v1, v2);
+                if (v.type != VALUE_INTEGER)
+                        vm_panic("user-defined %s.<=> method returned non-integer", class_name(v1->class));
+                return v.integer;
+        default:
+        Fail:
+                vm_panic("attempt to compare values of invalid types: %s and %s", value_show(v1), value_show(v2));
         }
 }
 
@@ -506,7 +515,7 @@ value_string_alloc(int n)
 }
 
 void
-value_mark(struct value *v)
+_value_mark(struct value *v)
 {
         switch (v->type) {
         case VALUE_METHOD:          MARK(v->this); value_mark(v->this);                break;

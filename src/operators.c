@@ -3,6 +3,7 @@
 #include "alloc.h"
 #include "value.h"
 #include "operators.h"
+#include "class.h"
 #include "dict.h"
 #include "vm.h"
 
@@ -15,13 +16,20 @@ str_concat(struct value const *s1, struct value const *s2)
         memcpy(s, s1->string, s1->bytes);
         memcpy(s + s1->bytes, s2->string, s2->bytes);
 
-        return STRING(s, n, s);
+        return STRING(s, n);
 }
 
 struct value
 binary_operator_addition(struct value const *left, struct value const *right)
 {
         
+        if (left->type == VALUE_OBJECT) {
+                struct value const *f = class_lookup_method(left->class, "+");
+                if (f == NULL)
+                        goto Fail;
+                return vm_eval_function2(f, left, right);
+        }
+
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
                 return REAL(left->real + right->integer);
 
@@ -42,6 +50,7 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 value_array_extend(v.array, right->array);
                 return v;
         default:
+        Fail:
                 vm_panic("+ applied to operands of invalid type");
                 break;
         }
@@ -50,6 +59,13 @@ binary_operator_addition(struct value const *left, struct value const *right)
 struct value
 binary_operator_multiplication(struct value const *left, struct value const *right)
 {
+
+        if (left->type == VALUE_OBJECT) {
+                struct value const *f = class_lookup_method(left->class, "*");
+                if (f == NULL)
+                        goto Fail;
+                return vm_eval_function2(f, left, right);
+        }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
                 return REAL(left->real * right->integer);
@@ -63,13 +79,21 @@ binary_operator_multiplication(struct value const *left, struct value const *rig
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer * right->integer);
         case VALUE_REAL:    return REAL(left->real * right->real);
-        default:            vm_panic("* applied to operands of invalid type");
+        default:
+        Fail:
+                vm_panic("* applied to operands of invalid type");
         }
 }
 
 struct value
 binary_operator_division(struct value const *left, struct value const *right)
 {
+        if (left->type == VALUE_OBJECT) {
+                struct value const *f = class_lookup_method(left->class, "/");
+                if (f == NULL)
+                        goto Fail;
+                return vm_eval_function2(f, left, right);
+        }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
                 return REAL(left->real / right->integer);
@@ -83,13 +107,21 @@ binary_operator_division(struct value const *left, struct value const *right)
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer / right->integer);
         case VALUE_REAL:    return REAL(left->real / right->real);
-        default:            vm_panic("/ applied to operands of invalid type");
+        default:
+        Fail:
+                vm_panic("/ applied to operands of invalid type");
         }
 }
 
 struct value
 binary_operator_subtraction(struct value const *left, struct value const *right)
 {
+        if (left->type == VALUE_OBJECT) {
+                struct value const *f = class_lookup_method(left->class, "-");
+                if (f == NULL)
+                        goto Fail;
+                return vm_eval_function2(f, left, right);
+        }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
                 return REAL(left->real - right->integer);
@@ -103,7 +135,9 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer - right->integer);
         case VALUE_REAL:    return REAL(left->real - right->real);
-        default:            vm_panic("- applied to operands of invalid type");
+        default:
+        Fail:
+                vm_panic("- applied to operands of invalid type");
         }
 
 }
@@ -111,13 +145,21 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
 struct value
 binary_operator_remainder(struct value const *left, struct value const *right)
 {
+        if (left->type == VALUE_OBJECT) {
+                struct value const *f = class_lookup_method(left->class, "%");
+                if (f == NULL)
+                        goto Fail;
+                return vm_eval_function2(f, left, right);
+        }
 
         if (left->type != right->type)
-                vm_panic("the operands to % must have the same type");
+                vm_panic("the operands to %% must have the same type");
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer % right->integer);
-        default:            vm_panic("the operands to % must be integers");
+        default:
+        Fail:
+                vm_panic("the operands to % must be integers");
         }
 
 }

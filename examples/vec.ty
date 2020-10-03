@@ -1,0 +1,30 @@
+class Vec3 {
+        init(v, x, y, z) {
+                [v.x, v.y, v.z] = [x, y, z];
+        }
+
+        +(u, v) {
+                return Vec3(u.x + v.x, u.y + v.y, u.z + v.z);
+        }
+
+        *(u, c) {
+                return Vec3(c * u.x, c * u.y, c * u.z);
+        }
+
+        <=>(u, v) {
+                return [u.x, u.y, u.z] <=> [v.x, v.y, v.z];
+        }
+
+        str(u) {
+                return "({u.x} {u.y} {u.z})";
+        }
+}
+
+for x in ..3 {
+        for y in ..3 {
+                for z in ..3 {
+                        let v = Vec3(x, y, z) * 7;
+                        print(v.str());
+                }
+        }
+}

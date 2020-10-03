@@ -1,0 +1,48 @@
+tag RangeIterator {
+     __next__(self) {
+          if (self.i > self.end)
+               return nil;
+          self.i += self.step;
+          return self.i - self.step;
+     }
+}
+
+tag Range {
+     __iter__(self) {
+          return RangeIterator({
+               'i':    self[0],
+               'end':  self[1],
+               'step': self[2] || 1
+          });
+     }
+}
+
+
+
+tag Some {
+     map(self, f) {
+          return Some(f(self));
+     }
+}
+
+tag None {
+     map(f) { return None; }
+}
+
+toInt('24') = Some(24)
+toInt('asd') = None
+
+Some(10).map(a -> a + 10) == Some(20)
+None
+
+let a = toInt('asdsad').flatMap(k -> Some(k + 10));
+
+Some(10).flatMap(a -> None)
+
+
+for k in Range([0, 100, 4]) {
+     print(k);
+}
+
+for k in [1 .. 100000] {
+}

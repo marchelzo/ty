@@ -11,7 +11,7 @@
                         fprintf(stderr, "(%d) ", getpid()), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
-                        flock(2, LOCK_UN) \
+                        flock(2, LOCK_UN); \
                 } while (0)
 #else
 #define LOG(...) ;

@@ -1,0 +1,39 @@
+import fs (File)
+
+class Person {
+     init(self, name) {
+          self.name = name;
+          self.friends = [];
+     }
+
+     greet(self) {
+          print("Hello, my name is {self.name}!");
+     }
+
+     addFriend(self, f) {
+          print("{self.name} is now friends with {f.name}!");
+          self.friends.push(f);
+     }
+}
+
+let Ok(f) = File.open('/usr/share/dict/words', 'r');
+let people = [];
+
+for line in f {
+     if (line.match?(/^[A-Z][a-z]/)) {
+          people.push(Person(line));
+     }
+}
+
+for person in people {
+     person.greet();
+}
+
+for [a, b, c] in people.shuffle!().groupsOf!(3) {
+     a.addFriend(b);
+     a.addFriend(c);
+     b.addFriend(a);
+     b.addFriend(c);
+     c.addFriend(a);
+     c.addFriend(b);
+}

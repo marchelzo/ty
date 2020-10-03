@@ -657,10 +657,11 @@ array_join(struct value *array, value_vector *args)
         if (sep.type != VALUE_STRING)
                 vm_panic("the argument to array.join() must be a string");
 
-        struct value sum, v;
-        sum = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[0] });
+        struct value sum = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[0] });
+        struct value v = NIL;
 
         gc_push(&sum);
+        gc_push(&v);
 
         for (int i = 1; i < array->array->count; ++i) {
                 v = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[i] });
@@ -668,6 +669,7 @@ array_join(struct value *array, value_vector *args)
                 sum = binary_operator_addition(&sum, &v);
         }
 
+        gc_pop();
         gc_pop();
 
         return sum;
@@ -688,7 +690,7 @@ array_consume_while(struct value *array, value_vector *args)
         if (!CALLABLE(p))
                 vm_panic("invalid predicate passed to array.consumeWhile()");
 
-        struct value v;
+        struct value v = NIL;
         gc_push(&v);
 
         for (;;) {
@@ -989,8 +991,8 @@ array_shuffle(struct value *array, value_vector *args)
 
         struct value t;
         int n = array->array->count;
-        for (int i = n - 1; i > 1; --i) {
-                int j = rand() % i;
+        for (int i = n - 1; i > 0; --i) {
+                int j = rand() % (i + 1);
                 t = array->array->items[i];
                 array->array->items[i] = array->array->items[j];
                 array->array->items[j] = t;
@@ -1123,7 +1125,7 @@ array_fold_left(struct value *array, value_vector *args)
                 start = 1;
                 f = args->items[0];
                 if (array->array->count == 0)
-                        vm_panic("foldLeft called on array with 1 argument");
+                        vm_panic("foldLeft called on empty array with 1 argument");
                 v = array->array->items[0];
         } else {
                 start = 0;
@@ -1145,6 +1147,7 @@ array_fold_left(struct value *array, value_vector *args)
         return v;
 }
 
+/* TODO: fix this */
 static struct value
 array_fold_right(struct value *array, value_vector *args)
 {
@@ -1158,7 +1161,7 @@ array_fold_right(struct value *array, value_vector *args)
                 start = array->array->count - 2;
                 f = args->items[0];
                 if (array->array->count == 0)
-                        vm_panic("foldRight called on array with 1 argument");
+                        vm_panic("foldRight called on empty array with 1 argument");
                 v = array->array->items[start + 1];
         } else {
                 start = array->array->count - 1;
@@ -1171,8 +1174,7 @@ array_fold_right(struct value *array, value_vector *args)
 
         gc_push(&v);
 
-        int n = array->array->count;
-        for (int i = start; i < n; ++i)
+        for (int i = start; i >= 0; --i)
                 v = vm_eval_function2(&f, &array->array->items[i], &v);
 
         gc_pop();

@@ -1,0 +1,33 @@
+import fs
+import os
+
+let fs::Ok(f) = fs::File.open(os::args[1], 'r');
+
+function fmt(k) {
+     let s = str(k);
+     return match s.len() {
+          1 => '  ' + s,
+          2 => ' ' + s,
+          3 => s
+     };
+}
+
+let done = false;
+
+let line = blob();
+while (!done) {
+
+     line.clear();
+
+     for (let i = 0; i < 24; ++i) {
+          if let $b = f.nextByte() {
+               line.push(fmt(b));
+               line.push(' ');
+          } else {
+               done = true;
+               break;
+          }
+     }
+
+     print(line.str(0, line.size() - 1));
+}

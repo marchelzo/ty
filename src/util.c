@@ -54,9 +54,9 @@ slurp(char const *path)
                 return NULL;
         }
 
-        char *contents = NULL;
-        int capacity = 0;
         int used = 0;
+        int capacity = 512;
+        char *contents = alloc(capacity);
 
         int n;
         static char buffer[4096];
@@ -72,6 +72,9 @@ slurp(char const *path)
         }
 
         fclose(f);
+
+        if (used == 0)
+                return "";
 
         contents[used] = '\0';
         return contents;

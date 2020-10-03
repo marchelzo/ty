@@ -1,0 +1,10 @@
+for (let i = 0; i < 50; ++i) {
+     let o = {};
+     let s = ('' + '' + '' + '').upper().slice(10);
+     let a = (1 .. 1000).map(|(1 .. 100).map(() -> 'hello haha world'.split(' '))|).groupBy(.len()).sort();
+     let fs = [];
+     for (let i = 0; i < 100; ++i)
+          fs.push(a -> fs.push(a) + (o[a] += 19));
+     let b = blob();
+     b.push("{a}");
+}

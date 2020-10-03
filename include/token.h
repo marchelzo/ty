@@ -44,6 +44,7 @@ struct token {
                 TOKEN_AND,
                 TOKEN_OR,
                 TOKEN_BIT_OR,
+                TOKEN_CMP,
                 TOKEN_LEQ,
                 TOKEN_GEQ,
                 TOKEN_LT,
@@ -53,6 +54,8 @@ struct token {
                 TOKEN_DEC,
                 TOKEN_NEWLINE,
                 TOKEN_DOT_DOT,
+                TOKEN_DOT_DOT_DOT,
+                TOKEN_USER_OP,
                 TOKEN_ERROR,
         } type;
         struct location loc;
@@ -80,6 +83,7 @@ struct token {
                         KEYWORD_CATCH,
                         KEYWORD_FINALLY,
                         KEYWORD_THROW,
+                        KEYWORD_OPERATOR,
                 } keyword;
                 struct {
                         pcre *regex;

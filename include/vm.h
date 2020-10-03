@@ -38,13 +38,15 @@ enum instruction {
         INSTR_CONCAT_STRINGS,
 
         INSTR_RANGE,
+        INSTR_INCRANGE,
 
         INSTR_MEMBER_ACCESS,
         INSTR_SUBSCRIPT,
         INSTR_CALL,
         INSTR_CALL_METHOD,
-        INSTR_FOR_EACH,
-        INSTR_BREAK_EACH,
+        INSTR_GET_NEXT,
+        INSTR_PUSH_INDEX,
+        INSTR_READ_INDEX,
         INSTR_POP,
         INSTR_DUP,
         INSTR_LEN,
@@ -63,6 +65,13 @@ enum instruction {
         INSTR_RETURN,
         INSTR_EXEC_CODE,
         INSTR_HALT,
+
+        INSTR_MULTI_RETURN,
+        INSTR_SENTINEL,
+        INSTR_CLEAR_RC,
+        INSTR_GET_EXTRA,
+        INSTR_MULTI_ASSIGN,
+
 
         INSTR_SAVE_STACK_POS,
         INSTR_RESTORE_STACK_POS,
@@ -96,6 +105,7 @@ enum instruction {
         INSTR_GT, 
         INSTR_LEQ,
         INSTR_GEQ,
+        INSTR_CMP,
 
         INSTR_MUT_ADD,
         INSTR_MUT_MUL,
@@ -127,9 +137,9 @@ bool
 vm_execute_file(char const *path);
 
 struct value
-vm_eval_function(struct value *f, struct value * restrict v);
+vm_eval_function(struct value const *f, struct value const *v);
 
 struct value
-vm_eval_function2(struct value *f, struct value *v1, struct value *v2);
+vm_eval_function2(struct value const *f, struct value const *v1, struct value const *v2);
 
 #endif

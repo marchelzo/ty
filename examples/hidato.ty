@@ -1,0 +1,15 @@
+function readPuzzle() {
+     let puzzle = [];
+
+     while let line = read() {
+          puzzle.push(line.chars().filter!(c -> c != ' '));
+     }
+
+     return puzzle;
+}
+
+function printPuzzle(p) {
+     p.each(line -> print(line.intersperse(' ').sum()));
+}
+
+printPuzzle(readPuzzle());

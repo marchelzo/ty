@@ -82,6 +82,7 @@ enum {
 enum {
         LV_LET,
         LV_EACH,
+        LV_SUB,
         LV_ANY
 };
 
@@ -95,6 +96,7 @@ enum lex_context lex_ctx = LEX_PREFIX;
 static int depth;
 static int dot_lambda_depth;
 static bool new_dot_lambda;
+static bool NoEquals = false;
 
 static char const *filename;
 
@@ -165,7 +167,8 @@ mkret(struct expression *value)
 {
         struct statement *s = mkstmt();
         s->type = STATEMENT_RETURN;
-        s->return_value = value;
+        vec_init(s->returns);
+        vec_push(s->returns, value);
         return s;
 }
 
@@ -175,6 +178,7 @@ mkdef(struct expression *lvalue, char *name)
         struct expression *value = mkexpr();
         value->type = EXPRESSION_IDENTIFIER;
         value->identifier = name;
+        value->module = NULL;
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_DEFINITION;
@@ -205,6 +209,18 @@ error(char const *fmt, ...)
         LOG("Parse Error: %s", errbuf);
 
         longjmp(jb, 1);
+}
+
+inline static void
+skip(int n)
+{
+        tokidx += n;
+}
+
+inline static void
+next(void)
+{
+        skip(1);
 }
 
 inline static struct token *
@@ -397,7 +413,7 @@ prefix_function(void)
 
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
-                consume(TOKEN_IDENTIFIER);
+                next();
         } else {
                 e->name = NULL;
         }
@@ -405,7 +421,7 @@ prefix_function(void)
         consume('(');
 
         if (tok()->type == ')') {
-                consume(')');
+                next();
                 goto body;
         } else {
                 expect(TOKEN_IDENTIFIER);
@@ -414,10 +430,10 @@ prefix_function(void)
         }
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->params, sclone(tok()->identifier));
-                consume(TOKEN_IDENTIFIER);
+                next();
         }
 
         consume(')');
@@ -465,7 +481,7 @@ prefix_match(void)
 
         vec_push(e->patterns, parse_expr(0));
         if (tok()->type == TOKEN_BIT_OR) {
-                consume(TOKEN_BIT_OR);
+                next();
                 vec_push(e->conds, parse_expr(0));
         } else {
                 vec_push(e->conds, NULL);
@@ -475,10 +491,10 @@ prefix_match(void)
         vec_push(e->thens, parse_expr(0));
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 vec_push(e->patterns, parse_expr(0));
                 if (tok()->type == TOKEN_BIT_OR) {
-                        consume(TOKEN_BIT_OR);
+                        next();
                         vec_push(e->conds, parse_expr(0));
                 } else {
                         vec_push(e->conds, NULL);
@@ -498,8 +514,7 @@ prefix_parenthesis(void)
 {
         /*
          * This can either be a plain old parenthesized expression, e.g., (4 + 4)
-         * or it can be an identifier list for an arrow function, e.g., (a, b, c),
-         * or it can be a range, e.g., (4 .. 10]
+         * or it can be an identifier list for an arrow function, e.g., (a, b, c).
          */
 
         consume('(');
@@ -508,7 +523,7 @@ prefix_parenthesis(void)
          * () is an empty identifier list.
          */
         if (tok()->type == ')') {
-                consume(')');
+                next();
                 struct expression *list = mkexpr();
                 list->type = EXPRESSION_LIST;
                 list->only_identifiers = true;
@@ -534,7 +549,7 @@ prefix_parenthesis(void)
                 vec_push(list->es, e);
 
                 while (tok()->type == ',') {
-                        consume(',');
+                        next();
                         struct expression *e = parse_expr(0);
                         if (e->type != EXPRESSION_IDENTIFIER) {
                                 list->only_identifiers = false;
@@ -611,14 +626,14 @@ prefix_array(void)
         vec_init(e->elements);
 
         if (tok()->type == ']') {
-                consume(']');
+                next();
                 return e;
         } else {
                 vec_push(e->elements, parse_expr(0));
         }
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 vec_push(e->elements, parse_expr(0));
         }
 
@@ -643,7 +658,7 @@ prefix_tick(void)
         e->identifier = tok()->identifier;
         e->module = NULL;
 
-        consume(TOKEN_IDENTIFIER);
+        next();
 
         return e;
 }
@@ -666,6 +681,24 @@ prefix_dot(void)
                 tok()->module = NULL;
                 return prefix_identifier();
         }
+}
+
+static struct expression *
+prefix_incrange(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_DOT_DOT_DOT;
+
+        struct expression *zero = mkexpr();
+        zero->type = EXPRESSION_INTEGER;
+        zero->integer = 0;
+
+        consume(TOKEN_DOT_DOT_DOT);
+
+        e->left = zero;
+        e->right = parse_expr(0);
+
+        return e;
 }
 
 static struct expression *
@@ -692,6 +725,7 @@ prefix_hash(void)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_IDENTIFIER;
         e->identifier = "#";
+        e->module = NULL;
 
         consume('#');
 
@@ -709,10 +743,8 @@ prefix_implicit_lambda(void)
         vec_init(f->params);
         vec_push(f->params, "#");
 
-        struct statement *ret = mkstmt();
-        ret->type = STATEMENT_RETURN;
-        ret->return_value = parse_expr(0);
-        f->body = ret;
+        struct expression *e = parse_expr(0);
+        f->body = mkret(e);
 
         consume(TOKEN_BIT_OR);
 
@@ -731,12 +763,12 @@ prefix_object(void)
         vec_init(e->values);
 
         if (tok()->type == '}') {
-                consume('}');
+                next();
                 return e;
         } else {
                 vec_push(e->keys, parse_expr(0));
                 if (tok()->type == ':') {
-                        consume(':');
+                        next();
                         vec_push(e->values, parse_expr(0));
                 } else {
                         vec_push(e->values, NULL);
@@ -744,10 +776,10 @@ prefix_object(void)
         }
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 vec_push(e->keys, parse_expr(0));
                 if (tok()->type == ':') {
-                        consume(':');
+                        next();
                         vec_push(e->values, parse_expr(0));
                 } else {
                         vec_push(e->values, NULL);
@@ -781,18 +813,74 @@ infix_function_call(struct expression *left)
         lex_ctx = LEX_PREFIX;
 
         if (tok()->type == ')') {
-                consume(')');
+                next();
                 return e;
         } else {
                 vec_push(e->args, parse_expr(0));
         }
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 vec_push(e->args, parse_expr(0));
         }
 
         consume(')');
+
+        return e;
+}
+
+static struct expression *
+infix_eq(struct expression *left)
+{
+        consume(TOKEN_EQ);
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_EQ;
+        e->target = assignment_lvalue(left);
+        if (left->type == EXPRESSION_LIST) {
+                e->value = parse_expr(-1);
+        } else {
+                e->value = parse_expr(1);
+        }
+
+        return e;
+}
+
+static struct expression *
+infix_user_op(struct expression *left)
+{
+        struct expression *e = mkexpr();
+
+        e->type = EXPRESSION_FUNCTION_CALL;
+        e->function = mkexpr();
+        e->function->type = EXPRESSION_IDENTIFIER;
+        e->function->identifier = tok()->identifier;
+        e->function->module = NULL;
+        consume(TOKEN_USER_OP);
+
+        vec_init(e->args);
+        vec_push(e->args, left);
+        vec_push(e->args, parse_expr(2));
+
+        return e;
+}
+
+static struct expression *
+infix_list(struct expression *left)
+{
+
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_LIST;
+        vec_init(e->es);
+        vec_push(e->es, left);
+
+        NoEquals = true;
+
+        while (tok()->type == ',') {
+                next();
+                vec_push(e->es, parse_expr(1));
+        }
+
+        NoEquals = false;
 
         return e;
 }
@@ -845,7 +933,7 @@ infix_member_access(struct expression *left)
                 vec_push(e->method_args, parse_expr(0));
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 vec_push(e->method_args, parse_expr(0));
         }
 
@@ -978,32 +1066,33 @@ postfix_dec(struct expression *left)
         return e;
 }
 
-BINARY_OPERATOR(star,    STAR,    8, false)
-BINARY_OPERATOR(div,     DIV,     8, false)
-BINARY_OPERATOR(percent, PERCENT, 8, false)
+BINARY_OPERATOR(star,     STAR,        9, false)
+BINARY_OPERATOR(div,      DIV,         9, false)
+BINARY_OPERATOR(percent,  PERCENT,     9, false)
 
-BINARY_OPERATOR(plus,    PLUS,    7, false)
-BINARY_OPERATOR(minus,   MINUS,   7, false)
+BINARY_OPERATOR(plus,     PLUS,        8, false)
+BINARY_OPERATOR(minus,    MINUS,       8, false)
 
-BINARY_OPERATOR(range,   DOT_DOT, 6, false)
+BINARY_OPERATOR(range,    DOT_DOT,     7, false)
+BINARY_OPERATOR(incrange, DOT_DOT_DOT, 7, false)
 
-BINARY_OPERATOR(lt,      LT,      6, false)
-BINARY_OPERATOR(gt,      GT,      6, false)
-BINARY_OPERATOR(geq,     GEQ,     6, false)
-BINARY_OPERATOR(leq,     LEQ,     6, false)
+BINARY_OPERATOR(lt,       LT,          7, false)
+BINARY_OPERATOR(gt,       GT,          7, false)
+BINARY_OPERATOR(geq,      GEQ,         7, false)
+BINARY_OPERATOR(leq,      LEQ,         7, false)
+BINARY_OPERATOR(cmp,      CMP,         7, false)
 
-BINARY_OPERATOR(not_eq,  NOT_EQ,  5, false)
-BINARY_OPERATOR(dbl_eq,  DBL_EQ,  5, false)
+BINARY_OPERATOR(not_eq,   NOT_EQ,      6, false)
+BINARY_OPERATOR(dbl_eq,   DBL_EQ,      6, false)
 
-BINARY_OPERATOR(and,     AND,     4, false)
+BINARY_OPERATOR(and,      AND,         5, false)
 
-BINARY_OPERATOR(or,      OR,      3, false)
+BINARY_OPERATOR(or,       OR,          4, false)
 
-BINARY_LVALUE_OPERATOR(eq,       EQ,       1, true)
-BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  1, true)
-BINARY_LVALUE_OPERATOR(star_eq,  STAR_EQ,  1, true)
-BINARY_LVALUE_OPERATOR(div_eq,   DIV_EQ,   1, true)
-BINARY_LVALUE_OPERATOR(minus_eq, MINUS_EQ, 1, true)
+BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  2, true)
+BINARY_LVALUE_OPERATOR(star_eq,  STAR_EQ,  2, true)
+BINARY_LVALUE_OPERATOR(div_eq,   DIV_EQ,   2, true)
+BINARY_LVALUE_OPERATOR(minus_eq, MINUS_EQ, 2, true)
 /* * * * | end of infix parsers | * * * */
 
 static parse_fn *
@@ -1033,6 +1122,7 @@ get_prefix_parser(void)
         case '`':                  return prefix_tick;
         
         case TOKEN_DOT_DOT:        return prefix_range;
+        case TOKEN_DOT_DOT_DOT:    return prefix_incrange;
 
         case TOKEN_BANG:           return prefix_bang;
         case TOKEN_AT:             return prefix_at;
@@ -1067,11 +1157,13 @@ get_infix_parser(void)
         case '(':                  return infix_function_call;
         case '.':                  return infix_member_access;
         case '[':                  return infix_subscript;
+        case ',':                  return infix_list;
         case TOKEN_INC:            return postfix_inc;
         case TOKEN_DEC:            return postfix_dec;
         case TOKEN_ARROW:          return infix_arrow_function;
         case TOKEN_SQUIGGLY_ARROW: return infix_squiggly_arrow;
         case TOKEN_DOT_DOT:        return infix_range;
+        case TOKEN_DOT_DOT_DOT:    return infix_incrange;
         case TOKEN_PLUS_EQ:        return infix_plus_eq;
         case TOKEN_STAR_EQ:        return infix_star_eq;
         case TOKEN_DIV_EQ:         return infix_div_eq;
@@ -1086,10 +1178,12 @@ get_infix_parser(void)
         case TOKEN_GT:             return infix_gt;
         case TOKEN_GEQ:            return infix_geq;
         case TOKEN_LEQ:            return infix_leq;
+        case TOKEN_CMP:            return infix_cmp;
         case TOKEN_NOT_EQ:         return infix_not_eq;
         case TOKEN_DBL_EQ:         return infix_dbl_eq;
         case TOKEN_OR:             return infix_or;
         case TOKEN_AND:            return infix_and;
+        case TOKEN_USER_OP:        return infix_user_op;
         default:                   return NULL;
         }
 
@@ -1106,56 +1200,64 @@ get_infix_prec(void)
 {
         lex_ctx = LEX_INFIX;
 
+        if (tok()->type == TOKEN_USER_OP) {
+                return 3;
+        }
+
         switch (tok()->type) {
-        case '.':                  return 11;
+        case '.':                  return 12;
 
-        case '[':                  return 10;
-        case '(':                  return 10;
+        case '[':                  return 11;
+        case '(':                  return 11;
 
-        case TOKEN_INC:            return 9;
-        case TOKEN_DEC:            return 9;
+        case TOKEN_INC:            return 10;
+        case TOKEN_DEC:            return 10;
 
-        case TOKEN_PERCENT:        return 8;
-        case TOKEN_DIV:            return 8;
-        case TOKEN_STAR:           return 8;
+        case TOKEN_PERCENT:        return 9;
+        case TOKEN_DIV:            return 9;
+        case TOKEN_STAR:           return 9;
 
-        case TOKEN_MINUS:          return 7;
-        case TOKEN_PLUS:           return 7;
+        case TOKEN_MINUS:          return 8;
+        case TOKEN_PLUS:           return 8;
 
-        case TOKEN_DOT_DOT:        return 6;
+        case TOKEN_DOT_DOT:        return 7;
+        case TOKEN_DOT_DOT_DOT:    return 7;
 
-        case TOKEN_GEQ:            return 6;
-        case TOKEN_LEQ:            return 6;
-        case TOKEN_GT:             return 6;
-        case TOKEN_LT:             return 6;
+        case TOKEN_CMP:            return 7;
+        case TOKEN_GEQ:            return 7;
+        case TOKEN_LEQ:            return 7;
+        case TOKEN_GT:             return 7;
+        case TOKEN_LT:             return 7;
 
-        case TOKEN_NOT_EQ:         return 5;
-        case TOKEN_DBL_EQ:         return 5;
+        case TOKEN_NOT_EQ:         return 6;
+        case TOKEN_DBL_EQ:         return 6;
 
-        case TOKEN_AND:            return 4;
+        case TOKEN_AND:            return 5;
 
-        case TOKEN_OR:             return 3;
+        case TOKEN_OR:             return 4;
 
-        case TOKEN_EQ:             return 1;
-        case TOKEN_PLUS_EQ:        return 1;
-        case TOKEN_STAR_EQ:        return 1;
-        case TOKEN_DIV_EQ:         return 1;
-        case TOKEN_MINUS_EQ:       return 1;
-        case TOKEN_ARROW:          return 1;
+        case TOKEN_EQ:             return NoEquals ? -3 : 2;
+        case TOKEN_PLUS_EQ:        return 2;
+        case TOKEN_STAR_EQ:        return 2;
+        case TOKEN_DIV_EQ:         return 2;
+        case TOKEN_MINUS_EQ:       return 2;
+        case TOKEN_ARROW:          return 2;
 
-        /* this may need to have lower precedence at; I'm not sure yet. */
-        case TOKEN_SQUIGGLY_ARROW: return 1;
+        /* this may need to have lower precedence. I'm not sure yet. */
+        case TOKEN_SQUIGGLY_ARROW: return 2;
+
+        case ',':                  return 0;
 
         case TOKEN_KEYWORD:        goto keyword;
 
-        default:                   return -1;
+        default:                   return -3;
         }
 
 keyword:
 
         switch (tok()->keyword) {
-        case KEYWORD_IF: return 2;
-        default:         return -1;
+        case KEYWORD_IF: return 3;
+        default:         return -3;
         }
 }
 
@@ -1187,6 +1289,7 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_FUNCTION_CALL:
+        case EXPRESSION_LIST:
                 return e;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i)
@@ -1214,33 +1317,28 @@ parse_definition_lvalue(int context)
                 e->identifier = tok()->identifier;
                 e->module = tok()->module;
 
-                consume(TOKEN_IDENTIFIER);
+                next();
 
                 if (tok()->type == '(') {
-                     struct expression *f = mkexpr();
-                     f->type = EXPRESSION_FUNCTION_CALL;
-                     f->function = e;
-                     e = f;
-                     lex_ctx = LEX_INFIX;
-                     consume('(');
-                     vec_init(f->args);
-                     vec_push(f->args, parse_definition_lvalue(LV_ANY));
-                     while (tok()->type == ',') {
-                             consume(',');
-                             vec_push(f->args, parse_definition_lvalue(LV_ANY));
-                     }
-                     if (f->args.items[0] == NULL)
-                             goto error;
-                    consume(')');
+                        struct expression *f = mkexpr(); f->type = EXPRESSION_FUNCTION_CALL; f->function = e; e = f;
+                        lex_ctx = LEX_INFIX;
+                        next();
+                        vec_init(f->args);
+                        vec_push(f->args, parse_definition_lvalue(LV_ANY));
+                        while (tok()->type == ',') {
+                                next();
+                                vec_push(f->args, parse_definition_lvalue(LV_ANY));
+                        }
+                        if (f->args.items[0] == NULL) goto error;
+                        consume(')');
                 } else if (e->module != NULL) {
-                    error("unexpected module in lvalue");
+                                error("unexpected module in lvalue");
                 }
-
                 break;
         case '`':
                 return prefix_tick();
         case '$':
-                consume('$');
+                next();
                 e = mkexpr();
                 e->type = EXPRESSION_MATCH_NOT_NIL;
                 e->identifier = tok()->identifier;
@@ -1250,12 +1348,12 @@ parse_definition_lvalue(int context)
                 consume(TOKEN_IDENTIFIER);
                 break;
         case '[':
-                consume('[');
+                next();
                 e = mkexpr();
                 e->type = EXPRESSION_ARRAY;
                 vec_init(e->elements);
                 if (tok()->type == ']') {
-                        consume(']');
+                        next();
                         break;
                 } else {
                         if (elem = parse_definition_lvalue(LV_ANY), elem == NULL) {
@@ -1266,7 +1364,7 @@ parse_definition_lvalue(int context)
                         }
                 }
                 while (tok()->type == ',') {
-                        consume(',');
+                        next();
                         if (elem = parse_definition_lvalue(LV_ANY), elem == NULL) {
                                 vec_empty(e->elements);
                                 goto error;
@@ -1283,7 +1381,7 @@ parse_definition_lvalue(int context)
                 consume(']');
                 break;
         case '(':
-                consume('(');
+                next();
                 e = parse_definition_lvalue(LV_ANY);
                 if (e == NULL || tok()->type != ')') {
                         goto error;
@@ -1294,10 +1392,37 @@ parse_definition_lvalue(int context)
                 return NULL;
         }
 
+        if (context == LV_LET && tok()->type == ',') {
+                struct expression *l = mkexpr();
+                l->type = EXPRESSION_LIST;
+                vec_init(l->es);
+                vec_push(l->es, e);
+                while (tok()->type == ',') {
+                        next();
+                        struct expression *e = parse_definition_lvalue(LV_SUB);
+                        if (e == NULL) {
+                                error("expected lvalue but found %s", token_show(tok()));
+                        }
+                        vec_push(l->es, e);
+                }
+                e = l;
+        }
+
         switch (context) {
-        case LV_LET:  if (tok()->type != TOKEN_EQ)                                      goto error; break;
-        case LV_EACH: if (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_IN) goto error; break;
-        default:                                                                                    break;
+        case LV_LET: 
+                if (tok()->type != TOKEN_EQ)
+                        goto error;
+                break;
+        case LV_EACH:
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IN)
+                        break;
+                if (tok()->type != ',')
+                        goto error;
+                if (token(1)->type != TOKEN_IDENTIFIER)
+                        goto error;
+                break;
+        default:
+                break;
         }
 
         return e;
@@ -1321,17 +1446,27 @@ parse_for_loop(void)
          * a C-style for loop.
          */
         if (tok()->type != '(') {
-                struct expression *each_target = parse_definition_lvalue(LV_EACH);
-                if (each_target == NULL)
+                s->type = STATEMENT_EACH_LOOP;
+                s->each.target = mkexpr();
+                s->each.target->type = EXPRESSION_LIST;
+                vec_init(s->each.target->es);
+                vec_push(s->each.target->es, parse_definition_lvalue(LV_EACH));
+
+                if (s->each.target->es.items[0] == NULL)
+                Error:
                         error("expected lvalue in for-each loop");
 
-                s->type = STATEMENT_EACH_LOOP;
-                s->each.target = each_target;
+                while (tok()->type == ',' && (token(1)->type == TOKEN_IDENTIFIER || token(1)->type == '[')) {
+                        next();
+                        vec_push(s->each.target->es, parse_definition_lvalue(LV_EACH));
+                        if (vec_last(s->each.target->es) == NULL) {
+                                goto Error;
+                        }
+                }
 
                 consume_keyword(KEYWORD_IN);
 
                 s->each.array = parse_expr(0);
-
                 s->each.body = parse_statement();
 
                 return s;
@@ -1378,7 +1513,7 @@ parse_while_loop(void)
          * Maybe it's a while-let loop.
          */
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET) {
-                consume_keyword(KEYWORD_LET);
+                next();
 
                 struct statement *s = mkstmt();
 
@@ -1420,15 +1555,17 @@ parse_if_statement(void)
          * Maybe it's an if-let statement.
          */
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET) {
-                consume_keyword(KEYWORD_LET);
+                next();
                 s->type = STATEMENT_IF_LET;
                 s->if_let.pattern = parse_definition_lvalue(LV_LET);
                 consume(TOKEN_EQ);
                 s->if_let.e = parse_expr(0);
                 s->if_let.then = parse_block();
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
-                        consume_keyword(KEYWORD_ELSE);
+                        next();
                         s->if_let.otherwise = parse_block();
+                } else {
+                        s->if_let.otherwise = NULL;
                 }
                 return s;
         }
@@ -1471,7 +1608,7 @@ parse_match_statement(void)
 
         vec_push(s->match.patterns, parse_expr(0));
         if (tok()->type == TOKEN_BIT_OR) {
-                consume(TOKEN_BIT_OR);
+                next();
                 vec_push(s->match.conds, parse_expr(0));
         } else {
                 vec_push(s->match.conds, NULL);
@@ -1481,10 +1618,10 @@ parse_match_statement(void)
         vec_push(s->match.statements, parse_statement());
 
         while (tok()->type == ',') {
-                consume(',');
+                next();
                 vec_push(s->match.patterns, parse_expr(0));
                 if (tok()->type == TOKEN_BIT_OR) {
-                        consume(TOKEN_BIT_OR);
+                        next();
                         vec_push(s->match.conds, parse_expr(0));
                 } else {
                         vec_push(s->match.conds, NULL);
@@ -1501,9 +1638,6 @@ parse_match_statement(void)
 static struct statement *
 parse_function_definition(void)
 {
-        struct statement *s = mkstmt();
-        s->type = STATEMENT_DEFINITION;
-
         struct expression *f = prefix_function();
         if (f->name == NULL)
                 error("unnamed function definitions cannot be used as statements");
@@ -1512,10 +1646,26 @@ parse_function_definition(void)
         target->type = EXPRESSION_IDENTIFIER;
         target->identifier = f->name;
 
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_FUNCTION_DEFINITION;
         s->target = target;
         s->value = f;
         
         return s;
+}
+
+static struct statement *
+parse_operator_definition(void)
+{
+    if (token(1)->type != TOKEN_USER_OP) {
+        consume_keyword(KEYWORD_OPERATOR);
+        consume(TOKEN_USER_OP);
+    }
+
+    tok()->keyword = KEYWORD_FUNCTION;
+    token(1)->type = TOKEN_IDENTIFIER;
+
+    return parse_function_definition();
 }
 
 static struct statement *
@@ -1525,17 +1675,20 @@ parse_return_statement(void)
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_RETURN;
+        vec_init(s->returns);
 
-        if (tok()->type == ';') {
-                s->return_value = NULL;
-        } else {
-                s->return_value = parse_expr(0);
+        while (tok()->type != ';') {
+        Expr:
+                vec_push(s->returns, parse_expr(0));
+                if (tok()->type == ',') {
+                        next();
+                        goto Expr;
+                }
         }
 
         consume(';');
 
         return s;
-
 }
 
 static struct statement *
@@ -1553,7 +1706,7 @@ parse_let_definition(void)
 
         consume(TOKEN_EQ);
 
-        struct expression *value = parse_expr(0);
+        struct expression *value = parse_expr(-1);
         
         consume(';');
 
@@ -1651,34 +1804,46 @@ parse_class_definition(void)
         s->tag.name = tok()->identifier;
         vec_init(s->tag.methods);
 
-        consume(TOKEN_IDENTIFIER);
+        next();
 
         if (tok()->type == ':') {
-                consume(':');
+                next();
                 expect(TOKEN_IDENTIFIER);
                 s->tag.super = mkexpr();
                 s->tag.super->type = EXPRESSION_IDENTIFIER;
                 s->tag.super->identifier = tok()->identifier;
                 s->tag.super->module = tok()->module;
-                consume(TOKEN_IDENTIFIER);
+                next();
         } else {
                 s->tag.super = NULL;
         }
 
         /* Hack to allow comma-separated tag declarations */
         if (tag && tok()->type == ',' && token(1)->type == TOKEN_IDENTIFIER) {
-                consume(',');
+                next();
                 unconsume(TOKEN_KEYWORD);
                 tok()->keyword = KEYWORD_TAG;
                 unconsume(';');
         }
                 
         if (tag && tok()->type == ';') {
-                consume(';');
+                next();
         } else {
                 consume('{');
                 while (tok()->type != '}') {
-
+                        /*
+                         * Lol.
+                         */
+                        switch (tok()->type) {
+                        case TOKEN_DBL_EQ:  tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "==";   break;
+                        case TOKEN_CMP:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "<=>";  break;
+                        case TOKEN_PLUS:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "+";    break;
+                        case TOKEN_DIV:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "/";    break;
+                        case TOKEN_MINUS:   tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-";    break;
+                        case TOKEN_STAR:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*";    break;
+                        case TOKEN_PERCENT: tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "%";    break;
+                        default:                                                                        break;
+                        }
                         /*
                          * Push a 'function' keyword token back onto the stream so that we can
                          * use the existing function parsing code to parse the method.
@@ -1722,13 +1887,13 @@ parse_try(void)
         vec_init(s->try.handlers);
 
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_CATCH) {
-                consume_keyword(KEYWORD_CATCH);
+                next();
                 vec_push(s->try.patterns, parse_expr(0));
                 vec_push(s->try.handlers, parse_statement());
         }
 
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FINALLY) {
-                consume_keyword(KEYWORD_FINALLY);
+                next();
                 s->try.finally = parse_statement();
         } else {
                 s->try.finally = NULL;
@@ -1749,9 +1914,9 @@ parse_export(void)
 
         while (tok()->type == TOKEN_IDENTIFIER) {
                 vec_push(s->exports, tok()->identifier);
-                consume(TOKEN_IDENTIFIER);
+                next();
                 if (tok()->type == ',')
-                        consume(',');
+                        next();
                 else
                         expect(TOKEN_NEWLINE);
         }
@@ -1772,7 +1937,7 @@ parse_import(void)
         expect(TOKEN_IDENTIFIER);
         char *mod = tok()->module;
         char *id = tok()->identifier;
-        consume(TOKEN_IDENTIFIER);
+        next();
 
         int modlen = (mod == NULL) ? 0 : strlen(mod);
         int idlen = strlen(id);
@@ -1786,14 +1951,13 @@ parse_import(void)
                 strcpy(module, id);
         }
 
-
         s->import.module = module;
 
         if (tok()->type == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "as") == 0) {
-                consume(TOKEN_IDENTIFIER);
+                next();
                 expect(TOKEN_IDENTIFIER);
                 s->import.as = tok()->identifier;
-                consume(TOKEN_IDENTIFIER);
+                next();
         } else {
                 s->import.as = module;
         }
@@ -1801,15 +1965,15 @@ parse_import(void)
         vec_init(s->import.identifiers);
 
         if (tok()->type == '(') {
-                consume('(');
+                next();
                 if (tok()->type == TOKEN_DOT_DOT) {
-                        consume(TOKEN_DOT_DOT);
+                        next();
                         vec_push(s->import.identifiers, "..");
                 } else while (tok()->type == TOKEN_IDENTIFIER) {
                         vec_push(s->import.identifiers, tok()->identifier);
-                        consume(TOKEN_IDENTIFIER);
+                        next();
                         if (tok()->type == ',')
-                                consume(',');
+                                next();
                         else
                                 expect(')');
                 }
@@ -1844,6 +2008,7 @@ keyword:
         case KEYWORD_WHILE:    return parse_while_loop();
         case KEYWORD_IF:       return parse_if_statement();
         case KEYWORD_FUNCTION: return parse_function_definition();
+        case KEYWORD_OPERATOR: return parse_operator_definition();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
         case KEYWORD_LET:      return parse_let_definition();
@@ -1858,7 +2023,7 @@ expression:
 
         s = mkstmt();
         s->type = STATEMENT_EXPRESSION;
-        s->expression = parse_expr(0);
+        s->expression = parse_expr(-1);
         consume(';');
 
         return s;
@@ -2066,7 +2231,7 @@ TEST(arrow)
         claim(s->value->type == EXPRESSION_FUNCTION);
         claim(s->value->params.count == 2);
         claim(s->value->body->type == STATEMENT_RETURN);
-        claim(s->value->body->return_value->type == EXPRESSION_PLUS);
+        claim(s->value->body->returns.items[0]->type == EXPRESSION_PLUS);
 }
 
 TEST(import)

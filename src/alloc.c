@@ -10,8 +10,6 @@ alloc(size_t n)
         if (mem == NULL) {
                 panic("out of memory");
         }
-#ifndef TY_RELEASE
-        memset(mem, 0, n);
-#endif
+
         return mem;
 }

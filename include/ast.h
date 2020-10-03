@@ -26,6 +26,7 @@ struct statement {
                 STATEMENT_FOR_LOOP,
                 STATEMENT_EACH_LOOP,
                 STATEMENT_DEFINITION,
+                STATEMENT_FUNCTION_DEFINITION,
                 STATEMENT_TAG_DEFINITION,
                 STATEMENT_CLASS_DEFINITION,
                 STATEMENT_WHILE_LOOP,
@@ -49,9 +50,9 @@ struct statement {
         struct location loc;
         union {
                 struct expression *expression;
-                struct expression *return_value;
                 struct expression *throw;
                 vec(struct statement *) statements;
+                vec(struct expression *) returns;
                 vec(char *) exports;
                 struct {
                         char *module;
@@ -139,6 +140,7 @@ struct expression {
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
                 EXPRESSION_DOT_DOT,
+                EXPRESSION_DOT_DOT_DOT,
 
                 EXPRESSION_MATCH,
 
@@ -159,6 +161,7 @@ struct expression {
                 EXPRESSION_LEQ,
                 EXPRESSION_GT,
                 EXPRESSION_GEQ,
+                EXPRESSION_CMP,
                 EXPRESSION_DBL_EQ,
                 EXPRESSION_NOT_EQ,
 

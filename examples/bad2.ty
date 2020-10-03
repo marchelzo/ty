@@ -1,0 +1,2 @@
+tag Foo { push(self, x) { self.push(x); } }
+(Foo([1]).push)(10);

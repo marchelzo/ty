@@ -1,0 +1,17 @@
+import os
+
+let [r, w] = os::pipe();
+
+match os::fork() {
+     0 => {
+          os::close(r);
+          os::write(w, "Hello, world!\n");
+     },
+     _ => {
+          os::close(w);
+          let msg = blob();
+          os::read(r, msg, 512);
+          os::write(1, 'Got message from child: ');
+          os::write(1, msg);
+     }
+}

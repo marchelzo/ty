@@ -1,0 +1,45 @@
+import os
+import bit
+
+function spawnChild() {
+     let [r, w] = os::pipe();
+     match os::fork() {
+          0 => {
+               os::close(r);
+               while (true) {
+                    let delay = rand(1, 5);
+                    os::usleep(1000 * 1000 * delay);
+                    os::write(w, "Hello! I waited {delay} seconds.");
+               }
+          },
+          _ => {
+               os::close(w);
+               return r;
+          }
+     }
+}
+
+let c1 = spawnChild();
+rand();
+rand();
+let c2 = spawnChild();
+
+let fds = [
+     { 'fd': c1 },
+     { 'fd': c2 }
+];
+
+let b = blob();
+
+function echoMessage(fd) {
+     os::read(fd, b, 512);
+     print("Message from fd {fd}: {b.str()}");
+     b.clear();
+}
+
+while let _ = os::poll(fds, -1) {
+     for f in fds {
+          if (bit::and(f['revents'], os::POLLIN))
+               echoMessage(f['fd']);
+     }
+}

@@ -1,4 +1,3 @@
-CC ?= gcc-5
 CFLAGS = -std=c11
 CFLAGS += -Wall
 CFLAGS += -Iinclude
@@ -6,9 +5,11 @@ CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pcre-config --cflags)
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
+CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
-LDFLAGS = -L/usr/local/lib
-LDFLAGS = -lpthread
+LDFLAGS ?= ""
+LDFLAGS += -L/usr/local/lib
+LDFLAGS += -lpthread
 LDFLAGS += -lm
 LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
@@ -26,9 +27,10 @@ ifdef NOLOG
 endif
 
 ifndef RELEASE
+        CFLAGS += -Og
         CFLAGS += -fsanitize=undefined
-        CFLAGS += -fsanitize=leak
-        CFLAGS += -O0
+        CFLAGS += -fsanitize=address
+        #CFLAGS += -fsanitize=leak
 else
         CFLAGS += -Ofast
         CFLAGS += -DTY_RELEASE
@@ -48,7 +50,7 @@ ifdef LTO
         CFLAGS += -fomit-frame-pointer
         CFLAGS += -fwhole-program
 else
-        CFLAGS += -ggdb3
+        CFLAGS += -g3
 endif
 
 SOURCES := $(wildcard src/*.c)
@@ -58,14 +60,14 @@ all: $(PROG)
 
 ty: $(OBJECTS) ty.c
 	@echo cc $^
-	@$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 %.o: %.c
 	@echo cc $<
-	@$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
+	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(PROG) src/*.o
+	rm -rf $(PROG) *.gcda src/*.{o,gcda}
 
 .PHONY: test.c
 test.c: $(OBJECTS)

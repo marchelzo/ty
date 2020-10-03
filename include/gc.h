@@ -4,12 +4,13 @@
 #include <stddef.h>
 
 #include "vec.h"
+#include "log.h"
 
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
 #define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
 #define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
-#define UNMARK(v) ((ALLOC_OF(v))->mark &= GC_MARK)
+#define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
 #define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
 #define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
 
@@ -53,7 +54,9 @@ void
 gc_register(void *p);
 
 void
-gc_push(struct value *v);
+_gc_push(struct value *v);
+
+#define gc_push(v) do { LOG("gc_push: " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0);
 
 void
 gc_pop(void);
@@ -66,6 +69,16 @@ gc_truncate_root_set(size_t n);
 
 size_t
 gc_root_set_count(void);
+
+void
+gc_notify(size_t n);
+
+inline static void *
+gc_resize(void *p, size_t n) {
+        gc_notify(n);
+        resize(p, n);
+        return p;
+}
 
 inline static void *
 gc_alloc_unregistered(size_t n, char type)

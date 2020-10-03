@@ -1,0 +1,23 @@
+import fs
+
+for c, i in 'Hello, Ωåœ∑®†\©ƒ∂ç√∫ÏÅ¸˛ÍŒ€‹›⁄‹›' {
+    print("({c}, {i})");
+}
+
+let d = {}.default(|[]|);
+
+let Ok(s) = fs::slurp('wr');
+for line in s.split(/\n/) {
+    for w in line.matches(/\w\w+/) {
+        d[line].push(w);
+    }
+}
+
+for k, v in d {
+    print(k);
+    for w, i in v {
+        print("    {i}. {w}");
+    }
+}
+
+print(d.len());

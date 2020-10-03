@@ -11,6 +11,7 @@ struct value;
 #include "ast.h"
 #include "gc.h"
 #include "tags.h"
+#include "vec.h"
 
 #define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                              .tags = 0 })
 #define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                              .tags = 0 })
@@ -26,6 +27,12 @@ struct value;
 #define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m), .this   = (t), .name = (n),  .tags = 0 })
 #define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m), .this   = (t), .name = (n),  .tags = 0 })
 #define NIL                      ((struct value){ .type = VALUE_NIL,                                                                .tags = 0 })
+
+/* Special kind of value, only used as an iteration counter in for-each loops */
+#define INDEX(ix, o, n)          ((struct value){ .type = VALUE_NIL,            .i              = (ix), .off   = (o), .nt = (n),    .tags = 0 })
+
+/* Another special one, used for functions with multiple return values */
+#define SENTINEL                 ((struct value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                 .tags = 0 })
 
 #define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
 
@@ -57,6 +64,8 @@ struct value;
 
 typedef vec(struct value) value_vector;
 #define NO_ARGS ((value_vector){ .count = 0 })
+
+#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 
 struct array {
         struct value *items;
@@ -100,7 +109,9 @@ enum {
         VALUE_TAG              = 1 << 14,
         VALUE_STRING           = 1 << 15,
         VALUE_BLOB             = 1 << 16,
-        VALUE_TAGGED           = 1 << 17,
+        VALUE_SENTINEL         = 1 << 17,
+        VALUE_INDEX            = 1 << 17,
+        VALUE_TAGGED           = 1 << 18,
 };
 
 struct value {
@@ -130,7 +141,13 @@ struct value {
                 struct {
                         char const *string;
                         size_t bytes;
+                        size_t gcb;
                         char *gcstr;
+                };
+                struct {
+                        intmax_t i;
+                        size_t off;
+                        int nt;
                 };
                 struct {
                         pcre *regex;
@@ -207,19 +224,14 @@ struct blob *
 value_blob_new(void);
 
 void
-value_mark(struct value *v);
+_value_mark(struct value *v);
 
 inline static void
 value_array_push(struct array *a, struct value v)
 {
         if (a->count == a->capacity) {
                 a->capacity = a->capacity ? a->capacity * 2 : 4;
-                struct value *new_items = gc_alloc(a->capacity * sizeof (struct value));
-
-                if (a->items != NULL)
-                        memcpy(new_items, a->items, a->count * sizeof (struct value));
-
-                a->items = new_items;
+                a->items = gc_resize(a->items, a->capacity * sizeof (struct value));
         }
 
         a->items[a->count++] = v;
@@ -237,11 +249,7 @@ value_array_reserve(struct array *a, int count)
         while (a->capacity < count)
                 a->capacity *= 2;
 
-        struct value *new_items = gc_alloc(a->capacity * sizeof (struct value));
-        if (a->count != 0)
-                memcpy(new_items, a->items, a->count * sizeof (struct value));
-
-        a->items = new_items;
+        a->items = gc_resize(a->items, a->capacity * sizeof (struct value));
 }
 
 inline static struct value
@@ -258,14 +266,14 @@ STRING_CLONE(char const *s, int n)
 }
 
 inline static struct value
-STRING(char const *s, int n, char *gcstr)
+STRING(char *s, int n)
 {
         return (struct value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = s,
                 .bytes = n,
-                .gcstr = gcstr,
+                .gcstr = s,
         };
 }
 
@@ -278,6 +286,7 @@ STRING_VIEW(struct value s, int offset, int n)
                 .string = s.string + offset,
                 .bytes = n,
                 .gcstr = s.gcstr,
+                .gcb = s.gcb
         };
 }
 
@@ -290,6 +299,7 @@ STRING_NOGC(char const *s, int n)
                 .string = s,
                 .bytes = n,
                 .gcstr = NULL,
+                .gcb = 0
         };
 }
 

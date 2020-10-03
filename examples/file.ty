@@ -1,0 +1,25 @@
+#!/usr/bin/env ty
+
+import fs (File)
+import os (spawn, write, close)
+import errno
+
+let path = 'src/parse.c';
+
+match File.slurp(path) {
+     Ok(s) => {
+          let p = spawn(['grep', 'TEST']);
+          write(p.stdin, s);
+          close(p.stdin);
+          let f = File.from(p.stdout);
+          while let line = f.nextLine() {
+               print(line);
+          }
+     },
+     Err(e) => {
+          print("Failed to open {path}: {errno::str(e)}");
+     },
+     x => {
+          print(x);
+     }
+}

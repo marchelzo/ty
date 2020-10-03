@@ -1,0 +1,20 @@
+import fs
+import errno
+
+class Person {
+    init(self, name) {
+        self.name = name;
+    }
+    sayHello(self) {
+        print("Hello, my name is {self.name}!");
+    }
+}
+
+let people = [];
+
+if let fs::Ok(f) = fs::File.open('/usr/share/dict/words', 'r') {
+     while let $line = f.nextLine() {
+         people.push(Person(line));
+     }
+     people.each(p -> p.sayHello());
+}

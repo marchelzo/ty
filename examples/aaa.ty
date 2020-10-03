@@ -1,0 +1,13 @@
+class A {
+    init(self) {
+        self.xs = ..10;
+    }
+
+    __iter__(self) { return self; }
+
+    __next__(self) { if (self.xs.len()) return self.xs.pop(); }
+}
+
+for k in A() {
+    print(k);
+}

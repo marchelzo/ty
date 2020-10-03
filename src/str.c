@@ -5,6 +5,7 @@
 #include "utf8.h"
 #include "value.h"
 #include "util.h"
+#include "gc.h"
 #include "vm.h"
 
 static struct stringpos limitpos;
@@ -56,6 +57,15 @@ string_length(struct value *string, value_vector *args)
         stringcount(string->string, string->bytes, -1);
 
         return INTEGER(outpos.graphemes);
+}
+
+static struct value
+string_size(struct value *string, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("str.size() expects no arguments but got %zu", args->count);
+
+        return INTEGER(string->bytes);
 }
 
 static struct value
@@ -257,7 +267,13 @@ end:
 static struct value
 string_replace(struct value *string, value_vector *args)
 {
-        static vec(char) chars;
+        vec(char) chars;
+        size_t const header = offsetof(struct alloc, data);
+        // TODO: yikes
+
+        vec_init(chars);
+        vec_reserve(chars, header);
+        chars.count = chars.capacity;
 
         if (args->count != 2)
                 vm_panic("the replace method on strings expects 2 arguments but got %zu", args->count);
@@ -270,8 +286,6 @@ string_replace(struct value *string, value_vector *args)
 
         if (replacement.type != VALUE_STRING && !CALLABLE(replacement))
                 vm_panic("the replacement argument to string's replace method must be callable or a string");
-
-        chars.count = 0;
 
         char const *s = string->string;
 
@@ -343,7 +357,8 @@ string_replace(struct value *string, value_vector *args)
                         if (repstr.type != VALUE_STRING)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
 
-                        OKGC(match.array);
+                        if (match.type == VALUE_ARRAY)
+                            OKGC(match.array);
 
                         vec_push_n(chars, repstr.string, repstr.bytes);
 
@@ -353,7 +368,10 @@ string_replace(struct value *string, value_vector *args)
                 vec_push_n(chars, s + start, len - start);
         }
 
-        return STRING_CLONE(chars.items, chars.count);
+        struct alloc *a = (void *)chars.items;
+        a->type = GC_STRING;
+        a->mark = GC_NONE;
+        return STRING(chars.items + header, chars.count - header);
 }
 
 static struct value
@@ -481,9 +499,8 @@ string_matches(struct value *string, value_vector *args)
                         for (int i = 0; i < rc; ++i, j += 2)
                                 value_array_push(match.array, STRING_VIEW(*string, ovec[j] + offset, ovec[j + 1] - ovec[j]));
 
-                        OKGC(match.array);
-
                         value_array_push(result.array, match);
+                        OKGC(match.array);
                 }
 
                 s += ovec[1];
@@ -493,6 +510,8 @@ string_matches(struct value *string, value_vector *args)
 
         if (rc < -1)
                 vm_panic("error while executing regular expression");
+
+        gc_pop();
 
         return result;
 }
@@ -572,6 +591,24 @@ string_chars(struct value *string, value_vector *args)
 }
 
 static struct value
+string_bytes(struct value *string, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("str.bytes() expects no arguments but got %zu", args->count);
+
+        struct value result = ARRAY(value_array_new());
+        NOGC(result.array);
+
+        for (char const *c = string->string; *c != '\0'; ++c) {
+                value_array_push(result.array, INTEGER(*c));
+        }
+
+        OKGC(result.array);
+
+        return result;
+}
+
+static struct value
 string_lower(struct value *string, value_vector *args)
 {
         if (args->count != 0)
@@ -593,7 +630,7 @@ string_lower(struct value *string, value_vector *args)
                 outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result + outlen);
         }
 
-        return STRING(result, outlen, result);
+        return STRING(result, outlen);
 }
 
 static struct value
@@ -618,7 +655,7 @@ string_upper(struct value *string, value_vector *args)
                 outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result + outlen);
         }
 
-        return STRING(result, outlen, result);
+        return STRING(result, outlen);
 }
 
 static struct value
@@ -673,7 +710,7 @@ string_pad_left(struct value *string, value_vector *args)
         memcpy(result + bytes, string->string, string->bytes);
         bytes += string->bytes;
 
-        return STRING(result, bytes, result);
+        return STRING(result, bytes);
 }
 
 static struct value
@@ -725,11 +762,12 @@ string_pad_right(struct value *string, value_vector *args)
                 bytes += outpos.bytes;
         }
 
-        return STRING(result, bytes, result);
+        return STRING(result, bytes);
 }
 
 DEFINE_METHOD_TABLE(
         { .name = "byte",      .func = string_byte      },
+        { .name = "bytes",     .func = string_bytes     },
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
         { .name = "len",       .func = string_length    },
@@ -741,6 +779,7 @@ DEFINE_METHOD_TABLE(
         { .name = "padRight",  .func = string_pad_right },
         { .name = "replace",   .func = string_replace   },
         { .name = "search",    .func = string_search    },
+        { .name = "size",      .func = string_size      },
         { .name = "slice",     .func = string_slice     },
         { .name = "split",     .func = string_split     },
         { .name = "upper",     .func = string_upper     },

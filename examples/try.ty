@@ -1,0 +1,40 @@
+import fs
+import errno
+import os
+
+try
+        throw Ok([100, 50]);
+catch Ok([100, k])
+        print(k);
+
+let o = {
+        'test': 'foo',
+        'foo': 'bar',
+        'baz': [1, 2, 3]
+};
+
+for k in o {
+        print('test');
+        print("o[{k}] = {o[k]}");
+}
+
+let path = 'src/vm.c';
+
+match fs::slurp(path) {
+        Ok(s)  => {
+                print(s.chars().take(10).sum());
+        },
+        Err(e) => {
+                print("Failed to open {path}: {errno::str(e)}");
+        }
+}
+
+
+match os::fork() {
+        0   => {
+                print("Child: my pid = {os::getpid()}  parent pid = {os::getppid()}");
+        },
+        pid => {
+                print("Pareng: my pid = {os::getpid()}  child pid = {pid}");
+        }
+}

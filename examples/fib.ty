@@ -1,0 +1,29 @@
+import os
+
+function next(f) {
+        f[0] += f[1];
+        f.swap(0, 1);
+}
+
+function prev(f) {
+        f.swap(0, 1);
+        f[0] -= f[1];
+}
+
+while let $k = int(read()) {
+        let f = [0, 1];
+
+        while (f[1] < k)
+                next(f);
+
+        os::write(1, "{k} =");
+
+        for (let sep = " "; k > 0; sep = " + ") {
+                while (f[1] > k)
+                        prev(f);
+                k -= f[1];
+                os::write(1, "{sep}{f[1]}");
+        }
+
+        os::write(1, "\n");
+}

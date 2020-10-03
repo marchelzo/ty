@@ -6,7 +6,7 @@
 
 #define MACRO_CONCAT(A, B) MACRO_CONCAT_(A, B)
 #define MACRO_CONCAT_(A, B) A##B
-#define TEST(name) void MACRO_CONCAT(TEST_, MACRO_CONCAT(FILENAME, MACRO_CONCAT(_, name))) (bool *test_status_bool)
+#define TEST(name) static void MACRO_CONCAT(TEST_, MACRO_CONCAT(FILENAME, MACRO_CONCAT(_, name))) (bool *test_status_bool)
 
 #define claim(b) \
         if (!(b)) { \

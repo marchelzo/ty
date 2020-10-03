@@ -1,0 +1,11 @@
+{
+        let i = 0;
+        let fs = [];
+
+        {
+                for (; i < 10; ++i)
+                        fs.push(a -> a + i);
+        }
+
+        print(fs[3](0));
+}

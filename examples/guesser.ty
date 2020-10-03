@@ -1,0 +1,24 @@
+import os
+import fs
+
+let MAX = 1000000000;
+
+let p = os::spawn(['ty', 'guessme.ty', str(MAX)]);
+let out = fs::File.from(p.stdout);
+
+let n = 1;
+let lo = 0;
+let hi = MAX;
+
+for (;;) {
+        let guess = (lo + hi) / 2;
+        os::write(p.stdin, "{guess}\n");
+        match out.nextLine() {
+                'Too low!'  =>  { lo = guess + 1; },
+                'Too high!' =>  { hi = guess - 1; },
+                'You win!'  =>  { break;          }
+        }
+        n += 1;
+}
+
+print("Solved in {n} guesses.");

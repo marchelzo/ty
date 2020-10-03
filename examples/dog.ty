@@ -1,0 +1,13 @@
+tag A {
+     f() {
+          return this.n() + 10;
+     }
+}
+
+tag B : A {
+     n() {
+          return 32;
+     }
+}
+
+print(B.f());

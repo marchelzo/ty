@@ -9,6 +9,7 @@
 
 #define GC_ALLOC_THRESHOLD (1ULL << 24)
 
+
 static size_t allocated = 0;
 static vec(struct value *) root_set;
 static vec(struct alloc *) allocs;
@@ -35,8 +36,9 @@ gc(void)
 {
         vm_mark();
 
-        for (int i = 0; i < root_set.count; ++i)
+        for (int i = 0; i < root_set.count; ++i) {
                 value_mark(root_set.items[i]);
+        }
 
         int len = 0;
         for (int i = 0; i < allocs.count; ++i) {
@@ -65,6 +67,14 @@ gc_alloc(size_t n)
         return mem;
 }
 
+void
+gc_notify(size_t n)
+{
+        allocated += n;
+        if (allocated > GC_ALLOC_THRESHOLD && GC_ENABLED)
+                gc();
+}
+
 void *
 gc_alloc_object(size_t n, char type)
 {
@@ -90,7 +100,7 @@ gc_register(void *p)
 }
 
 void
-gc_push(struct value *v)
+_gc_push(struct value *v)
 {
         vec_push(root_set, v);
 }

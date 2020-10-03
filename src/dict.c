@@ -70,7 +70,7 @@ grow(struct dict *d)
         d->values = values;
 }
 
-inline static void
+inline static struct value *
 put(struct dict *d, size_t i, unsigned long h, struct value k, struct value v)
 {
         if (4 * d->count >= d->size)
@@ -79,8 +79,9 @@ put(struct dict *d, size_t i, unsigned long h, struct value k, struct value v)
         d->hashes[i] = h;
         d->keys[i] = k;
         d->values[i] = v;
-
         d->count += 1;
+
+        return &d->values[i];
 }
 
 struct value *
@@ -119,10 +120,13 @@ dict_put_key_if_not_exists(struct dict *d, struct value key)
         unsigned long h = value_hash(&key);
         size_t i = find_spot(d->size, d->hashes, d->keys, h, &key);
 
-        if (d->keys[i].type == 0)
-                put(d, i, h, key, NIL);
-
-        return &d->values[i];
+        if (d->keys[i].type != 0) {
+                return &d->values[i];
+        } else if (d->dflt.type != VALUE_NIL) {
+                return put(d, i, h, key, value_apply_callable(&d->dflt, &key));
+        } else {
+                return put(d, i, h, key, NIL);
+        }
 }
 
 struct value *

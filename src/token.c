@@ -35,38 +35,44 @@ static struct {
         { "catch",    KEYWORD_CATCH    },
         { "finally",  KEYWORD_FINALLY  },
         { "throw",    KEYWORD_THROW    },
+        { "operator", KEYWORD_OPERATOR },
 };
 
 static struct {
         char const *op;
         int toktype;
 } operators[] = {
-        { "+",  TOKEN_PLUS           },
-        { "-",  TOKEN_MINUS          },
-        { "*",  TOKEN_STAR           },
-        { "/",  TOKEN_DIV            },
-        { "%",  TOKEN_PERCENT        },
-        { "!=", TOKEN_NOT_EQ         },
-        { "!",  TOKEN_BANG           },
-        { "==", TOKEN_DBL_EQ         },
-        { "=",  TOKEN_EQ             },
-        { "->", TOKEN_ARROW          },
-        { "=>", TOKEN_FAT_ARROW      },
-        { "~>", TOKEN_SQUIGGLY_ARROW },
-        { "&&", TOKEN_AND            },
-        { "||", TOKEN_OR             },
-        { "|",  TOKEN_BIT_OR         },
-        { "<=", TOKEN_LEQ            },
-        { ">=", TOKEN_GEQ            },
-        { "<",  TOKEN_LT             },
-        { ">",  TOKEN_GT             },
-        { "@",  TOKEN_AT             },
-        { "++", TOKEN_INC            },
-        { "--", TOKEN_DEC            },
-        { "+=", TOKEN_PLUS_EQ        },
-        { "*=", TOKEN_STAR_EQ        },
-        { "/=", TOKEN_DIV_EQ         },
-        { "-=", TOKEN_MINUS_EQ       },
+        { "+",   TOKEN_PLUS           },
+        { "-",   TOKEN_MINUS          },
+        { "*",   TOKEN_STAR           },
+        { "/",   TOKEN_DIV            },
+        { "%",   TOKEN_PERCENT        },
+        { "!=",  TOKEN_NOT_EQ         },
+        { "!",   TOKEN_BANG           },
+        { "==",  TOKEN_DBL_EQ         },
+        { "=",   TOKEN_EQ             },
+        { "->",  TOKEN_ARROW          },
+        { "=>",  TOKEN_FAT_ARROW      },
+        { "~>",  TOKEN_SQUIGGLY_ARROW },
+        { "&&",  TOKEN_AND            },
+        { "||",  TOKEN_OR             },
+        { "|",   TOKEN_BIT_OR         },
+        { "<=>", TOKEN_CMP            },
+        { "<=",  TOKEN_LEQ            },
+        { ">=",  TOKEN_GEQ            },
+        { "<",   TOKEN_LT             },
+        { ">",   TOKEN_GT             },
+        { "@",   TOKEN_AT             },
+        { "++",  TOKEN_INC            },
+        { "--",  TOKEN_DEC            },
+        { "+=",  TOKEN_PLUS_EQ        },
+        { "*=",  TOKEN_STAR_EQ        },
+        { "/=",  TOKEN_DIV_EQ         },
+        { "-=",  TOKEN_MINUS_EQ       },
+        { ".",   '.'                  },
+        { "..",  TOKEN_DOT_DOT        },
+        { "...", TOKEN_DOT_DOT_DOT    },
+        { "$",   '$'                  },
 };
 
 int
@@ -121,9 +127,11 @@ token_show_type(int type)
         case TOKEN_FAT_ARROW:      return "token '=>'";
         case TOKEN_SQUIGGLY_ARROW: return "token '~>'";
         case TOKEN_DOT_DOT:        return "token '..'";
+        case TOKEN_DOT_DOT_DOT:    return "token '...'";
         case TOKEN_AND:            return "operator '&&'";
         case TOKEN_OR:             return "operator '||'";
         case TOKEN_BIT_OR:         return "token '|'";
+        case TOKEN_CMP:            return "operator '<=>'";
         case TOKEN_LEQ:            return "operator '<='";
         case TOKEN_GEQ:            return "operator '>='";
         case TOKEN_LT:             return "operator '<'";
@@ -132,6 +140,7 @@ token_show_type(int type)
         case TOKEN_INC:            return "operator '++'";
         case TOKEN_DEC:            return "operator '--'";
         case TOKEN_IDENTIFIER:     return "identifier";
+        case TOKEN_USER_OP:        return "user-defined operator";
         case TOKEN_STRING:         return "string";
         case TOKEN_INTEGER:        return "integer";
         case TOKEN_REAL:           return "real";
@@ -151,6 +160,7 @@ token_show(struct token const *t)
         case TOKEN_INTEGER:    snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
         case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
         case TOKEN_KEYWORD:    snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;
+        case TOKEN_USER_OP:    snprintf(token_show_buffer, 512, "operator '%s'", t->identifier);           break;
         default:               return token_show_type(t->type);
         }
 

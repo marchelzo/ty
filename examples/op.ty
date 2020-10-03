@@ -1,0 +1,21 @@
+import math
+
+operator ^(a, b) {
+    return math::pow(a, b);
+}
+
+operator =<<(f, x) {
+    let Some(y) = x;
+    return f(y);
+}
+
+function f(x) {
+    return x*2 + 4;
+}
+
+function g(y) {
+    a = 12;
+}
+
+print(2^10);
+print(f =<< Some(10));

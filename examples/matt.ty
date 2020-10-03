@@ -1,0 +1,45 @@
+let letters = [ 0, 3, 3, 5, 4, 4, 3, 5, 5, 4, 3, 6, 6, 8, 8, 7, 7, 9, 8, 8 ];
+
+let tens = {
+     2: 'twenty'.len(),
+     3: 'thirty'.len(),
+     4: 'fourty'.len(),
+     5: 'fifty'.len(),
+     6: 'sixty'.len(),
+     7: 'seventy'.len(),
+     8: 'eighty'.len(),
+     9: 'nienty'.len()
+};
+
+for (let n = 20; n <= 1000000; ++n) {
+     let k = nil;
+     if (n == 1000000) {
+          k = 10;
+     } else if (n >= 100000) {
+          let d = n / 1000;
+          k = letters[d] + 8 + letters[n % 1000];
+     } else if (n >= 10000) {
+          let d = n / 1000;
+          k = letters[d] + 8 + letters[n % 1000];
+     } else if (n >= 100) {
+          let d = n / 100;
+          k = letters[d] + 7 + letters[n % 100];
+     } else if (n >= 20) {
+          k = tens[n / 10] + letters[n % 10];
+     }
+     letters.push(k);
+}
+
+let chains = [ 2, 4, 4, 3, 1, 2, 4 ];
+for (let n = chains.len(); n < 1000000; ++n) {
+     chains.push(1 + chains[letters[n]]);
+}
+
+let [longest, len] = chains.enumerate!().maxBy([_, n] -> n);
+
+let c = [longest];
+while (longest != 4) {
+     longest = letters[longest];
+     c.push(longest);
+}
+print(c.map!(str).intersperse!(' -> ').sum() + " (length: {len})");

@@ -1,0 +1,49 @@
+let template = [
+     '     ________________________________________________________________',
+     '    /                                                                ',
+     '12 /                                                                 ',
+     '11|                                                                  ',
+     ' 0|                                                                  ',
+     ' 1|                                                                  ',
+     ' 2|                                                                  ',
+     ' 3|                                                                  ',
+     ' 4|                                                                  ',
+     ' 5|                                                                  ',
+     ' 6|                                                                  ',
+     ' 7|                                                                  ',
+     ' 8|                                                                  ',
+     ' 9|                                                                  ',
+     '  |__________________________________________________________________'
+];
+
+let alphabet = read().split(' ')[1].chars();
+let messages = [1 .. int(read())].map(|read().upper().chars()|);
+
+let encoding = {' ': []};
+
+for i in [0 .. 11]
+     encoding[alphabet[i]] = [i];
+
+for block in [0 .. 2]
+     for i in [0 .. 8]
+          encoding[alphabet[i + 12 + block * 9]] = [block, i + 3];
+
+for block in [0 .. 3]
+     for i in [0 .. 5]
+          encoding[alphabet[i + 39 + block * 6]] = [i + 4, 10] + ([] if block == 0 else [block]);
+
+for message in messages {
+     let width = message.len() + 5;
+
+     let output = template.map(row -> row.padRight(width, row.char(10)).chars().take!(width));
+
+     for [i, c] in message.enumerate() {
+          output[1][i + 5] = c;
+          for row in encoding[c]
+               output[row + 2][i + 5] = 'O';
+     }
+
+     for row in output
+          print(row.sum());
+}
+

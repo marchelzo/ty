@@ -20,8 +20,8 @@ enum {
         MAX_ERR_LEN  = 2048
 };
 
-struct location startloc;
-struct location loc;
+static struct location startloc;
+static struct location loc;
 
 static char const *filename;
 
@@ -33,7 +33,7 @@ static char errbuf[MAX_ERR_LEN + 1];
 static vec(char const *) states;
 static char const *chars;
 
-static char const *opchars = "/=<~|!@%^&*-+>";
+static char const *opchars = "/=<~|!@%^&*-+>?.$";
 
 noreturn static void
 error(char const *fmt, ...)
@@ -431,10 +431,12 @@ lexnum(void)
                         error("invalid trailing character after numeric literal: %c", *end);
 
                 num = mkreal(real);
+        } else if (*end == 'r') {
+                integer = strtoull(end + 1, &end, integer);
+                num = mkinteger(integer);
         } else {
                 if (isalnum(*end))
                         error("invalid trailing character after numeric literal: %c", *end);
-
                 num = mkinteger(integer);
         }
 
@@ -466,7 +468,10 @@ lexop(void)
                         loc.col -= (i - 1);
                         return mktoken(TOKEN_BIT_OR);
                 }
-                error("invalid operator encountered: '%s'", op);
+                //error("invalid operator encountered: '%s'", op);
+                struct token t = mktoken(TOKEN_USER_OP);
+                t.identifier = sclone(op);
+                return t;
         }
 
         return mktoken(toktype);
@@ -519,8 +524,12 @@ lex_token(enum lex_context ctx)
                 } else if (*chars == '"') {
                         return lexspecialstr();
                 } else if (chars[0] == '.' && chars[1] == '.') {
-                        nextchar(); nextchar();
-                        return mktoken(TOKEN_DOT_DOT);
+                        nextchar();
+                        nextchar();
+                        if (chars[0] == '.')
+                                return nextchar(), mktoken(TOKEN_DOT_DOT_DOT);
+                        else
+                                return mktoken(TOKEN_DOT_DOT);
                 } else if (isspace(*chars)) {
                         if (skipspace()) {
                                 return mktoken(TOKEN_NEWLINE);

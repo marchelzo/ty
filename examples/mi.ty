@@ -1,0 +1,48 @@
+class Zip {
+    init(self, xs, ys) {
+        self.xs = xs;
+        self.ys = ys;
+        self.i = 0;
+    }
+    __next__(self) {
+        if (self.i < self.xs.len() && self.i < self.ys.len()) {
+            self.i += 1;
+            return self.xs[self.i - 1], self.ys[self.i - 1];
+        } else {
+            return nil;
+        }
+    }
+}
+
+
+let z = Zip(['one', 'two', 'three'], ['foo', 'bar', 'baz']);
+
+for x, y, i in z {
+    print("i = {i}");
+    print("  x = {x}");
+    print("  y = {y}");
+}
+
+
+for k, v, i in { 'hello': 'world', 'foo': 'bar', 'young': 'thug' } {
+    print("i = {i}");
+    print("  k = {k}");
+    print("  v = {v}");
+}
+
+for s in (..5).map(|# + 4|).map(k -> ..k).map(r -> r.map(str).join(', ')) {
+    print("s = {s}");
+}
+
+z = Zip('hello world'.split(' '), 'foo bar'.split(' '));
+let a, b = z.__next__();
+print("a = {a}, b = {b}");
+a, b = z.__next__();
+print("a = {a}, b = {b}");
+
+
+
+
+let xs = ..10;
+xs[2], xs[3] = xs[3], xs[2];
+print(xs);
