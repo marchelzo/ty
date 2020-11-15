@@ -78,6 +78,6 @@ test: $(OBJECTS) test.c
 	time ./test
 
 install: $(PROG)
-	install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
+	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
 	install -d $(HOME)/.ty
 	install -m644 lib/* $(HOME)/.ty

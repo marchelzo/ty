@@ -29,3 +29,47 @@ tag Err {
      map(self)     { return self; }
      flatMap(self) { return self; }
 }
+
+class RangeIter {
+    init(self, a, b) {
+	self.a = a;
+	self.b = b;
+    }
+
+    __next__(self) {
+	if (self.a < self.b) {
+	    return self.a++;
+	}
+    }
+}
+
+class Range {
+    init(self, a, b) {
+	self.a = a;
+	self.b = b;
+    }
+
+    __iter__(self) {
+	return RangeIter(self.a, self.b);
+    }
+
+    list(self) {
+	let xs = [];
+	for x in self { xs.push(x); }
+	return xs;
+    }
+
+    __str__(self) {
+	return "({self.a}..{self.b})";
+    }
+}
+
+class InclusiveRange : Range {
+    __iter__(self) {
+	return RangeIter(self.a, self.b + 1);
+    }
+
+    __str__(self) {
+	return "({self.a}...{self.b})";
+    }
+}
