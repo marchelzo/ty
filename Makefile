@@ -7,8 +7,7 @@ CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
-LDFLAGS ?= ""
-LDFLAGS += -L/usr/local/lib
+LDFLAGS ?= -L/usr/local/lib
 LDFLAGS += -lpthread
 LDFLAGS += -lm
 LDFLAGS += -lreadline
@@ -67,7 +66,7 @@ ty: $(OBJECTS) ty.c
 	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(PROG) *.gcda src/*.{o,gcda}
+	rm -rf $(PROG) *.gcda $(wildcard src/*.o) $(wildcard src/*.gcda)
 
 .PHONY: test.c
 test.c: $(OBJECTS)

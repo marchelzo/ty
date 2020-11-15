@@ -693,32 +693,35 @@ vm_exec(char *code)
                 CASE(RANGE)
                         right = pop();
                         left = pop();
-                        if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER)
-                                vm_panic("non-integer used as bound in range");
-                        v = ARRAY(value_array_new());
+
+                        i = class_lookup("Range");
+                        if (i == -1 || (vp = class_lookup_method(i, "init")) == NULL) {
+                                vm_panic("failed to load Range class. was prelude loaded correctly?");
+                        }
+
+                        v = OBJECT(object_new(), i);
+                        push(left);
+                        push(right);
+                        call(vp, &v, 2, true);
+                        pop();
                         push(v);
-                        value_array_reserve(v.array, labs(right.integer - left.integer) + 2);
-                        if (left.integer < right.integer)
-                                for (int i = left.integer; i < right.integer; ++i)
-                                        v.array->items[v.array->count++] = INTEGER(i);
-                        else
-                                for (int i = left.integer; i > right.integer; --i)
-                                        v.array->items[v.array->count++] = INTEGER(i);
+                        
                         break;
                 CASE(INCRANGE)
                         right = pop();
                         left = pop();
-                        if (right.type != VALUE_INTEGER || left.type != VALUE_INTEGER)
-                                vm_panic("non-integer used as bound in range");
-                        v = ARRAY(value_array_new());
+
+                        i = class_lookup("InclusiveRange");
+                        if (i == -1 || (vp = class_lookup_method(i, "init")) == NULL) {
+                                vm_panic("failed to load InclusiveRange class. was prelude loaded correctly?");
+                        }
+
+                        v = OBJECT(object_new(), i);
+                        push(left);
+                        push(right);
+                        call(vp, &v, 2, true);
+                        pop();
                         push(v);
-                        value_array_reserve(v.array, labs(right.integer - left.integer) + 2);
-                        if (left.integer < right.integer)
-                                for (int i = left.integer; i <= right.integer; ++i)
-                                        v.array->items[v.array->count++] = INTEGER(i);
-                        else
-                                for (int i = left.integer; i >= right.integer; --i)
-                                        v.array->items[v.array->count++] = INTEGER(i);
                         break;
                 CASE(MEMBER_ACCESS)
                         v = pop();

@@ -2332,6 +2332,11 @@ compiler_init(void)
 char *
 compiler_load_prelude(void)
 {
+        if (setjmp(jb) != 0) {
+                fprintf(stderr, "failed to load prelude: %s\n", compiler_error());
+                exit(1);
+        }
+
         compile(slurp_module("prelude"));
         state.global = scope_new(state.global, false);
         return state.code.items;
