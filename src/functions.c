@@ -24,6 +24,7 @@
 #include "json.h"
 #include "dict.h"
 #include "object.h"
+#include "class.h"
 
 static char buffer[1024];
 
@@ -45,15 +46,28 @@ static char buffer[1024];
 struct value
 builtin_print(value_vector *args)
 {
-        ASSERT_ARGC("print()", 1);
+        struct value *f;
 
-        if (args->items[0].type == VALUE_STRING) {
-                fwrite(args->items[0].string, 1, args->items[0].bytes, stdout);
-        } else {
-                char *s = value_show(&args->items[0]);
-                fputs(s, stdout);
-                free(s);
+        for (int i = 0; i < args->count; ++i) {
+                struct value *v = &args->items[i];
+Again:
+                if (i > 0) fputs(", ", stdout);
+                if (v->type == VALUE_STRING) {
+                        fwrite(v->string, 1, v->bytes, stdout);
+                } else if (v->type == VALUE_OBJECT && (f = class_lookup_method(v->class, "__str__")) != NULL) {
+                        struct value str = vm_eval_function(f, v);
+                        if (str.type != VALUE_STRING) {
+                                v = &str;
+                                goto Again;
+                        }
+                        fwrite(str.string, 1, str.bytes, stdout);
+                } else {
+                        char *s = value_show(&args->items[i]);
+                        fputs(s, stdout);
+                        free(s);
+                }
         }
+
 
         putchar('\n');
 
@@ -234,9 +248,13 @@ builtin_str(value_vector *args)
         if (args->count == 0)
                 return STRING_NOGC(NULL, 0);
 
+        struct value *f;
+
         struct value arg = args->items[0];
         if (arg.type == VALUE_STRING) {
                 return arg;
+        } else if (arg.type == VALUE_OBJECT && (f = class_lookup_method(arg.class, "__str__")) != NULL) {
+                return vm_eval_function(f, &arg);
         } else {
                 char *str = value_show(&arg);
                 struct value result = STRING_CLONE(str, strlen(str));

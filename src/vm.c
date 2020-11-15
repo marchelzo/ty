@@ -705,7 +705,6 @@ vm_exec(char *code)
                         call(vp, &v, 2, true);
                         pop();
                         push(v);
-                        
                         break;
                 CASE(INCRANGE)
                         right = pop();
