@@ -253,6 +253,7 @@ dict_len(struct value *d, value_vector *args)
 DEFINE_METHOD_TABLE(
         { .name = "contains?",    .func = dict_contains      },
         { .name = "default",      .func = dict_default       },
+        { .name = "has?",         .func = dict_contains      },
         { .name = "keys",         .func = dict_keys          },
         { .name = "len",          .func = dict_len           },
         { .name = "values",       .func = dict_values        },
