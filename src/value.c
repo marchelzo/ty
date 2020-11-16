@@ -135,6 +135,53 @@ value_hash(struct value const *val)
 }
 
 char *
+show_dict(struct value const *d)
+{
+        static vec(struct dict *) show_dicts;
+
+        for (int i = 0; i < show_dicts.count; ++i)
+                if (show_dicts.items[i] == d->dict)
+                        return sclone("{...}");
+
+        vec_push(show_dicts, d->dict);
+
+        size_t capacity = 1;
+        size_t len = 1;
+        size_t n;
+        char *s = alloc(2);
+        strcpy(s, "{");
+
+#define add(str) \
+                n = strlen(str); \
+                if (len + n >= capacity) {\
+                        capacity = 2 * (len + n) + 1; \
+                        resize(s, capacity); \
+                } \
+                strcpy(s + len, str); \
+                len += n;
+
+        for (size_t i = 0, j = 0; i < d->dict->size; ++i) {
+                if (d->dict->keys[i].type == 0) continue;
+                char *key = value_show(&d->dict->keys[i]);
+                char *val = value_show(&d->dict->values[i]);
+                add(j == 0 ? "" : ", ");
+                add(key);
+                add(": ");
+                add(val);
+                free(key);
+                free(val);
+                j += 1;
+        }
+
+        add("}");
+#undef add
+        
+        --show_dicts.count;
+
+        return s;
+}
+
+char *
 show_array(struct value const *a)
 {
         static vec(struct array *) show_arrays;
@@ -237,7 +284,7 @@ value_show(struct value const *v)
                 snprintf(buffer, 1024, "/%s/", v->pattern);
                 break;
         case VALUE_DICT:
-                snprintf(buffer, 1024, "<dict at %p>", (void *) v->dict);
+                s = show_dict(v);
                 break;
         case VALUE_FUNCTION:
                 snprintf(buffer, 1024, "<function at %p>", (void *) v->code);
