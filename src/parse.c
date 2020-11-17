@@ -1335,6 +1335,8 @@ parse_definition_lvalue(int context)
                                 error("unexpected module in lvalue");
                 }
                 break;
+        case TOKEN_STAR:
+                return prefix_star();
         case '`':
                 return prefix_tick();
         case '$':

@@ -105,6 +105,22 @@ ary_hash(struct value const *a)
         return hash;
 }
 
+static unsigned long
+obj_hash(struct value const *v)
+{
+        struct value const *f = class_lookup_method(v->class, "__hash__");
+
+        if (f != NULL) {
+                struct value h = vm_eval_function(f, v);
+                if (h.type != VALUE_INTEGER) {
+                        vm_panic("%s.__hash__ return non-integer: %s", class_name(v->class), value_show(v));
+                }
+                return (unsigned long)h.integer;
+        } else {
+                return ptr_hash(v->object);
+        }
+}
+
 inline static unsigned long
 hash(struct value const *val)
 {
@@ -116,7 +132,7 @@ hash(struct value const *val)
         case VALUE_REAL:              return flt_hash(val->real);
         case VALUE_ARRAY:             return ary_hash(val);
         case VALUE_DICT:              return ptr_hash(val->dict);
-        case VALUE_OBJECT:            return ptr_hash(val->object);
+        case VALUE_OBJECT:            return obj_hash(val);
         case VALUE_METHOD:            return ptr_hash(val->method) ^ ptr_hash(val->this);
         case VALUE_BUILTIN_METHOD:    return ptr_hash(val->builtin_method) ^ ptr_hash(val->this);
         case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->code);
@@ -500,6 +516,8 @@ value_test_equality(struct value const *v1, struct value const *v2)
         if (v1->type != v2->type)
                 return false;
 
+        struct value *f;
+
         switch (v1->type & ~VALUE_TAGGED) {
         case VALUE_REAL:             if (v1->real != v2->real)                                                      return false; break;
         case VALUE_BOOLEAN:          if (v1->boolean != v2->boolean)                                                return false; break;
@@ -510,12 +528,20 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_FUNCTION:         if (v1->code != v2->code)                                                      return false; break;
         case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
         case VALUE_DICT:             if (v1->dict != v2->dict)                                                      return false; break;
-        case VALUE_OBJECT:           if (v1->object != v2->object)                                                  return false; break;
         case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
         case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || v1->this != v2->this)          return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
         case VALUE_NIL:                                                                                                           break;
+        case VALUE_OBJECT:
+                f = class_lookup_method(v1->class, "<=>");
+                if (f != NULL) {
+                        if (value_compare(v1, v2) != 0) {
+                                return false;
+                        }
+                } else if (v1->object != v2->object) {
+                        return false;
+                }
         }
 
         if (v1->tags != v2->tags)

@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <netdb.h>
 #include <sys/time.h>
@@ -704,7 +705,7 @@ builtin_os_read(value_vector *args)
                 vm_panic("the third argument to os::read() must be an integer");
 
         if (n.integer < 0)
-                vm_panic("the second argument to os::read() must be non-negative");
+                vm_panic("the third argument to os::read() must be non-negative");
 
         vec_reserve(*blob.blob, blob.blob->count + n.integer);
 
@@ -823,7 +824,8 @@ builtin_os_spawn(value_vector *args)
 
                 for (int i = 0; i < cmd.array->count; ++i) {
                         char *arg = alloc(cmd.array->items[i].bytes + 1);
-                        memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes + 1);
+                        memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
+                        arg[cmd.array->items[i].bytes] = '\0';
                         vec_push(args, arg);
                 }
 
@@ -952,16 +954,25 @@ builtin_os_poll(value_vector *args)
 struct value
 builtin_os_waitpid(value_vector *args)
 {
-        ASSERT_ARGC("os::waitpid()", 2);
+        ASSERT_ARGC_2("os::waitpid()", 1, 2);
 
         struct value pid = args->items[0];
-        struct value flags = args->items[1];
 
-        if (pid.type != VALUE_INTEGER || flags.type != VALUE_INTEGER)
+        int flags = 0;
+        if (args->count == 2) {
+                struct value f = args->items[1];
+                if (f.type != VALUE_INTEGER) goto Bad;
+                flags = f.integer;
+        } else {
+        }
+
+        if (pid.type != VALUE_INTEGER) {
+Bad:
                 vm_panic("both arguments to os::waitpid() must be integers");
+        }
 
         int status;
-        int ret = waitpid(pid.integer, &status, flags.integer);
+        int ret = waitpid(pid.integer, &status, flags);
 
         if (ret <= 0)
                 return INTEGER(ret);
@@ -1079,7 +1090,8 @@ builtin_os_exec(value_vector *args)
 
         for (int i = 0; i < cmd.array->count; ++i) {
                 char *arg = alloc(cmd.array->items[i].bytes + 1);
-                memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes + 1);
+                memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
+                arg[cmd.array->items[i].bytes] = '\0';
                 vec_push(argv, arg);
         }
 
@@ -1199,6 +1211,60 @@ builtin_os_listdir(value_vector *args)
         closedir(d);
 
         return ARRAY(files);
+}
+
+struct value
+builtin_os_stat(value_vector *args)
+{
+        ASSERT_ARGC("os::stat()", 1);
+
+        struct stat s;
+
+        struct value path = args->items[0];
+        if (path.type != VALUE_STRING)
+                vm_panic("the argument to os::stat() must be a string");
+
+       static vec(char) pb;
+       pb.count = 0;
+       vec_push_n(pb, path.string, path.bytes);
+       vec_push(pb, '\0');
+
+       int r = stat(pb.items, &s);
+       if (r != 0)
+               return NIL;
+
+       struct table *t = object_new();
+       table_add(t, "st_dev", INTEGER(s.st_dev));
+       table_add(t, "st_ino", INTEGER(s.st_ino));
+       table_add(t, "st_mode", INTEGER(s.st_mode));
+       table_add(t, "st_nlink", INTEGER(s.st_nlink));
+       table_add(t, "st_uid", INTEGER(s.st_uid));
+       table_add(t, "st_gid", INTEGER(s.st_gid));
+       table_add(t, "st_rdev", INTEGER(s.st_rdev));
+       table_add(t, "st_size", INTEGER(s.st_size));
+       table_add(t, "st_blocks", INTEGER(s.st_blocks));
+       table_add(t, "st_blksize", INTEGER(s.st_blksize));
+       table_add(t, "st_blksize", INTEGER(s.st_blksize));
+
+       struct table *atim = object_new();
+       struct table *mtim = object_new();
+       struct table *ctim = object_new();
+
+       table_add(atim, "tv_sec", INTEGER(s.st_atim.tv_sec));
+       table_add(atim, "tv_nsec", INTEGER(s.st_atim.tv_nsec));
+
+       table_add(mtim, "tv_sec", INTEGER(s.st_mtim.tv_sec));
+       table_add(mtim, "tv_nsec", INTEGER(s.st_mtim.tv_nsec));
+
+       table_add(ctim, "tv_sec", INTEGER(s.st_ctim.tv_sec));
+       table_add(ctim, "tv_nsec", INTEGER(s.st_ctim.tv_nsec));
+
+       table_add(t, "st_atim", OBJECT(atim, 0));
+       table_add(t, "st_mtim", OBJECT(mtim, 0));
+       table_add(t, "st_ctim", OBJECT(ctim, 0));
+
+       return OBJECT(t, 0);
+
 }
 
 struct value

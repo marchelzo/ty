@@ -447,6 +447,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
         switch (target->type) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
                 if (decl) {
                         target->symbol = addsymbol(scope, target->identifier);
                         target->local = true;
@@ -1697,8 +1698,18 @@ emit_assignment(struct expression *target, struct expression const *e)
                 subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &container, .subscript = &index);
                 for (int i = 0; i < target->elements.count; ++i) {
                         index.integer = i;
-                        emit_assignment(target->elements.items[i], &subscript);
-                        emit_instr(INSTR_POP);
+                        if (i == target->elements.count - 1 && target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
+                                emit_instr(INSTR_ARRAY_REST);
+                                emit_symbol(target->elements.items[i]->symbol->symbol);
+                                emit_int(i);
+                                emit_int(sizeof (int) + 1);
+                                emit_instr(INSTR_JUMP);
+                                emit_int(1);
+                                emit_instr(INSTR_BAD_MATCH);
+                        } else {
+                                emit_assignment(target->elements.items[i], &subscript);
+                                emit_instr(INSTR_POP);
+                        }
                 }
                 emit_instr(INSTR_POP_VAR);
                 emit_symbol(tmp->symbol);

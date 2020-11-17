@@ -130,6 +130,9 @@ struct value
 builtin_os_spawn(value_vector *args);
 
 struct value
+builtin_os_stat(value_vector *args);
+
+struct value
 builtin_os_fork(value_vector *args);
 
 struct value

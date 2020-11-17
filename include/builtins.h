@@ -43,6 +43,7 @@
 { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
 { .module = "os",     .name = "fcntl",             .value = BUILTIN(builtin_os_fcntl)                      },
 { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
+{ .module = "os",     .name = "stat",              .value = BUILTIN(builtin_os_stat)                       },
 { .module = "os",     .name = "fork",              .value = BUILTIN(builtin_os_fork)                       },
 { .module = "os",     .name = "pipe",              .value = BUILTIN(builtin_os_pipe)                       },
 { .module = "os",     .name = "dup2",              .value = BUILTIN(builtin_os_dup2)                       },
