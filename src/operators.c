@@ -6,6 +6,7 @@
 #include "class.h"
 #include "dict.h"
 #include "vm.h"
+#include "gc.h"
 
 static struct value
 str_concat(struct value const *s1, struct value const *s2)
@@ -46,8 +47,14 @@ binary_operator_addition(struct value const *left, struct value const *right)
         case VALUE_REAL:    return REAL(left->real + right->real);
         case VALUE_STRING:  return str_concat(left, right);
         case VALUE_ARRAY:
+                gc_push(left);
+                gc_push(right);
                 v = ARRAY(value_array_clone(left->array));
+                NOGC(v.array);
                 value_array_extend(v.array, right->array);
+                OKGC(v.array);
+                gc_pop();
+                gc_pop();
                 return v;
         default:
         Fail:

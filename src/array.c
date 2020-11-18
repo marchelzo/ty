@@ -603,7 +603,7 @@ array_drop(struct value *array, value_vector *args)
         struct value n = args->items[0];
 
         if (n.type != VALUE_INTEGER)
-                vm_panic("non-integer passed to array.drop!()");
+                vm_panic("non-integer passed to array.drop()");
 
         struct value result = ARRAY(value_array_new());
 
@@ -614,7 +614,7 @@ array_drop(struct value *array, value_vector *args)
         value_array_reserve(result.array, count);
         OKGC(result.array);
 
-        memmove(result.array->items, array->array->items + d, count * sizeof (struct value));
+        memcpy(result.array->items, array->array->items + d, count * sizeof (struct value));
         result.array->count = count;
 
         return result;
