@@ -135,6 +135,13 @@ builtin_rand(value_vector *args)
 }
 
 struct value
+builtin_hash(value_vector *args)
+{
+        ASSERT_ARGC("hash()", 1);
+        return INTEGER(value_hash(&args->items[0]));
+}
+
+struct value
 builtin_float(value_vector *args)
 {
         ASSERT_ARGC("float()", 1);

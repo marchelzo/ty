@@ -14,6 +14,7 @@
 { .module = NULL,     .name = "blob",              .value = BUILTIN(builtin_blob)                          },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
+{ .module = NULL,     .name = "hash",              .value = BUILTIN(builtin_hash)                          },
 { .module = NULL,     .name = "getenv",            .value = BUILTIN(builtin_getenv)                        },
 { .module = NULL,     .name = "setenv",            .value = BUILTIN(builtin_setenv)                        },
 { .module = "math",   .name = "log2",              .value = BUILTIN(builtin_log2)                          },
