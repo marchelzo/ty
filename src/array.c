@@ -1352,6 +1352,7 @@ DEFINE_METHOD_TABLE(
         { .name = "groupBy!",          .func = array_group_by                },
         { .name = "groupsOf",          .func = array_groups_of_no_mut        },
         { .name = "groupsOf!",         .func = array_groups_of               },
+        { .name = "has?",              .func = array_contains                },
         { .name = "insert",            .func = array_insert                  },
         { .name = "intersperse",       .func = array_intersperse_no_mut      },
         { .name = "intersperse!",      .func = array_intersperse             },
