@@ -80,7 +80,7 @@ operator %>(it, f) {
 }
 
 operator .*.(f, n) {
-    return (..n).map(f);
+    return (..n).list().map(f);
 }
 
 function r() {
@@ -109,7 +109,7 @@ function rs(n) {
 
 function g() {
     let d = {}.default(_ -> []);
-    let s = (..500).map(|rs(sample())|).join(' ');
+    let s = (..500).list().map(|rs(sample())|).join(' ');
     for m in s.matches(/\w+/) {
         d[m.len()].push(m);
     }

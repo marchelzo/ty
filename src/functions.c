@@ -10,6 +10,7 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <netdb.h>
@@ -910,6 +911,157 @@ builtin_os_dup2(value_vector *args)
                 vm_panic("the arguments to os::dup2() must be integers");
 
         return INTEGER(dup2(old.integer, new.integer));
+}
+
+struct value
+builtin_os_socket(value_vector *args)
+{
+        ASSERT_ARGC("os::socket()", 3);
+
+        struct value domain = args->items[0];
+        struct value type = args->items[1];
+        struct value protocol = args->items[2];
+
+        if (domain.type != VALUE_INTEGER || type.type != VALUE_INTEGER || protocol.type != VALUE_INTEGER)
+                vm_panic("the arguments to os::socket() must be integers");
+
+        return INTEGER(socket(domain.integer, type.integer, protocol.integer));
+}
+
+struct value
+builtin_os_listen(value_vector *args)
+{
+        ASSERT_ARGC("os::listen()", 2);
+
+        struct value sockfd = args->items[0];
+        struct value backlog = args->items[1];
+
+        if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
+                vm_panic("the arguments to os::listen() must be integers");
+
+        return INTEGER(listen(sockfd.integer, backlog.integer));
+}
+
+struct value
+builtin_os_bind(value_vector *args)
+{
+        ASSERT_ARGC("os::bind()", 2);
+
+        struct value sockfd = args->items[0];
+        struct value addr = args->items[1];
+
+        if (sockfd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::listen() must be an integer");
+
+        if (addr.type != VALUE_DICT)
+                vm_panic("the second argument to os::listen() must be a dict");
+
+        struct value *v = dict_get_member(addr.dict, "family");
+        if (v == NULL || v->type != VALUE_INTEGER)
+                vm_panic("missing or invalid address family in dict passed to os::bind()");
+
+        struct sockaddr_un un_addr;
+        struct sockaddr_in in_addr;
+
+        switch (af.integer) {
+        case AF_UNIX:
+                memset(&un_addr, 0, sizeof un_addr);
+                un_addr.sun_path = AF_UNIX;
+                v = dict_get_member(addr.dict, "path");
+                if (v == NULL || v->type != VALUE_STRING)
+                        vm_panic("missing or invalid path in dict passed to os::bind()");
+                memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
+                return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr);
+        case AF_INET:
+                memset(&un_addr, 0, sizeof un_addr);
+                un_addr.sun_path = AF_UNIX;
+                v = dict_get_member(addr.dict, "address");
+                if (v == NULL || v->type != VALUE_STRING)
+                        vm_panic("missing or invalid address in dict passed to os::bind()");
+                memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
+                v = dict_get_member(addr.dict, "port");
+                if (v == NULL || v->type != VALUE_INTEGER)
+                        vm_panic("missing or invalid port in dict passed to os::bind()");
+                return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr);
+                
+        }
+
+
+        return INTEGER(listen(sockfd.integer, backlog.integer));
+}
+
+struct value
+builtin_os_getaddrinfo(value_vector *args)
+{
+        ASSERT_ARGC_2("os::getaddrinfo()", 5, 6);
+
+        struct value host = args->items[0];
+        if (host.type != VALUE_STRING)
+                vm_panic("the first argument to os::getaddrinfo() must be a string");
+
+        struct value port = args->items[1];
+        if (port.type != VALUE_INTEGER)
+                vm_panic("the second argument to os::getaddrinfo() must be a string");
+
+        struct value family = args->items[2];
+        struct value type = args->items[3];
+        struct value proto = args->items[4];
+
+        int flags = 0;
+        if (args->count == 6) {
+                if (args->items[5].type != VALUE_INTEGER)
+                        vm_panic("the sixth argument to os::getaddrinfo() must be an integer");
+                flags = args->items[5].integer;
+        }
+
+        vec(char) node;
+        vec_push_n(node, host.string, host.bytes);
+        vec_push(node, '\0');
+
+        vec(char) service;
+        vec_push_n(service, port.string, port.bytes);
+        vec_push(service, '\0');
+
+        struct value results = ARRAY(value_array_new());
+        gc_push(&results);
+
+        struct addrinfo *res;
+        int r = getaddrinfo(node.items, service.items, NULL, &res);
+        if (r == 0) {
+                struct value d = DICT(dict_new());
+                value_array_push(results.array, d);
+                while (res != NULL) {
+                        dict_put_member(d.dict, "family", INTEGER(res->ai_family));
+                        dict_put_member(d.dict, "type", INTEGER(res->ai_type));
+                        dict_put_member(d.dict, "protocol", INTEGER(res->ai_protocol));
+                        dict_put_member(
+                                d.dict,
+                                "canonname",
+                                STRING_CLONE(res->ai_canonname, strlen(res->ai_canonname))
+                        );
+                        struct value addr = OBJECT(class_lookup(
+                        dict_put_member(
+                                d.dict,
+                                "addr",
+                                OBJECT(object_new(), 0);
+
+                }
+                return NIL;
+        }
+}
+
+struct value
+builtin_os_accept(value_vector *args)
+{
+        ASSERT_ARGC("os::listen()", 2);
+
+        struct value sockfd = args->items[0];
+        struct value backlog = args->items[1];
+
+        if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
+                vm_panic("the arguments to os::listen() must be integers");
+
+        return INTEGER(listen(sockfd.integer, backlog.integer));
 }
 
 struct value

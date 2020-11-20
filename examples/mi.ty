@@ -30,7 +30,7 @@ for k, v, i in { 'hello': 'world', 'foo': 'bar', 'young': 'thug' } {
     print("  v = {v}");
 }
 
-for s in (..5).map(|# + 4|).map(k -> ..k).map(r -> r.map(str).join(', ')) {
+for s in (..5).list().map(|# + 4|).map(k -> (..k).list()).map(r -> r.map(str).join(', ')) {
     print("s = {s}");
 }
 
@@ -43,6 +43,6 @@ print("a = {a}, b = {b}");
 
 
 
-let xs = ..10;
+let xs = (..10).list();
 xs[2], xs[3] = xs[3], xs[2];
 print(xs);

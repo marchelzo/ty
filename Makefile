@@ -32,6 +32,8 @@ ifndef RELEASE
         #CFLAGS += -fsanitize=leak
 else
         CFLAGS += -Ofast
+        CFLAGS += -march=native
+        CFLAGS += -pipe
         CFLAGS += -DTY_RELEASE
         CFLAGS += -DTY_NO_LOG
 endif
