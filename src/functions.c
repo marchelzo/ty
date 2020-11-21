@@ -931,6 +931,20 @@ builtin_os_socket(value_vector *args)
 }
 
 struct value
+builtin_os_shutdown(value_vector *args)
+{
+        ASSERT_ARGC("os::shutdown()", 2);
+
+        struct value fd = args->items[0];
+        struct value how = args->items[1];
+
+        if (fd.type != VALUE_INTEGER || how.type != VALUE_INTEGER)
+                vm_panic("the arguments to os::shutdown() must be integers");
+
+        return INTEGER(shutdown(fd.integer, how.integer));
+}
+
+struct value
 builtin_os_listen(value_vector *args)
 {
         ASSERT_ARGC("os::listen()", 2);

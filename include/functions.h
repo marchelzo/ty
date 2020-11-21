@@ -166,6 +166,9 @@ struct value
 builtin_os_connect(value_vector *args);
 
 struct value
+builtin_os_shutdown(value_vector *args);
+
+struct value
 builtin_os_waitpid(value_vector *args);
 
 struct value
