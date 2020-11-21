@@ -28,7 +28,7 @@ endif
 ifndef RELEASE
         CFLAGS += -Og
         CFLAGS += -fsanitize=undefined
-        CFLAGS += -fsanitize=address
+        #CFLAGS += -fsanitize=address
         #CFLAGS += -fsanitize=leak
 else
         CFLAGS += -Ofast

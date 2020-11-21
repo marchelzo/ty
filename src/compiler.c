@@ -2181,8 +2181,9 @@ compile(char const *source)
                 }
         }
 
-        for (size_t i = 0; p[i] != NULL; ++i)
+        for (size_t i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(state.global, p[i]);
+        }
 
         for (int i = 0; i < state.exports.count; ++i) {
                 struct symbol *s = scope_lookup(state.global, state.exports.items[i]);
@@ -2210,16 +2211,18 @@ compile(char const *source)
          * without getting an error due to f and g being referenced before they're defined.
          *
          */
-        size_t fi = 0;
-        for (size_t i = 0; p[i] != NULL; ++i) {
+        for (int i = 0; p[i] != NULL; ++i) {
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
-                        struct statement *s = p[fi];
-                        p[fi++] = p[i];
-                        p[i] = s;
+                        for (int j = i - 1; j > 0 && p[j]->type != STATEMENT_FUNCTION_DEFINITION
+                                                 && p[j]->type != STATEMENT_IMPORT; --j) {
+                                struct statement *s = p[j];
+                                p[j] = p[i];
+                                p[i] = s;
+                        }
                 }
         }
 
-        for (size_t i = 0; p[i] != NULL; ++i) {
+        for (int i = 0; p[i] != NULL; ++i) {
                 emit_statement(p[i]);
         }
 
