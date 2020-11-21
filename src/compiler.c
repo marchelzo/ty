@@ -777,9 +777,15 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_IF_LET:
                 symbolize_expression(scope, s->if_let.e);
                 subscope = scope_new(scope, false);
-                symbolize_pattern(subscope, s->if_let.pattern);
-                symbolize_statement(subscope, s->if_let.then);
-                symbolize_statement(scope, s->if_let.otherwise); /* note that this is not done in the subscope */
+                if (s->if_let.neg) {
+                        symbolize_pattern(scope, s->if_let.pattern);
+                        symbolize_statement(scope, s->if_let.then);
+                        symbolize_statement(subscope, s->if_let.otherwise);
+                } else {
+                        symbolize_pattern(subscope, s->if_let.pattern);
+                        symbolize_statement(subscope, s->if_let.then);
+                        symbolize_statement(scope, s->if_let.otherwise);
+                }
                 break;
         case STATEMENT_FOR_LOOP:
                 scope = scope_new(scope, false);
@@ -1528,14 +1534,20 @@ emit_if_let(struct statement const *s)
 
         emit_expression(s->if_let.e);
 
-        bool returns = emit_case(s->if_let.pattern, NULL, s->if_let.then);
+        bool returns;
 
-        emit_instr(INSTR_POP);
-
-        if (s->if_let.otherwise != NULL) {
-                returns &= emit_statement(s->if_let.otherwise);
+        if (!s->if_let.neg) {
+                returns = emit_case(s->if_let.pattern, NULL, s->if_let.then);
+                emit_instr(INSTR_POP);
+                if (s->if_let.otherwise != NULL) {
+                        returns &= emit_statement(s->if_let.otherwise);
+                } else {
+                        returns = false;
+                }
         } else {
-                returns = false;
+                returns = emit_case(s->if_let.pattern, NULL, s->if_let.otherwise);
+                emit_instr(INSTR_POP);
+                returns &= emit_statement(s->if_let.then);
         }
 
         patch_jumps_to(&state.match_successes, state.code.count);

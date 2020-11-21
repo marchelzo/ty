@@ -1556,9 +1556,13 @@ parse_if_statement(void)
         /*
          * Maybe it's an if-let statement.
          */
-        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET) {
-                next();
+        if (tok()->type == TOKEN_BANG || (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET)) {
+                bool neg = tok()->type == TOKEN_BANG;
+                if (neg)
+                        next();
+                consume_keyword(KEYWORD_LET);
                 s->type = STATEMENT_IF_LET;
+                s->if_let.neg = neg;
                 s->if_let.pattern = parse_definition_lvalue(LV_LET);
                 consume(TOKEN_EQ);
                 s->if_let.e = parse_expr(0);

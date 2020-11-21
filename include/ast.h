@@ -110,6 +110,7 @@ struct statement {
                         struct expression *pattern;
                         struct statement *then;
                         struct statement *otherwise;
+                        bool neg;
                 } if_let;
                 struct {
                         struct expression *target;
