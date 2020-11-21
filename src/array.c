@@ -1270,6 +1270,46 @@ array_reverse(struct value *array, value_vector *args)
 }
 
 static struct value
+array_rotate(struct value *array, value_vector *args)
+{
+        int d = 1;
+        int n = array->array->count;
+
+        if (args->count == 1) {
+                struct value amount = args->items[0];
+                if (amount.type != VALUE_INTEGER)
+                        vm_panic("the argument to array.rotate() must be an integer");
+                d = amount.integer;
+        } else if (args->count != 0) {
+                vm_panic("the rotate method on arrays expects 0 or 1 arguments but got %zu", args->count);
+        }
+
+        d %= n;
+        if (d < 0)
+                d += n;
+
+        int N = gcd(n, d);
+        int i, j, k;
+        for (int i = 0; i < N; ++i) {
+                struct value t = array->array->items[i];
+                j = i;
+                for (;;) {
+                        k = j + d;
+                        if (k >= n)
+                                k = k - n;
+                        if (k == i)
+                                break;
+                        array->array->items[j] = array->array->items[k];
+                        j = k;
+
+                }
+                array->array->items[j] = t;
+        }
+
+        return *array;
+}
+
+static struct value
 array_sort_by(struct value *array, value_vector *args)
 {
         if (args->count != 1)
@@ -1321,6 +1361,7 @@ DEFINE_NO_MUT(intersperse);
 DEFINE_NO_MUT(map);
 DEFINE_NO_MUT(map_cons);
 DEFINE_NO_MUT(reverse);
+DEFINE_NO_MUT(rotate);
 DEFINE_NO_MUT(scan_left);
 DEFINE_NO_MUT(scan_right);
 DEFINE_NO_MUT(shuffle);
@@ -1372,6 +1413,8 @@ DEFINE_METHOD_TABLE(
         { .name = "push",              .func = array_push                    },
         { .name = "reverse",           .func = array_reverse_no_mut          },
         { .name = "reverse!",          .func = array_reverse                 },
+        { .name = "rotate!",           .func = array_rotate                  },
+        { .name = "rotate",            .func = array_rotate_no_mut           },
         { .name = "scanLeft",          .func = array_scan_left_no_mut        },
         { .name = "scanLeft!",         .func = array_scan_left               },
         { .name = "scanRight",         .func = array_scan_right_no_mut       },
