@@ -148,6 +148,21 @@ struct value
 builtin_os_poll(value_vector *args);
 
 struct value
+builtin_os_getaddrinfo(value_vector *args);
+
+struct value
+builtin_os_bind(value_vector *args);
+
+struct value
+builtin_os_socket(value_vector *args);
+
+struct value
+builtin_os_listen(value_vector *args);
+
+struct value
+builtin_os_accept(value_vector *args);
+
+struct value
 builtin_os_connect(value_vector *args);
 
 struct value

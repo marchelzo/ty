@@ -14,7 +14,13 @@
 #include <signal.h>
 
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <netdb.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
+#include <netdb.h>
+#include <netinet/ip.h>
 
 #include "vm.h"
 #include "util.h"

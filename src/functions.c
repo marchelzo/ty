@@ -10,10 +10,12 @@
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <netdb.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <netdb.h>
+#include <netinet/ip.h>
 #include <sys/time.h>
 #include <poll.h>
 #include <signal.h>
@@ -951,10 +953,10 @@ builtin_os_bind(value_vector *args)
         struct value addr = args->items[1];
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::listen() must be an integer");
+                vm_panic("the first argument to os::bind() must be an integer");
 
         if (addr.type != VALUE_DICT)
-                vm_panic("the second argument to os::listen() must be a dict");
+                vm_panic("the second argument to os::bind() must be a dict");
 
         struct value *v = dict_get_member(addr.dict, "family");
         if (v == NULL || v->type != VALUE_INTEGER)
@@ -963,31 +965,32 @@ builtin_os_bind(value_vector *args)
         struct sockaddr_un un_addr;
         struct sockaddr_in in_addr;
 
-        switch (af.integer) {
-        case AF_UNIX:
-                memset(&un_addr, 0, sizeof un_addr);
-                un_addr.sun_path = AF_UNIX;
-                v = dict_get_member(addr.dict, "path");
-                if (v == NULL || v->type != VALUE_STRING)
-                        vm_panic("missing or invalid path in dict passed to os::bind()");
-                memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
-                return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr);
-        case AF_INET:
-                memset(&un_addr, 0, sizeof un_addr);
-                un_addr.sun_path = AF_UNIX;
-                v = dict_get_member(addr.dict, "address");
-                if (v == NULL || v->type != VALUE_STRING)
-                        vm_panic("missing or invalid address in dict passed to os::bind()");
-                memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
-                v = dict_get_member(addr.dict, "port");
-                if (v == NULL || v->type != VALUE_INTEGER)
-                        vm_panic("missing or invalid port in dict passed to os::bind()");
-                return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr);
-                
+        struct value *sockaddr = dict_get_member(addr.dict, "address");
+        if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
+                return INTEGER(bind(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
+        } else switch (v->integer) {
+                case AF_UNIX:
+                        memset(&un_addr, 0, sizeof un_addr);
+                        un_addr.sun_family = AF_UNIX;
+                        v = dict_get_member(addr.dict, "path");
+                        if (v == NULL || v->type != VALUE_STRING)
+                                vm_panic("missing or invalid path in dict passed to os::bind()");
+                        memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
+                        return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+                case AF_INET:
+                        memset(&un_addr, 0, sizeof un_addr);
+                        un_addr.sun_family = AF_UNIX;
+                        v = dict_get_member(addr.dict, "address");
+                        if (v == NULL || v->type != VALUE_STRING)
+                                vm_panic("missing or invalid address in dict passed to os::bind()");
+                        memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
+                        v = dict_get_member(addr.dict, "port");
+                        if (v == NULL || v->type != VALUE_INTEGER)
+                                vm_panic("missing or invalid port in dict passed to os::bind()");
+                        return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+                default:
+                        vm_panic("invalid arguments to os::bind()");
         }
-
-
-        return INTEGER(listen(sockfd.integer, backlog.integer));
 }
 
 struct value
@@ -1000,12 +1003,20 @@ builtin_os_getaddrinfo(value_vector *args)
                 vm_panic("the first argument to os::getaddrinfo() must be a string");
 
         struct value port = args->items[1];
-        if (port.type != VALUE_INTEGER)
+        if (port.type != VALUE_STRING)
                 vm_panic("the second argument to os::getaddrinfo() must be a string");
 
         struct value family = args->items[2];
+        if (family.type != VALUE_INTEGER)
+                vm_panic("the third argument to os::getaddrinfo() must be an integer");
+
         struct value type = args->items[3];
-        struct value proto = args->items[4];
+        if (type.type != VALUE_INTEGER)
+                vm_panic("the fourth argument to os::getaddrinfo() must be an integer");
+
+        struct value protocol = args->items[4];
+        if (protocol.type != VALUE_INTEGER)
+                vm_panic("the fifth argument to os::getaddrinfo() must be an integer");
 
         int flags = 0;
         if (args->count == 6) {
@@ -1014,11 +1025,11 @@ builtin_os_getaddrinfo(value_vector *args)
                 flags = args->items[5].integer;
         }
 
-        vec(char) node;
+        vec(char) node = {0};
         vec_push_n(node, host.string, host.bytes);
         vec_push(node, '\0');
 
-        vec(char) service;
+        vec(char) service = {0};
         vec_push_n(service, port.string, port.bytes);
         vec_push(service, '\0');
 
@@ -1026,42 +1037,78 @@ builtin_os_getaddrinfo(value_vector *args)
         gc_push(&results);
 
         struct addrinfo *res;
-        int r = getaddrinfo(node.items, service.items, NULL, &res);
-        if (r == 0) {
-                struct value d = DICT(dict_new());
-                value_array_push(results.array, d);
-                while (res != NULL) {
-                        dict_put_member(d.dict, "family", INTEGER(res->ai_family));
-                        dict_put_member(d.dict, "type", INTEGER(res->ai_type));
-                        dict_put_member(d.dict, "protocol", INTEGER(res->ai_protocol));
-                        dict_put_member(
-                                d.dict,
-                                "canonname",
-                                STRING_CLONE(res->ai_canonname, strlen(res->ai_canonname))
-                        );
-                        struct value addr = OBJECT(class_lookup(
-                        dict_put_member(
-                                d.dict,
-                                "addr",
-                                OBJECT(object_new(), 0);
+        struct addrinfo hints;
 
+        memset(&hints, 0, sizeof hints);
+        hints.ai_flags = flags;
+        hints.ai_family = family.integer;
+        hints.ai_socktype = type.integer;
+        hints.ai_protocol = protocol.integer;
+
+        int r = getaddrinfo(node.items, service.items, &hints, &res);
+        if (r == 0) {
+                for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
+                        struct value d = DICT(dict_new());
+                        value_array_push(results.array, d);
+                        dict_put_member(d.dict, "family", INTEGER(it->ai_family));
+                        dict_put_member(d.dict, "type", INTEGER(it->ai_socktype));
+                        dict_put_member(d.dict, "protocol", INTEGER(it->ai_protocol));
+                        struct blob *b = value_blob_new();
+                        dict_put_member(d.dict, "address", BLOB(b));
+                        vec_push_n(*b, (char *)it->ai_addr, it->ai_addrlen);
+                        if (it->ai_canonname != NULL) {
+                                dict_put_member(
+                                        d.dict,
+                                        "canonname",
+                                        STRING_CLONE(it->ai_canonname, strlen(it->ai_canonname))
+                                );
+                        }
                 }
-                return NIL;
+
+                gc_pop();
+                freeaddrinfo(res);
+
+                results.tags = tags_lookup("Ok");
+                results.type |= VALUE_TAGGED;
+
+                return results;
+
+        } else {
+                return (struct value) {
+                        .type = VALUE_INTEGER | VALUE_TAGGED,
+                        .integer = r,
+                        .tags = tags_lookup("Err")
+                };
         }
 }
 
 struct value
 builtin_os_accept(value_vector *args)
 {
-        ASSERT_ARGC("os::listen()", 2);
+        ASSERT_ARGC("os::accept()", 1);
 
         struct value sockfd = args->items[0];
-        struct value backlog = args->items[1];
 
-        if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
-                vm_panic("the arguments to os::listen() must be integers");
+        if (sockfd.type != VALUE_INTEGER)
+                vm_panic("the argument to os::listen() must be an integer");
 
-        return INTEGER(listen(sockfd.integer, backlog.integer));
+        struct sockaddr a;
+        socklen_t n = sizeof a;
+
+        int r = accept(sockfd.integer, &a, &n);
+        if (r == -1)
+                return NIL;
+
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, (char *)&a, n);
+
+        struct array *result = value_array_new();
+        NOGC(result);
+
+        value_array_push(result, INTEGER(r));
+        value_array_push(result, BLOB(b));
+
+        return ARRAY(result);
 }
 
 struct value
