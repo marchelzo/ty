@@ -116,6 +116,9 @@ parse_match_statement(void);
 static struct statement *
 parse_let_definition(void);
 
+static struct expression *
+parse_target_list(void);
+
 static struct statement *
 parse_block(void);
 
@@ -632,9 +635,24 @@ prefix_array(void)
                 vec_push(e->elements, parse_expr(0));
         }
 
-        while (tok()->type == ',') {
-                next();
-                vec_push(e->elements, parse_expr(0));
+        while (tok()->type != ']') {
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FOR) {
+                        next();
+                        e->type = EXPRESSION_ARRAY_COMPR;
+                        e->compr.pattern = parse_target_list();
+                        consume_keyword(KEYWORD_IN);
+                        e->compr.iter = parse_expr(0);
+                        if (tok()->type == TOKEN_BIT_OR) {
+                                next();
+                                e->compr.cond = parse_expr(0);
+                        } else {
+                                e->compr.cond = NULL;
+                        }
+                        expect(']');
+                } else {
+                        consume(',');
+                        vec_push(e->elements, parse_expr(0));
+                }
         }
 
         consume(']');
@@ -1435,6 +1453,29 @@ error:
         return NULL;
 }
 
+static struct expression *
+parse_target_list(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_LIST;
+        vec_init(e->es);
+        vec_push(e->es, parse_definition_lvalue(LV_EACH));
+
+        if (e->es.items[0] == NULL)
+        Error:
+                error("expected lvalue in for-each loop");
+
+        while (tok()->type == ',' && (token(1)->type == TOKEN_IDENTIFIER || token(1)->type == '[')) {
+                next();
+                vec_push(e->es, parse_definition_lvalue(LV_EACH));
+                if (vec_last(e->es) == NULL) {
+                        goto Error;
+                }
+        }
+
+        return e;
+}
+
 static struct statement *
 parse_for_loop(void)
 {
@@ -1449,22 +1490,7 @@ parse_for_loop(void)
          */
         if (tok()->type != '(') {
                 s->type = STATEMENT_EACH_LOOP;
-                s->each.target = mkexpr();
-                s->each.target->type = EXPRESSION_LIST;
-                vec_init(s->each.target->es);
-                vec_push(s->each.target->es, parse_definition_lvalue(LV_EACH));
-
-                if (s->each.target->es.items[0] == NULL)
-                Error:
-                        error("expected lvalue in for-each loop");
-
-                while (tok()->type == ',' && (token(1)->type == TOKEN_IDENTIFIER || token(1)->type == '[')) {
-                        next();
-                        vec_push(s->each.target->es, parse_definition_lvalue(LV_EACH));
-                        if (vec_last(s->each.target->es) == NULL) {
-                                goto Error;
-                        }
-                }
+                s->each.target = parse_target_list();
 
                 consume_keyword(KEYWORD_IN);
 

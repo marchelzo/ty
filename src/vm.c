@@ -650,6 +650,13 @@ vm_exec(char *code)
                                 vm_panic("for-each loop on non-iterable value");
                         }
                         break;
+                CASE(ARRAY_COMPR)
+                        READVALUE(n);
+                        v = top()[-(n + 2)];
+                        gc_push(&v);
+                        while (n --> 0)
+                                value_array_push(v.array, pop());
+                        break;
                 CASE(PUSH_INDEX)
                         READVALUE(n);
                         push(INDEX(0, 0, n));

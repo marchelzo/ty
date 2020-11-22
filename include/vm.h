@@ -50,6 +50,7 @@ enum instruction {
         INSTR_POP,
         INSTR_DUP,
         INSTR_LEN,
+        INSTR_ARRAY_COMPR,
 
         INSTR_DIE_IF_NIL,
 

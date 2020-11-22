@@ -133,6 +133,7 @@ struct expression {
                 EXPRESSION_MEMBER_ACCESS,
                 EXPRESSION_SUBSCRIPT,
                 EXPRESSION_ARRAY,
+                EXPRESSION_ARRAY_COMPR,
                 EXPRESSION_DICT,
                 EXPRESSION_METHOD_CALL,
                 EXPRESSION_IDENTIFIER,
@@ -196,7 +197,14 @@ struct expression {
                 char *string;
                 float real;
                 struct expression *operand;
-                vec(struct expression *) elements;
+                struct {
+                        vec(struct expression *) elements;
+                        struct {
+                                struct expression *pattern;
+                                struct expression *iter;
+                                struct expression *cond;
+                        } compr;
+                };
                 struct {
                         bool only_identifiers;
                         vec(struct expression *) es;

@@ -1,6 +1,6 @@
 class A {
     init(self) {
-        self.xs = ..10;
+        self.xs = (..10).list();
     }
 
     __iter__(self) { return self; }

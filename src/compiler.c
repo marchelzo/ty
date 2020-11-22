@@ -43,6 +43,18 @@
                 emit_int(loc - state.code.count - sizeof (int)); \
         } while (false)
 
+#define JUMP_IF(loc) \
+        do { \
+                emit_instr(INSTR_JUMP_IF); \
+                emit_int(loc - state.code.count - sizeof (int)); \
+        } while (false)
+
+#define JUMP_IF_NOT(loc) \
+        do { \
+                emit_instr(INSTR_JUMP_IF_NOT); \
+                emit_int(loc - state.code.count - sizeof (int)); \
+        } while (false)
+
 #define EXPR(...) ((struct expression){ .loc = { -1, -1 }, __VA_ARGS__ })
 
 struct eloc {
@@ -659,8 +671,18 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < e->elements.count; ++i)
+                for (size_t i = 0; i < e->elements.count; ++i) {
                         symbolize_expression(scope, e->elements.items[i]);
+                }
+                break;
+        case EXPRESSION_ARRAY_COMPR:
+                symbolize_expression(scope, e->compr.iter);
+                subscope = scope_new(scope, false);
+                symbolize_lvalue(subscope, e->compr.pattern, true);
+                symbolize_expression(subscope, e->compr.cond);
+                for (size_t i = 0; i < e->elements.count; ++i) {
+                        symbolize_expression(subscope, e->elements.items[i]);
+                }
                 break;
         case EXPRESSION_DICT:
                 for (size_t i = 0; i < e->keys.count; ++i) {
@@ -796,15 +818,15 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 s->for_loop.check = state.check;
                 break;
         case STATEMENT_EACH_LOOP:
+                symbolize_expression(scope, s->each.array);
                 scope = scope_new(scope, false);
                 symbolize_lvalue(scope, s->each.target, true);
-                symbolize_expression(scope, s->each.array);
                 symbolize_statement(scope, s->each.body);
                 s->each.check = state.check;
                 break;
         case STATEMENT_WHILE_LOOP:
-                scope = scope_new(scope, false);
                 symbolize_expression(scope, s->while_loop.cond);
+                scope = scope_new(scope, false);
                 symbolize_statement(scope, s->while_loop.body);
                 s->while_loop.check = state.check;
                 break;
@@ -1615,6 +1637,70 @@ emit_target(struct expression *target)
 }
 
 static void
+emit_array_compr(struct expression const *e)
+{
+        bool each_loop_save = state.each_loop;
+        state.each_loop = true;
+
+        uint64_t loop_save = state.loop;
+        state.loop = ++t;
+
+        offset_vector brk_save = state.breaks;
+        offset_vector cont_save = state.continues;
+        offset_vector successes_save = state.match_successes;
+        vec_init(state.breaks);
+        vec_init(state.continues);
+        vec_init(state.match_successes);
+
+        emit_instr(INSTR_ARRAY);
+        emit_int(0);
+
+        emit_instr(INSTR_PUSH_INDEX);
+        if (e->compr.pattern->type == EXPRESSION_LIST) {
+                emit_int((int)e->compr.pattern->es.count);
+        } else {
+                emit_int(1);
+        }
+
+        emit_expression(e->compr.iter);
+
+        size_t start = state.code.count;
+
+        for (int i = 0; i < e->compr.pattern->es.count; ++i) {
+                emit_target(e->compr.pattern->es.items[i]);
+        }
+
+        emit_instr(INSTR_SENTINEL);
+        emit_instr(INSTR_CLEAR_RC);
+        emit_instr(INSTR_GET_NEXT);
+        emit_instr(INSTR_READ_INDEX);
+        emit_instr(INSTR_MULTI_ASSIGN);
+        emit_int((int)e->compr.pattern->es.count);
+        emit_instr(INSTR_NIL);
+        emit_instr(INSTR_EQ);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t stop);
+        if (e->compr.cond != NULL) {
+                emit_expression(e->compr.cond);
+                JUMP_IF_NOT(start);
+        }
+        for (int i = e->elements.count - 1; i >= 0; --i)
+                emit_expression(e->elements.items[i]);
+        emit_instr(INSTR_ARRAY_COMPR);
+        emit_int((int)e->elements.count);
+        JUMP(start);
+        PATCH_JUMP(stop);
+        patch_loop_jumps(start, state.code.count);
+        emit_instr(INSTR_POP);
+        emit_instr(INSTR_POP);
+
+        state.match_successes = successes_save;
+        state.breaks = brk_save;
+        state.continues = cont_save;
+        state.each_loop = each_loop_save;
+        state.loop = loop_save;
+}
+
+static void
 emit_for_each(struct statement const *s)
 {
         bool each_loop_save = state.each_loop;
@@ -1838,10 +1924,14 @@ emit_expression(struct expression const *e)
                 emit_symbol((uintptr_t) e->pattern);
                 break;
         case EXPRESSION_ARRAY:
-                for (int i = e->elements.count - 1; i >= 0; --i)
+                for (int i = e->elements.count - 1; i >= 0; --i) {
                         emit_expression(e->elements.items[i]);
+                }
                 emit_instr(INSTR_ARRAY);
                 emit_int(e->elements.count);
+                break;
+        case EXPRESSION_ARRAY_COMPR:
+                emit_array_compr(e);
                 break;
         case EXPRESSION_DICT:
                 for (int i = e->keys.count - 1; i >= 0; --i) {
