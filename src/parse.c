@@ -1013,63 +1013,44 @@ infix_arrow_function(struct expression *left)
         e->name = NULL;
         vec_init(e->params);
 
+        if (left->type != EXPRESSION_LIST) {
+                struct expression *l = mkexpr();
+                l->type = EXPRESSION_LIST;
+                vec_init(l->es);
+                vec_push(l->es, left);
+                left = l;
+        }
 
-        /*
-         * If the left hand side consists of nothing more than identifiers, we can use a regular function.
-         *
-         * e.g., (a, b, c) -> (a + b + c) can become function (a, b, c) { return (a + b + c); }
-         *
-         * but
-         *
-         *       ([a, b], [c, d]) -> (a + b + c + d) must be transformed into something more complicated.
-         */
-        if (left->type == EXPRESSION_MATCH_REST || left->type == EXPRESSION_IDENTIFIER || (left->type == EXPRESSION_LIST && left->only_identifiers)) {
-                if (left->type == EXPRESSION_MATCH_REST) {
-                        vec_push(e->params, left->identifier);
+        struct statement *body = mkstmt();
+        body->type = STATEMENT_BLOCK;
+        vec_init(body->statements);
+
+        for (int i = 0; i < left->es.count; ++i) {
+                struct expression *p = left->es.items[i];
+                if (p->type == EXPRESSION_IDENTIFIER) {
+                        vec_push(e->params, p->identifier);
+                } else if (p->type == EXPRESSION_MATCH_REST) {
+                        vec_push(e->params, p->identifier);
                         e->params.count -= 1;
                         e->rest = true;
-                } else if (left->type == EXPRESSION_IDENTIFIER) {
-                        vec_push(e->params, left->identifier);
-                } else {
-                        for (int i = 0; i < left->es.count; ++i) {
-                                vec_push(e->params, left->es.items[i]->identifier);
-                        }
-                        if (left->es.items[left->es.count - 1]->type == EXPRESSION_MATCH_REST) {
-                                e->params.count -= 1;
-                                e->rest = true;
-                        }
-                }
-
-                e->body = mkret(parse_expr(0));
-
-                return e;
-        } else {
-                /*
-                 * In this case, we will generate unique names for each parameter, and then use
-                 * 'let' statements in the function body to unpack them.
-                 */
-                struct statement *body = mkstmt();
-                body->type = STATEMENT_BLOCK;
-                vec_init(body->statements);
-
-                if (left->type == EXPRESSION_LIST) {
-                        for (int i = 0; i < left->es.count; ++i) {
-                                char *name = gensym();
-                                vec_push(e->params, name);
-                                vec_push(body->statements, mkdef(left->es.items[i], name));
-                        }
                 } else {
                         char *name = gensym();
                         vec_push(e->params, name);
-                        vec_push(body->statements, mkdef(left, name));
+                        vec_push(body->statements, mkdef(p, name));
                 }
-
-                vec_push(body->statements, mkret(parse_expr(0)));
-
-                e->body = body;
-
-                return e;
         }
+
+        struct statement *ret = mkret(parse_expr(0));
+
+        if (body->statements.count == 0) {
+                free(body);
+                e->body = ret;
+        } else {
+                vec_push(body->statements, ret);
+                e->body = body;
+        }
+
+        return e;
 }
 
 static struct expression *
