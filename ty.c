@@ -6,12 +6,15 @@
 
 #include <unistd.h>
 #include <fcntl.h>
+#include <dlfcn.h>
 
 #include <readline/readline.h>
 #include <readline/history.h>
 
 #include "vm.h"
 #include "gc.h"
+#include "value.h"
+#include "sqlite.h"
 
 static bool use_readline = true;
 
@@ -44,7 +47,7 @@ repl(void)
 
                 if (line[0] == ':') {
                         if (line[1] == '!')
-                                system(line + 2);
+                                system(line + 2) || 0;
                         else if (!vm_execute_file(line + 1))
                                 fprintf(stderr, "%s\n", vm_error());
                         goto add;
@@ -80,6 +83,8 @@ main(int argc, char **argv)
         vm_init(argc, argv);
 
         use_readline = isatty(0);
+
+        sqlite_load();
 
         if (argc <= 1)
                 repl();

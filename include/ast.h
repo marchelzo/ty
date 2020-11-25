@@ -74,6 +74,7 @@ struct statement {
                         struct expression *target;
                         struct expression *array;
                         struct statement *body;
+                        struct expression *cond;
                         int_vector check;
                 } each;
                 struct {
@@ -135,6 +136,7 @@ struct expression {
                 EXPRESSION_ARRAY,
                 EXPRESSION_ARRAY_COMPR,
                 EXPRESSION_DICT,
+                EXPRESSION_DICT_COMPR,
                 EXPRESSION_METHOD_CALL,
                 EXPRESSION_IDENTIFIER,
                 EXPRESSION_TAG,
@@ -252,6 +254,7 @@ struct expression {
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;
                         bool is_method;
+                        bool rest;
                 };
                 struct {
                         struct expression *function;
@@ -260,6 +263,11 @@ struct expression {
                 struct {
                         vec(struct expression *) keys;
                         vec(struct expression *) values;
+                        struct {
+                                struct expression *pattern;
+                                struct expression *iter;
+                                struct expression *cond;
+                        } dcompr;
                 };
                 struct {
                         struct expression *container;

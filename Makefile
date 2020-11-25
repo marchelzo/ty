@@ -12,6 +12,8 @@ LDFLAGS += -lpthread
 LDFLAGS += -lm
 LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
+LDFLAGS += -lsqlite3
+LDFLAGS += -ldl
 LDFLAGS += $(shell pcre-config --libs)
 
 TEST_FILTER ?= "."
@@ -26,9 +28,9 @@ ifdef NOLOG
 endif
 
 ifndef RELEASE
-        CFLAGS += -Og
+        CFLAGS += -O0
         CFLAGS += -fsanitize=undefined
-        #CFLAGS += -fsanitize=address
+        CFLAGS += -fsanitize=address
         #CFLAGS += -fsanitize=leak
 else
         CFLAGS += -Ofast

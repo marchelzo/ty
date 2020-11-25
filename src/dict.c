@@ -110,8 +110,8 @@ dict_put_value(struct dict *d, struct value key, struct value value)
 
         if (d->keys[i].type != 0)
                 d->values[i] = value;
-
-        put(d, i, h, key, value);
+        else
+                put(d, i, h, key, value);
 }
 
 struct value *

@@ -51,6 +51,7 @@ enum instruction {
         INSTR_DUP,
         INSTR_LEN,
         INSTR_ARRAY_COMPR,
+        INSTR_DICT_COMPR,
 
         INSTR_DIE_IF_NIL,
 
@@ -63,12 +64,16 @@ enum instruction {
         INSTR_JUMP,
         INSTR_JUMP_IF,
         INSTR_JUMP_IF_NOT,
+        INSTR_JUMP_IF_NONE,
         INSTR_RETURN,
         INSTR_EXEC_CODE,
         INSTR_HALT,
 
         INSTR_MULTI_RETURN,
         INSTR_SENTINEL,
+        INSTR_FIX_TO,
+        INSTR_REVERSE,
+        INSTR_NONE_IF_NIL,
         INSTR_CLEAR_RC,
         INSTR_GET_EXTRA,
         INSTR_MULTI_ASSIGN,
@@ -142,5 +147,8 @@ vm_eval_function(struct value const *f, struct value const *v);
 
 struct value
 vm_eval_function2(struct value const *f, struct value const *v1, struct value const *v2);
+
+void
+vm_load_c_module(char const *name, void *p);
 
 #endif

@@ -412,6 +412,7 @@ prefix_function(void)
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_FUNCTION;
+        e->rest = false;
         vec_init(e->params);
 
         if (tok()->type == TOKEN_IDENTIFIER) {
@@ -423,25 +424,27 @@ prefix_function(void)
 
         consume('(');
 
-        if (tok()->type == ')') {
-                next();
-                goto body;
-        } else {
-                expect(TOKEN_IDENTIFIER);
-                vec_push(e->params, sclone(tok()->identifier));
-                consume(TOKEN_IDENTIFIER);
-        }
+        while (tok()->type != ')') {
+                bool rest = false;
+                if (tok()->type == TOKEN_STAR) {
+                        rest = true;
+                        next();
+                }
 
-        while (tok()->type == ',') {
-                next();
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->params, sclone(tok()->identifier));
                 next();
+
+                if (rest) {
+                        e->params.count -= 1;
+                        e->rest = 1;
+                        expect(')');
+                } else if (tok()->type == ',') {
+                        next();
+                }
         }
 
         consume(')');
-
-body:
 
         e->body = parse_statement();
 
@@ -543,7 +546,7 @@ prefix_parenthesis(void)
                 /*
                  * It _must_ be an identifier list.
                  */
-                if (e->type != EXPRESSION_IDENTIFIER) {
+                if (e->type != EXPRESSION_IDENTIFIER && e->type != EXPRESSION_MATCH_REST) {
                         list->only_identifiers = false;
                 }
 
@@ -554,7 +557,9 @@ prefix_parenthesis(void)
                 while (tok()->type == ',') {
                         next();
                         struct expression *e = parse_expr(0);
-                        if (e->type != EXPRESSION_IDENTIFIER) {
+                        if (e->type == EXPRESSION_MATCH_REST) {
+                                expect(')');
+                        } else if (e->type != EXPRESSION_IDENTIFIER) {
                                 list->only_identifiers = false;
                         }
                         vec_push(list->es, e);
@@ -793,14 +798,29 @@ prefix_object(void)
                 }
         }
 
-        while (tok()->type == ',') {
-                next();
-                vec_push(e->keys, parse_expr(0));
-                if (tok()->type == ':') {
+        while (tok()->type != '}') {
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FOR) {
                         next();
-                        vec_push(e->values, parse_expr(0));
+                        e->type = EXPRESSION_DICT_COMPR;
+                        e->dcompr.pattern = parse_target_list();
+                        consume_keyword(KEYWORD_IN);
+                        e->dcompr.iter = parse_expr(0);
+                        if (tok()->type == TOKEN_BIT_OR) {
+                                next();
+                                e->dcompr.cond = parse_expr(0);
+                        } else {
+                                e->dcompr.cond = NULL;
+                        }
+                        expect('}');
                 } else {
-                        vec_push(e->values, NULL);
+                        consume(',');
+                        vec_push(e->keys, parse_expr(0));
+                        if (tok()->type == ':') {
+                                next();
+                                vec_push(e->values, parse_expr(0));
+                        } else {
+                                vec_push(e->values, NULL);
+                        }
                 }
         }
 
@@ -989,6 +1009,7 @@ infix_arrow_function(struct expression *left)
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_FUNCTION;
+        e->rest = false;
         e->name = NULL;
         vec_init(e->params);
 
@@ -1002,12 +1023,20 @@ infix_arrow_function(struct expression *left)
          *
          *       ([a, b], [c, d]) -> (a + b + c + d) must be transformed into something more complicated.
          */
-        if (left->type == EXPRESSION_IDENTIFIER || (left->type == EXPRESSION_LIST && left->only_identifiers)) {
-                if (left->type == EXPRESSION_IDENTIFIER) {
+        if (left->type == EXPRESSION_MATCH_REST || left->type == EXPRESSION_IDENTIFIER || (left->type == EXPRESSION_LIST && left->only_identifiers)) {
+                if (left->type == EXPRESSION_MATCH_REST) {
+                        vec_push(e->params, left->identifier);
+                        e->params.count -= 1;
+                        e->rest = true;
+                } else if (left->type == EXPRESSION_IDENTIFIER) {
                         vec_push(e->params, left->identifier);
                 } else {
                         for (int i = 0; i < left->es.count; ++i) {
                                 vec_push(e->params, left->es.items[i]->identifier);
+                        }
+                        if (left->es.items[left->es.count - 1]->type == EXPRESSION_MATCH_REST) {
+                                e->params.count -= 1;
+                                e->rest = true;
                         }
                 }
 
@@ -1491,12 +1520,15 @@ parse_for_loop(void)
         if (tok()->type != '(') {
                 s->type = STATEMENT_EACH_LOOP;
                 s->each.target = parse_target_list();
-
                 consume_keyword(KEYWORD_IN);
-
                 s->each.array = parse_expr(0);
+                if (tok()->type == TOKEN_BIT_OR) {
+                        next();
+                        s->each.cond = parse_expr(0);
+                } else {
+                        s->each.cond = NULL;
+                }
                 s->each.body = parse_statement();
-
                 return s;
         }
 

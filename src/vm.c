@@ -147,6 +147,32 @@ add_builtins(int ac, char **av)
         symbol_count = builtin_count + 1;
 }
 
+
+void
+vm_load_c_module(char const *name, void *p)
+{
+
+        struct {
+                char const *name;
+                struct value value;
+        } *mod = p;
+
+        int n = 0;
+        while (mod[n].name != NULL)
+                n += 1;
+
+        resize(vars, sizeof *vars * (symbol_count + n));
+        resize(used, sizeof *used * (symbol_count + n));
+
+        for (int i = 0; i < n; ++i) {
+                compiler_introduce_symbol(name, mod[i].name);
+                vars[symbol_count + i] = newvar(NULL);
+                vars[symbol_count + i]->value = mod[i].value;
+        }
+
+        symbol_count += n;
+}
+
 inline static struct value *
 top(void)
 {
@@ -156,6 +182,7 @@ top(void)
 inline static struct value
 pop(void)
 {
+        LOG("POP: %s", value_show(top()));
         return *vec_pop(stack);
 }
 
@@ -168,6 +195,7 @@ peek(void)
 inline static void
 push(struct value v)
 {
+        LOG("PUSH: %s", value_show(&v));
         vec_push(stack, v);
 }
 
@@ -197,9 +225,16 @@ call(struct value const *f, struct value const *self, int n, bool exec)
 
         bool has_self = (f->params > 0) && (self != NULL);
 
-        int params = f->params - has_self;
+        int params = f->params - has_self - f->rest;
 
-        /* throw away ignored arguments */
+        if (f->rest) {
+                struct value v = ARRAY(value_array_new());
+                for (int i = n - params - 1; i >= 0; --i)
+                        value_array_push(v.array, top()[-i]);
+                vars[f->symbols[f->params - 1]]->value = v;
+        }
+
+        /* throw away extra arguments */
         while (n > params) {
                 pop(), --n;
         }
@@ -242,7 +277,7 @@ vm_exec(char *code)
         intmax_t k;
         bool b;
         float f;
-        int n, i, tag, rc = 0;
+        int n, i, j, tag, rc = 0;
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
@@ -324,6 +359,12 @@ vm_exec(char *code)
                         READVALUE(n);
                         v = pop();
                         if (!value_truthy(&v)) {
+                                ip += n;
+                        }
+                        break;
+                CASE(JUMP_IF_NONE)
+                        READVALUE(n);
+                        if (top()[-1].type == VALUE_NONE) {
                                 ip += n;
                         }
                         break;
@@ -590,12 +631,14 @@ vm_exec(char *code)
                 CASE(GET_NEXT)
                         v = top()[-1];
                         i = top()[-2].i++;
+                        LOG("GET_NEXT: v = %s", value_show(&v));
+                        LOG("GET_NEXT: i = %d", i);
                         switch (v.type) {
                         case VALUE_ARRAY:
                                 if (i < v.array->count) {
                                         push(v.array->items[i]);
                                 } else {
-                                        push(NIL);
+                                        push(NONE);
                                 }
                                 break;
                         case VALUE_DICT:
@@ -608,13 +651,16 @@ vm_exec(char *code)
                                         rc = 1;
                                         pop();
                                 } else {
-                                        push(NIL);
+                                        push(NONE);
                                 }
                                 break;
                         case VALUE_OBJECT:
                                 if ((vp = class_lookup_method(v.class, "__next__")) != NULL) {
+                                        static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN };
                                         push(INTEGER(i));
+                                        vec_push(calls, ip);
                                         call(vp, &v, 1, false);
+                                        *vec_last(calls) = next_fix;
                                 } else if ((vp = class_lookup_method(v.class, "__iter__")) != NULL) {
                                         static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN };
                                         pop();
@@ -623,7 +669,7 @@ vm_exec(char *code)
                                         /* Have to repeat this instruction */
                                         vec_push(calls, ip - 1);
                                         call(vp, &v, 0, false);
-                                        vec_last(calls)[0] = iter_fix;
+                                        *vec_last(calls) = iter_fix;
                                         continue;
                                 } else {
                                         goto NoIter;
@@ -633,7 +679,7 @@ vm_exec(char *code)
                                 if (i < v.blob->count) {
                                         push(INTEGER(v.blob->items[i]));
                                 } else {
-                                        push(NIL);
+                                        push(NONE);
                                 }
                                 break;
                         case VALUE_STRING:
@@ -642,7 +688,7 @@ vm_exec(char *code)
                                         vp->off += (n = utf8_char_len(v.string + off));
                                         push(STRING_VIEW(v, off, n));
                                 } else {
-                                        push(NIL); 
+                                        push(NONE); 
                                 }
                                 break;
                         default:
@@ -656,6 +702,18 @@ vm_exec(char *code)
                         gc_push(&v);
                         while (n --> 0)
                                 value_array_push(v.array, pop());
+                        gc_pop();
+                        break;
+                CASE(DICT_COMPR)
+                        READVALUE(n);
+                        v = top()[-(2*n + 2)];
+                        gc_push(&v);
+                        for (i = 0; i < n; ++i) {
+                                value = pop();
+                                key = pop();
+                                dict_put_value(v.dict, key, value);
+                        }
+                        gc_pop();
                         break;
                 CASE(PUSH_INDEX)
                         READVALUE(n);
@@ -669,11 +727,40 @@ vm_exec(char *code)
                 CASE(SENTINEL)
                         push(SENTINEL);
                         break;
+                CASE(NONE_IF_NIL)
+                        if (top()->type == VALUE_NIL)
+                                *top() = NONE;
+                        break;
                 CASE(CLEAR_RC)
                         rc = 0;
                         break;
                 CASE(GET_EXTRA)
                         stack.count += rc;
+                        break;
+                CASE(FIX_TO)
+                        READVALUE(n);
+                        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
+                                ;
+                        while (i > n)
+                                --i, pop();
+                        while (i < n)
+                                ++i, push(NIL);
+                        for (i = 0, j = n - 1; i < j; ++i, --j) {
+                                v = top()[-i];
+                                top()[-i] = top()[-j];
+                                top()[-j] = v;
+                        }
+                        break;
+                CASE(REVERSE)
+                        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
+                                ;
+                        
+                        READVALUE(n);
+                        for (--n, i = 0; i < n; ++i, --n) {
+                                v = top()[-i];
+                                top()[-i] = top()[-n];
+                                top()[-n] = v;
+                        }
                         break;
                 CASE(MULTI_ASSIGN)
                         READVALUE(n);
@@ -928,7 +1015,13 @@ vm_exec(char *code)
                 CASE(CMP)
                         right = pop();
                         left = pop();
-                        push(INTEGER(value_compare(&left, &right)));
+                        i = value_compare(&left, &right);
+                        if (i < 0)
+                                push(INTEGER(-1));
+                        else if (i > 0)
+                                push(INTEGER(1));
+                        else
+                                push(INTEGER(0));
                         break;
                 CASE(GET_TAG)
                         v = pop();
@@ -1047,12 +1140,15 @@ vm_exec(char *code)
 
                         int params;
                         int bound;
+                        bool rest;
 
                         READVALUE(params);
                         READVALUE(bound);
+                        READVALUE(rest);
 
                         v.bound = bound;
                         v.params = params;
+                        v.rest = rest;
 
                         while (*ip != ((char)0xFF))
                                 ++ip;

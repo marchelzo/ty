@@ -138,6 +138,21 @@ builtin_rand(value_vector *args)
 }
 
 struct value
+builtin_abs(value_vector *args)
+{
+        ASSERT_ARGC("abs()", 1);
+        
+        struct value x = args->items[0];
+
+        switch (x.type) {
+        case VALUE_INTEGER: return INTEGER(llabs(x.integer));
+        case VALUE_REAL:    return REAL(fabs(x.real));
+        default:
+                vm_panic("the argument to abs() must be a number");
+        }
+}
+
+struct value
 builtin_hash(value_vector *args)
 {
         ASSERT_ARGC("hash()", 1);
@@ -152,6 +167,7 @@ builtin_float(value_vector *args)
         struct value v = args->items[0];
 
         switch (v.type) {
+        case VALUE_NIL:     return NIL;
         case VALUE_INTEGER: return REAL((float)v.integer);
         case VALUE_REAL:    return v;
         case VALUE_STRING:;

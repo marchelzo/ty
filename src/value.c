@@ -140,7 +140,7 @@ hash(struct value const *val)
         case VALUE_REGEX:             return ptr_hash(val->regex);
         case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
         case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
-        default:                      vm_panic("attempt to hash invalid value");
+        default:                      vm_panic("attempt to hash invalid value: %s", value_show(val));
         }
 }
 
@@ -329,8 +329,16 @@ value_show(struct value const *v)
         case VALUE_BLOB:
                 snprintf(buffer, 1024, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
+        case VALUE_PTR:
+                snprintf(buffer, 1024, "<pointer at %p>", v->ptr);
+                break;
         case VALUE_SENTINEL:
-                return "<sentinel>";
+                return sclone("<sentinel>");
+        case VALUE_NONE:
+                return sclone("<none>");
+        case VALUE_INDEX:
+                snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
+                break;
         default:
                 return sclone("< !!! >");
         }
@@ -391,6 +399,7 @@ value_truthy(struct value const *v)
         case VALUE_CLASS:            return true;
         case VALUE_OBJECT:           return true;
         case VALUE_METHOD:           return true;
+        case VALUE_PTR:              return v->ptr != NULL;
         default:                     return false;
         }
 }
@@ -532,6 +541,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || v1->this != v2->this)          return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
+        case VALUE_PTR:              if (v1->ptr != v2->ptr)                                                        return false;
         case VALUE_NIL:                                                                                                           break;
         case VALUE_OBJECT:
                 f = class_lookup_method(v1->class, "<=>");

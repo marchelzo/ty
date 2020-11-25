@@ -1290,7 +1290,7 @@ array_rotate(struct value *array, value_vector *args)
 
         int N = gcd(n, d);
         int i, j, k;
-        for (int i = 0; i < N; ++i) {
+        for (i = 0; i < N; ++i) {
                 struct value t = array->array->items[i];
                 j = i;
                 for (;;) {

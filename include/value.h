@@ -21,6 +21,7 @@ struct value;
 #define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                              .tags = 0 })
 #define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                              .tags = 0 })
 #define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                           .tags = 0 })
+#define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),                              .tags = 0 })
 #define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                              .tags = 0 })
 #define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c), .object = NULL,              .tags = 0 })
 #define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o), .class  = (c),               .tags = 0 })
@@ -29,10 +30,13 @@ struct value;
 #define NIL                      ((struct value){ .type = VALUE_NIL,                                                                .tags = 0 })
 
 /* Special kind of value, only used as an iteration counter in for-each loops */
-#define INDEX(ix, o, n)          ((struct value){ .type = VALUE_NIL,            .i              = (ix), .off   = (o), .nt = (n),    .tags = 0 })
+#define INDEX(ix, o, n)          ((struct value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),    .tags = 0 })
 
 /* Another special one, used for functions with multiple return values */
 #define SENTINEL                 ((struct value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                 .tags = 0 })
+
+/* This is getting ugly */
+#define NONE                     ((struct value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                 .tags = 0 })
 
 #define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
 
@@ -111,7 +115,9 @@ enum {
         VALUE_BLOB             = 1 << 15,
         VALUE_SENTINEL         = 1 << 16,
         VALUE_INDEX            = 1 << 17,
-        VALUE_TAGGED           = 1 << 18,
+        VALUE_NONE             = 1 << 18,
+        VALUE_PTR              = 1 << 19,
+        VALUE_TAGGED           = 1 << 20,
 };
 
 struct value {
@@ -126,6 +132,7 @@ struct value {
                 struct dict *dict;
                 struct value (*builtin_function)(value_vector *);
                 struct blob *blob;
+                void *ptr;
                 struct {
                         int class;
                         struct table *object;
@@ -157,6 +164,7 @@ struct value {
                 struct {
                         int *symbols;
                         unsigned char params;
+                        bool rest;
                         unsigned short bound;
                         struct ref_vector *refs;
                         char *code;

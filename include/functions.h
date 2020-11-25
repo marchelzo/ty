@@ -13,6 +13,9 @@ struct value
 builtin_rand(value_vector *args);
 
 struct value
+builtin_abs(value_vector *args);
+
+struct value
 builtin_hash(value_vector *args);
 
 struct value
