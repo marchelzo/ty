@@ -763,6 +763,7 @@ prefix_implicit_lambda(void)
         struct expression *f = mkexpr();
         f->type = EXPRESSION_FUNCTION;
         f->name = NULL;
+        f->rest = false;
         vec_init(f->params);
         vec_push(f->params, "#");
 
