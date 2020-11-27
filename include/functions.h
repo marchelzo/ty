@@ -112,6 +112,9 @@ struct value
 builtin_json_parse(value_vector *args);
 
 struct value
+builtin_json_encode(value_vector *args);
+
+struct value
 builtin_os_open(value_vector *args);
 
 struct value

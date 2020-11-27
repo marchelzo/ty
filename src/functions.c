@@ -657,6 +657,13 @@ builtin_json_parse(value_vector *args)
 }
 
 struct value
+builtin_json_encode(value_vector *args)
+{
+        ASSERT_ARGC("json::parse()", 1);
+        return json_encode(&args->items[0]);
+}
+
+struct value
 builtin_os_open(value_vector *args)
 {
         ASSERT_ARGC_2("os::open()", 2, 3);

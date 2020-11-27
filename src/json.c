@@ -7,6 +7,7 @@
 #include "value.h"
 #include "dict.h"
 #include "util.h"
+#include "table.h"
 #include "vec.h"
 #include "vm.h"
 
@@ -16,6 +17,8 @@
 static jmp_buf jb;
 static char const *json;
 static int len;
+
+typedef vec(char) str;
 
 inline static char
 peek(void)
@@ -248,6 +251,105 @@ value(void)
         }
 }
 
+static bool
+encode(struct value const *v, str *out)
+{
+        switch (v->type) {
+        case VALUE_NIL:
+                vec_push_n(*out, "null", 4);
+                break;
+        case VALUE_STRING:
+                vec_push(*out, '"');
+                for (int i = 0; i < v->bytes; ++i) {
+                        switch (v->string[i]) {
+                        case '\t':
+                                vec_push(*out, '\\');
+                                vec_push(*out, 't');
+                                break;
+                        case '\n':
+                                vec_push(*out, '\\');
+                                vec_push(*out, 'n');
+                                break;
+                        case '\\':
+                        case '"':
+                                vec_push(*out, '\\');
+                        default:
+                                vec_push(*out, v->string[i]);
+                                break;
+                        }
+                }
+                vec_push(*out, '"');
+                break;
+        case VALUE_BOOLEAN:
+                if (v->boolean)
+                        vec_push_n(*out, "true", 4);
+                else
+                        vec_push_n(*out, "false", 5);
+                break;
+        case VALUE_INTEGER:
+                vec_reserve(*out, out->count + 64);
+                out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->integer);
+                break;
+        case VALUE_REAL:
+                vec_reserve(*out, out->count + 64);
+                out->count += snprintf(out->items + out->count, 64, "%g", v->real);
+                break;
+        case VALUE_ARRAY:
+                vec_push(*out, '[');
+                for (int i = 0; i < v->array->count; ++i) {
+                        if (!encode(&v->array->items[i], out))
+                                return false;
+                        if (i + 1 < v->array->count)
+                                vec_push(*out, ',');
+                }
+                vec_push(*out, ']');
+                break;
+        case VALUE_DICT:
+                vec_push(*out, '{');
+                int last = -1;
+                for (int i = 0; i < v->dict->size; ++i)
+                        if (v->dict->keys[i].type == VALUE_STRING)
+                                last = i;
+                for (int i = 0; i < v->dict->size; ++i) {
+                        if (v->dict->keys[i].type != VALUE_STRING)
+                                continue;
+                        if (!encode(&v->dict->keys[i], out))
+                                return false;
+                        vec_push(*out, ':');
+                        if (!encode(&v->dict->values[i], out))
+                                return false;
+                        if (i != last)
+                                vec_push(*out, ',');
+                }
+                vec_push(*out, '}');
+                break;
+        case VALUE_OBJECT:
+                vec_push(*out, '{');
+                for (int i = 0; i < TABLE_SIZE; ++i) {
+                        for (int j = 0; j < v->object->buckets[i].names.count; ++j) {
+                                vec_push(*out, '"');
+                                char const *name = v->object->buckets[i].names.items[j];
+                                vec_push_n(*out, name, strlen(name));
+                                vec_push(*out, '"');
+                                vec_push(*out, ':');
+                                if (!encode(&v->object->buckets[i].values.items[j], out))
+                                        return false;
+                                vec_push(*out, ',');
+                        }
+                }
+                if (*vec_last(*out) == ',')
+                        *vec_last(*out) = '}';
+                else
+                        vec_push(*out, '}');
+                break;
+        default:
+                return false;
+                
+        }
+
+        return true;
+}
+
 struct value
 json_parse(char const *s, int n)
 {
@@ -271,6 +373,23 @@ json_parse(char const *s, int n)
         gc_alloc(0);
 
         return v;
+}
+
+struct value
+json_encode(struct value const *v)
+{
+        str s;
+        vec_init(s);
+        
+        struct value r = NIL;
+
+        if (encode(v, &s)) {
+                r = STRING_CLONE(s.items, s.count);
+        }
+
+        vec_empty(s);
+
+        return r;
 }
 
 TEST(null)

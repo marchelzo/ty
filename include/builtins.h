@@ -149,6 +149,7 @@
 { .module = "errno",  .name = "EFAULT",            .value = INT(EFAULT)                                    },
 { .module = "errno",  .name = "EPERM",             .value = INT(EPERM)                                     },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
+{ .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
 
 #ifdef SIGHUP
 { .module = "os",      .name = "SIGHUP",                 .value = INT(SIGHUP)                              },
