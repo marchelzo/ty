@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <string.h>
 #include <stdnoreturn.h>
+#include <time.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -1567,4 +1568,11 @@ builtin_errno_str(value_vector *args)
         char const *s = strerror(e);
 
         return STRING_CLONE(s, strlen(s));
+}
+
+struct value
+builtin_time_time(value_vector *args)
+{
+        ASSERT_ARGC("time::time()", 0);
+        return INTEGER(time(NULL));
 }

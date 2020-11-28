@@ -253,4 +253,7 @@ builtin_errno_get(value_vector *args);
 struct value
 builtin_errno_str(value_vector *args);
 
+struct value
+builtin_time_time(value_vector *args);
+
 #endif

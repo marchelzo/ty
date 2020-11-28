@@ -148,6 +148,7 @@
 { .module = "errno",  .name = "ENOSPC",            .value = INT(ENOSPC)                                    },
 { .module = "errno",  .name = "EFAULT",            .value = INT(EFAULT)                                    },
 { .module = "errno",  .name = "EPERM",             .value = INT(EPERM)                                     },
+{ .module = "time",   .name = "time",              .value = BUILTIN(builtin_time_time)                     },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
 
