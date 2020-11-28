@@ -563,6 +563,8 @@ value_test_equality(struct value const *v1, struct value const *v2)
 inline static void
 value_array_mark(struct array *a)
 {
+        if (MARKED(a)) return;
+
         MARK(a);
 
         for (int i = 0; i < a->count; ++i)

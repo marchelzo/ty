@@ -21,6 +21,8 @@ object_new(void)
 void
 object_mark(struct table *o)
 {
+        if (MARKED(o)) return;
+
         MARK(o);
 
         for (int i = 0; i < TABLE_SIZE; ++i)

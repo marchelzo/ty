@@ -152,6 +152,8 @@ dict_put_member(struct dict *d, char const *key, struct value value)
 void
 dict_mark(struct dict *d)
 {
+        if (MARKED(d)) return;
+
         MARK(d);
 
         if (d->dflt.type != VALUE_NIL)

@@ -132,6 +132,7 @@ add_builtins(int ac, char **av)
                 compiler_introduce_symbol(builtins[i].module, builtins[i].name);
                 vars[i] = newvar(NULL);
                 vars[i]->value = builtins[i].value;
+                used[i] = true;
         }
 
         struct array *args = value_array_new();
@@ -143,6 +144,7 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "args");
         vars[builtin_count] = newvar(NULL);
         vars[builtin_count]->value = ARRAY(args);
+        used[builtin_count] = true;
 
         symbol_count = builtin_count + 1;
 }
@@ -168,6 +170,7 @@ vm_load_c_module(char const *name, void *p)
                 compiler_introduce_symbol(name, mod[i].name);
                 vars[symbol_count + i] = newvar(NULL);
                 vars[symbol_count + i]->value = mod[i].value;
+                used[symbol_count + i] = true;
         }
 
         symbol_count += n;
