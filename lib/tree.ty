@@ -262,11 +262,13 @@ class Tree {
     }
 
     min(T) {
-        return T.treeMin(T.root).v;
+        let x = T.treeMin(T.root);
+        return x.k, x.v;
     }
 
     max(T) {
-        return T.treeMax(T.root).v;
+        let x = T.treeMax(T.root);
+        return x.k, x.v;
     }
 
     has?(T, k) {
@@ -282,9 +284,9 @@ class Tree {
             if (x.seen) {
                 nodes.push(x);
             } else {
-                s.push(x.l);
-                s.push(x);
                 s.push(x.r);
+                s.push(x);
+                s.push(x.l);
                 x.seen = true;
             }
         }
