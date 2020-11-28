@@ -32,7 +32,7 @@ class Tree {
     init(T) {
         T.null = Node();
         T.root = T.null;
-        T.root.p = T.null;
+        T.root.l = T.root.r = T.root.p = T.null;
     }
 
     leftRotate(T, x) {
