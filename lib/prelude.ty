@@ -30,7 +30,74 @@ tag Err {
      flatMap(self) { return self; }
 }
 
-class RangeIter {
+class Iter {
+    map(I, f) {
+        return MapIter(I, f);
+    }
+
+    filter(I, f) {
+        return FilterIter(I, f);
+    }
+
+    list(I) {
+        let xs = [];
+        while let $x = I.__next__() {
+            xs.push(x);
+        }
+        return xs;
+    }
+
+    reverse(I) {
+        return ReverseIter(I);
+    }
+}
+
+class ReverseIter : Iter {
+    init(R, I) {
+        R.xs = [];
+        while let $x = I.__next__() {
+            R.xs.push(x);
+        }
+    }
+
+    __next__(R) {
+        if (R.xs)
+            return R.xs.pop();
+        else
+            return nil;
+    }
+}
+
+class MapIter : Iter {
+    init(M, I, f) {
+        M.I = I;
+        M.f = f;
+    }
+
+    __next__(M) {
+        if let $n = M.I.__next__() {
+            return M.f(n);
+        }
+    }
+}
+
+class FilterIter : Iter {
+    init(F, I, p) {
+        F.I = I;
+        F.p = p;
+    }
+
+    __next__(F) {
+        while let $n = F.I.__next__() {
+            if (F.p(n))
+                return n;
+        }
+
+        return nil;
+    }
+}
+
+class RangeIter : Iter {
     init(self, a, b) {
 	self.a = a;
 	self.b = b;
