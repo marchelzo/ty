@@ -782,6 +782,7 @@ DEFINE_METHOD_TABLE(
         { .name = "size",      .func = string_size      },
         { .name = "slice",     .func = string_slice     },
         { .name = "split",     .func = string_split     },
+        { .name = "sub",       .func = string_replace   },
         { .name = "upper",     .func = string_upper     },
 );
 

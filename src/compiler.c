@@ -746,16 +746,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->expression);
                 break;
         case STATEMENT_CLASS_DEFINITION:
-                if (scope_locally_defined(state.global, s->class.name))
-                        fail("redeclaration of class: %s", s->class.name);
                 if (s->class.super != NULL) {
                         symbolize_expression(scope, s->class.super);
                         if (!is_class(s->class.super))
                                 fail("attempt to extend non-class");
                 }
-                sym = scope_add(state.global, s->class.name);
-                sym->class = class_new(s->class.name);
-                s->class.symbol = sym->class;
                 symbolize_methods(scope, s->class.methods.items, s->class.methods.count);
                 break;
         case STATEMENT_TAG_DEFINITION:
@@ -2629,6 +2624,12 @@ compile(char const *source)
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
                         symbolize_lvalue(state.global, p[i]->target, true);
                         p[i]->value->name = NULL;
+                } else if (p[i]->type == STATEMENT_CLASS_DEFINITION) {
+                        if (scope_locally_defined(state.global, p[i]->class.name))
+                                fail("redeclaration of class: %s", p[i]->class.name);
+                        struct symbol *sym = scope_add(state.global, p[i]->class.name);
+                        sym->class = class_new(p[i]->class.name);
+                        p[i]->class.symbol = sym->class;
                 }
         }
 

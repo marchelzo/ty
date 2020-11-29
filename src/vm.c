@@ -926,13 +926,46 @@ vm_exec(char *code)
 
                         switch (container.type) {
                         case VALUE_ARRAY:
-                                if (subscript.type != VALUE_INTEGER)
+                                if (subscript.type == VALUE_OBJECT) {
+ObjectSubscript:
+                                        vp = class_lookup_method(subscript.class, "__next__");
+                                        if (vp == NULL) {
+                                                vp = class_lookup_method(subscript.class, "__iter__");
+                                                if (vp == NULL) {
+                                                        vm_panic("non-iterable object used in subscript expression");
+                                                }
+                                                call(vp, &subscript, 0, true);
+                                                subscript = pop();
+                                                goto ObjectSubscript;
+                                        }
+                                        struct array *a = value_array_new();
+                                        NOGC(a);
+                                        for (int i = 0; ; ++i) {
+                                                push(INTEGER(i));
+                                                call(vp, &subscript, 1, true);
+                                                struct value r = pop();
+                                                if (r.type == VALUE_NIL)
+                                                        break;
+                                                if (r.type != VALUE_INTEGER)
+                                                        vm_panic("iterator yielded non-integer array index in subscript expression");
+                                                if (r.integer < 0)
+                                                        r.integer += container.array->count;
+                                                if (r.integer < 0 || subscript.integer >= container.array->count)
+                                                        goto OutOfRange;
+                                                value_array_push(a, container.array->items[r.integer]);
+                                        }
+                                        push(ARRAY(a));
+                                        OKGC(a);
+                                } else if (subscript.type == VALUE_INTEGER) {
+                                        if (subscript.integer < 0)
+                                                subscript.integer += container.array->count;
+                                        if (subscript.integer < 0 || subscript.integer >= container.array->count)
+OutOfRange:
+                                                vm_panic("array index out of range in subscript expression");
+                                        push(container.array->items[subscript.integer]);
+                                } else {
                                         vm_panic("non-integer array index used in subscript expression");
-                                if (subscript.integer < 0)
-                                        subscript.integer += container.array->count;
-                                if (subscript.integer < 0 || subscript.integer >= container.array->count)
-                                        vm_panic("array index out of range in subscript expression");
-                                push(container.array->items[subscript.integer]);
+                                }
                                 break;
                         case VALUE_STRING:
                                 push(get_string_method("char")(&container, (&(value_vector){ .count = 1, .items = &subscript })));
