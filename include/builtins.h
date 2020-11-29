@@ -149,6 +149,10 @@
 { .module = "errno",  .name = "EFAULT",            .value = INT(EFAULT)                                    },
 { .module = "errno",  .name = "EPERM",             .value = INT(EPERM)                                     },
 { .module = "time",   .name = "time",              .value = BUILTIN(builtin_time_time)                     },
+{ .module = "time",   .name = "utime",             .value = BUILTIN(builtin_time_utime)                    },
+{ .module = "time",   .name = "localtime",         .value = BUILTIN(builtin_time_localtime)                },
+{ .module = "time",   .name = "strptime",          .value = BUILTIN(builtin_time_strptime)                 },
+{ .module = "time",   .name = "strftime",          .value = BUILTIN(builtin_time_strftime)                 },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
 

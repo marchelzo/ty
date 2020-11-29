@@ -256,4 +256,16 @@ builtin_errno_str(value_vector *args);
 struct value
 builtin_time_time(value_vector *args);
 
+struct value
+builtin_time_utime(value_vector *args);
+
+struct value
+builtin_time_localtime(value_vector *args);
+
+struct value
+builtin_time_strftime(value_vector *args);
+
+struct value
+builtin_time_strptime(value_vector *args);
+
 #endif

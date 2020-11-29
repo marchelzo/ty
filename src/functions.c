@@ -1571,8 +1571,202 @@ builtin_errno_str(value_vector *args)
 }
 
 struct value
-builtin_time_time(value_vector *args)
+builtin_time_utime(value_vector *args)
 {
         ASSERT_ARGC("time::time()", 0);
-        return INTEGER(time(NULL));
+
+        struct timespec t;
+        clock_gettime(CLOCK_REALTIME, &t);
+
+        return INTEGER(t.tv_sec * 1000 * 1000 + t.tv_nsec / 1000);
+}
+
+struct value
+builtin_time_localtime(value_vector *args)
+{
+        ASSERT_ARGC_2("time::localtime()", 0, 1);
+
+        time_t t;
+
+        if (args->count == 1) {
+                struct value v = args->items[0];
+                if (v.type != VALUE_INTEGER) {
+                        vm_panic("the argument to time::localtime() must be an integer");
+                }
+                t = v.integer;
+        } else {
+                t = time(NULL);
+        }
+
+        struct tm r = {0};
+        localtime_r(&t, &r);
+
+        struct table *o = object_new();
+
+        NOGC(o);
+        table_add(o, "sec", INTEGER(r.tm_sec));
+        table_add(o, "min", INTEGER(r.tm_min));
+        table_add(o, "hour", INTEGER(r.tm_hour));
+        table_add(o, "mday", INTEGER(r.tm_mday));
+        table_add(o, "mon", INTEGER(r.tm_mon));
+        table_add(o, "year", INTEGER(r.tm_year));
+        table_add(o, "wday", INTEGER(r.tm_wday));
+        table_add(o, "yday", INTEGER(r.tm_yday));
+        table_add(o, "isdst", BOOLEAN(r.tm_isdst));
+        OKGC(o);
+
+        return OBJECT(o, 0);
+}
+
+struct value
+builtin_time_strftime(value_vector *args)
+{
+        ASSERT_ARGC_2("time::strftime()", 1, 2);
+
+        struct tm t = {0};
+
+        struct value fmt = args->items[0];
+        if (fmt.type != VALUE_STRING) {
+                vm_panic("the first argument to time::strftime() must be a string");
+        }
+
+        if (args->count == 2) {
+                struct value v = args->items[1];
+                if (v.type == VALUE_INTEGER) {
+                        time_t sec = v.integer;
+                        localtime_r(&sec, &t);
+                } else if (v.type == VALUE_OBJECT) {
+                        struct value *vp;
+                        struct table *o = v.object;
+                        if ((vp = table_lookup(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_sec = vp->integer;
+                        if ((vp = table_lookup(o, "min")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_min = vp->integer;
+                        if ((vp = table_lookup(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_hour = vp->integer;
+                        if ((vp = table_lookup(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_mday = vp->integer;
+                        if ((vp = table_lookup(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_mon = vp->integer;
+                        if ((vp = table_lookup(o, "year")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_year = vp->integer;
+                        if ((vp = table_lookup(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_wday = vp->integer;
+                        if ((vp = table_lookup(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
+                                t.tm_yday = vp->integer;
+                        if ((vp = table_lookup(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
+                                t.tm_isdst = vp->boolean;
+
+                } else {
+                        vm_panic("the second argument to time::strftime() must be an integer or object");
+                }
+        } else {
+                time_t sec = time(NULL);
+                localtime_r(&sec, &t);
+        }
+
+        vec(char) fb;
+        vec_init(fb);
+        vec_push_n(fb, fmt.string, fmt.bytes);
+        vec_push(fb, '\0');
+        
+        char b[512];
+        int n = strftime(b, sizeof b, fb.items, &t);
+
+        vec_empty(fb);
+
+        if (n > 0) {
+                return STRING_CLONE(b, n);
+        } else {
+                return NIL;
+        }
+}
+
+struct value
+builtin_time_strptime(value_vector *args)
+{
+
+        ASSERT_ARGC("time::strptime()", 2);
+
+        struct value s = args->items[0];
+        struct value fmt = args->items[1];
+
+        if (s.type != VALUE_STRING || fmt.type != VALUE_STRING) {
+                vm_panic("both arguments to time::strptime() must be strings");
+        }
+
+        vec(char) sb;
+        vec(char) fb;
+
+        vec_init(sb);
+        vec_init(fb);
+
+        vec_push_n(sb, s.string, s.bytes);
+        vec_push_n(fb, fmt.string, fmt.bytes);
+
+        vec_push(sb, '\0');
+        vec_push(fb, '\0');
+        
+        struct tm r = {0};
+        strptime(sb.items, fb.items, &r);
+
+        vec_empty(sb);
+        vec_empty(fb);
+        
+        struct table *o = object_new();
+
+        NOGC(o);
+        table_add(o, "sec", INTEGER(r.tm_sec));
+        table_add(o, "min", INTEGER(r.tm_min));
+        table_add(o, "hour", INTEGER(r.tm_hour));
+        table_add(o, "mday", INTEGER(r.tm_mday));
+        table_add(o, "mon", INTEGER(r.tm_mon));
+        table_add(o, "year", INTEGER(r.tm_year));
+        table_add(o, "wday", INTEGER(r.tm_wday));
+        table_add(o, "yday", INTEGER(r.tm_yday));
+        table_add(o, "isdst", BOOLEAN(r.tm_isdst));
+        OKGC(o);
+
+        return OBJECT(o, 0);
+}
+
+struct value
+builtin_time_time(value_vector *args)
+{
+        ASSERT_ARGC_2("time::time()", 0, 1);
+
+        if (args->count == 0) {
+                return INTEGER(time(NULL));
+        }
+
+        struct tm t = {0};
+        struct value v = args->items[0];
+
+        if (v.type != VALUE_OBJECT) {
+                vm_panic("the argument to time::time() must be an object");
+        }
+
+        struct value *vp;
+        struct table *o = v.object;
+
+        if ((vp = table_lookup(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_sec = vp->integer;
+        if ((vp = table_lookup(o, "min")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_min = vp->integer;
+        if ((vp = table_lookup(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_hour = vp->integer;
+        if ((vp = table_lookup(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_mday = vp->integer;
+        if ((vp = table_lookup(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_mon = vp->integer;
+        if ((vp = table_lookup(o, "year")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_year = vp->integer;
+        if ((vp = table_lookup(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_wday = vp->integer;
+        if ((vp = table_lookup(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
+                t.tm_yday = vp->integer;
+        if ((vp = table_lookup(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
+                t.tm_isdst = vp->boolean;
+
+        return INTEGER(mktime(&t));
 }

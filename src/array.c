@@ -9,6 +9,12 @@
 #include "util.h"
 #include "vm.h"
 
+static struct value
+array_drop_mut(struct value *array, value_vector *args);
+
+static struct value
+array_drop(struct value *array, value_vector *args);
+
 static struct value *comparison_fn;
 
 static int
@@ -156,6 +162,9 @@ array_swap(struct value *array, value_vector *args)
 static struct value
 array_slice_mut(struct value *array, value_vector *args)
 {
+        if (args->count == 1)
+                return array_drop_mut(array, args);
+
         if (args->count != 2)
                 vm_panic("array.slice!() expects 2 arguments but got %zu", args->count);
         
@@ -294,6 +303,8 @@ array_map_cons(struct value *array, value_vector *args)
 static struct value
 array_slice(struct value *array, value_vector *args)
 {
+        if (args->count == 1)
+                return array_drop(array, args);
         if (args->count != 2)
                 vm_panic("array.slice() expects 2 arguments but got %zu", args->count);
         
@@ -1062,6 +1073,90 @@ array_filter(struct value *array, value_vector *args)
 }
 
 static struct value
+array_partition(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the partition method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the partition method on array");
+
+        int n = array->array->count;
+        int j = 0;
+        struct array *yes = value_array_new();
+        struct array *no = value_array_new();
+
+        NOGC(yes);
+        NOGC(no);
+
+        for (int i = 0; i < n; ++i) {
+                if (value_apply_predicate(&pred, &array->array->items[i])) {
+                        array->array->items[j++] = array->array->items[i];
+                } else {
+                        value_array_push(no, array->array->items[i]);
+                }
+        }
+
+        array->array->count = j;
+        shrink(array);
+
+        yes->items = array->array->items;
+        yes->count = array->array->count;
+        yes->capacity = array->array->capacity;
+
+        vec_init(*array->array);
+        value_array_push(array->array, ARRAY(yes));
+        value_array_push(array->array, ARRAY(no));
+
+        OKGC(yes);
+        OKGC(no);
+
+        return *array;
+}
+
+static struct value
+array_partition_no_mut(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the partition method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the partition method on array");
+
+        int n = array->array->count;
+        struct array *yes = value_array_new();
+        struct array *no = value_array_new();
+
+        NOGC(yes);
+        NOGC(no);
+
+        for (int i = 0; i < n; ++i) {
+                if (value_apply_predicate(&pred, &array->array->items[i])) {
+                        value_array_push(yes, array->array->items[i]);
+                } else {
+                        value_array_push(no, array->array->items[i]);
+                }
+        }
+
+        struct array *result = value_array_new();
+        NOGC(result);
+
+        value_array_push(result, ARRAY(yes));
+        value_array_push(result, ARRAY(no));
+
+
+        OKGC(yes);
+        OKGC(no);
+        OKGC(result);
+
+        return ARRAY(result);
+}
+
+static struct value
 array_contains(struct value *array, value_vector *args)
 {
         if (args->count != 1)
@@ -1409,6 +1504,8 @@ DEFINE_METHOD_TABLE(
         { .name = "minBy",             .func = array_min_by                  },
         { .name = "nextPermutation",   .func = array_next_permutation_no_mut },
         { .name = "nextPermutation!",  .func = array_next_permutation        },
+        { .name = "partition",         .func = array_partition_no_mut        },
+        { .name = "partition!",        .func = array_partition               },
         { .name = "pop",               .func = array_pop                     },
         { .name = "push",              .func = array_push                    },
         { .name = "reverse",           .func = array_reverse_no_mut          },
