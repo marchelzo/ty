@@ -950,7 +950,7 @@ ObjectSubscript:
                                                         vm_panic("iterator yielded non-integer array index in subscript expression");
                                                 if (r.integer < 0)
                                                         r.integer += container.array->count;
-                                                if (r.integer < 0 || subscript.integer >= container.array->count)
+                                                if (r.integer < 0 || r.integer >= container.array->count)
                                                         goto OutOfRange;
                                                 value_array_push(a, container.array->items[r.integer]);
                                         }

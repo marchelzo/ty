@@ -1208,6 +1208,45 @@ array_each(struct value *array, value_vector *args)
 }
 
 static struct value
+array_all(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the all? method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the all? method on array");
+
+        int n = array->array->count;
+        for (int i = 0; i < n; ++i)
+                if (!value_apply_predicate(&pred, &array->array->items[i]))
+                        return BOOLEAN(false);
+
+        return BOOLEAN(true);
+}
+
+static struct value
+array_count(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the count method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the count method on array");
+
+        int n = array->array->count;
+        int k = 0;
+        for (int i = 0; i < n; ++i)
+                if (value_apply_predicate(&pred, &array->array->items[i]))
+                        k += 1;
+
+        return INTEGER(k);
+}
+
+static struct value
 array_fold_left(struct value *array, value_vector *args)
 {
         if (args->count != 1 && args->count != 2)
@@ -1468,6 +1507,7 @@ DEFINE_NO_MUT(zip_with);
 DEFINE_NO_MUT(next_permutation);
 
 DEFINE_METHOD_TABLE(
+        { .name = "all?",              .func = array_all                     },
         { .name = "clone",             .func = array_clone                   },
         { .name = "consumeWhile",      .func = array_consume_while           },
         { .name = "contains?",         .func = array_contains                },

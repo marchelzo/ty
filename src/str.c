@@ -265,6 +265,35 @@ end:
 }
 
 static struct value
+string_count(struct value *string, value_vector *args)
+{
+        if (args->count != 1) {
+                vm_panic("the count method on strings expects exactly 1 argument");
+        }
+
+        struct value pattern = args->items[0];
+
+        if (pattern.type != VALUE_STRING) {
+                vm_panic("non-string passed to string's count method");
+        }
+
+        char const *s = string->string;
+        char const *p = pattern.string;
+        int len = string->bytes;
+        int plen = pattern.bytes;
+        char const *m;
+        int count = 0;
+
+        if (plen > 0) while ((m = sfind(s, len, p, plen)) != NULL) {
+                len -= (m - s + plen);
+                s = m + plen;
+                count += 1;
+        }
+
+        return INTEGER(count);
+}
+
+static struct value
 string_replace(struct value *string, value_vector *args)
 {
         vec(char) chars;
@@ -770,6 +799,7 @@ DEFINE_METHOD_TABLE(
         { .name = "bytes",     .func = string_bytes     },
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
+        { .name = "count",     .func = string_count     },
         { .name = "len",       .func = string_length    },
         { .name = "lower",     .func = string_lower     },
         { .name = "match!",    .func = string_match     },

@@ -3,6 +3,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "panic.h"
 #include "alloc.h"
@@ -49,33 +54,24 @@ contains(char const *s, char c)
 char *
 slurp(char const *path)
 {
-        FILE *f = fopen(path, "r");
-        if (f == NULL) {
+        int fd = open(path, O_RDONLY);
+
+        struct stat st;
+        fstat(fd, &st);
+
+        int n = st.st_size;
+
+        void *p = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+        if (p == NULL) {
                 return NULL;
         }
 
-        int used = 0;
-        int capacity = 512;
-        char *contents = alloc(capacity);
+        char *s = alloc(n + 1);
+        memcpy(s, p, n);
+        s[n] = '\0';
 
-        int n;
-        static char buffer[4096];
-        while ((n = fread(buffer, 1, sizeof buffer, f)) != 0) {
-                if (n + used >= capacity) {
-                        capacity += n;
-                        capacity *= 2;
-                        resize(contents, capacity);
-                }
+        munmap(p, n);
 
-                memcpy(contents + used, buffer, n);
-                used += n;
-        }
+        return s;
 
-        fclose(f);
-
-        if (used == 0)
-                return "";
-
-        contents[used] = '\0';
-        return contents;
 }
