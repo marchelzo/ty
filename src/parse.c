@@ -1958,7 +1958,7 @@ parse_export(void)
 
         vec_init(s->exports);
 
-        while (tok()->type == TOKEN_IDENTIFIER) {
+        while (tok()->type == TOKEN_IDENTIFIER || tok()->type == TOKEN_USER_OP) {
                 vec_push(s->exports, tok()->identifier);
                 next();
                 if (tok()->type == ',')

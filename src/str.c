@@ -562,7 +562,7 @@ string_byte(struct value *string, value_vector *args)
         if (i.integer < 0 || i.integer >= string->bytes)
                 return NIL; /* TODO: maybe panic */
 
-        return INTEGER(string->string[i.integer]);
+        return INTEGER((unsigned char)string->string[i.integer]);
 }
 
 static struct value
@@ -629,7 +629,7 @@ string_bytes(struct value *string, value_vector *args)
         NOGC(result.array);
 
         for (char const *c = string->string; *c != '\0'; ++c) {
-                value_array_push(result.array, INTEGER(*c));
+                value_array_push(result.array, INTEGER((unsigned char)*c));
         }
 
         OKGC(result.array);
