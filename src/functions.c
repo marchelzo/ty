@@ -1488,7 +1488,6 @@ builtin_os_stat(value_vector *args)
        table_add(t, "st_size", INTEGER(s.st_size));
        table_add(t, "st_blocks", INTEGER(s.st_blocks));
        table_add(t, "st_blksize", INTEGER(s.st_blksize));
-       table_add(t, "st_blksize", INTEGER(s.st_blksize));
 
        struct table *atim = object_new();
        struct table *mtim = object_new();

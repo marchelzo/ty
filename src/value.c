@@ -412,6 +412,8 @@ value_apply_predicate(struct value *p, struct value *v)
         switch (p->type) {
         case VALUE_FUNCTION:
         case VALUE_BUILTIN_FUNCTION:
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:
                 b = vm_eval_function(p, v);
                 return value_truthy(&b);
         case VALUE_REGEX:

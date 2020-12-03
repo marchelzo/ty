@@ -999,12 +999,6 @@ infix_squiggly_arrow(struct expression *left)
 static struct expression *
 infix_arrow_function(struct expression *left)
 {
-        /*
-         * If it's not a list, we need to make sure it's a valid definition lvalue.
-         * For example, ([a, b, c] -> a + b * c) is allowed, but not ([a[0], b, c] -> b * c).
-         */
-        if (left->type != EXPRESSION_LIST)
-                left = definition_lvalue(left);
 
         consume(TOKEN_ARROW);
 
@@ -1037,7 +1031,7 @@ infix_arrow_function(struct expression *left)
                 } else {
                         char *name = gensym();
                         vec_push(e->params, name);
-                        vec_push(body->statements, mkdef(p, name));
+                        vec_push(body->statements, mkdef(definition_lvalue(p), name));
                 }
         }
 

@@ -1078,6 +1078,22 @@ array_find(struct value *array, value_vector *args)
         if (args->count != 1)
                 vm_panic("the find method on arrays expects 1 argument but got %zu", args->count);
 
+        struct value x = args->items[0];
+
+        int n = array->array->count;
+        for (int i = 0; i < n; ++i)
+                if (value_test_equality(&x, &array->array->items[i]))
+                        return INTEGER(i);
+
+        return NIL;
+}
+
+static struct value
+array_find_by(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the find method on arrays expects 1 argument but got %zu", args->count);
+
         struct value pred = args->items[0];
 
         if (!CALLABLE(pred))
@@ -1540,6 +1556,7 @@ DEFINE_METHOD_TABLE(
         { .name = "filter",            .func = array_filter_no_mut           },
         { .name = "filter!",           .func = array_filter                  },
         { .name = "find",              .func = array_find                    },
+        { .name = "findBy",            .func = array_find_by                 },
         { .name = "foldLeft",          .func = array_fold_left               },
         { .name = "foldRight",         .func = array_fold_right              },
         { .name = "group",             .func = array_group_no_mut            },
