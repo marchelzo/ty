@@ -73,8 +73,10 @@ grow(struct dict *d)
 inline static struct value *
 put(struct dict *d, size_t i, unsigned long h, struct value k, struct value v)
 {
-        if (4 * d->count >= d->size)
+        if (4 * d->count >= d->size) {
                 grow(d);
+                i = find_spot(d->size, d->hashes, d->keys, h, &k);
+        }
 
         d->hashes[i] = h;
         d->keys[i] = k;
@@ -95,8 +97,7 @@ dict_get_value(struct dict *d, struct value *key)
 
         if (d->dflt.type != VALUE_NIL) {
                 struct value dflt = value_apply_callable(&d->dflt, key);
-                put(d, i, h, *key, dflt);
-                return &d->values[i];
+                return put(d, i, h, *key, dflt);
         }
 
         return NULL;
