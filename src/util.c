@@ -55,6 +55,9 @@ char *
 slurp(char const *path)
 {
         int fd = open(path, O_RDONLY);
+        if (fd == -1) {
+                return NULL;
+        }
 
         struct stat st;
         fstat(fd, &st);
