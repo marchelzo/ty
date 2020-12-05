@@ -20,6 +20,7 @@
 #include <sys/time.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/mman.h>
 
 #include "tags.h"
 #include "value.h"
@@ -75,6 +76,64 @@ Again:
 
 
         putchar('\n');
+
+        return NIL;
+}
+
+struct value
+builtin_slurp(value_vector *args)
+{
+        ASSERT_ARGC("slurp()", 1);
+
+        char p[PATH_MAX + 1];
+        struct value v = args->items[0];
+
+        if (v.type != VALUE_STRING) {
+                vm_panic("slurp() expects a path but got: %s", value_show(&v));
+        }
+
+        if (v.bytes >= sizeof p)
+                return NIL;
+
+        memcpy(p, v.string, v.bytes);
+        p[v.bytes] = '\0';
+
+        int fd = open(p, O_RDONLY);
+        if (fd < 0)
+                return NIL;
+
+        struct stat st;
+        if (fstat(fd, &st) != 0) {
+                close(fd);
+                return NIL;
+        }
+
+        if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+                size_t n = st.st_size;
+
+                void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+                if (m == NULL) {
+                        close(fd);
+                        return NIL;
+                }
+
+                char *s = value_string_alloc(n);
+                memcpy(s, m, n);
+
+                munmap(m, n);
+                close(fd);
+
+                return STRING(s, n);
+        } else if (!S_ISDIR(st.st_mode)) {
+                int r;
+                vec(char) s = {0};
+                while ((r = read(fd, p, sizeof p)) > 0) {
+                        vec_push_n(s, p, r);
+                }
+                struct value str = STRING_CLONE(s.items, s.count);
+                vec_empty(s);
+                return str;
+        }
 
         return NIL;
 }

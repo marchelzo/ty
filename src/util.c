@@ -74,6 +74,7 @@ slurp(char const *path)
         s[n] = '\0';
 
         munmap(p, n);
+        close(fd);
 
         return s;
 

@@ -3,6 +3,7 @@
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
 
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
+{ .module = NULL,     .name = "slurp",             .value = BUILTIN(builtin_slurp)                         },
 { .module = NULL,     .name = "die",               .value = BUILTIN(builtin_die)                           },
 { .module = NULL,     .name = "read",              .value = BUILTIN(builtin_read)                          },
 { .module = NULL,     .name = "rand",              .value = BUILTIN(builtin_rand)                          },
