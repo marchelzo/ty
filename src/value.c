@@ -390,7 +390,7 @@ value_truthy(struct value const *v)
         case VALUE_REAL:             return v->real != 0.0f;
         case VALUE_BOOLEAN:          return v->boolean;
         case VALUE_INTEGER:          return (v->integer != 0);
-        case VALUE_STRING:           return (v->string[0] != '\0');
+        case VALUE_STRING:           return (v->bytes > 0);
         case VALUE_ARRAY:            return (v->array->count != 0);
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
