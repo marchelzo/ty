@@ -101,7 +101,7 @@ builtin_slurp(value_vector *args)
                 memcpy(p, v.string, v.bytes);
                 p[v.bytes] = '\0';
 
-                int fd = open(p, O_RDONLY);
+                fd = open(p, O_RDONLY);
                 if (fd < 0)
                         return NIL;
         } else {
@@ -116,7 +116,6 @@ builtin_slurp(value_vector *args)
 
         if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
                 size_t n = st.st_size;
-
                 void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
                 if (m == NULL) {
                         close(fd);
@@ -133,6 +132,7 @@ builtin_slurp(value_vector *args)
         } else if (!S_ISDIR(st.st_mode)) {
                 int r;
                 vec(char) s = {0};
+
                 while ((r = read(fd, p, sizeof p)) > 0) {
                         vec_push_n(s, p, r);
                 }
