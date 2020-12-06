@@ -155,6 +155,9 @@ string(void)
         vec(char) str;
         vec_init(str);
 
+        char b[3] = {0};
+        unsigned hex;
+
         while (peek() != '\0' && peek() != '"') {
                 if (peek() == '\\') switch (next(), next()) {
                 case 't':  vec_push(str, '\t'); break;
@@ -165,6 +168,14 @@ string(void)
                 case '"':  vec_push(str, '"');  break;
                 case '/':  vec_push(str, '/');  break;
                 case '\\': vec_push(str, '\\'); break;
+                case 'x':
+                        b[0] = next();
+                        b[1] = next();
+                        if (sscanf(b, "%X", &hex) != 1) {
+                                FAIL;
+                        }
+                        vec_push(str, (char)hex);
+                        break;
                 } else vec_push(str, next());
         }
 
@@ -342,6 +353,18 @@ encode(struct value const *v, str *out)
                 else
                         vec_push(*out, '}');
                 break;
+        case VALUE_BLOB:
+                vec_push(*out, '"');
+                for (int i = 0; i < v->blob->count; ++i) {
+                        char b[3];
+                        snprintf(b, sizeof b, "%.2X", (unsigned)v->blob->items[i]);
+                        vec_push(*out, '\\');
+                        vec_push(*out, 'x');
+                        vec_push(*out, b[0]);
+                        vec_push(*out, b[1]);
+                }
+                vec_push(*out, '"');
+                break;
         default:
                 return false;
                 
@@ -385,9 +408,8 @@ json_encode(struct value const *v)
 
         if (encode(v, &s)) {
                 r = STRING_CLONE(s.items, s.count);
+                vec_empty(s);
         }
-
-        vec_empty(s);
 
         return r;
 }
