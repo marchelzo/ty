@@ -1,7 +1,4 @@
-export Tree
-
-let Black = 0;
-let Red = 1;
+export Tree, set
 
 class NodeIter {
     init(self, nodes) {
@@ -49,6 +46,20 @@ class Tree {
             x.p.r = y;
         y.l = x;
         x.p = y;
+    }
+
+    empty?(T) {
+        return T.root == T.null;
+    }
+
+    size(T) {
+        return T.treeCount(T.root);
+    }
+
+    treeCount(T, x) {
+        if (x == T.null)
+            return 0;
+        return 1 + T.treeCount(x.l) + T.treeCount(x.r);
     }
 
     rightRotate(T, x) {
@@ -293,4 +304,19 @@ class Tree {
         for node in nodes { node.seen = false; }
         return NodeIter(nodes);
     }
+
+    -(a, b) {
+        let t = Tree();
+        for x in a {
+            if (!b.has?(x))
+                t.put(x);
+        }
+        return t;
+    }
+}
+
+function set(xs) {
+    let t = Tree();
+    for x in xs { t.put(x); }
+    return t;
 }

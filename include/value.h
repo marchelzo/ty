@@ -311,4 +311,6 @@ STRING_NOGC(char const *s, int n)
         };
 }
 
+#define STRING_EMPTY (STRING_NOGC(NULL, 0))
+
 #endif

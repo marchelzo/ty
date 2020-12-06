@@ -234,7 +234,7 @@ string_split(struct value *string, value_vector *args)
                 }
 
                 if (i == len)
-                        value_array_push(result.array, STRING_NOGC(NULL, 0));
+                        value_array_push(result.array, STRING_EMPTY);
         } else {
                 pcre *re = pattern.regex;
                 int len = string->bytes;
@@ -256,7 +256,7 @@ string_split(struct value *string, value_vector *args)
                 }
 
                 if (start == len)
-                        value_array_push(result.array, STRING_NOGC(NULL, 0));
+                        value_array_push(result.array, STRING_EMPTY);
         }
 
 end:
@@ -291,6 +291,75 @@ string_count(struct value *string, value_vector *args)
         }
 
         return INTEGER(count);
+}
+
+/* copy + paste of replace, can fix later */
+static struct value
+string_comb(struct value *string, value_vector *args)
+{
+        vec(char) chars;
+        size_t const header = offsetof(struct alloc, data);
+        // TODO: yikes
+
+        vec_init(chars);
+        vec_reserve(chars, header);
+        chars.count = chars.capacity;
+
+        if (args->count != 1)
+                vm_panic("the comb method on strings expects 1 arguments but got %zu", args->count);
+
+        struct value pattern = args->items[0];
+        struct value replacement = STRING_EMPTY;
+
+        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
+                vm_panic("the pattern argument to string's comb method must be a regex or a string");
+
+        char const *s = string->string;
+
+        if (pattern.type == VALUE_STRING) {
+
+                char const *p = pattern.string;
+                char const *r = replacement.string;
+
+                int len = string->bytes;
+                int plen = pattern.bytes;
+                char const *m;
+
+                while ((m = sfind(s, len, p, plen)) != NULL) {
+                        vec_push_n(chars, s, m - s);
+
+                        vec_push_n(chars, r, replacement.bytes);
+
+                        len -= (m - s + plen);
+                        s = m + plen;
+                }
+
+                vec_push_n(chars, s, len);
+        } else {
+                pcre *re = pattern.regex;
+                char const *r = replacement.string;
+                int len = string->bytes;
+                int start = 0;
+                int out[3];
+
+                while (pcre_exec(re, NULL, s, len, start, 0, out, 3) == 1) {
+
+                        vec_push_n(chars, s + start, out[0] - start);
+
+                        vec_push_n(chars, r, replacement.bytes);
+
+                        start = out[1];
+                }
+
+                vec_push_n(chars, s + start, len - start);
+
+        }
+
+        struct alloc *a = (void *)chars.items;
+        a->type = GC_STRING;
+        a->mark = GC_NONE;
+
+        return STRING(chars.items + header, chars.count - header);
 }
 
 static struct value
@@ -807,6 +876,7 @@ DEFINE_METHOD_TABLE(
         { .name = "bytes",     .func = string_bytes     },
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
+        { .name = "comb",      .func = string_comb      },
         { .name = "count",     .func = string_count     },
         { .name = "len",       .func = string_length    },
         { .name = "lower",     .func = string_lower     },
