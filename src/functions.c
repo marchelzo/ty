@@ -83,24 +83,30 @@ Again:
 struct value
 builtin_slurp(value_vector *args)
 {
-        ASSERT_ARGC("slurp()", 1);
+        ASSERT_ARGC_2("slurp()", 0, 1);
 
         char p[PATH_MAX + 1];
-        struct value v = args->items[0];
+        int fd;
 
-        if (v.type != VALUE_STRING) {
-                vm_panic("slurp() expects a path but got: %s", value_show(&v));
+        if (args->count == 1) {
+                struct value v = args->items[0];
+
+                if (v.type != VALUE_STRING) {
+                        vm_panic("slurp() expects a path but got: %s", value_show(&v));
+                }
+
+                if (v.bytes >= sizeof p)
+                        return NIL;
+
+                memcpy(p, v.string, v.bytes);
+                p[v.bytes] = '\0';
+
+                int fd = open(p, O_RDONLY);
+                if (fd < 0)
+                        return NIL;
+        } else {
+                fd = 0;
         }
-
-        if (v.bytes >= sizeof p)
-                return NIL;
-
-        memcpy(p, v.string, v.bytes);
-        p[v.bytes] = '\0';
-
-        int fd = open(p, O_RDONLY);
-        if (fd < 0)
-                return NIL;
 
         struct stat st;
         if (fstat(fd, &st) != 0) {
