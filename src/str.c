@@ -7,6 +7,7 @@
 #include "util.h"
 #include "gc.h"
 #include "vm.h"
+#include "functions.h"
 
 static struct stringpos limitpos;
 static struct stringpos outpos;
@@ -218,9 +219,6 @@ string_split(struct value *string, value_vector *args)
                         goto end;
 
                 int i = 0;
-                while (i < len && is_prefix(s + i, len - i, p, n))
-                        i += n;
-                
                 while (i < len) {
 
                         struct value str = STRING_VIEW(*string, i, 0);
@@ -232,9 +230,11 @@ string_split(struct value *string, value_vector *args)
 
                         value_array_push(result.array, str);
 
-                        while (i < len && is_prefix(s + i, len - i, p, n))
-                                i += n;
+                        i += 1;
                 }
+
+                if (i == len)
+                        value_array_push(result.array, STRING_NOGC(NULL, 0));
         } else {
                 pcre *re = pattern.regex;
                 int len = string->bytes;
@@ -245,18 +245,18 @@ string_split(struct value *string, value_vector *args)
                         if (pcre_exec(re, NULL, s, len, start, 0, out, 3) != 1)
                                 out[0] = out[1] = len;
 
-                        if (out[0] == out[1] && out[1] != len) {
+                        if (out[0] == out[1]) {
                                 ++out[0];
                                 ++out[1];
                         }
 
                         int n = out[0] - start;
-
-                        if (n > 0)
-                                value_array_push(result.array, STRING_VIEW(*string, start, n));
-
+                        value_array_push(result.array, STRING_VIEW(*string, start, n));
                         start = out[1];
                 }
+
+                if (start == len)
+                        value_array_push(result.array, STRING_NOGC(NULL, 0));
         }
 
 end:
@@ -313,12 +313,14 @@ string_replace(struct value *string, value_vector *args)
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
                 vm_panic("the pattern argument to string's replace method must be a regex or a string");
 
-        if (replacement.type != VALUE_STRING && !CALLABLE(replacement))
-                vm_panic("the replacement argument to string's replace method must be callable or a string");
-
         char const *s = string->string;
 
         if (pattern.type == VALUE_STRING) {
+
+                replacement = builtin_str(&(value_vector){
+                        .items = &replacement,
+                        .count = 1
+                });
 
                 if (replacement.type != VALUE_STRING)
                         vm_panic("non-string replacement passed to string's replace method with a string pattern");
@@ -358,7 +360,7 @@ string_replace(struct value *string, value_vector *args)
 
                 vec_push_n(chars, s + start, len - start);
 
-        } else {
+        } else if (CALLABLE(replacement)) {
                 pcre *re = pattern.regex;
                 int len = string->bytes;
                 int start = 0;
@@ -383,6 +385,10 @@ string_replace(struct value *string, value_vector *args)
                         }
 
                         struct value repstr = vm_eval_function(&replacement, &match);
+                        repstr = builtin_str(&(value_vector){
+                                .items = &repstr,
+                                .count = 1
+                        });
                         if (repstr.type != VALUE_STRING)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
 
@@ -395,6 +401,8 @@ string_replace(struct value *string, value_vector *args)
                 }
 
                 vec_push_n(chars, s + start, len - start);
+        } else {
+                vm_panic("invalid replacement passed to replace method on string");
         }
 
         struct alloc *a = (void *)chars.items;

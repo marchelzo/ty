@@ -47,8 +47,8 @@ binary_operator_addition(struct value const *left, struct value const *right)
         case VALUE_REAL:    return REAL(left->real + right->real);
         case VALUE_STRING:  return str_concat(left, right);
         case VALUE_ARRAY:
-                gc_push(left);
-                gc_push(right);
+                gc_push((struct value *)left);
+                gc_push((struct value *)right);
                 v = ARRAY(value_array_clone(left->array));
                 NOGC(v.array);
                 value_array_extend(v.array, right->array);
