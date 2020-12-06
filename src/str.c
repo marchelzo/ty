@@ -177,6 +177,46 @@ string_search(struct value *string, value_vector *args)
 }
 
 static struct value
+string_lines(struct value *string, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("the lines method on strings expects no arguments but got %zu", args->count);
+
+        gc_push(string);
+
+        struct array *a = value_array_new();
+        NOGC(a);
+
+        int i = 0;
+        int len = string->bytes;
+        char const *s = string->string;
+
+        if (len == 0) {
+                value_array_push(a, *string);
+                goto End;
+        }
+
+        while (i < len) {
+                struct value str = STRING_VIEW(*string, i, 0);
+
+                while (i < len && s[i] != '\n' && !is_prefix(s + i, len - i, "\r\n", 2)) {
+                        ++str.bytes;
+                        ++i;
+                }
+
+                value_array_push(a, str);
+
+                if (i < len)
+                        i += 1 + (s[i] == '\r');
+        }
+End: 
+        gc_pop();
+        OKGC(a);
+
+        return ARRAY(a);
+}
+
+static struct value
 string_split(struct value *string, value_vector *args)
 {
         if (args->count != 1)
@@ -184,6 +224,7 @@ string_split(struct value *string, value_vector *args)
 
         char const *s = string->string;
         int len = string->bytes;
+        gc_push(string);
 
         struct value pattern = args->items[0];
 
@@ -202,6 +243,7 @@ string_split(struct value *string, value_vector *args)
                 value_array_push(parts, STRING_VIEW(*string, 0, outpos.bytes));
                 value_array_push(parts, STRING_VIEW(*string, outpos.bytes, len - outpos.bytes));
                 OKGC(parts);
+                gc_pop();
                 return ARRAY(parts);
         }
 
@@ -260,6 +302,7 @@ string_split(struct value *string, value_vector *args)
         }
 
 end:
+        gc_pop();
         OKGC(result.array);
         return result;
 }
@@ -879,6 +922,7 @@ DEFINE_METHOD_TABLE(
         { .name = "comb",      .func = string_comb      },
         { .name = "count",     .func = string_count     },
         { .name = "len",       .func = string_length    },
+        { .name = "lines",     .func = string_lines     },
         { .name = "lower",     .func = string_lower     },
         { .name = "match!",    .func = string_match     },
         { .name = "match?",    .func = string_is_match  },
