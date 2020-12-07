@@ -1224,6 +1224,38 @@ array_search(struct value *array, value_vector *args)
 }
 
 static struct value
+array_flat(struct value *array, value_vector *args)
+{
+        if (args->count != 0) {
+                vm_panic("array.flatten() expects no arguments but got %zu", args->count);
+        }
+
+        struct array *r = value_array_new();
+        vec(struct value *) stack = {0};
+
+        NOGC(r);
+
+        for (int i = 0; i < array->array->count; ++i) {
+                vec_push(stack, &array->array->items[i]);
+                while (stack.count > 0) {
+                        struct value *v = *vec_pop(stack);
+                        if (v->type != VALUE_ARRAY) {
+                                value_array_push(r, *v);
+                        } else {
+                                for (int i = v->array->count - 1; i >= 0; --i)
+                                        vec_push(stack, &v->array->items[i]);
+                        }
+                }
+        }
+
+        vec_empty(stack);
+        OKGC(r);
+
+        return ARRAY(r);
+
+}
+
+static struct value
 array_each(struct value *array, value_vector *args)
 {
         if (args->count != 1)
@@ -1259,6 +1291,25 @@ array_all(struct value *array, value_vector *args)
                         return BOOLEAN(false);
 
         return BOOLEAN(true);
+}
+
+static struct value
+array_any(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the any? method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the any? method on array");
+
+        int n = array->array->count;
+        for (int i = 0; i < n; ++i)
+                if (value_apply_predicate(&pred, &array->array->items[i]))
+                        return BOOLEAN(true);
+
+        return BOOLEAN(false);
 }
 
 static struct value
@@ -1543,6 +1594,7 @@ DEFINE_NO_MUT(next_permutation);
 
 DEFINE_METHOD_TABLE(
         { .name = "all?",              .func = array_all                     },
+        { .name = "any?",              .func = array_any                     },
         { .name = "clone",             .func = array_clone                   },
         { .name = "consumeWhile",      .func = array_consume_while           },
         { .name = "contains?",         .func = array_contains                },
@@ -1557,6 +1609,7 @@ DEFINE_METHOD_TABLE(
         { .name = "filter!",           .func = array_filter                  },
         { .name = "find",              .func = array_find                    },
         { .name = "findBy",            .func = array_find_by                 },
+        { .name = "flat",              .func = array_flat                    },
         { .name = "foldLeft",          .func = array_fold_left               },
         { .name = "foldRight",         .func = array_fold_right              },
         { .name = "group",             .func = array_group_no_mut            },
