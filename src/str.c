@@ -1,6 +1,7 @@
 #include <string.h>
 
 #include <utf8proc.h>
+#include <ctype.h>
 
 #include "utf8.h"
 #include "value.h"
@@ -177,6 +178,60 @@ string_search(struct value *string, value_vector *args)
 }
 
 static struct value
+string_words(struct value *string, value_vector *args)
+{
+        if (args->count != 0)
+                vm_panic("the words method on strings expects no arguments but got %zu", args->count);
+
+        gc_push(string);
+
+        struct array *a = value_array_new();
+        NOGC(a);
+
+        int i = 0;
+        int len = string->bytes;
+        int n = 0;
+        char const *s = string->string;
+
+        if (len == 0) {
+                goto End;
+        }
+
+        utf8proc_int32_t cp;
+
+
+        while (i < len) {
+                utf8proc_iterate(s + i, len - i, &cp);
+                utf8proc_category_t c = utf8proc_category(cp);
+                while (i < len &&
+                        (isspace(s[i]) || c == UTF8PROC_CATEGORY_ZS || c == UTF8PROC_CATEGORY_ZL || c == UTF8PROC_CATEGORY_ZP)) {
+                        i += n;
+                        n = utf8proc_iterate(s + i, len - i, &cp);
+                        c = utf8proc_category(cp);
+                }
+
+                if (i >= len)
+                        break;
+
+                struct value str = STRING_VIEW(*string, i, 0);
+                
+                do {
+                        str.bytes += n;
+                        i += n;
+                        n = utf8proc_iterate(s + i, len - i, &cp);
+                        c = utf8proc_category(cp);
+                } while (i < len && !isspace(s[i]) && c != UTF8PROC_CATEGORY_ZS && c != UTF8PROC_CATEGORY_ZL && c != UTF8PROC_CATEGORY_ZP);
+
+                value_array_push(a, str);
+        }
+End: 
+        gc_pop();
+        OKGC(a);
+
+        return ARRAY(a);
+}
+
+static struct value
 string_lines(struct value *string, value_vector *args)
 {
         if (args->count != 0)
@@ -272,7 +327,7 @@ string_split(struct value *string, value_vector *args)
 
                         value_array_push(result.array, str);
 
-                        i += 1;
+                        i += n;
                 }
 
                 if (i == len)
@@ -936,6 +991,7 @@ DEFINE_METHOD_TABLE(
         { .name = "split",     .func = string_split     },
         { .name = "sub",       .func = string_replace   },
         { .name = "upper",     .func = string_upper     },
+        { .name = "words",     .func = string_words     },
 );
 
 DEFINE_METHOD_LOOKUP(string)

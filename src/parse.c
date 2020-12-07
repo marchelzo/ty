@@ -885,20 +885,22 @@ infix_eq(struct expression *left)
 }
 
 static struct expression *
+prefix_user_op(struct expression *e)
+{
+        error("not implemented");
+}
+
+static struct expression *
 infix_user_op(struct expression *left)
 {
         struct expression *e = mkexpr();
 
-        e->type = EXPRESSION_FUNCTION_CALL;
-        e->function = mkexpr();
-        e->function->type = EXPRESSION_IDENTIFIER;
-        e->function->identifier = tok()->identifier;
-        e->function->module = NULL;
+        e->type = EXPRESSION_METHOD_CALL;
+        e->object = left;
+        e->method_name = tok()->identifier;
         consume(TOKEN_USER_OP);
-
-        vec_init(e->args);
-        vec_push(e->args, left);
-        vec_push(e->args, parse_expr(2));
+        vec_init(e->method_args);
+        vec_push(e->method_args, parse_expr(2));
 
         return e;
 }
@@ -1152,6 +1154,7 @@ get_prefix_parser(void)
         case TOKEN_MINUS:          return prefix_minus;
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
+        case TOKEN_USER_OP:        return prefix_user_op;
 
         case TOKEN_STAR:           return prefix_star;
 
@@ -1882,6 +1885,7 @@ parse_class_definition(void)
                         case TOKEN_MINUS:   tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-";    break;
                         case TOKEN_STAR:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*";    break;
                         case TOKEN_PERCENT: tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "%";    break;
+                        case TOKEN_USER_OP: tok()->type = TOKEN_IDENTIFIER;                             break;
                         default:                                                                        break;
                         }
                         /*
