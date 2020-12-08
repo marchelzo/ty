@@ -317,6 +317,6 @@ class Tree {
 
 function set(xs) {
     let t = Tree();
-    for x in xs { t.put(x); }
+    if (xs) for x in xs { t.put(x); }
     return t;
 }
