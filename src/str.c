@@ -343,7 +343,6 @@ string_split(struct value *string, value_vector *args)
                                 out[0] = out[1] = len;
 
                         if (out[0] == out[1]) {
-                                ++out[0];
                                 ++out[1];
                         }
 

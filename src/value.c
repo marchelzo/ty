@@ -343,7 +343,7 @@ value_show(struct value const *v)
                 return sclone("< !!! >");
         }
 
-        char *result = sclone(tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0));
+        char *result = tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0);
         free(s);
 
         return result;

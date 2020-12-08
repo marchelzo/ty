@@ -23,7 +23,7 @@ tags_pop(int n);
 int
 tags_first(int tags);
 
-char const *
+char *
 tags_wrap(char const *s, int tags);
 
 char const *

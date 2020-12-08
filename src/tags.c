@@ -102,10 +102,10 @@ tags_first(int tags)
 /*
  * Wraps a string in the tag labels specified by 'tags'.
  */
-char const *
+char *
 tags_wrap(char const *s, int tags)
 {
-        static vec(char) cs;
+        vec(char) cs = {0};
 
         struct tags *list = lists.items[tags];
         int n = 0;
@@ -123,8 +123,6 @@ tags_wrap(char const *s, int tags)
                 vec_push(cs, ')');
 
         vec_push(cs, '\0');
-
-        cs.count = 0;
 
         return cs.items;
 }
