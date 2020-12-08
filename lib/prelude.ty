@@ -30,6 +30,24 @@ tag Err {
      flatMap(self) { return self; }
 }
 
+class Iterable {
+    map(I, f) {
+        return I.__iter__().map(f);
+    }
+
+    filter(I, f) {
+        return I.__iter__().filter(f);
+    }
+
+    reverse(I) {
+        return I.__iter__().reverse();
+    }
+
+    list(I) {
+        return [x for x in I];
+    }
+}
+
 class Iter {
     map(I, f) {
         return MapIter(I, f);
@@ -98,22 +116,24 @@ class FilterIter : Iter {
 }
 
 class RangeIter : Iter {
-    init(self, a, b) {
-	self.a = a;
-	self.b = b;
+    init(R, a, b) {
+        R.a = a;
+        R.b = b;
     }
 
-    __next__(self) {
-	if (self.a < self.b) {
-	    return self.a++;
-	}
+    __next__(R) {
+        if (R.a < R.b)
+            return R.a++;
+        else
+            return nil;
     }
 }
 
-class Range {
+class Range : Iterable {
     init(self, a, b) {
 	self.a = a;
 	self.b = b;
+        self.i = 0;
     }
 
     low(self) {
@@ -122,10 +142,6 @@ class Range {
 
     high(self) {
 	return self.b;
-    }
-
-    __iter__(self) {
-	return RangeIter(self.a, self.b);
     }
 
     list(self) {
@@ -140,6 +156,10 @@ class Range {
 
     contains?(self, k) {
 	return k >= self.low() && k < self.high();
+    }
+
+    __iter__(self) {
+        return RangeIter(self.low(), self.high());
     }
 }
 

@@ -1164,8 +1164,7 @@ OutOfRange:
                                 class_add_method(class, ip, v);
                                 ip += strlen(ip) + 1;
                         }
-                        if (super != -1)
-                                class_copy_methods(class, super);
+                        class_set_super(class, super);
                         break;
                 }
                 CASE(FUNCTION)

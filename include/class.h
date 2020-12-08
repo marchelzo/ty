@@ -23,4 +23,7 @@ class_copy_methods(int dst, int src);
 struct value *
 class_lookup_method(int class, char const *name);
 
+void
+class_set_super(int class, int super);
+
 #endif

@@ -10,18 +10,26 @@
 
 static int class = 0;
 static vec(char const *) names;
+static vec(int) supers;
 static vec(struct table) tables;
 
 int
 class_new(char const *name)
 {
         vec_push(names, name);
+        vec_push(supers, -1);
 
         struct table t;
         table_init(&t);
         vec_push(tables, t);
 
         return class++;
+}
+
+void
+class_set_super(int class, int super)
+{
+        supers.items[class] = super;
 }
 
 int
@@ -57,6 +65,12 @@ class_copy_methods(int dst, int src)
 struct value *
 class_lookup_method(int class, char const *name)
 {
-        struct table const *t = &tables.items[class];
-        return table_lookup(t, name);
+        do {
+                struct table const *t = &tables.items[class];
+                struct value *v = table_lookup(t, name);
+                if (v != NULL) return v;
+                class = supers.items[class];
+        } while (class != -1);
+
+        return NULL;
 }
