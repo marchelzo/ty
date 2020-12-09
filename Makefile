@@ -15,6 +15,7 @@ LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
 LDFLAGS += $(shell pcre-config --libs)
+LDFLAGS += $(shell pkg-config --libs gumbo)
 
 TEST_FILTER ?= "."
 

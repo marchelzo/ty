@@ -40,6 +40,7 @@
 #include "class.h"
 #include "utf8.h"
 #include "functions.h"
+#include "html.h"
 
 #define TY_LOG_VERBOSE 1
 

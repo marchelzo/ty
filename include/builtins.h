@@ -156,6 +156,10 @@
 { .module = "time",   .name = "strftime",          .value = BUILTIN(builtin_time_strftime)                 },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
+{ .module = "gumbo",  .name = "parse",             .value = BUILTIN(html_parse)                            },
+{ .module = "gumbo",  .name = "NODE_DOCUMENT",     .value = INT(0)                                         },
+{ .module = "gumbo",  .name = "NODE_ELEMENT",      .value = INT(1)                                         },
+{ .module = "gumbo",  .name = "NODE_TEXT",         .value = INT(2)                                         },
 
 #ifdef SIGHUP
 { .module = "os",      .name = "SIGHUP",                 .value = INT(SIGHUP)                              },
