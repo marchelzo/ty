@@ -184,6 +184,8 @@ array_slice_mut(struct value *array, value_vector *args)
                 s += array->array->count;
         if (s < 0)
                 vm_panic("start index passed to array.slice!() is out of range");
+        if (n < 0)
+                vm_panic("negative count passed to array.slice!()");
 
         s = min(s, array->array->count);
         n = min(n, array->array->count - s);
@@ -324,6 +326,8 @@ array_slice(struct value *array, value_vector *args)
                 s += array->array->count;
         if (s < 0)
                 vm_panic("start index passed to array.slice() is out of range");
+        if (n < 0)
+                vm_panic("negative count passed to array.slice()");
 
         s = min(s, array->array->count);
         n = min(n, array->array->count - s);
