@@ -320,9 +320,6 @@ value_show(struct value const *v)
         case VALUE_CLASS:
                 snprintf(buffer, 1024, "<class %s>", class_name(v->class));
                 break;
-        case VALUE_OBJECT:
-                snprintf(buffer, 1024, "<%s object at %p>", class_name(v->class), (void *)v->object);
-                break;
         case VALUE_TAG:
                 snprintf(buffer, 1024, "%s", tags_name(v->tag));
                 break;
@@ -338,6 +335,19 @@ value_show(struct value const *v)
                 return sclone("<none>");
         case VALUE_INDEX:
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
+                break;
+        case VALUE_OBJECT:;
+                struct value *fp = class_lookup_method(v->class, "__str__");
+                if (fp != NULL) {
+                        struct value str = vm_eval_function(fp, v);
+                        if (str.type != VALUE_STRING)
+                                vm_panic("%s.__str__() returned non-string: %s", class_name(v->class), value_show(&str));
+                        s = alloc(str.bytes + 1);
+                        memcpy(s, str.string, str.bytes);
+                        s[str.bytes] = '\0';
+                } else {
+                        snprintf(buffer, 1024, "<%s object at %p>", class_name(v->class), (void *)v->object);
+                }
                 break;
         default:
                 return sclone("< !!! >");

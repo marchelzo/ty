@@ -87,7 +87,7 @@ class Tree {
             y = x;
             match k <=> x.k {
                 -1 => { x = x.l; },
-                 0 => { x.v = v; return T; },
+                 0 => { x.v = v; return v; },
                  1 => { x = x.r; }
             }
         }
@@ -100,7 +100,7 @@ class Tree {
             y.r = z;
         z.c = 1;
         T.ifixup(z);
-        return T;
+        return v;
     }
 
     ifixup(T, z) {

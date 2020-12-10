@@ -62,8 +62,9 @@ utf8_valid(char const *str, int len)
 
         while (len != 0) {
                 int n = next_utf8(str, len, &cp);
-                if (n == -1)
+                if (n == -1) {
                         return false;
+                }
                 len -= n;
                 str += n;
         }

@@ -60,13 +60,6 @@ Again:
                 if (i > 0) fputs(", ", stdout);
                 if (v->type == VALUE_STRING) {
                         fwrite(v->string, 1, v->bytes, stdout);
-                } else if (v->type == VALUE_OBJECT && (f = class_lookup_method(v->class, "__str__")) != NULL) {
-                        struct value str = vm_eval_function(f, v);
-                        if (str.type != VALUE_STRING) {
-                                v = &str;
-                                goto Again;
-                        }
-                        fwrite(str.string, 1, str.bytes, stdout);
                 } else {
                         char *s = value_show(&args->items[i]);
                         fputs(s, stdout);
@@ -346,8 +339,6 @@ builtin_str(value_vector *args)
         struct value arg = args->items[0];
         if (arg.type == VALUE_STRING) {
                 return arg;
-        } else if (arg.type == VALUE_OBJECT && (f = class_lookup_method(arg.class, "__str__")) != NULL) {
-                return vm_eval_function(f, &arg);
         } else {
                 char *str = value_show(&arg);
                 struct value result = STRING_CLONE(str, strlen(str));

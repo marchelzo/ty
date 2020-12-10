@@ -1,10 +1,10 @@
 #include <limits.h>
+#include <utf8proc.h>
 
 #include "blob.h"
 #include "value.h"
 #include "vm.h"
 #include "util.h"
-#include "utf8.h"
 
 static struct value
 blob_clear(struct value *blob, value_vector *args)
@@ -240,10 +240,28 @@ blob_str(struct value *blob, value_vector *args)
         if (start < 0 || n < 0 || (n + start) > blob->blob->count)
                 vm_panic("invalid arguments to blob.str()");
 
-        if (!utf8_valid((char *)blob->blob->items + start, n))
-                return NIL;
+        char *s = value_string_alloc(2 * n);
+        int i = 0;
 
-        return STRING_CLONE((char *)blob->blob->items + start, n);
+        utf8proc_int32_t cp;
+        while (n > 0) {
+                int r = utf8proc_iterate((unsigned char *)blob->blob->items + start, n, &cp);
+                if (r < 0) {
+                        start += 1;
+                        n -= 1;
+                        if (blob->blob->items[start] < 0xC0) {
+                                s[i++] = 0xC2;
+                                s[i++] = blob->blob->items[start];
+                        }
+                } else {
+                        memcpy(s + i, blob->blob->items + start, r);
+                        i += r;
+                        start += r;
+                        n -= r;
+                }
+        }
+
+        return STRING(s, i);
 }
 
 static struct value
