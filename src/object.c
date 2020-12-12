@@ -33,6 +33,9 @@ object_mark(struct table *o)
 void
 object_free(struct table *o)
 {
-        for (int i = 0; i < TABLE_SIZE; ++i)
+        for (int i = 0; i < TABLE_SIZE; ++i) {
                 free(o->buckets[i].values.items);
+                free(o->buckets[i].names.items);
+                free(o->buckets[i].hashes.items);
+        }
 }
