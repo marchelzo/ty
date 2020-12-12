@@ -364,8 +364,19 @@ value_compare(void const *_v1, void const *_v2)
 {
         struct value const *v1 = _v1;
         struct value const *v2 = _v2;
+        struct value v;
 
-        if (v1->type != v2->type)
+        if (v1->type == VALUE_REAL && v2->type == VALUE_INTEGER) {
+                v = REAL(v2->integer);
+                v2 = &v;
+        }
+                
+        if (v1->type == VALUE_INTEGER && v2->type == VALUE_REAL) {
+                v = REAL(v1->integer);
+                v1 = &v;
+        }
+
+        if (v1->type != v2->type && v1->type != VALUE_OBJECT)
                 vm_panic("attempt to compare values of different types");
 
         switch (v1->type) {
