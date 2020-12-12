@@ -30,6 +30,7 @@ enum instruction {
         INSTR_REGEX,
         INSTR_ARRAY,
         INSTR_DICT,
+        INSTR_DICT_DEFAULT,
         INSTR_NIL,
         INSTR_TAG,
         INSTR_CLASS,

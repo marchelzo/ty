@@ -825,6 +825,23 @@ prefix_object(void)
                 }
         }
 
+        e->dflt = NULL;
+        for (int i = 0; i < e->keys.count; ++i) {
+                if (e->keys.items[i]->type == EXPRESSION_IDENTIFIER && !strcmp("#", e->keys.items[i]->identifier)) {
+                        struct expression *f = mkexpr();
+                        f->type = EXPRESSION_FUNCTION;
+                        f->name = NULL;
+                        f->rest = false;
+                        vec_init(f->params);
+                        vec_push(f->params, "#");
+                        f->body = mkret(e->values.items[i]);
+                        e->dflt = f;
+                        vec_pop_ith(e->keys, i);
+                        vec_pop_ith(e->values, i);
+                        break;
+                }
+        }
+
         consume('}');
 
         return e;

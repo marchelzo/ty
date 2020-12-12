@@ -622,6 +622,10 @@ vm_exec(char *code)
 
                         push(v);
                         break;
+                CASE(DICT_DEFAULT)
+                        v = pop();
+                        top()->dict->dflt = v;
+                        break;
                 CASE(NIL)
                         push(NIL);
                         break;

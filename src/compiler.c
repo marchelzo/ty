@@ -691,6 +691,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
                 break;
         case EXPRESSION_DICT:
+                symbolize_expression(scope, e->dflt);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(scope, e->keys.items[i]);
                         symbolize_expression(scope, e->values.items[i]);
@@ -2284,6 +2285,10 @@ emit_expression(struct expression const *e)
                 }
                 emit_instr(INSTR_DICT);
                 emit_int(e->keys.count);
+                if (e->dflt != NULL) {
+                        emit_expression(e->dflt);
+                        emit_instr(INSTR_DICT_DEFAULT);
+                }
                 break;
         case EXPRESSION_DICT_COMPR:
                 emit_dict_compr2(e);

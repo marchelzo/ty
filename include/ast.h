@@ -268,6 +268,7 @@ struct expression {
                                 struct expression *iter;
                                 struct expression *cond;
                         } dcompr;
+                        struct expression *dflt;
                 };
                 struct {
                         struct expression *container;

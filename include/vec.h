@@ -32,8 +32,8 @@
 #define vec_pop(v) \
     ((v).count == 0 ? NULL : (v).items + --(v).count)
 
-#define vec_pop_ith(v, i, out) \
-    (((out) = ((v).items)[(i)]), (memmove((v).items + (i), (v).items + (i) + 1, (--(v).count - (i)) * sizeof (*((v).items)))))
+#define vec_pop_ith(v, i) \
+    ((((v).items)[(i)]), (memmove((v).items + (i), (v).items + (i) + 1, (--(v).count - (i)) * sizeof (*((v).items)))))
 
 #define vec_init(v) \
     (((v).capacity = 0), ((v).count = 0), ((v).items = NULL))

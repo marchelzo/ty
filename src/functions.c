@@ -56,7 +56,6 @@ builtin_print(value_vector *args)
 
         for (int i = 0; i < args->count; ++i) {
                 struct value *v = &args->items[i];
-Again:
                 if (i > 0) fputs(", ", stdout);
                 if (v->type == VALUE_STRING) {
                         fwrite(v->string, 1, v->bytes, stdout);
@@ -1058,6 +1057,7 @@ builtin_os_bind(value_vector *args)
 
         struct sockaddr_un un_addr;
         struct sockaddr_in in_addr;
+        struct in_addr ia;
 
         struct value *sockaddr = dict_get_member(addr.dict, "address");
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
@@ -1072,16 +1072,19 @@ builtin_os_bind(value_vector *args)
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
                 case AF_INET:
-                        memset(&un_addr, 0, sizeof un_addr);
-                        un_addr.sun_family = AF_UNIX;
+                        memset(&in_addr, 0, sizeof in_addr);
+                        in_addr.sin_family = AF_INET;
                         v = dict_get_member(addr.dict, "address");
-                        if (v == NULL || v->type != VALUE_STRING)
+                        if (v == NULL || v->type != VALUE_INTEGER)
                                 vm_panic("missing or invalid address in dict passed to os::bind()");
-                        memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
+                        ia.s_addr = htonl(v->integer);
+                        in_addr.sin_addr = ia;
                         v = dict_get_member(addr.dict, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
                                 vm_panic("missing or invalid port in dict passed to os::bind()");
-                        return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+                        unsigned short p = htons(v->integer);
+                        memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
+                        return INTEGER(bind(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
                 default:
                         vm_panic("invalid arguments to os::bind()");
         }

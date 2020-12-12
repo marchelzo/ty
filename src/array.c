@@ -119,7 +119,8 @@ array_pop(struct value *array, value_vector *args)
                         arg.integer += array->array->count;
                 if (arg.integer < 0 || arg.integer >= array->array->count)
                         vm_panic("array index passed to pop is out of range");
-                vec_pop_ith(*array->array, arg.integer, result);
+                result = array->array->items[arg.integer];
+                vec_pop_ith(*array->array, arg.integer);
         } else {
                 vm_panic("the pop method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
         }
