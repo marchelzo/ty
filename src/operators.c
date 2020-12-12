@@ -86,6 +86,21 @@ binary_operator_multiplication(struct value const *left, struct value const *rig
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer * right->integer);
         case VALUE_REAL:    return REAL(left->real * right->real);
+        case VALUE_ARRAY:;
+                struct array *a = value_array_new();
+                NOGC(a);
+                for (int i = 0; i < left->array->count; ++i) {
+                        for (int j = 0; j < right->array->count; ++j) {
+                                struct array *pair = value_array_new();
+                                NOGC(pair);
+                                value_array_push(pair, left->array->items[i]);
+                                value_array_push(pair, right->array->items[j]);
+                                value_array_push(a, ARRAY(pair));
+                                OKGC(pair);
+                        }
+                }
+                OKGC(a);
+                return ARRAY(a);
         default:
         Fail:
                 vm_panic("* applied to operands of invalid type");
