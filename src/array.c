@@ -1054,6 +1054,26 @@ array_enumerate(struct value *array, value_vector *args)
 }
 
 static struct value
+array_remove(struct value *array, value_vector *args)
+{
+        if (args->count == 1)
+                vm_panic("the remove method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value v = args->items[0];
+
+        int n = array->array->count;
+        int j = 0;
+        for (int i = 0; i < n; ++i)
+                if (!value_test_equality(&v, &array->array->items[i]))
+                        array->array->items[j++] = array->array->items[i];
+
+        array->array->count = j;
+        shrink(array);
+
+        return *array;
+}
+
+static struct value
 array_filter(struct value *array, value_vector *args)
 {
         if (args->count != 1)
@@ -1082,26 +1102,29 @@ array_find(struct value *array, value_vector *args)
         if (args->count != 1)
                 vm_panic("the find method on arrays expects 1 argument but got %zu", args->count);
 
-        struct value x = args->items[0];
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the find method on array");
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i)
-                if (value_test_equality(&x, &array->array->items[i]))
-                        return INTEGER(i);
+                if (value_apply_predicate(&pred, &array->array->items[i]))
+                        return array->array->items[i];
 
         return NIL;
 }
 
 static struct value
-array_find_by(struct value *array, value_vector *args)
+array_search_by(struct value *array, value_vector *args)
 {
         if (args->count != 1)
-                vm_panic("the find method on arrays expects 1 argument but got %zu", args->count);
+                vm_panic("the searchBy method on arrays expects 1 argument but got %zu", args->count);
 
         struct value pred = args->items[0];
 
         if (!CALLABLE(pred))
-                vm_panic("non-predicate passed to the find method on array");
+                vm_panic("non-predicate passed to the searchBy method on array");
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i)
@@ -1318,6 +1341,23 @@ array_any(struct value *array, value_vector *args)
 
 static struct value
 array_count(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the count method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value v = args->items[0];
+
+        int n = array->array->count;
+        int k = 0;
+        for (int i = 0; i < n; ++i)
+                if (value_test_equality(&v, &array->array->items[i]))
+                        k += 1;
+
+        return INTEGER(k);
+}
+
+static struct value
+array_count_by(struct value *array, value_vector *args)
 {
         if (args->count != 1)
                 vm_panic("the count method on arrays expects 1 argument but got %zu", args->count);
@@ -1578,6 +1618,7 @@ array_clone(struct value *array, value_vector *args)
 
 DEFINE_NO_MUT(enumerate);
 DEFINE_NO_MUT(filter);
+DEFINE_NO_MUT(remove);
 DEFINE_NO_MUT(group);
 DEFINE_NO_MUT(group_by);
 DEFINE_NO_MUT(groups_of);
@@ -1602,6 +1643,8 @@ DEFINE_METHOD_TABLE(
         { .name = "clone",             .func = array_clone                   },
         { .name = "consumeWhile",      .func = array_consume_while           },
         { .name = "contains?",         .func = array_contains                },
+        { .name = "count",             .func = array_count                   },
+        { .name = "countBy",           .func = array_count_by                },
         { .name = "drop",              .func = array_drop                    },
         { .name = "drop!",             .func = array_drop_mut                },
         { .name = "dropWhile",         .func = array_drop_while              },
@@ -1612,7 +1655,6 @@ DEFINE_METHOD_TABLE(
         { .name = "filter",            .func = array_filter_no_mut           },
         { .name = "filter!",           .func = array_filter                  },
         { .name = "find",              .func = array_find                    },
-        { .name = "findBy",            .func = array_find_by                 },
         { .name = "flat",              .func = array_flat                    },
         { .name = "foldLeft",          .func = array_fold_left               },
         { .name = "foldRight",         .func = array_fold_right              },
@@ -1642,6 +1684,8 @@ DEFINE_METHOD_TABLE(
         { .name = "partition!",        .func = array_partition               },
         { .name = "pop",               .func = array_pop                     },
         { .name = "push",              .func = array_push                    },
+        { .name = "remove",            .func = array_remove_no_mut           },
+        { .name = "remove!",           .func = array_remove                  },
         { .name = "reverse",           .func = array_reverse_no_mut          },
         { .name = "reverse!",          .func = array_reverse                 },
         { .name = "rotate!",           .func = array_rotate                  },
@@ -1651,6 +1695,7 @@ DEFINE_METHOD_TABLE(
         { .name = "scanRight",         .func = array_scan_right_no_mut       },
         { .name = "scanRight!",        .func = array_scan_right              },
         { .name = "search",            .func = array_search                  },
+        { .name = "searchBy",          .func = array_search_by               },
         { .name = "shuffle",           .func = array_shuffle_no_mut          },
         { .name = "shuffle!",          .func = array_shuffle                 },
         { .name = "slice",             .func = array_slice                   },
