@@ -782,6 +782,7 @@ prefix_object(void)
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_DICT;
+        e->dflt = NULL;
 
         vec_init(e->keys);
         vec_init(e->values);
@@ -825,7 +826,6 @@ prefix_object(void)
                 }
         }
 
-        e->dflt = NULL;
         for (int i = 0; i < e->keys.count; ++i) {
                 if (e->keys.items[i]->type == EXPRESSION_IDENTIFIER && !strcmp("#", e->keys.items[i]->identifier)) {
                         struct expression *f = mkexpr();
@@ -1110,11 +1110,11 @@ postfix_dec(struct expression *left)
 
 BINARY_OPERATOR(star,     STAR,        9, false)
 BINARY_OPERATOR(div,      DIV,         9, false)
+BINARY_OPERATOR(percent,  PERCENT,     9, false)
 
 BINARY_OPERATOR(plus,     PLUS,        8, false)
 BINARY_OPERATOR(minus,    MINUS,       8, false)
 
-BINARY_OPERATOR(percent,  PERCENT,     7, false)
 BINARY_OPERATOR(range,    DOT_DOT,     7, false)
 BINARY_OPERATOR(incrange, DOT_DOT_DOT, 7, false)
 
@@ -1258,13 +1258,13 @@ get_infix_prec(void)
 
         case TOKEN_DIV:            return 9;
         case TOKEN_STAR:           return 9;
+        case TOKEN_PERCENT:        return 9;
 
         case TOKEN_MINUS:          return 8;
         case TOKEN_PLUS:           return 8;
 
         case TOKEN_DOT_DOT:        return 7;
         case TOKEN_DOT_DOT_DOT:    return 7;
-        case TOKEN_PERCENT:        return 7;
 
         case TOKEN_CMP:            return 7;
         case TOKEN_GEQ:            return 7;
