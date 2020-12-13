@@ -199,7 +199,7 @@ struct value
 builtin_abs(value_vector *args)
 {
         ASSERT_ARGC("abs()", 1);
-        
+
         struct value x = args->items[0];
 
         switch (x.type) {
@@ -207,6 +207,36 @@ builtin_abs(value_vector *args)
         case VALUE_REAL:    return REAL(fabs(x.real));
         default:
                 vm_panic("the argument to abs() must be a number");
+        }
+}
+
+struct value
+builtin_round(value_vector *args)
+{
+        ASSERT_ARGC("round()", 1);
+
+        struct value x = args->items[0];
+
+        switch (x.type) {
+        case VALUE_INTEGER: return x;
+        case VALUE_REAL:    return REAL(round(x.real));
+        default:
+                vm_panic("the argument to round() must be a number");
+        }
+}
+
+struct value
+builtin_ceil(value_vector *args)
+{
+        ASSERT_ARGC("ceil()", 1);
+
+        struct value x = args->items[0];
+
+        switch (x.type) {
+        case VALUE_INTEGER: return x;
+        case VALUE_REAL:    return REAL(ceil(x.real));
+        default:
+                vm_panic("the argument to ceil() must be a number");
         }
 }
 
@@ -1502,7 +1532,7 @@ builtin_os_listdir(value_vector *args)
         if (d == NULL)
                 return NIL;
 
-        
+
         struct array *files = value_array_new();
 
         struct dirent *e;
@@ -1727,7 +1757,7 @@ builtin_time_strftime(value_vector *args)
         vec_init(fb);
         vec_push_n(fb, fmt.string, fmt.bytes);
         vec_push(fb, '\0');
-        
+
         char b[512];
         int n = strftime(b, sizeof b, fb.items, &t);
 
@@ -1764,13 +1794,13 @@ builtin_time_strptime(value_vector *args)
 
         vec_push(sb, '\0');
         vec_push(fb, '\0');
-        
+
         struct tm r = {0};
         strptime(sb.items, fb.items, &r);
 
         vec_empty(sb);
         vec_empty(fb);
-        
+
         struct table *o = object_new();
 
         NOGC(o);

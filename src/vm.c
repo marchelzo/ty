@@ -1373,7 +1373,7 @@ OutOfRange:
                                 stack.count -= n;
                                 stack.items[stack.count - 1] = v;
                         } else if (vp != NULL) {
-                                if (value.type == VALUE_CLASS || value.type == VALUE_OBJECT || self != NULL) {
+                                if (self != NULL) {
                                         v = METHOD(method, vp, self);
                                 } else {
                                         v = *vp;

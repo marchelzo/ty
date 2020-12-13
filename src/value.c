@@ -338,10 +338,11 @@ value_show(struct value const *v)
                 break;
         case VALUE_OBJECT:;
                 struct value *fp = class_lookup_method(v->class, "__str__");
+                fp = NULL;
                 if (fp != NULL) {
                         struct value str = vm_eval_function(fp, v);
                         if (str.type != VALUE_STRING)
-                                vm_panic("%s.__str__() returned non-string: %s", class_name(v->class), value_show(&str));
+                                vm_panic("%s.__str__() returned non-string", class_name(v->class));
                         s = alloc(str.bytes + 1);
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';

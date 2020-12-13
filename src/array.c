@@ -1057,7 +1057,7 @@ array_enumerate(struct value *array, value_vector *args)
 static struct value
 array_remove(struct value *array, value_vector *args)
 {
-        if (args->count == 1)
+        if (args->count != 1)
                 vm_panic("the remove method on arrays expects 1 argument but got %zu", args->count);
 
         struct value v = args->items[0];

@@ -19,6 +19,12 @@ struct value
 builtin_abs(value_vector *args);
 
 struct value
+builtin_round(value_vector *args);
+
+struct value
+builtin_ceil(value_vector *args);
+
+struct value
 builtin_hash(value_vector *args);
 
 struct value

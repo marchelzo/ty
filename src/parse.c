@@ -1110,11 +1110,11 @@ postfix_dec(struct expression *left)
 
 BINARY_OPERATOR(star,     STAR,        9, false)
 BINARY_OPERATOR(div,      DIV,         9, false)
-BINARY_OPERATOR(percent,  PERCENT,     9, false)
 
 BINARY_OPERATOR(plus,     PLUS,        8, false)
 BINARY_OPERATOR(minus,    MINUS,       8, false)
 
+BINARY_OPERATOR(percent,  PERCENT,     7, false)
 BINARY_OPERATOR(range,    DOT_DOT,     7, false)
 BINARY_OPERATOR(incrange, DOT_DOT_DOT, 7, false)
 
@@ -1256,7 +1256,6 @@ get_infix_prec(void)
         case TOKEN_INC:            return 10;
         case TOKEN_DEC:            return 10;
 
-        case TOKEN_PERCENT:        return 9;
         case TOKEN_DIV:            return 9;
         case TOKEN_STAR:           return 9;
 
@@ -1265,6 +1264,7 @@ get_infix_prec(void)
 
         case TOKEN_DOT_DOT:        return 7;
         case TOKEN_DOT_DOT_DOT:    return 7;
+        case TOKEN_PERCENT:        return 7;
 
         case TOKEN_CMP:            return 7;
         case TOKEN_GEQ:            return 7;
