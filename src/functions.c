@@ -211,6 +211,60 @@ builtin_abs(value_vector *args)
 }
 
 struct value
+builtin_gcd(value_vector *args)
+{
+        ASSERT_ARGC("gcd()", 2);
+
+        struct value t = args->items[0];
+        struct value u = args->items[1];
+
+        if (t.type == VALUE_REAL) t = INTEGER(t.real);
+        if (u.type == VALUE_REAL) u = INTEGER(u.real);
+
+        if (t.type != VALUE_INTEGER || u.type != VALUE_INTEGER) {
+                vm_panic("both arguments to gcd() must be integers");
+        }
+
+        intmax_t a = t.integer;
+        intmax_t b = u.integer;
+
+        while (b != 0) {
+                intmax_t t = b;
+                b = a % b;
+                a = t;
+        }
+
+        return INTEGER(a);
+}
+
+struct value
+builtin_lcm(value_vector *args)
+{
+        ASSERT_ARGC("lcm()", 2);
+
+        struct value t = args->items[0];
+        struct value u = args->items[1];
+
+        if (t.type == VALUE_REAL) t = INTEGER(t.real);
+        if (u.type == VALUE_REAL) u = INTEGER(u.real);
+
+        if (t.type != VALUE_INTEGER || u.type != VALUE_INTEGER) {
+                vm_panic("both arguments to lcm() must be integers");
+        }
+
+        intmax_t a = t.integer;
+        intmax_t b = u.integer;
+
+        while (b != 0) {
+                intmax_t t = b;
+                b = a % b;
+                a = t;
+        }
+
+        return INTEGER(llabs(t.integer * u.integer) / a);
+}
+
+struct value
 builtin_round(value_vector *args)
 {
         ASSERT_ARGC("round()", 1);

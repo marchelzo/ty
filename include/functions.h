@@ -25,6 +25,12 @@ struct value
 builtin_ceil(value_vector *args);
 
 struct value
+builtin_gcd(value_vector *args);
+
+struct value
+builtin_lcm(value_vector *args);
+
+struct value
 builtin_hash(value_vector *args);
 
 struct value
