@@ -85,24 +85,25 @@ string_slice(struct value *string, value_vector *args)
         int i = start.integer;
         int n;
 
+        stringcount(s, string->bytes, -1);
+
         if (args->count == 2) {
                 struct value len = args->items[1];
                 if (len.type != VALUE_INTEGER)
                         vm_panic("non-integer passed as second argument to str.slice()");
-                if (len.integer < 0)
-                        vm_panic("negative integer passed as second argument to str.slice()");
                 n = len.integer;
         } else {
-                n = -1;
+                n = outpos.graphemes;
         }
 
-        stringcount(s, string->bytes, -1);
 
         if (i < 0)
                 i += outpos.graphemes;
-                
-        if (i < 0 || i > outpos.graphemes)
-                return NIL;
+        i = min(max(0, i), outpos.graphemes);
+
+        if (n < 0)
+                n += outpos.graphemes;
+        n = min(max(0, n), outpos.graphemes - i);
         
         stringcount(s, string->bytes, i);
 

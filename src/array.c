@@ -18,6 +18,12 @@ array_drop(struct value *array, value_vector *args);
 static struct value
 array_zip_with(struct value *array, value_vector *args);
 
+static struct value
+array_min_by(struct value *array, value_vector *args);
+
+static struct value
+array_max_by(struct value *array, value_vector *args);
+
 static struct value *comparison_fn;
 
 static int
@@ -166,28 +172,34 @@ array_swap(struct value *array, value_vector *args)
 static struct value
 array_slice_mut(struct value *array, value_vector *args)
 {
-        if (args->count == 1)
-                return array_drop_mut(array, args);
-
-        if (args->count != 2)
-                vm_panic("array.slice!() expects 2 arguments but got %zu", args->count);
+        if (args->count != 1 && args->count != 2)
+                vm_panic("array.slice!() expects 1 or 2 arguments but got %zu", args->count);
         
         struct value start = args->items[0];
-        struct value count = args->items[1];
 
         if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to array.slice!()");
 
-        if (count.type != VALUE_INTEGER)
-                vm_panic("non-integer passed as second argument to array.slice!()");
-
         int s = start.integer;
-        int n = count.integer;
+        int n;
+
+        if (args->count == 2) {
+                struct value count = args->items[1];
+                if (count.type != VALUE_INTEGER)
+                        vm_panic("non-integer passed as second argument to array.slice!()");
+                n = count.integer;
+        } else {
+                n = array->array->count;
+        }
+
 
         if (s < 0)
                 s += array->array->count;
         if (s < 0)
                 vm_panic("start index passed to array.slice!() is out of range");
+
+        if (n < 0)
+                n += array->array->count;
         if (n < 0)
                 vm_panic("negative count passed to array.slice!()");
 
@@ -313,27 +325,32 @@ array_map_cons(struct value *array, value_vector *args)
 static struct value
 array_slice(struct value *array, value_vector *args)
 {
-        if (args->count == 1)
-                return array_drop(array, args);
-        if (args->count != 2)
-                vm_panic("array.slice() expects 2 arguments but got %zu", args->count);
+        if (args->count != 1 && args->count != 2)
+                vm_panic("array.slice() expects 1 or 2 arguments but got %zu", args->count);
         
         struct value start = args->items[0];
-        struct value count = args->items[1];
-
         if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to array.slice()");
 
-        if (count.type != VALUE_INTEGER)
-                vm_panic("non-integer passed as second argument to array.slice()");
-
         int s = start.integer;
-        int n = count.integer;
+        int n;
+
+        if (args->count == 2) {
+                struct value count = args->items[1];
+                if (count.type != VALUE_INTEGER)
+                        vm_panic("non-integer passed as second argument to array.slice()");
+                n = count.integer;
+        } else {
+                n = array->array->count;
+        }
 
         if (s < 0)
                 s += array->array->count;
         if (s < 0)
                 vm_panic("start index passed to array.slice() is out of range");
+
+        if (n < 0)
+                n += array->array->count;
         if (n < 0)
                 vm_panic("negative count passed to array.slice()");
 
@@ -814,8 +831,11 @@ array_group_by(struct value *array, value_vector *args)
 static struct value
 array_group(struct value *array, value_vector *args)
 {
+        if (args->count == 1)
+                return array_group_by(array, args);
+
         if (args->count != 0)
-                vm_panic("array.group() expects 0 arguments but got %zu", args->count);
+                vm_panic("array.group() expects 0 or 1 arguments but got %zu", args->count);
 
         int len = 0;
         for (int i = 0; i < array->array->count; ++i) {
@@ -864,11 +884,14 @@ array_intersperse(struct value *array, value_vector *args)
 static struct value
 array_min(struct value *array, value_vector *args)
 {
+        if (args->count == 1)
+                return array_min_by(array, args);
+
         if (args->count != 0)
                 vm_panic("the min method on arrays expects no arguments but got %zu", args->count);
 
         if (array->array->count == 0)
-                vm_panic("min called on empty array");
+                return NIL;
 
         struct value min, v;
         min = array->array->items[0];
@@ -889,7 +912,7 @@ array_min_by(struct value *array, value_vector *args)
                 vm_panic("the minBy method on arrays expects 1 argument but got %zu", args->count);
 
         if (array->array->count == 0)
-                vm_panic("minBy called on empty array");
+                return NIL;
 
         struct value f = args->items[0];
         if (!CALLABLE(f))
@@ -932,11 +955,14 @@ array_min_by(struct value *array, value_vector *args)
 static struct value
 array_max(struct value *array, value_vector *args)
 {
+        if (args->count == 1)
+                return array_max_by(array, args);
+
         if (args->count != 0)
                 vm_panic("the max method on arrays expects no arguments but got %zu", args->count);
 
         if (array->array->count == 0)
-                vm_panic("max called on empty array");
+                return NIL;
 
         struct value max, v;
         max = array->array->items[0];
@@ -957,7 +983,7 @@ array_max_by(struct value *array, value_vector *args)
                 vm_panic("the maxBy method on arrays expects 1 argument but got %zu", args->count);
 
         if (array->array->count == 0)
-                vm_panic("maxBy called on empty array");
+                return NIL;
 
         struct value f = args->items[0];
         if (!CALLABLE(f))
@@ -1262,7 +1288,7 @@ static struct value
 array_flat(struct value *array, value_vector *args)
 {
         if (args->count != 0) {
-                vm_panic("array.flatten() expects no arguments but got %zu", args->count);
+                vm_panic("array.flat() expects no arguments but got %zu", args->count);
         }
 
         struct array *r = value_array_new();
