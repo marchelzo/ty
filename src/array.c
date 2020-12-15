@@ -15,6 +15,9 @@ array_drop_mut(struct value *array, value_vector *args);
 static struct value
 array_drop(struct value *array, value_vector *args);
 
+static struct value
+array_zip_with(struct value *array, value_vector *args);
+
 static struct value *comparison_fn;
 
 static int
@@ -202,6 +205,9 @@ array_slice_mut(struct value *array, value_vector *args)
 static struct value
 array_zip(struct value *array, value_vector *args)
 {
+        if (args->count == 2)
+                return array_zip_with(array, args);
+
         if (args->count != 1)
                 vm_panic("array.zip() expects 1 argument but got %zu", args->count);
 
@@ -238,13 +244,14 @@ array_zip_with(struct value *array, value_vector *args)
         if (args->count != 2)
                 vm_panic("array.zipWith() expects 2 arguments but got %zu", args->count);
 
-        struct value f = args->items[0];
-        if (!CALLABLE(f))
-                vm_panic("the first argument to array.zipWith() must be callable");
-
-        struct value other = args->items[1];
+        struct value other = args->items[0];
         if (other.type != VALUE_ARRAY)
-                vm_panic("the argument to array.zip() must be an array");
+                vm_panic("the first argument to array.zipWith() must be an array");
+
+        struct value f = args->items[1];
+        if (!CALLABLE(f))
+                vm_panic("the second argument to array.zipWith() must be callable");
+
 
         int n = min(array->array->count, other.array->count);
 
@@ -601,7 +608,7 @@ array_drop_mut(struct value *array, value_vector *args)
         if (n.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to array.drop!()");
 
-        int d = min(array->array->count, n.integer);
+        int d = min(array->array->count, max(n.integer, 0));
 
         memmove(array->array->items, array->array->items + d, (array->array->count - d) * sizeof (struct value));
         array->array->count -= d;
@@ -623,7 +630,7 @@ array_drop(struct value *array, value_vector *args)
 
         struct value result = ARRAY(value_array_new());
 
-        int d = min(n.integer, array->array->count);
+        int d = min(max(n.integer, 0), array->array->count);
         int count = array->array->count - d;
 
         NOGC(result.array);

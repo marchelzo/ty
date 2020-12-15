@@ -181,7 +181,7 @@ binary_operator_remainder(struct value const *left, struct value const *right)
         case VALUE_INTEGER: return INTEGER(left->integer % right->integer);
         default:
         Fail:
-                vm_panic("the operands to % must be integers");
+                vm_panic("the operands to %% must be integers");
         }
 
 }

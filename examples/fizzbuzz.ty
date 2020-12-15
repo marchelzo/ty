@@ -1,4 +1,4 @@
-[1 .. 100].each(|
+(1 .. 100).list().each(|
      print(match [# % 3, # % 5] {
           [0, 0] => 'FizzBuzz',
           [0, _] => 'Fizz',
