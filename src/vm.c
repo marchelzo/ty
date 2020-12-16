@@ -329,7 +329,7 @@ vm_exec(char *code)
                         READVALUE(n);
                         while (n --> 0) {
                                 READVALUE(s);
-                                if (vars[s]->captured) {
+                                if (vars[s] != NULL && vars[s]->captured) {
                                         struct variable *next = newvar(vars[s]->next);
                                         // TODO: figure out what is happening here
                                         if (vars[s]->next != NULL)

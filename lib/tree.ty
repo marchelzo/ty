@@ -179,7 +179,7 @@ class Tree {
         let y = z;
         let yoc = y.c;
         let x = nil;
-        if (z.left == T.null) {
+        if (z.l == T.null) {
             x = z.r;
             T.transplant(z, z.r);
         } else if (z.r == T.null) {
@@ -307,9 +307,28 @@ class Tree {
 
     -(a, b) {
         let t = Tree();
-        for x in a {
-            if (!b.has?(x))
-                t.put(x);
+        for k, v in a {
+            if (!b.has?(k))
+                t.put(k, v);
+        }
+        return t;
+    }
+
+    &(a, b) {
+        let t = Tree();
+        for k, v in a {
+            if (b.has?(k))
+                t.put(k, v);
+        }
+        return t;
+    }
+
+    intersect(ts) {
+        let t = Tree();
+        if (!ts) return t;
+        for k, v in ts[0] {
+            if (ts.all?(t -> t.has?(k)))
+                t.put(k, v);
         }
         return t;
     }

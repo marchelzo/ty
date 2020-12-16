@@ -52,8 +52,6 @@ static char buffer[1024];
 struct value
 builtin_print(value_vector *args)
 {
-        struct value *f;
-
         for (int i = 0; i < args->count; ++i) {
                 struct value *v = &args->items[i];
                 if (i > 0) fputs(", ", stdout);
@@ -122,10 +120,11 @@ builtin_slurp(value_vector *args)
 
                 return STRING(s, n);
         } else if (!S_ISDIR(st.st_mode)) {
-                int r;
+                FILE *f = fd == 0 ? stdin : fdopen(fd, "r");
                 vec(char) s = {0};
+                int r;
 
-                while ((r = read(fd, p, sizeof p)) > 0) {
+                while ((r = fread(p, 1, sizeof p, f)) > 0) {
                         vec_push_n(s, p, r);
                 }
                 struct value str = STRING_CLONE(s.items, s.count);
