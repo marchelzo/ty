@@ -323,12 +323,28 @@ class Tree {
         return t;
     }
 
+    +(a, b) {
+        let t = Tree();
+        for k, v in b { t.put(k, v); }
+        for k, v in a { t.put(k, v); }
+        return t;
+    }
+
+    union(ts) {
+        let t = Tree();
+        for t in ts {
+            for k, v in t { t.put(k, v); }
+        }
+        return t;
+    }
+
     intersect(ts) {
         let t = Tree();
-        if (!ts) return t;
-        for k, v in ts[0] {
-            if (ts.all?(t -> t.has?(k)))
-                t.put(k, v);
+        if let [z, *zs] = ts {
+            for k, v in z {
+                if (zs.all?(|#.has?(k)|))
+                    t.put(k, v);
+            }
         }
         return t;
     }
