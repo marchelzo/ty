@@ -1150,6 +1150,25 @@ array_find(struct value *array, value_vector *args)
 }
 
 static struct value
+array_findr(struct value *array, value_vector *args)
+{
+        if (args->count != 1)
+                vm_panic("the findr method on arrays expects 1 argument but got %zu", args->count);
+
+        struct value pred = args->items[0];
+
+        if (!CALLABLE(pred))
+                vm_panic("non-predicate passed to the findr method on array");
+
+        int n = array->array->count;
+        for (int i = n - 1; i >= 0; --i)
+                if (value_apply_predicate(&pred, &array->array->items[i]))
+                        return array->array->items[i];
+
+        return NIL;
+}
+
+static struct value
 array_search_by(struct value *array, value_vector *args)
 {
         if (args->count != 1)
@@ -1689,9 +1708,10 @@ DEFINE_METHOD_TABLE(
         { .name = "filter",            .func = array_filter_no_mut           },
         { .name = "filter!",           .func = array_filter                  },
         { .name = "find",              .func = array_find                    },
+        { .name = "findr",             .func = array_findr                   },
         { .name = "flat",              .func = array_flat                    },
-        { .name = "foldLeft",          .func = array_fold_left               },
-        { .name = "foldRight",         .func = array_fold_right              },
+        { .name = "fold",              .func = array_fold_left               },
+        { .name = "foldr",             .func = array_fold_right              },
         { .name = "group",             .func = array_group_no_mut            },
         { .name = "group!",            .func = array_group                   },
         { .name = "groupBy",           .func = array_group_by_no_mut         },
@@ -1724,10 +1744,10 @@ DEFINE_METHOD_TABLE(
         { .name = "reverse!",          .func = array_reverse                 },
         { .name = "rotate!",           .func = array_rotate                  },
         { .name = "rotate",            .func = array_rotate_no_mut           },
-        { .name = "scanLeft",          .func = array_scan_left_no_mut        },
-        { .name = "scanLeft!",         .func = array_scan_left               },
-        { .name = "scanRight",         .func = array_scan_right_no_mut       },
-        { .name = "scanRight!",        .func = array_scan_right              },
+        { .name = "scan",          .func = array_scan_left_no_mut        },
+        { .name = "scan!",         .func = array_scan_left               },
+        { .name = "scanr",         .func = array_scan_right_no_mut       },
+        { .name = "scanr!",        .func = array_scan_right              },
         { .name = "search",            .func = array_search                  },
         { .name = "searchBy",          .func = array_search_by               },
         { .name = "shuffle",           .func = array_shuffle_no_mut          },

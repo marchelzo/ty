@@ -124,7 +124,7 @@ builtin_slurp(value_vector *args)
                 vec(char) s = {0};
                 int r;
 
-                while ((r = fread(p, 1, sizeof p, f)) > 0) {
+                while (!feof(f) && (r = fread(p, 1, sizeof p, f)) > 0) {
                         vec_push_n(s, p, r);
                 }
                 struct value str = STRING_CLONE(s.items, s.count);
