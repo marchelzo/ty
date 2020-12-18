@@ -111,7 +111,7 @@ obj_hash(struct value const *v)
         struct value const *f = class_lookup_method(v->class, "__hash__");
 
         if (f != NULL) {
-                struct value h = vm_eval_function(f, v);
+                struct value h = vm_eval_function(f, v, NULL);
                 if (h.type != VALUE_INTEGER) {
                         vm_panic("%s.__hash__ return non-integer: %s", class_name(v->class), value_show(v));
                 }
@@ -340,7 +340,7 @@ value_show(struct value const *v)
                 struct value *fp = class_lookup_method(v->class, "__str__");
                 fp = NULL;
                 if (fp != NULL) {
-                        struct value str = vm_eval_function(fp, v);
+                        struct value str = vm_eval_function(fp, v, NULL);
                         if (str.type != VALUE_STRING)
                                 vm_panic("%s.__str__() returned non-string", class_name(v->class));
                         s = alloc(str.bytes + 1);
@@ -395,7 +395,7 @@ value_compare(void const *_v1, void const *_v2)
                 struct value const *cmpfn = class_lookup_method(v1->class, "<=>");
                 if (cmpfn == NULL)
                         goto Fail;
-                struct value v = vm_eval_function2(cmpfn, v1, v2);
+                struct value v = vm_eval_function(cmpfn, v1, v2, NULL);
                 if (v.type != VALUE_INTEGER)
                         vm_panic("user-defined %s.<=> method returned non-integer", class_name(v1->class));
                 return v.integer;
@@ -436,7 +436,7 @@ value_apply_predicate(struct value *p, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
-                b = vm_eval_function(p, v);
+                b = vm_eval_function(p, v, NULL);
                 return value_truthy(&b);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
@@ -479,7 +479,7 @@ value_apply_callable(struct value *f, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
-                return vm_eval_function(f, v);
+                return vm_eval_function(f, v, NULL);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
                         vm_panic("regex applied as predicate to non-string");
@@ -535,7 +535,7 @@ value_apply_callable(struct value *f, struct value *v)
                         struct value result = OBJECT(object_new(), f->class);
                         struct value *init = class_lookup_method(f->class, "init");
                         if (init != NULL)
-                                vm_eval_function(&METHOD(NULL, init, &result), v);
+                                vm_eval_function(&METHOD(NULL, init, &result), v, NULL);
                         return result;
                 }
         default:

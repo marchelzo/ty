@@ -28,7 +28,7 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 struct value const *f = class_lookup_method(left->class, "+");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function2(f, left, right);
+                return vm_eval_function(f, left, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -71,7 +71,7 @@ binary_operator_multiplication(struct value const *left, struct value const *rig
                 struct value const *f = class_lookup_method(left->class, "*");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function2(f, left, right);
+                return vm_eval_function(f, left, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -118,7 +118,7 @@ binary_operator_division(struct value const *left, struct value const *right)
                 struct value const *f = class_lookup_method(left->class, "/");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function2(f, left, right);
+                return vm_eval_function(f, left, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -146,7 +146,7 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
                 struct value const *f = class_lookup_method(left->class, "-");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function2(f, left, right);
+                return vm_eval_function(f, left, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -175,7 +175,7 @@ binary_operator_remainder(struct value const *left, struct value const *right)
                 struct value const *f = class_lookup_method(left->class, "%");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function2(f, left, right);
+                return vm_eval_function(f, left, right, NULL);
         }
 
         if (left->type != right->type)

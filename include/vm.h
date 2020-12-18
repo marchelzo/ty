@@ -144,10 +144,7 @@ bool
 vm_execute_file(char const *path);
 
 struct value
-vm_eval_function(struct value const *f, struct value const *v);
-
-struct value
-vm_eval_function2(struct value const *f, struct value const *v1, struct value const *v2);
+vm_eval_function(struct value const *f, ...);
 
 void
 vm_load_c_module(char const *name, void *p);

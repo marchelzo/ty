@@ -551,7 +551,7 @@ string_replace(struct value *string, value_vector *args)
                                         vec_push(*match.array, STRING_VIEW(*string, out[j], out[j + 1] - out[j]));
                         }
 
-                        struct value repstr = vm_eval_function(&replacement, &match);
+                        struct value repstr = vm_eval_function(&replacement, &match, NULL);
                         repstr = builtin_str(&(value_vector){
                                 .items = &repstr,
                                 .count = 1

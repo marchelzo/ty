@@ -46,7 +46,7 @@ compare_by(void const *v1, void const *v2)
 static int
 compare_by2(void const *v1, void const *v2)
 {
-        struct value v = vm_eval_function2(comparison_fn, (struct value *)v1, (struct value *)v2);
+        struct value v = vm_eval_function(comparison_fn, v1, v2, NULL);
         gc_push(&v);
 
         int result;
@@ -271,7 +271,7 @@ array_zip_with(struct value *array, value_vector *args)
         gc_push(&a);
 
         for (int i = 0; i < n; ++i) {
-                a = vm_eval_function2(&f, &array->array->items[i], &other.array->items[i]);
+                a = vm_eval_function(&f, &array->array->items[i], &other.array->items[i], NULL);
                 array->array->items[i] = a;
         }
 
@@ -558,7 +558,7 @@ array_uniq(struct value *array, value_vector *args)
         int n = 0;
         for (int i = 0; i < array->array->count; ++i) {
                 struct value e = array->array->items[i];
-                struct value k = (f == NULL) ? e : vm_eval_function(f, &e);
+                struct value k = (f == NULL) ? e : vm_eval_function(f, &e, NULL);
                 struct value *v = dict_put_key_if_not_exists(d.dict, k);
                 if (v->type == VALUE_NIL) {
                         *v = e;
@@ -929,16 +929,16 @@ array_min_by(struct value *array, value_vector *args)
         if (f.type == VALUE_FUNCTION && f.params > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
-                        r = vm_eval_function2(&f, &v, &min);
+                        r = vm_eval_function(&f, &v, &min, NULL);
                         if ((r.type != VALUE_INTEGER && !value_truthy(&r)) || r.integer < 0)
                                 min = v;
 
                 }
         } else {
-                k = vm_eval_function(&f, &min);
+                k = vm_eval_function(&f, &min, NULL);
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
-                        r = vm_eval_function(&f, &v);
+                        r = vm_eval_function(&f, &v, NULL);
                         if (value_compare(&r, &k) < 0) {
                                 min = v;
                                 k = r;
@@ -1000,16 +1000,16 @@ array_max_by(struct value *array, value_vector *args)
         if (f.type == VALUE_FUNCTION && f.params > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
-                        r = vm_eval_function2(&f, &v, &max);
+                        r = vm_eval_function(&f, &v, &max, NULL);
                         if ((r.type != VALUE_INTEGER && value_truthy(&r)) || r.integer > 0)
                                 max = v;
 
                 }
         } else {
-                k = vm_eval_function(&f, &max);
+                k = vm_eval_function(&f, &max, NULL);
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
-                        r = vm_eval_function(&f, &v);
+                        r = vm_eval_function(&f, &v, NULL);
                         if (value_compare(&r, &k) > 0) {
                                 max = v;
                                 k = r;
@@ -1349,7 +1349,7 @@ array_each(struct value *array, value_vector *args)
         int n = array->array->count;
 
         for (int i = 0; i < n; ++i)
-                vm_eval_function(&f, &array->array->items[i]);
+                vm_eval_function(&f, &array->array->items[i], NULL);
 
         return *array;
 }
@@ -1457,7 +1457,7 @@ array_fold_left(struct value *array, value_vector *args)
 
         int n = array->array->count;
         for (int i = start; i < n; ++i)
-                v = vm_eval_function2(&f, &v, &array->array->items[i]);
+                v = vm_eval_function(&f, &v, &array->array->items[i], NULL);
 
         gc_pop();
 
@@ -1492,7 +1492,7 @@ array_fold_right(struct value *array, value_vector *args)
         gc_push(&v);
 
         for (int i = start; i >= 0; --i)
-                v = vm_eval_function2(&f, &array->array->items[i], &v);
+                v = vm_eval_function(&f, &array->array->items[i], &v, NULL);
 
         gc_pop();
 
@@ -1525,7 +1525,7 @@ array_scan_left(struct value *array, value_vector *args)
 
         int n = array->array->count;
         for (int i = start; i < n; ++i) {
-                v = vm_eval_function2(&f, &v, &array->array->items[i]);
+                v = vm_eval_function(&f, &v, &array->array->items[i], NULL);
                 array->array->items[i] = v;
         }
 
@@ -1557,7 +1557,7 @@ array_scan_right(struct value *array, value_vector *args)
                 vm_panic("non-function passed to the scanRight method on array");
 
         for (int i = start; i >= 0; --i) {
-                v = vm_eval_function2(&f, &array->array->items[i], &v);
+                v = vm_eval_function(&f, &array->array->items[i], &v, NULL);
                 array->array->items[i] = v;
         }
 

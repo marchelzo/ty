@@ -1535,54 +1535,39 @@ vm_execute(char const *source)
 }
 
 struct value
-vm_eval_function(struct value const *f, struct value const *v)
-{
-        switch (f->type) {
-        case VALUE_FUNCTION:
-                if (v != NULL)
-                        push(*v);
-                call(f, NULL, v != NULL, true);
-                return pop();
-        case VALUE_METHOD:
-                if (v != NULL)
-                        push(*v);
-                call(f->method, f->this, v != NULL, true);
-                return pop();
-        case VALUE_BUILTIN_FUNCTION:
-                return f->builtin_function(&(value_vector){
-                        .count = v != NULL,
-                        .items = (struct value *)v
-                });
-        case VALUE_BUILTIN_METHOD:
-                return f->builtin_method(f->this, &(value_vector){
-                        .count = v != NULL,
-                        .items = (struct value *)v
-                });
-        default:
-                abort();
-        }
-}
-
-struct value
-vm_eval_function2(struct value const *f, struct value const *v1, struct value const *v2)
+vm_eval_function(struct value const *f, ...)
 {
         value_vector args;
+        int argc;
+        va_list ap;
+        struct value const *v;
+
+        va_start(ap, f);
+        argc = 0;
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                push(*v1);
-                push(*v2);
-                call(f, NULL, 2, true);
+                while ((v = va_arg(ap, struct value const *)) != NULL) {
+                        push(*v);
+                        argc += 1;
+                }
+                va_end(ap);
+                call(f, NULL, argc, true);
                 return pop();
         case VALUE_METHOD:
-                push(*v1);
-                push(*v2);
+                while ((v = va_arg(ap, struct value const *)) != NULL) {
+                        push(*v);
+                        argc += 1;
+                }
+                va_end(ap);
                 call(f->method, f->this, 2, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 vec_init(args);
-                vec_push(args, *v1);
-                vec_push(args, *v2);
+                while ((v = va_arg(ap, struct value const *)) != NULL) {
+                        vec_push(args, *v);
+                }
+                va_end(ap);
                 return f->builtin_function(&args);
         default:
                 abort();
