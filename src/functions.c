@@ -32,7 +32,7 @@
 #include "object.h"
 #include "class.h"
 
-static char buffer[1024];
+static char buffer[1024 * 1024 * 4];
 
 #define ASSERT_ARGC(func, argc) \
         if (args->count != (argc)) { \
