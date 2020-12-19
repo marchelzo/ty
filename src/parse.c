@@ -1311,6 +1311,9 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_LIST:
                 return e;
         case EXPRESSION_ARRAY:
                 if (e->elements.count == 0)
@@ -1329,10 +1332,12 @@ assignment_lvalue(struct expression *e)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
         case EXPRESSION_SUBSCRIPT:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_FUNCTION_CALL:
+        case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_LIST:
                 return e;
         case EXPRESSION_ARRAY:
@@ -1353,92 +1358,9 @@ parse_definition_lvalue(int context)
         struct expression *e, *elem;
         int save = tokidx;
 
-        switch (tok()->type) {
-        case TOKEN_IDENTIFIER:
-                e = mkexpr();
-
-                e->type = EXPRESSION_IDENTIFIER;
-                e->identifier = tok()->identifier;
-                e->module = tok()->module;
-
-                next();
-
-                if (tok()->type == '(') {
-                        struct expression *f = mkexpr(); f->type = EXPRESSION_FUNCTION_CALL; f->function = e; e = f;
-                        lex_ctx = LEX_INFIX;
-                        next();
-                        vec_init(f->args);
-                        vec_push(f->args, parse_definition_lvalue(LV_ANY));
-                        while (tok()->type == ',') {
-                                next();
-                                vec_push(f->args, parse_definition_lvalue(LV_ANY));
-                        }
-                        if (f->args.items[0] == NULL) goto error;
-                        consume(')');
-                } else if (e->module != NULL) {
-                                error("unexpected module in lvalue");
-                }
-                break;
-        case TOKEN_STAR:
-                e = prefix_star();
-                break;
-        case '`':
-                e = prefix_tick();
-                break;
-        case '$':
-                next();
-                e = mkexpr();
-                e->type = EXPRESSION_MATCH_NOT_NIL;
-                e->identifier = tok()->identifier;
-                e->module = tok()->module;
-                if (e->module != NULL)
-                        error("unexpected module in lvalue");
-                consume(TOKEN_IDENTIFIER);
-                break;
-        case '[':
-                next();
-                e = mkexpr();
-                e->type = EXPRESSION_ARRAY;
-                vec_init(e->elements);
-                if (tok()->type == ']') {
-                        next();
-                        break;
-                } else {
-                        if (elem = parse_definition_lvalue(LV_ANY), elem == NULL) {
-                                vec_empty(e->elements);
-                                goto error;
-                        } else {
-                                vec_push(e->elements, elem);
-                        }
-                }
-                while (tok()->type == ',') {
-                        next();
-                        if (elem = parse_definition_lvalue(LV_ANY), elem == NULL) {
-                                vec_empty(e->elements);
-                                goto error;
-                        } else {
-                                vec_push(e->elements, elem);
-                        }
-
-                }
-                if (tok()->type != ']') {
-                        vec_empty(e->elements);
-                        goto error;
-                }
-
-                consume(']');
-                break;
-        case '(':
-                next();
-                e = parse_definition_lvalue(LV_ANY);
-                if (e == NULL || tok()->type != ')') {
-                        goto error;
-                }
-                consume(')');
-                break;
-        default:
-                return NULL;
-        }
+        NoEquals = true;
+        e = definition_lvalue(parse_expr(1));
+        NoEquals = false;
 
         if (context == LV_LET && tok()->type == ',') {
                 struct expression *l = mkexpr();
@@ -1454,17 +1376,6 @@ parse_definition_lvalue(int context)
                         vec_push(l->es, e);
                 }
                 e = l;
-        }
-
-        if (tok()->type == TOKEN_SQUIGGLY_ARROW) {
-                next();
-                struct expression *view = mkexpr();
-                view->type = EXPRESSION_VIEW_PATTERN;
-                view->left = e;
-                view->right = parse_definition_lvalue(LV_SUB);
-                if (view->right == NULL)
-                        goto error;
-                e = view;
         }
 
         switch (context) {
