@@ -1379,9 +1379,11 @@ parse_definition_lvalue(int context)
                 }
                 break;
         case TOKEN_STAR:
-                return prefix_star();
+                e = prefix_star();
+                break;
         case '`':
-                return prefix_tick();
+                e = prefix_tick();
+                break;
         case '$':
                 next();
                 e = mkexpr();
@@ -1451,6 +1453,17 @@ parse_definition_lvalue(int context)
                         vec_push(l->es, e);
                 }
                 e = l;
+        }
+
+        if (tok()->type == TOKEN_SQUIGGLY_ARROW) {
+                next();
+                struct expression *view = mkexpr();
+                view->type = EXPRESSION_VIEW_PATTERN;
+                view->left = e;
+                view->right = parse_definition_lvalue(LV_SUB);
+                if (view->right == NULL)
+                        goto error;
+                e = view;
         }
 
         switch (context) {

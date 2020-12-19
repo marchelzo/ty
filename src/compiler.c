@@ -467,6 +467,10 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                         target->symbol = getsymbol(scope, target->identifier, &target->local);
                 }
                 break;
+        case EXPRESSION_VIEW_PATTERN:
+                symbolize_expression(scope, target->left);
+                symbolize_lvalue(scope, target->right, decl);
+                break;
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue(scope, target->tagged, decl);
                 target->symbol = getsymbol(
@@ -2158,6 +2162,13 @@ emit_assignment(struct expression *target, struct expression const *e)
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
                 emit_assignment(target->tagged, NULL);
+                break;
+        case EXPRESSION_VIEW_PATTERN:
+                emit_instr(INSTR_DUP);
+                emit_expression(target->left);
+                emit_instr(INSTR_CALL);
+                emit_int(1);
+                emit_assignment(target->right, NULL);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_instr(INSTR_DIE_IF_NIL);
