@@ -1279,15 +1279,15 @@ get_infix_prec(void)
 
         case TOKEN_OR:             return 4;
 
+        /* this may need to have lower precedence. I'm not sure yet. */
+        case TOKEN_SQUIGGLY_ARROW: return 3;
+
         case TOKEN_EQ:             return NoEquals ? -3 : 2;
         case TOKEN_PLUS_EQ:        return 2;
         case TOKEN_STAR_EQ:        return 2;
         case TOKEN_DIV_EQ:         return 2;
         case TOKEN_MINUS_EQ:       return 2;
         case TOKEN_ARROW:          return 2;
-
-        /* this may need to have lower precedence. I'm not sure yet. */
-        case TOKEN_SQUIGGLY_ARROW: return 2;
 
         case ',':                  return 0;
 
@@ -1310,6 +1310,7 @@ definition_lvalue(struct expression *e)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_TAG_APPLICATION:
+        case EXPRESSION_VIEW_PATTERN:
                 return e;
         case EXPRESSION_ARRAY:
                 if (e->elements.count == 0)

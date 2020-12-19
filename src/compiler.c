@@ -2456,6 +2456,8 @@ emit_expression(struct expression const *e)
         case EXPRESSION_LIST:
                 fail("list in invalid context");
                 break;
+        default:
+                fail("expression unexpected in this context");
         }
 }
 
