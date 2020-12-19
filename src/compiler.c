@@ -2108,7 +2108,7 @@ check_multi(struct expression *target, struct expression const *e, int *n)
                 return true;
 
         if (e->type != EXPRESSION_LIST)
-                return false;
+                return (*n = 1), false;
 
         for (*n = 0; *n < e->es.count; ++*n) {
                 if (is_call(e->es.items[*n]))
@@ -2164,7 +2164,6 @@ emit_assignment(struct expression *target, struct expression const *e)
                 emit_assignment(target->tagged, NULL);
                 break;
         case EXPRESSION_VIEW_PATTERN:
-                emit_instr(INSTR_DUP);
                 emit_expression(target->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
