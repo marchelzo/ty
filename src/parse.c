@@ -131,6 +131,9 @@ definition_lvalue(struct expression *e);
 static struct expression *
 infix_member_access(struct expression *e);
 
+static struct expression *
+prefix_parenthesis(void);
+
 inline static struct token *
 tok(void);
 
@@ -254,7 +257,7 @@ tok(void)
 inline static void
 unconsume(int type)
 {
-        vec_insert(tokens, ((struct token){ .type = type, .loc = { 42, 42 } }), tokidx);
+        vec_insert(tokens, ((struct token){ .type = type, .loc = { -1, -1 } }), tokidx);
 }
 
 static void
@@ -447,6 +450,51 @@ prefix_function(void)
         consume(')');
 
         e->body = parse_statement();
+
+        return e;
+}
+
+static struct expression *
+prefix_lt(void)
+{
+        consume(TOKEN_LT);
+
+        struct token t = *tok();
+        next();
+
+        consume(TOKEN_GT);
+
+        char *a = gensym();
+        char *b = gensym();
+
+        unconsume(TOKEN_IDENTIFIER);
+        tok()->module = NULL;
+        tok()->identifier = b;
+
+        unconsume(TOKEN_USER_OP);
+        *tok() = t;
+
+        unconsume(TOKEN_IDENTIFIER);
+        tok()->module = NULL;
+        tok()->identifier = a;
+
+        unconsume(TOKEN_ARROW);
+
+        unconsume(')');
+
+        unconsume(TOKEN_IDENTIFIER);
+        tok()->module = NULL;
+        tok()->identifier = b;
+
+        unconsume(',');
+
+        unconsume(TOKEN_IDENTIFIER);
+        tok()->module = NULL;
+        tok()->identifier = a;
+
+        unconsume('(');
+
+        struct expression *e = parse_expr(0);
 
         return e;
 }
@@ -1172,6 +1220,8 @@ get_prefix_parser(void)
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
         case TOKEN_USER_OP:        return prefix_user_op;
+
+        case TOKEN_LT:             return prefix_lt;
 
         case TOKEN_STAR:           return prefix_star;
 
