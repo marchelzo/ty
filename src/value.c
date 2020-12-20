@@ -337,8 +337,11 @@ value_show(struct value const *v)
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
         case VALUE_OBJECT:;
+#ifdef TY_RELEASE
                 struct value *fp = class_lookup_method(v->class, "__str__");
-                fp = NULL;
+#else
+                struct value *fp = NULL;
+#endif
                 if (fp != NULL) {
                         struct value str = vm_eval_function(fp, v, NULL);
                         if (str.type != VALUE_STRING)
