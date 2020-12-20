@@ -1310,10 +1310,17 @@ definition_lvalue(struct expression *e)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_TAG_APPLICATION:
-        case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_LIST:
+                return e;
+        case EXPRESSION_FUNCTION_CALL:
+                for (int i = 0; i < e->args.count; ++i) {
+                        e->args.items[i] = definition_lvalue(e->args.items[i]);
+                }
+                return e;
+        case EXPRESSION_VIEW_PATTERN:
+                e->right = definition_lvalue(e->right);
                 return e;
         case EXPRESSION_ARRAY:
                 if (e->elements.count == 0)
