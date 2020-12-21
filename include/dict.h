@@ -24,6 +24,18 @@ dict_put_key_if_not_exists(struct dict *obj, struct value key);
 struct value *
 dict_put_member_if_not_exists(struct dict *obj, char const *member);
 
+struct value
+dict_update(struct value *d, value_vector *args);
+
+struct value
+dict_intersect(struct value *d, value_vector *args);
+
+struct value
+dict_subtract(struct value *d, value_vector *args);
+
+struct value
+dict_clone(struct value *d, value_vector *args);
+
 void
 dict_mark(struct dict *obj);
 

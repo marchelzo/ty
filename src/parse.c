@@ -257,7 +257,14 @@ tok(void)
 inline static void
 unconsume(int type)
 {
-        vec_insert(tokens, ((struct token){ .type = type, .loc = { -1, -1 } }), tokidx);
+        vec_insert(
+                tokens,
+                ((struct token){
+                        .type = type,
+                        .loc = tok()->loc
+                }),
+                tokidx
+        );
 }
 
 static void

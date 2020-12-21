@@ -1117,6 +1117,11 @@ OutOfRange:
                                 if (top()->type != VALUE_ARRAY)
                                         vm_panic("attempt to add non-array to array");
                                 value_array_extend(vp->array, pop().array);
+                        } else if (vp->type == VALUE_DICT) {
+                                if (top()->type != VALUE_DICT)
+                                        vm_panic("attempt to add non-dict to dict");
+                                dict_update(vp, &((value_vector){ .count = 1, .items = top() }));
+                                pop();
                         } else {
                                 v = pop();
                                 *vp = binary_operator_addition(vp, &v);
@@ -1137,8 +1142,15 @@ OutOfRange:
                         break;
                 CASE(MUT_SUB)
                         vp = poptarget();
-                        v = pop();
-                        *vp = binary_operator_subtraction(vp, &v);
+                        if (vp->type == VALUE_DICT) {
+                                if (top()->type != VALUE_DICT)
+                                        vm_panic("attempt to subtract non-dict from dict");
+                                dict_subtract(vp, &((value_vector){ .count = 1, .items = top()}));
+                                pop();
+                        } else {
+                                v = pop();
+                                *vp = binary_operator_subtraction(vp, &v);
+                        }
                         push(*vp);
                         break;
                 CASE(DEFINE_TAG)

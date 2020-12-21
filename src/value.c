@@ -182,8 +182,10 @@ show_dict(struct value const *d)
                 char *val = value_show(&d->dict->values[i]);
                 add(j == 0 ? "" : ", ");
                 add(key);
-                add(": ");
-                add(val);
+                if (strcmp(val, "nil") != 0) {
+                        add(": ");
+                        add(val);
+                }
                 free(key);
                 free(val);
                 j += 1;
@@ -386,7 +388,10 @@ value_compare(void const *_v1, void const *_v2)
         switch (v1->type) {
         case VALUE_INTEGER: return (v1->integer - v2->integer); // TODO
         case VALUE_REAL:    return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
-        case VALUE_STRING:  return memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
+        case VALUE_STRING:;
+                int c = memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
+                if (c == 0) return ((int)v1->bytes - (int)v2->bytes);
+                return c;
         case VALUE_ARRAY:
                 for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {
                         int o = value_compare(&v1->array->items[i], &v2->array->items[i]);
@@ -470,7 +475,7 @@ value_apply_predicate(struct value *p, struct value *v)
         case VALUE_CLASS:
                 return v->type == VALUE_OBJECT && v->class == p->class;
         default:
-                vm_panic("invalid type of value used as a predicate");
+                vm_panic("invalid type of value used as a predicate: %s", value_show(v));
         }
 }
 
@@ -542,7 +547,7 @@ value_apply_callable(struct value *f, struct value *v)
                         return result;
                 }
         default:
-                vm_panic("invalid type of value used as a predicate");
+                vm_panic("invalid type of value used as a callable: %s", value_show(f));
         }
 }
 

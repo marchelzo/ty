@@ -1671,6 +1671,9 @@ array_sort_by(struct value *array, value_vector *args)
         if (!CALLABLE(f))
                 vm_panic("non-function passed to the sortBy method on array");
 
+        if (array->array->count == 0)
+                return *array;
+
         comparison_fn = &f;
 
         if (f.type == VALUE_FUNCTION && f.params > 1)

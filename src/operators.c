@@ -56,6 +56,16 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 gc_pop();
                 gc_pop();
                 return v;
+        case VALUE_DICT:
+                gc_push((struct value *)left);
+                gc_push((struct value *)right);
+                v = dict_clone(left, &((value_vector){ .count = 0 }));
+                gc_push(&v);
+                dict_update(&v, &((value_vector){ .count = 1, .items = (struct value *)right }));
+                gc_pop();
+                gc_pop();
+                gc_pop();
+                return v;
         default:
         Fail:
                 vm_panic("+ applied to operands of invalid type");
@@ -161,6 +171,16 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer - right->integer);
         case VALUE_REAL:    return REAL(left->real - right->real);
+        case VALUE_DICT:
+                gc_push((struct value *)left);
+                gc_push((struct value *)right);
+                struct value v = dict_clone(left, &((value_vector){ .count = 0 }));
+                gc_push(&v);
+                dict_subtract(&v, &((value_vector){ .count = 1, .items = (struct value *)right }));
+                gc_pop();
+                gc_pop();
+                gc_pop();
+                return v;
         default:
         Fail:
                 vm_panic("- applied to operands of invalid type");
