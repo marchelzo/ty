@@ -2170,7 +2170,7 @@ emit_assignment(struct expression *target, struct expression const *e)
                 emit_assignment(target->right, NULL);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
-                emit_instr(INSTR_DIE_IF_NIL);
+                emit_instr(INSTR_THROW_IF_NIL);
                 emit_target(target);
                 emit_instr(INSTR_ASSIGN);
                 break;

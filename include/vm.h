@@ -54,7 +54,7 @@ enum instruction {
         INSTR_ARRAY_COMPR,
         INSTR_DICT_COMPR,
 
-        INSTR_DIE_IF_NIL,
+        INSTR_THROW_IF_NIL,
 
         INSTR_PRE_INC,
         INSTR_POST_INC,

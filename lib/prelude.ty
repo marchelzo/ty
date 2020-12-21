@@ -1,4 +1,6 @@
-export Some, None, Ok, Err
+export Some, None, Ok, Err, MatchError
+
+tag MatchError;
 
 tag Some {
      map(self, f) {
@@ -155,6 +157,10 @@ class Range : Iterable {
     }
 
     contains?(self, k) {
+	return self.has?(k);
+    }
+
+    has?(self, k) {
 	return k >= self.low() && k < self.high();
     }
 

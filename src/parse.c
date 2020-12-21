@@ -454,6 +454,7 @@ prefix_function(void)
         return e;
 }
 
+/* rewrite < t > as ((a, b) -> a t b) */
 static struct expression *
 prefix_lt(void)
 {
@@ -466,6 +467,8 @@ prefix_lt(void)
 
         char *a = gensym();
         char *b = gensym();
+
+        unconsume(')');
 
         unconsume(TOKEN_IDENTIFIER);
         tok()->module = NULL;
@@ -492,6 +495,7 @@ prefix_lt(void)
         tok()->module = NULL;
         tok()->identifier = a;
 
+        unconsume('(');
         unconsume('(');
 
         struct expression *e = parse_expr(0);

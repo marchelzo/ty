@@ -430,24 +430,27 @@ vm_exec(char *code)
                                 vec_push_n(*vars[s]->value.array, top()->array->items + i, top()->array->count - i);
                         }
                         break;
-                CASE(DIE_IF_NIL)
-                        if (top()->type == VALUE_NIL)
-                                vm_panic("failed to match %s against the non-nil pattern", value_show(top()));
+                CASE(THROW_IF_NIL)
+                        if (top()->type == VALUE_NIL) {
+                                push(TAG(tags_lookup("MatchError")));
+                                goto Throw;
+                        }
                         break;
                 CASE(UNTAG_OR_DIE)
                         READVALUE(tag);
                         if (!tags_same(tags_first(top()->tags), tag)) {
-                                vm_panic("failed to match %s against the tag %s", value_show(top()), tags_name(tag));
+                                push(TAG(tags_lookup("MatchError")));
+                                goto Throw;
                         } else {
                                 top()->tags = tags_pop(top()->tags);
                                 top()->type &= ~VALUE_TAGGED;
                         }
                         break;
                 CASE(BAD_MATCH)
-                        vm_panic("expression did not match any patterns in match expression");
-                        break;
+                        push(TAG(tags_lookup("MatchError")));
+                        goto Throw;
                 CASE(THROW)
-                {
+Throw:
                         if (try_stack.count == 0)
                                 vm_panic("uncaught exception: %s", value_show(top()));
 
@@ -473,7 +476,6 @@ vm_exec(char *code)
 
                         longjmp(t->jb, 1);
                         /* unreachable */
-                }
                 CASE(FINALLY)
                 {
                         struct try *t = vec_pop(try_stack);
