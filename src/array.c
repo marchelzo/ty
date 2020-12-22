@@ -1384,7 +1384,7 @@ array_each(struct value *array, value_vector *args)
         int n = array->array->count;
 
         for (int i = 0; i < n; ++i)
-                vm_eval_function(&f, &array->array->items[i], NULL);
+                vm_eval_function(&f, &array->array->items[i], &INTEGER(i), NULL);
 
         return *array;
 }
@@ -1392,18 +1392,24 @@ array_each(struct value *array, value_vector *args)
 static struct value
 array_all(struct value *array, value_vector *args)
 {
-        if (args->count != 1)
-                vm_panic("the all? method on arrays expects 1 argument but got %zu", args->count);
-
-        struct value pred = args->items[0];
-
-        if (!CALLABLE(pred))
-                vm_panic("non-predicate passed to the all? method on array");
-
         int n = array->array->count;
-        for (int i = 0; i < n; ++i)
-                if (!value_apply_predicate(&pred, &array->array->items[i]))
-                        return BOOLEAN(false);
+
+        if (args->count == 0) {
+                for (int i = 0; i < n; ++i)
+                        if (!value_truthy(&array->array->items[i]))
+                                return BOOLEAN(false);
+        } else if (args->count == 1) {
+                struct value pred = args->items[0];
+
+                if (!CALLABLE(pred))
+                        vm_panic("non-predicate passed to the all? method on array");
+
+                for (int i = 0; i < n; ++i)
+                        if (!value_apply_predicate(&pred, &array->array->items[i]))
+                                return BOOLEAN(false);
+        } else {
+                vm_panic("the all? method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
+        }
 
         return BOOLEAN(true);
 }
@@ -1411,18 +1417,24 @@ array_all(struct value *array, value_vector *args)
 static struct value
 array_any(struct value *array, value_vector *args)
 {
-        if (args->count != 1)
-                vm_panic("the any? method on arrays expects 1 argument but got %zu", args->count);
-
-        struct value pred = args->items[0];
-
-        if (!CALLABLE(pred))
-                vm_panic("non-predicate passed to the any? method on array");
-
         int n = array->array->count;
-        for (int i = 0; i < n; ++i)
-                if (value_apply_predicate(&pred, &array->array->items[i]))
-                        return BOOLEAN(true);
+
+        if (args->count == 0) {
+                for (int i = 0; i < n; ++i)
+                        if (value_truthy(&array->array->items[i]))
+                                return BOOLEAN(true);
+        } else if (args->count == 1) {
+                struct value pred = args->items[0];
+
+                if (!CALLABLE(pred))
+                        vm_panic("non-predicate passed to the any? method on array");
+
+                for (int i = 0; i < n; ++i)
+                        if (value_apply_predicate(&pred, &array->array->items[i]))
+                                return BOOLEAN(true);
+        } else {
+                vm_panic("the any? method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
+        }
 
         return BOOLEAN(false);
 }

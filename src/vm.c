@@ -67,13 +67,18 @@ struct try {
         char *end;
 };
 
+struct target {
+        struct value *t;
+        void *gc;
+};
+
 static struct variable **vars;
 static bool *used;
 
 static vec(struct value) stack;
 static vec(char *) calls;
 static vec(size_t) sp_stack;
-static vec(struct value *) targets;
+static vec(struct target) targets;
 static vec(struct try) try_stack;
 static char *ip;
 
@@ -111,8 +116,12 @@ newvar(struct variable *next)
 inline static void
 pushvar(int s)
 {
-        if (vars[s] == NULL || used[s])
+        if (vars[s] == NULL) {
                 vars[s] = newvar(vars[s]);
+        } else if (used[s]) {
+                vars[s] = newvar(vars[s]);
+                vars[s]->next->prev = vars[s];
+        }
         
         vars[s]->try = try_stack.count;
         used[s] = true;
@@ -206,19 +215,23 @@ push(struct value v)
 inline static struct value *
 poptarget(void)
 {
-        return *vec_pop(targets);
+        struct target t = *vec_pop(targets);
+        if (t.gc != NULL) OKGC(t.gc);
+        return t.t;
 }
 
 inline static struct value *
 peektarget(void)
 {
-        return targets.items[targets.count - 1];
+        return targets.items[targets.count - 1].t;
 }
 
 inline static void
-pushtarget(struct value *v)
+pushtarget(struct value *v, void *gc)
 {
-        vec_push(targets, v);
+        struct target t = { .t = v, .gc = gc };
+        if (gc != NULL) NOGC(gc);
+        vec_push(targets, t);
 }
 
 inline static void
@@ -330,14 +343,15 @@ vm_exec(char *code)
                         while (n --> 0) {
                                 READVALUE(s);
                                 if (vars[s] != NULL && vars[s]->captured) {
-                                        struct variable *next = newvar(vars[s]->next);
-                                        // TODO: figure out what is happening here
-                                        if (vars[s]->next != NULL)
-                                                //vars[s]->next->prev = vars[s]->prev;
-                                                vars[s]->next->prev = next;
                                         gc_register(vars[s]);
-                                        next->value = vars[s]->value;
-                                        vars[s] = next;
+                                        struct variable *new = newvar(vars[s]->next);
+                                        new->value = vars[s]->value;
+                                        new->prev = vars[s]->prev;
+                                        if (new->next != NULL)
+                                                new->next->prev = new;
+                                        if (new->prev != NULL)
+                                                new->prev->next = new;
+                                        vars[s] = new;
                                 }
                         }
                         break;
@@ -374,11 +388,11 @@ vm_exec(char *code)
                         break;
                 CASE(TARGET_VAR)
                         READVALUE(s);
-                        pushtarget(&vars[s]->value);
+                        pushtarget(&vars[s]->value, NULL);
                         break;
                 CASE(TARGET_REF)
                         READVALUE(s);
-                        pushtarget(&((struct variable *) s)->value);
+                        pushtarget(&((struct variable *) s)->value, NULL);
                         break;
                 CASE(TARGET_MEMBER)
                         v = pop();
@@ -386,9 +400,9 @@ vm_exec(char *code)
                                 vm_panic("assignment to member of non-object");
                         vp = table_lookup(v.object, ip);
                         if (vp != NULL)
-                                pushtarget(vp);
+                                pushtarget(vp, v.object);
                         else
-                                pushtarget(table_add(v.object, ip, NIL));
+                                pushtarget(table_add(v.object, ip, NIL), v.object);
                         ip += strlen(ip) + 1;
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -402,9 +416,9 @@ vm_exec(char *code)
                                         subscript.integer += container.array->count;
                                 if (subscript.integer < 0 || subscript.integer >= container.array->count)
                                         vm_panic("array index out of range in subscript expression");
-                                pushtarget(&container.array->items[subscript.integer]);
+                                pushtarget(&container.array->items[subscript.integer], container.array);
                         } else if (container.type == VALUE_DICT) {
-                                pushtarget(dict_put_key_if_not_exists(container.dict, subscript));
+                                pushtarget(dict_put_key_if_not_exists(container.dict, subscript), container.dict);
                         } else {
                                 vm_panic("attempt to perform subscript assignment on something other than an object or array");
                         }
@@ -709,21 +723,19 @@ Throw:
                 CASE(ARRAY_COMPR)
                         READVALUE(n);
                         v = top()[-(n + 2)];
-                        gc_push(&v);
-                        while (n --> 0)
-                                value_array_push(v.array, pop());
-                        gc_pop();
+                        for (int i = 0; i < n; ++i)
+                                value_array_push(v.array, top()[-i]);
+                        stack.count -= n;
                         break;
                 CASE(DICT_COMPR)
                         READVALUE(n);
                         v = top()[-(2*n + 2)];
-                        gc_push(&v);
                         for (i = 0; i < n; ++i) {
-                                value = pop();
-                                key = pop();
-                                dict_put_value(v.dict, key, value);
+                                value = top()[-2*i];
+                                key = top()[-(2*i + 1)];
+                                dict_put_value(v.dict, top()[-2*i+1], top()[-2*i]);
                         }
-                        gc_pop();
+                        stack.count -= 2 * n;
                         break;
                 CASE(PUSH_INDEX)
                         READVALUE(n);
@@ -776,11 +788,11 @@ Throw:
                         READVALUE(n);
                         for (i = 0, vp = top(); pop().type != VALUE_SENTINEL; ++i)
                                 ;
-                        for (int j = targets.count - n; n > 0; --n, --targets.count) {
+                        for (int j = targets.count - n; n > 0; --n, poptarget()) {
                                 if (i > 0) {
-                                        *targets.items[j++] = vp[-(--i)];
+                                        *targets.items[j++].t = vp[-(--i)];
                                 } else {
-                                        *targets.items[j++] = NIL;
+                                        *targets.items[j++].t = NIL;
                                 }
                         }
                         push(top()[2]);
@@ -1403,11 +1415,11 @@ OutOfRange:
                         break;
                 CASE(RESTORE_STACK_POS)
                         stack.count = *vec_pop(sp_stack);
-                        //LOG("restored stack pos. top = %s", value_show(top()));
                         break;
                 CASE(MULTI_RETURN)
                         READVALUE(rc);
                         stack.count -= rc;
+                        /* fallthrough */
                 CASE(RETURN)
                         ip = *vec_pop(calls);
                         LOG("returning: ip = %p", ip);
@@ -1454,7 +1466,6 @@ vm_init(int ac, char **av)
         resize(vars, new_symbol_count * sizeof *vars);
         resize(used, new_symbol_count * sizeof *used);
         while (symbol_count < new_symbol_count) {
-                //LOG("SETTING %d TO NULL", symbol_count);
                 used[symbol_count] = false;
                 vars[symbol_count++] = NULL;
         }
@@ -1599,6 +1610,9 @@ vm_mark(void)
 
         for (int i = 0; i < stack.count; ++i)
                 value_mark(&stack.items[i]);
+
+        for (int i = 0; i < targets.count; ++i)
+                value_mark(targets.items[i].t);
 }
 
 TEST(let)

@@ -1,15 +1,13 @@
 tag Even {
     print(self) {
-        let Even(k) = self;
-        print("{k} is even!");
+        print("{self} is even!");
     }
 }
 
 tag Odd {
     print(self) {
-        let Odd(k) = self;
-        print("{k} is odd!");
+        print("{self} is odd!");
     }
 }
 
-[1 .. 10].map(n -> (match n % 2 { 0 => Even, 1 => Odd })(n)).each(n -> n.print());
+(1..10).list().map(n -> (match n % 2 { 0 => Even, 1 => Odd })(n)).each(n -> n.print());

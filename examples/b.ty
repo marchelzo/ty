@@ -1,8 +1,7 @@
-import fs (slurp)
 import json
 import os
 
-let Ok(s) = slurp('json.json');
+let s = slurp('json.json');
 
 for (let i = 0; i < 30000; ++i) {
      let o = json::parse(s);

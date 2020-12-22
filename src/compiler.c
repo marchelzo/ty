@@ -2682,7 +2682,7 @@ compile(char const *source)
          */
         for (int i = 0; p[i] != NULL; ++i) {
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
-                        for (int j = i - 1; j > 0 && p[j]->type != STATEMENT_FUNCTION_DEFINITION
+                        for (int j = i - 1; j >= 0 && p[j]->type != STATEMENT_FUNCTION_DEFINITION
                                                  && p[j]->type != STATEMENT_IMPORT; --j) {
                                 struct statement *s = p[j];
                                 p[j] = p[j + 1];

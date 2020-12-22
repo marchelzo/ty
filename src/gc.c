@@ -112,6 +112,18 @@ gc_pop(void)
 }
 
 void
+gc_remove(struct value *v)
+{
+        for (int i = 0; i < root_set.count; ++i) {
+                if (root_set.items[i] == v) {
+                        int j = root_set.count - 1;
+                        root_set.items[i] = root_set.items[j];
+                        --root_set.count;
+                }
+        }
+}
+
+void
 gc_clear_root_set(void)
 {
         root_set.count = 0;
