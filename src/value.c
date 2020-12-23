@@ -92,7 +92,7 @@ flt_hash(float flt)
         return hash;
 }
 
-static unsigned long
+inline static unsigned long
 ary_hash(struct value const *a)
 {
         unsigned long hash = 5381;
@@ -105,7 +105,7 @@ ary_hash(struct value const *a)
         return hash;
 }
 
-static unsigned long
+inline static unsigned long
 obj_hash(struct value const *v)
 {
         struct value const *f = class_lookup_method(v->class, "__hash__");
@@ -422,13 +422,16 @@ value_truthy(struct value const *v)
         case VALUE_INTEGER:          return (v->integer != 0);
         case VALUE_STRING:           return (v->bytes > 0);
         case VALUE_ARRAY:            return (v->array->count != 0);
+        case VALUE_BLOB:             return (v->blob->count != 0);
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
         case VALUE_BUILTIN_FUNCTION: return true;
+        case VALUE_BUILTIN_METHOD:   return true;
         case VALUE_DICT:             return true;
         case VALUE_CLASS:            return true;
         case VALUE_OBJECT:           return true;
         case VALUE_METHOD:           return true;
+        case VALUE_TAG:              return true;
         case VALUE_PTR:              return v->ptr != NULL;
         default:                     return false;
         }
