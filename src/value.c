@@ -490,6 +490,8 @@ value_apply_callable(struct value *f, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
+                vm_push(v);
+                return vm_call(f, 1);
                 return vm_eval_function(f, v, NULL);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
@@ -576,7 +578,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || v1->this != v2->this)          return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
-        case VALUE_PTR:              if (v1->ptr != v2->ptr)                                                        return false;
+        case VALUE_PTR:              if (v1->ptr != v2->ptr)                                                        return false; break;
         case VALUE_NIL:                                                                                                           break;
         case VALUE_OBJECT:
                 f = class_lookup_method(v1->class, "<=>");

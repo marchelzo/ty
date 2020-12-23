@@ -5,6 +5,8 @@
 #include <stdarg.h>
 #include <stdnoreturn.h>
 
+#include "value.h"
+
 struct variable;
 
 enum instruction {
@@ -142,6 +144,12 @@ vm_execute(char const *source);
 
 bool
 vm_execute_file(char const *path);
+
+void
+vm_push(struct value const *v);
+
+struct value
+vm_call(struct value const *f, int argc);
 
 struct value
 vm_eval_function(struct value const *f, ...);

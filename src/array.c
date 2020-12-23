@@ -267,15 +267,14 @@ array_zip_with(struct value *array, value_vector *args)
 
         int n = min(array->array->count, other.array->count);
 
-        struct value a;
-        gc_push(&a);
-
         for (int i = 0; i < n; ++i) {
-                a = vm_eval_function(&f, &array->array->items[i], &other.array->items[i], NULL);
-                array->array->items[i] = a;
+                array->array->items[i] = vm_eval_function(
+                        &f,
+                        &array->array->items[i],
+                        &other.array->items[i],
+                        NULL
+                );
         }
-
-        gc_pop();
 
         /*
          * TODO: implement something like this in vec.h
@@ -305,16 +304,11 @@ array_map_cons(struct value *array, value_vector *args)
 
         int n = array->array->count - k.integer + 1;
 
-        struct value sub = NIL;
-        gc_push(&sub);
-
         for (int i = 0; i < n; ++i) {
-                sub = ARRAY(value_array_new());
-                vec_push_n(*sub.array, array->array->items + i, k.integer);
-                array->array->items[i] = value_apply_callable(&f, &sub);
+                for (int i = 0; i < k.integer; ++i)
+                        vm_push(&array->array->items[i]);
+                array->array->items[i] = vm_call(&f, k.integer);
         }
-
-        gc_pop();
 
         array->array->count = n;
         shrink(array);

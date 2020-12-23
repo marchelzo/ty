@@ -52,6 +52,8 @@
   #define CASE(i) case INSTR_ ## i:
 #endif
 
+#define inline __attribute__((always_inline)) inline
+
 static char halt = INSTR_HALT;
 
 static jmp_buf jb;
@@ -1559,6 +1561,51 @@ vm_execute(char const *source)
         return true;
 }
 
+void
+vm_push(struct value const *v)
+{
+        push(*v);
+}
+
+struct value
+vm_call(struct value const *f, int argc)
+{
+        value_vector args;
+
+        switch (f->type) {
+        case VALUE_FUNCTION:
+                call(f, NULL, argc, true);
+                return pop();
+        case VALUE_METHOD:
+                call(f->method, f->this, argc, true);
+                return pop();
+        case VALUE_BUILTIN_FUNCTION:
+                vec_init(args);
+                for (int i = argc; i >= 0; --i) {
+                        vec_push(args, top()[-i]);
+                }
+                stack.count -= argc;
+                return f->builtin_function(&args);
+        case VALUE_TAG:
+        {
+                struct value result = pop();
+                result.tags = tags_push(result.tags, f->tag);
+                result.type |= VALUE_TAGGED;
+                return result;
+        }
+        case VALUE_CLASS:
+        {
+                struct value result = OBJECT(object_new(), f->class);
+                struct value *init = class_lookup_method(f->class, "init");
+                if (init != NULL)
+                        call(init, &result, argc, true);
+                return result;
+        }
+        default:
+                abort();
+        }
+}
+
 struct value
 vm_eval_function(struct value const *f, ...)
 {
@@ -1585,7 +1632,7 @@ vm_eval_function(struct value const *f, ...)
                         argc += 1;
                 }
                 va_end(ap);
-                call(f->method, f->this, 2, true);
+                call(f->method, f->this, argc, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 vec_init(args);

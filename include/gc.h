@@ -21,6 +21,7 @@ struct alloc {
                 struct {
                         char type;
                         char mark;
+                        unsigned size;
                 };
                 void const * restrict padding;
         };
@@ -87,6 +88,7 @@ gc_alloc_unregistered(size_t n, char type)
 
         a->mark = GC_NONE;
         a->type = type;
+        a->size = n;
 
         return a->data;
 }

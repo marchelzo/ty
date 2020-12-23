@@ -1,4 +1,4 @@
-for (let i = 0; i < 50; ++i) {
+for (let i = 0; i < 10; ++i) {
      let o = {c: [c.upper, c.lower()] for c in 'hello'.chars().reverse()};
      let s = ('' + '' + '' + '').upper().slice(10);
      let a = (1 .. 1000).list().map(|(1 .. 100).list().map(() -> 'hello haha world'.split(' '))|).groupBy(.len()).sort();
