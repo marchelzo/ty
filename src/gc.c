@@ -8,7 +8,7 @@
 #include "log.h"
 
 #define GC_THRESHOLD (1ULL << 25)
-#define GC_MAX_EXTRA (1ULL << 4)
+#define GC_MAX_EXTRA (1ULL << 7)
 #define GC_SAVE_MIN  (sizeof (struct table))
 
 

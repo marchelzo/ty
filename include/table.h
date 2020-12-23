@@ -3,7 +3,7 @@
 
 #include "vec.h"
 
-#define TABLE_SIZE 8
+#define TABLE_SIZE 16
 
 struct value;
 
