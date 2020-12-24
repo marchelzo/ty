@@ -51,7 +51,7 @@ class_name(int class)
 void
 class_add_method(int class, char const *name, struct value f)
 {
-        table_add(&tables.items[class], name, f);
+        table_put(&tables.items[class], name, f);
 }
 
 void
@@ -63,11 +63,11 @@ class_copy_methods(int dst, int src)
 }
 
 struct value *
-class_lookup_method(int class, char const *name)
+class_lookup_method(int class, char const *name, unsigned h)
 {
         do {
                 struct table const *t = &tables.items[class];
-                struct value *v = table_lookup(t, name);
+                struct value *v = table_lookup(t, name, h);
                 if (v != NULL) return v;
                 class = supers.items[class];
         } while (class != -1);

@@ -10,7 +10,4 @@ object_new(void);
 void
 object_mark(struct table *obj);
 
-void
-object_free(struct table *obj);
-
 #endif

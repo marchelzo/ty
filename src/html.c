@@ -6,6 +6,7 @@
 #include "vm.h"
 #include "table.h"
 #include "object.h"
+#include "util.h"
 
 static struct value
 convert_node(GumboNode const *n, struct table *p);
@@ -28,8 +29,8 @@ convert_attr(GumboAttribute const *a)
         struct table *t = object_new();
         NOGC(t);
 
-        table_add(t, "name", S(a->name));
-        table_add(t, "value", S(a->value));
+        table_put(t, "name", S(a->name));
+        table_put(t, "value", S(a->value));
 
         OKGC(t);
 
@@ -50,8 +51,8 @@ convert_elem(GumboElement const *e, struct table *n)
         }
 
 
-        table_add(t, "children", ARRAY(cs));
-        table_add(t, "t", S(gumbo_normalized_tagname(e->tag)));
+        table_put(t, "children", ARRAY(cs));
+        table_put(t, "t", S(gumbo_normalized_tagname(e->tag)));
 
         struct array *as = value_array_new();
         NOGC(as);
@@ -60,7 +61,7 @@ convert_elem(GumboElement const *e, struct table *n)
                 value_array_push(as, convert_attr(e->attributes.data[i]));
         }
 
-        table_add(t, "attributes", ARRAY(as));
+        table_put(t, "attributes", ARRAY(as));
 
         OKGC(as);
         OKGC(cs);
@@ -75,10 +76,10 @@ convert_doc(GumboDocument const *d)
         struct table *t = object_new();
         NOGC(t);
 
-        table_add(t, "has_doctype", BOOLEAN(!!d->has_doctype));
-        table_add(t, "name", S(d->name));
-        table_add(t, "public_id", S(d->public_identifier));
-        table_add(t, "system_id", S(d->system_identifier));
+        table_put(t, "has_doctype", BOOLEAN(!!d->has_doctype));
+        table_put(t, "name", S(d->name));
+        table_put(t, "public_id", S(d->public_identifier));
+        table_put(t, "system_id", S(d->system_identifier));
 
         OKGC(t);
         return OBJECT(t, 0);
@@ -89,19 +90,19 @@ convert_node(GumboNode const *n, struct table *p)
 {
         struct table *t = object_new();
         NOGC(t);
-        table_add(t, "type", INTEGER(n->type));
-        table_add(t, "parent", (p == NULL) ? NIL : OBJECT(p, 0));
-        table_add(t, "index", INTEGER(n->index_within_parent));
+        table_put(t, "type", INTEGER(n->type));
+        table_put(t, "parent", (p == NULL) ? NIL : OBJECT(p, 0));
+        table_put(t, "index", INTEGER(n->index_within_parent));
 
         switch (n->type) {
         case GUMBO_NODE_DOCUMENT:
-                table_add(t, "document", convert_doc(&n->v.document));
+                table_put(t, "document", convert_doc(&n->v.document));
                 break;
         case GUMBO_NODE_ELEMENT:
-                table_add(t, "element", convert_elem(&n->v.element, t));
+                table_put(t, "element", convert_elem(&n->v.element, t));
                 break;
         default:
-                table_add(t, "text", convert_text(&n->v.text));
+                table_put(t, "text", convert_text(&n->v.text));
         }
 
         OKGC(t);
@@ -114,8 +115,8 @@ convert(GumboOutput const *out)
         struct table *t = object_new();
         NOGC(t);
 
-        table_add(t, "root", convert_node(out->root, NULL));
-        table_add(t, "document", convert_node(out->document, NULL));
+        table_put(t, "root", convert_node(out->root, NULL));
+        table_put(t, "document", convert_node(out->document, NULL));
 
         OKGC(t);
 

@@ -1,8 +1,21 @@
+class A {
+    init(self, k) {
+        self.a = 1;
+        self.abc = 12;
+        self.f = [k, k for _ in ..5];
+    }
+
+    f(self) {
+        [self.a, self.abc for _ in ..100];
+    }
+}
+
 for (let i = 0; i < 30; ++i) {
      let o = {c: [c.upper, c.lower()] for c in 'hello'.chars().reverse()};
      let s = ('' + '' + '' + '').upper().slice(10);
      let a = (1 .. 1000).list().map(|(1 .. 100).list().map(() -> 'hello haha world'.split(' '))|).groupBy(.len()).sort();
      let fs = [];
+     let cs = [..5 for _ in ..100].map(|A(#.high())|).each(A.f);
      for (let i = 0; i < 100; ++i)
           fs.push(a -> fs.push(a) + (o[a] += 19));
      let b = blob();

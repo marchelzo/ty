@@ -14,7 +14,7 @@
         ((v).items + idx)
 
 #define vec_push(v, item) \
-          (((v).count >= (v).capacity) \
+          (((v).count == (v).capacity) \
         ? ((resize((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count++] = (item)), \
                         ((v).items + (v).count - 1)) \

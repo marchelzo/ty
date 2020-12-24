@@ -1029,10 +1029,10 @@ builtin_os_spawn(value_vector *args)
 
                 struct table *result = object_new();
 
-                table_add(result, "stdin",  INTEGER(in[1]));
-                table_add(result, "stdout", INTEGER(out[0]));
-                table_add(result, "stderr", INTEGER(err[0]));
-                table_add(result, "pid",    INTEGER(pid));
+                table_put(result, "stdin",  INTEGER(in[1]));
+                table_put(result, "stdout", INTEGER(out[0]));
+                table_put(result, "stderr", INTEGER(err[0]));
+                table_put(result, "pid",    INTEGER(pid));
 
                 return OBJECT(result, 0);
         }
@@ -1620,33 +1620,33 @@ builtin_os_stat(value_vector *args)
                return NIL;
 
        struct table *t = object_new();
-       table_add(t, "st_dev", INTEGER(s.st_dev));
-       table_add(t, "st_ino", INTEGER(s.st_ino));
-       table_add(t, "st_mode", INTEGER(s.st_mode));
-       table_add(t, "st_nlink", INTEGER(s.st_nlink));
-       table_add(t, "st_uid", INTEGER(s.st_uid));
-       table_add(t, "st_gid", INTEGER(s.st_gid));
-       table_add(t, "st_rdev", INTEGER(s.st_rdev));
-       table_add(t, "st_size", INTEGER(s.st_size));
-       table_add(t, "st_blocks", INTEGER(s.st_blocks));
-       table_add(t, "st_blksize", INTEGER(s.st_blksize));
+       table_put(t, "st_dev", INTEGER(s.st_dev));
+       table_put(t, "st_ino", INTEGER(s.st_ino));
+       table_put(t, "st_mode", INTEGER(s.st_mode));
+       table_put(t, "st_nlink", INTEGER(s.st_nlink));
+       table_put(t, "st_uid", INTEGER(s.st_uid));
+       table_put(t, "st_gid", INTEGER(s.st_gid));
+       table_put(t, "st_rdev", INTEGER(s.st_rdev));
+       table_put(t, "st_size", INTEGER(s.st_size));
+       table_put(t, "st_blocks", INTEGER(s.st_blocks));
+       table_put(t, "st_blksize", INTEGER(s.st_blksize));
 
        struct table *atim = object_new();
        struct table *mtim = object_new();
        struct table *ctim = object_new();
 
-       table_add(atim, "tv_sec", INTEGER(s.st_atim.tv_sec));
-       table_add(atim, "tv_nsec", INTEGER(s.st_atim.tv_nsec));
+       table_put(atim, "tv_sec", INTEGER(s.st_atim.tv_sec));
+       table_put(atim, "tv_nsec", INTEGER(s.st_atim.tv_nsec));
 
-       table_add(mtim, "tv_sec", INTEGER(s.st_mtim.tv_sec));
-       table_add(mtim, "tv_nsec", INTEGER(s.st_mtim.tv_nsec));
+       table_put(mtim, "tv_sec", INTEGER(s.st_mtim.tv_sec));
+       table_put(mtim, "tv_nsec", INTEGER(s.st_mtim.tv_nsec));
 
-       table_add(ctim, "tv_sec", INTEGER(s.st_ctim.tv_sec));
-       table_add(ctim, "tv_nsec", INTEGER(s.st_ctim.tv_nsec));
+       table_put(ctim, "tv_sec", INTEGER(s.st_ctim.tv_sec));
+       table_put(ctim, "tv_nsec", INTEGER(s.st_ctim.tv_nsec));
 
-       table_add(t, "st_atim", OBJECT(atim, 0));
-       table_add(t, "st_mtim", OBJECT(mtim, 0));
-       table_add(t, "st_ctim", OBJECT(ctim, 0));
+       table_put(t, "st_atim", OBJECT(atim, 0));
+       table_put(t, "st_mtim", OBJECT(mtim, 0));
+       table_put(t, "st_ctim", OBJECT(ctim, 0));
 
        return OBJECT(t, 0);
 
@@ -1745,15 +1745,15 @@ builtin_time_localtime(value_vector *args)
         struct table *o = object_new();
 
         NOGC(o);
-        table_add(o, "sec", INTEGER(r.tm_sec));
-        table_add(o, "min", INTEGER(r.tm_min));
-        table_add(o, "hour", INTEGER(r.tm_hour));
-        table_add(o, "mday", INTEGER(r.tm_mday));
-        table_add(o, "mon", INTEGER(r.tm_mon));
-        table_add(o, "year", INTEGER(r.tm_year));
-        table_add(o, "wday", INTEGER(r.tm_wday));
-        table_add(o, "yday", INTEGER(r.tm_yday));
-        table_add(o, "isdst", BOOLEAN(r.tm_isdst));
+        table_put(o, "sec", INTEGER(r.tm_sec));
+        table_put(o, "min", INTEGER(r.tm_min));
+        table_put(o, "hour", INTEGER(r.tm_hour));
+        table_put(o, "mday", INTEGER(r.tm_mday));
+        table_put(o, "mon", INTEGER(r.tm_mon));
+        table_put(o, "year", INTEGER(r.tm_year));
+        table_put(o, "wday", INTEGER(r.tm_wday));
+        table_put(o, "yday", INTEGER(r.tm_yday));
+        table_put(o, "isdst", BOOLEAN(r.tm_isdst));
         OKGC(o);
 
         return OBJECT(o, 0);
@@ -1779,23 +1779,23 @@ builtin_time_strftime(value_vector *args)
                 } else if (v.type == VALUE_OBJECT) {
                         struct value *vp;
                         struct table *o = v.object;
-                        if ((vp = table_lookup(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_sec = vp->integer;
-                        if ((vp = table_lookup(o, "min")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "min")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_min = vp->integer;
-                        if ((vp = table_lookup(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_hour = vp->integer;
-                        if ((vp = table_lookup(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_mday = vp->integer;
-                        if ((vp = table_lookup(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_mon = vp->integer;
-                        if ((vp = table_lookup(o, "year")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "year")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_year = vp->integer;
-                        if ((vp = table_lookup(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_wday = vp->integer;
-                        if ((vp = table_lookup(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = table_look(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_yday = vp->integer;
-                        if ((vp = table_lookup(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
+                        if ((vp = table_look(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
                                 t.tm_isdst = vp->boolean;
 
                 } else {
@@ -1857,15 +1857,15 @@ builtin_time_strptime(value_vector *args)
         struct table *o = object_new();
 
         NOGC(o);
-        table_add(o, "sec", INTEGER(r.tm_sec));
-        table_add(o, "min", INTEGER(r.tm_min));
-        table_add(o, "hour", INTEGER(r.tm_hour));
-        table_add(o, "mday", INTEGER(r.tm_mday));
-        table_add(o, "mon", INTEGER(r.tm_mon));
-        table_add(o, "year", INTEGER(r.tm_year));
-        table_add(o, "wday", INTEGER(r.tm_wday));
-        table_add(o, "yday", INTEGER(r.tm_yday));
-        table_add(o, "isdst", BOOLEAN(r.tm_isdst));
+        table_put(o, "sec", INTEGER(r.tm_sec));
+        table_put(o, "min", INTEGER(r.tm_min));
+        table_put(o, "hour", INTEGER(r.tm_hour));
+        table_put(o, "mday", INTEGER(r.tm_mday));
+        table_put(o, "mon", INTEGER(r.tm_mon));
+        table_put(o, "year", INTEGER(r.tm_year));
+        table_put(o, "wday", INTEGER(r.tm_wday));
+        table_put(o, "yday", INTEGER(r.tm_yday));
+        table_put(o, "isdst", BOOLEAN(r.tm_isdst));
         OKGC(o);
 
         return OBJECT(o, 0);
@@ -1890,23 +1890,23 @@ builtin_time_time(value_vector *args)
         struct value *vp;
         struct table *o = v.object;
 
-        if ((vp = table_lookup(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_sec = vp->integer;
-        if ((vp = table_lookup(o, "min")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "min")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_min = vp->integer;
-        if ((vp = table_lookup(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_hour = vp->integer;
-        if ((vp = table_lookup(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_mday = vp->integer;
-        if ((vp = table_lookup(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_mon = vp->integer;
-        if ((vp = table_lookup(o, "year")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "year")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_year = vp->integer;
-        if ((vp = table_lookup(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_wday = vp->integer;
-        if ((vp = table_lookup(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = table_look(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_yday = vp->integer;
-        if ((vp = table_lookup(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
+        if ((vp = table_look(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
                 t.tm_isdst = vp->boolean;
 
         return INTEGER(mktime(&t));

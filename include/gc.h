@@ -14,6 +14,12 @@
 #define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
 #define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
 
+#define GC_THRESHOLD (1ULL << 25)
+
+typedef vec(struct alloc *) alloc_list;
+
+extern alloc_list allocs;
+extern size_t allocated;
 extern bool GC_ENABLED;
 
 struct alloc {
@@ -21,7 +27,6 @@ struct alloc {
                 struct {
                         char type;
                         char mark;
-                        unsigned size;
                 };
                 void const * restrict padding;
         };
@@ -45,11 +50,29 @@ enum {
         GC_HARD = 1 << 2,
 };
 
+void
+gc(void);
+
 void *
 gc_alloc(size_t n);
 
-void *
-gc_alloc_object(size_t n, char type);
+inline static void *
+gc_alloc_object(size_t n, char type)
+{
+        struct alloc *a = alloc(sizeof *a + n);
+
+        allocated += n;
+
+        a->mark = GC_NONE;
+        a->type = type;
+
+        if (allocated > GC_THRESHOLD)
+                gc();
+
+        vec_push(allocs, a);
+
+        return a->data;
+}
 
 void
 gc_register(void *p);
@@ -88,7 +111,6 @@ gc_alloc_unregistered(size_t n, char type)
 
         a->mark = GC_NONE;
         a->type = type;
-        a->size = n;
 
         return a->data;
 }

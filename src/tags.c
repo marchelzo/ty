@@ -148,7 +148,7 @@ tags_add_method(int tag, char const *name, struct value f)
 {
         LOG("tag = %d", tag);
         LOG("adding method %s to tag %s", name, names.items[tag - 1]);
-        table_add(&tables.items[tag - 1], name, f);
+        table_add(&tables.items[tag - 1], name, strhash(name), f);
 }
 
 void
@@ -160,8 +160,8 @@ tags_copy_methods(int dst, int src)
 }
 
 struct value *
-tags_lookup_method(int tag, char const *name)
+tags_lookup_method(int tag, char const *name, unsigned h)
 {
         struct table const *t = &tables.items[tag - 1];
-        return table_lookup(t, name);
+        return table_lookup(t, name, h);
 }

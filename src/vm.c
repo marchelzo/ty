@@ -297,6 +297,7 @@ vm_exec(char *code)
         bool b;
         float f;
         int n, i, j, tag, rc = 0;
+        unsigned h;
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
@@ -400,12 +401,14 @@ vm_exec(char *code)
                         v = pop();
                         if (!(v.type & VALUE_OBJECT))
                                 vm_panic("assignment to member of non-object");
-                        vp = table_lookup(v.object, ip);
+                        str = ip;
+                        ip += strlen(ip) + 1;
+                        READVALUE(h);
+                        vp = table_lookup(v.object, str, h);
                         if (vp != NULL)
                                 pushtarget(vp, v.object);
                         else
-                                pushtarget(table_add(v.object, ip, NIL), v.object);
-                        ip += strlen(ip) + 1;
+                                pushtarget(table_add(v.object, str, h, NIL), v.object);
                         break;
                 CASE(TARGET_SUBSCRIPT)
                         subscript = pop();
@@ -681,13 +684,13 @@ Throw:
                                 }
                                 break;
                         case VALUE_OBJECT:
-                                if ((vp = class_lookup_method(v.class, "__next__")) != NULL) {
+                                if ((vp = class_method(v.class, "__next__")) != NULL) {
                                         static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN };
                                         push(INTEGER(i));
                                         vec_push(calls, ip);
                                         call(vp, &v, 1, false);
                                         *vec_last(calls) = next_fix;
-                                } else if ((vp = class_lookup_method(v.class, "__iter__")) != NULL) {
+                                } else if ((vp = class_method(v.class, "__iter__")) != NULL) {
                                         static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN };
                                         pop();
                                         pop();
@@ -819,7 +822,7 @@ Throw:
                         left = pop();
 
                         i = class_lookup("Range");
-                        if (i == -1 || (vp = class_lookup_method(i, "init")) == NULL) {
+                        if (i == -1 || (vp = class_method(i, "init")) == NULL) {
                                 vm_panic("failed to load Range class. was prelude loaded correctly?");
                         }
 
@@ -835,7 +838,7 @@ Throw:
                         left = pop();
 
                         i = class_lookup("InclusiveRange");
-                        if (i == -1 || (vp = class_lookup_method(i, "init")) == NULL) {
+                        if (i == -1 || (vp = class_method(i, "init")) == NULL) {
                                 vm_panic("failed to load InclusiveRange class. was prelude loaded correctly?");
                         }
 
@@ -852,9 +855,11 @@ Throw:
                         char const *member = ip;
                         ip += strlen(ip) + 1;
 
+                        READVALUE(h);
+
                         vp = NULL;
                         if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(tags)) {
-                                vp = tags_lookup_method(tags_first(tags), member);
+                                vp = tags_lookup_method(tags_first(tags), member, h);
                                 if (vp != NULL)  {
                                         struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
                                         *this = v;
@@ -914,12 +919,12 @@ Throw:
                                 push(BUILTIN_METHOD(member, func, this));
                                 break;
                         case VALUE_OBJECT:
-                                vp = table_lookup(v.object, member);
+                                vp = table_lookup(v.object, member, h);
                                 if (vp != NULL) {
                                         push(*vp);
                                         break;
                                 }
-                                vp = class_lookup_method(v.class, member);
+                                vp = class_lookup_method(v.class, member, h);
                                 if (vp != NULL) {
                                         this = gc_alloc_object(sizeof *this, GC_VALUE);
                                         *this = v;
@@ -929,11 +934,11 @@ Throw:
                                 vm_panic("attempt to access non-existent member '%s' of %s", member, value_show(&v));
                                 break;
                         case VALUE_TAG:
-                                vp = tags_lookup_method(v.tag, member);
+                                vp = tags_lookup_method(v.tag, member, h);
                                 push(vp == NULL ? NIL : *vp);
                                 break;
                         case VALUE_CLASS:
-                                vp = class_lookup_method(v.class, member);
+                                vp = class_lookup_method(v.class, member, h);
                                 push(vp == NULL ? NIL : *vp);
                                 break;
                         default:
@@ -949,9 +954,9 @@ Throw:
                         case VALUE_ARRAY:
                                 if (subscript.type == VALUE_OBJECT) {
 ObjectSubscript:
-                                        vp = class_lookup_method(subscript.class, "__next__");
+                                        vp = class_method(subscript.class, "__next__");
                                         if (vp == NULL) {
-                                                vp = class_lookup_method(subscript.class, "__iter__");
+                                                vp = class_method(subscript.class, "__iter__");
                                                 if (vp == NULL) {
                                                         vm_panic("non-iterable object used in subscript expression");
                                                 }
@@ -1280,7 +1285,7 @@ OutOfRange:
                                 break;
                         case VALUE_CLASS:
                                 value = OBJECT(object_new(), v.class);
-                                vp = class_lookup_method(v.class, "init");
+                                vp = class_method(v.class, "init");
                                 if (vp != NULL) {
                                         call(vp, &value, n, true);
                                         pop();
@@ -1333,10 +1338,11 @@ OutOfRange:
                         char const *method = ip;
                         ip += strlen(ip) + 1;
 
+                        READVALUE(h);
                         READVALUE(n);
 
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
-                                vp = tags_lookup_method(tags_first(tags), method);
+                                vp = tags_lookup_method(tags_first(tags), method, h);
                                 if (vp != NULL) {
                                         value.tags = tags_pop(tags);
                                         if (value.tags == 0)
@@ -1353,7 +1359,7 @@ OutOfRange:
                          */
                         if (self == NULL) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
-                                vp = tags_lookup_method(value.tag, method);
+                                vp = tags_lookup_method(value.tag, method, h);
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method(method);
@@ -1368,12 +1374,12 @@ OutOfRange:
                                 func = get_blob_method(method);
                                 break;
                         case VALUE_CLASS: /* lol */
-                                vp = class_lookup_method(value.class, method);
+                                vp = class_lookup_method(value.class, method, h);
                                 break;
                         case VALUE_OBJECT:
-                                vp = class_lookup_method(value.class, method);
+                                vp = class_lookup_method(value.class, method, h);
                                 if (vp == NULL) {
-                                        vp = table_lookup(value.object, method);
+                                        vp = table_lookup(value.object, method, h);
                                 } else {
                                         self = &value;
                                 }
@@ -1596,7 +1602,7 @@ vm_call(struct value const *f, int argc)
         case VALUE_CLASS:
         {
                 struct value result = OBJECT(object_new(), f->class);
-                struct value *init = class_lookup_method(f->class, "init");
+                struct value *init = class_method(f->class, "init");
                 if (init != NULL)
                         call(init, &result, argc, true);
                 return result;

@@ -3,23 +3,33 @@
 #include "vec.h"
 #include "util.h"
 
+#define POOL_MAX (1ULL << 12)
+
+static vec(struct bucket) bp;
+
 void
 table_init(struct table *t)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
-                vec_init(t->buckets[i].hashes);
-                vec_init(t->buckets[i].names);
-                vec_init(t->buckets[i].values);
+                if (bp.count != 0) {
+                        t->buckets[i] = *vec_pop(bp);
+                        t->buckets[i].hashes.count = 0;
+                        t->buckets[i].names.count = 0;
+                        t->buckets[i].values.count = 0;
+                } else {
+                        vec_init(t->buckets[i].hashes);
+                        vec_init(t->buckets[i].names);
+                        vec_init(t->buckets[i].values);
+                }
         }
 }
 
 struct value *
-table_add(struct table *t, char const *name, struct value f)
+table_add(struct table *t, char const *name, unsigned h, struct value f)
 {
-        uint64_t h = strhash(name);
         int i = h % TABLE_SIZE;
 
-        struct value *m = table_lookup(t, name);
+        struct value *m = table_lookup(t, name, h);
 
         if (m == NULL) {
                 vec_push(t->buckets[i].hashes, h);
@@ -60,9 +70,8 @@ table_copy(struct table *dst, struct table const *src)
 }
 
 struct value *
-table_lookup(struct table const *t, char const *name)
+table_lookup(struct table const *t, char const *name, unsigned h)
 {
-        uint64_t h = strhash(name);
         int i = h % TABLE_SIZE;
 
         struct bucket const *b = &t->buckets[i];
@@ -75,4 +84,18 @@ table_lookup(struct table const *t, char const *name)
         }
 
         return NULL;
+}
+
+void
+table_release(struct table *t)
+{
+        for (int i = 0; i < TABLE_SIZE; ++i) {
+                if (bp.count < POOL_MAX) {
+                        vec_push(bp, t->buckets[i]);
+                } else {
+                        free(t->buckets[i].values.items);
+                        free(t->buckets[i].names.items);
+                        free(t->buckets[i].hashes.items);
+                }
+        }
 }

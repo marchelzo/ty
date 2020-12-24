@@ -108,7 +108,7 @@ ary_hash(struct value const *a)
 inline static unsigned long
 obj_hash(struct value const *v)
 {
-        struct value const *f = class_lookup_method(v->class, "__hash__");
+        struct value const *f = class_method(v->class, "__hash__");
 
         if (f != NULL) {
                 struct value h = vm_eval_function(f, v, NULL);
@@ -340,7 +340,7 @@ value_show(struct value const *v)
                 break;
         case VALUE_OBJECT:;
 #ifdef TY_RELEASE
-                struct value *fp = class_lookup_method(v->class, "__str__");
+                struct value *fp = class_method(v->class, "__str__");
 #else
                 struct value *fp = NULL;
 #endif
@@ -400,7 +400,7 @@ value_compare(void const *_v1, void const *_v2)
                 }
                 return ((int)v1->array->count) - ((int)v2->array->count);
         case VALUE_OBJECT:;
-                struct value const *cmpfn = class_lookup_method(v1->class, "<=>");
+                struct value const *cmpfn = class_method(v1->class, "<=>");
                 if (cmpfn == NULL)
                         goto Fail;
                 struct value v = vm_eval_function(cmpfn, v1, v2, NULL);
@@ -546,7 +546,7 @@ value_apply_callable(struct value *f, struct value *v)
         case VALUE_CLASS:
                 {
                         struct value result = OBJECT(object_new(), f->class);
-                        struct value *init = class_lookup_method(f->class, "init");
+                        struct value *init = class_method(f->class, "init");
                         if (init != NULL)
                                 vm_eval_function(&METHOD(NULL, init, &result), v, NULL);
                         return result;
@@ -581,7 +581,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_PTR:              if (v1->ptr != v2->ptr)                                                        return false; break;
         case VALUE_NIL:                                                                                                           break;
         case VALUE_OBJECT:
-                f = class_lookup_method(v1->class, "<=>");
+                f = class_method(v1->class, "<=>");
                 if (f != NULL) {
                         if (value_compare(v1, v2) != 0) {
                                 return false;

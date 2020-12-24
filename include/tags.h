@@ -36,7 +36,7 @@ void
 tags_add_method(int tag, char const *name, struct value f);
 
 struct value *
-tags_lookup_method(int tag, char const *name);
+tags_lookup_method(int tag, char const *name, unsigned h);
 
 void
 tags_copy_methods(int dst, int src);

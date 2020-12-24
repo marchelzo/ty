@@ -916,6 +916,15 @@ emit_int(int k)
 }
 
 inline static void
+emit_uint(unsigned k)
+{
+        LOG("emitting uint: %u", k);
+        char const *s = (char *) &k;
+        for (int i = 0; i < sizeof (unsigned); ++i)
+                vec_push(state.code, s[i]);
+}
+
+inline static void
 emit_symbol(uintptr_t sym)
 {
         LOG("emitting symbol: %"PRIuPTR, sym);
@@ -1643,6 +1652,7 @@ emit_target(struct expression *target)
                 emit_expression(target->object);
                 emit_instr(INSTR_TARGET_MEMBER);
                 emit_string(target->member_name);
+                emit_uint(strhash(target->member_name));
                 break;
         case EXPRESSION_SUBSCRIPT:
                 emit_expression(target->container);
@@ -2310,6 +2320,7 @@ emit_expression(struct expression const *e)
                 emit_expression(e->object);
                 emit_instr(INSTR_MEMBER_ACCESS);
                 emit_string(e->member_name);
+                emit_uint(strhash(e->member_name));
                 break;
         case EXPRESSION_SUBSCRIPT:
                 emit_expression(e->container);
@@ -2329,6 +2340,7 @@ emit_expression(struct expression const *e)
                 emit_expression(e->object);
                 emit_instr(INSTR_CALL_METHOD);
                 emit_string(e->method_name);
+                emit_uint(strhash(e->method_name));
                 emit_int(e->method_args.count);
                 break;
         case EXPRESSION_FUNCTION:

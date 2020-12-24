@@ -25,7 +25,7 @@ binary_operator_addition(struct value const *left, struct value const *right)
 {
         
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_lookup_method(left->class, "+");
+                struct value const *f = class_method(left->class, "+");
                 if (f == NULL)
                         goto Fail;
                 return vm_eval_function(f, left, right, NULL);
@@ -78,7 +78,7 @@ binary_operator_multiplication(struct value const *left, struct value const *rig
 {
 
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_lookup_method(left->class, "*");
+                struct value const *f = class_method(left->class, "*");
                 if (f == NULL)
                         goto Fail;
                 return vm_eval_function(f, left, right, NULL);
@@ -125,7 +125,7 @@ struct value
 binary_operator_division(struct value const *left, struct value const *right)
 {
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_lookup_method(left->class, "/");
+                struct value const *f = class_method(left->class, "/");
                 if (f == NULL)
                         goto Fail;
                 return vm_eval_function(f, left, right, NULL);
@@ -153,7 +153,7 @@ struct value
 binary_operator_subtraction(struct value const *left, struct value const *right)
 {
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_lookup_method(left->class, "-");
+                struct value const *f = class_method(left->class, "-");
                 if (f == NULL)
                         goto Fail;
                 return vm_eval_function(f, left, right, NULL);
@@ -192,7 +192,7 @@ struct value
 binary_operator_remainder(struct value const *left, struct value const *right)
 {
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_lookup_method(left->class, "%");
+                struct value const *f = class_method(left->class, "%");
                 if (f == NULL)
                         goto Fail;
                 return vm_eval_function(f, left, right, NULL);

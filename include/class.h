@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include "value.h"
+#include "util.h"
 
 int
 class_new(char const *name);
@@ -21,7 +22,13 @@ void
 class_copy_methods(int dst, int src);
 
 struct value *
-class_lookup_method(int class, char const *name);
+class_lookup_method(int class, char const *name, unsigned h);
+
+inline static struct value *
+class_method(int class, char const *name)
+{
+        return class_lookup_method(class, name, strhash(name));
+}
 
 void
 class_set_super(int class, int super);

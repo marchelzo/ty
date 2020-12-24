@@ -29,13 +29,3 @@ object_mark(struct table *o)
                 for (int v = 0; v < o->buckets[i].values.count; ++v)
                         value_mark(&o->buckets[i].values.items[v]);
 }
-
-void
-object_free(struct table *o)
-{
-        for (int i = 0; i < TABLE_SIZE; ++i) {
-                free(o->buckets[i].values.items);
-                free(o->buckets[i].names.items);
-                free(o->buckets[i].hashes.items);
-        }
-}
