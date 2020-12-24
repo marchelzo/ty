@@ -53,8 +53,19 @@ enum {
 void
 gc(void);
 
-void *
-gc_alloc(size_t n);
+inline static void *
+gc_alloc(size_t n)
+{
+        void *mem = alloc(n);
+
+        allocated += n;
+
+        if (allocated > GC_THRESHOLD)
+                gc();
+
+        return mem;
+}
+
 
 inline static void *
 gc_alloc_object(size_t n, char type)
@@ -78,7 +89,7 @@ void
 gc_register(void *p);
 
 void
-_gc_push(struct value *v);
+_gc_push(struct value const *v);
 
 #define gc_push(v) do { LOG("gc_push: " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0);
 
@@ -99,7 +110,7 @@ gc_notify(size_t n);
 
 inline static void *
 gc_resize(void *p, size_t n) {
-        gc_notify(n);
+        allocated += n;
         resize(p, n);
         return p;
 }

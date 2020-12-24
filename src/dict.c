@@ -10,22 +10,42 @@
 #include "log.h"
 #include "vm.h"
 #include "gc.h"
+#include "vec.h"
+
+#define INITIAL_SIZE 16
+#define POOL_MAX (1ULL << 18)
+
+struct dead {
+        size_t size;
+        unsigned long *hashes;
+        struct value *keys;
+        struct value *values;
+};
+
+static vec(struct dict) dp;
 
 struct dict *
 dict_new(void)
 {
-        struct dict *dict = gc_alloc_object(sizeof *dict, GC_DICT);
+        struct dict *d = gc_alloc_object(sizeof *d, GC_DICT);
 
-        dict->size = 16;
-        dict->count = 0;
-        dict->dflt = NONE;
-        dict->hashes = alloc(sizeof (unsigned long [16]));
-        dict->keys = alloc(sizeof (struct value [16]));
-        dict->values = alloc(sizeof (struct value [16]));
+        if (dp.count != 0) {
+                *d = *vec_pop(dp);
+        } else {
+                NOGC(d);
+                d->size = INITIAL_SIZE;
+                d->hashes = gc_alloc(sizeof (unsigned long [INITIAL_SIZE]));
+                d->keys = gc_alloc(sizeof (struct value [INITIAL_SIZE]));
+                d->values = gc_alloc(sizeof (struct value [INITIAL_SIZE]));
+                OKGC(d);
+        }
 
-        memset(dict->keys, 0, sizeof (struct value [16]));
 
-        return dict;
+        d->count = 0;
+        d->dflt = NONE;
+        memset(d->keys, 0, sizeof (struct value [d->size]));
+
+        return d;
 }
 
 inline static size_t
@@ -67,11 +87,11 @@ inline static void
 grow(struct dict *d)
 {
         size_t oldsz = d->size;
-        d->size = oldsz << 2;
+        d->size <<= 2;
 
-        unsigned long *hashes = alloc(sizeof (unsigned long [d->size]));
-        struct value *keys = alloc(sizeof (struct value [d->size]));
-        struct value *values = alloc(sizeof (struct value [d->size]));
+        unsigned long *hashes = gc_resize(NULL, sizeof (unsigned long [d->size]));
+        struct value *keys = gc_resize(NULL, sizeof (struct value [d->size]));
+        struct value *values = gc_resize(NULL, sizeof (struct value [d->size]));
 
         memset(keys, 0, sizeof (struct value [d->size]));
         
@@ -207,9 +227,13 @@ dict_mark(struct dict *d)
 void
 dict_free(struct dict *d)
 {
-        free(d->hashes);
-        free(d->keys);
-        free(d->values);
+        if (dp.count < POOL_MAX) {
+                vec_push(dp, *d);
+        } else {
+                free(d->hashes);
+                free(d->keys);
+                free(d->values);
+        }
 }
 
 static struct value

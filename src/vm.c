@@ -297,7 +297,7 @@ vm_exec(char *code)
         bool b;
         float f;
         int n, i, j, tag, rc = 0;
-        unsigned h;
+        unsigned long h;
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;

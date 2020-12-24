@@ -232,7 +232,7 @@ struct blob *
 value_blob_new(void);
 
 void
-_value_mark(struct value *v);
+_value_mark(struct value const *v);
 
 inline static void
 value_array_push(struct array *a, struct value v)

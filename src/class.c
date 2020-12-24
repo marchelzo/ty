@@ -63,7 +63,7 @@ class_copy_methods(int dst, int src)
 }
 
 struct value *
-class_lookup_method(int class, char const *name, unsigned h)
+class_lookup_method(int class, char const *name, unsigned long h)
 {
         do {
                 struct table const *t = &tables.items[class];

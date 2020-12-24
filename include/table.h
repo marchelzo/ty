@@ -22,7 +22,7 @@ void
 table_init(struct table *t);
 
 struct value *
-table_add(struct table *t, char const *name, unsigned h, struct value f);
+table_add(struct table *t, char const *name, unsigned long h, struct value f);
 
 inline static struct value *
 table_put(struct table *t, char const *name, struct value f)
@@ -34,7 +34,7 @@ void
 table_copy(struct table *dst, struct table const *src);
 
 struct value *
-table_lookup(struct table const *t, char const *name, unsigned h);
+table_lookup(struct table const *t, char const *name, unsigned long h);
 
 inline static struct value *
 table_look(struct table const *t, char const *name)

@@ -9,7 +9,7 @@
 
 size_t allocated = 0;
 alloc_list allocs;
-static vec(struct value *) root_set;
+static vec(struct value const *) root_set;
 
 bool GC_ENABLED = true;
 
@@ -49,19 +49,6 @@ gc(void)
         allocated = 0;
 }
 
-void *
-gc_alloc(size_t n)
-{
-        void *mem = alloc(n);
-
-        allocated += n;
-
-        if (allocated > GC_THRESHOLD)
-                gc();
-
-        return mem;
-}
-
 void
 gc_notify(size_t n)
 {
@@ -75,7 +62,7 @@ gc_register(void *p)
 }
 
 void
-_gc_push(struct value *v)
+_gc_push(struct value const *v)
 {
         vec_push(root_set, v);
 }

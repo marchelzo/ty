@@ -22,7 +22,7 @@ void
 class_copy_methods(int dst, int src);
 
 struct value *
-class_lookup_method(int class, char const *name, unsigned h);
+class_lookup_method(int class, char const *name, unsigned long h);
 
 inline static struct value *
 class_method(int class, char const *name)

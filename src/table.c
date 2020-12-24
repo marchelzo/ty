@@ -3,7 +3,7 @@
 #include "vec.h"
 #include "util.h"
 
-#define POOL_MAX (1ULL << 12)
+#define POOL_MAX (1ULL << 16)
 
 static vec(struct bucket) bp;
 
@@ -25,7 +25,7 @@ table_init(struct table *t)
 }
 
 struct value *
-table_add(struct table *t, char const *name, unsigned h, struct value f)
+table_add(struct table *t, char const *name, unsigned long h, struct value f)
 {
         int i = h % TABLE_SIZE;
 
@@ -70,7 +70,7 @@ table_copy(struct table *dst, struct table const *src)
 }
 
 struct value *
-table_lookup(struct table const *t, char const *name, unsigned h)
+table_lookup(struct table const *t, char const *name, unsigned long h)
 {
         int i = h % TABLE_SIZE;
 

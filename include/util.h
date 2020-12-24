@@ -40,10 +40,10 @@ strstrn(char const *haystack, int hn, char const *needle, int nn)
         return NULL;
 }
 
-inline static uint64_t
+inline static unsigned long
 strhash(char const *s)
 {
-        uint64_t hash = 5381;
+        unsigned long hash = 5381;
 
         while (*s != '\0')
                 hash = ((hash << 5) + hash) + *s++; /* hash * 33 + c */

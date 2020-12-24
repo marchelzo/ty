@@ -609,7 +609,7 @@ value_array_mark(struct array *a)
 }
 
 inline static void
-function_mark_references(struct value *v)
+function_mark_references(struct value const *v)
 {
         for (size_t i = 0; i < v->refs->count; ++i) {
                 struct variable *var = (struct variable *)v->refs->refs[i].pointer;
@@ -637,7 +637,7 @@ value_string_alloc(int n)
 }
 
 void
-_value_mark(struct value *v)
+_value_mark(struct value const *v)
 {
         switch (v->type) {
         case VALUE_METHOD:          MARK(v->this); value_mark(v->this);                break;

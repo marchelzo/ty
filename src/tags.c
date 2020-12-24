@@ -160,7 +160,7 @@ tags_copy_methods(int dst, int src)
 }
 
 struct value *
-tags_lookup_method(int tag, char const *name, unsigned h)
+tags_lookup_method(int tag, char const *name, unsigned long h)
 {
         struct table const *t = &tables.items[tag - 1];
         return table_lookup(t, name, h);
