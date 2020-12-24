@@ -157,10 +157,14 @@ class Range : Iterable {
     }
 
     contains?(self, k) {
-	return self.has?(k);
+	return self ? k;
     }
 
     has?(self, k) {
+        return self ? k;
+    }
+
+    ?(self, k) {
 	return k >= self.low() && k < self.high();
     }
 

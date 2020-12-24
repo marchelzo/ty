@@ -738,7 +738,7 @@ Throw:
                         for (i = 0; i < n; ++i) {
                                 value = top()[-2*i];
                                 key = top()[-(2*i + 1)];
-                                dict_put_value(v.dict, top()[-2*i+1], top()[-2*i]);
+                                dict_put_value(v.dict, key, value);
                         }
                         stack.count -= 2 * n;
                         break;
