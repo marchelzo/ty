@@ -1588,7 +1588,7 @@ vm_call(struct value const *f, int argc)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 vec_init(args);
-                for (int i = argc; i >= 0; --i) {
+                for (int i = argc - 1; i >= 0; --i) {
                         vec_push(args, top()[-i]);
                 }
                 stack.count -= argc;

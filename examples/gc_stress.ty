@@ -16,8 +16,9 @@ for (let i = 0; i < 30; ++i) {
      let a = (1 .. 1000).list().map(|(1 .. 100).list().map(() -> 'hello haha world'.split(' '))|).groupBy(.len()).sort();
      let fs = [];
      let cs = [..5 for _ in ..100].map(|A(#.high())|).each(A.f);
-     for (let i = 0; i < 100; ++i)
+     let d = [ { c for c in 'abc' } for _ in ..1000 ].fold(< + >);
+     for (let i = 0; i < 1000; ++i)
           fs.push(a -> fs.push(a) + (o[a] += 19));
      let b = blob();
-     b.push("{a}");
+     b.push("{a} {d}");
 }
