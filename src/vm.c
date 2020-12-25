@@ -1577,6 +1577,7 @@ struct value
 vm_call(struct value const *f, int argc)
 {
         value_vector args;
+        struct value r, *init;
 
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -1593,20 +1594,16 @@ vm_call(struct value const *f, int argc)
                 stack.count -= argc;
                 return f->builtin_function(&args);
         case VALUE_TAG:
-        {
-                struct value result = pop();
-                result.tags = tags_push(result.tags, f->tag);
-                result.type |= VALUE_TAGGED;
-                return result;
-        }
+                r = pop();
+                r.tags = tags_push(r.tags, f->tag);
+                r.type |= VALUE_TAGGED;
+                return r;
         case VALUE_CLASS:
-        {
-                struct value result = OBJECT(object_new(), f->class);
-                struct value *init = class_method(f->class, "init");
+                r = OBJECT(object_new(), f->class);
+                init = class_method(f->class, "init");
                 if (init != NULL)
-                        call(init, &result, argc, true);
-                return result;
-        }
+                        call(init, &r, argc, true);
+                return r;
         default:
                 abort();
         }

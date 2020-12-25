@@ -447,7 +447,8 @@ value_apply_predicate(struct value *p, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
-                b = vm_eval_function(p, v, NULL);
+                vm_push(v);
+                b = vm_call(p, 1);
                 return value_truthy(&b);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
@@ -490,9 +491,10 @@ value_apply_callable(struct value *f, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
+        case VALUE_CLASS:
+        case VALUE_TAG:
                 vm_push(v);
                 return vm_call(f, 1);
-                return vm_eval_function(f, v, NULL);
         case VALUE_REGEX:
                 if (v->type != VALUE_STRING)
                         vm_panic("regex applied as predicate to non-string");
@@ -536,21 +538,6 @@ value_apply_callable(struct value *f, struct value *v)
                 }
 
                 return match;
-        case VALUE_TAG:
-                {
-                        struct value result = *v;
-                        result.tags = tags_push(result.tags, f->tag);
-                        result.type |= VALUE_TAGGED;
-                        return result;
-                }
-        case VALUE_CLASS:
-                {
-                        struct value result = OBJECT(object_new(), f->class);
-                        struct value *init = class_method(f->class, "init");
-                        if (init != NULL)
-                                vm_eval_function(&METHOD(NULL, init, &result), v, NULL);
-                        return result;
-                }
         default:
                 vm_panic("invalid type of value used as a callable: %s", value_show(f));
         }

@@ -14,7 +14,7 @@
 #define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
 #define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
 
-#define GC_THRESHOLD (1ULL << 25)
+#define GC_THRESHOLD (1ULL << 26)
 
 typedef vec(struct alloc *) alloc_list;
 
