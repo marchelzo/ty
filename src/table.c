@@ -3,24 +3,13 @@
 #include "vec.h"
 #include "util.h"
 
-#define POOL_MAX (1ULL << 16)
-
-static vec(struct bucket) bp;
-
 void
 table_init(struct table *t)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
-                if (bp.count != 0) {
-                        t->buckets[i] = *vec_pop(bp);
-                        t->buckets[i].hashes.count = 0;
-                        t->buckets[i].names.count = 0;
-                        t->buckets[i].values.count = 0;
-                } else {
-                        vec_init(t->buckets[i].hashes);
-                        vec_init(t->buckets[i].names);
-                        vec_init(t->buckets[i].values);
-                }
+                vec_init(t->buckets[i].hashes);
+                vec_init(t->buckets[i].names);
+                vec_init(t->buckets[i].values);
         }
 }
 
@@ -90,12 +79,8 @@ void
 table_release(struct table *t)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
-                if (bp.count < POOL_MAX) {
-                        vec_push(bp, t->buckets[i]);
-                } else {
-                        free(t->buckets[i].values.items);
-                        free(t->buckets[i].names.items);
-                        free(t->buckets[i].hashes.items);
-                }
+                free(t->buckets[i].values.items);
+                free(t->buckets[i].names.items);
+                free(t->buckets[i].hashes.items);
         }
 }
