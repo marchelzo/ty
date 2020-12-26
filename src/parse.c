@@ -137,6 +137,15 @@ prefix_parenthesis(void);
 inline static struct token *
 tok(void);
 
+char *
+mksym(int s)
+{
+        char b[32];
+
+        snprintf(b, sizeof b - 1, ":%d", s);
+        return sclone(b);
+}
+
 /*
  * Get a unique identifier name.
  * This sucks.
@@ -145,11 +154,7 @@ char *
 gensym(void)
 {
         static int sym = 0;
-        char buf[24];
-
-        sprintf(buf, ":%d", sym++);
-
-        return sclone(buf);
+        return mksym(sym++);
 }
 
 inline static struct expression *
@@ -1799,7 +1804,6 @@ parse_expr(int prec)
 
         if (++depth > 256)
                 error("exceeded maximum recursion depth of 256");
-
 
         parse_fn *f = get_prefix_parser();
         if (f == NULL)

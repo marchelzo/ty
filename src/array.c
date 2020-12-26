@@ -10,19 +10,19 @@
 #include "vm.h"
 
 static struct value
-array_drop_mut(struct value *array, value_vector *args);
+array_drop_mut(struct value *array, int argc);
 
 static struct value
-array_drop(struct value *array, value_vector *args);
+array_drop(struct value *array, int argc);
 
 static struct value
-array_zip_with(struct value *array, value_vector *args);
+array_zip_with(struct value *array, int argc);
 
 static struct value
-array_min_by(struct value *array, value_vector *args);
+array_min_by(struct value *array, int argc);
 
 static struct value
-array_max_by(struct value *array, value_vector *args);
+array_max_by(struct value *array, int argc);
 
 static struct value *comparison_fn;
 
@@ -74,24 +74,24 @@ shrink(struct value *array)
 }
 
 static struct value
-array_push(struct value *array, value_vector *args)
+array_push(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the push method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the push method on arrays expects 1 argument but got %d", argc);
 
-        value_array_push(array->array, args->items[0]);
+        value_array_push(array->array, ARG(0));
 
         return NIL;
 }
 
 static struct value
-array_insert(struct value *array, value_vector *args)
+array_insert(struct value *array, int argc)
 {
-        if (args->count != 2)
-                vm_panic("the insert method on arrays expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("the insert method on arrays expects 2 arguments but got %d", argc);
 
-        struct value i = args->items[0];
-        struct value v = args->items[1];
+        struct value i = ARG(0);
+        struct value v = ARG(1);
 
         if (i.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as the index to the insert method on array");
@@ -112,16 +112,16 @@ array_insert(struct value *array, value_vector *args)
 }
 
 static struct value
-array_pop(struct value *array, value_vector *args)
+array_pop(struct value *array, int argc)
 {
         struct value result;
 
-        if (args->count == 0) {
+        if (argc == 0) {
                 if (array->array->count == 0)
                         vm_panic("attempt to pop from an empty array");
                 result = array->array->items[--array->array->count];
-        } else if (args->count == 1) {
-                struct value arg = args->items[0];
+        } else if (argc == 1) {
+                struct value arg = ARG(0);
                 if (arg.type != VALUE_INTEGER)
                         vm_panic("the argument to pop must be an integer");
                 if (arg.integer < 0)
@@ -131,7 +131,7 @@ array_pop(struct value *array, value_vector *args)
                 result = array->array->items[arg.integer];
                 vec_pop_ith(*array->array, arg.integer);
         } else {
-                vm_panic("the pop method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
+                vm_panic("the pop method on arrays expects 0 or 1 argument(s) but got %d", argc);
         }
 
         shrink(array);
@@ -140,13 +140,13 @@ array_pop(struct value *array, value_vector *args)
 }
 
 static struct value
-array_swap(struct value *array, value_vector *args)
+array_swap(struct value *array, int argc)
 {
-        if (args->count != 2)
-                vm_panic("array.swap() expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("array.swap() expects 2 arguments but got %d", argc);
 
-        struct value i = args->items[0];
-        struct value j = args->items[1];
+        struct value i = ARG(0);
+        struct value j = ARG(1);
 
         if (i.type != VALUE_INTEGER || j.type != VALUE_INTEGER)
                 vm_panic("the arguments to array.swap() must be integers");
@@ -170,12 +170,12 @@ array_swap(struct value *array, value_vector *args)
 }
 
 static struct value
-array_slice_mut(struct value *array, value_vector *args)
+array_slice_mut(struct value *array, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("array.slice!() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("array.slice!() expects 1 or 2 arguments but got %d", argc);
         
-        struct value start = args->items[0];
+        struct value start = ARG(0);
 
         if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to array.slice!()");
@@ -183,8 +183,8 @@ array_slice_mut(struct value *array, value_vector *args)
         int s = start.integer;
         int n;
 
-        if (args->count == 2) {
-                struct value count = args->items[1];
+        if (argc == 2) {
+                struct value count = ARG(1);
                 if (count.type != VALUE_INTEGER)
                         vm_panic("non-integer passed as second argument to array.slice!()");
                 n = count.integer;
@@ -215,15 +215,15 @@ array_slice_mut(struct value *array, value_vector *args)
 }
 
 static struct value
-array_zip(struct value *array, value_vector *args)
+array_zip(struct value *array, int argc)
 {
-        if (args->count == 2)
-                return array_zip_with(array, args);
+        if (argc == 2)
+                return array_zip_with(array, argc);
 
-        if (args->count != 1)
-                vm_panic("array.zip() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.zip() expects 1 argument but got %d", argc);
 
-        struct value other = args->items[0];
+        struct value other = ARG(0);
         if (other.type != VALUE_ARRAY)
                 vm_panic("the argument to array.zip() must be an array");
 
@@ -251,16 +251,16 @@ array_zip(struct value *array, value_vector *args)
 }
 
 static struct value
-array_zip_with(struct value *array, value_vector *args)
+array_zip_with(struct value *array, int argc)
 {
-        if (args->count != 2)
-                vm_panic("array.zipWith() expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("array.zipWith() expects 2 arguments but got %d", argc);
 
-        struct value other = args->items[0];
+        struct value other = ARG(0);
         if (other.type != VALUE_ARRAY)
                 vm_panic("the first argument to array.zipWith() must be an array");
 
-        struct value f = args->items[1];
+        struct value f = ARG(1);
         if (!CALLABLE(f))
                 vm_panic("the second argument to array.zipWith() must be callable");
 
@@ -286,19 +286,19 @@ array_zip_with(struct value *array, value_vector *args)
 }
 
 static struct value
-array_map_cons(struct value *array, value_vector *args)
+array_map_cons(struct value *array, int argc)
 {
-        if (args->count != 2)
-                vm_panic("array.mapCons() expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("array.mapCons() expects 2 arguments but got %d", argc);
 
-        struct value k = args->items[0];
+        struct value k = ARG(0);
         if (k.type != VALUE_INTEGER)
                 vm_panic("the first argument to array.mapCons() must be an integer");
 
         if (k.integer <= 0)
                 vm_panic("the first argument to array.mapCons() must be positive");
 
-        struct value f = args->items[1];
+        struct value f = ARG(1);
         if (!CALLABLE(f))
                 vm_panic("the second argument to array.mapCons() must be callable");
 
@@ -317,20 +317,20 @@ array_map_cons(struct value *array, value_vector *args)
 }
 
 static struct value
-array_slice(struct value *array, value_vector *args)
+array_slice(struct value *array, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("array.slice() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("array.slice() expects 1 or 2 arguments but got %d", argc);
         
-        struct value start = args->items[0];
+        struct value start = ARG(0);
         if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to array.slice()");
 
         int s = start.integer;
         int n;
 
-        if (args->count == 2) {
-                struct value count = args->items[1];
+        if (argc == 2) {
+                struct value count = ARG(1);
                 if (count.type != VALUE_INTEGER)
                         vm_panic("non-integer passed as second argument to array.slice()");
                 n = count.integer;
@@ -362,29 +362,29 @@ array_slice(struct value *array, value_vector *args)
 }
 
 static struct value
-array_sort(struct value *array, value_vector *args)
+array_sort(struct value *array, int argc)
 {
         int i;
         int n;
 
-        switch (args->count) {
+        switch (argc) {
         case 0:
                 i = 0;
                 n = array->array->count;
                 break;
         case 2:
-                if (args->items[1].type != VALUE_INTEGER)
+                if (ARG(1).type != VALUE_INTEGER)
                         vm_panic("the second argument to array.sort() must be an integer");
-                n = args->items[1].integer;
+                n = ARG(1).integer;
         case 1:
-                if (args->items[0].type != VALUE_INTEGER)
+                if (ARG(0).type != VALUE_INTEGER)
                         vm_panic("the first argument to array.sort() must be an integer");
-                i = args->items[0].integer;
-                if (args->count == 1)
+                i = ARG(0).integer;
+                if (argc == 1)
                         n = array->array->count - i;
                 break;
         default:
-                vm_panic("array.sort() expects 0, 1, or 2 arguments but got %zu", args->count);
+                vm_panic("array.sort() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
         if (i < 0)
@@ -399,11 +399,11 @@ array_sort(struct value *array, value_vector *args)
 }
 
 static struct value
-array_next_permutation(struct value *array, value_vector *args)
+array_next_permutation(struct value *array, int argc)
 {
 #define CMP(i, j) value_compare(&array->array->items[i], &array->array->items[j])
-        if (args->count != 0)
-                vm_panic("array.nextPermutation() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("array.nextPermutation() expects no arguments but got %d", argc);
 
         for (int i = array->array->count - 1; i > 0; --i) {
                 if (CMP(i - 1, i) < 0) {
@@ -416,7 +416,9 @@ array_next_permutation(struct value *array, value_vector *args)
                         array->array->items[i - 1] = array->array->items[j];
                         array->array->items[j] = t;
 
-                        array_sort(array, &(value_vector){ .count = 1, .items = &INTEGER(i) });
+                        vm_push(&INTEGER(i));
+                        array_sort(array, 1);
+                        vm_pop();
 
                         return *array;
                 }
@@ -427,12 +429,12 @@ array_next_permutation(struct value *array, value_vector *args)
 }
 
 static struct value
-array_take_while_mut(struct value *array, value_vector *args)
+array_take_while_mut(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.takeWhile!() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.takeWhile!() expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
 
         if (!CALLABLE(f))
                 vm_panic("non-callable predicate passed to array.takeWhile!()");
@@ -452,12 +454,12 @@ array_take_while_mut(struct value *array, value_vector *args)
 }
 
 static struct value
-array_take_while(struct value *array, value_vector *args)
+array_take_while(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.takeWhile!() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.takeWhile!() expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
 
         if (!CALLABLE(f))
                 vm_panic("non-callable predicate passed to array.takeWhile!()");
@@ -480,12 +482,12 @@ array_take_while(struct value *array, value_vector *args)
 }
 
 static struct value
-array_drop_while_mut(struct value *array, value_vector *args)
+array_drop_while_mut(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.dropWhile!() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.dropWhile!() expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
 
         if (!CALLABLE(f))
                 vm_panic("non-callable predicate passed to array.dropWhile!()");
@@ -505,12 +507,12 @@ array_drop_while_mut(struct value *array, value_vector *args)
 }
 
 static struct value
-array_drop_while(struct value *array, value_vector *args)
+array_drop_while(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.dropWhile() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.dropWhile() expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
 
         if (!CALLABLE(f))
                 vm_panic("non-callable predicate passed to array.dropWhile()");
@@ -534,14 +536,14 @@ array_drop_while(struct value *array, value_vector *args)
 }
 
 static struct value
-array_uniq(struct value *array, value_vector *args)
+array_uniq(struct value *array, int argc)
 {
         struct value *f = NULL;
 
-        if (args->count == 1)
-                f = &args->items[0];
-        else if (args->count != 0)
-                vm_panic("array.uniq() expects 0 or 1 arguments but got %zu", args->count);
+        if (argc == 1)
+                f = &ARG(0);
+        else if (argc != 0)
+                vm_panic("array.uniq() expects 0 or 1 arguments but got %d", argc);
 
         if (f != NULL && !CALLABLE(*f))
                 vm_panic("the argument to array.uniq() must be callable");
@@ -567,12 +569,12 @@ array_uniq(struct value *array, value_vector *args)
 }
 
 static struct value
-array_take_mut(struct value *array, value_vector *args)
+array_take_mut(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.take!() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.take!() expects 1 argument but got %d", argc);
 
-        struct value n = args->items[0];
+        struct value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to array.take!()");
@@ -584,12 +586,12 @@ array_take_mut(struct value *array, value_vector *args)
 }
 
 static struct value
-array_take(struct value *array, value_vector *args)
+array_take(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.take() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.take() expects 1 argument but got %d", argc);
 
-        struct value n = args->items[0];
+        struct value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to array.take!()");
@@ -609,12 +611,12 @@ array_take(struct value *array, value_vector *args)
 }
 
 static struct value
-array_drop_mut(struct value *array, value_vector *args)
+array_drop_mut(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.drop!() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.drop!() expects 1 argument but got %d", argc);
 
-        struct value n = args->items[0];
+        struct value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to array.drop!()");
@@ -629,12 +631,12 @@ array_drop_mut(struct value *array, value_vector *args)
 }
 
 static struct value
-array_drop(struct value *array, value_vector *args)
+array_drop(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.drop() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.drop() expects 1 argument but got %d", argc);
 
-        struct value n = args->items[0];
+        struct value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to array.drop()");
@@ -655,10 +657,10 @@ array_drop(struct value *array, value_vector *args)
 }
 
 static struct value
-array_sum(struct value *array, value_vector *args)
+array_sum(struct value *array, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the sum method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the sum method on arrays expects no arguments but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
@@ -679,26 +681,30 @@ array_sum(struct value *array, value_vector *args)
 }
 
 static struct value
-array_join(struct value *array, value_vector *args)
+array_join(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.join() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.join() expects 1 argument but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
 
-        struct value sep = args->items[0];
+        struct value sep = ARG(0);
         if (sep.type != VALUE_STRING)
                 vm_panic("the argument to array.join() must be a string");
 
-        struct value sum = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[0] });
+        vm_push(&array->array->items[0]);
+        struct value sum = builtin_str(1);
+        vm_pop();
         struct value v = NIL;
 
         gc_push(&sum);
         gc_push(&v);
 
         for (int i = 1; i < array->array->count; ++i) {
-                v = builtin_str(&(value_vector){ .count = 1, .items = &array->array->items[i] });
+                vm_push(&array->array->items[i]);
+                v = builtin_str(1);
+                vm_pop();
                 sum = binary_operator_addition(&sum, &sep);
                 sum = binary_operator_addition(&sum, &v);
         }
@@ -710,13 +716,13 @@ array_join(struct value *array, value_vector *args)
 }
 
 static struct value
-array_consume_while(struct value *array, value_vector *args)
+array_consume_while(struct value *array, int argc)
 {
-        if (args->count != 2)
-                vm_panic("array.consumeWhile() expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("array.consumeWhile() expects 2 arguments but got %d", argc);
 
-        struct value f = args->items[0];
-        struct value p = args->items[1];
+        struct value f = ARG(0);
+        struct value p = ARG(1);
 
         if (!CALLABLE(f))
                 vm_panic("invalid source passed to array.consumeWhile()");
@@ -741,12 +747,12 @@ array_consume_while(struct value *array, value_vector *args)
 }
 
 static struct value
-array_groups_of(struct value *array, value_vector *args)
+array_groups_of(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.groupsOf() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.groupsOf() expects 1 argument but got %d", argc);
 
-        struct value size = args->items[0];
+        struct value size = ARG(0);
         if (size.type != VALUE_INTEGER)
                 vm_panic("the argument to array.groupsOf() must be an integer");
 
@@ -779,12 +785,12 @@ array_groups_of(struct value *array, value_vector *args)
 }
 
 static struct value
-array_group_by(struct value *array, value_vector *args)
+array_group_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.groupBy() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.groupBy() expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
         
         if (!CALLABLE(f))
                 vm_panic("the argument to array.groupBy() must be callable");
@@ -823,13 +829,13 @@ array_group_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_group(struct value *array, value_vector *args)
+array_group(struct value *array, int argc)
 {
-        if (args->count == 1)
-                return array_group_by(array, args);
+        if (argc == 1)
+                return array_group_by(array, argc);
 
-        if (args->count != 0)
-                vm_panic("array.group() expects 0 or 1 arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("array.group() expects 0 or 1 arguments but got %d", argc);
 
         int len = 0;
         for (int i = 0; i < array->array->count; ++i) {
@@ -849,12 +855,12 @@ array_group(struct value *array, value_vector *args)
 }
 
 static struct value
-array_intersperse(struct value *array, value_vector *args)
+array_intersperse(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the intersperse method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the intersperse method on arrays expects 1 argument but got %d", argc);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         int n = array->array->count - 1;
         if (n < 1)
@@ -876,13 +882,13 @@ array_intersperse(struct value *array, value_vector *args)
 }
 
 static struct value
-array_min(struct value *array, value_vector *args)
+array_min(struct value *array, int argc)
 {
-        if (args->count == 1)
-                return array_min_by(array, args);
+        if (argc == 1)
+                return array_min_by(array, argc);
 
-        if (args->count != 0)
-                vm_panic("the min method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the min method on arrays expects no arguments but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
@@ -900,15 +906,15 @@ array_min(struct value *array, value_vector *args)
 }
 
 static struct value
-array_min_by(struct value *array, value_vector *args)
+array_min_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the minBy method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the minBy method on arrays expects 1 argument but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
         if (!CALLABLE(f))
                 vm_panic("non-function passed to the minBy method on array");
 
@@ -947,13 +953,13 @@ array_min_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_max(struct value *array, value_vector *args)
+array_max(struct value *array, int argc)
 {
-        if (args->count == 1)
-                return array_max_by(array, args);
+        if (argc == 1)
+                return array_max_by(array, argc);
 
-        if (args->count != 0)
-                vm_panic("the max method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the max method on arrays expects no arguments but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
@@ -971,15 +977,15 @@ array_max(struct value *array, value_vector *args)
 }
 
 static struct value
-array_max_by(struct value *array, value_vector *args)
+array_max_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the maxBy method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the maxBy method on arrays expects 1 argument but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
         if (!CALLABLE(f))
                 vm_panic("non-function passed to the maxBy method on array");
 
@@ -1018,19 +1024,19 @@ array_max_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_length(struct value *array, value_vector *args)
+array_length(struct value *array, int argc)
 {
-        if (args->count != 0)
-                vm_panic("array.len() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("array.len() expects no arguments but got %d", argc);
 
         return INTEGER(array->array->count);
 }
 
 static struct value
-array_shuffle(struct value *array, value_vector *args)
+array_shuffle(struct value *array, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the shuffle! method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the shuffle! method on arrays expects no arguments but got %d", argc);
 
         struct value t;
         int n = array->array->count;
@@ -1045,12 +1051,12 @@ array_shuffle(struct value *array, value_vector *args)
 }
 
 static struct value
-array_map(struct value *array, value_vector *args)
+array_map(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the map method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the map method on arrays expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
 
         if (!CALLABLE(f))
                 vm_panic("non-function passed to the map method on array");
@@ -1063,10 +1069,10 @@ array_map(struct value *array, value_vector *args)
 }
 
 static struct value
-array_enumerate(struct value *array, value_vector *args)
+array_enumerate(struct value *array, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the enumerate method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the enumerate method on arrays expects no arguments but got %d", argc);
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i) {
@@ -1082,12 +1088,12 @@ array_enumerate(struct value *array, value_vector *args)
 }
 
 static struct value
-array_remove(struct value *array, value_vector *args)
+array_remove(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the remove method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the remove method on arrays expects 1 argument but got %d", argc);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         int n = array->array->count;
         int j = 0;
@@ -1102,12 +1108,12 @@ array_remove(struct value *array, value_vector *args)
 }
 
 static struct value
-array_filter(struct value *array, value_vector *args)
+array_filter(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the filter method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the filter method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the filter method on array");
@@ -1125,12 +1131,12 @@ array_filter(struct value *array, value_vector *args)
 }
 
 static struct value
-array_find(struct value *array, value_vector *args)
+array_find(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the find method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the find method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the find method on array");
@@ -1144,12 +1150,12 @@ array_find(struct value *array, value_vector *args)
 }
 
 static struct value
-array_findr(struct value *array, value_vector *args)
+array_findr(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the findr method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the findr method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the findr method on array");
@@ -1163,12 +1169,12 @@ array_findr(struct value *array, value_vector *args)
 }
 
 static struct value
-array_search_by(struct value *array, value_vector *args)
+array_search_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the searchBy method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the searchBy method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the searchBy method on array");
@@ -1182,12 +1188,12 @@ array_search_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_searchr_by(struct value *array, value_vector *args)
+array_searchr_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the searchrBy method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the searchrBy method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the searchBy method on array");
@@ -1201,12 +1207,12 @@ array_searchr_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_partition(struct value *array, value_vector *args)
+array_partition(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the partition method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the partition method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the partition method on array");
@@ -1245,12 +1251,12 @@ array_partition(struct value *array, value_vector *args)
 }
 
 static struct value
-array_partition_no_mut(struct value *array, value_vector *args)
+array_partition_no_mut(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the partition method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the partition method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the partition method on array");
@@ -1285,12 +1291,12 @@ array_partition_no_mut(struct value *array, value_vector *args)
 }
 
 static struct value
-array_contains(struct value *array, value_vector *args)
+array_contains(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.contains?() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.contains?() expects 1 argument but got %d", argc);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i)
@@ -1301,12 +1307,12 @@ array_contains(struct value *array, value_vector *args)
 }
 
 static struct value
-array_search(struct value *array, value_vector *args)
+array_search(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.search() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.search() expects 1 argument but got %d", argc);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i)
@@ -1317,12 +1323,12 @@ array_search(struct value *array, value_vector *args)
 }
 
 static struct value
-array_searchr(struct value *array, value_vector *args)
+array_searchr(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("array.searchr() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("array.searchr() expects 1 argument but got %d", argc);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         int n = array->array->count;
         for (int i = n - 1; i >= 0; --i)
@@ -1333,10 +1339,10 @@ array_searchr(struct value *array, value_vector *args)
 }
 
 static struct value
-array_flat(struct value *array, value_vector *args)
+array_flat(struct value *array, int argc)
 {
-        if (args->count != 0) {
-                vm_panic("array.flat() expects no arguments but got %zu", args->count);
+        if (argc != 0) {
+                vm_panic("array.flat() expects no arguments but got %d", argc);
         }
 
         struct array *r = value_array_new();
@@ -1365,12 +1371,12 @@ array_flat(struct value *array, value_vector *args)
 }
 
 static struct value
-array_each(struct value *array, value_vector *args)
+array_each(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the each method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the each method on arrays expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
 
         if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
                 vm_panic("non-function passed to the each method on array");
@@ -1384,16 +1390,16 @@ array_each(struct value *array, value_vector *args)
 }
 
 static struct value
-array_all(struct value *array, value_vector *args)
+array_all(struct value *array, int argc)
 {
         int n = array->array->count;
 
-        if (args->count == 0) {
+        if (argc == 0) {
                 for (int i = 0; i < n; ++i)
                         if (!value_truthy(&array->array->items[i]))
                                 return BOOLEAN(false);
-        } else if (args->count == 1) {
-                struct value pred = args->items[0];
+        } else if (argc == 1) {
+                struct value pred = ARG(0);
 
                 if (!CALLABLE(pred))
                         vm_panic("non-predicate passed to the all? method on array");
@@ -1402,23 +1408,23 @@ array_all(struct value *array, value_vector *args)
                         if (!value_apply_predicate(&pred, &array->array->items[i]))
                                 return BOOLEAN(false);
         } else {
-                vm_panic("the all? method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
+                vm_panic("the all? method on arrays expects 0 or 1 argument(s) but got %d", argc);
         }
 
         return BOOLEAN(true);
 }
 
 static struct value
-array_any(struct value *array, value_vector *args)
+array_any(struct value *array, int argc)
 {
         int n = array->array->count;
 
-        if (args->count == 0) {
+        if (argc == 0) {
                 for (int i = 0; i < n; ++i)
                         if (value_truthy(&array->array->items[i]))
                                 return BOOLEAN(true);
-        } else if (args->count == 1) {
-                struct value pred = args->items[0];
+        } else if (argc == 1) {
+                struct value pred = ARG(0);
 
                 if (!CALLABLE(pred))
                         vm_panic("non-predicate passed to the any? method on array");
@@ -1427,19 +1433,19 @@ array_any(struct value *array, value_vector *args)
                         if (value_apply_predicate(&pred, &array->array->items[i]))
                                 return BOOLEAN(true);
         } else {
-                vm_panic("the any? method on arrays expects 0 or 1 argument(s) but got %zu", args->count);
+                vm_panic("the any? method on arrays expects 0 or 1 argument(s) but got %d", argc);
         }
 
         return BOOLEAN(false);
 }
 
 static struct value
-array_count(struct value *array, value_vector *args)
+array_count(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the count method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the count method on arrays expects 1 argument but got %d", argc);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         int n = array->array->count;
         int k = 0;
@@ -1451,12 +1457,12 @@ array_count(struct value *array, value_vector *args)
 }
 
 static struct value
-array_count_by(struct value *array, value_vector *args)
+array_count_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the count method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the count method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = args->items[0];
+        struct value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 vm_panic("non-predicate passed to the count method on array");
@@ -1471,24 +1477,24 @@ array_count_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_fold_left(struct value *array, value_vector *args)
+array_fold_left(struct value *array, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("the foldLeft method on arrays expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("the foldLeft method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
         struct value f, v;
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 start = 1;
-                f = args->items[0];
+                f = ARG(0);
                 if (array->array->count == 0)
                         vm_panic("foldLeft called on empty array with 1 argument");
                 v = array->array->items[0];
         } else {
                 start = 0;
-                f = args->items[1];
-                v = args->items[0];
+                f = ARG(1);
+                v = ARG(0);
         }
 
         if (!CALLABLE(f))
@@ -1507,24 +1513,24 @@ array_fold_left(struct value *array, value_vector *args)
 
 /* TODO: fix this */
 static struct value
-array_fold_right(struct value *array, value_vector *args)
+array_fold_right(struct value *array, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("the foldRight method on arrays expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("the foldRight method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
         struct value f, v;
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 start = array->array->count - 2;
-                f = args->items[0];
+                f = ARG(0);
                 if (array->array->count == 0)
                         vm_panic("foldRight called on empty array with 1 argument");
                 v = array->array->items[start + 1];
         } else {
                 start = array->array->count - 1;
-                f = args->items[1];
-                v = args->items[0];
+                f = ARG(1);
+                v = ARG(0);
         }
 
         if (!CALLABLE(f))
@@ -1541,24 +1547,24 @@ array_fold_right(struct value *array, value_vector *args)
 }
 
 static struct value
-array_scan_left(struct value *array, value_vector *args)
+array_scan_left(struct value *array, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("the scanLeft method on arrays expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("the scanLeft method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
         struct value f, v;
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 start = 1;
-                f = args->items[0];
+                f = ARG(0);
                 if (array->array->count == 0)
                         vm_panic("scanLeft called on empty array with 1 argument");
                 v = array->array->items[0];
         } else {
                 start = 0;
-                f = args->items[1];
-                v = args->items[0];
+                f = ARG(1);
+                v = ARG(0);
         }
 
         if (!CALLABLE(f))
@@ -1574,24 +1580,24 @@ array_scan_left(struct value *array, value_vector *args)
 }
 
 static struct value
-array_scan_right(struct value *array, value_vector *args)
+array_scan_right(struct value *array, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("the scanRight method on arrays expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("the scanRight method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
         struct value f, v;
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 start = array->array->count - 2;
-                f = args->items[0];
+                f = ARG(0);
                 if (array->array->count == 0)
                         vm_panic("scanRight called on empty array with 1 argument");
                 v = array->array->items[start + 1];
         } else {
                 start = array->array->count - 1;
-                f = args->items[1];
-                v = args->items[0];
+                f = ARG(1);
+                v = ARG(0);
         }
 
         if (!CALLABLE(f))
@@ -1606,10 +1612,10 @@ array_scan_right(struct value *array, value_vector *args)
 }
 
 static struct value
-array_reverse(struct value *array, value_vector *args)
+array_reverse(struct value *array, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the reverse method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the reverse method on arrays expects no arguments but got %d", argc);
 
         int lo = 0;
         int hi = array->array->count - 1;
@@ -1628,18 +1634,18 @@ array_reverse(struct value *array, value_vector *args)
 }
 
 static struct value
-array_rotate(struct value *array, value_vector *args)
+array_rotate(struct value *array, int argc)
 {
         int d = 1;
         int n = array->array->count;
 
-        if (args->count == 1) {
-                struct value amount = args->items[0];
+        if (argc == 1) {
+                struct value amount = ARG(0);
                 if (amount.type != VALUE_INTEGER)
                         vm_panic("the argument to array.rotate() must be an integer");
                 d = amount.integer;
-        } else if (args->count != 0) {
-                vm_panic("the rotate method on arrays expects 0 or 1 arguments but got %zu", args->count);
+        } else if (argc != 0) {
+                vm_panic("the rotate method on arrays expects 0 or 1 arguments but got %d", argc);
         }
 
         d %= n;
@@ -1668,12 +1674,12 @@ array_rotate(struct value *array, value_vector *args)
 }
 
 static struct value
-array_sort_by(struct value *array, value_vector *args)
+array_sort_by(struct value *array, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the sortBy method on arrays expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the sortBy method on arrays expects 1 argument but got %d", argc);
 
-        struct value f = args->items[0];
+        struct value f = ARG(0);
         if (!CALLABLE(f))
                 vm_panic("non-function passed to the sortBy method on array");
 
@@ -1691,10 +1697,10 @@ array_sort_by(struct value *array, value_vector *args)
 }
 
 static struct value
-array_clone(struct value *array, value_vector *args)
+array_clone(struct value *array, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the clone method on arrays expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the clone method on arrays expects no arguments but got %d", argc);
 
         struct value v = *array;
         v.array = value_array_clone(v.array);
@@ -1704,11 +1710,11 @@ array_clone(struct value *array, value_vector *args)
 
 #define DEFINE_NO_MUT(name) \
         static struct value \
-        array_ ## name ## _no_mut(struct value *array, value_vector *args) \
+        array_ ## name ## _no_mut(struct value *array, int argc) \
         { \
-                struct value clone = array_clone(array, &NO_ARGS); \
+                struct value clone = array_clone(array, 0); \
                 gc_push(&clone); \
-                struct value result = array_ ## name(&clone, args); \
+                struct value result = array_ ## name(&clone, argc); \
                 gc_pop(); \
                 return result; \
         }

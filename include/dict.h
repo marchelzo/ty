@@ -25,16 +25,16 @@ struct value *
 dict_put_member_if_not_exists(struct dict *obj, char const *member);
 
 struct value
-dict_update(struct value *d, value_vector *args);
+dict_update(struct value *d, int argc);
 
 struct value
-dict_intersect(struct value *d, value_vector *args);
+dict_intersect(struct value *d, int argc);
 
 struct value
-dict_subtract(struct value *d, value_vector *args);
+dict_subtract(struct value *d, int argc);
 
 struct value
-dict_clone(struct value *d, value_vector *args);
+dict_clone(struct value *d, int argc);
 
 void
 dict_mark(struct dict *obj);
@@ -42,6 +42,6 @@ dict_mark(struct dict *obj);
 void
 dict_free(struct dict *obj);
 
-struct value (*get_dict_method(char const *))(struct value *, value_vector *);
+struct value (*get_dict_method(char const *))(struct value *, int);
 
 #endif

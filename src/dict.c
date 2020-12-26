@@ -25,7 +25,7 @@ dict_new(void)
         d->values = alloc(sizeof (struct value [INITIAL_SIZE]));
         d->count = 0;
         d->dflt = NONE;
-        memset(d->keys, 0, sizeof (struct value [d->size]));
+        memset(d->keys, 0, sizeof (struct value [INITIAL_SIZE]));
 
         return d;
 }
@@ -98,7 +98,7 @@ grow(struct dict *d)
 inline static struct value *
 put(struct dict *d, size_t i, unsigned long h, struct value k, struct value v)
 {
-        if (5 * d->count >= 2 * d->size) {
+        if (9*d->count >= 4*d->size) {
                 grow(d);
                 i = find_spot(d->size, d->hashes, d->keys, h, &k);
         }
@@ -215,9 +215,9 @@ dict_free(struct dict *d)
 }
 
 static struct value
-dict_default(struct value *d, value_vector *args)
+dict_default(struct value *d, int argc)
 {
-        if (args->count == 0) {
+        if (argc == 0) {
                 if (d->dict->dflt.type == VALUE_NONE) {
                         return NIL;
                 } else {
@@ -225,24 +225,24 @@ dict_default(struct value *d, value_vector *args)
                 }
         }
 
-        if (args->count != 1)
-                vm_panic("dict.default() expects 1 or 0 arguments but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("dict.default() expects 1 or 0 arguments but got %d", argc);
 
-        if (!CALLABLE(args->items[0]))
+        if (!CALLABLE(ARG(0)))
                 vm_panic("the argument to dict.default() must be callable");
 
-        d->dict->dflt = args->items[0];
+        d->dict->dflt = ARG(0);
 
         return *d;
 }
 
 static struct value
-dict_contains(struct value *d, value_vector *args)
+dict_contains(struct value *d, int argc)
 {
-        if (args->count != 1)
-                vm_panic("dict.contains() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("dict.contains() expects 1 argument but got %d", argc);
 
-        struct value *key = &args->items[0];
+        struct value *key = &ARG(0);
         unsigned long h = value_hash(key);
         size_t i = find_spot(d->dict->size, d->dict->hashes, d->dict->keys, h, key);
 
@@ -250,10 +250,10 @@ dict_contains(struct value *d, value_vector *args)
 }
 
 static struct value
-dict_keys(struct value *d, value_vector *args)
+dict_keys(struct value *d, int argc)
 {
-        if (args->count != 0)
-                vm_panic("dict.keys() expects 0 arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("dict.keys() expects 0 arguments but got %d", argc);
 
         struct value keys = ARRAY(value_array_new());
 
@@ -269,10 +269,10 @@ dict_keys(struct value *d, value_vector *args)
 }
 
 static struct value
-dict_values(struct value *d, value_vector *args)
+dict_values(struct value *d, int argc)
 {
-        if (args->count != 0)
-                vm_panic("dict.values() expects 0 arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("dict.values() expects 0 arguments but got %d", argc);
 
         struct value values = ARRAY(value_array_new());
 
@@ -288,10 +288,10 @@ dict_values(struct value *d, value_vector *args)
 }
 
 struct value
-dict_clone(struct value *d, value_vector *args)
+dict_clone(struct value *d, int argc)
 {
-        if (args->count != 0)
-                vm_panic("dict.clone() expects 0 arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("dict.clone() expects 0 arguments but got %d", argc);
 
         struct dict *new = dict_new();
         new->dflt = d->dict->dflt;
@@ -306,17 +306,17 @@ dict_clone(struct value *d, value_vector *args)
 }
 
 struct value
-dict_intersect(struct value *d, value_vector *args)
+dict_intersect(struct value *d, int argc)
 {
-        if (args->count != 1 && args->count != 2) {
-                vm_panic("dict.intersect() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2) {
+                vm_panic("dict.intersect() expects 1 or 2 arguments but got %d", argc);
         }
 
-        struct value u = args->items[0];
+        struct value u = ARG(0);
         if (u.type != VALUE_DICT)
                 vm_panic("the first argument to dict.intersect() must be a dict");
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 for (size_t i = 0; i < d->dict->size;) {
                         if (d->dict->keys[i].type == 0) {
                                 i += 1;
@@ -336,7 +336,7 @@ dict_intersect(struct value *d, value_vector *args)
                         }
                 }
         } else {
-                struct value f = args->items[1];
+                struct value f = ARG(1);
                 if (!CALLABLE(f)) {
                         vm_panic("the second argument to dict.intersect() must be callable");
                 }
@@ -371,31 +371,31 @@ dict_intersect(struct value *d, value_vector *args)
 }
 
 struct value
-dict_intersect_copy(struct value *d, value_vector *args)
+dict_intersect_copy(struct value *d, int argc)
 {
-        struct value copy = dict_clone(d, &((value_vector){ .count = 0 }));
-        return dict_intersect(&copy, args);
+        struct value copy = dict_clone(d, 0);
+        return dict_intersect(&copy, argc);
 }
 
 struct value
-dict_update(struct value *d, value_vector *args)
+dict_update(struct value *d, int argc)
 {
-        if (args->count != 1 && args->count != 2) {
-                vm_panic("dict.update() expects 1 argument but got %zu", args->count);
+        if (argc != 1 && argc != 2) {
+                vm_panic("dict.update() expects 1 argument but got %d", argc);
         }
 
-        struct value u = args->items[0];
+        struct value u = ARG(0);
         if (u.type != VALUE_DICT)
                 vm_panic("the first argument to dict.update() must be a dict");
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 for (size_t i = 0; i < u.dict->size; ++i) {
                         if (u.dict->keys[i].type != 0) {
                                 dict_put_value(d->dict, u.dict->keys[i], u.dict->values[i]);
                         }
                 }
         } else {
-                struct value f = args->items[1];
+                struct value f = ARG(1);
                 if (!CALLABLE(f)) {
                         vm_panic("the second argument to dict.update() must be callable");
                 }
@@ -416,17 +416,17 @@ dict_update(struct value *d, value_vector *args)
 }
 
 struct value
-dict_subtract(struct value *d, value_vector *args)
+dict_subtract(struct value *d, int argc)
 {
-        if (args->count != 1 && args->count != 2) {
-                vm_panic("dict.subtract() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2) {
+                vm_panic("dict.subtract() expects 1 or 2 arguments but got %d", argc);
         }
 
-        struct value u = args->items[0];
+        struct value u = ARG(0);
         if (u.type != VALUE_DICT)
                 vm_panic("the first argument to dict.subtract() must be a dict");
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 for (size_t i = 0; i < u.dict->size; ++i) {
                         if (u.dict->keys[i].type != 0) {
                                 size_t j = find_spot(
@@ -442,7 +442,7 @@ dict_subtract(struct value *d, value_vector *args)
                         }
                 }
         } else {
-                struct value f = args->items[1];
+                struct value f = ARG(1);
                 if (!CALLABLE(f)) {
                         vm_panic("the second argument to dict.subtract() must be callable");
                 }
@@ -473,25 +473,25 @@ dict_subtract(struct value *d, value_vector *args)
 }
 
 static struct value
-dict_put(struct value *d, value_vector *args)
+dict_put(struct value *d, int argc)
 {
-        if (args->count == 0)
+        if (argc == 0)
                 vm_panic("dict.put() expects at least 1 argument but got 0");
 
-        for (int i = 0; i < args->count; ++i) {
-                dict_put_value(d->dict, args->items[i], NIL);
+        for (int i = 0; i < argc; ++i) {
+                dict_put_value(d->dict, ARG(i), NIL);
         }
 
         return *d;
 }
 
 static struct value
-dict_remove(struct value *d, value_vector *args)
+dict_remove(struct value *d, int argc)
 {
-        if (args->count != 1)
-                vm_panic("dict.remove() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("dict.remove() expects 1 argument but got %d", argc);
 
-        struct value k = args->items[0];
+        struct value k = ARG(0);
         unsigned long h = value_hash(&k);
 
         size_t i = find_spot(
@@ -512,10 +512,10 @@ dict_remove(struct value *d, value_vector *args)
 }
 
 static struct value
-dict_len(struct value *d, value_vector *args)
+dict_len(struct value *d, int argc)
 {
-        if (args->count != 0)
-                vm_panic("dict.len() expects 0 arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("dict.len() expects 0 arguments but got %d", argc);
 
         return INTEGER(d->dict->count);
 }

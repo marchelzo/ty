@@ -4,283 +4,283 @@
 #include "value.h"
 
 struct value
-builtin_print(value_vector *args);
+builtin_print(int argc);
 
 struct value
-builtin_slurp(value_vector *args);
+builtin_slurp(int argc);
 
 struct value
-builtin_die(value_vector *args);
+builtin_die(int argc);
 
 struct value
-builtin_rand(value_vector *args);
+builtin_rand(int argc);
 
 struct value
-builtin_abs(value_vector *args);
+builtin_abs(int argc);
 
 struct value
-builtin_round(value_vector *args);
+builtin_round(int argc);
 
 struct value
-builtin_ceil(value_vector *args);
+builtin_ceil(int argc);
 
 struct value
-builtin_gcd(value_vector *args);
+builtin_gcd(int argc);
 
 struct value
-builtin_lcm(value_vector *args);
+builtin_lcm(int argc);
 
 struct value
-builtin_hash(value_vector *args);
+builtin_hash(int argc);
 
 struct value
-builtin_int(value_vector *args);
+builtin_int(int argc);
 
 struct value
-builtin_float(value_vector *args);
+builtin_float(int argc);
 
 struct value
-builtin_str(value_vector *args);
+builtin_str(int argc);
 
 struct value
-builtin_bool(value_vector *args);
+builtin_bool(int argc);
 
 struct value
-builtin_regex(value_vector *args);
+builtin_regex(int argc);
 
 struct value
-builtin_blob(value_vector *args);
+builtin_blob(int argc);
 
 struct value
-builtin_max(value_vector *args);
+builtin_max(int argc);
 
 struct value
-builtin_min(value_vector *args);
+builtin_min(int argc);
 
 struct value
-builtin_read(value_vector *args);
+builtin_read(int argc);
 
 struct value
-builtin_log2(value_vector *args);
+builtin_log2(int argc);
 
 struct value
-builtin_pow(value_vector *args);
+builtin_pow(int argc);
 
 struct value
-builtin_cbrt(value_vector *args);
+builtin_cbrt(int argc);
 
 struct value
-builtin_sqrt(value_vector *args);
+builtin_sqrt(int argc);
 
 struct value
-builtin_exp(value_vector *args);
+builtin_exp(int argc);
 
 struct value
-builtin_log(value_vector *args);
+builtin_log(int argc);
 
 struct value
-builtin_atan2(value_vector *args);
+builtin_atan2(int argc);
 
 struct value
-builtin_atan(value_vector *args);
+builtin_atan(int argc);
 
 struct value
-builtin_asin(value_vector *args);
+builtin_asin(int argc);
 
 struct value
-builtin_acos(value_vector *args);
+builtin_acos(int argc);
 
 struct value
-builtin_tan(value_vector *args);
+builtin_tan(int argc);
 
 struct value
-builtin_sin(value_vector *args);
+builtin_sin(int argc);
 
 struct value
-builtin_cos(value_vector *args);
+builtin_cos(int argc);
 
 struct value
-builtin_bit_and(value_vector *args);
+builtin_bit_and(int argc);
 
 struct value
-builtin_bit_or(value_vector *args);
+builtin_bit_or(int argc);
 
 struct value
-builtin_bit_xor(value_vector *args);
+builtin_bit_xor(int argc);
 
 struct value
-builtin_bit_shift_left(value_vector *args);
+builtin_bit_shift_left(int argc);
 
 struct value
-builtin_bit_shift_right(value_vector *args);
+builtin_bit_shift_right(int argc);
 
 struct value
-builtin_bit_complement(value_vector *args);
+builtin_bit_complement(int argc);
 
 struct value
-builtin_getenv(value_vector *args);
+builtin_getenv(int argc);
 
 struct value
-builtin_setenv(value_vector *args);
+builtin_setenv(int argc);
 
 struct value
-builtin_json_parse(value_vector *args);
+builtin_json_parse(int argc);
 
 struct value
-builtin_json_encode(value_vector *args);
+builtin_json_encode(int argc);
 
 struct value
-builtin_os_open(value_vector *args);
+builtin_os_open(int argc);
 
 struct value
-builtin_os_close(value_vector *args);
+builtin_os_close(int argc);
 
 struct value
-builtin_os_read(value_vector *args);
+builtin_os_read(int argc);
 
 struct value
-builtin_os_write(value_vector *args);
+builtin_os_write(int argc);
 
 struct value
-builtin_os_listdir(value_vector *args);
+builtin_os_listdir(int argc);
 
 struct value
-builtin_os_usleep(value_vector *args);
+builtin_os_usleep(int argc);
 
 struct value
-builtin_os_fcntl(value_vector *args);
+builtin_os_fcntl(int argc);
 
 struct value
-builtin_os_spawn(value_vector *args);
+builtin_os_spawn(int argc);
 
 struct value
-builtin_os_stat(value_vector *args);
+builtin_os_stat(int argc);
 
 struct value
-builtin_os_fork(value_vector *args);
+builtin_os_fork(int argc);
 
 struct value
-builtin_os_pipe(value_vector *args);
+builtin_os_pipe(int argc);
 
 struct value
-builtin_os_dup2(value_vector *args);
+builtin_os_dup2(int argc);
 
 struct value
-builtin_os_poll(value_vector *args);
+builtin_os_poll(int argc);
 
 struct value
-builtin_os_getaddrinfo(value_vector *args);
+builtin_os_getaddrinfo(int argc);
 
 struct value
-builtin_os_bind(value_vector *args);
+builtin_os_bind(int argc);
 
 struct value
-builtin_os_socket(value_vector *args);
+builtin_os_socket(int argc);
 
 struct value
-builtin_os_listen(value_vector *args);
+builtin_os_listen(int argc);
 
 struct value
-builtin_os_accept(value_vector *args);
+builtin_os_accept(int argc);
 
 struct value
-builtin_os_connect(value_vector *args);
+builtin_os_connect(int argc);
 
 struct value
-builtin_os_shutdown(value_vector *args);
+builtin_os_shutdown(int argc);
 
 struct value
-builtin_os_waitpid(value_vector *args);
+builtin_os_waitpid(int argc);
 
 struct value
-builtin_os_WIFEXITED(value_vector *args);
+builtin_os_WIFEXITED(int argc);
 
 struct value
-builtin_os_WIFSIGNALED(value_vector *args);
+builtin_os_WIFSIGNALED(int argc);
 
 #ifdef WIFCONTINUED
 struct value
-builtin_os_WIFCONTINUED(value_vector *args);
+builtin_os_WIFCONTINUED(int argc);
 #endif
 
 struct value
-builtin_os_WIFSTOPPED(value_vector *args);
+builtin_os_WIFSTOPPED(int argc);
 
 #ifdef WCOREDUMP
 struct value
-builtin_os_WCOREDUMP(value_vector *args);
+builtin_os_WCOREDUMP(int argc);
 #endif
 
 struct value
-builtin_os_WEXITSTATUS(value_vector *args);
+builtin_os_WEXITSTATUS(int argc);
 
 struct value
-builtin_os_WTERMSIG(value_vector *args);
+builtin_os_WTERMSIG(int argc);
 
 struct value
-builtin_os_WSTOPSIG(value_vector *args);
+builtin_os_WSTOPSIG(int argc);
 
 struct value
-builtin_os_getpid(value_vector *args);
+builtin_os_getpid(int argc);
 
 struct value
-builtin_os_getppid(value_vector *args);
+builtin_os_getppid(int argc);
 
 struct value
-builtin_os_getuid(value_vector *args);
+builtin_os_getuid(int argc);
 
 struct value
-builtin_os_geteuid(value_vector *args);
+builtin_os_geteuid(int argc);
 
 struct value
-builtin_os_getgid(value_vector *args);
+builtin_os_getgid(int argc);
 
 struct value
-builtin_os_getegid(value_vector *args);
+builtin_os_getegid(int argc);
 
 struct value
-builtin_os_setuid(value_vector *args);
+builtin_os_setuid(int argc);
 
 struct value
-builtin_os_seteuid(value_vector *args);
+builtin_os_seteuid(int argc);
 
 struct value
-builtin_os_setgid(value_vector *args);
+builtin_os_setgid(int argc);
 
 struct value
-builtin_os_setegid(value_vector *args);
+builtin_os_setegid(int argc);
 
 struct value
-builtin_os_kill(value_vector *args);
+builtin_os_kill(int argc);
 
 struct value
-builtin_os_exit(value_vector *args);
+builtin_os_exit(int argc);
 
 struct value
-builtin_os_utime(value_vector *args);
+builtin_os_utime(int argc);
 
 struct value
-builtin_os_exec(value_vector *args);
+builtin_os_exec(int argc);
 
 struct value
-builtin_errno_get(value_vector *args);
+builtin_errno_get(int argc);
 
 struct value
-builtin_errno_str(value_vector *args);
+builtin_errno_str(int argc);
 
 struct value
-builtin_time_time(value_vector *args);
+builtin_time_time(int argc);
 
 struct value
-builtin_time_utime(value_vector *args);
+builtin_time_utime(int argc);
 
 struct value
-builtin_time_localtime(value_vector *args);
+builtin_time_localtime(int argc);
 
 struct value
-builtin_time_strftime(value_vector *args);
+builtin_time_strftime(int argc);
 
 struct value
-builtin_time_strptime(value_vector *args);
+builtin_time_strptime(int argc);
 
 #endif

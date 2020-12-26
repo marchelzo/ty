@@ -34,31 +34,31 @@
 
 static char buffer[1024 * 1024 * 4];
 
-#define ASSERT_ARGC(func, argc) \
-        if (args->count != (argc)) { \
-                vm_panic(func " expects " #argc " argument(s) but got %zu", args->count); \
+#define ASSERT_ARGC(func, ac) \
+        if (argc != (ac)) { \
+                vm_panic(func " expects " #ac " argument(s) but got %d", argc); \
         }
 
-#define ASSERT_ARGC_2(func, argc1, argc2) \
-        if (args->count != (argc1) && args->count != (argc2)) { \
-                vm_panic(func " expects " #argc1 " or " #argc2 " argument(s) but got %zu", args->count); \
+#define ASSERT_ARGC_2(func, ac1, ac2) \
+        if (argc != (ac1) && argc != (ac2)) { \
+                vm_panic(func " expects " #ac1 " or " #ac2 " argument(s) but got %d", argc); \
         }
 
-#define ASSERT_ARGC_3(func, argc1, argc2, argc3) \
-        if (args->count != (argc1) && args->count != (argc2) && args->count != (argc3)) { \
-                vm_panic(func " expects " #argc1 ", " #argc2 ", or " #argc3 " argument(s) but got %zu", args->count); \
+#define ASSERT_ARGC_3(func, ac1, ac2, ac3) \
+        if (argc != (ac1) && argc != (ac2) && argc != (ac3)) { \
+                vm_panic(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
 
 struct value
-builtin_print(value_vector *args)
+builtin_print(int argc)
 {
-        for (int i = 0; i < args->count; ++i) {
-                struct value *v = &args->items[i];
+        for (int i = 0; i < argc; ++i) {
+                struct value *v = &ARG(i);
                 if (i > 0) fputs(", ", stdout);
                 if (v->type == VALUE_STRING) {
                         fwrite(v->string, 1, v->bytes, stdout);
                 } else {
-                        char *s = value_show(&args->items[i]);
+                        char *s = value_show(&ARG(i));
                         fputs(s, stdout);
                         free(s);
                 }
@@ -71,15 +71,15 @@ builtin_print(value_vector *args)
 }
 
 struct value
-builtin_slurp(value_vector *args)
+builtin_slurp(int argc)
 {
         ASSERT_ARGC_2("slurp()", 0, 1);
 
         char p[PATH_MAX + 1];
         int fd;
 
-        if (args->count == 1) {
-                struct value v = args->items[0];
+        if (argc == 1) {
+                struct value v = ARG(0);
 
                 if (v.type != VALUE_STRING) {
                         vm_panic("slurp() expects a path but got: %s", value_show(&v));
@@ -136,11 +136,11 @@ builtin_slurp(value_vector *args)
 }
 
 struct value
-builtin_die(value_vector *args)
+builtin_die(int argc)
 {
         ASSERT_ARGC("die()", 1);
 
-        struct value message = args->items[0];
+        struct value message = ARG(0);
         if (message.type != VALUE_STRING)
                 vm_panic("the argument to die() must be a string");
 
@@ -148,7 +148,7 @@ builtin_die(value_vector *args)
 }
 
 struct value
-builtin_read(value_vector *args)
+builtin_read(int argc)
 {
         ASSERT_ARGC("read()", 0);
 
@@ -166,28 +166,28 @@ builtin_read(value_vector *args)
 }
 
 struct value
-builtin_rand(value_vector *args)
+builtin_rand(int argc)
 {
         int low, high;
 
         ASSERT_ARGC_3("rand()", 0, 1, 2);
 
-        if (args->count == 1 && args->items[0].type == VALUE_ARRAY) {
-                int n = args->items[0].array->count;
+        if (argc == 1 && ARG(0).type == VALUE_ARRAY) {
+                int n = ARG(0).array->count;
                 if (n == 0)
                         return NIL;
                 else
-                        return args->items[0].array->items[rand() % n];
+                        return ARG(0).array->items[rand() % n];
         }
 
-        for (int i = 0; i < args->count; ++i)
-                if (args->items[i].type != VALUE_INTEGER)
+        for (int i = 0; i < argc; ++i)
+                if (ARG(i).type != VALUE_INTEGER)
                         vm_panic("non-integer passed as argument %d to rand", i + 1);
 
-        switch (args->count) {
+        switch (argc) {
         case 0:  low = 0;                      high = RAND_MAX;               break;
-        case 1:  low = 0;                      high = args->items[0].integer; break;
-        case 2:  low = args->items[0].integer; high = args->items[1].integer; break;
+        case 1:  low = 0;                      high = ARG(0).integer; break;
+        case 2:  low = ARG(0).integer; high = ARG(1).integer; break;
         }
 
         return INTEGER((rand() % (high - low)) + low);
@@ -195,11 +195,11 @@ builtin_rand(value_vector *args)
 }
 
 struct value
-builtin_abs(value_vector *args)
+builtin_abs(int argc)
 {
         ASSERT_ARGC("abs()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
 
         switch (x.type) {
         case VALUE_INTEGER: return INTEGER(llabs(x.integer));
@@ -210,12 +210,12 @@ builtin_abs(value_vector *args)
 }
 
 struct value
-builtin_gcd(value_vector *args)
+builtin_gcd(int argc)
 {
         ASSERT_ARGC("gcd()", 2);
 
-        struct value t = args->items[0];
-        struct value u = args->items[1];
+        struct value t = ARG(0);
+        struct value u = ARG(1);
 
         if (t.type == VALUE_REAL) t = INTEGER(t.real);
         if (u.type == VALUE_REAL) u = INTEGER(u.real);
@@ -237,12 +237,12 @@ builtin_gcd(value_vector *args)
 }
 
 struct value
-builtin_lcm(value_vector *args)
+builtin_lcm(int argc)
 {
         ASSERT_ARGC("lcm()", 2);
 
-        struct value t = args->items[0];
-        struct value u = args->items[1];
+        struct value t = ARG(0);
+        struct value u = ARG(1);
 
         if (t.type == VALUE_REAL) t = INTEGER(t.real);
         if (u.type == VALUE_REAL) u = INTEGER(u.real);
@@ -264,11 +264,11 @@ builtin_lcm(value_vector *args)
 }
 
 struct value
-builtin_round(value_vector *args)
+builtin_round(int argc)
 {
         ASSERT_ARGC("round()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
 
         switch (x.type) {
         case VALUE_INTEGER: return x;
@@ -279,11 +279,11 @@ builtin_round(value_vector *args)
 }
 
 struct value
-builtin_ceil(value_vector *args)
+builtin_ceil(int argc)
 {
         ASSERT_ARGC("ceil()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
 
         switch (x.type) {
         case VALUE_INTEGER: return x;
@@ -294,18 +294,18 @@ builtin_ceil(value_vector *args)
 }
 
 struct value
-builtin_hash(value_vector *args)
+builtin_hash(int argc)
 {
         ASSERT_ARGC("hash()", 1);
-        return INTEGER(value_hash(&args->items[0]));
+        return INTEGER(value_hash(&ARG(0)));
 }
 
 struct value
-builtin_float(value_vector *args)
+builtin_float(int argc)
 {
         ASSERT_ARGC("float()", 1);
 
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         switch (v.type) {
         case VALUE_NIL:     return NIL;
@@ -332,14 +332,14 @@ builtin_float(value_vector *args)
 }
 
 struct value
-builtin_blob(value_vector *args)
+builtin_blob(int argc)
 {
         ASSERT_ARGC("blob()", 0);
         return BLOB(value_blob_new());
 }
 
 struct value
-builtin_int(value_vector *args)
+builtin_int(int argc)
 {
         struct value v = INTEGER(0), a, s, b;
         int base;
@@ -350,7 +350,7 @@ builtin_int(value_vector *args)
 
         ASSERT_ARGC_3("int()", 0, 1, 2);
 
-        switch (args->count) {
+        switch (argc) {
         case 0: v.integer = 0; return v;
         case 1:                goto coerce;
         case 2:                goto custom_base;
@@ -358,7 +358,7 @@ builtin_int(value_vector *args)
 
 coerce:
 
-        a = args->items[0];
+        a = ARG(0);
         switch (a.type) {
         case VALUE_INTEGER:                                             return a;
         case VALUE_REAL:    v.integer = a.real;                         return v;
@@ -371,8 +371,8 @@ coerce:
 
 custom_base:
 
-        s = args->items[0];
-        b = args->items[1];
+        s = ARG(0);
+        b = ARG(1);
 
         if (s.type != VALUE_STRING)
                 vm_panic("non-string passed as first of two arguments to int()");
@@ -409,16 +409,16 @@ string:
 }
 
 struct value
-builtin_str(value_vector *args)
+builtin_str(int argc)
 {
         ASSERT_ARGC_2("str()", 0, 1);
 
-        if (args->count == 0)
+        if (argc == 0)
                 return STRING_NOGC(NULL, 0);
 
         struct value *f;
 
-        struct value arg = args->items[0];
+        struct value arg = ARG(0);
         if (arg.type == VALUE_STRING) {
                 return arg;
         } else {
@@ -430,18 +430,18 @@ builtin_str(value_vector *args)
 }
 
 struct value
-builtin_bool(value_vector *args)
+builtin_bool(int argc)
 {
         ASSERT_ARGC("bool()", 1);
-        return BOOLEAN(value_truthy(&args->items[0]));
+        return BOOLEAN(value_truthy(&ARG(0)));
 }
 
 struct value
-builtin_regex(value_vector *args)
+builtin_regex(int argc)
 {
         ASSERT_ARGC("regex()", 1);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type == VALUE_REGEX)
                 return pattern;
@@ -470,16 +470,16 @@ builtin_regex(value_vector *args)
 }
 
 struct value
-builtin_min(value_vector *args)
+builtin_min(int argc)
 {
-        if (args->count < 2)
-                vm_panic("min() expects 2 or more arguments, but got %zu", args->count);
+        if (argc < 2)
+                vm_panic("min() expects 2 or more arguments, but got %d", argc);
 
         struct value min, v;
-        min = args->items[0];
+        min = ARG(0);
 
-        for (int i = 1; i < args->count; ++i) {
-                v = args->items[i];
+        for (int i = 1; i < argc; ++i) {
+                v = ARG(i);
                 if (value_compare(&v, &min) < 0)
                         min = v;
         }
@@ -488,16 +488,16 @@ builtin_min(value_vector *args)
 }
 
 struct value
-builtin_max(value_vector *args)
+builtin_max(int argc)
 {
-        if (args->count < 2)
-                vm_panic("max() expects 2 or more arguments, but got %zu", args->count);
+        if (argc < 2)
+                vm_panic("max() expects 2 or more arguments, but got %d", argc);
 
         struct value max, v;
-        max = args->items[0];
+        max = ARG(0);
 
-        for (int i = 1; i < args->count; ++i) {
-                v = args->items[i];
+        for (int i = 1; i < argc; ++i) {
+                v = ARG(i);
                 if (value_compare(&v, &max) > 0)
                         max = v;
         }
@@ -506,11 +506,11 @@ builtin_max(value_vector *args)
 }
 
 struct value
-builtin_exp(value_vector *args)
+builtin_exp(int argc)
 {
         ASSERT_ARGC("math::exp()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
@@ -520,11 +520,11 @@ builtin_exp(value_vector *args)
 }
 
 struct value
-builtin_log(value_vector *args)
+builtin_log(int argc)
 {
         ASSERT_ARGC("math::log()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
@@ -534,11 +534,11 @@ builtin_log(value_vector *args)
 }
 
 struct value
-builtin_log2(value_vector *args)
+builtin_log2(int argc)
 {
         ASSERT_ARGC("math::log2()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
@@ -548,17 +548,17 @@ builtin_log2(value_vector *args)
 }
 
 struct value
-builtin_pow(value_vector *args)
+builtin_pow(int argc)
 {
         ASSERT_ARGC("math::pow()", 2);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
                 vm_panic("the first argument to math::pow() must be a float");
 
-        struct value y = args->items[1];
+        struct value y = ARG(1);
         if (y.type == VALUE_INTEGER)
                 y = REAL(y.integer);
         if (y.type != VALUE_REAL)
@@ -568,17 +568,17 @@ builtin_pow(value_vector *args)
 }
 
 struct value
-builtin_atan2(value_vector *args)
+builtin_atan2(int argc)
 {
         ASSERT_ARGC("math::atan2()", 2);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
                 vm_panic("the first argument to math::atan2() must be a float");
 
-        struct value y = args->items[1];
+        struct value y = ARG(1);
         if (y.type == VALUE_INTEGER)
                 y = REAL(y.integer);
         if (y.type != VALUE_REAL)
@@ -589,11 +589,11 @@ builtin_atan2(value_vector *args)
 
 #define MATH_WRAP(func)                                 \
         struct value                                    \
-        builtin_ ## func (value_vector *args)           \
+        builtin_ ## func (int argc)           \
         {                                               \
                 ASSERT_ARGC("math::" #func "()", 1);    \
                                                         \
-                struct value x = args->items[0];        \
+                struct value x = ARG(0);        \
                 if (x.type == VALUE_INTEGER)            \
                         x = REAL(x.integer);            \
                 if (x.type != VALUE_REAL)               \
@@ -610,11 +610,11 @@ MATH_WRAP(asin)
 MATH_WRAP(atan)
 
 struct value
-builtin_sqrt(value_vector *args)
+builtin_sqrt(int argc)
 {
         ASSERT_ARGC("math::sqrt()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
@@ -624,11 +624,11 @@ builtin_sqrt(value_vector *args)
 }
 
 struct value
-builtin_cbrt(value_vector *args)
+builtin_cbrt(int argc)
 {
         ASSERT_ARGC("math::cbrt()", 1);
 
-        struct value x = args->items[0];
+        struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
@@ -638,15 +638,15 @@ builtin_cbrt(value_vector *args)
 }
 
 struct value
-builtin_bit_and(value_vector *args)
+builtin_bit_and(int argc)
 {
         ASSERT_ARGC("bit::and()", 2);
 
-        struct value a = args->items[0];
+        struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit::and() must be an integer");
 
-        struct value b = args->items[1];
+        struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit::and() must be an integer");
 
@@ -654,15 +654,15 @@ builtin_bit_and(value_vector *args)
 }
 
 struct value
-builtin_bit_or(value_vector *args)
+builtin_bit_or(int argc)
 {
         ASSERT_ARGC("bit::or()", 2);
 
-        struct value a = args->items[0];
+        struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit::or() must be an integer");
 
-        struct value b = args->items[1];
+        struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit::or() must be an integer");
 
@@ -670,15 +670,15 @@ builtin_bit_or(value_vector *args)
 }
 
 struct value
-builtin_bit_xor(value_vector *args)
+builtin_bit_xor(int argc)
 {
         ASSERT_ARGC("bit::xor()", 2);
 
-        struct value a = args->items[0];
+        struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit::xor() must be an integer");
 
-        struct value b = args->items[1];
+        struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit::xor() must be an integer");
 
@@ -686,15 +686,15 @@ builtin_bit_xor(value_vector *args)
 }
 
 struct value
-builtin_bit_shift_left(value_vector *args)
+builtin_bit_shift_left(int argc)
 {
         ASSERT_ARGC("bit::shiftLeft()", 2);
 
-        struct value a = args->items[0];
+        struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit::shiftLeft() must be an integer");
 
-        struct value b = args->items[1];
+        struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit::shiftLeft() must be an integer");
 
@@ -702,15 +702,15 @@ builtin_bit_shift_left(value_vector *args)
 }
 
 struct value
-builtin_bit_shift_right(value_vector *args)
+builtin_bit_shift_right(int argc)
 {
         ASSERT_ARGC("bit::shiftRight()", 2);
 
-        struct value a = args->items[0];
+        struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit::shiftRight() must be an integer");
 
-        struct value b = args->items[1];
+        struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit::shiftRight() must be an integer");
 
@@ -718,11 +718,11 @@ builtin_bit_shift_right(value_vector *args)
 }
 
 struct value
-builtin_bit_complement(value_vector *args)
+builtin_bit_complement(int argc)
 {
         ASSERT_ARGC("bit::complement()", 1);
 
-        struct value a = args->items[0];
+        struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit::complement() must be an integer");
 
@@ -730,15 +730,15 @@ builtin_bit_complement(value_vector *args)
 }
 
 struct value
-builtin_setenv(value_vector *args)
+builtin_setenv(int argc)
 {
         static vec(char) varbuf;
         static vec(char) valbuf;
 
         ASSERT_ARGC("setenv()", 2);
 
-        struct value var = args->items[0];
-        struct value val = args->items[1];
+        struct value var = ARG(0);
+        struct value val = ARG(1);
 
         if (var.type != VALUE_STRING || val.type != VALUE_STRING)
                 vm_panic("both arguments to setenv() must be strings");
@@ -758,11 +758,11 @@ builtin_setenv(value_vector *args)
 }
 
 struct value
-builtin_getenv(value_vector *args)
+builtin_getenv(int argc)
 {
         ASSERT_ARGC("getenv()", 1);
 
-        struct value var = args->items[0];
+        struct value var = ARG(0);
 
         if (var.type != VALUE_STRING)
                 vm_panic("non-string passed to getenv()");
@@ -784,11 +784,11 @@ builtin_getenv(value_vector *args)
 }
 
 struct value
-builtin_json_parse(value_vector *args)
+builtin_json_parse(int argc)
 {
         ASSERT_ARGC("json::parse()", 1);
 
-        struct value json = args->items[0];
+        struct value json = ARG(0);
         if (json.type != VALUE_STRING)
                 vm_panic("non-string passed to json::parse()");
 
@@ -796,18 +796,18 @@ builtin_json_parse(value_vector *args)
 }
 
 struct value
-builtin_json_encode(value_vector *args)
+builtin_json_encode(int argc)
 {
         ASSERT_ARGC("json::parse()", 1);
-        return json_encode(&args->items[0]);
+        return json_encode(&ARG(0));
 }
 
 struct value
-builtin_os_open(value_vector *args)
+builtin_os_open(int argc)
 {
         ASSERT_ARGC_2("os::open()", 2, 3);
 
-        struct value path = args->items[0];
+        struct value path = ARG(0);
         if (path.type != VALUE_STRING)
                 vm_panic("the path passed to os::open() must be a string");
 
@@ -818,7 +818,7 @@ builtin_os_open(value_vector *args)
 
         unsigned flags = 0;
 
-        struct value flags_array = args->items[1];
+        struct value flags_array = ARG(1);
         if (flags_array.type != VALUE_ARRAY)
                 vm_panic("the second argument to os::open() must be an array");
 
@@ -832,11 +832,11 @@ builtin_os_open(value_vector *args)
         int fd;
 
         if (flags & O_CREAT) {
-                if (args->count != 3)
+                if (argc != 3)
                         vm_panic("os::open() called with O_CREAT but no third argument");
-                if (args->items[2].type != VALUE_INTEGER)
+                if (ARG(2).type != VALUE_INTEGER)
                         vm_panic("the third argument to os::open() must be an integer");
-                fd = open(pathbuf.items, flags, (mode_t) args->items[2].integer);
+                fd = open(pathbuf.items, flags, (mode_t) ARG(2).integer);
         } else {
                 fd = open(pathbuf.items, flags);
         }
@@ -846,11 +846,11 @@ builtin_os_open(value_vector *args)
 }
 
 struct value
-builtin_os_close(value_vector *args)
+builtin_os_close(int argc)
 {
         ASSERT_ARGC("os::close()", 1);
 
-        struct value file = args->items[0];
+        struct value file = ARG(0);
 
         if (file.type != VALUE_INTEGER)
                 vm_panic("the argument to os::close() must be an integer");
@@ -859,13 +859,13 @@ builtin_os_close(value_vector *args)
 }
 
 struct value
-builtin_os_read(value_vector *args)
+builtin_os_read(int argc)
 {
         ASSERT_ARGC("os::read()", 3);
 
-        struct value file = args->items[0];
-        struct value blob = args->items[1];
-        struct value n = args->items[2]; 
+        struct value file = ARG(0);
+        struct value blob = ARG(1);
+        struct value n = ARG(2); 
 
         if (file.type != VALUE_INTEGER)
                 vm_panic("the first argument to os::read() must be an integer");
@@ -890,12 +890,12 @@ builtin_os_read(value_vector *args)
 }
 
 struct value
-builtin_os_write(value_vector *args)
+builtin_os_write(int argc)
 {
         ASSERT_ARGC("os::write()", 2);
 
-        struct value file = args->items[0];
-        struct value data = args->items[1];
+        struct value file = ARG(0);
+        struct value data = ARG(1);
 
         if (file.type != VALUE_INTEGER)
                 vm_panic("the first argument to os::write() must be an integer");
@@ -917,11 +917,11 @@ builtin_os_write(value_vector *args)
 }
 
 struct value
-builtin_os_spawn(value_vector *args)
+builtin_os_spawn(int argc)
 {
         ASSERT_ARGC("os::spawn()", 1);
 
-        struct value cmd = args->items[0];
+        struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
                 vm_panic("the argument to os::spawn() must be an array");
 
@@ -1039,14 +1039,14 @@ builtin_os_spawn(value_vector *args)
 }
 
 struct value
-builtin_os_fork(value_vector *args)
+builtin_os_fork(int argc)
 {
         ASSERT_ARGC("os::fork()", 0);
         return INTEGER(fork());
 }
 
 struct value
-builtin_os_pipe(value_vector *args)
+builtin_os_pipe(int argc)
 {
         ASSERT_ARGC("os::pipe()", 0);
 
@@ -1064,12 +1064,12 @@ builtin_os_pipe(value_vector *args)
 }
 
 struct value
-builtin_os_dup2(value_vector *args)
+builtin_os_dup2(int argc)
 {
         ASSERT_ARGC("os::dup2()", 2);
 
-        struct value old = args->items[0];
-        struct value new = args->items[1];
+        struct value old = ARG(0);
+        struct value new = ARG(1);
 
         if (old.type != VALUE_INTEGER || new.type != VALUE_INTEGER)
                 vm_panic("the arguments to os::dup2() must be integers");
@@ -1078,13 +1078,13 @@ builtin_os_dup2(value_vector *args)
 }
 
 struct value
-builtin_os_socket(value_vector *args)
+builtin_os_socket(int argc)
 {
         ASSERT_ARGC("os::socket()", 3);
 
-        struct value domain = args->items[0];
-        struct value type = args->items[1];
-        struct value protocol = args->items[2];
+        struct value domain = ARG(0);
+        struct value type = ARG(1);
+        struct value protocol = ARG(2);
 
         if (domain.type != VALUE_INTEGER || type.type != VALUE_INTEGER || protocol.type != VALUE_INTEGER)
                 vm_panic("the arguments to os::socket() must be integers");
@@ -1093,12 +1093,12 @@ builtin_os_socket(value_vector *args)
 }
 
 struct value
-builtin_os_shutdown(value_vector *args)
+builtin_os_shutdown(int argc)
 {
         ASSERT_ARGC("os::shutdown()", 2);
 
-        struct value fd = args->items[0];
-        struct value how = args->items[1];
+        struct value fd = ARG(0);
+        struct value how = ARG(1);
 
         if (fd.type != VALUE_INTEGER || how.type != VALUE_INTEGER)
                 vm_panic("the arguments to os::shutdown() must be integers");
@@ -1107,12 +1107,12 @@ builtin_os_shutdown(value_vector *args)
 }
 
 struct value
-builtin_os_listen(value_vector *args)
+builtin_os_listen(int argc)
 {
         ASSERT_ARGC("os::listen()", 2);
 
-        struct value sockfd = args->items[0];
-        struct value backlog = args->items[1];
+        struct value sockfd = ARG(0);
+        struct value backlog = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
                 vm_panic("the arguments to os::listen() must be integers");
@@ -1121,12 +1121,12 @@ builtin_os_listen(value_vector *args)
 }
 
 struct value
-builtin_os_bind(value_vector *args)
+builtin_os_bind(int argc)
 {
         ASSERT_ARGC("os::bind()", 2);
 
-        struct value sockfd = args->items[0];
-        struct value addr = args->items[1];
+        struct value sockfd = ARG(0);
+        struct value addr = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER)
                 vm_panic("the first argument to os::bind() must be an integer");
@@ -1174,35 +1174,35 @@ builtin_os_bind(value_vector *args)
 }
 
 struct value
-builtin_os_getaddrinfo(value_vector *args)
+builtin_os_getaddrinfo(int argc)
 {
         ASSERT_ARGC_2("os::getaddrinfo()", 5, 6);
 
-        struct value host = args->items[0];
+        struct value host = ARG(0);
         if (host.type != VALUE_STRING)
                 vm_panic("the first argument to os::getaddrinfo() must be a string");
 
-        struct value port = args->items[1];
+        struct value port = ARG(1);
         if (port.type != VALUE_STRING)
                 vm_panic("the second argument to os::getaddrinfo() must be a string");
 
-        struct value family = args->items[2];
+        struct value family = ARG(2);
         if (family.type != VALUE_INTEGER)
                 vm_panic("the third argument to os::getaddrinfo() must be an integer");
 
-        struct value type = args->items[3];
+        struct value type = ARG(3);
         if (type.type != VALUE_INTEGER)
                 vm_panic("the fourth argument to os::getaddrinfo() must be an integer");
 
-        struct value protocol = args->items[4];
+        struct value protocol = ARG(4);
         if (protocol.type != VALUE_INTEGER)
                 vm_panic("the fifth argument to os::getaddrinfo() must be an integer");
 
         int flags = 0;
-        if (args->count == 6) {
-                if (args->items[5].type != VALUE_INTEGER)
+        if (argc == 6) {
+                if (ARG(5).type != VALUE_INTEGER)
                         vm_panic("the sixth argument to os::getaddrinfo() must be an integer");
-                flags = args->items[5].integer;
+                flags = ARG(5).integer;
         }
 
         vec(char) node = {0};
@@ -1263,11 +1263,11 @@ builtin_os_getaddrinfo(value_vector *args)
 }
 
 struct value
-builtin_os_accept(value_vector *args)
+builtin_os_accept(int argc)
 {
         ASSERT_ARGC("os::accept()", 1);
 
-        struct value sockfd = args->items[0];
+        struct value sockfd = ARG(0);
 
         if (sockfd.type != VALUE_INTEGER)
                 vm_panic("the argument to os::listen() must be an integer");
@@ -1292,12 +1292,12 @@ builtin_os_accept(value_vector *args)
 }
 
 struct value
-builtin_os_poll(value_vector *args)
+builtin_os_poll(int argc)
 {
         ASSERT_ARGC("os::poll()", 2);
 
-        struct value fds = args->items[0];
-        struct value timeout = args->items[1];
+        struct value fds = ARG(0);
+        struct value timeout = ARG(1);
 
         if (fds.type != VALUE_ARRAY)
                 vm_panic("the first argument to os::poll() must be an array");
@@ -1338,15 +1338,15 @@ builtin_os_poll(value_vector *args)
 }
 
 struct value
-builtin_os_waitpid(value_vector *args)
+builtin_os_waitpid(int argc)
 {
         ASSERT_ARGC_2("os::waitpid()", 1, 2);
 
-        struct value pid = args->items[0];
+        struct value pid = ARG(0);
 
         int flags = 0;
-        if (args->count == 2) {
-                struct value f = args->items[1];
+        if (argc == 2) {
+                struct value f = ARG(1);
                 if (f.type != VALUE_INTEGER) goto Bad;
                 flags = f.integer;
         } else {
@@ -1376,11 +1376,11 @@ Bad:
 
 #define WAITMACRO(name) \
         struct value \
-        builtin_os_ ## name(value_vector *args) \
+        builtin_os_ ## name(int argc) \
         { \
                 ASSERT_ARGC("os::" #name, 1); \
         \
-                struct value status = args->items[0]; \
+                struct value status = ARG(0); \
                 if (status.type != VALUE_INTEGER) \
                         vm_panic("the argument to os::" #name "() must be an integer"); \
         \
@@ -1404,7 +1404,7 @@ WAITMACRO(WCOREDUMP)
 
 #define GETID(name) \
         struct value \
-        builtin_os_ ## name (value_vector *args) \
+        builtin_os_ ## name (int argc) \
         { \
                 ASSERT_ARGC("os::" #name, 0); \
                 return INTEGER(name()); \
@@ -1412,10 +1412,10 @@ WAITMACRO(WCOREDUMP)
 
 #define SETID(name) \
         struct value \
-        builtin_os_ ## name (value_vector *args) \
+        builtin_os_ ## name (int argc) \
         { \
                 ASSERT_ARGC("os::" #name, 1); \
-                struct value id = args->items[0]; \
+                struct value id = ARG(0); \
                 if (id.type != VALUE_INTEGER) \
                         vm_panic("the argument to os::" #name "() must be an integer"); \
                 return INTEGER(name(id.integer)); \
@@ -1433,7 +1433,7 @@ SETID(setgid)
 SETID(setegid)
 
 struct value
-builtin_os_utime(value_vector *args)
+builtin_os_utime(int argc)
 {
         ASSERT_ARGC("os::utime()", 0);
 
@@ -1444,11 +1444,11 @@ builtin_os_utime(value_vector *args)
 }
 
 noreturn struct value
-builtin_os_exit(value_vector *args)
+builtin_os_exit(int argc)
 {
         ASSERT_ARGC("os::exit()", 1);
 
-        struct value status = args->items[0];
+        struct value status = ARG(0);
         if (status.type != VALUE_INTEGER)
                 vm_panic("the argument to os::exit() must be an integer");
 
@@ -1456,11 +1456,11 @@ builtin_os_exit(value_vector *args)
 }
 
 struct value
-builtin_os_exec(value_vector *args)
+builtin_os_exec(int argc)
 {
         ASSERT_ARGC("os::exec()", 1);
 
-        struct value cmd = args->items[0];
+        struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
                 vm_panic("the argument to os::exec() must be an array");
 
@@ -1487,12 +1487,12 @@ builtin_os_exec(value_vector *args)
 }
 
 struct value
-builtin_os_kill(value_vector *args)
+builtin_os_kill(int argc)
 {
         ASSERT_ARGC("os::kill()", 2);
 
-        struct value pid = args->items[0];
-        struct value sig = args->items[1];
+        struct value pid = ARG(0);
+        struct value sig = ARG(1);
 
         if (pid.type != VALUE_INTEGER || sig.type != VALUE_INTEGER)
                 vm_panic("both arguments to os::kill() must be integers");
@@ -1501,7 +1501,7 @@ builtin_os_kill(value_vector *args)
 }
 
 struct value
-builtin_os_connect(value_vector *args)
+builtin_os_connect(int argc)
 {
         static vec(char) host;
         static vec(char) port;
@@ -1511,14 +1511,14 @@ builtin_os_connect(value_vector *args)
 
         ASSERT_ARGC("os::connect()", 2);
 
-        struct value h = args->items[0];
+        struct value h = ARG(0);
         if (h.type != VALUE_STRING)
                 vm_panic("the first argument to os::connect() must be a string");
 
         vec_push_n(host, h.string, h.bytes);
         vec_push(host, '\0');
 
-        struct value p = args->items[1];
+        struct value p = ARG(1);
         switch (p.type) {
         case VALUE_STRING:
                 vec_push_n(port, p.string, p.bytes);
@@ -1553,11 +1553,11 @@ builtin_os_connect(value_vector *args)
 }
 
 struct value
-builtin_os_usleep(value_vector *args)
+builtin_os_usleep(int argc)
 {
         ASSERT_ARGC("os::usleep()", 1);
 
-        struct value duration = args->items[0];
+        struct value duration = ARG(0);
         if (duration.type != VALUE_INTEGER)
                 vm_panic("the argument to os::usleep() must be an integer");
 
@@ -1568,11 +1568,11 @@ builtin_os_usleep(value_vector *args)
 }
 
 struct value
-builtin_os_listdir(value_vector *args)
+builtin_os_listdir(int argc)
 {
         ASSERT_ARGC("os::listdir()", 1);
 
-        struct value dir = args->items[0];
+        struct value dir = ARG(0);
         if (dir.type != VALUE_STRING)
                 vm_panic("the argument to os::listdir() must be a string");
 
@@ -1600,13 +1600,13 @@ builtin_os_listdir(value_vector *args)
 }
 
 struct value
-builtin_os_stat(value_vector *args)
+builtin_os_stat(int argc)
 {
         ASSERT_ARGC("os::stat()", 1);
 
         struct stat s;
 
-        struct value path = args->items[0];
+        struct value path = ARG(0);
         if (path.type != VALUE_STRING)
                 vm_panic("the argument to os::stat() must be a string");
 
@@ -1653,22 +1653,22 @@ builtin_os_stat(value_vector *args)
 }
 
 struct value
-builtin_os_fcntl(value_vector *args)
+builtin_os_fcntl(int argc)
 {
         ASSERT_ARGC_2("os::fcntl()", 2, 3);
 
-        struct value fd = args->items[0];
+        struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
                 vm_panic("the first argument to os::fcntl() must be an integer");
 
-        struct value cmd = args->items[1];
+        struct value cmd = ARG(1);
         if (fd.type != VALUE_INTEGER)
                 vm_panic("the second argument to os::fcntl() must be an integer");
 
-        if (args->count == 2)
+        if (argc == 2)
                 return INTEGER(fcntl(fd.integer, cmd.integer));
 
-        struct value arg = args->items[2];
+        struct value arg = ARG(2);
         switch (cmd.integer) {
         case F_DUPFD:
 #ifdef __APPLE__
@@ -1685,25 +1685,25 @@ builtin_os_fcntl(value_vector *args)
 }
 
 struct value
-builtin_errno_get(value_vector *args)
+builtin_errno_get(int argc)
 {
         ASSERT_ARGC("errno::get()", 0);
         return INTEGER(errno);
 }
 
 struct value
-builtin_errno_str(value_vector *args)
+builtin_errno_str(int argc)
 {
         ASSERT_ARGC_2("errno::str()", 0, 1);
 
         int e;
 
-        if (args->count == 0) {
+        if (argc == 0) {
                 e = errno;
         } else {
-                if (args->items[0].type != VALUE_INTEGER)
+                if (ARG(0).type != VALUE_INTEGER)
                         vm_panic("the argument to errno::str() must be an integer");
-                e = args->items[0].integer;
+                e = ARG(0).integer;
         }
 
         char const *s = strerror(e);
@@ -1712,7 +1712,7 @@ builtin_errno_str(value_vector *args)
 }
 
 struct value
-builtin_time_utime(value_vector *args)
+builtin_time_utime(int argc)
 {
         ASSERT_ARGC("time::time()", 0);
 
@@ -1723,14 +1723,14 @@ builtin_time_utime(value_vector *args)
 }
 
 struct value
-builtin_time_localtime(value_vector *args)
+builtin_time_localtime(int argc)
 {
         ASSERT_ARGC_2("time::localtime()", 0, 1);
 
         time_t t;
 
-        if (args->count == 1) {
-                struct value v = args->items[0];
+        if (argc == 1) {
+                struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER) {
                         vm_panic("the argument to time::localtime() must be an integer");
                 }
@@ -1760,19 +1760,19 @@ builtin_time_localtime(value_vector *args)
 }
 
 struct value
-builtin_time_strftime(value_vector *args)
+builtin_time_strftime(int argc)
 {
         ASSERT_ARGC_2("time::strftime()", 1, 2);
 
         struct tm t = {0};
 
-        struct value fmt = args->items[0];
+        struct value fmt = ARG(0);
         if (fmt.type != VALUE_STRING) {
                 vm_panic("the first argument to time::strftime() must be a string");
         }
 
-        if (args->count == 2) {
-                struct value v = args->items[1];
+        if (argc == 2) {
+                struct value v = ARG(1);
                 if (v.type == VALUE_INTEGER) {
                         time_t sec = v.integer;
                         localtime_r(&sec, &t);
@@ -1824,13 +1824,13 @@ builtin_time_strftime(value_vector *args)
 }
 
 struct value
-builtin_time_strptime(value_vector *args)
+builtin_time_strptime(int argc)
 {
 
         ASSERT_ARGC("time::strptime()", 2);
 
-        struct value s = args->items[0];
-        struct value fmt = args->items[1];
+        struct value s = ARG(0);
+        struct value fmt = ARG(1);
 
         if (s.type != VALUE_STRING || fmt.type != VALUE_STRING) {
                 vm_panic("both arguments to time::strptime() must be strings");
@@ -1872,16 +1872,16 @@ builtin_time_strptime(value_vector *args)
 }
 
 struct value
-builtin_time_time(value_vector *args)
+builtin_time_time(int argc)
 {
         ASSERT_ARGC_2("time::time()", 0, 1);
 
-        if (args->count == 0) {
+        if (argc == 0) {
                 return INTEGER(time(NULL));
         }
 
         struct tm t = {0};
-        struct value v = args->items[0];
+        struct value v = ARG(0);
 
         if (v.type != VALUE_OBJECT) {
                 vm_panic("the argument to time::time() must be an object");

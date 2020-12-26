@@ -59,9 +59,11 @@ binary_operator_addition(struct value const *left, struct value const *right)
         case VALUE_DICT:
                 gc_push((struct value *)left);
                 gc_push((struct value *)right);
-                v = dict_clone(left, &((value_vector){ .count = 0 }));
+                struct value v = dict_clone(left, 0);
                 gc_push(&v);
-                dict_update(&v, &((value_vector){ .count = 1, .items = (struct value *)right }));
+                vm_push((struct value  *)right);
+                dict_update(&v, 1);
+                vm_pop();
                 gc_pop();
                 gc_pop();
                 gc_pop();
@@ -174,9 +176,11 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
         case VALUE_DICT:
                 gc_push((struct value *)left);
                 gc_push((struct value *)right);
-                struct value v = dict_clone(left, &((value_vector){ .count = 0 }));
+                struct value v = dict_clone(left, 0);
                 gc_push(&v);
-                dict_subtract(&v, &((value_vector){ .count = 1, .items = (struct value *)right }));
+                vm_push((struct value  *)right);
+                dict_subtract(&v, 1);
+                vm_pop();
                 gc_pop();
                 gc_pop();
                 gc_pop();

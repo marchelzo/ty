@@ -3,6 +3,6 @@
 
 #include "value.h"
 
-struct value (*get_string_method(char const *))(struct value *, value_vector *);
+struct value (*get_string_method(char const *))(struct value *, int);
 
 #endif

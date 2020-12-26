@@ -302,10 +302,7 @@ vm_exec(char *code)
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
 
-        value_vector args;
-        vec_init(args);
-
-        struct value (*func)(struct value *, value_vector *);
+        struct value (*func)(struct value *, int);
 
         struct variable *next;
 
@@ -651,9 +648,7 @@ Throw:
                         push(NIL);
                         break;
                 CASE(TO_STRING)
-                        args.count = 0;
-                        vec_push(args, *top());
-                        v = builtin_str(&args);
+                        v = builtin_str(1);
                         pop();
                         push(v);
                         break;
@@ -994,10 +989,16 @@ OutOfRange:
                                 }
                                 break;
                         case VALUE_STRING:
-                                push(get_string_method("char")(&container, (&(value_vector){ .count = 1, .items = &subscript })));
+                                push(subscript);
+                                v = get_string_method("char")(&container, 1);
+                                pop();
+                                push(v);
                                 break;
                         case VALUE_BLOB:
-                                push(get_blob_method("get")(&container, (&(value_vector){ .count = 1, .items = &subscript })));
+                                push(subscript);
+                                v = get_blob_method("get")(&container, 1);
+                                pop();
+                                push(v);
                                 break;
                         case VALUE_DICT:
                                 vp = dict_get_value(container.dict, &subscript);
@@ -1139,7 +1140,7 @@ OutOfRange:
                         } else if (vp->type == VALUE_DICT) {
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to add non-dict to dict");
-                                dict_update(vp, &((value_vector){ .count = 1, .items = top() }));
+                                dict_update(vp, 1);
                                 pop();
                         } else {
                                 v = pop();
@@ -1164,7 +1165,7 @@ OutOfRange:
                         if (vp->type == VALUE_DICT) {
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to subtract non-dict from dict");
-                                dict_subtract(vp, &((value_vector){ .count = 1, .items = top()}));
+                                dict_subtract(vp, 1);
                                 pop();
                         } else {
                                 v = pop();
@@ -1260,12 +1261,7 @@ OutOfRange:
                                 call(&v, NULL, n, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
-                                vec_reserve(args, n);
-                                args.count = n;
-                                while (n --> 0)
-                                        args.items[n] = pop();
-                                push(v.builtin_function(&args));
-                                args.count = 0;
+                                push(v.builtin_function(n));
                                 break;
                         case VALUE_TAG:
                                 if (n == 1) {
@@ -1300,23 +1296,16 @@ OutOfRange:
                         case VALUE_REGEX:
                                 if (n != 1)
                                         vm_panic("attempt to apply a regex to an invalid number of values");
-                                if (top()->type != VALUE_STRING)
-                                        vm_panic("attempt to apply a regex to a non-string: %s", value_show(top()));
-                                stack.items[stack.count - 1] = get_string_method("match!")(top(), &(value_vector){ .count = 1, .items = &v });
+                                value = pop();
+                                if (value.type != VALUE_STRING)
+                                        vm_panic("attempt to apply a regex to a non-string: %s", value_show(&value));
+                                push(v);
+                                *top() = get_string_method("match!")(&value, 1);
                                 break;
                         case VALUE_BUILTIN_METHOD:
-                                vec_reserve(args, n);
-                                args.count = n;
-                                i = 0;
-
-                                for (struct value const *a = stack.items + stack.count - n; i < n; ++i, ++a)
-                                        args.items[i] = *a;
-
-                                value = v.builtin_method(v.this, &args);
-
+                                value = v.builtin_method(v.this, n);
                                 stack.count -= n;
                                 push(value);
-
                                 break;
                         case VALUE_NIL:
                                 stack.count -= n;
@@ -1392,20 +1381,14 @@ OutOfRange:
                         }
 
                         if (func != NULL) {
-                                vec_reserve(args, n);
-                                args.count = n;
-                                i = 0;
-
-                                for (struct value const *a = stack.items + stack.count - n - 1; i < n; ++i, ++a)
-                                        args.items[i] = *a;
-
                                 value.type &= ~VALUE_TAGGED;
                                 value.tags = 0;
-
-                                v = func(&value, &args);
-
+                                pop();
+                                gc_push(&value);
+                                v = func(&value, n);
+                                gc_pop();
                                 stack.count -= n;
-                                stack.items[stack.count - 1] = v;
+                                push(v);
                         } else if (vp != NULL) {
                                 if (self != NULL) {
                                         v = METHOD(method, vp, self);
@@ -1433,7 +1416,6 @@ OutOfRange:
                         LOG("returning: ip = %p", ip);
                         break;
                 CASE(HALT)
-                        free(args.items);
                         ip = save;
                         LOG("halting: ip = %p", ip);
                         return;
@@ -1573,10 +1555,22 @@ vm_push(struct value const *v)
         push(*v);
 }
 
+void
+vm_pop(void)
+{
+        stack.count -= 1;
+}
+
+struct value *
+vm_get(int i)
+{
+        return top() - i;
+}
+
+
 struct value
 vm_call(struct value const *f, int argc)
 {
-        value_vector args;
         struct value r, *init;
 
         switch (f->type) {
@@ -1587,12 +1581,13 @@ vm_call(struct value const *f, int argc)
                 call(f->method, f->this, argc, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
-                vec_init(args);
-                for (int i = argc - 1; i >= 0; --i) {
-                        vec_push(args, top()[-i]);
-                }
+                r = f->builtin_function(argc);
                 stack.count -= argc;
-                return f->builtin_function(&args);
+                return r;
+        case VALUE_BUILTIN_METHOD:
+                r = f->builtin_method(f->this, argc);
+                stack.count -= argc;
+                return r;
         case VALUE_TAG:
                 r = pop();
                 r.tags = tags_push(r.tags, f->tag);
@@ -1612,38 +1607,32 @@ vm_call(struct value const *f, int argc)
 struct value
 vm_eval_function(struct value const *f, ...)
 {
-        value_vector args;
         int argc;
         va_list ap;
+        struct value r;
         struct value const *v;
 
         va_start(ap, f);
         argc = 0;
 
+        while ((v = va_arg(ap, struct value const *)) != NULL) {
+                push(*v);
+                argc += 1;
+        }
+
+        va_end(ap);
+
         switch (f->type) {
         case VALUE_FUNCTION:
-                while ((v = va_arg(ap, struct value const *)) != NULL) {
-                        push(*v);
-                        argc += 1;
-                }
-                va_end(ap);
                 call(f, NULL, argc, true);
                 return pop();
         case VALUE_METHOD:
-                while ((v = va_arg(ap, struct value const *)) != NULL) {
-                        push(*v);
-                        argc += 1;
-                }
-                va_end(ap);
                 call(f->method, f->this, argc, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
-                vec_init(args);
-                while ((v = va_arg(ap, struct value const *)) != NULL) {
-                        vec_push(args, *v);
-                }
-                va_end(ap);
-                return f->builtin_function(&args);
+                r = f->builtin_function(argc);
+                stack.count -= argc;
+                return r;
         default:
                 abort();
         }

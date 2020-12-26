@@ -7,36 +7,36 @@
 #include "util.h"
 
 static struct value
-blob_clear(struct value *blob, value_vector *args)
+blob_clear(struct value *blob, int argc)
 {
         int start;
         int n;
 
-        if (args->count > 0 && args->items[0].type != VALUE_INTEGER)
+        if (argc > 0 && ARG(0).type != VALUE_INTEGER)
                 vm_panic("the first argument to blob.clear() must be an integer");
 
-        if (args->count > 1 && args->items[1].type != VALUE_INTEGER)
+        if (argc > 1 && ARG(1).type != VALUE_INTEGER)
                 vm_panic("the second argument to blob.clear() must be an integer");
 
-        switch (args->count) {
+        switch (argc) {
         case 0:
                 start = 0;
                 n = blob->blob->count;
                 break;
         case 1:
-                start = args->items[0].integer;
+                start = ARG(0).integer;
                 if (start < 0)
                         start += blob->blob->count;
                 n = blob->blob->count - start;
                 break;
         case 2:
-                start = args->items[0].integer;
+                start = ARG(0).integer;
                 if (start < 0)
                         start += blob->blob->count;
-                n = args->items[1].integer;
+                n = ARG(1).integer;
                 break;
         default:
-                vm_panic("blob.clear() expects 0, 1, or 2 arguments but got %zu", args->count);
+                vm_panic("blob.clear() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
         if (start < 0 || n < 0 || (n + start) > blob->blob->count)
@@ -49,23 +49,23 @@ blob_clear(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_search(struct value *blob, value_vector *args)
+blob_search(struct value *blob, int argc)
 {
 
         struct value start;
         struct value c;
 
-        switch (args->count) {
+        switch (argc) {
         case 1:
                 start = INTEGER(0);
-                c = args->items[0];
+                c = ARG(0);
                 break;
         case 2:
-                start = args->items[0];
-                c = args->items[1];
+                start = ARG(0);
+                c = ARG(1);
                 break;
         default:
-                vm_panic("blob.search() expects 1 or 2 arguments but got %zu", args->count);
+                vm_panic("blob.search() expects 1 or 2 arguments but got %d", argc);
         }
 
         if (start.type != VALUE_INTEGER)
@@ -101,7 +101,7 @@ blob_search(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_shrink(struct value *blob, value_vector *args)
+blob_shrink(struct value *blob, int argc)
 {
         resize(blob->blob->items, blob->blob->count);
         blob->blob->capacity = blob->blob->count;
@@ -109,14 +109,14 @@ blob_shrink(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_push(struct value *blob, value_vector *args)
+blob_push(struct value *blob, int argc)
 {
         size_t index = blob->blob->count;
         struct value arg;
 
-        if (args->count == 2) {
-                arg = args->items[1];
-                struct value idx = args->items[0];
+        if (argc == 2) {
+                arg = ARG(1);
+                struct value idx = ARG(0);
                 if (idx.type != VALUE_INTEGER)
                         vm_panic("the index passed to blob.push() must be an integer");
                 if (idx.integer < 0)
@@ -125,7 +125,7 @@ blob_push(struct value *blob, value_vector *args)
                         vm_panic("invalid index passed to blob.push()");
                 index = idx.integer;
         } else {
-                arg = args->items[0];
+                arg = ARG(0);
         }
 
         switch (arg.type) {
@@ -148,18 +148,18 @@ blob_push(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_size(struct value *blob, value_vector *args)
+blob_size(struct value *blob, int argc)
 {
         return INTEGER(blob->blob->count);
 }
 
 static struct value
-blob_get(struct value *blob, value_vector *args)
+blob_get(struct value *blob, int argc)
 {
-        if (args->count != 1)
-                vm_panic("blob.get() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("blob.get() expects 1 argument but got %d", argc);
 
-        struct value i = args->items[0];
+        struct value i = ARG(0);
         if (i.type != VALUE_INTEGER)
                 vm_panic("the argument to blob.get() must be an integer");
         if (i.integer < 0)
@@ -171,10 +171,10 @@ blob_get(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_fill(struct value *blob, value_vector *args)
+blob_fill(struct value *blob, int argc)
 {
-        if (args->count != 0)
-                vm_panic("blob.fill() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("blob.fill() expects no arguments but got %d", argc);
 
         if (blob->blob->items == NULL)
                 return NIL;
@@ -186,12 +186,12 @@ blob_fill(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_set(struct value *blob, value_vector *args)
+blob_set(struct value *blob, int argc)
 {
-        if (args->count != 2)
-                vm_panic("blob.set() expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("blob.set() expects 2 arguments but got %d", argc);
 
-        struct value i = args->items[0];
+        struct value i = ARG(0);
         if (i.type != VALUE_INTEGER)
                 vm_panic("the argument to blob.get() must be an integer");
         if (i.integer < 0)
@@ -199,7 +199,7 @@ blob_set(struct value *blob, value_vector *args)
         if (i.integer < 0 || i.integer >= blob->blob->count)
                 vm_panic("invalid index passed to blob.get()");
         
-        struct value arg = args->items[1];
+        struct value arg = ARG(1);
         if (arg.type != VALUE_INTEGER || arg.integer < 0 || arg.integer > UCHAR_MAX)
                 vm_panic("invalid integer passed to blob.set()");
 
@@ -209,32 +209,32 @@ blob_set(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_str(struct value *blob, value_vector *args)
+blob_str(struct value *blob, int argc)
 {
         int start;
         int n;
 
-        if (args->count > 0 && args->items[0].type != VALUE_INTEGER)
+        if (argc > 0 && ARG(0).type != VALUE_INTEGER)
                 vm_panic("the first argument to blob.str() must be an integer");
 
-        if (args->count > 1 && args->items[1].type != VALUE_INTEGER)
+        if (argc > 1 && ARG(1).type != VALUE_INTEGER)
                 vm_panic("the second argument to blob.str() must be an integer");
 
-        switch (args->count) {
+        switch (argc) {
         case 0:
                 start = 0;
                 n = blob->blob->count;
                 break;
         case 1:
-                start = args->items[0].integer;
+                start = ARG(0).integer;
                 n = blob->blob->count - start;
                 break;
         case 2:
-                start = args->items[0].integer;
-                n = args->items[1].integer;
+                start = ARG(0).integer;
+                n = ARG(1).integer;
                 break;
         default:
-                vm_panic("blob.str() expects 0, 1, or 2 arguments but got %zu", args->count);
+                vm_panic("blob.str() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
         if (start < 0 || n < 0 || (n + start) > blob->blob->count)
@@ -265,12 +265,12 @@ blob_str(struct value *blob, value_vector *args)
 }
 
 static struct value
-blob_reserve(struct value *blob, value_vector *args)
+blob_reserve(struct value *blob, int argc)
 {
-        if (args->count != 1)
-                vm_panic("blob.reserve() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("blob.reserve() expects 1 argument but got %d", argc);
 
-        struct value n = args->items[0];
+        struct value n = ARG(0);
         if (n.type != VALUE_INTEGER)
                 vm_panic("the argument to blob.reserve() must be an integer");
         if (n.integer < 0)

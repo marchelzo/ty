@@ -124,13 +124,13 @@ convert(GumboOutput const *out)
 }
 
 struct value
-html_parse(value_vector *args)
+html_parse(int argc)
 {
-        if (args->count != 1) {
-                vm_panic("gumbo::parse() expects 1 argument but got %zu", args->count);
+        if (argc != 1) {
+                vm_panic("gumbo::parse() expects 1 argument but got %d", argc);
         }
 
-        struct value s = args->items[0];
+        struct value s = ARG(0);
         vec(char) b = {0};
 
         if (s.type == VALUE_STRING) {

@@ -148,6 +148,12 @@ vm_execute_file(char const *path);
 void
 vm_push(struct value const *v);
 
+void
+vm_pop(void);
+
+struct value *
+vm_get(int i);
+
 struct value
 vm_call(struct value const *f, int argc);
 

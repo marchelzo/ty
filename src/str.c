@@ -51,10 +51,10 @@ next:
 }
 
 static struct value
-string_length(struct value *string, value_vector *args)
+string_length(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("str.len() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("str.len() expects no arguments but got %d", argc);
 
         stringcount(string->string, string->bytes, -1);
 
@@ -62,21 +62,21 @@ string_length(struct value *string, value_vector *args)
 }
 
 static struct value
-string_size(struct value *string, value_vector *args)
+string_size(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("str.size() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("str.size() expects no arguments but got %d", argc);
 
         return INTEGER(string->bytes);
 }
 
 static struct value
-string_slice(struct value *string, value_vector *args)
+string_slice(struct value *string, int argc)
 {
-        if (args->count == 0 || args->count > 2)
-                vm_panic("str.slice() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc == 0 || argc > 2)
+                vm_panic("str.slice() expects 1 or 2 arguments but got %d", argc);
 
-        struct value start = args->items[0];
+        struct value start = ARG(0);
 
         if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to str.slice()");
@@ -87,8 +87,8 @@ string_slice(struct value *string, value_vector *args)
 
         stringcount(s, string->bytes, -1);
 
-        if (args->count == 2) {
-                struct value len = args->items[1];
+        if (argc == 2) {
+                struct value len = ARG(1);
                 if (len.type != VALUE_INTEGER)
                         vm_panic("non-integer passed as second argument to str.slice()");
                 n = len.integer;
@@ -115,21 +115,21 @@ string_slice(struct value *string, value_vector *args)
 }
 
 static struct value
-string_search(struct value *string, value_vector *args)
+string_search(struct value *string, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("str.search() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("str.search() expects 1 or 2 arguments but got %d", argc);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
                 vm_panic("the pattern argument to str.search() must be a string or a regex");
 
         int offset;
-        if (args->count == 1)
+        if (argc == 1)
                 offset = 0;
-        else if (args->items[1].type == VALUE_INTEGER)
-                offset = args->items[1].integer;
+        else if (ARG(1).type == VALUE_INTEGER)
+                offset = ARG(1).integer;
         else
                 vm_panic("the second argument to str.search() must be an integer");
 
@@ -179,10 +179,10 @@ string_search(struct value *string, value_vector *args)
 }
 
 static struct value
-string_words(struct value *string, value_vector *args)
+string_words(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the words method on strings expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the words method on strings expects no arguments but got %d", argc);
 
         gc_push(string);
 
@@ -233,10 +233,10 @@ End:
 }
 
 static struct value
-string_lines(struct value *string, value_vector *args)
+string_lines(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("the lines method on strings expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("the lines method on strings expects no arguments but got %d", argc);
 
         gc_push(string);
 
@@ -273,16 +273,16 @@ End:
 }
 
 static struct value
-string_split(struct value *string, value_vector *args)
+string_split(struct value *string, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the split method on strings expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the split method on strings expects 1 argument but got %d", argc);
 
         char const *s = string->string;
         int len = string->bytes;
         gc_push(string);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type == VALUE_INTEGER) {
                 int i = pattern.integer;
@@ -363,13 +363,13 @@ end:
 }
 
 static struct value
-string_count(struct value *string, value_vector *args)
+string_count(struct value *string, int argc)
 {
-        if (args->count != 1) {
+        if (argc != 1) {
                 vm_panic("the count method on strings expects exactly 1 argument");
         }
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_STRING) {
                 vm_panic("non-string passed to string's count method");
@@ -393,7 +393,7 @@ string_count(struct value *string, value_vector *args)
 
 /* copy + paste of replace, can fix later */
 static struct value
-string_comb(struct value *string, value_vector *args)
+string_comb(struct value *string, int argc)
 {
         vec(char) chars;
         size_t const header = offsetof(struct alloc, data);
@@ -403,10 +403,10 @@ string_comb(struct value *string, value_vector *args)
         vec_reserve(chars, header);
         chars.count = chars.capacity;
 
-        if (args->count != 1)
-                vm_panic("the comb method on strings expects 1 arguments but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the comb method on strings expects 1 arguments but got %d", argc);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
         struct value replacement = STRING_EMPTY;
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
@@ -461,7 +461,7 @@ string_comb(struct value *string, value_vector *args)
 }
 
 static struct value
-string_replace(struct value *string, value_vector *args)
+string_replace(struct value *string, int argc)
 {
         vec(char) chars;
         size_t const header = offsetof(struct alloc, data);
@@ -471,11 +471,11 @@ string_replace(struct value *string, value_vector *args)
         vec_reserve(chars, header);
         chars.count = chars.capacity;
 
-        if (args->count != 2)
-                vm_panic("the replace method on strings expects 2 arguments but got %zu", args->count);
+        if (argc != 2)
+                vm_panic("the replace method on strings expects 2 arguments but got %d", argc);
 
-        struct value pattern = args->items[0];
-        struct value replacement = args->items[1];
+        struct value pattern = ARG(0);
+        struct value replacement = ARG(1);
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
                 vm_panic("the pattern argument to string's replace method must be a regex or a string");
@@ -484,10 +484,9 @@ string_replace(struct value *string, value_vector *args)
 
         if (pattern.type == VALUE_STRING) {
 
-                replacement = builtin_str(&(value_vector){
-                        .items = &replacement,
-                        .count = 1
-                });
+                vm_push(&replacement);
+                replacement = builtin_str(1);
+                vm_pop();
 
                 if (replacement.type != VALUE_STRING)
                         vm_panic("non-string replacement passed to string's replace method with a string pattern");
@@ -552,10 +551,9 @@ string_replace(struct value *string, value_vector *args)
                         }
 
                         struct value repstr = vm_eval_function(&replacement, &match, NULL);
-                        repstr = builtin_str(&(value_vector){
-                                .items = &repstr,
-                                .count = 1
-                        });
+                        vm_push(&repstr);
+                        repstr = builtin_str(1);
+                        vm_pop();
                         if (repstr.type != VALUE_STRING)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
 
@@ -579,12 +577,12 @@ string_replace(struct value *string, value_vector *args)
 }
 
 static struct value
-string_is_match(struct value *string, value_vector *args)
+string_is_match(struct value *string, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the match? method on strings expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the match? method on strings expects 1 argument but got %d", argc);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the match? method on string");
@@ -610,12 +608,12 @@ string_is_match(struct value *string, value_vector *args)
 }
 
 static struct value
-string_match(struct value *string, value_vector *args)
+string_match(struct value *string, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the match method on strings expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the match method on strings expects 1 argument but got %d", argc);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the match method on string");
@@ -661,12 +659,12 @@ string_match(struct value *string, value_vector *args)
 }
 
 static struct value
-string_matches(struct value *string, value_vector *args)
+string_matches(struct value *string, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the matches method on strings expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the matches method on strings expects 1 argument but got %d", argc);
 
-        struct value pattern = args->items[0];
+        struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the matches method on string");
@@ -721,12 +719,12 @@ string_matches(struct value *string, value_vector *args)
 }
 
 static struct value
-string_byte(struct value *string, value_vector *args)
+string_byte(struct value *string, int argc)
 {
-        if (args->count != 1)
-                vm_panic("str.byte() expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("str.byte() expects 1 argument but got %d", argc);
 
-        struct value i = args->items[0];
+        struct value i = ARG(0);
 
         if (i.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to str.byte()");
@@ -741,12 +739,12 @@ string_byte(struct value *string, value_vector *args)
 }
 
 static struct value
-string_char(struct value *string, value_vector *args)
+string_char(struct value *string, int argc)
 {
-        if (args->count != 1)
-                vm_panic("the char method on strings expects 1 argument but got %zu", args->count);
+        if (argc != 1)
+                vm_panic("the char method on strings expects 1 argument but got %d", argc);
 
-        struct value i = args->items[0];
+        struct value i = ARG(0);
 
         if (i.type != VALUE_INTEGER)
                 vm_panic("non-integer passed to the char method on string");
@@ -771,10 +769,10 @@ string_char(struct value *string, value_vector *args)
 }
 
 static struct value
-string_chars(struct value *string, value_vector *args)
+string_chars(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("str.chars() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("str.chars() expects no arguments but got %d", argc);
 
         struct value result = ARRAY(value_array_new());
         NOGC(result.array);
@@ -795,10 +793,10 @@ string_chars(struct value *string, value_vector *args)
 }
 
 static struct value
-string_bytes(struct value *string, value_vector *args)
+string_bytes(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("str.bytes() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("str.bytes() expects no arguments but got %d", argc);
 
         struct value result = ARRAY(value_array_new());
         NOGC(result.array);
@@ -813,10 +811,10 @@ string_bytes(struct value *string, value_vector *args)
 }
 
 static struct value
-string_lower(struct value *string, value_vector *args)
+string_lower(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("str.lower() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("str.lower() expects no arguments but got %d", argc);
 
         utf8proc_int32_t c;
 
@@ -838,10 +836,10 @@ string_lower(struct value *string, value_vector *args)
 }
 
 static struct value
-string_upper(struct value *string, value_vector *args)
+string_upper(struct value *string, int argc)
 {
-        if (args->count != 0)
-                vm_panic("str.upper() expects no arguments but got %zu", args->count);
+        if (argc != 0)
+                vm_panic("str.upper() expects no arguments but got %d", argc);
 
         utf8proc_int32_t c;
 
@@ -863,12 +861,12 @@ string_upper(struct value *string, value_vector *args)
 }
 
 static struct value
-string_pad_left(struct value *string, value_vector *args)
+string_pad_left(struct value *string, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("str.padLeft() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("str.padLeft() expects 1 or 2 arguments but got %d", argc);
 
-        struct value len = args->items[0];
+        struct value len = ARG(0);
         if (len.type != VALUE_INTEGER)
                 vm_panic("the first argument to str.padLeft() must be an integer");
 
@@ -882,14 +880,14 @@ string_pad_left(struct value *string, value_vector *args)
         int pad_bytes;
         int pad_len;
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 pad = " ";
                 pad_bytes = pad_len = 1;
         } else {
-                if (args->items[1].type != VALUE_STRING)
+                if (ARG(1).type != VALUE_STRING)
                         vm_panic("the second argument to str.padLeft() must be a string");
-                pad = args->items[1].string;
-                pad_bytes = args->items[1].bytes;
+                pad = ARG(1).string;
+                pad_bytes = ARG(1).bytes;
                 stringcount(pad, pad_bytes, -1);
                 pad_len = outpos.graphemes;
         }
@@ -918,12 +916,12 @@ string_pad_left(struct value *string, value_vector *args)
 }
 
 static struct value
-string_pad_right(struct value *string, value_vector *args)
+string_pad_right(struct value *string, int argc)
 {
-        if (args->count != 1 && args->count != 2)
-                vm_panic("str.padRight() expects 1 or 2 arguments but got %zu", args->count);
+        if (argc != 1 && argc != 2)
+                vm_panic("str.padRight() expects 1 or 2 arguments but got %d", argc);
 
-        struct value len = args->items[0];
+        struct value len = ARG(0);
         if (len.type != VALUE_INTEGER)
                 vm_panic("the first argument to str.padRight() must be an integer");
 
@@ -937,14 +935,14 @@ string_pad_right(struct value *string, value_vector *args)
         int pad_bytes;
         int pad_len;
 
-        if (args->count == 1) {
+        if (argc == 1) {
                 pad = " ";
                 pad_bytes = pad_len = 1;
         } else {
-                if (args->items[1].type != VALUE_STRING)
+                if (ARG(1).type != VALUE_STRING)
                         vm_panic("the second argument to str.padRight() must be a string");
-                pad = args->items[1].string;
-                pad_bytes = args->items[1].bytes;
+                pad = ARG(1).string;
+                pad_bytes = ARG(1).bytes;
                 stringcount(pad, pad_bytes, -1);
                 pad_len = outpos.graphemes;
         }
