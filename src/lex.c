@@ -418,7 +418,7 @@ lexnum(void)
                 error("invalid numeric literal: %c%s", tolower(err[0]), err + 1);
         }
 
-        if (*end == '.' && end[1] != '.') {
+        if (*end == '.' && !isalpha(end[1]) && end[1] != '_' && end[1] != '.') {
                 errno = 0;
                 float real = strtof(chars, &end);
 
@@ -468,7 +468,6 @@ lexop(void)
                         loc.col -= (i - 1);
                         return mktoken(TOKEN_BIT_OR);
                 }
-                //error("invalid operator encountered: '%s'", op);
                 struct token t = mktoken(TOKEN_USER_OP);
                 t.identifier = sclone(op);
                 return t;
@@ -515,6 +514,9 @@ lex_token(enum lex_context ctx)
                         return lexregex();
                 } else if (isalpha(*chars) || *chars == '_' || (chars[0] == ':' && chars[1] == ':')) {
                         return lexword();
+                } else if (chars[0] == '$' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken('$');
                 } else if (contains(opchars, *chars)) {
                         return lexop();
                 } else if (isdigit(*chars)) {

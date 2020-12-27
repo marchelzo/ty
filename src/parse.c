@@ -93,10 +93,12 @@ static vec(struct token) tokens;
 static int tokidx = 0;
 enum lex_context lex_ctx = LEX_PREFIX;
 
+static struct location loc;
 static int depth;
-static int dot_lambda_depth;
-static bool new_dot_lambda;
 static bool NoEquals = false;
+
+typedef vec(char *) param_list;
+static param_list pnames;
 
 static char const *filename;
 
@@ -161,7 +163,7 @@ inline static struct expression *
 mkexpr(void)
 {
         struct expression *e = alloc(sizeof *e);
-        e->loc = tok()->loc;
+        e->loc = loc;
         return e;
 }
 
@@ -169,7 +171,7 @@ inline static struct statement *
 mkstmt(void)
 {
         struct statement *s = alloc(sizeof *s);
-        s->loc = tok()->loc;
+        s->loc = loc;
         return s;
 }
 
@@ -246,6 +248,7 @@ token(int i)
                 vec_push(tokens, t);
         }
 
+        loc = tokens.items[tokidx + i].loc;
         return &tokens.items[tokidx + i];
 }
 
@@ -266,7 +269,7 @@ unconsume(int type)
                 tokens,
                 ((struct token){
                         .type = type,
-                        .loc = tok()->loc
+                        .loc = loc
                 }),
                 tokidx
         );
@@ -390,16 +393,31 @@ prefix_dollar(void)
 
         struct expression *e = mkexpr();
 
-        expect(TOKEN_IDENTIFIER);
+        if (tok()->type == TOKEN_IDENTIFIER) {
+                e->type = EXPRESSION_MATCH_NOT_NIL;
+                e->identifier = tok()->identifier;
+                e->module = tok()->module;
 
-        e->type = EXPRESSION_MATCH_NOT_NIL;
-        e->identifier = tok()->identifier;
-        e->module = tok()->module;
+                if (e->module != NULL)
+                        error("unpexpected module in lvalue");
 
-        if (e->module != NULL)
-                error("unpexpected module in lvalue");
-
-        consume(TOKEN_IDENTIFIER);
+                consume(TOKEN_IDENTIFIER);
+        } else {
+                int i = 1;
+                if (tok()->type == TOKEN_INTEGER) {
+                        i = tok()->integer;
+                        next();
+                }
+                if (i < 1) {
+                        error("invalid implicit parameter index: $%d", i);
+                }
+                while (pnames.count < i) {
+                        vec_push(pnames, gensym());
+                }
+                e->type = EXPRESSION_IDENTIFIER;
+                e->identifier = pnames.items[i - 1];
+                e->module = NULL;
+        }
 
         return e;
 }
@@ -474,7 +492,6 @@ prefix_lt(void)
 
         struct token t = *tok();
         next();
-
         consume(TOKEN_GT);
 
         char *a = gensym();
@@ -751,26 +768,6 @@ prefix_tick(void)
 }
 
 static struct expression *
-prefix_dot(void)
-{
-        if (dot_lambda_depth > 0 && !new_dot_lambda) {
-                struct expression *e = mkexpr();
-                e->type = EXPRESSION_IDENTIFIER;
-                e->identifier = "<object>";
-                e->module = NULL;
-                return infix_member_access(e);
-        } else {
-                new_dot_lambda = false;
-                ++dot_lambda_depth;
-                unconsume(TOKEN_ARROW);
-                unconsume(TOKEN_IDENTIFIER);
-                tok()->identifier = "<object>";
-                tok()->module = NULL;
-                return prefix_identifier();
-        }
-}
-
-static struct expression *
 prefix_incrange(void)
 {
         struct expression *e = mkexpr();
@@ -814,7 +811,7 @@ prefix_hash(void)
         e->identifier = "#";
         e->module = NULL;
 
-        consume('#');
+        next();
 
         return e;
 }
@@ -840,6 +837,27 @@ prefix_implicit_lambda(void)
 }
 
 static struct expression *
+prefix_arrow(void)
+{
+        param_list pnames_save = pnames;
+        vec_init(pnames);
+
+        unconsume(')');
+        unconsume('(');
+
+        struct expression *f = parse_expr(0);
+
+        for (int i = 0; i < pnames.count; ++i) {
+                vec_push(f->params, pnames.items[i]);
+        }
+
+        vec_empty(pnames);
+        pnames = pnames_save;
+
+        return f;
+}
+
+static struct expression *
 prefix_object(void)
 {
         consume('{');
@@ -851,20 +869,22 @@ prefix_object(void)
         vec_init(e->keys);
         vec_init(e->values);
 
-        if (tok()->type == '}') {
-                next();
-                return e;
-        } else {
-                vec_push(e->keys, parse_expr(0));
-                if (tok()->type == ':') {
-                        next();
-                        vec_push(e->values, parse_expr(0));
-                } else {
-                        vec_push(e->values, NULL);
-                }
-        }
-
         while (tok()->type != '}') {
+                if (tok()->type == TOKEN_STAR && token(1)->type == ':') {
+                        next();
+                        next();
+                        unconsume(TOKEN_ARROW);
+                        e->dflt = parse_expr(0);
+                } else {
+                        vec_push(e->keys, parse_expr(0));
+                        if (tok()->type == ':') {
+                                next();
+                                vec_push(e->values, parse_expr(0));
+                        } else {
+                                vec_push(e->values, NULL);
+                        }
+                }
+
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FOR) {
                         next();
                         e->type = EXPRESSION_DICT_COMPR;
@@ -878,35 +898,14 @@ prefix_object(void)
                                 e->dcompr.cond = NULL;
                         }
                         expect('}');
+                } else if (tok()->type == ',') {
+                        next();
                 } else {
-                        consume(',');
-                        vec_push(e->keys, parse_expr(0));
-                        if (tok()->type == ':') {
-                                next();
-                                vec_push(e->values, parse_expr(0));
-                        } else {
-                                vec_push(e->values, NULL);
-                        }
+                        expect('}');
                 }
         }
 
-        for (int i = 0; i < e->keys.count; ++i) {
-                if (e->keys.items[i]->type == EXPRESSION_IDENTIFIER && !strcmp("#", e->keys.items[i]->identifier)) {
-                        struct expression *f = mkexpr();
-                        f->type = EXPRESSION_FUNCTION;
-                        f->name = NULL;
-                        f->rest = false;
-                        vec_init(f->params);
-                        vec_push(f->params, "#");
-                        f->body = mkret(e->values.items[i]);
-                        e->dflt = f;
-                        vec_pop_ith(e->keys, i);
-                        vec_pop_ith(e->values, i);
-                        break;
-                }
-        }
-
-        consume('}');
+        next();
 
         return e;
 }
@@ -1039,7 +1038,6 @@ infix_member_access(struct expression *left)
                 return e;
         }
 
-        new_dot_lambda = true;
         e->type = EXPRESSION_METHOD_CALL;
         e->method_name = sclone(tok()->identifier);
         consume(TOKEN_IDENTIFIER);
@@ -1061,7 +1059,6 @@ infix_member_access(struct expression *left)
 
 end:
         consume(')');
-        new_dot_lambda = false;
         return e;
 }
 
@@ -1224,7 +1221,6 @@ get_prefix_parser(void)
         case '{':                  return prefix_object;
 
         case '$':                  return prefix_dollar;
-        case '.':                  return prefix_dot;
         case '`':                  return prefix_tick;
         
         case TOKEN_DOT_DOT:        return prefix_range;
@@ -1237,7 +1233,7 @@ get_prefix_parser(void)
         case TOKEN_DEC:            return prefix_dec;
         case TOKEN_USER_OP:        return prefix_user_op;
 
-        case TOKEN_LT:             return prefix_lt;
+        case TOKEN_ARROW:          return prefix_arrow;
 
         case TOKEN_STAR:           return prefix_star;
 
@@ -1428,7 +1424,7 @@ assignment_lvalue(struct expression *e)
 static struct expression *
 parse_definition_lvalue(int context)
 {
-        struct expression *e, *elem;
+        struct expression *e;
         int save = tokidx;
 
         NoEquals = true;
@@ -1809,8 +1805,6 @@ parse_expr(int prec)
         if (f == NULL)
                 error("expected expression but found %s", token_show(tok()));
 
-        int old_dot_lambda_depth = dot_lambda_depth;
-
         e = f();
 
         while (prec < get_infix_prec()) {
@@ -1819,9 +1813,6 @@ parse_expr(int prec)
                         error("unexpected token after expression: %s", token_show(tok()));
                 e = f(e);
         }
-
-        if (dot_lambda_depth > old_dot_lambda_depth)
-                --dot_lambda_depth;
 
         --depth;
 
@@ -1887,6 +1878,7 @@ parse_class_definition(void)
                 next();
         } else {
                 consume('{');
+                lex_ctx = LEX_INFIX;
                 while (tok()->type != '}') {
                         /*
                          * Lol.
@@ -1911,6 +1903,7 @@ parse_class_definition(void)
 
                         vec_push(s->tag.methods, prefix_function());
                 }
+                lex_ctx = LEX_PREFIX;
                 consume('}');
         }
 
