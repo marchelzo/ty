@@ -16,9 +16,6 @@ static struct value
 array_drop(struct value *array, int argc);
 
 static struct value
-array_zip_with(struct value *array, int argc);
-
-static struct value
 array_min_by(struct value *array, int argc);
 
 static struct value
@@ -217,68 +214,45 @@ array_slice_mut(struct value *array, int argc)
 static struct value
 array_zip(struct value *array, int argc)
 {
-        if (argc == 2)
-                return array_zip_with(array, argc);
-
-        if (argc != 1)
-                vm_panic("array.zip() expects 1 argument but got %d", argc);
-
-        struct value other = ARG(0);
-        if (other.type != VALUE_ARRAY)
-                vm_panic("the argument to array.zip() must be an array");
-
-        int n = min(array->array->count, other.array->count);
-
-        struct value a;
-        gc_push(&a);
-
-        for (int i = 0; i < n; ++i) {
-                a = ARRAY(value_array_new());
-                vec_push(*a.array, array->array->items[i]);
-                vec_push(*a.array, other.array->items[i]);
-                array->array->items[i] = a;
+        if (argc == 0 || (argc == 1 && ARG(0).type != VALUE_ARRAY)) {
+                vm_panic("array.zip() expects at least one array argument");
         }
 
-        gc_pop();
+        int ac = argc;
 
-        /*
-         * TODO: implement something like this in vec.h
-         */
-        array->array->count = n;
-        shrink(array);
-
-        return *array;
-}
-
-static struct value
-array_zip_with(struct value *array, int argc)
-{
-        if (argc != 2)
-                vm_panic("array.zipWith() expects 2 arguments but got %d", argc);
-
-        struct value other = ARG(0);
-        if (other.type != VALUE_ARRAY)
-                vm_panic("the first argument to array.zipWith() must be an array");
-
-        struct value f = ARG(1);
-        if (!CALLABLE(f))
-                vm_panic("the second argument to array.zipWith() must be callable");
-
-
-        int n = min(array->array->count, other.array->count);
-
-        for (int i = 0; i < n; ++i) {
-                array->array->items[i] = vm_eval_function(
-                        &f,
-                        &array->array->items[i],
-                        &other.array->items[i],
-                        NULL
-                );
+        struct value f = NIL;
+        if (CALLABLE(ARG(ac - 1))) {
+                f = ARG(ac - 1);
+                ac -= 1;
         }
 
-        /*
-         * TODO: implement something like this in vec.h
-         */
+        int n = array->array->count;
+        for (int i = 0; i < ac; ++i) {
+                if (ARG(i).type != VALUE_ARRAY) {
+                        vm_panic("non-array passed to array.zip()");
+                }
+                n = min(n, ARG(i).array->count);
+        }
+
+        for (int i = 0; i < n; ++i) {
+                if (f.type == VALUE_NIL) {
+                        struct value a = ARRAY(value_array_new());
+                        gc_push(&a);
+                        value_array_push(a.array, array->array->items[i]);
+                        for (int j = 0; j < ac; ++j) {
+                                value_array_push(a.array, ARG(j).array->items[i]);
+                        }
+                        array->array->items[i] = a;
+                        gc_pop();
+                } else {
+                        vm_push(&array->array->items[i]);
+                        for (int j = 0; j < ac; ++j) {
+                                vm_push(&ARG(-1).array->items[i]);
+                        }
+                        array->array->items[i] = vm_call(&f, argc);
+                }
+        }
+
         array->array->count = n;
         shrink(array);
 
@@ -305,8 +279,8 @@ array_map_cons(struct value *array, int argc)
         int n = array->array->count - k.integer + 1;
 
         for (int i = 0; i < n; ++i) {
-                for (int i = 0; i < k.integer; ++i)
-                        vm_push(&array->array->items[i]);
+                for (int j = i; j < i + k.integer; ++j)
+                        vm_push(&array->array->items[j]);
                 array->array->items[i] = vm_call(&f, k.integer);
         }
 
@@ -1737,7 +1711,6 @@ DEFINE_NO_MUT(sort);
 DEFINE_NO_MUT(sort_by);
 DEFINE_NO_MUT(uniq);
 DEFINE_NO_MUT(zip);
-DEFINE_NO_MUT(zip_with);
 DEFINE_NO_MUT(next_permutation);
 
 DEFINE_METHOD_TABLE(
@@ -1820,8 +1793,6 @@ DEFINE_METHOD_TABLE(
         { .name = "uniq!",             .func = array_uniq                    },
         { .name = "zip",               .func = array_zip_no_mut              },
         { .name = "zip!",              .func = array_zip                     },
-        { .name = "zipWith",           .func = array_zip_with_no_mut         },
-        { .name = "zipWith!",          .func = array_zip_with                },
 );
 
 DEFINE_METHOD_LOOKUP(array)

@@ -62,4 +62,7 @@ scope_get_symbol(void);
 void
 scope_set_symbol(int s);
 
+char const *
+scope_symbol_name(int s);
+
 #endif

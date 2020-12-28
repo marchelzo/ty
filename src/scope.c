@@ -6,6 +6,7 @@
 #include "util.h"
 
 static int SYMBOL;
+static vec(char const *) names;
 
 inline static struct symbol *
 local_lookup(struct scope const *s, char const *id)
@@ -62,6 +63,8 @@ scope_add(struct scope *s, char const *id)
 {
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
+
+        vec_push(names, id);
 
         struct symbol *sym = alloc(sizeof *sym);
 
@@ -137,4 +140,10 @@ void
 scope_set_symbol(int s)
 {
         SYMBOL = s;
+}
+
+char const *
+scope_symbol_name(int s)
+{
+        return names.items[s];
 }

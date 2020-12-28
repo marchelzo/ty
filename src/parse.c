@@ -484,15 +484,13 @@ prefix_function(void)
         return e;
 }
 
-/* rewrite < t > as ((a, b) -> a t b) */
+/* rewrite [ op ] as ((a, b) -> a op b) */
 static struct expression *
-prefix_lt(void)
+opfunc(void)
 {
-        consume(TOKEN_LT);
-
         struct token t = *tok();
         next();
-        consume(TOKEN_GT);
+        consume(']');
 
         char *a = gensym();
         char *b = gensym();
@@ -709,6 +707,28 @@ static struct expression *
 prefix_array(void)
 {
         consume('[');
+
+        if (token(1)->type == ']') switch (tok()->type) {
+        case TOKEN_USER_OP:
+        case TOKEN_PERCENT:
+        case TOKEN_PLUS:
+        case TOKEN_MINUS:
+        case TOKEN_STAR:
+        case TOKEN_DIV:
+        case TOKEN_CMP:
+        case TOKEN_AND:
+        case TOKEN_OR:
+        case TOKEN_DOT_DOT:
+        case TOKEN_DOT_DOT_DOT:
+        case TOKEN_LT:
+        case TOKEN_GT:
+        case TOKEN_LEQ:
+        case TOKEN_GEQ:
+        case TOKEN_NOT_EQ:
+        case TOKEN_DBL_EQ:
+                return opfunc();
+        default: break;
+        }
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_ARRAY;
@@ -1305,10 +1325,6 @@ get_infix_prec(void)
 {
         lex_ctx = LEX_INFIX;
 
-        if (tok()->type == TOKEN_USER_OP) {
-                return 3;
-        }
-
         switch (tok()->type) {
         case '.':                  return 12;
 
@@ -1343,6 +1359,7 @@ get_infix_prec(void)
 
         /* this may need to have lower precedence. I'm not sure yet. */
         case TOKEN_SQUIGGLY_ARROW: return 3;
+        case TOKEN_USER_OP:        return 3;
 
         case TOKEN_EQ:             return NoEquals ? -3 : 2;
         case TOKEN_PLUS_EQ:        return 2;
@@ -1713,7 +1730,7 @@ parse_operator_definition(void)
 {
     if (token(1)->type != TOKEN_USER_OP) {
         consume_keyword(KEYWORD_OPERATOR);
-        consume(TOKEN_USER_OP);
+        expect(TOKEN_USER_OP);
     }
 
     tok()->keyword = KEYWORD_FUNCTION;
