@@ -14,6 +14,7 @@ LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
+LDFLAGS += -lcrypto
 LDFLAGS += $(shell pcre-config --libs)
 LDFLAGS += $(shell pkg-config --libs gumbo)
 

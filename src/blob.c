@@ -281,10 +281,31 @@ blob_reserve(struct value *blob, int argc)
         return NIL;
 }
 
+static struct value
+blob_hex(struct value *blob, int argc)
+{
+        if (argc != 0)
+                vm_panic("blob.hex() expects no arguments but got %d", argc);
+
+        static char const digits[] = "0123456789abcdef";
+
+        int n = blob->blob->count;
+        char *s = gc_alloc_object(n*2, GC_STRING);
+
+        for (int i = 0; i < n; ++i) {
+                unsigned char b = blob->blob->items[i];
+                s[2*i] = digits[b / 0x10];
+                s[2*i+1] = digits[b & 0xF];
+        }
+
+        return STRING(s, n*2);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "clear",    .func = blob_clear     },
         { .name = "fill",     .func = blob_fill      },
         { .name = "get",      .func = blob_get       },
+        { .name = "hex",      .func = blob_hex       },
         { .name = "push",     .func = blob_push      },
         { .name = "reserve",  .func = blob_reserve   },
         { .name = "search",   .func = blob_search    },

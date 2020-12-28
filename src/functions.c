@@ -21,6 +21,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
+#include <openssl/md5.h>
 
 #include "tags.h"
 #include "value.h"
@@ -800,6 +801,26 @@ builtin_json_encode(int argc)
 {
         ASSERT_ARGC("json::parse()", 1);
         return json_encode(&ARG(0));
+}
+
+struct value
+builtin_md5(int argc)
+{
+        ASSERT_ARGC("md5", 1);
+
+        struct value s = ARG(0);
+        char digest[MD5_DIGEST_LENGTH];
+
+        if (s.type == VALUE_STRING) {
+                MD5(s.string, s.bytes, digest);
+        } else if (s.type == VALUE_BLOB) {
+                MD5(s.blob->items, s.blob->count, digest);
+        }
+
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, digest, sizeof digest);
+
+        return BLOB(b);
 }
 
 struct value
