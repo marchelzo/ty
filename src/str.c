@@ -56,9 +56,63 @@ string_length(struct value *string, int argc)
         if (argc != 0)
                 vm_panic("str.len() expects no arguments but got %d", argc);
 
-        stringcount(string->string, string->bytes, -1);
+        char const *s = string->string;
+        long size = string->bytes;
+        int length = 0;
 
-        return INTEGER(outpos.graphemes);
+        while (size > 0) {
+                int codepoint;
+                int n = utf8proc_iterate(s, size, &codepoint);
+                if (n == -1) {
+                        n = 1;
+                } else {
+                        length += utf8proc_charwidth(codepoint);
+                }
+                s += n;
+                size -= n;
+        }
+
+        return INTEGER(length);
+}
+
+static struct value
+string_chars(struct value *string, int argc)
+{
+        if (argc != 0)
+                vm_panic("str.len() expects no arguments but got %d", argc);
+
+        char const *s = string->string;
+        int size = string->bytes;
+        int offset = 0;
+        int state = 0;
+
+        struct array *r = value_array_new();
+        NOGC(r);
+
+        while (size > 0) {
+                int codepoint;
+                int n = utf8proc_iterate(s + offset, size, &codepoint);
+                if (n == -1) {
+                        size -= 1;
+                        offset += 1;
+                        continue;
+                } else while (n < size) {
+                        int next;
+                        int m = utf8proc_iterate(s + offset + n, size - n, &next);
+                        if (m == -1)
+                                break;
+                        if (utf8proc_grapheme_break_stateful(codepoint, next, &state))
+                                break;
+                        n += m;
+                }
+                value_array_push(r, STRING_VIEW(*string, offset, n));
+                size -= n;
+                offset += n;
+        }
+
+        OKGC(r);
+
+        return ARRAY(r);
 }
 
 static struct value
@@ -750,46 +804,22 @@ string_char(struct value *string, int argc)
                 vm_panic("non-integer passed to the char method on string");
 
         if (i.integer < 0)
-                i.integer += utf8_charcount(string->string, string->bytes);
+                i.integer += string_length(string, 0).integer;
 
+        int cp;
+        int j = i.integer;
+        int offset = 0;
+        int n = utf8proc_iterate(string->string, string->bytes, &cp);
 
-        stringcount(string->string, string->bytes, i.integer);
-
-        if (outpos.graphemes != i.integer)
-                return NIL;
-
-        int offset = outpos.bytes;
-
-        stringcount(string->string + offset, string->bytes - offset, 1);
-
-        if (outpos.graphemes != 1)
-                return NIL;
-
-        return STRING_VIEW(*string, offset, outpos.bytes);
-}
-
-static struct value
-string_chars(struct value *string, int argc)
-{
-        if (argc != 0)
-                vm_panic("str.chars() expects no arguments but got %d", argc);
-
-        struct value result = ARRAY(value_array_new());
-        NOGC(result.array);
-
-        int i = 0;
-        int n = string->bytes;
-
-        while (n > 0) {
-                stringcount(string->string + i, n, 1);
-                value_array_push(result.array, STRING_VIEW(*string, i, outpos.bytes));
-                i += outpos.bytes;
-                n -= outpos.bytes;
+        while (offset < string->bytes && n > 0 && j --> 0) {
+                offset += max(1, n);
+                n = utf8proc_iterate(string->string + offset, string->bytes, &cp);
         }
 
-        OKGC(result.array);
+        if (offset == string->bytes)
+                return NIL;
 
-        return result;
+        return STRING_VIEW(*string, offset, n);
 }
 
 static struct value

@@ -133,6 +133,12 @@ struct value
 builtin_md5(int argc);
 
 struct value
+builtin_ord(int argc);
+
+struct value
+builtin_chr(int argc);
+
+struct value
 builtin_os_open(int argc);
 
 struct value

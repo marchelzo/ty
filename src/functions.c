@@ -22,6 +22,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <openssl/md5.h>
+#include <utf8proc.h>
 
 #include "tags.h"
 #include "value.h"
@@ -292,6 +293,44 @@ builtin_ceil(int argc)
         default:
                 vm_panic("the argument to ceil() must be a number");
         }
+}
+
+struct value
+builtin_chr(int argc)
+{
+        ASSERT_ARGC("chr()", 1);
+
+        struct value k = ARG(0);
+
+        if (k.type != VALUE_INTEGER)
+                vm_panic("the argument to chr() must be an integer");
+
+        if (!utf8proc_codepoint_valid(k.integer))
+                return NIL;
+
+        char b[4];
+        int n = utf8proc_encode_char(k.integer, b);
+
+        return STRING_CLONE(b, n);
+}
+
+struct value
+builtin_ord(int argc)
+{
+        ASSERT_ARGC("ord()", 1);
+
+        struct value c = ARG(0);
+
+        if (c.type != VALUE_STRING)
+                vm_panic("the argument to ord() must be a string");
+
+        int codepoint;
+        int n = utf8proc_iterate(c.string, c.bytes, &codepoint);
+
+        if (codepoint == -1 || n < c.bytes)
+                return NIL;
+
+        return INTEGER(codepoint);
 }
 
 struct value

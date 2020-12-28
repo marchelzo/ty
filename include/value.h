@@ -213,7 +213,7 @@ char *
 value_string_alloc(int n);
 
 char *
-value_clone_string(char const *s, int n);
+value_string_clone(char const *s, int n);
 
 struct array *
 value_array_new(void);
@@ -262,7 +262,7 @@ value_array_reserve(struct array *a, int count)
 inline static struct value
 STRING_CLONE(char const *s, int n)
 {
-        char *clone = value_clone_string(s, n);
+        char *clone = value_string_clone(s, n);
         return (struct value) {
                 .type = VALUE_STRING,
                 .tags = 0,

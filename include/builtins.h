@@ -20,6 +20,8 @@
 { .module = NULL,     .name = "blob",              .value = BUILTIN(builtin_blob)                          },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
+{ .module = NULL,     .name = "chr",               .value = BUILTIN(builtin_chr)                           },
+{ .module = NULL,     .name = "ord",               .value = BUILTIN(builtin_ord)                           },
 { .module = NULL,     .name = "hash",              .value = BUILTIN(builtin_hash)                          },
 { .module = NULL,     .name = "md5",               .value = BUILTIN(builtin_md5)                           },
 { .module = NULL,     .name = "getenv",            .value = BUILTIN(builtin_getenv)                        },

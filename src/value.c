@@ -610,7 +610,7 @@ function_mark_references(struct value const *v)
 }
 
 char *
-value_clone_string(char const *src, int n)
+value_string_clone(char const *src, int n)
 {
         char *s = gc_alloc_object(n, GC_STRING);
         memcpy(s, src, n);
