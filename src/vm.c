@@ -717,7 +717,7 @@ Throw:
                                 break;
                         default:
                         NoIter:
-                                vm_panic("for-each loop on non-iterable value");
+                                vm_panic("for-each loop on non-iterable value: %s", value_show(&v));
                         }
                         break;
                 CASE(ARRAY_COMPR)
@@ -1261,7 +1261,9 @@ OutOfRange:
                                 call(&v, NULL, n, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
-                                push(v.builtin_function(n));
+                                v = v.builtin_function(n);
+                                stack.count -= n;
+                                push(v);
                                 break;
                         case VALUE_TAG:
                                 if (n == 1) {
@@ -1303,9 +1305,9 @@ OutOfRange:
                                 *top() = get_string_method("match!")(&value, 1);
                                 break;
                         case VALUE_BUILTIN_METHOD:
-                                value = v.builtin_method(v.this, n);
+                                v = v.builtin_method(v.this, n);
                                 stack.count -= n;
-                                push(value);
+                                push(v);
                                 break;
                         case VALUE_NIL:
                                 stack.count -= n;
