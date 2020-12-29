@@ -373,11 +373,17 @@ lexregex(void)
 
         while (*chars != '/') {
                 switch (*chars) {
-                case '\0': goto unterminated;
+                case '\0': goto Unterminated;
                 case '\\':
-                           if (chars[1] == '\0') goto unterminated;
-                           if (chars[1] == '/') nextchar();
-                           // fallthrough
+                        if (chars[1] == '\0') {
+                                goto Unterminated;
+                        }
+                        if (chars[1] == '\\') {
+                                vec_push(pat, nextchar());
+                        } else if (chars[1] == '/') {
+                                nextchar();
+                        }
+                        /* fallthrough */
                 default:
                            vec_push(pat, nextchar());
                 }
@@ -399,7 +405,7 @@ lexregex(void)
 
         return mkregex(pat.items, flags);
 
-unterminated:
+Unterminated:
 
         error("unterminated regular expression");
 }

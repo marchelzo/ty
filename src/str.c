@@ -35,13 +35,13 @@ sfind(char const *big, int blen, char const *small, int slen)
         while (blen >= slen) {
                 for (i = 0; i < slen; ++i) {
                         if (big[i] != small[i]) {
-                                goto next;
+                                goto Next;
                         }
                 }
 
                 return big;
 
-next:
+Next:
                 ++big;
                 --blen;
         }
@@ -368,7 +368,7 @@ string_split(struct value *string, int argc)
                 int n = pattern.bytes;
 
                 if (n == 0)
-                        goto end;
+                        goto End;
 
                 int i = 0;
                 while (i < len) {
@@ -410,7 +410,7 @@ string_split(struct value *string, int argc)
                         value_array_push(result.array, STRING_EMPTY);
         }
 
-end:
+End:
         gc_pop();
         OKGC(result.array);
         return result;
@@ -424,22 +424,44 @@ string_count(struct value *string, int argc)
         }
 
         struct value pattern = ARG(0);
-
-        if (pattern.type != VALUE_STRING) {
-                vm_panic("non-string passed to string's count method");
-        }
-
-        char const *s = string->string;
-        char const *p = pattern.string;
-        int len = string->bytes;
-        int plen = pattern.bytes;
-        char const *m;
         int count = 0;
 
-        if (plen > 0) while ((m = sfind(s, len, p, plen)) != NULL) {
-                len -= (m - s + plen);
-                s = m + plen;
-                count += 1;
+        if (pattern.type == VALUE_STRING) {
+                char const *s = string->string;
+                char const *p = pattern.string;
+                int len = string->bytes;
+                int plen = pattern.bytes;
+                char const *m;
+
+                if (plen > 0) while ((m = sfind(s, len, p, plen)) != NULL) {
+                        len -= (m - s + plen);
+                        s = m + plen;
+                        count += 1;
+                }
+        } else if (pattern.type == VALUE_REGEX) {
+                int ovec[30];
+                char const *s = string->string;
+                int len = string->bytes;
+                int offset = 0;
+                int rc;
+
+                while ((rc = pcre_exec(
+                                pattern.regex,
+                                pattern.extra,
+                                s,
+                                len,
+                                0,
+                                0,
+                                ovec,
+                                30
+                        )) > 0) {
+                        count += 1;
+                        s += ovec[1];
+                        offset += ovec[1];
+                        len -= ovec[1];
+                }
+        } else {
+                vm_panic("the argument to string.count() must be a string or a regex");
         }
 
         return INTEGER(count);
