@@ -260,28 +260,40 @@ array_zip(struct value *array, int argc)
 }
 
 static struct value
-array_map_cons(struct value *array, int argc)
+array_window(struct value *array, int argc)
 {
-        if (argc != 2)
-                vm_panic("array.mapCons() expects 2 arguments but got %d", argc);
+        if (argc != 1 && argc != 2)
+                vm_panic("array.window() expects 1 or 2 arguments but got %d", argc);
 
         struct value k = ARG(0);
         if (k.type != VALUE_INTEGER)
-                vm_panic("the first argument to array.mapCons() must be an integer");
+                vm_panic("the first argument to array.window() must be an integer");
 
         if (k.integer <= 0)
-                vm_panic("the first argument to array.mapCons() must be positive");
-
-        struct value f = ARG(1);
-        if (!CALLABLE(f))
-                vm_panic("the second argument to array.mapCons() must be callable");
+                vm_panic("the first argument to array.window() must be positive");
 
         int n = array->array->count - k.integer + 1;
 
-        for (int i = 0; i < n; ++i) {
-                for (int j = i; j < i + k.integer; ++j)
-                        vm_push(&array->array->items[j]);
-                array->array->items[i] = vm_call(&f, k.integer);
+        if (argc == 2) {
+                struct value f = ARG(1);
+                if (!CALLABLE(f))
+                        vm_panic("the second argument to array.window() must be callable");
+
+                for (int i = 0; i < n; ++i) {
+                        for (int j = i; j < i + k.integer; ++j)
+                                vm_push(&array->array->items[j]);
+                        array->array->items[i] = vm_call(&f, k.integer);
+                }
+
+        } else {
+                for (int i = 0; i < n; ++i) {
+                        struct array *w = value_array_new();
+                        NOGC(w);
+                        for (int j = i; j < i + k.integer; ++j)
+                                value_array_push(w, array->array->items[j]);
+                        OKGC(w);
+                        array->array->items[i] = ARRAY(w);
+                }
         }
 
         array->array->count = n;
@@ -1701,7 +1713,7 @@ DEFINE_NO_MUT(group_by);
 DEFINE_NO_MUT(groups_of);
 DEFINE_NO_MUT(intersperse);
 DEFINE_NO_MUT(map);
-DEFINE_NO_MUT(map_cons);
+DEFINE_NO_MUT(window);
 DEFINE_NO_MUT(reverse);
 DEFINE_NO_MUT(rotate);
 DEFINE_NO_MUT(scan_left);
@@ -1749,8 +1761,6 @@ DEFINE_METHOD_TABLE(
         { .name = "len",               .func = array_length                  },
         { .name = "map",               .func = array_map_no_mut              },
         { .name = "map!",              .func = array_map                     },
-        { .name = "mapCons",           .func = array_map_cons_no_mut         },
-        { .name = "mapCons!",          .func = array_map_cons                },
         { .name = "max",               .func = array_max                     },
         { .name = "maxBy",             .func = array_max_by                  },
         { .name = "min",               .func = array_min                     },
@@ -1791,6 +1801,8 @@ DEFINE_METHOD_TABLE(
         { .name = "takeWhile!",        .func = array_take_while_mut          },
         { .name = "uniq",              .func = array_uniq_no_mut             },
         { .name = "uniq!",             .func = array_uniq                    },
+        { .name = "window",            .func = array_window_no_mut           },
+        { .name = "window!",           .func = array_window                  },
         { .name = "zip",               .func = array_zip_no_mut              },
         { .name = "zip!",              .func = array_zip                     },
 );

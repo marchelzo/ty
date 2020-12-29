@@ -88,7 +88,7 @@ mkregex(char const *pat, int flags)
 
         pcre *re = pcre_compile(pat, flags, &err, &offset, NULL);
         if (re == NULL) {
-                error("error compiling regular expression: %s: %s", err, pat + offset);
+                error("error compiling regular expression: %s at position %d", err, offset);
         }
 
         pcre_extra *extra = pcre_study(re, PCRE_STUDY_EXTRA_NEEDED | PCRE_STUDY_JIT_COMPILE, &err);
