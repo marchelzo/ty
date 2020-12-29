@@ -34,6 +34,9 @@ struct value
 builtin_hash(int argc);
 
 struct value
+builtin_type(int argc);
+
+struct value
 builtin_int(int argc);
 
 struct value
@@ -47,6 +50,12 @@ builtin_bool(int argc);
 
 struct value
 builtin_regex(int argc);
+
+struct value
+builtin_array(int argc);
+
+struct value
+builtin_dict(int argc);
 
 struct value
 builtin_blob(int argc);

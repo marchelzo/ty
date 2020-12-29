@@ -477,6 +477,20 @@ builtin_bool(int argc)
 }
 
 struct value
+builtin_dict(int argc)
+{
+        ASSERT_ARGC("dict()", 0);
+        return DICT(dict_new());
+}
+
+struct value
+builtin_array(int argc)
+{
+        ASSERT_ARGC("array()", 0);
+        return ARRAY(value_array_new());
+}
+
+struct value
 builtin_regex(int argc)
 {
         ASSERT_ARGC("regex()", 1);
@@ -1970,4 +1984,31 @@ builtin_time_time(int argc)
                 t.tm_isdst = vp->boolean;
 
         return INTEGER(mktime(&t));
+}
+
+struct value
+builtin_type(int argc)
+{
+        ASSERT_ARGC("type()", 1);
+
+        struct value v = ARG(0);
+
+        char const *s = NULL;
+        
+        switch (v.type) {
+        case VALUE_INTEGER:  return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_int };
+        case VALUE_REAL:     return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_float };
+        case VALUE_STRING:   return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_str };
+        case VALUE_ARRAY:    return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_array };
+        case VALUE_DICT:     return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_dict };
+        case VALUE_BLOB:     return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_blob };
+        case VALUE_OBJECT:   return (struct value) { .type = VALUE_CLASS, .class = 0 };
+        case VALUE_BOOLEAN:  return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_bool };
+        case VALUE_REGEX:    return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_regex };
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:
+        case VALUE_BUILTIN_FUNCTION:
+        case VALUE_FUNCTION: return (struct value) { .type = VALUE_CLASS, .class = 1 };
+        case VALUE_NIL:      return NIL;
+        }
 }
