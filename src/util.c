@@ -11,6 +11,7 @@
 
 #include "panic.h"
 #include "alloc.h"
+#include "vec.h"
 
 uintmax_t
 umax(uintmax_t a, uintmax_t b)
@@ -62,20 +63,37 @@ slurp(char const *path)
         struct stat st;
         fstat(fd, &st);
 
-        int n = st.st_size;
+        if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+                int n = st.st_size;
 
-        void *p = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
-        if (p == NULL) {
-                return NULL;
+                void *p = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+                if (p == NULL) {
+                        return NULL;
+                }
+
+                char *s = alloc(n + 1);
+                memcpy(s, p, n);
+                s[n] = '\0';
+
+                munmap(p, n);
+                close(fd);
+
+                return s;
+        } else {
+                vec(char) s;
+                char b[1UL << 14];
+                int r;
+
+                vec_init(s);
+                
+                while ((r = read(fd, b, sizeof b)) > 0) {
+                        for (int i = 0; i < r; ++i) {
+                                vec_push(s, b[i]);
+                        }
+                }
+
+                vec_push(s, '\0');
+                return s.items;
         }
-
-        char *s = alloc(n + 1);
-        memcpy(s, p, n);
-        s[n] = '\0';
-
-        munmap(p, n);
-        close(fd);
-
-        return s;
 
 }
