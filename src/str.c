@@ -53,23 +53,31 @@ Next:
 static struct value
 string_length(struct value *string, int argc)
 {
-        if (argc != 0)
-                vm_panic("str.len() expects no arguments but got %d", argc);
-
         char const *s = string->string;
-        long size = string->bytes;
+        int size = string->bytes;
+        int offset = 0;
+        int state = 0;
         int length = 0;
 
         while (size > 0) {
                 int codepoint;
-                int n = utf8proc_iterate(s, size, &codepoint);
+                int n = utf8proc_iterate(s + offset, size, &codepoint);
                 if (n == -1) {
-                        n = 1;
-                } else {
-                        length += utf8proc_charwidth(codepoint);
+                        size -= 1;
+                        offset += 1;
+                        continue;
+                } else while (n < size) {
+                        int next;
+                        int m = utf8proc_iterate(s + offset + n, size - n, &next);
+                        if (m == -1)
+                                break;
+                        if (utf8proc_grapheme_break_stateful(codepoint, next, &state))
+                                break;
+                        n += m;
                 }
-                s += n;
+                length += 1;
                 size -= n;
+                offset += n;
         }
 
         return INTEGER(length);
@@ -79,7 +87,7 @@ static struct value
 string_chars(struct value *string, int argc)
 {
         if (argc != 0)
-                vm_panic("str.len() expects no arguments but got %d", argc);
+                vm_panic("str.chars() expects no arguments but got %d", argc);
 
         char const *s = string->string;
         int size = string->bytes;

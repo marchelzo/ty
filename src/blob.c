@@ -301,6 +301,85 @@ blob_hex(struct value *blob, int argc)
         return STRING(s, n*2);
 }
 
+static struct value
+blob_slice(struct value *blob, int argc)
+{
+        int start = 0;
+        int n = blob->blob->count;
+
+        switch (argc) {
+        case 2:
+                if (ARG(1).type != VALUE_INTEGER)
+                        vm_panic("the second argument to blob.slice() must be an integer");
+                n = ARG(1).integer;
+        case 1:
+                if (ARG(0).type != VALUE_INTEGER)
+                        vm_panic("the first argument to blob.slice() must be an integer");
+                start = ARG(0).integer;
+        case 0:
+                break;
+        default:
+                vm_panic("blob.slice() expects 0, 1, or 2 arguments but got %d", argc);
+        }
+
+        if (start < 0)
+                start += blob->blob->count;
+        if (start < 0 || start >= blob->blob->count)
+                vm_panic("start index %d out of range in call to blob.slice()", start);
+
+        if (n < 0)
+                n += blob->blob->count;
+        if (n < 0)
+                vm_panic("count %d out of range in call to blob.slice()", n);
+        n = min(n, blob->blob->count - start);
+
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, blob->blob->items + start, n);
+
+        return BLOB(b);
+}
+
+static struct value
+blob_splice(struct value *blob, int argc)
+{
+        int start = 0;
+        int n = blob->blob->count;
+
+        switch (argc) {
+        case 2:
+                if (ARG(1).type != VALUE_INTEGER)
+                        vm_panic("the second argument to blob.splice() must be an integer");
+                n = ARG(1).integer;
+        case 1:
+                if (ARG(0).type != VALUE_INTEGER)
+                        vm_panic("the first argument to blob.splice() must be an integer");
+                start = ARG(0).integer;
+        case 0:
+                break;
+        default:
+                vm_panic("blob.splice() expects 0, 1, or 2 arguments but got %d", argc);
+        }
+
+        if (start < 0)
+                start += blob->blob->count;
+        if (start < 0 || start >= blob->blob->count)
+                vm_panic("start index %d out of range in call to blob.splice()", start);
+
+        if (n < 0)
+                n += blob->blob->count;
+        if (n < 0)
+                vm_panic("count %d out of range in call to blob.splice()", n);
+        n = min(n, blob->blob->count - start);
+
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, blob->blob->items + start, n);
+
+        memmove(blob->blob->items + start, blob->blob->items + start + n, blob->blob->count - start - n);
+        blob->blob->count -= n;
+
+        return BLOB(b);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "clear",    .func = blob_clear     },
         { .name = "fill",     .func = blob_fill      },
@@ -312,6 +391,8 @@ DEFINE_METHOD_TABLE(
         { .name = "set",      .func = blob_set       },
         { .name = "shrink",   .func = blob_shrink    },
         { .name = "size",     .func = blob_size      },
+        { .name = "slice",    .func = blob_slice     },
+        { .name = "splice",   .func = blob_splice    },
         { .name = "str",      .func = blob_str       },
 );
 

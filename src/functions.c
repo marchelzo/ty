@@ -877,6 +877,19 @@ builtin_md5(int argc)
 }
 
 struct value
+builtin_os_umask(int argc)
+{
+        ASSERT_ARGC("os::umask()", 1);
+
+        struct value mask = ARG(0);
+        if (mask.type != VALUE_INTEGER) {
+                vm_panic("the argument to os::umask() must be an integer");
+        }
+
+        return INTEGER(umask(mask.integer));
+}
+
+struct value
 builtin_os_open(int argc)
 {
         ASSERT_ARGC_2("os::open()", 2, 3);
@@ -978,7 +991,7 @@ builtin_os_write(int argc)
 
         switch (data.type) {
         case VALUE_BLOB:
-                n = write(file.integer, (char *)data.blob->items, data.blob->count);
+                n = write(file.integer, (void *)data.blob->items, data.blob->count);
                 break;
         case VALUE_STRING:
                 n = write(file.integer, data.string, data.bytes);

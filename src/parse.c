@@ -490,6 +490,7 @@ opfunc(void)
 {
         struct token t = *tok();
         next();
+
         consume(']');
 
         char *a = gensym();

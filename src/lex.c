@@ -20,10 +20,9 @@ enum {
         MAX_ERR_LEN  = 2048
 };
 
+static char const *filename;
 static struct location startloc;
 static struct location loc;
-
-static char const *filename;
 
 static jmp_buf jb;
 static bool keep_next_newline;
@@ -244,10 +243,10 @@ lexrawstr(void)
 
         while (*chars != '\'') {
                 switch (*chars) {
-                case '\0': goto unterminated;
+                case '\0': goto Unterminated;
                 case '\\':
                            nextchar();
-                           if (*chars == '\0') goto unterminated;
+                           if (*chars == '\0') goto Unterminated;
                            // fallthrough
                 default:
                            vec_push(str, nextchar());
@@ -260,7 +259,7 @@ lexrawstr(void)
 
         return mkstring(str.items);
 
-unterminated:
+Unterminated:
 
         error("unterminated string literal");
 }
@@ -274,10 +273,10 @@ lexexpr(void)
         nextchar();
         while (*chars != '}') {
                 switch (*chars) {
-                case '\0': goto unterminated;
+                case '\0': goto Unterminated;
                 case '\\':
                            nextchar();
-                           if (*chars == '\0') goto unterminated;
+                           if (*chars == '\0') goto Unterminated;
                            if (*chars == 'n') {
                                    nextchar();
                                    vec_push(e, '\n');
@@ -295,7 +294,7 @@ lexexpr(void)
 
         return e.items;
 
-unterminated:
+Unterminated:
         error("unterminated expression in interpolated string");
 }
 
@@ -313,17 +312,17 @@ lexspecialstr(void)
 
         nextchar();
 
-start:
+Start:
 
         while (*chars != '"') {
                 switch (*chars) {
-                case '\0': goto unterminated;
-                case '{':  goto expr;
+                case '\0': goto Unterminated;
+                case '{':  goto Expr;
                 case '\\':
                         nextchar();
                         switch (*chars) {
                         case '\0':
-                                goto unterminated;
+                                goto Unterminated;
                         case 'n':
                                 nextchar();
                                 vec_push(str, '\n');
@@ -349,16 +348,16 @@ start:
 
         return special;
 
-expr:
+Expr:
         vec_push(str, '\0');
         vec_push(special.strings, str.items);
         vec_init(str);
         vec_push(special.locations, loc);
         vec_push(special.expressions, lexexpr());
 
-        goto start;
+        goto Start;
 
-unterminated:
+Unterminated:
 
         error("unterminated string literal");
 }
@@ -569,15 +568,29 @@ lex_init(char const *file)
 void
 lex_start(char const *s)
 {
+        vec_push(states, chars);
+        chars = s;
+
         /*
          * Eat the shebang if there is one.
          */
-        if (s[0] == '#' && s[1] == '!')
-                while (*s != '\0' && *s++ != '\n')
-                        ;
+        if (chars[0] == '#' && chars[1] == '!')
+                while (*chars != '\0' && *chars != '\n')
+                        nextchar();
+}
 
-        vec_push(states, chars);
-        chars = s;
+void
+lex_save(struct lex_state *state)
+{
+        state->s = chars;
+        state->loc = loc;
+}
+
+void
+lex_rewind(struct lex_state const *state)
+{
+        chars = state->s;
+        loc = state->loc;
 }
 
 void

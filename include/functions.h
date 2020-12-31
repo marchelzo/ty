@@ -151,6 +151,9 @@ struct value
 builtin_os_open(int argc);
 
 struct value
+builtin_os_umask(int argc);
+
+struct value
 builtin_os_close(int argc);
 
 struct value

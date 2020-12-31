@@ -55,6 +55,7 @@
 { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
 { .module = "os",     .name = "read",              .value = BUILTIN(builtin_os_read)                       },
 { .module = "os",     .name = "write",             .value = BUILTIN(builtin_os_write)                      },
+{ .module = "os",     .name = "umask",             .value = BUILTIN(builtin_os_umask)                      },
 { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
 { .module = "os",     .name = "fcntl",             .value = BUILTIN(builtin_os_fcntl)                      },
 { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
