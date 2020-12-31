@@ -1,0 +1,34 @@
+import os
+
+export ls, sh, expand
+
+function sh(c, input) {
+    if !let $p = os::spawn(['bash', '-c', c]) {
+	return nil;
+    }
+
+    let out = blob();
+
+    if (input != nil)
+        os::write(p.stdin, input);
+    os::close(p.stdin);
+
+    while (os::read(p.stdout, out, 4096) > 0) {
+        ;
+    }
+
+    os::close(p.stdout);
+    os::close(p.stderr);
+
+    let [_, s] = os::waitpid(p.pid);
+
+    return out.str(), os::WEXITSTATUS(s), out;
+}
+
+function ls(d, flags) {
+    return sh("ls '{d}' {flags || ''}").split("\n");
+}
+
+function expand(s) {
+    return sh("echo -n {s}");
+}

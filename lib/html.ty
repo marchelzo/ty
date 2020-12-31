@@ -1,0 +1,47 @@
+import gumbo
+
+export parse, HtmlText
+
+function parse(s) {
+    if !let $d = gumbo::parse(s).root {
+        return nil;
+    }
+
+    return HtmlElement.from(d);
+
+}
+
+tag HtmlText {
+    text(t) { return t; }
+}
+
+
+class HtmlElement {
+    init(E, t, p) {
+        E.parent = p;
+        E.children = [];
+        E.t = t;
+        E.attrs = {};
+    }
+
+    attr(E, a) {
+        return E.attrs[a];
+    }
+
+    text(E) {
+        return E.children.filter(HtmlText).map(e -> e.text()).join(' ')
+                .sub(/\s+/, ' ')
+                .sub(/(^\s*)|(\s*$)/, '');
+    }
+
+    from(n, p) {
+        if (n.type == gumbo::NODE_ELEMENT) {
+            let e = HtmlElement(n.element.t, p);
+            e.children = n.element.children.map(c -> HtmlElement.from(c, e));
+            e.attrs = { a.name : (a.value || true) for a in n.element.attributes };
+            return e;
+        } else {
+            return HtmlText(n.text);
+        }
+    }
+}

@@ -1,0 +1,106 @@
+import sqlite3c (..)
+
+export SQLite3
+
+class SQLite3RowIter {
+    init(self, s) {
+        self.s = s;
+    }
+
+    __next__(self) {
+        return self.s.nextRow();
+    }
+}
+
+class SQLite3Statement {
+    init(self, p) {
+        self.p = p;
+    }
+
+    exec(self) {
+        if (self.p) {
+            let r = step(self.p);
+            finalize(self.p);
+            self.p = nil;
+            return r;
+        } else {
+            throw Err(SQLITE_MISUSE);
+        }
+    }
+
+    step(self) {
+        if (self.p) {
+            self.status = step(self.p);
+            return self.status;
+        } else {
+            throw Err(SQLITE_MISUSE);
+        }
+    }
+
+    row(self) {
+        if (self.p) {
+            if (self.status == SQLITE_ROW) {
+                return fetchAssoc(self.p);
+            } else {
+                return nil;
+            }
+        } else {
+            throw Err(SQLITE_MISUSE);
+        }
+    }
+
+    nextRow(self) {
+        self.step();
+        let row = self.row();
+        if (self.status == SQLITE_DONE) {
+            self.finalize();
+        }
+        return row;
+    }
+
+    finalize(self) {
+        if (self.p) {
+            finalize(self.p);
+            self.p = nil;
+        }
+    }
+
+    rows(self) {
+        if (!self.p) throw Err(SQLITE_MISUSE);
+        reset(self.p);
+        return SQLite3RowIter(self);
+    }
+
+    __iter__(self) {
+        return self.rows();
+    }
+}
+
+class SQLite3 {
+    init(self, path) {
+        if let $db = open(path) {
+            self.db = db;
+        } else {
+            throw Err(error());
+        }
+    }
+
+    close(self) {
+        if (self.db) {
+            close(self.db);
+            self.db = nil;
+        }
+    }
+
+    query(self, sql, *ps) {
+        let s = prepare(self.db, sql);
+        if (!s) throw Err(error(self.db));
+        for p, i in ps {
+            match bind(s, i + 1, p) {
+                SQLITE_OK => { },
+                e         => throw Err(e);
+            }
+        }
+        return SQLite3Statement(s);
+    }
+}
