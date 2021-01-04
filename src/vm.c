@@ -759,6 +759,15 @@ Throw:
                 CASE(GET_EXTRA)
                         stack.count += rc;
                         break;
+                CASE(FIX_EXTRA)
+                        for (n = 0; top()[-n].type != VALUE_SENTINEL; ++n)
+                                ;
+                        for (i = 0, j = n - 1; i < j; ++i, --j) {
+                                v = top()[-i];
+                                top()[-i] = top()[-j];
+                                top()[-j] = v;
+                        }
+                        break;
                 CASE(FIX_TO)
                         READVALUE(n);
                         for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
@@ -796,6 +805,16 @@ Throw:
                                 }
                         }
                         push(top()[2]);
+                        break;
+                CASE(JUMP_IF_SENTINEL)
+                        READVALUE(n);
+                        if (top()->type == VALUE_SENTINEL)
+                                ip += n;
+                        break;
+                CASE(CLEAR_EXTRA)
+                        while (top()->type != VALUE_SENTINEL)
+                                pop();
+                        pop();
                         break;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);

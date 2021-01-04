@@ -157,6 +157,9 @@ struct value
 builtin_os_close(int argc);
 
 struct value
+builtin_os_unlink(int argc);
+
+struct value
 builtin_os_read(int argc);
 
 struct value

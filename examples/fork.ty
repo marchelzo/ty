@@ -1,17 +1,16 @@
-import os
+import os (..)
 
-let [r, w] = os::pipe();
+let [r, w] = pipe();
 
-match os::fork() {
+match fork() {
      0 => {
-          os::close(r);
-          os::write(w, "Hello, world!\n");
+          close(r);
+          write(w, "Hello, world!\n");
      },
-     _ => {
-          os::close(w);
+     pid => {
+          close(w);
           let msg = blob();
-          os::read(r, msg, 512);
-          os::write(1, 'Got message from child: ');
-          os::write(1, msg);
+          read(r, msg, 512);
+          print("Got message from child ({pid}): {msg.str()}");
      }
 }

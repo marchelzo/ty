@@ -53,6 +53,7 @@
 { .module = "bit",    .name = "shiftRight",        .value = BUILTIN(builtin_bit_shift_right)               },
 { .module = "os",     .name = "open",              .value = BUILTIN(builtin_os_open)                       },
 { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
+{ .module = "os",     .name = "unlink",            .value = BUILTIN(builtin_os_unlink)                     },
 { .module = "os",     .name = "read",              .value = BUILTIN(builtin_os_read)                       },
 { .module = "os",     .name = "write",             .value = BUILTIN(builtin_os_write)                      },
 { .module = "os",     .name = "umask",             .value = BUILTIN(builtin_os_umask)                      },

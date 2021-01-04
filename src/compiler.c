@@ -816,13 +816,13 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->if_let.e);
                 subscope = scope_new(scope, false);
                 if (s->if_let.neg) {
+                        symbolize_statement(subscope, s->if_let.then);
                         symbolize_pattern(scope, s->if_let.pattern);
-                        symbolize_statement(scope, s->if_let.then);
                         symbolize_statement(subscope, s->if_let.otherwise);
                 } else {
+                        symbolize_statement(subscope, s->if_let.otherwise);
                         symbolize_pattern(subscope, s->if_let.pattern);
                         symbolize_statement(subscope, s->if_let.then);
-                        symbolize_statement(scope, s->if_let.otherwise);
                 }
                 break;
         case STATEMENT_FOR_LOOP:
@@ -974,6 +974,25 @@ emit_checks(int_vector check)
         emit_int(check.count);
         for (int i = 0; i < check.count; ++i)
                 emit_symbol(check.items[i]);
+}
+
+static void
+emit_list(struct expression const *e)
+{
+        emit_instr(INSTR_SENTINEL);
+        if (e->type == EXPRESSION_LIST) for (int i = 0; i < e->es.count; ++i) {
+                if (is_call(e->es.items[i])) {
+                        emit_instr(INSTR_CLEAR_RC);
+                        emit_expression(e->es.items[i]);
+                        emit_instr(INSTR_GET_EXTRA);
+                } else {
+                        emit_expression(e->es.items[i]);
+                }
+        } else {
+                emit_instr(INSTR_CLEAR_RC);
+                emit_expression(e);
+                emit_instr(INSTR_GET_EXTRA);
+        }
 }
 
 static void
@@ -1362,6 +1381,15 @@ emit_try_match(struct expression const *pattern)
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
                 break;
+        case EXPRESSION_LIST:
+                for (int i = 0; i < pattern->es.count; ++i) {
+                        emit_instr(INSTR_JUMP_IF_SENTINEL);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
+                        emit_try_match(pattern->es.items[i]);
+                        emit_instr(INSTR_POP);
+                }
+                break;
         default:
                 emit_instr(INSTR_DUP);
                 emit_expression(pattern);
@@ -1389,8 +1417,7 @@ emit_case(struct expression const *pattern, struct expression const *condition, 
                 emit_int(0);
         }
 
-        emit_instr(INSTR_RESTORE_STACK_POS);
-        emit_instr(INSTR_POP);
+        emit_instr(INSTR_CLEAR_EXTRA);
 
         bool returns = false;
         if (s != NULL) {
@@ -1434,7 +1461,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
          * then pop it and execute the code to produce the result of this branch.
          */
         emit_instr(INSTR_RESTORE_STACK_POS);
-        emit_instr(INSTR_POP);
+        emit_instr(INSTR_CLEAR_EXTRA);
         emit_expression(e);
 
         /*
@@ -1460,7 +1487,8 @@ emit_match_statement(struct statement const *s)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        emit_expression(s->match.e);
+        emit_list(s->match.e);
+        emit_instr(INSTR_FIX_EXTRA);
 
         bool returns = true;
 
@@ -1475,7 +1503,6 @@ emit_match_statement(struct statement const *s)
         emit_instr(INSTR_BAD_MATCH);
 
         patch_jumps_to(&state.match_successes, state.code.count);
-
         state.match_successes = successes_save;
 
         return returns;
@@ -1499,7 +1526,8 @@ emit_while_match(struct statement const *s)
 
         emit_checks(s->match.check);
 
-        emit_expression(s->match.e);
+        emit_list(s->match.e);
+        emit_instr(INSTR_FIX_EXTRA);
 
         for (int i = 0; i < s->match.patterns.count; ++i) {
                 LOG("emitting case %d", i + 1);
@@ -1509,17 +1537,17 @@ emit_while_match(struct statement const *s)
         /*
          * If nothing matches, we jump out of the loop.
          */
-        emit_instr(INSTR_POP);
+        emit_instr(INSTR_CLEAR_EXTRA);
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
-
-        patch_jumps_to(&state.match_successes, state.code.count);
 
         /*
          * Something matched, so we iterate again.
          */
+        patch_jumps_to(&state.match_successes, state.code.count);
         JUMP(begin);
 
         PATCH_JUMP(finished);
+
         patch_loop_jumps(begin, state.code.count);
 
         state.match_successes = successes_save;
@@ -1547,15 +1575,16 @@ emit_while_let(struct statement const *s)
 
         emit_checks(s->while_let.check);
 
-        emit_expression(s->while_let.e);
+        emit_list(s->while_let.e);
+        emit_instr(INSTR_FIX_EXTRA);
 
         emit_case(s->while_let.pattern, NULL, s->while_let.block);
 
         /*
          * We failed to match, so we jump out.
          */
+        emit_instr(INSTR_CLEAR_EXTRA);
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
-
         patch_jumps_to(&state.match_successes, state.code.count);
 
         /*
@@ -1565,8 +1594,6 @@ emit_while_let(struct statement const *s)
 
         PATCH_JUMP(finished);
         patch_loop_jumps(begin, state.code.count);
-
-        emit_instr(INSTR_POP);
 
         state.match_successes = successes_save;
         state.breaks = brk_save;
@@ -1581,13 +1608,14 @@ emit_if_let(struct statement const *s)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        emit_expression(s->if_let.e);
+        emit_list(s->if_let.e);
+        emit_instr(INSTR_FIX_EXTRA);
 
         bool returns;
 
         if (!s->if_let.neg) {
                 returns = emit_case(s->if_let.pattern, NULL, s->if_let.then);
-                emit_instr(INSTR_POP);
+                emit_instr(INSTR_CLEAR_EXTRA);
                 if (s->if_let.otherwise != NULL) {
                         returns &= emit_statement(s->if_let.otherwise);
                 } else {
@@ -1595,12 +1623,11 @@ emit_if_let(struct statement const *s)
                 }
         } else {
                 returns = emit_case(s->if_let.pattern, NULL, s->if_let.otherwise);
-                emit_instr(INSTR_POP);
+                emit_instr(INSTR_CLEAR_EXTRA);
                 returns &= emit_statement(s->if_let.then);
         }
 
         patch_jumps_to(&state.match_successes, state.code.count);
-
         state.match_successes = successes_save;
 
         return returns;
@@ -1612,7 +1639,8 @@ emit_match_expression(struct expression const *e)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        emit_expression(e->subject);
+        emit_list(e->subject);
+        emit_instr(INSTR_FIX_EXTRA);
 
         for (int i = 0; i < e->patterns.count; ++i) {
                 LOG("emitting case %d", i + 1);

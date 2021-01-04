@@ -80,6 +80,9 @@ enum instruction {
         INSTR_CLEAR_RC,
         INSTR_GET_EXTRA,
         INSTR_MULTI_ASSIGN,
+        INSTR_JUMP_IF_SENTINEL,
+        INSTR_CLEAR_EXTRA,
+        INSTR_FIX_EXTRA,
 
 
         INSTR_SAVE_STACK_POS,

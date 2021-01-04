@@ -557,7 +557,7 @@ prefix_match(void)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_MATCH;
 
-        e->subject = parse_expr(0);
+        e->subject = parse_expr(-1);
 
         consume('{');
 
@@ -565,7 +565,7 @@ prefix_match(void)
         vec_init(e->conds);
         vec_init(e->thens);
 
-        vec_push(e->patterns, parse_expr(0));
+        vec_push(e->patterns, parse_expr(-1));
         if (tok()->type == TOKEN_BIT_OR) {
                 next();
                 vec_push(e->conds, parse_expr(0));
@@ -578,7 +578,7 @@ prefix_match(void)
 
         while (tok()->type == ',') {
                 next();
-                vec_push(e->patterns, parse_expr(0));
+                vec_push(e->patterns, parse_expr(-1));
                 if (tok()->type == TOKEN_BIT_OR) {
                         next();
                         vec_push(e->conds, parse_expr(0));
@@ -1590,7 +1590,7 @@ parse_while_loop(void)
 
                 consume(TOKEN_EQ);
 
-                s->while_let.e = parse_expr(0);
+                s->while_let.e = parse_expr(-1);
                 s->while_let.block = parse_block();
 
                 return s;
@@ -1631,11 +1631,11 @@ parse_if_statement(void)
                 s->if_let.neg = neg;
                 s->if_let.pattern = parse_definition_lvalue(LV_LET);
                 consume(TOKEN_EQ);
-                s->if_let.e = parse_expr(0);
+                s->if_let.e = parse_expr(-1);
                 s->if_let.then = parse_block();
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
                         next();
-                        s->if_let.otherwise = parse_block();
+                        s->if_let.otherwise = parse_statement();
                 } else {
                         s->if_let.otherwise = NULL;
                 }
@@ -1670,7 +1670,7 @@ parse_match_statement(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_MATCH;
 
-        s->match.e = parse_expr(0);
+        s->match.e = parse_expr(-1);
 
         consume('{');
 
@@ -1678,7 +1678,7 @@ parse_match_statement(void)
         vec_init(s->match.conds);
         vec_init(s->match.statements);
 
-        vec_push(s->match.patterns, parse_expr(0));
+        vec_push(s->match.patterns, parse_expr(-1));
         if (tok()->type == TOKEN_BIT_OR) {
                 next();
                 vec_push(s->match.conds, parse_expr(0));
@@ -1691,7 +1691,7 @@ parse_match_statement(void)
 
         while (tok()->type == ',') {
                 next();
-                vec_push(s->match.patterns, parse_expr(0));
+                vec_push(s->match.patterns, parse_expr(-1));
                 if (tok()->type == TOKEN_BIT_OR) {
                         next();
                         vec_push(s->match.conds, parse_expr(0));

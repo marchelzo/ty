@@ -946,6 +946,27 @@ builtin_os_close(int argc)
 }
 
 struct value
+builtin_os_unlink(int argc)
+{
+        ASSERT_ARGC("os::unlink()", 1);
+
+        struct value path = ARG(0);
+
+        if (path.type != VALUE_STRING)
+                vm_panic("the argument to os::unlink() must be a string");
+
+        if (path.bytes >= sizeof buffer) {
+                errno = ENAMETOOLONG;
+                return INTEGER(-1);
+        }
+
+        memcpy(buffer, path.string, path.bytes);
+        buffer[path.bytes] = '\0';
+
+        return INTEGER(unlink(buffer));
+}
+
+struct value
 builtin_os_read(int argc)
 {
         ASSERT_ARGC("os::read()", 3);
@@ -1208,6 +1229,59 @@ builtin_os_listen(int argc)
 }
 
 struct value
+builtin_os_connect(int argc)
+{
+        ASSERT_ARGC("os::connect()", 2);
+
+        struct value sockfd = ARG(0);
+        struct value addr = ARG(1);
+
+        if (sockfd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::connect() must be an integer");
+
+        if (addr.type != VALUE_DICT)
+                vm_panic("the second argument to os::connect() must be a dict");
+
+        struct value *v = dict_get_member(addr.dict, "family");
+        if (v == NULL || v->type != VALUE_INTEGER)
+                vm_panic("missing or invalid address family in dict passed to os::connect()");
+
+        struct sockaddr_un un_addr;
+        struct sockaddr_in in_addr;
+        struct in_addr ia;
+
+        struct value *sockaddr = dict_get_member(addr.dict, "address");
+        if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
+                return INTEGER(connect(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
+        } else switch (v->integer) {
+                case AF_UNIX:
+                        memset(&un_addr, 0, sizeof un_addr);
+                        un_addr.sun_family = AF_UNIX;
+                        v = dict_get_member(addr.dict, "path");
+                        if (v == NULL || v->type != VALUE_STRING)
+                                vm_panic("missing or invalid path in dict passed to os::connect()");
+                        memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
+                        return INTEGER(connect(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+                case AF_INET:
+                        memset(&in_addr, 0, sizeof in_addr);
+                        in_addr.sin_family = AF_INET;
+                        v = dict_get_member(addr.dict, "address");
+                        if (v == NULL || v->type != VALUE_INTEGER)
+                                vm_panic("missing or invalid address in dict passed to os::connect()");
+                        ia.s_addr = htonl(v->integer);
+                        in_addr.sin_addr = ia;
+                        v = dict_get_member(addr.dict, "port");
+                        if (v == NULL || v->type != VALUE_INTEGER)
+                                vm_panic("missing or invalid port in dict passed to os::connect()");
+                        unsigned short p = htons(v->integer);
+                        memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
+                        return INTEGER(connect(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
+                default:
+                        vm_panic("invalid arguments to os::connect()");
+        }
+}
+
+struct value
 builtin_os_bind(int argc)
 {
         ASSERT_ARGC("os::bind()", 2);
@@ -1316,13 +1390,17 @@ builtin_os_getaddrinfo(int argc)
         if (r == 0) {
                 for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
                         struct value d = DICT(dict_new());
+                        NOGC(d.dict);
                         value_array_push(results.array, d);
+                        OKGC(d.dict);
                         dict_put_member(d.dict, "family", INTEGER(it->ai_family));
                         dict_put_member(d.dict, "type", INTEGER(it->ai_socktype));
                         dict_put_member(d.dict, "protocol", INTEGER(it->ai_protocol));
                         struct blob *b = value_blob_new();
+                        NOGC(b);
                         dict_put_member(d.dict, "address", BLOB(b));
                         vec_push_n(*b, (char *)it->ai_addr, it->ai_addrlen);
+                        OKGC(b);
                         if (it->ai_canonname != NULL) {
                                 dict_put_member(
                                         d.dict,
@@ -1588,7 +1666,7 @@ builtin_os_kill(int argc)
 }
 
 struct value
-builtin_os_connect(int argc)
+builtin_os_connect2(int argc)
 {
         static vec(char) host;
         static vec(char) port;
