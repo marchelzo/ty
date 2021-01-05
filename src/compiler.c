@@ -980,6 +980,8 @@ static void
 emit_list(struct expression const *e)
 {
         emit_instr(INSTR_SENTINEL);
+        emit_instr(INSTR_CLEAR_RC);
+
         if (e->type == EXPRESSION_LIST) for (int i = 0; i < e->es.count; ++i) {
                 if (is_call(e->es.items[i])) {
                         emit_instr(INSTR_CLEAR_RC);
@@ -1383,6 +1385,8 @@ emit_try_match(struct expression const *pattern)
                 break;
         case EXPRESSION_LIST:
                 for (int i = 0; i < pattern->es.count; ++i) {
+                        emit_instr(INSTR_PUSH_NTH);
+                        emit_int(i);
                         emit_instr(INSTR_JUMP_IF_SENTINEL);
                         vec_push(state.match_fails, state.code.count);
                         emit_int(0);

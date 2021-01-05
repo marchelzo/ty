@@ -474,6 +474,7 @@ Throw:
 
                         v = pop();
                         stack.count = t->sp;
+                        push(SENTINEL);
                         push(v);
 
                         targets.count = t->ts;
@@ -815,6 +816,10 @@ Throw:
                         while (top()->type != VALUE_SENTINEL)
                                 pop();
                         pop();
+                        break;
+                CASE(PUSH_NTH)
+                        READVALUE(n);
+                        push(top()[-n]);
                         break;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);

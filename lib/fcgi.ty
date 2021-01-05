@@ -1,0 +1,245 @@
+import os
+import fs
+import bit (shiftLeft, shiftRight, and)
+
+export FCGIApp
+
+let FCGI_LISTENSOCK_FILENO  = 0;
+
+let FCGI_HEADER_LEN         = 8;
+
+let FCGI_VERSION_1          = 1;
+
+let FCGI_BEGIN_REQUEST      = 1;
+let FCGI_ABORT_REQUEST      = 2;
+let FCGI_END_REQUEST        = 3;
+let FCGI_PARAMS             = 4;
+let FCGI_STDIN              = 5;
+let FCGI_STDOUT             = 6;
+let FCGI_STDERR             = 7;
+let FCGI_DATA               = 8;
+let FCGI_GET_VALUES         = 9;
+let FCGI_GET_VALUES_RESULT  = 10;
+let FCGI_UNKNOWN_TYPE       = 11;
+let FCGI_MAXTYPE            = FCGI_UNKNOWN_TYPE;
+
+let FCGI_NULL_REQUEST_ID    = 0;
+
+let FCGI_KEEP_CONN          = 1;
+
+let FCGI_RESPONDER          = 1;
+let FCGI_AUTHORIZER         = 2;
+let FCGI_FILTER             = 3;
+
+let FCGI_REQUEST_COMPLETE   = 0;
+let FCGI_CANT_MPX_CONN      = 1;
+let FCGI_OVERLOADED         = 2;
+let FCGI_UNKNOWN_ROLE       = 3;
+
+let FCGI_MAX_CONNS  = "FCGI_MAX_CONNS";
+let FCGI_MAX_REQS   = "FCGI_MAX_REQS";
+let FCGI_MPXS_CONNS = "FCGI_MPXS_CONNS";
+
+class FCGIRecord {
+    read(f) {
+        let r = FCGIRecord();
+
+        r.version = f.next();
+        if (r.version == nil)
+            return nil;
+
+        r.type = f.next();
+
+        r.requestID = nextShort(f);
+
+        let contentLength = nextShort(f);
+        let paddingLength = f.next();
+
+        f.next(); /* skip the reserved byte */
+
+        r.content = f.next(contentLength);
+
+        f.next(paddingLength); /* skip padding bytes */
+
+        return r;
+    }
+
+    beginRequest(self) {
+        let b = self.content.splice(0, 8);
+        self.role = shiftLeft(b[0], 8) + b[1];
+        self.flags = b[2];
+        return self;
+    }
+
+    getParams(self) {
+        let b = self.content;
+        let ps = {};
+
+        while (b.size() != 0) {
+            let nameLength = getLength(b);
+            let valueLength = getLength(b);
+            let name = b.splice(0, nameLength).str();
+            let value = b.splice(0, valueLength).str();
+            ps[name] = value;
+        }
+
+        return self.params = ps;
+    }
+
+    readInput(self) {
+        return self.content;
+    }
+}
+
+function getLength(b) {
+    if (shiftRight(b[0], 7) == 1) {
+        let n = shiftLeft(and(b[0], 0x7F), 24)
+              + shiftLeft(b[1], 16)
+              + shiftLeft(b[2], 8)
+              + b[3];
+        b.splice(0, 4);
+        return n;
+    } else {
+        let n = b[0];
+        b.splice(0, 1);
+        return n;
+    }
+}
+
+function nextShort(f) {
+    let B1 = f.next();
+    let B0 = f.next();
+    if (B1 == nil || B0 == nil)
+        return nil;
+    return shiftLeft(B1, 8) + B0;
+}
+
+function decode(s) {
+    return s.sub('+', ' ')
+            .sub(/%../, s -> chr(int(s.slice(1), 16)))
+            .sub("\r\n", "\n")
+            .sub("\r", "\n");
+}
+
+function urlDecode(s) {
+    let components = s.split('&');
+    let pairs = [c.split('=').map(decode) for c in components];
+    return {k: v for [k, v] in pairs};
+}
+
+class FCGIRequest {
+    init(self, fd, body, ps) {
+        self.socket = fd;
+        self.body = body;
+        self.params = ps;
+    }
+
+    sendHTML(self, html) {
+        self.sendResponse(0, "Content-type: text/html\r\n\r\n{html}\r\n");
+    }
+
+    sendResponse(self, status, body) {
+        let size = body.size();
+        let response = blob();
+        response.push(FCGI_VERSION_1);
+        response.push(FCGI_STDOUT);
+        response.push(0);
+        response.push(1);
+        response.push(shiftRight(size, 8));
+        response.push(and(0xFF, size));
+        response.push(0);
+        response.push(0);
+        response.push(body);
+        os::write(self.socket, response);
+        response.clear();
+
+        response.push(FCGI_VERSION_1);
+        response.push(FCGI_STDOUT);
+        response.push(0);
+        response.push(1);
+        response.push(0);
+        response.push(0);
+        response.push(0);
+        response.push(0);
+        os::write(self.socket, response);
+        response.clear();
+
+        response.push(FCGI_VERSION_1);
+        response.push(FCGI_END_REQUEST);
+        response.push(0);
+        response.push(1);
+        response.push(0);
+        response.push(8);
+        response.push(0);
+        response.push(0);
+        response.push(and(shiftRight(status, 24), 0xFF));
+        response.push(and(shiftRight(status, 16), 0xFF));
+        response.push(and(shiftRight(status, 8), 0xFF));
+        response.push(and(status, 0xFF));
+        response.push(FCGI_REQUEST_COMPLETE);
+        response.push(0);
+        response.push(0);
+        response.push(0);
+
+        os::write(self.socket, response);
+
+        os::close(self.socket);
+    }
+
+    queryParams(self) {
+        return urlDecode(self.params['QUERY_STRING']);
+    }
+
+    formData(self) {
+        if (self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/)) {
+            let [_, delim] = self.body.match!(/^(.*)\r\n/);
+            let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})");
+            let fields = self.body.matches(pattern);
+            return { k: v for [_, k, v] in fields };
+        } else {
+            return urlDecode(self.body);
+        }
+    }
+}
+
+class FCGIApp {
+    init(self, socket) {
+        self.socket = socket;
+    }
+
+    waitRequest(self) {
+        if !let [$fd, addr] = os::accept(self.socket) {
+            return nil;
+        }
+
+        let stream = fs::File.from(fd);
+
+        let body = blob();
+        let params = {};
+
+        while let $r = FCGIRecord.read(stream) {
+            match r.type {
+                ::FCGI_BEGIN_REQUEST => {
+                    let role, flags = r.beginRequest();
+                },
+
+                ::FCGI_PARAMS => {
+                    params += r.getParams();
+                },
+
+                ::FCGI_STDIN => {
+                    let input = r.readInput();
+                    if (input.size() == 0)
+                        break;
+                    else
+                        body.push(input);
+                },
+
+                t => { print("Type = {t}"); }
+            }
+        }
+
+        return FCGIRequest(fd, body.str(), params);
+    }
+
+}

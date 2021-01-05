@@ -241,6 +241,50 @@ string_search(struct value *string, int argc)
 }
 
 static struct value
+string_contains(struct value *string, int argc)
+{
+        if (argc != 1 && argc != 2)
+                vm_panic("str.contains?() expects 1 or 2 arguments but got %d", argc);
+
+        struct value pattern = ARG(0);
+
+        if (pattern.type != VALUE_STRING)
+                vm_panic("the pattern argument to str.contains?() must be a string");
+
+        int offset;
+        if (argc == 1)
+                offset = 0;
+        else if (ARG(1).type == VALUE_INTEGER)
+                offset = ARG(1).integer;
+        else
+                vm_panic("the second argument to str.contains?() must be an integer");
+
+        if (offset < 0) {
+                stringcount(string->string, string->bytes, -1);
+                offset += outpos.graphemes;
+        }
+
+        if (offset < 0)
+                vm_panic("invalid offset passed to str.contains?()");
+
+        stringcount(string->string, string->bytes, offset);
+        if (outpos.graphemes != offset)
+                return BOOLEAN(false);
+
+        char const *s = string->string + outpos.bytes;
+        int bytes = string->bytes - outpos.bytes;
+
+        char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
+
+        if (match == NULL)
+                return BOOLEAN(false);
+
+        stringcount(s, match - s, -1);
+
+        return BOOLEAN(true);
+}
+
+static struct value
 string_words(struct value *string, int argc)
 {
         if (argc != 0)
@@ -1033,6 +1077,7 @@ DEFINE_METHOD_TABLE(
         { .name = "char",      .func = string_char      },
         { .name = "chars",     .func = string_chars     },
         { .name = "comb",      .func = string_comb      },
+        { .name = "contains?", .func = string_contains  },
         { .name = "count",     .func = string_count     },
         { .name = "len",       .func = string_length    },
         { .name = "lines",     .func = string_lines     },

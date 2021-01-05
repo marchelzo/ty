@@ -79,6 +79,7 @@ enum instruction {
         INSTR_NONE_IF_NIL,
         INSTR_CLEAR_RC,
         INSTR_GET_EXTRA,
+        INSTR_PUSH_NTH,
         INSTR_MULTI_ASSIGN,
         INSTR_JUMP_IF_SENTINEL,
         INSTR_CLEAR_EXTRA,
