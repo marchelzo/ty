@@ -51,6 +51,7 @@
 { .module = "bit",    .name = "complement",        .value = BUILTIN(builtin_bit_complement)                },
 { .module = "bit",    .name = "shiftLeft",         .value = BUILTIN(builtin_bit_shift_left)                },
 { .module = "bit",    .name = "shiftRight",        .value = BUILTIN(builtin_bit_shift_right)               },
+#ifndef TY_WITHOUT_OS
 { .module = "os",     .name = "open",              .value = BUILTIN(builtin_os_open)                       },
 { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
 { .module = "os",     .name = "unlink",            .value = BUILTIN(builtin_os_unlink)                     },
@@ -150,6 +151,7 @@
 { .module = "os",     .name = "F_FULLFSYNC",       .value = INT(F_FULLFSYNC)                               },
 { .module = "os",     .name = "F_SETNOSIGPIPE",    .value = INT(F_SETNOSIGPIPE)                            },
 { .module = "os",     .name = "F_GETNOSIGPIPE",    .value = INT(F_GETNOSIGPIPE)                            },
+#endif
 #endif
 { .module = "errno",  .name = "get",               .value = BUILTIN(builtin_errno_get)                     },
 { .module = "errno",  .name = "str",               .value = BUILTIN(builtin_errno_str)                     },

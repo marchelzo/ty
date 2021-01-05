@@ -58,6 +58,10 @@ else
         CFLAGS += -g3
 endif
 
+ifdef WITHOUT_OS
+        CFLAGS += -DTY_WITHOUT_OS
+endif
+
 SOURCES := $(wildcard src/*.c)
 OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
 
