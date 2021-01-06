@@ -202,11 +202,20 @@ binary_operator_remainder(struct value const *left, struct value const *right)
                 return vm_eval_function(f, left, right, NULL);
         }
 
-        if (left->type != right->type)
+        struct value L = *left;
+        struct value R = *right;
+
+        if (L.type == VALUE_REAL)
+                L = INTEGER(L.real);
+
+        if (R.type == VALUE_REAL)
+                R = INTEGER(R.real);
+
+        if (L.type != R.type)
                 vm_panic("the operands to %% must have the same type");
 
-        switch (left->type) {
-        case VALUE_INTEGER: return INTEGER(left->integer % right->integer);
+        switch (L.type) {
+        case VALUE_INTEGER: return INTEGER(L.integer % R.integer);
         default:
         Fail:
                 vm_panic("the operands to %% must be integers");
