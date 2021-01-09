@@ -270,6 +270,29 @@
 #ifdef SIGUSR2
 { .module = "os",      .name = "SIGUSR2",                 .value = INT(SIGUSR2)                              },
 #endif
+{ .module = "os",      .name = "S_IFMT",                  .value = INT(S_IFMT)                              },
+{ .module = "os",      .name = "S_IFSOCK",                .value = INT(S_IFSOCK)                              },
+{ .module = "os",      .name = "S_IFLNK",                 .value = INT(S_IFLNK)                              },
+{ .module = "os",      .name = "S_IFREG",                 .value = INT(S_IFREG)                              },
+{ .module = "os",      .name = "S_IFBLK",                 .value = INT(S_IFBLK)                              },
+{ .module = "os",      .name = "S_IFDIR",                 .value = INT(S_IFDIR)                              },
+{ .module = "os",      .name = "S_IFCHR",                 .value = INT(S_IFCHR)                              },
+{ .module = "os",      .name = "S_IFIFO",                 .value = INT(S_IFIFO)                              },
+{ .module = "os",      .name = "S_ISUID",                 .value = INT(S_ISUID)                              },
+{ .module = "os",      .name = "S_ISGID",                 .value = INT(S_ISGID)                              },
+{ .module = "os",      .name = "S_ISVTX",                 .value = INT(S_ISVTX)                              },
+{ .module = "os",      .name = "S_IRWXU",                 .value = INT(S_IRWXU)                              },
+{ .module = "os",      .name = "S_IRUSR",                 .value = INT(S_IRUSR)                              },
+{ .module = "os",      .name = "S_IWUSR",                 .value = INT(S_IWUSR)                              },
+{ .module = "os",      .name = "S_IXUSR",                 .value = INT(S_IXUSR)                              },
+{ .module = "os",      .name = "S_IRWXG",                 .value = INT(S_IRWXG)                              },
+{ .module = "os",      .name = "S_IRGRP",                 .value = INT(S_IRGRP)                              },
+{ .module = "os",      .name = "S_IWGRP",                 .value = INT(S_IWGRP)                              },
+{ .module = "os",      .name = "S_IXGRP",                 .value = INT(S_IXGRP)                              },
+{ .module = "os",      .name = "S_IRWXO",                 .value = INT(S_IRWXO)                              },
+{ .module = "os",      .name = "S_IROTH",                 .value = INT(S_IROTH)                              },
+{ .module = "os",      .name = "S_IWOTH",                 .value = INT(S_IWOTH)                              },
+{ .module = "os",      .name = "S_IXOTH",                 .value = INT(S_IXOTH)                              },
 
 #undef INT
 #undef FLOAT
