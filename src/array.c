@@ -1359,20 +1359,37 @@ array_flat(struct value *array, int argc)
 static struct value
 array_each(struct value *array, int argc)
 {
-        if (argc != 1)
-                vm_panic("the each method on arrays expects 1 argument but got %d", argc);
+        if (argc != 1 && argc != 2)
+                vm_panic("the each method on arrays expects 1 or 2 arguments but got %d", argc);
 
-        struct value f = ARG(0);
+        if (argc == 1) {
+                struct value f = ARG(0);
 
-        if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
-                vm_panic("non-function passed to the each method on array");
+                if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
+                        vm_panic("non-function passed to the each method on array");
 
-        int n = array->array->count;
+                int n = array->array->count;
 
-        for (int i = 0; i < n; ++i)
-                vm_eval_function(&f, &array->array->items[i], &INTEGER(i), NULL);
+                for (int i = 0; i < n; ++i)
+                        vm_eval_function(&f, &array->array->items[i], &INTEGER(i), NULL);
 
-        return *array;
+                return *array;
+        } else {
+                struct value v = ARG(0);
+                struct value f = ARG(1);
+
+                if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
+                        vm_panic("non-function passed to the each method on array");
+
+                int n = array->array->count;
+
+                for (int i = 0; i < n; ++i) {
+                        vm_eval_function(&f, &v, &array->array->items[i], &INTEGER(i), NULL);
+                }
+
+                return v;
+        }
+
 }
 
 static struct value
