@@ -25,6 +25,9 @@ struct value
 builtin_ceil(int argc);
 
 struct value
+builtin_floor(int argc);
+
+struct value
 builtin_gcd(int argc);
 
 struct value

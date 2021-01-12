@@ -289,9 +289,24 @@ builtin_ceil(int argc)
 
         switch (x.type) {
         case VALUE_INTEGER: return x;
-        case VALUE_REAL:    return REAL(ceil(x.real));
+        case VALUE_REAL:    return INTEGER(ceil(x.real));
         default:
                 vm_panic("the argument to ceil() must be a number");
+        }
+}
+
+struct value
+builtin_floor(int argc)
+{
+        ASSERT_ARGC("floor()", 1);
+
+        struct value x = ARG(0);
+
+        switch (x.type) {
+        case VALUE_INTEGER: return x;
+        case VALUE_REAL:    return INTEGER(floor(x.real));
+        default:
+                vm_panic("the argument to floor() must be a number");
         }
 }
 

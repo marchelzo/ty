@@ -1155,6 +1155,28 @@ array_findr(struct value *array, int argc)
 }
 
 static struct value
+array_bsearch(struct value *array, int argc)
+{
+        if (argc != 1)
+                vm_panic("the bsearch method on array expects 1 argumenet but got %d", argc);
+
+        struct value v = ARG(0);
+
+        int lo = 0,
+            hi = array->array->count - 1;
+
+        while (lo <= hi) {
+                int m = (lo + hi) / 2;
+                int c = value_compare(&v, &array->array->items[m]);
+                if      (c < 0) hi = m - 1;
+                else if (c > 0) lo = m + 1;
+                else            return INTEGER(m);
+        }
+
+        return NIL;
+}
+
+static struct value
 array_search_by(struct value *array, int argc)
 {
         if (argc != 1)
@@ -1290,6 +1312,46 @@ array_contains(struct value *array, int argc)
                         return BOOLEAN(true);
 
         return BOOLEAN(false);
+}
+
+static struct value
+array_tally(struct value *array, int argc)
+{
+        if (argc != 0 && argc != 1)
+                vm_panic("array.tally() expects 0 or 1 argument(s) but got %d", argc);
+
+        struct value d = DICT(dict_new());
+        gc_push(&d);
+
+        if (argc == 0) {
+                for (int i = 0; i < array->array->count; ++i) {
+                        struct value *c = dict_get_value(d.dict, &array->array->items[i]);
+                        if (c == NULL) {
+                                dict_put_value(d.dict, array->array->items[i], INTEGER(1));
+                        } else {
+                                c->integer += 1;
+                        }
+                }
+        } else {
+                struct value f = ARG(0);
+                if (!CALLABLE(f))
+                        vm_panic("non-callable passed to array.tally()");
+
+                for (int i = 0; i < array->array->count; ++i) {
+                        vm_push(&array->array->items[i]);
+                        struct value v = vm_call(&f, 1);
+                        struct value *c = dict_get_value(d.dict, &v);
+                        if (c == NULL) {
+                                dict_put_value(d.dict, v, INTEGER(1));
+                        } else {
+                                c->integer += 1;
+                        }
+                }
+        }
+
+        gc_pop();
+
+        return d;
 }
 
 static struct value
@@ -1745,6 +1807,7 @@ DEFINE_NO_MUT(next_permutation);
 DEFINE_METHOD_TABLE(
         { .name = "all?",              .func = array_all                     },
         { .name = "any?",              .func = array_any                     },
+        { .name = "bsearch",           .func = array_bsearch                 },
         { .name = "clone",             .func = array_clone                   },
         { .name = "consumeWhile",      .func = array_consume_while           },
         { .name = "contains?",         .func = array_contains                },
@@ -1816,6 +1879,7 @@ DEFINE_METHOD_TABLE(
         { .name = "take!",             .func = array_take_mut                },
         { .name = "takeWhile",         .func = array_take_while              },
         { .name = "takeWhile!",        .func = array_take_while_mut          },
+        { .name = "tally",             .func = array_tally                   },
         { .name = "uniq",              .func = array_uniq_no_mut             },
         { .name = "uniq!",             .func = array_uniq                    },
         { .name = "window",            .func = array_window_no_mut           },
