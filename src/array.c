@@ -1215,6 +1215,23 @@ array_searchr_by(struct value *array, int argc)
 }
 
 static struct value
+array_set(struct value *array, int argc)
+{
+        if (argc != 0)
+                vm_panic("array.set() expects 0 arguments but got %d", argc);
+
+        struct dict *d = dict_new();
+        NOGC(d);
+
+        for (int i = 0; i < array->array->count; ++i) {
+                dict_put_key_if_not_exists(d, array->array->items[i]);
+        }
+
+        OKGC(d);
+        return DICT(d);
+}
+
+static struct value
 array_partition(struct value *array, int argc)
 {
         if (argc != 1)
@@ -1865,6 +1882,7 @@ DEFINE_METHOD_TABLE(
         { .name = "searchBy",          .func = array_search_by               },
         { .name = "searchr",           .func = array_searchr                 },
         { .name = "searchrBy",         .func = array_searchr_by              },
+        { .name = "set",               .func = array_set                     },
         { .name = "shuffle",           .func = array_shuffle_no_mut          },
         { .name = "shuffle!",          .func = array_shuffle                 },
         { .name = "slice",             .func = array_slice                   },
