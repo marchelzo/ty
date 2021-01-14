@@ -1,4 +1,43 @@
+import bit
+
 export Some, None, Ok, Err, MatchError
+
+class Object {
+}
+
+class Function {
+}
+
+class Array {
+}
+
+class Dict {
+}
+
+class String {
+}
+
+class Int {
+    &(a, b)  { return bit::and(a, b);        }
+    ^(a, b)  { return bit::xor(a, b);        }
+    .|(a, b) { return bit::or(a, b);         }
+    <<(a, b) { return bit::shiftLeft(a, b);  }
+    >>(a, b) { return bit::shiftRight(a, b); }
+}
+
+class Float {
+}
+
+class Blob {
+}
+
+class Bool {
+}
+
+class Regex {
+    ~=(r, s) { return s.match!(r); }
+    ?(r, s)  { return s.match?(r); }
+}
 
 tag MatchError;
 

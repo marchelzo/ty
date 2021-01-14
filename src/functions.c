@@ -2102,15 +2102,15 @@ builtin_type(int argc)
         char const *s = NULL;
         
         switch (v.type) {
-        case VALUE_INTEGER:  return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_int };
-        case VALUE_REAL:     return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_float };
-        case VALUE_STRING:   return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_str };
-        case VALUE_ARRAY:    return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_array };
-        case VALUE_DICT:     return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_dict };
-        case VALUE_BLOB:     return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_blob };
+        case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = 5 };
+        case VALUE_REAL:     return (struct value) { .type = VALUE_CLASS, .class = 6 };
+        case VALUE_STRING:   return (struct value) { .type = VALUE_CLASS, .class = 4 };
+        case VALUE_ARRAY:    return (struct value) { .type = VALUE_CLASS, .class = 2 };
+        case VALUE_DICT:     return (struct value) { .type = VALUE_CLASS, .class = 3 };
+        case VALUE_BLOB:     return (struct value) { .type = VALUE_CLASS, .class = 7 };
         case VALUE_OBJECT:   return (struct value) { .type = VALUE_CLASS, .class = 0 };
-        case VALUE_BOOLEAN:  return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_bool };
-        case VALUE_REGEX:    return (struct value) { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = builtin_regex };
+        case VALUE_BOOLEAN:  return (struct value) { .type = VALUE_CLASS, .class = 8 };
+        case VALUE_REGEX:    return (struct value) { .type = VALUE_CLASS, .class = 9 };
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:

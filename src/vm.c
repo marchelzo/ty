@@ -899,8 +899,10 @@ Throw:
                                 break;
                         case VALUE_DICT:
                                 func = get_dict_method(member);
-                                if (func == NULL)
-                                        vm_panic("reference to non-existent method '%s' on dict", member);
+                                if (func == NULL) {
+                                        n = CLASS_DICT;
+                                        goto ClassLookup;
+                                }
                                 v.type = VALUE_ARRAY;
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
@@ -909,8 +911,10 @@ Throw:
                                 break;
                         case VALUE_ARRAY:
                                 func = get_array_method(member);
-                                if (func == NULL)
-                                        vm_panic("reference to non-existent method '%s' on array", member);
+                                if (func == NULL) {
+                                        n = CLASS_ARRAY;
+                                        goto ClassLookup;
+                                }
                                 v.type = VALUE_ARRAY;
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
@@ -919,8 +923,10 @@ Throw:
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method(member);
-                                if (func == NULL)
-                                        vm_panic("reference to non-existent method '%s' on string", member);
+                                if (func == NULL) {
+                                        n = CLASS_STRING;
+                                        goto ClassLookup;
+                                }
                                 v.type = VALUE_STRING;
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
@@ -929,21 +935,28 @@ Throw:
                                 break;
                         case VALUE_BLOB:
                                 func = get_blob_method(member);
-                                if (func == NULL)
-                                        vm_panic("reference to non-existent method '%s' on blob", member);
+                                if (func == NULL) {
+                                        n = CLASS_BLOB;
+                                        goto ClassLookup;
+                                }
                                 v.type = VALUE_BLOB;
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
                                 *this = v;
                                 push(BUILTIN_METHOD(member, func, this));
                                 break;
+                        case VALUE_INTEGER:
+                                n = CLASS_INT;
+                                goto ClassLookup;
                         case VALUE_OBJECT:
                                 vp = table_lookup(v.object, member, h);
                                 if (vp != NULL) {
                                         push(*vp);
                                         break;
                                 }
-                                vp = class_lookup_method(v.class, member, h);
+                                n = v.class;
+ClassLookup:
+                                vp = class_lookup_method(n, member, h);
                                 if (vp != NULL) {
                                         this = gc_alloc_object(sizeof *this, GC_VALUE);
                                         *this = v;
@@ -1372,31 +1385,45 @@ OutOfRange:
                          * supported the  method call, so we must now see if the inner value itself can handle the method
                          * call.
                          */
-                        if (self == NULL) switch (value.type & ~VALUE_TAGGED) {
+                        if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method, h);
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method(method);
+                                if (func == NULL)
+                                        vp = class_lookup_method(CLASS_STRING, method, h);
                                 break;
                         case VALUE_DICT:
                                 func = get_dict_method(method);
+                                if (func == NULL)
+                                        vp = class_lookup_method(CLASS_DICT, method, h);
                                 break;
                         case VALUE_ARRAY:
                                 func = get_array_method(method);
+                                if (func == NULL)
+                                        vp = class_lookup_method(CLASS_ARRAY, method, h);
                                 break;
                         case VALUE_BLOB:
                                 func = get_blob_method(method);
+                                if (func == NULL)
+                                        vp = class_lookup_method(CLASS_BLOB, method, h);
+                                break;
+                        case VALUE_INTEGER:
+                                vp = class_lookup_method(CLASS_INT, method, h);
+                                break;
+                        case VALUE_REGEX:
+                                vp = class_lookup_method(CLASS_REGEX, method, h);
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_method(value.class, method, h);
                                 break;
                         case VALUE_OBJECT:
-                                vp = class_lookup_method(value.class, method, h);
+                                vp = table_lookup(value.object, method, h);
                                 if (vp == NULL) {
-                                        vp = table_lookup(value.object, method, h);
+                                        vp = class_lookup_method(value.class, method, h);
                                 } else {
-                                        self = &value;
+                                        self = NULL;
                                 }
                                 break;
                         case VALUE_NIL:

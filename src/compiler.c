@@ -2851,8 +2851,6 @@ void
 compiler_init(void)
 {
         tags_init();
-        class_new("Object");
-        class_new("Function");
         state = freshstate();
         global = state.global;
 }

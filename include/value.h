@@ -42,6 +42,17 @@ struct value;
 
 #define BUILTIN_OBJECT_TYPE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_STRING | VALUE_ARRAY | VALUE_BLOB)) != 0))
 
+#define CLASS_OBJECT   0
+#define CLASS_FUNCTION 1
+#define CLASS_ARRAY    2
+#define CLASS_DICT     3
+#define CLASS_STRING   4
+#define CLASS_INT      5
+#define CLASS_FLOAT    6
+#define CLASS_BLOB     7
+#define CLASS_BOOL     8
+#define CLASS_REGEX    9
+
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
                 char const *name; \
