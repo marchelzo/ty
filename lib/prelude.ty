@@ -2,44 +2,12 @@ import bit
 
 export Some, None, Ok, Err, MatchError
 
-class Object {
-}
-
-class Function {
-}
-
-class Array {
-}
-
-class Dict {
-}
-
-class String {
-}
-
-class Int {
-    &(a, b)  { return bit::and(a, b);        }
-    ^(a, b)  { return bit::xor(a, b);        }
-    .|(a, b) { return bit::or(a, b);         }
-    <<(a, b) { return bit::shiftLeft(a, b);  }
-    >>(a, b) { return bit::shiftRight(a, b); }
-}
-
-class Float {
-}
-
-class Blob {
-}
-
-class Bool {
-}
-
-class Regex {
-    ~=(r, s) { return s.match!(r); }
-    ?(r, s)  { return s.match?(r); }
-}
-
 tag MatchError;
+
+tag None {
+     map()     { return None; }
+     flatMap() { return None; }
+}
 
 tag Some {
      map(self, f) {
@@ -49,11 +17,13 @@ tag Some {
      flatMap(self, f) {
           return f(self);
      }
-}
 
-tag None {
-     map()     { return None; }
-     flatMap() { return None; }
+    from(x) {
+        return match x {
+            nil => None,
+            _   => Some(x)
+        };
+    }
 }
 
 tag Ok {
@@ -71,6 +41,127 @@ tag Err {
      flatMap(self) { return self; }
 }
 
+class Object {
+    init() {
+        return object(Object);
+    }
+}
+
+class Function {
+    init() {
+        return -> $;
+    }
+
+    flip(f) {
+        return (a, b) -> f(b, a);
+    }
+}
+
+class Array {
+    init(*xs) {
+        return xs;
+    }
+
+    sorted?(xs) {
+        if (!xs) return true;
+        let y = xs[0];
+        for x in xs {
+            if (x < y) return false;
+            y = x;
+        }
+        return true;
+    }
+
+    cycle(xs) {
+        let i = 0;
+        return Generator(function () {
+            return xs[i++ % xs.len()];
+        });
+    }
+}
+
+class Dict {
+    init(ks, vs) {
+        if (ks && vs) {
+            return { k: v for [k, v] in ks.zip(vs) };
+        } else {
+            return {};
+        }
+    }
+
+    map(d, f) {
+        return { k: f(v) for k, v in d };
+    }
+
+    kmap(d, f) {
+        return { f(k): v for k, v in d };
+    }
+}
+
+class String {
+    init(x) {
+        return str(x);
+    }
+
+    repeat(s, n) {
+        match s, n {
+            $s, $n => {
+                let b = blob();
+                for _ in ..n { b.push(s); }
+                return b.str();
+            },
+            _ => {
+                return Generator(function () {
+                    return s;
+                });
+            }
+        }
+    }
+}
+
+class Int {
+    init(x)  { return int(x || 0);           }
+    &(a, b)  { return bit::and(a, b);        }
+    ^(a, b)  { return bit::xor(a, b);        }
+    .|(a, b) { return bit::or(a, b);         }
+    <<(a, b) { return bit::shiftLeft(a, b);  }
+    >>(a, b) { return bit::shiftRight(a, b); }
+}
+
+class Float {
+    init(x) {
+        return float(x);
+    }
+}
+
+class Blob {
+    init() {
+        return blob();
+    }
+}
+
+class Bool {
+    init(x) {
+        return !(!x);
+    }
+}
+
+class Regex {
+    init(x)  { return regex(x);    }
+    ~=(r, s) { return s.match!(r); }
+    ?(r, s)  { return s.match?(r); }
+}
+
+class Generator : Iter {
+    init(self, f) {
+        self.f = f;
+    }
+
+    __next__(self) {
+        return self.f();
+    }
+}
+
 class Iterable {
     map(I, f) {
         return I.__iter__().map(f);
@@ -86,6 +177,22 @@ class Iterable {
 
     list(I) {
         return [x for x in I];
+    }
+
+    take(I, n) {
+        return I.__iter__().take(n);
+    }
+
+    drop(I, n) {
+        return I.__iter__().drop(n);
+    }
+
+    set(I) {
+        return I.__iter__().set();
+    }
+
+    set(I) {
+        return I.__iter__().str();
     }
 }
 
@@ -108,6 +215,30 @@ class Iter {
 
     reverse(I) {
         return ReverseIter(I);
+    }
+
+    take(I, n) {
+        let i = 0;
+        return Generator(function () {
+            if (i++ < n) {
+                return I.__next__();
+            }
+        });
+    }
+
+    drop(I, n) {
+        for _ in ..n { I.__next__(); }
+        return I;
+    }
+
+    set(I) {
+        return { x for x in I };
+    }
+
+    str(I) {
+        let b = blob();
+        for s in I { b.push(str(s)); }
+        return b.str();
     }
 }
 
