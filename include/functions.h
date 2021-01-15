@@ -37,6 +37,9 @@ struct value
 builtin_hash(int argc);
 
 struct value
+builtin_object(int argc);
+
+struct value
 builtin_type(int argc);
 
 struct value

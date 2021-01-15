@@ -276,7 +276,7 @@ show_string(char const *s, size_t n)
 char *
 value_show(struct value const *v)
 {
-        static char buffer[1024];
+        char buffer[1024];
         char *s = NULL;
 
         switch (v->type & ~VALUE_TAGGED) {
@@ -311,7 +311,7 @@ value_show(struct value const *v)
                 if (v->this == NULL)
                         snprintf(buffer, 1024, "<method '%s' at %p>", v->name, (void *)v->method);
                 else
-                        snprintf(buffer, 1024, "<method '%s' at %p bound to <value at %p>>", v->name, (void *)v->method, (void *)v->this);
+                        snprintf(buffer, 1024, "<method '%s' at %p bound to %s>", v->name, (void *)v->method, value_show(v->this));
                 break;
         case VALUE_BUILTIN_METHOD:
                 snprintf(buffer, 1024, "<bound builtin method '%s'>", v->name);
@@ -564,6 +564,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
         case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || v1->this != v2->this)          return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
+        case VALUE_CLASS:            if (v1->class != v2->class)                                                    return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
         case VALUE_PTR:              if (v1->ptr != v2->ptr)                                                        return false; break;
         case VALUE_NIL:                                                                                                           break;

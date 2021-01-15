@@ -20,6 +20,7 @@
 { .module = NULL,     .name = "regex",             .value = BUILTIN(builtin_regex)                         },
 { .module = NULL,     .name = "blob",              .value = BUILTIN(builtin_blob)                          },
 { .module = NULL,     .name = "type",              .value = BUILTIN(builtin_type)                          },
+{ .module = NULL,     .name = "object",            .value = BUILTIN(builtin_object)                        },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
 { .module = NULL,     .name = "chr",               .value = BUILTIN(builtin_chr)                           },

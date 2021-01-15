@@ -2093,6 +2093,18 @@ builtin_time_time(int argc)
 }
 
 struct value
+builtin_object(int argc)
+{
+        ASSERT_ARGC("object()", 1);
+
+        struct value class = ARG(0);
+        if (class.type != VALUE_CLASS)
+                vm_panic("the argument to object() must be a class");
+
+        return OBJECT(object_new(), class.class);
+}
+
+struct value
 builtin_type(int argc)
 {
         ASSERT_ARGC("type()", 1);

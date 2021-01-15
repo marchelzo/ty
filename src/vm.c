@@ -1319,15 +1319,23 @@ OutOfRange:
                                 }
                                 break;
                         case VALUE_CLASS:
-                                value = OBJECT(object_new(), v.class);
                                 vp = class_method(v.class, "init");
-                                if (vp != NULL) {
-                                        call(vp, &value, n, true);
-                                        pop();
+                                if (v.class < CLASS_PRIMITIVE) {
+                                        if (vp != NULL) {
+                                                call(vp, NULL, n, true);
+                                        } else {
+                                                vm_panic("primitive class has no init method. was prelude loaded?");
+                                        }
                                 } else {
-                                        stack.count -= n;
+                                        value = OBJECT(object_new(), v.class);
+                                        if (vp != NULL) {
+                                                call(vp, &value, n, true);
+                                                pop();
+                                        } else {
+                                                stack.count -= n;
+                                        }
+                                        push(value);
                                 }
-                                push(value);
                                 break;
                         case VALUE_METHOD:
                                 call(v.method, v.this, n, false);
@@ -1388,6 +1396,7 @@ OutOfRange:
                         if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method, h);
+                                self = NULL;
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method(method);
@@ -1417,6 +1426,7 @@ OutOfRange:
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_method(value.class, method, h);
+                                self = NULL;
                                 break;
                         case VALUE_OBJECT:
                                 vp = table_lookup(value.object, method, h);
@@ -1647,11 +1657,22 @@ vm_call(struct value const *f, int argc)
                 r.type |= VALUE_TAGGED;
                 return r;
         case VALUE_CLASS:
-                r = OBJECT(object_new(), f->class);
                 init = class_method(f->class, "init");
-                if (init != NULL)
-                        call(init, &r, argc, true);
-                return r;
+                if (f->class < CLASS_PRIMITIVE) {
+                        if (init != NULL) {
+                                call(init, NULL, argc, true);
+                                return pop();
+                        } 
+                } else {
+                        r = OBJECT(object_new(), f->class);
+                        if (init != NULL) {
+                                call(init, &r, argc, true);
+                                pop();
+                        } else {
+                                stack.count -= argc;
+                        }
+                        return r;
+                }
         default:
                 abort();
         }

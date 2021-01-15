@@ -215,7 +215,10 @@ binary_operator_remainder(struct value const *left, struct value const *right)
                 vm_panic("the operands to %% must have the same type");
 
         switch (L.type) {
-        case VALUE_INTEGER: return INTEGER(L.integer % R.integer);
+        case VALUE_INTEGER:
+                if (R.integer == 0)
+                        vm_panic("attempt to use % with a modulus of 0");
+                return INTEGER(L.integer % R.integer);
         default:
         Fail:
                 vm_panic("the operands to %% must be integers");
