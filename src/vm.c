@@ -124,7 +124,7 @@ pushvar(int s)
                 vars[s] = newvar(vars[s]);
                 vars[s]->next->prev = vars[s];
         }
-        
+
         vars[s]->try = try_stack.count;
         used[s] = true;
 }
@@ -713,7 +713,7 @@ Throw:
                                         vp->off += (n = utf8_char_len(v.string + off));
                                         push(STRING_VIEW(v, off, n));
                                 } else {
-                                        push(NONE); 
+                                        push(NONE);
                                 }
                                 break;
                         default:
@@ -786,7 +786,7 @@ Throw:
                 CASE(REVERSE)
                         for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
                                 ;
-                        
+
                         READVALUE(n);
                         for (--n, i = 0; i < n; ++i, --n) {
                                 v = top()[-i];
@@ -1364,7 +1364,7 @@ OutOfRange:
                         gc_pop();
                         break;
                 CASE(CALL_METHOD)
-                        
+
                         value = peek();
 
                         vp = NULL;
@@ -1662,7 +1662,7 @@ vm_call(struct value const *f, int argc)
                         if (init != NULL) {
                                 call(init, NULL, argc, true);
                                 return pop();
-                        } 
+                        }
                 } else {
                         r = OBJECT(object_new(), f->class);
                         if (init != NULL) {
