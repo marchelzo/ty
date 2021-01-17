@@ -57,6 +57,11 @@
 
 #define EXPR(...) ((struct expression){ .loc = { -1, -1 }, __VA_ARGS__ })
 
+#if 0
+  #define INSTR_SAVE_STACK_POS INSTR_SAVE_STACK_POS), emit_int(__LINE__
+  #define INSTR_RESTORE_STACK_POS INSTR_RESTORE_STACK_POS), emit_int(__LINE__
+#endif
+
 struct eloc {
         union {
                 uintptr_t p;
@@ -756,7 +761,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         if (!is_class(s->class.super))
                                 fail("attempt to extend non-class");
                 }
-                symbolize_methods(scope, s->class.methods.items, s->class.methods.count);
+                subscope = scope_new(scope, false);
+                symbolize_methods(subscope, s->class.methods.items, s->class.methods.count);
                 break;
         case STATEMENT_TAG_DEFINITION:
                 if (scope_locally_defined(state.global, s->tag.name))
@@ -1421,12 +1427,10 @@ emit_case(struct expression const *pattern, struct expression const *condition, 
                 emit_int(0);
         }
 
+        emit_instr(INSTR_RESTORE_STACK_POS);
         emit_instr(INSTR_CLEAR_EXTRA);
 
-        bool returns = false;
-        if (s != NULL) {
-                returns |= emit_statement(s);
-        }
+        bool returns = (s != NULL) && emit_statement(s);
 
         emit_instr(INSTR_JUMP);
         vec_push(state.match_successes, state.code.count);
@@ -1494,11 +1498,9 @@ emit_match_statement(struct statement const *s)
         emit_list(s->match.e);
         emit_instr(INSTR_FIX_EXTRA);
 
-        bool returns = true;
-
         for (int i = 0; i < s->match.patterns.count; ++i) {
                 LOG("emitting case %d", i + 1);
-                returns &= emit_case(s->match.patterns.items[i], s->match.conds.items[i], s->match.statements.items[i]);
+                emit_case(s->match.patterns.items[i], s->match.conds.items[i], s->match.statements.items[i]);
         }
 
         /*
@@ -1509,7 +1511,7 @@ emit_match_statement(struct statement const *s)
         patch_jumps_to(&state.match_successes, state.code.count);
         state.match_successes = successes_save;
 
-        return returns;
+        return false;
 }
 
 static void

@@ -126,6 +126,7 @@ pushvar(int s)
         }
 
         vars[s]->try = try_stack.count;
+        vars[s]->captured = false;
         used[s] = true;
 }
 
@@ -214,6 +215,16 @@ push(struct value v)
         vec_push(stack, v);
 }
 
+static void
+print_stack(int n)
+{
+        return;
+        for (int i = 0; i < n && i < stack.count; ++i) {
+                char const *s = i ? "     " : "TOP: ";
+                printf("%s%s\n", s, value_show(top() - i));
+        }
+}
+
 inline static struct value *
 poptarget(void)
 {
@@ -270,12 +281,6 @@ call(struct value const *f, struct value const *self, int n, bool exec)
         /* fill in 'self' / 'this' */
         if (has_self)
                 vars[f->symbols[0]]->value = *self;
-
-        if (f->refs != NULL) for (int i = 0; i < f->refs->count; ++i) {
-                struct reference ref = f->refs->refs[i];
-                //LOG("resolving reference to %p", (void *) ref.pointer);
-                memcpy(f->code + ref.offset, &ref.pointer, sizeof ref.pointer);
-        }
 
         if (exec) {
                 vec_push(calls, &halt);
@@ -1269,19 +1274,32 @@ OutOfRange:
                         ip += bound * sizeof (int);
 
                         READVALUE(n);
-                        v.code = ip;
+                        size_t sz = n;
+                        char *code = ip;
+
                         ip += n;
 
                         READVALUE(n);
+                        if (n == 0) {
+                                v.code = code;
+                                v.refs = NULL;
+                        } else {
+                                v.code = alloc(sz);
+                                memcpy(v.code, code, sz);
+                                v.refs = ref_vector_new(n);
+                        }
                         v.refs = (n == 0) ? NULL : ref_vector_new(n);
-                        //LOG("function contains %d reference(s)", n);
+
                         for (int i = 0; i < n; ++i) {
                                 READVALUE(s);
                                 READVALUE(off);
                                 vars[s]->captured = true;
-                                struct reference ref = { .pointer = (uintptr_t) vars[s], .offset = off };
-                                //LOG("it refers to symbol %d", (int) s);
-                                //LOG("it refers to pointer %p", (void *) ref.pointer);
+                                uintptr_t ptr = (uintptr_t)vars[s];
+                                memcpy(v.code + off, &ptr, sizeof ptr);
+                                struct reference ref = {
+                                        .pointer = ptr,
+                                        .offset = off
+                                };
                                 v.refs->refs[i] = ref;
                         }
 
