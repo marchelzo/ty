@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
+#include <dirent.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -77,6 +78,12 @@ struct target {
 static struct variable **vars;
 static bool *used;
 
+struct sigfn {
+        int sig;
+        struct value f;
+};
+
+static vec(struct sigfn) sigfns;
 static vec(struct value) stack;
 static vec(char *) calls;
 static vec(size_t) sp_stack;
@@ -161,7 +168,6 @@ add_builtins(int ac, char **av)
 
         symbol_count = builtin_count + 1;
 }
-
 
 void
 vm_load_c_module(char const *name, void *p)
@@ -288,6 +294,56 @@ call(struct value const *f, struct value const *self, int n, bool exec)
         } else {
                 vec_push(calls, ip);
                 ip = f->code;
+        }
+}
+
+void
+vm_del_sigfn(int sig)
+{
+        for (int i = 0; i < sigfns.count; ++i) {
+                if (sigfns.items[i].sig == sig) {
+                        struct sigfn t = *vec_last(sigfns);
+                        *vec_last(sigfns) = sigfns.items[i];
+                        sigfns.items[i] = t;
+                        vec_pop(sigfns);
+                        return;
+                }
+        }
+}
+
+void
+vm_set_sigfn(int sig, struct value const *f)
+{
+        for (int i = 0; i < sigfns.count; ++i) {
+                if (sigfns.items[i].sig == sig) {
+                        sigfns.items[i].f = *f;
+                        return;
+                }
+        }
+
+        vec_push(sigfns, ((struct sigfn){ .sig = sig, .f = *f }));
+}
+
+struct value
+vm_get_sigfn(int sig)
+{
+        for (int i = 0; i < sigfns.count; ++i) {
+                if (sigfns.items[i].sig == sig) {
+                        return sigfns.items[i].f;
+                }
+        }
+
+        return NIL;
+}
+
+void
+vm_do_signal(int sig)
+{
+        for (int i = 0; i < sigfns.count; ++i) {
+                if (sigfns.items[i].sig == sig) {
+                        call(&sigfns.items[i].f, NULL, 0, true);
+                        return;
+                }
         }
 }
 
@@ -1744,6 +1800,9 @@ vm_mark(void)
 
         for (int i = 0; i < targets.count; ++i)
                 value_mark(targets.items[i].t);
+
+        for (int i = 0; i < sigfns.count; ++i)
+                value_mark(&sigfns.items[i].f);
 }
 
 TEST(let)

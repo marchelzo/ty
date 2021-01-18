@@ -1,4 +1,5 @@
 import bit
+import math
 
 export Some, None, Ok, Err, MatchError
 
@@ -78,6 +79,17 @@ class Array {
             return xs[i++ % xs.len()];
         });
     }
+
+    str(xs) {
+        return xs.map(str).sum();
+    }
+
+    mean(xs) {
+        return match xs {
+            [] => nil,
+            _  => xs.map(float).sum() / xs.len()
+        };
+    }
 }
 
 class Dict {
@@ -117,6 +129,18 @@ class String {
             }
         }
     }
+
+    reverse(s) {
+        return s.chars().reverse!().sum() || '';
+    }
+
+    searchr(s, pattern) {
+        for (let off = s.len() - 1; off >= 0; --off) {
+            if let $i = s.search(pattern, off) {
+                return i;
+            }
+        }
+    }
 }
 
 class Int {
@@ -126,17 +150,30 @@ class Int {
     .|(a, b) { return bit::or(a, b);         }
     <<(a, b) { return bit::shiftLeft(a, b);  }
     >>(a, b) { return bit::shiftRight(a, b); }
+    **(a, b) { return math::pow(a, b);       }
 }
 
 class Float {
     init(x) {
         return float(x);
     }
+
+    **(a, b) {
+        return math::pow(a, b);
+    }
 }
 
 class Blob {
     init() {
         return blob();
+    }
+
+    searchr(b, s) {
+        for (let off = b.size() - 1; off >= 0; --off) {
+            if let $i = b.search(off, s) {
+                return i;
+            }
+        }
     }
 }
 
@@ -195,6 +232,10 @@ class Iterable {
         return I.__iter__().str();
     }
 
+    tally(I, f) {
+        return I.__iter__().tally(f);
+    }
+
     intersperse(I, x) {
         return I.__iter__().intersperse(x);
     }
@@ -245,6 +286,13 @@ class Iter {
             b.push(str(s));
         }
         return b.str();
+    }
+
+    tally(I, f) {
+        let d = {*:0};
+        f = f || id;
+        for x in I { d[f(x)] += 1; }
+        return d;
     }
 
     intersperse(I, x) {

@@ -163,6 +163,27 @@ struct value
 builtin_os_close(int argc);
 
 struct value
+builtin_os_mktemp(int argc);
+
+struct value
+builtin_os_opendir(int argc);
+
+struct value
+builtin_os_readdir(int argc);
+
+struct value
+builtin_os_telldir(int argc);
+
+struct value
+builtin_os_seekdir(int argc);
+
+struct value
+builtin_os_rewinddir(int argc);
+
+struct value
+builtin_os_closedir(int argc);
+
+struct value
 builtin_os_unlink(int argc);
 
 struct value
@@ -282,6 +303,9 @@ builtin_os_setegid(int argc);
 
 struct value
 builtin_os_kill(int argc);
+
+struct value
+builtin_os_signal(int argc);
 
 struct value
 builtin_os_exit(int argc);

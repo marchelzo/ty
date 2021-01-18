@@ -143,6 +143,18 @@ vm_panic(char const *fmt, ...);
 void
 vm_mark(void);
 
+void
+vm_set_sigfn(int, struct value const *);
+
+void
+vm_del_sigfn(int);
+
+struct value
+vm_get_sigfn(int);
+
+void
+vm_do_signal(int);
+
 bool
 vm_execute(char const *source);
 

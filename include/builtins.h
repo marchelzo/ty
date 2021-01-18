@@ -52,7 +52,14 @@
 #ifndef TY_WITHOUT_OS
 { .module = "os",     .name = "open",              .value = BUILTIN(builtin_os_open)                       },
 { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
+{ .module = "os",     .name = "mktemp",            .value = BUILTIN(builtin_os_mktemp)                     },
 { .module = "os",     .name = "unlink",            .value = BUILTIN(builtin_os_unlink)                     },
+{ .module = "os",     .name = "opendir",           .value = BUILTIN(builtin_os_opendir)                    },
+{ .module = "os",     .name = "readdir",           .value = BUILTIN(builtin_os_readdir)                    },
+{ .module = "os",     .name = "closedir",          .value = BUILTIN(builtin_os_closedir)                   },
+{ .module = "os",     .name = "telldir",           .value = BUILTIN(builtin_os_telldir)                    },
+{ .module = "os",     .name = "seekdir",           .value = BUILTIN(builtin_os_seekdir)                    },
+{ .module = "os",     .name = "rewinddir",         .value = BUILTIN(builtin_os_rewinddir)                  },
 { .module = "os",     .name = "read",              .value = BUILTIN(builtin_os_read)                       },
 { .module = "os",     .name = "write",             .value = BUILTIN(builtin_os_write)                      },
 { .module = "os",     .name = "umask",             .value = BUILTIN(builtin_os_umask)                      },
@@ -80,9 +87,9 @@
 { .module = "os",     .name = "SHUT_WR",           .value = INT(SHUT_WR)                                   },
 { .module = "os",     .name = "SHUT_RDWR",         .value = INT(SHUT_RDWR)                                 },
 { .module = "os",     .name = "kill",              .value = BUILTIN(builtin_os_kill)                       },
+{ .module = "os",     .name = "signal",            .value = BUILTIN(builtin_os_signal)                     },
 { .module = "os",     .name = "exit",              .value = BUILTIN(builtin_os_exit)                       },
 { .module = "os",     .name = "exec",              .value = BUILTIN(builtin_os_exec)                       },
-{ .module = "os",     .name = "utime",             .value = BUILTIN(builtin_os_utime)                      },
 { .module = "os",     .name = "getpid",            .value = BUILTIN(builtin_os_getpid)                     },
 { .module = "os",     .name = "getppid",           .value = BUILTIN(builtin_os_getppid)                    },
 { .module = "os",     .name = "getuid",            .value = BUILTIN(builtin_os_getuid)                     },
@@ -183,6 +190,23 @@
 { .module = "time",   .name = "localtime",         .value = BUILTIN(builtin_time_localtime)                },
 { .module = "time",   .name = "strptime",          .value = BUILTIN(builtin_time_strptime)                 },
 { .module = "time",   .name = "strftime",          .value = BUILTIN(builtin_time_strftime)                 },
+{ .module = "time",   .name = "CLOCK_REALTIME",    .value = INT(CLOCK_REALTIME)                            },
+#ifdef CLOCK_REALTIME_COARSE
+{ .module = "time",   .name = "CLOCK_REALTIME_COARSE",  .value = INT(CLOCK_REALTIME_COARSE)                },
+#endif
+{ .module = "time",   .name = "CLOCK_MONOTONIC",        .value = INT(CLOCK_MONOTONIC)                      },
+#ifdef CLOCK_REALTIME_COARSE
+{ .module = "time",   .name = "CLOCK_MONOTONIC_COARSE", .value = INT(CLOCK_MONOTONIC_COARSE)               },
+#endif
+#ifdef CLOCK_PROCESS_CPUTIME_ID
+{ .module = "time",   .name = "CLOCK_PROCESS_CPUTIME_ID",    .value = INT(CLOCK_PROCESS_CPUTIME_ID)                            },
+#endif
+#ifdef CLOCK_THREAD_CPUTIME_ID
+{ .module = "time",   .name = "CLOCK_THREAD_CPUTIME_ID",    .value = INT(CLOCK_THREAD_CPUTIME_ID)                            },
+#endif
+#ifdef CLOCK_MONOTONIC_RAW
+{ .module = "time",   .name = "CLOCK_MONOTONIC_RAW",    .value = INT(CLOCK_MONOTONIC_RAW)                            },
+#endif
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
 { .module = "gumbo",  .name = "parse",             .value = BUILTIN(html_parse)                            },
@@ -306,6 +330,14 @@
 { .module = "os",      .name = "S_IROTH",                 .value = INT(S_IROTH)                              },
 { .module = "os",      .name = "S_IWOTH",                 .value = INT(S_IWOTH)                              },
 { .module = "os",      .name = "S_IXOTH",                 .value = INT(S_IXOTH)                              },
+{ .module = "os",      .name = "DT_BLK",                  .value = INT(DT_BLK)                               },
+{ .module = "os",      .name = "DT_CHR",                  .value = INT(DT_CHR)                               },
+{ .module = "os",      .name = "DT_DIR",                  .value = INT(DT_DIR)                               },
+{ .module = "os",      .name = "DT_FIFO",                 .value = INT(DT_FIFO)                              },
+{ .module = "os",      .name = "DT_SOCK",                 .value = INT(DT_SOCK)                              },
+{ .module = "os",      .name = "DT_LNK",                  .value = INT(DT_LNK)                               },
+{ .module = "os",      .name = "DT_REG",                  .value = INT(DT_REG)                               },
+{ .module = "os",      .name = "DT_UNKNOWN",              .value = INT(DT_UNKNOWN)                           },
 
 #undef INT
 #undef FLOAT

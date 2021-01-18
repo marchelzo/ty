@@ -961,6 +961,151 @@ builtin_os_close(int argc)
 }
 
 struct value
+builtin_os_mktemp(int argc)
+{
+        char template[PATH_MAX + 1] = "tmp";
+
+        if (argc > 2) {
+                vm_panic("os::mktemp() expects 0, 1, or 2 arguments but got %d", argc);
+        }
+        
+        if (argc >= 1 && ARG(0).type != VALUE_NIL) {
+                struct value s = ARG(0);
+                if (s.type != VALUE_STRING)
+                        vm_panic("the first argument to os::mktemp() must be a string");
+                /* -7 to make room for the XXXXXX suffix and NUL byte */
+                memcpy(template, s.string, min(s.bytes, sizeof template - 7));
+        }
+
+        strcat(template, "XXXXXX");
+
+        int flags = 0;
+        if (argc == 2) {
+                struct value f = ARG(1);
+                if (f.type != VALUE_INTEGER)
+                        vm_panic("the second argument to os::mktemp() must be an integer");
+                flags = f.integer;
+        }
+
+        return INTEGER(mkostemp(template, flags));
+}
+
+struct value
+builtin_os_opendir(int argc)
+{
+        ASSERT_ARGC("os::opendir()", 1);
+
+        struct value path = ARG(0);
+        DIR *d;
+
+        if (path.type != VALUE_STRING) {
+                if (path.bytes >= sizeof buffer) {
+                        errno = ENOENT;
+                        return NIL;
+                }
+                memcpy(buffer, path.string, path.bytes);
+                buffer[path.bytes] = '\0';
+                d = opendir(buffer);
+        } else if (path.type == VALUE_INTEGER) {
+                d = fdopendir(path.integer);
+        } else {
+                vm_panic("the argument to os::opendir() must be a path or a file descriptor");
+        }
+
+        if (d == NULL)
+                return NIL;
+
+        return PTR(d);
+}
+
+struct value
+builtin_os_readdir(int argc)
+{
+        ASSERT_ARGC("os::readdir()", 1);
+
+        struct value d = ARG(0);
+
+        if (d.type != VALUE_PTR)
+                vm_panic("the argument to os::readdir() must be a pointer");
+
+        struct dirent *entry = readdir(d.ptr);
+        if (entry == NULL)
+                return NIL;
+
+        struct table *t = object_new();
+        NOGC(t);
+
+        table_put(t, "d_ino", INTEGER(entry->d_ino));
+        table_put(t, "d_off", INTEGER(entry->d_off));
+        table_put(t, "d_reclen", INTEGER(entry->d_reclen));
+        table_put(t, "d_type", INTEGER(entry->d_type));
+        table_put(t, "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)));
+
+        OKGC(t);
+        return OBJECT(t, 0);
+}
+
+struct value
+builtin_os_rewinddir(int argc)
+{
+        ASSERT_ARGC("os::rewinddir()", 1);
+
+        struct value d = ARG(0);
+
+        if (d.type != VALUE_PTR)
+                vm_panic("the argument to os::rewinddir() must be a pointer");
+
+        rewinddir(d.ptr);
+
+        return NIL;
+}
+
+struct value
+builtin_os_seekdir(int argc)
+{
+        ASSERT_ARGC("os::seekdir()", 2);
+
+        struct value d = ARG(0);
+
+        if (d.type != VALUE_PTR)
+                vm_panic("the first argument to os::seekdir() must be a pointer");
+
+        struct value off = ARG(1);
+        if (off.type != VALUE_INTEGER)
+                vm_panic("the second argument to os::seekdir() must be an integer");
+
+        seekdir(d.ptr, off.integer);
+
+        return NIL;
+}
+
+struct value
+builtin_os_telldir(int argc)
+{
+        ASSERT_ARGC("os::telldir()", 1);
+
+        struct value d = ARG(0);
+
+        if (d.type != VALUE_PTR)
+                vm_panic("the argument to os::telldir() must be a pointer");
+
+        return INTEGER(telldir(d.ptr));
+}
+
+struct value
+builtin_os_closedir(int argc)
+{
+        ASSERT_ARGC("os::closedir()", 1);
+
+        struct value d = ARG(0);
+
+        if (d.type != VALUE_PTR)
+                vm_panic("the argument to os::closedir() must be a pointer");
+
+        return INTEGER(closedir(d.ptr));
+}
+
+struct value
 builtin_os_unlink(int argc)
 {
         ASSERT_ARGC("os::unlink()", 1);
@@ -971,7 +1116,7 @@ builtin_os_unlink(int argc)
                 vm_panic("the argument to os::unlink() must be a string");
 
         if (path.bytes >= sizeof buffer) {
-                errno = ENAMETOOLONG;
+                errno = ENOENT;
                 return INTEGER(-1);
         }
 
@@ -1612,17 +1757,6 @@ SETID(seteuid)
 SETID(setgid)
 SETID(setegid)
 
-struct value
-builtin_os_utime(int argc)
-{
-        ASSERT_ARGC("os::utime()", 0);
-
-        struct timeval t;
-        gettimeofday(&t, NULL);
-
-        return INTEGER(t.tv_usec + t.tv_sec * (INTMAX_C(1000000)));
-}
-
 noreturn struct value
 builtin_os_exit(int argc)
 {
@@ -1664,6 +1798,41 @@ builtin_os_exec(int argc)
         vec_push(argv, NULL);
 
         return INTEGER(execvp(argv.items[0], argv.items));
+}
+
+struct value
+builtin_os_signal(int argc)
+{
+        ASSERT_ARGC_2("os::signal()", 1, 2);
+
+        struct value num = ARG(0);
+
+        if (num.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::signal() must be an integer");
+
+        if (argc == 2) {
+                struct value f = ARG(1);
+
+                struct sigaction act = {0};
+
+                if (f.type == VALUE_NIL) {
+                        vm_del_sigfn(num.integer);
+                        act.sa_handler = SIG_DFL;
+                } else if (CALLABLE(f)) {
+                        act.sa_handler = vm_do_signal;
+                } else {
+                        vm_panic("the second argument to os::signal() must be callable");
+                }
+
+                int r = sigaction(num.integer, &act, NULL);
+                if (r == 0)
+                        vm_set_sigfn(num.integer, &f);
+
+                return INTEGER(r);
+        } else {
+                return vm_get_sigfn(num.integer);
+        }
+
 }
 
 struct value
@@ -1894,10 +2063,20 @@ builtin_errno_str(int argc)
 struct value
 builtin_time_utime(int argc)
 {
-        ASSERT_ARGC("time::time()", 0);
+        ASSERT_ARGC_2("time::utime()", 0, 1);
+
+        clockid_t clk;
+        if (argc == 1) {
+                struct value v = ARG(0);
+                if (v.type != VALUE_INTEGER)
+                        vm_panic("the argument to time::utime() must be an integer");
+                clk = v.integer;
+        } else {
+                clk = CLOCK_REALTIME;
+        }
 
         struct timespec t;
-        clock_gettime(CLOCK_REALTIME, &t);
+        clock_gettime(clk, &t);
 
         return INTEGER(t.tv_sec * 1000 * 1000 + t.tv_nsec / 1000);
 }
