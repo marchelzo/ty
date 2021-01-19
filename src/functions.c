@@ -2328,6 +2328,35 @@ builtin_stdio_fgets(int argc)
 }
 
 struct value
+builtin_stdio_slurp(int argc)
+{
+        ASSERT_ARGC("stdio::slurp()", 1);
+
+        vec(char) b;
+        vec_init(b);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::slurp() must be a pointer");
+
+        FILE *fp = f.ptr;
+
+        int c;
+        while ((c = fgetc_unlocked(fp)) != EOF) {
+                vec_push(b, c);
+        }
+
+        if (c == EOF && b.count == 0)
+                return NIL;
+
+        struct value s = STRING_CLONE(b.items, b.count);
+
+        vec_empty(b);
+
+        return s;
+}
+
+struct value
 builtin_stdio_fgetc(int argc)
 {
         ASSERT_ARGC("stdio::fgetc()", 1);
@@ -2341,7 +2370,7 @@ builtin_stdio_fgetc(int argc)
         if (c == EOF)
                 return NIL;
         else
-                return STRING_CLONE(&c, 1);
+                return INTEGER(c);
 }
 
 struct value
@@ -2405,7 +2434,7 @@ builtin_stdio_puts(int argc)
 struct value
 builtin_stdio_fflush(int argc)
 {
-        ASSERT_ARGC("stdio::fflush()", 2);
+        ASSERT_ARGC("stdio::fflush()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)

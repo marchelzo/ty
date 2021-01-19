@@ -160,6 +160,7 @@
 #endif
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },
+{ .module = "stdio",  .name = "slurp",             .value = BUILTIN(builtin_stdio_slurp)                   },
 { .module = "stdio",  .name = "puts",              .value = BUILTIN(builtin_stdio_puts)                    },
 { .module = "stdio",  .name = "fwrite",            .value = BUILTIN(builtin_stdio_fwrite)                  },
 { .module = "stdio",  .name = "fgetc",             .value = BUILTIN(builtin_stdio_fgetc)                   },

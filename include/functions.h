@@ -353,6 +353,9 @@ struct value
 builtin_stdio_fgetc(int argc);
 
 struct value
+builtin_stdio_slurp(int argc);
+
+struct value
 builtin_stdio_fflush(int argc);
 
 struct value
