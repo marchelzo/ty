@@ -2352,7 +2352,10 @@ emit_expression(struct expression const *e)
                 break;
         case EXPRESSION_MEMBER_ACCESS:
                 emit_expression(e->object);
-                emit_instr(INSTR_MEMBER_ACCESS);
+                if (e->maybe)
+                        emit_instr(INSTR_TRY_MEMBER_ACCESS);
+                else
+                        emit_instr(INSTR_MEMBER_ACCESS);
                 emit_string(e->member_name);
                 emit_ulong(strhash(e->member_name));
                 break;
@@ -2372,7 +2375,10 @@ emit_expression(struct expression const *e)
                 for (size_t i = 0; i < e->method_args.count; ++i)
                         emit_expression(e->method_args.items[i]);
                 emit_expression(e->object);
-                emit_instr(INSTR_CALL_METHOD);
+                if (e->maybe)
+                        emit_instr(INSTR_TRY_CALL_METHOD);
+                else
+                        emit_instr(INSTR_CALL_METHOD);
                 emit_string(e->method_name);
                 emit_ulong(strhash(e->method_name));
                 emit_int(e->method_args.count);

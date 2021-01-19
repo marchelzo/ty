@@ -283,6 +283,7 @@ struct expression {
                                         vec(struct expression *) method_args;
                                 };
                         };
+                        bool maybe;
                 };
         };
 };

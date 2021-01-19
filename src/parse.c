@@ -935,8 +935,8 @@ PREFIX_OPERATOR(at,    AT,    9)
 PREFIX_OPERATOR(minus, MINUS, 9)
 PREFIX_OPERATOR(bang,  BANG,  10)
 
-PREFIX_LVALUE_OPERATOR(inc,   INC,   6)
-PREFIX_LVALUE_OPERATOR(dec,   DEC,   6)
+PREFIX_LVALUE_OPERATOR(inc,   INC,   9)
+PREFIX_LVALUE_OPERATOR(dec,   DEC,   9)
 /* * * * | end of prefix parsers | * * * */
 
 /* * * * | infix parsers | * * * */
@@ -1045,10 +1045,11 @@ infix_subscript(struct expression *left)
 static struct expression *
 infix_member_access(struct expression *left)
 {
-        consume('.');
-        
         struct expression *e = mkexpr();
         e->object = left;
+
+        e->maybe = tok()->type == TOKEN_DOT_MAYBE;
+        next();
 
         expect(TOKEN_IDENTIFIER);
 
@@ -1282,6 +1283,7 @@ get_infix_parser(void)
         case TOKEN_KEYWORD:        goto keyword;
         case '(':                  return infix_function_call;
         case '.':                  return infix_member_access;
+        case TOKEN_DOT_MAYBE:      return infix_member_access;
         case '[':                  return infix_subscript;
         case ',':                  return infix_list;
         case TOKEN_INC:            return postfix_inc;
@@ -1328,6 +1330,7 @@ get_infix_prec(void)
 
         switch (tok()->type) {
         case '.':                  return 12;
+        case TOKEN_DOT_MAYBE:      return 12;
 
         case '[':                  return 11;
         case '(':                  return 11;

@@ -70,6 +70,7 @@ static struct {
         { "/=",  TOKEN_DIV_EQ         },
         { "-=",  TOKEN_MINUS_EQ       },
         { ".",   '.'                  },
+        { ".?",  TOKEN_DOT_MAYBE      },
         { "..",  TOKEN_DOT_DOT        },
         { "...", TOKEN_DOT_DOT_DOT    },
         { "$",   '$'                  },

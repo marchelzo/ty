@@ -44,9 +44,11 @@ enum instruction {
         INSTR_INCRANGE,
 
         INSTR_MEMBER_ACCESS,
+        INSTR_TRY_MEMBER_ACCESS,
         INSTR_SUBSCRIPT,
         INSTR_CALL,
         INSTR_CALL_METHOD,
+        INSTR_TRY_CALL_METHOD,
         INSTR_GET_NEXT,
         INSTR_PUSH_INDEX,
         INSTR_READ_INDEX,

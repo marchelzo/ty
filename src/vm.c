@@ -929,8 +929,11 @@ Throw:
                         pop();
                         push(v);
                         break;
+                CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
                         v = pop();
+
+                        b = ip[-1] == INSTR_TRY_MEMBER_ACCESS;
 
                         char const *member = ip;
                         ip += strlen(ip) + 1;
@@ -1024,7 +1027,10 @@ ClassLookup:
                                         push(METHOD(member, vp, this));
                                         break;
                                 }
-                                vm_panic("attempt to access non-existent member '%s' of %s", member, value_show(&v));
+                                if (b)
+                                        push(NIL);
+                                else
+                                        vm_panic("attempt to access non-existent member '%s' of %s", member, value_show(&v));
                                 break;
                         case VALUE_TAG:
                                 vp = tags_lookup_method(v.tag, member, h);
@@ -1035,7 +1041,10 @@ ClassLookup:
                                 push(vp == NULL ? NIL : *vp);
                                 break;
                         default:
-                                vm_panic("member access on value of invalid type: %s", value_show(&v));
+                                if (b)
+                                        push(NIL);
+                                else
+                                        vm_panic("member access on value of invalid type: %s", value_show(&v));
                         }
 
                         break;
@@ -1436,9 +1445,11 @@ OutOfRange:
                         }
                         gc_pop();
                         break;
+                CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
-
                         value = peek();
+
+                        b = ip[-1] == INSTR_TRY_CALL_METHOD;
 
                         vp = NULL;
                         func = NULL;
@@ -1533,6 +1544,10 @@ OutOfRange:
                                 }
                                 --stack.count;
                                 goto Call;
+                        } else if (b) {
+                                pop();
+                                stack.count -= n;
+                                push(NIL);
                         } else {
                                 vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
                         }

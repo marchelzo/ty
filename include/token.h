@@ -53,6 +53,7 @@ struct token {
                 TOKEN_INC,
                 TOKEN_DEC,
                 TOKEN_NEWLINE,
+                TOKEN_DOT_MAYBE,
                 TOKEN_DOT_DOT,
                 TOKEN_DOT_DOT_DOT,
                 TOKEN_USER_OP,
