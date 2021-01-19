@@ -79,13 +79,12 @@ builtin_slurp(int argc)
 
         char p[PATH_MAX + 1];
         int fd;
+        bool need_close = false;
 
-        if (argc == 1) {
+        if (argc == 0) {
+                fd = 0;
+        } else if (ARG(0).type == VALUE_STRING) {
                 struct value v = ARG(0);
-
-                if (v.type != VALUE_STRING) {
-                        vm_panic("slurp() expects a path but got: %s", value_show(&v));
-                }
 
                 if (v.bytes >= sizeof p)
                         return NIL;
@@ -96,8 +95,12 @@ builtin_slurp(int argc)
                 fd = open(p, O_RDONLY);
                 if (fd < 0)
                         return NIL;
+
+                need_close = true;
+        } else if (ARG(0).type == VALUE_INTEGER) {
+                fd = ARG(0).integer;
         } else {
-                fd = 0;
+                vm_panic("the argument to slurp() must be a path or a file descriptor");
         }
 
         struct stat st;
@@ -122,15 +125,20 @@ builtin_slurp(int argc)
 
                 return STRING(s, n);
         } else if (!S_ISDIR(st.st_mode)) {
-                FILE *f = fd == 0 ? stdin : fdopen(fd, "r");
+                FILE *f = fdopen(fd, "r");
                 vec(char) s = {0};
                 int r;
 
-                while (!feof(f) && (r = fread(p, 1, sizeof p, f)) > 0) {
-                        vec_push_n(s, p, r);
+                while (!feof(f) && (r = fread(buffer, 1, sizeof buffer, f)) > 0) {
+                        vec_push_n(s, buffer, r);
                 }
+
                 struct value str = STRING_CLONE(s.items, s.count);
                 vec_empty(s);
+
+                if (need_close)
+                        fclose(f);
+
                 return str;
         }
 
@@ -152,7 +160,7 @@ builtin_die(int argc)
 struct value
 builtin_read(int argc)
 {
-        ASSERT_ARGC("read()", 0);
+        ASSERT_ARGC("readLine()", 0);
 
         static vec(char) input;
         input.count = 0;
@@ -1106,6 +1114,17 @@ builtin_os_closedir(int argc)
 }
 
 struct value
+builtin_os_getcwd(int argc)
+{
+        ASSERT_ARGC("os::getcwd()", 0);
+
+        if (getcwd(buffer, sizeof buffer) == NULL)
+                return NIL;
+
+        return STRING_CLONE(buffer, strlen(buffer));
+}
+
+struct value
 builtin_os_unlink(int argc)
 {
         ASSERT_ARGC("os::unlink()", 1);
@@ -1127,13 +1146,48 @@ builtin_os_unlink(int argc)
 }
 
 struct value
+builtin_os_chdir(int argc)
+{
+        ASSERT_ARGC("os::chdir()", 1);
+
+        struct value dir = ARG(0);
+
+        if (dir.type == VALUE_STRING) {
+                if (dir.bytes >= sizeof buffer) {
+                        errno = ENOENT;
+                        return INTEGER(-1);
+                }
+
+                memcpy(buffer, dir.string, dir.bytes);
+                buffer[dir.bytes] = '\0';
+
+                return INTEGER(chdir(buffer));
+        } else if (dir.type == VALUE_INTEGER) {
+                return INTEGER(fchdir(dir.integer));
+        } else {
+                vm_panic("the argument to os::chdir() must be a path or a file descriptor");
+        }
+
+
+}
+
+struct value
 builtin_os_read(int argc)
 {
-        ASSERT_ARGC("os::read()", 3);
+        ASSERT_ARGC_2("os::read()", 2, 3);
 
         struct value file = ARG(0);
-        struct value blob = ARG(1);
-        struct value n = ARG(2); 
+
+        struct value blob;
+        struct value n;
+
+        if (argc == 3) {
+                blob = ARG(1);
+                n = ARG(2); 
+        } else {
+                blob = BLOB(value_blob_new());
+                n = ARG(1);
+        }
 
         if (file.type != VALUE_INTEGER)
                 vm_panic("the first argument to os::read() must be an integer");
@@ -1154,7 +1208,12 @@ builtin_os_read(int argc)
         if (nr != -1)
                 blob.blob->count += nr;
 
-        return INTEGER(nr);
+        if (argc == 3)
+                return INTEGER(nr);
+        else if (nr != -1)
+                return blob;
+        else
+                return NIL;
 }
 
 struct value
@@ -1176,6 +1235,9 @@ builtin_os_write(int argc)
                 break;
         case VALUE_STRING:
                 n = write(file.integer, data.string, data.bytes);
+                break;
+        case VALUE_INTEGER:
+                n = write(file.integer, &((unsigned char){data.integer}), 1);
                 break;
         default:
                 vm_panic("invalid argument to os::write()");
@@ -2459,6 +2521,22 @@ builtin_stdio_fclose(int argc)
                 return NIL;
 
         return INTEGER(0);
+}
+
+struct value
+builtin_stdio_setvbuf(int argc)
+{
+        ASSERT_ARGC("stdio::setvbuf()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio::setvbuf() must be a pointer");
+
+        struct value mode = ARG(1);
+        if (mode.type != VALUE_INTEGER)
+                vm_panic("the second argument to stdio::setvbuf() must be an integer");
+
+        return INTEGER(setvbuf(f.ptr, NULL, mode.integer, 0));
 }
 
 struct value

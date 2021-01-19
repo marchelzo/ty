@@ -184,6 +184,12 @@ struct value
 builtin_os_closedir(int argc);
 
 struct value
+builtin_os_getcwd(int argc);
+
+struct value
+builtin_os_chdir(int argc);
+
+struct value
 builtin_os_unlink(int argc);
 
 struct value
@@ -360,5 +366,8 @@ builtin_stdio_fflush(int argc);
 
 struct value
 builtin_stdio_fclose(int argc);
+
+struct value
+builtin_stdio_setvbuf(int argc);
 
 #endif
