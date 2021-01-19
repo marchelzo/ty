@@ -46,6 +46,10 @@ class Object {
     init() {
         return object(Object);
     }
+
+    is?(self, c) {
+        return subclass?(type(self), c);
+    }
 }
 
 class Function {
@@ -58,7 +62,7 @@ class Function {
     }
 }
 
-class Array {
+class Array : Iterable {
     init(*xs) {
         return xs;
     }
@@ -90,9 +94,16 @@ class Array {
             _  => xs.map(float).sum() / xs.len()
         };
     }
+
+    __iter__(xs) {
+        let i = 0;
+        return Generator(function () {
+            if (i < xs.len()) return xs[i++];
+        });
+    }
 }
 
-class Dict {
+class Dict : Iterable {
     init(ks, vs) {
         if (ks && vs) {
             return { k: v for [k, v] in ks.zip(vs) };
@@ -108,9 +119,13 @@ class Dict {
     kmap(d, f) {
         return { f(k): v for k, v in d };
     }
+
+    __iter__(d) {
+        return d.keys().zip(d.values()).__iter__();
+    }
 }
 
-class String {
+class String : Iterable {
     init(x) {
         return str(x);
     }
@@ -141,16 +156,46 @@ class String {
             }
         }
     }
+
+    __iter__(s) {
+        let cs = s.chars();
+        let i = 0;
+        return Generator(function () {
+            if (i < cs.len()) return cs[i++];
+        });
+    }
 }
 
 class Int {
     init(x)  { return int(x || 0);           }
+
     &(a, b)  { return bit::and(a, b);        }
     ^(a, b)  { return bit::xor(a, b);        }
     .|(a, b) { return bit::or(a, b);         }
     <<(a, b) { return bit::shiftLeft(a, b);  }
     >>(a, b) { return bit::shiftRight(a, b); }
     **(a, b) { return math::pow(a, b);       }
+
+    upto(a, b) {
+        let i = a;
+        return Generator(function () {
+            if (i <= b) return i++;
+        });
+    }
+
+    downto(a, b) {
+        let i = a;
+        return Generator(function () {
+            if (i >= b) return i--;
+        });
+    }
+
+    count(a, k) {
+        k = k || 1;
+        return Generator(function () {
+            return (a += k) - k;
+        });
+    }
 }
 
 class Float {
@@ -215,7 +260,7 @@ class Iterable {
     }
 
     list(I) {
-        return [x for x in I];
+        return I.__iter__().list();
     }
 
     take(I, n) {
@@ -240,6 +285,18 @@ class Iterable {
 
     intersperse(I, x) {
         return I.__iter__().intersperse(x);
+    }
+
+    mean(I) {
+        return I.__iter__().mean();
+    }
+
+    sum(I) {
+        return I.__iter__().sum();
+    }
+
+    chain(A, B) {
+        return A.__iter__().chain(B);
     }
 }
 
@@ -313,6 +370,29 @@ class Iter {
             }
         });
     }
+
+    chain(it, *its) {
+        let i = 0;
+        its.insert(0, it);
+        its.map!(it -> it if it.is?(Iter) else it.__iter__());
+        return Generator(function () {
+            if let $x = its[i].__next__() {
+                return x;
+            } else if ((++i) >= its.len()) {
+                return nil;
+            } else {
+                return its[i].__next__();
+            }
+        });
+    }
+
+    sum(I) {
+        return I.list().sum();
+    }
+
+    mean(I) {
+        return I.list().mean();
+    }
 }
 
 class ReverseIter : Iter {
@@ -376,27 +456,20 @@ class RangeIter : Iter {
 
 class Range : Iterable {
     init(self, a, b) {
-	self.a = a;
-	self.b = b;
-        self.i = 0;
+        self.a = a;
+        self.b = b;
     }
 
     low(self) {
-	return self.a;
+        return min(self.a, self.b);
     }
 
     high(self) {
-	return self.b;
-    }
-
-    list(self) {
-	let xs = [];
-	for x in self { xs.push(x); }
-	return xs;
+        return max(self.a, self.b) - 1;
     }
 
     __str__(self) {
-	return "({self.low()}..{self.high()})";
+	return "({self.a} .. {self.b})";
     }
 
     contains?(self, k) {
@@ -412,14 +485,25 @@ class Range : Iterable {
     }
 
     __iter__(self) {
-        return RangeIter(self.low(), self.high());
+        let a, b = self.a, self.b;
+        return a.upto(b - 1) if (a < b) else (a - 1).downto(b);
     }
 }
 
 class InclusiveRange : Range {
-    high(self) {
-	return self.b + 1;
+    __str__(self) {
+        return "({self.a} ... {self.b})";
+    }
+
+    __iter__(self) {
+        let a, b = self.a, self.b;
+        return a.upto(b) if (a < b) else a.downto(b);
+    }
+
+    ?(self, k) {
+	return k >= self.low() && k <= self.high();
     }
 }
 
 function id(x) { return x; }
+let chain = Iter.chain;
