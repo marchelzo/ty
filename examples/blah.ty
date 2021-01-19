@@ -1,4 +1,4 @@
-import math (pow)
+import io
 
 tag Int, Add, Mul, Pow, End;
 
@@ -20,11 +20,11 @@ function eval(ast) {
                 Int(k)      => k,
                 Add([a, b]) => eval(a) + eval(b),
                 Mul([a, b]) => eval(a) * eval(b),
-                Pow([a, b]) => int(pow(eval(a), eval(b)))
+                Pow([a, b]) => int(eval(a) ** eval(b))
         };
 }
 
-while let $line = read() {
+for line in io::stdin {
         let tokens = line.split(' ').map(w -> match w {
                 /\d+/ ~> int ~> $k => Int(k),
                 '+'                => Add,

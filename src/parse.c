@@ -390,6 +390,7 @@ static struct expression *
 prefix_dollar(void)
 {
         consume('$');
+        lex_ctx = LEX_INFIX;
 
         struct expression *e = mkexpr();
 
