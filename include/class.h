@@ -33,4 +33,7 @@ class_method(int class, char const *name)
 void
 class_set_super(int class, int super);
 
+bool
+class_is_subclass(int sub, int super);
+
 #endif

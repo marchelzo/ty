@@ -21,6 +21,7 @@
 { .module = NULL,     .name = "regex",             .value = BUILTIN(builtin_regex)                         },
 { .module = NULL,     .name = "blob",              .value = BUILTIN(builtin_blob)                          },
 { .module = NULL,     .name = "type",              .value = BUILTIN(builtin_type)                          },
+{ .module = NULL,     .name = "subclass?",         .value = BUILTIN(builtin_subclass)                      },
 { .module = NULL,     .name = "object",            .value = BUILTIN(builtin_object)                        },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },

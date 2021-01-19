@@ -2574,7 +2574,7 @@ emit_statement(struct statement const *s)
 
                 emit_instr(INSTR_DEFINE_CLASS);
                 emit_int(s->class.symbol);
-                emit_int(s->class.super == NULL ? -1 : s->class.super->symbol->class);
+                emit_int(s->class.super == NULL ? 0 : s->class.super->symbol->class);
                 emit_int(s->class.methods.count);
 
                 for (int i = s->class.methods.count; i > 0; --i)

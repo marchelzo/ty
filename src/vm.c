@@ -1340,11 +1340,10 @@ OutOfRange:
                                 v.code = code;
                                 v.refs = NULL;
                         } else {
+                                v.refs = ref_vector_new(n);
                                 v.code = gc_alloc_object(sz, GC_CODE);
                                 memcpy(v.code, code, sz);
-                                v.refs = ref_vector_new(n);
                         }
-                        v.refs = (n == 0) ? NULL : ref_vector_new(n);
 
                         for (int i = 0; i < n; ++i) {
                                 READVALUE(s);

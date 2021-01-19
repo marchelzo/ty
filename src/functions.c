@@ -2597,7 +2597,7 @@ builtin_type(int argc)
         case VALUE_ARRAY:    return (struct value) { .type = VALUE_CLASS, .class = 2 };
         case VALUE_DICT:     return (struct value) { .type = VALUE_CLASS, .class = 3 };
         case VALUE_BLOB:     return (struct value) { .type = VALUE_CLASS, .class = 7 };
-        case VALUE_OBJECT:   return (struct value) { .type = VALUE_CLASS, .class = 0 };
+        case VALUE_OBJECT:   return (struct value) { .type = VALUE_CLASS, .class = v.class };
         case VALUE_BOOLEAN:  return (struct value) { .type = VALUE_CLASS, .class = 8 };
         case VALUE_REGEX:    return (struct value) { .type = VALUE_CLASS, .class = 9 };
         case VALUE_METHOD:
@@ -2606,4 +2606,19 @@ builtin_type(int argc)
         case VALUE_FUNCTION: return (struct value) { .type = VALUE_CLASS, .class = 1 };
         case VALUE_NIL:      return NIL;
         }
+}
+
+struct value
+builtin_subclass(int argc)
+{
+        ASSERT_ARGC("subclass?()", 2);
+
+        struct value sub = ARG(0);
+        struct value super = ARG(1);
+
+        if (sub.type != VALUE_CLASS || super.type != VALUE_CLASS) {
+                vm_panic("the arguments to subclass?() must be classes");
+        }
+
+        return BOOLEAN(class_is_subclass(sub.class, super.class));
 }

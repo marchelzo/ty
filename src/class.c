@@ -29,7 +29,13 @@ class_new(char const *name)
 void
 class_set_super(int class, int super)
 {
-        supers.items[class] = super;
+        /*
+         * When a class is defined, its superclass defaults to 0 (Object)
+         * if unspecified, but we don't want this behaviour when Object
+         * itself is defined, otherwise we'd have a cyclic inheritance graph.
+         */
+        if (class)
+                supers.items[class] = super;
 }
 
 int
@@ -73,4 +79,15 @@ class_lookup_method(int class, char const *name, unsigned long h)
         } while (class != -1);
 
         return NULL;
+}
+
+bool
+class_is_subclass(int sub, int super)
+{
+        do {
+                if (sub == super) return true;
+                sub = supers.items[sub];
+        } while (sub != -1);
+
+        return false;
 }
