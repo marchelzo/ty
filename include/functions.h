@@ -337,4 +337,25 @@ builtin_time_strftime(int argc);
 struct value
 builtin_time_strptime(int argc);
 
+struct value
+builtin_stdio_fdopen(int argc);
+
+struct value
+builtin_stdio_fgets(int argc);
+
+struct value
+builtin_stdio_puts(int argc);
+
+struct value
+builtin_stdio_fwrite(int argc);
+
+struct value
+builtin_stdio_fgetc(int argc);
+
+struct value
+builtin_stdio_fflush(int argc);
+
+struct value
+builtin_stdio_fclose(int argc);
+
 #endif

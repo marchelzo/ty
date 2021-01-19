@@ -2272,6 +2272,167 @@ builtin_time_time(int argc)
 }
 
 struct value
+builtin_stdio_fdopen(int argc)
+{
+        ASSERT_ARGC_2("stdio::fdopen()", 1, 2);
+
+        struct value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the first argument to stdio::fdopen() must be an integer");
+
+        char mode[16] = "a+";
+        if (argc == 2) {
+                struct value m = ARG(1);
+                if (m.type != VALUE_STRING)
+                        vm_panic("the second argument to stdio::fdopen() must be a string");
+                if (m.bytes >= sizeof mode)
+                        vm_panic("invalid mode string %s passed to stdio::fdopen()", value_show(&m));
+                memcpy(mode, m.string, m.bytes);
+                mode[m.bytes] = '\0';
+        }
+
+        FILE *f = fdopen(fd.integer, mode);
+        if (f == NULL)
+                return NIL;
+
+        return PTR(f);
+}
+
+struct value
+builtin_stdio_fgets(int argc)
+{
+        ASSERT_ARGC("stdio::fgets()", 1);
+
+        vec(char) line;
+        vec_init(line);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::fgets() must be a pointer");
+
+        FILE *fp = f.ptr;
+
+        int c;
+        while ((c = fgetc_unlocked(fp)) != EOF && c != '\n') {
+                vec_push(line, c);
+        }
+
+        if (c == EOF && line.count == 0)
+                return NIL;
+
+        struct value s = STRING_CLONE(line.items, line.count);
+
+        vec_empty(line);
+
+        return s;
+}
+
+struct value
+builtin_stdio_fgetc(int argc)
+{
+        ASSERT_ARGC("stdio::fgetc()", 1);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::fgetc() must be a pointer");
+
+        int c = fgetc_unlocked(f.ptr);
+
+        if (c == EOF)
+                return NIL;
+        else
+                return STRING_CLONE(&c, 1);
+}
+
+struct value
+builtin_stdio_fwrite(int argc)
+{
+        ASSERT_ARGC("stdio::fwrite()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::fwrite() must be a pointer");
+
+        struct value s = ARG(1);
+
+        switch (s.type) {
+        case VALUE_STRING:
+                return INTEGER(fwrite_unlocked(s.string, 1, s.bytes, f.ptr));
+        case VALUE_BLOB:
+                return INTEGER(fwrite_unlocked(s.blob->items, 1, s.blob->count, f.ptr));
+        case VALUE_INTEGER:
+                return INTEGER(fputc_unlocked((unsigned char)s.integer, f.ptr));
+        default:
+                vm_panic("invalid type for second argument passed to stdio::fwrite()");
+        }
+}
+
+struct value
+builtin_stdio_puts(int argc)
+{
+        ASSERT_ARGC("stdio::puts()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::puts() must be a pointer");
+
+        struct value s = ARG(1);
+
+        errno = 0;
+        size_t r;
+
+        switch (s.type) {
+        case VALUE_STRING:
+                r = fwrite_unlocked(s.string, 1, s.bytes, f.ptr);
+                if (r < s.bytes && errno != 0)
+                        return NIL;
+                break;
+        case VALUE_BLOB:
+                r = fwrite_unlocked(s.blob->items, 1, s.blob->count, f.ptr);
+                if (r < s.blob->count && errno != 0)
+                        return NIL;
+                break;
+        default:
+                vm_panic("the second argument to stdio::puts() must be a string or a blob");
+        }
+
+        if (fputc_unlocked('\n', f.ptr) == EOF)
+                return NIL;
+
+        return INTEGER(r + 1);
+}
+
+struct value
+builtin_stdio_fflush(int argc)
+{
+        ASSERT_ARGC("stdio::fflush()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::fflush() must be a pointer");
+
+        if (fflush(f.ptr) == EOF)
+                return NIL;
+
+        return INTEGER(0);
+}
+
+struct value
+builtin_stdio_fclose(int argc)
+{
+        ASSERT_ARGC("stdio::fclose()", 1);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::fclose() must be a pointer");
+
+        if (fclose(f.ptr) == EOF)
+                return NIL;
+
+        return INTEGER(0);
+}
+
+struct value
 builtin_object(int argc)
 {
         ASSERT_ARGC("object()", 1);

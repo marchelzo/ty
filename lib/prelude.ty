@@ -164,8 +164,10 @@ class Float {
 }
 
 class Blob {
-    init() {
-        return blob();
+    init(*args) {
+        let b = blob();
+        for arg in args { b.push(arg); }
+        return b;
     }
 
     searchr(b, s) {

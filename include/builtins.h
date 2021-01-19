@@ -158,6 +158,13 @@
 { .module = "os",     .name = "F_GETNOSIGPIPE",    .value = INT(F_GETNOSIGPIPE)                            },
 #endif
 #endif
+{ .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
+{ .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },
+{ .module = "stdio",  .name = "puts",              .value = BUILTIN(builtin_stdio_puts)                    },
+{ .module = "stdio",  .name = "fwrite",            .value = BUILTIN(builtin_stdio_fwrite)                  },
+{ .module = "stdio",  .name = "fgetc",             .value = BUILTIN(builtin_stdio_fgetc)                   },
+{ .module = "stdio",  .name = "fflush",            .value = BUILTIN(builtin_stdio_fflush)                  },
+{ .module = "stdio",  .name = "fclose",            .value = BUILTIN(builtin_stdio_fclose)                  },
 { .module = "errno",  .name = "get",               .value = BUILTIN(builtin_errno_get)                     },
 { .module = "errno",  .name = "str",               .value = BUILTIN(builtin_errno_str)                     },
 { .module = "errno",  .name = "EACCES",            .value = INT(EACCES)                                    },
