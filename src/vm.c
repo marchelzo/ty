@@ -1340,7 +1340,7 @@ OutOfRange:
                                 v.code = code;
                                 v.refs = NULL;
                         } else {
-                                v.code = alloc(sz);
+                                v.code = gc_alloc_object(sz, GC_CODE);
                                 memcpy(v.code, code, sz);
                                 v.refs = ref_vector_new(n);
                         }

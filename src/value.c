@@ -597,17 +597,19 @@ value_array_mark(struct array *a)
 }
 
 inline static void
-function_mark_references(struct value const *v)
+mark_function(struct value const *v)
 {
+        if (MARKED(v->code))
+                return;
+
+        MARK(v->code);
+        MARK(v->refs);
+
         for (size_t i = 0; i < v->refs->count; ++i) {
                 struct variable *var = (struct variable *)v->refs->refs[i].pointer;
-                if (MARKED(var))
-                        continue;
                 MARK(var);
                 value_mark(&var->value);
         }
-
-        MARK(v->refs);
 }
 
 char *
@@ -632,7 +634,7 @@ _value_mark(struct value const *v)
         case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);                break;
         case VALUE_ARRAY:           value_array_mark(v->array);                        break;
         case VALUE_DICT:            dict_mark(v->dict);                                break;
-        case VALUE_FUNCTION:        if (v->refs != NULL) function_mark_references(v);  break;
+        case VALUE_FUNCTION:        if (v->refs != NULL) mark_function(v);             break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);              break;
         case VALUE_OBJECT:          object_mark(v->object);                            break;
         case VALUE_BLOB:            MARK(v->blob);                                     break;

@@ -42,6 +42,7 @@ enum {
         GC_REF_VECTOR,
         GC_BLOB,
         GC_VALUE,
+        GC_CODE
 };
 
 enum {
