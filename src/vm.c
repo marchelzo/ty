@@ -1577,7 +1577,8 @@ vm_init(int ac, char **av)
 
         pcre_malloc = alloc;
 
-        srand(time(NULL));
+        srand48(time(NULL));
+        srandom(lrand48());
 
         compiler_init();
 

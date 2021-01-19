@@ -11,6 +11,7 @@
 { .module = NULL,     .name = "gcd",               .value = BUILTIN(builtin_gcd)                           },
 { .module = NULL,     .name = "lcm",               .value = BUILTIN(builtin_lcm)                           },
 { .module = NULL,     .name = "round",             .value = BUILTIN(builtin_round)                         },
+{ .module = NULL,     .name = "iround",            .value = BUILTIN(builtin_iround)                        },
 { .module = NULL,     .name = "ceil",              .value = BUILTIN(builtin_ceil)                          },
 { .module = NULL,     .name = "floor",             .value = BUILTIN(builtin_floor)                         },
 { .module = NULL,     .name = "int",               .value = BUILTIN(builtin_int)                           },

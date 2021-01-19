@@ -178,16 +178,21 @@ builtin_read(int argc)
 struct value
 builtin_rand(int argc)
 {
-        int low, high;
+        long low, high;
 
         ASSERT_ARGC_3("rand()", 0, 1, 2);
+
+        if (argc == 0)
+                return REAL(drand48());
+
+        long z = random();
 
         if (argc == 1 && ARG(0).type == VALUE_ARRAY) {
                 int n = ARG(0).array->count;
                 if (n == 0)
                         return NIL;
                 else
-                        return ARG(0).array->items[rand() % n];
+                        return ARG(0).array->items[z % n];
         }
 
         for (int i = 0; i < argc; ++i)
@@ -195,12 +200,11 @@ builtin_rand(int argc)
                         vm_panic("non-integer passed as argument %d to rand", i + 1);
 
         switch (argc) {
-        case 0:  low = 0;                      high = RAND_MAX;               break;
-        case 1:  low = 0;                      high = ARG(0).integer; break;
+        case 1:  low = 0;              high = ARG(0).integer; break;
         case 2:  low = ARG(0).integer; high = ARG(1).integer; break;
         }
 
-        return INTEGER((rand() % (high - low)) + low);
+        return INTEGER((z % (high - low)) + low);
 
 }
 
@@ -285,6 +289,21 @@ builtin_round(int argc)
         case VALUE_REAL:    return REAL(round(x.real));
         default:
                 vm_panic("the argument to round() must be a number");
+        }
+}
+
+struct value
+builtin_iround(int argc)
+{
+        ASSERT_ARGC("iround()", 1);
+
+        struct value x = ARG(0);
+
+        switch (x.type) {
+        case VALUE_INTEGER: return x;
+        case VALUE_REAL:    return INTEGER(llround(x.real));
+        default:
+                vm_panic("the argument to iround() must be a number");
         }
 }
 
@@ -407,32 +426,37 @@ builtin_int(int argc)
         struct value v = INTEGER(0), a, s, b;
         int base;
 
-        char nbuf[64] = {0};
-
-        char const *string = nbuf;
+        char const *string = buffer;
 
         ASSERT_ARGC_3("int()", 0, 1, 2);
 
         switch (argc) {
-        case 0: v.integer = 0; return v;
-        case 1:                goto coerce;
-        case 2:                goto custom_base;
+        case 0: return v;
+        case 1: goto Coerce;
+        case 2: goto CustomBase;
         }
 
-coerce:
+Coerce:
 
         a = ARG(0);
         switch (a.type) {
-        case VALUE_INTEGER:                                             return a;
-        case VALUE_REAL:    v.integer = a.real;                         return v;
-        case VALUE_BOOLEAN: v.integer = a.boolean;                      return v;
-        case VALUE_ARRAY:   v.integer = a.array->count;                 return v;
-        case VALUE_DICT:    v.integer = a.dict->count;                  return v;
-        case VALUE_STRING:  base = 10; memcpy(nbuf, a.string, a.bytes); goto string;
-        default:                                                        return NIL;
+        case VALUE_INTEGER:                                               return a;
+        case VALUE_REAL:    v.integer = a.real;                           return v;
+        case VALUE_BOOLEAN: v.integer = a.boolean;                        return v;
+        case VALUE_ARRAY:   v.integer = a.array->count;                   return v;
+        case VALUE_DICT:    v.integer = a.dict->count;                    return v;
+        case VALUE_BLOB:    v.integer = a.blob->count;                    return v;
+        case VALUE_STRING:
+                base = 0;
+                if (a.bytes >= sizeof buffer)
+                        goto TooBig;
+                memcpy(buffer, a.string, a.bytes);
+                buffer[a.bytes] = '\0';
+                goto String;
+        default:                                                          return NIL;
         }
 
-custom_base:
+CustomBase:
 
         s = ARG(0);
         b = ARG(1);
@@ -445,7 +469,11 @@ custom_base:
                 vm_panic("invalid base passed to int(): expected 0 or 2..36, but got %d", (int) b.integer);
 
         base = b.integer;
-        memcpy(nbuf, s.string, s.bytes);
+
+        if (s.bytes >= sizeof buffer)
+                goto TooBig;
+        memcpy(buffer, s.string, s.bytes);
+        buffer[s.bytes] = '\0';
 
         /*
          * The 0b syntax for base-2 integers is not standard C, so the strto* family of
@@ -456,7 +484,7 @@ custom_base:
                 string += 2;
         }
 
-string:
+String:
 
         errno = 0;
 
@@ -466,9 +494,11 @@ string:
         if (errno != 0 || *end != '\0')
                 return NIL;
 
-        v.integer = n;
+        return INTEGER(n);
 
-        return v;
+TooBig:
+        errno = ERANGE;
+        return NIL;
 }
 
 struct value

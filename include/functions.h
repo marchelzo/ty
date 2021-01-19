@@ -22,6 +22,9 @@ struct value
 builtin_round(int argc);
 
 struct value
+builtin_iround(int argc);
+
+struct value
 builtin_ceil(int argc);
 
 struct value
