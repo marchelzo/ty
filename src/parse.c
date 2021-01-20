@@ -845,7 +845,7 @@ prefix_range(void)
         return e;
 }
 
-static struct expresion *
+static struct expression *
 prefix_implicit_method(void)
 {
         consume(TOKEN_BIT_AND);
