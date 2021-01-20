@@ -99,6 +99,12 @@ class Array : Iterable {
         };
     }
 
+    coalesce(xs) {
+        for x in xs {
+            if (x != nil) return x;
+        }
+    }
+
     __iter__(xs) {
         let i = 0;
         return Generator(function () {

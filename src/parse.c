@@ -725,6 +725,7 @@ prefix_array(void)
         case TOKEN_CMP:
         case TOKEN_AND:
         case TOKEN_OR:
+        case TOKEN_WTF:
         case TOKEN_DOT_DOT:
         case TOKEN_DOT_DOT_DOT:
         case TOKEN_LT:
