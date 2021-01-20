@@ -362,6 +362,7 @@ vm_exec(char *code)
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
+        char const *method;
 
         struct value (*func)(struct value *, int);
 
@@ -1169,6 +1170,25 @@ BadContainer:
                         v = pop();
                         push(unary_operator_negate(&v));
                         break;
+                CASE(COUNT)
+                        v = pop();
+                        switch (v.type) {
+                        case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
+                        case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
+                        case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
+                        case VALUE_STRING: 
+                                push(get_string_method("len")(&v, 0));
+                                break;
+                        case VALUE_OBJECT:
+                                push(v);
+                                n = 0;
+                                b = false;
+                                method = "__len__";
+                                h = strhash(method);
+                                goto CallMethod;
+                        default: vm_panic("# applied to operand of invalid type: %s", value_show(&v));
+                        }
+                        break;
                 CASE(ADD)
                         right = pop();
                         left = pop();
@@ -1490,19 +1510,18 @@ BadContainer:
                         break;
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
-                        value = peek();
-
                         b = ip[-1] == INSTR_TRY_CALL_METHOD;
 
-                        vp = NULL;
-                        func = NULL;
-                        struct value *self = NULL;
-
-                        char const *method = ip;
+                        method = ip;
                         ip += strlen(ip) + 1;
 
                         READVALUE(h);
                         READVALUE(n);
+CallMethod:
+                        value = peek();
+                        vp = NULL;
+                        func = NULL;
+                        struct value *self = NULL;
 
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method, h);

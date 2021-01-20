@@ -389,6 +389,18 @@ prefix_special_string(void)
 }
 
 static struct expression *
+prefix_hash(void)
+{
+        consume('#');
+
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_PREFIX_HASH;
+        e->operand = parse_expr(10);
+
+        return e;
+}
+
+static struct expression *
 prefix_dollar(void)
 {
         consume('$');
@@ -833,33 +845,85 @@ prefix_range(void)
         return e;
 }
 
-static struct expression *
-prefix_hash(void)
+static struct expresion *
+prefix_implicit_method(void)
 {
+        consume(TOKEN_BIT_AND);
+
+        bool maybe = false;
+        if (tok()->type == TOKEN_QUESTION) {
+                next();
+                maybe = true;
+        }
+
+        expect(TOKEN_IDENTIFIER);
+
+        struct expression *o = mkexpr();
+        o->type = EXPRESSION_IDENTIFIER;
+        o->identifier = gensym();
+        o->module = NULL;
+
         struct expression *e = mkexpr();
-        e->type = EXPRESSION_IDENTIFIER;
-        e->identifier = "#";
-        e->module = NULL;
+        e->type = EXPRESSION_METHOD_CALL;
+        e->maybe = maybe;
+        e->object = o;
+        e->method_name = tok()->identifier;
+        vec_init(e->method_args);
 
         next();
 
-        return e;
+        if (tok()->type == '(') {
+                next();
+
+                lex_ctx = LEX_PREFIX;
+
+                if (tok()->type == ')') {
+                        next();
+                        return e;
+                } else {
+                        vec_push(e->method_args, parse_expr(0));
+                }
+
+                while (tok()->type == ',') {
+                        next();
+                        vec_push(e->method_args, parse_expr(0));
+                }
+
+                consume(')');
+        }
+
+        struct expression *f = mkexpr();
+        f->type = EXPRESSION_FUNCTION;
+        f->rest = false;
+        f->name = NULL;
+        f->body = mkret(e);
+
+        vec_init(f->params);
+        vec_push(f->params, o->identifier);
+
+        return f;
 }
 
 static struct expression *
 prefix_implicit_lambda(void)
 {
-        consume(TOKEN_BIT_OR);
+        param_list pnames_save = pnames;
+        vec_init(pnames);
 
-        struct expression *f = mkexpr();
-        f->type = EXPRESSION_FUNCTION;
-        f->name = NULL;
-        f->rest = false;
-        vec_init(f->params);
-        vec_push(f->params, "#");
+        next();
 
-        struct expression *e = parse_expr(0);
-        f->body = mkret(e);
+        unconsume(TOKEN_ARROW);
+        unconsume(')');
+        unconsume('(');
+
+        struct expression *f = parse_expr(0);
+
+        for (int i = 0; i < pnames.count; ++i) {
+                vec_push(f->params, pnames.items[i]);
+        }
+
+        vec_empty(pnames);
+        pnames = pnames_save;
 
         consume(TOKEN_BIT_OR);
 
@@ -1257,6 +1321,7 @@ get_prefix_parser(void)
         case TOKEN_IDENTIFIER:     return prefix_identifier;
         case TOKEN_KEYWORD:        goto Keyword;
 
+        case TOKEN_BIT_AND:        return prefix_implicit_method;
         case TOKEN_BIT_OR:         return prefix_implicit_lambda;
         case '#':                  return prefix_hash;
 
@@ -1751,6 +1816,7 @@ parse_function_definition(void)
         struct expression *target = mkexpr();
         target->type = EXPRESSION_IDENTIFIER;
         target->identifier = f->name;
+        target->module = NULL;
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_FUNCTION_DEFINITION;

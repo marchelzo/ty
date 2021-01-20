@@ -54,7 +54,7 @@ class Object {
 
 class Function {
     init() {
-        return -> $;
+        return |$|;
     }
 
     flip(f) {
@@ -365,6 +365,10 @@ class Iterable {
         return I.__iter__().repeat(n);
     }
 
+    __len__(I) {
+        return I.__iter__().__len__();
+    }
+
     __subscript__(I, i) {
         return I.__iter__().__subscript__(i);
     }
@@ -393,6 +397,12 @@ class Iter {
         return x;
     }
 
+    __len__(I) {
+        let n = 0;
+        while let $_ = I.__next__() { n += 1; }
+        return n;
+    }
+
     uniq(I, f) {
         let seen = {};
         return Generator(function () {
@@ -410,7 +420,7 @@ class Iter {
         f ?= id;
 
         if !let $x = I.__next__() {
-            return Generator(-> nil);
+            return Generator(|nil|);
         }
 
         let g = [x];
@@ -709,6 +719,10 @@ class Range : Iterable {
 
     high(self) {
         return max(self.a, self.b) - 1;
+    }
+
+    __len__(self) {
+        return self.high() - self.low() + 1;
     }
 
     __str__(self) {

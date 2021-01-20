@@ -134,6 +134,7 @@ enum instruction {
         INSTR_NEG,
         INSTR_NOT,
         INSTR_IS_NOT_NIL,
+        INSTR_COUNT,
         INSTR_GET_TAG,
 };
 
