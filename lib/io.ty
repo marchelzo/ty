@@ -1,0 +1,104 @@
+import os
+import errno
+import stdio
+
+export open, stdin, stdout, stderr, FBF, LBF, NBF
+
+let FBF = stdio::_IOFBF;
+let LBF = stdio::_IOLBF;
+let NBF = stdio::_IONBF;
+
+class Stream : Iter {
+    init(self, fd, mode, buffering) {
+        self.fd = fd;
+
+        if ((self.f = stdio::fdopen(fd, mode || 'a+')) == nil) {
+            throw Err(errno::get());
+        }
+
+        if (buffering)
+            stdio::setvbuf(self.f, buffering);
+    }
+
+    close(self) {
+        return stdio::fclose(self.f);
+    }
+
+    nextLine(self) {
+        if let $line = stdio::fgets(self.f) {
+            return line;
+        } else {
+            stdio::clearerr(self.f);
+        }
+    }
+
+    next(self, n) {
+        return stdio::fgetc(self.f);
+    }
+
+    write(self, s) {
+        return match type(s) {
+            ::Blob   => stdio::fwrite(self.f, s),
+            ::String => stdio::fwrite(self.f, s),
+            _        => stdio::fwrite(self.f, str(s))
+        };
+    }
+
+    print(self, s) {
+        if (s == nil) s = '';
+        return match type(s) {
+            ::Blob   => stdio::puts(self.f, s),
+            ::String => stdio::puts(self.f, s),
+            _        => stdio::puts(self.f, str(s))
+        };
+    }
+
+    slurp(self) {
+        return stdio::slurp(self.f);
+    }
+
+    flush(self) {
+        return stdio::fflush(self.f);
+    }
+
+    __next__(self) {
+        return self.nextLine();
+    }
+}
+
+let stdin = Stream(0, 'r');
+let stdout = Stream(1, 'w');
+let stderr = Stream(2, 'w');
+
+function open(path, mode, buffering) {
+
+    if (type(path) == Int) {
+        return Stream(path, mode, buffering);
+    }
+
+    let flags = match mode || 'a+' {
+        'r'  => [os::O_RDONLY],
+        'w'  => [os::O_WRONLY, os::O_CREAT, os::O_TRUNC],
+        'wx' => [os::O_WRONLY, os::O_CREAT],
+        'a'  => [os::O_WRONLY, os::O_CREAT, os::O_APPEND],
+        'r+' => [os::O_RDWR],
+        'w+' => [os::O_RDWR, os::O_CREAT, os::O_TRUNC],
+        'a+' => [os::O_RDWR, os::O_CREAT, os::O_APPEND],
+        _    => nil
+    };
+
+    if (flags == nil)
+        throw Err(errno::EINVAL);
+
+    let creat = flags.contains?(os::O_CREAT);
+
+    let fd = match creat {
+        true  => os::open(path, flags, 0666),
+        false => os::open(path, flags)
+    };
+
+    return match fd {
+        nil => nil,
+        _   => Stream(fd, mode, buffering)
+    };
+}
