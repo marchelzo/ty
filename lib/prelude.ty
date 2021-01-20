@@ -435,7 +435,6 @@ class Iter {
                 if (g.len() == n) {
                     let group = g;
                     g = [];
-                    print(group);
                     return group;
                 }
             }
