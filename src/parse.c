@@ -715,6 +715,7 @@ prefix_array(void)
         struct lex_state ls;
         lex_save(&ls);
 
+        lex_ctx = LEX_INFIX;
         if (token(1)->type == ']') switch (tok()->type) {
         case TOKEN_USER_OP:
         case TOKEN_PERCENT:
@@ -740,6 +741,8 @@ prefix_array(void)
 
         skip(2);
         lex_rewind(&ls);
+
+        lex_ctx = LEX_PREFIX;
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_ARRAY;

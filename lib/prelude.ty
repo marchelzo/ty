@@ -360,6 +360,14 @@ class Iterable {
     cycle(I) {
         return I.list().cycle();
     }
+
+    repeat(I, n) {
+        return I.__iter__().repeat(n);
+    }
+
+    __subscript__(I, i) {
+        return I.__iter__().__subscript__(i);
+    }
 }
 
 class Iter {
@@ -599,12 +607,42 @@ class Iter {
         return I.list().cycle();
     }
 
+    repeat(I, n) {
+        let xs = I.list();
+        let i = 0;
+        let j = 0;
+        return Generator(function () {
+            if (j == xs.len()) {
+                j = 0;
+                i += 1;
+            }
+
+            if (i == n) return nil;
+
+            return xs[j++];
+        });
+    }
+
+    replicate(x, n) {
+        let i = 0;
+        return Generator(function () {
+            if (!?n || i++ < n) return x;
+        });
+    }
+
     sum(I) {
         return I.list().sum();
     }
 
     mean(I) {
         return I.list().mean();
+    }
+
+    __subscript__(I, i) {
+        for _ in ..(i - 1) {
+            if (!?I.__next__()) return nil;
+        }
+        return I.__next__();
     }
 }
 
