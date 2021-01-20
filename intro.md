@@ -1,54 +1,55 @@
 ## Types
 
-    - Int
-    - Float
-    - Bool
-    - Blob
-    - String
-    - Regex
-    - Array
-    - Dict
-    - Object
-    - Ptr
-    - nil
+- `Int`
+- `Float`
+- `Bool`
+- `Blob`
+- `String`
+- `Regex`
+- `Array`
+- `Dict`
+- `Object`
+- `Ptr`
+- `nil`
 
 ## Operators
 
-    #### Infix:
-        - `=`
-        - `==`
-        - `?=`
-        - `!=`
-        - `%`
-        - `+`
-        - `-`
-        - `*`
-        - `/`
-        - `??`
-        - `&&`
-        - `||`
-        - `+=`
-        - `-=`
-        - `/=`
-        - `*=`
-        - `>`
-        - `<`
-        - `<=`
-        - `>=`
-        - `<=>`
-        and any user-defined operators (the prelude defines some common ones)
+#### Infix
 
-    #### Prefix:
-        - `++`
-        - `--`
-        - `!`
-        - `?`
+- `=`
+- `==`
+- `?=`
+- `!=`
+- `%`
+- `+`
+- `-`
+- `*`
+- `/`
+- `??`
+- `&&`
+- `||`
+- `+=`
+- `-=`
+- `/=`
+- `*=`
+- `>`
+- `<`
+- `<=`
+- `>=`
+- `<=>`
+- (and any user-defined operators (the prelude defines some common ones))
 
-    #### Postfix:
-        - `++`
-        - `--`
-        - `[]`
-        - `.`
+#### Prefix
+- `++`
+- `--`
+- `!`
+- `?`
+
+#### Postfix
+- `++`
+- `--`
+- `[]`
+- `.`
 
 ## Declarations (runtime exception if we fail to match)
 
@@ -195,7 +196,7 @@ let intersection = sets.fold([&]);
 ```
 
 
-## Classes:
+## Classes
 
 Classes are templates for values of type Object. To construct an Object
 of class A, we use the same syntax as a function call, i.e., A(a, b, c).
