@@ -447,6 +447,13 @@ vm_exec(char *code)
                                 ip += n;
                         }
                         break;
+                CASE(JUMP_IF_NIL)
+                        READVALUE(n);
+                        v = pop();
+                        if (v.type == VALUE_NIL) {
+                                ip += n;
+                        }
+                        break;
                 CASE(TARGET_VAR)
                         READVALUE(s);
                         pushtarget(&vars[s]->value, NULL);
@@ -488,6 +495,11 @@ vm_exec(char *code)
                         break;
                 CASE(ASSIGN)
                         *poptarget() = peek();
+                        break;
+                CASE(MAYBE_ASSIGN)
+                        vp = poptarget();
+                        if (vp->type == VALUE_NIL)
+                                *vp = peek();
                         break;
                 CASE(TAG_PUSH)
                         READVALUE(tag);
@@ -862,6 +874,20 @@ Throw:
                         for (int j = targets.count - n; n > 0; --n, poptarget()) {
                                 if (i > 0) {
                                         *targets.items[j++].t = vp[-(--i)];
+                                } else {
+                                        *targets.items[j++].t = NIL;
+                                }
+                        }
+                        push(top()[2]);
+                        break;
+                CASE(MAYBE_MULTI)
+                        READVALUE(n);
+                        for (i = 0, vp = top(); pop().type != VALUE_SENTINEL; ++i)
+                                ;
+                        for (int j = targets.count - n; n > 0; --n, poptarget()) {
+                                if (i > 0) {
+                                        if (targets.items[j++].t->type == VALUE_NIL)
+                                                *targets.items[j - 1].t = vp[-(--i)];
                                 } else {
                                         *targets.items[j++].t = NIL;
                                 }

@@ -22,6 +22,7 @@ enum instruction {
         INSTR_TARGET_MEMBER,
         INSTR_TARGET_SUBSCRIPT,
         INSTR_ASSIGN,
+        INSTR_MAYBE_ASSIGN,
 
         INSTR_ARRAY_REST,
 
@@ -68,6 +69,7 @@ enum instruction {
         INSTR_FUNCTION,
         INSTR_JUMP,
         INSTR_JUMP_IF,
+        INSTR_JUMP_IF_NIL,
         INSTR_JUMP_IF_NOT,
         INSTR_JUMP_IF_NONE,
         INSTR_RETURN,
@@ -83,6 +85,7 @@ enum instruction {
         INSTR_GET_EXTRA,
         INSTR_PUSH_NTH,
         INSTR_MULTI_ASSIGN,
+        INSTR_MAYBE_MULTI,
         INSTR_JUMP_IF_SENTINEL,
         INSTR_CLEAR_EXTRA,
         INSTR_FIX_EXTRA,

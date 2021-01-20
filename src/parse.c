@@ -977,9 +977,11 @@ infix_function_call(struct expression *left)
 static struct expression *
 infix_eq(struct expression *left)
 {
-        consume(TOKEN_EQ);
         struct expression *e = mkexpr();
-        e->type = EXPRESSION_EQ;
+
+        e->type = tok()->type == TOKEN_EQ ? EXPRESSION_EQ : EXPRESSION_MAYBE_EQ;
+        next();
+
         e->target = assignment_lvalue(left);
         if (left->type == EXPRESSION_LIST) {
                 e->value = parse_expr(-1);
@@ -1227,6 +1229,7 @@ BINARY_OPERATOR(dbl_eq,   DBL_EQ,      6, false)
 BINARY_OPERATOR(and,      AND,         5, false)
 
 BINARY_OPERATOR(or,       OR,          4, false)
+BINARY_OPERATOR(wtf,      WTF,         4, false)
 
 BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  2, true)
 BINARY_LVALUE_OPERATOR(star_eq,  STAR_EQ,  2, true)
@@ -1310,6 +1313,7 @@ get_infix_parser(void)
         case TOKEN_STAR_EQ:        return infix_star_eq;
         case TOKEN_DIV_EQ:         return infix_div_eq;
         case TOKEN_MINUS_EQ:       return infix_minus_eq;
+        case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return infix_eq;
         case TOKEN_STAR:           return infix_star;
         case TOKEN_DIV:            return infix_div;
@@ -1324,6 +1328,7 @@ get_infix_parser(void)
         case TOKEN_NOT_EQ:         return infix_not_eq;
         case TOKEN_DBL_EQ:         return infix_dbl_eq;
         case TOKEN_OR:             return infix_or;
+        case TOKEN_WTF:            return infix_wtf;
         case TOKEN_AND:            return infix_and;
         case TOKEN_USER_OP:        return infix_user_op;
         default:                   return NULL;
@@ -1375,10 +1380,12 @@ get_infix_prec(void)
         case TOKEN_AND:            return 5;
 
         case TOKEN_OR:             return 4;
+        case TOKEN_WTF:            return 4;
 
         /* this may need to have lower precedence. I'm not sure yet. */
         case TOKEN_SQUIGGLY_ARROW: return 3;
 
+        case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return NoEquals ? -3 : 2;
         case TOKEN_PLUS_EQ:        return 2;
         case TOKEN_STAR_EQ:        return 2;
@@ -1767,12 +1774,12 @@ parse_operator_directive(void)
         char const *assoc = tok()->identifier;
         next();
 
-        if (strcmp(assoc, "L") == 0) {
+        if (strcmp(assoc, "left") == 0) {
                 table_put(&uops, uop, INTEGER(p));
-        } else if (strcmp(assoc, "R") == 0) {
+        } else if (strcmp(assoc, "right") == 0) {
                 table_put(&uops, uop, INTEGER(-p));
         } else {
-                error("expected L or R in operator directive");
+                error("expected 'left' or 'right' in operator directive");
         }
 
         consume(TOKEN_NEWLINE);

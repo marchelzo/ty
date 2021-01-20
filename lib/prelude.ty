@@ -150,7 +150,7 @@ class String : Iterable {
     }
 
     reverse(s) {
-        return s.chars().reverse!().sum() || '';
+        return s.chars().reverse!().sum() ?? '';
     }
 
     num?(s) {
@@ -175,7 +175,7 @@ class String : Iterable {
 }
 
 class Int {
-    init(x)  { return int(x || 0);           }
+    init(x)  { return int(x ?? 0);           }
 
     &(a, b)  { return bit::and(a, b);        }
     ^(a, b)  { return bit::xor(a, b);        }
@@ -199,7 +199,7 @@ class Int {
     }
 
     count(a, k) {
-        k = k || 1;
+        k ?= 1;
         return Generator(function () {
             return (a += k) - k;
         });
@@ -311,12 +311,24 @@ class Iterable {
         return I.__iter__().tally(f);
     }
 
+    min(I, k) {
+        return I.__iter__().min(k);
+    }
+
+    max(I, k) {
+        return I.__iter__().max(k);
+    }
+
     count(I, x) {
         return I.__iter__().count(x);
     }
 
     intersperse(I, x) {
         return I.__iter__().intersperse(x);
+    }
+
+    groupsOf(I, n, keepShort) {
+        return I.__iter__().groupsOf(n, keepShort);
     }
 
     mean(I) {
@@ -377,7 +389,7 @@ class Iter {
     }
 
     group(I, f) {
-        let k = f || id;
+        let k = f ?? id;
 
         if !let $x = I.__next__() {
             return Generator(-> nil);
@@ -402,6 +414,30 @@ class Iter {
                 return group;
             } else {
                 return nil;
+            }
+        });
+    }
+
+    groupsOf(I, n, keepShort) {
+        keepShort ?= true;
+
+        let g = [];
+
+        return Generator(function () {
+            while let $x = I.__next__() {
+                g.push(x);
+                if (g.len() == n) {
+                    let group = g;
+                    g = [];
+                    print(group);
+                    return group;
+                }
+            }
+
+            if (g && keepShort) {
+                let group = g;
+                g = nil;
+                return group;
             }
         });
     }
@@ -477,9 +513,47 @@ class Iter {
 
     tally(I, f) {
         let d = {*:0};
-        f = f || id;
+        f ?= id;
         for x in I { d[f(x)] += 1; }
         return d;
+    }
+
+    max(I, f) {
+        let k = f ?? id;
+
+        if !let $x = I.__next__() {
+            return nil;
+        }
+
+        let m = x;
+        let mKey = k(m);
+
+        while let $x = I.__next__() {
+            let key = k(x);
+            if (key > mKey)
+                m, mKey = x, key;
+        }
+
+        return m;
+    }
+
+    min(I, f) {
+        let k = f ?? id;
+
+        if !let $x = I.__next__() {
+            return nil;
+        }
+
+        let m = x;
+        let mKey = k(m);
+
+        while let $x = I.__next__() {
+            let key = k(x);
+            if (key < mKey)
+                m, mKey = x, key;
+        }
+
+        return m;
     }
 
     intersperse(I, x) {
@@ -636,10 +710,10 @@ class InclusiveRange : Range {
 function id(x) { return x; }
 
 
-operator ?  5  L
-operator ** 10 R
-operator << 7  L
-operator >> 7  L
-operator &  6  L
-operator ^  5  L
-operator .| 4  L
+operator ?  5  left
+operator ** 10 right
+operator << 7  left
+operator >> 7  left
+operator &  6  left
+operator ^  5  left
+operator .| 4  left

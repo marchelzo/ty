@@ -143,6 +143,7 @@ struct expression {
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
+                EXPRESSION_MAYBE_EQ,
                 EXPRESSION_DOT_DOT,
                 EXPRESSION_DOT_DOT_DOT,
 
@@ -161,6 +162,7 @@ struct expression {
                 EXPRESSION_PERCENT,
                 EXPRESSION_AND,
                 EXPRESSION_OR,
+                EXPRESSION_WTF,
                 EXPRESSION_LT,
                 EXPRESSION_LEQ,
                 EXPRESSION_GT,

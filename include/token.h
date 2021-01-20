@@ -57,6 +57,8 @@ struct token {
                 TOKEN_DOT_DOT,
                 TOKEN_DOT_DOT_DOT,
                 TOKEN_USER_OP,
+                TOKEN_MAYBE_EQ,
+                TOKEN_WTF,
                 TOKEN_ERROR,
         } type;
         struct location loc;

@@ -158,7 +158,7 @@ static void
 emit_expression(struct expression const *e);
 
 static void
-emit_assignment(struct expression *target, struct expression const *e);
+emit_assignment(struct expression *target, struct expression const *e, bool maybe);
 
 static bool
 emit_case(struct expression const *pattern, struct expression const *condition, struct statement const *s);
@@ -610,6 +610,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_PERCENT:
         case EXPRESSION_AND:
         case EXPRESSION_OR:
+        case EXPRESSION_WTF:
         case EXPRESSION_LT:
         case EXPRESSION_LEQ:
         case EXPRESSION_GT:
@@ -654,6 +655,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         symbolize_expression(scope, e->method_args.items[i]);
                 break;
         case EXPRESSION_EQ:
+        case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_PLUS_EQ:
         case EXPRESSION_STAR_EQ:
         case EXPRESSION_DIV_EQ:
@@ -1147,6 +1149,23 @@ emit_or(struct expression const *left, struct expression const *right)
         emit_expression(right);
 
         PATCH_JUMP(left_true);
+}
+
+static void
+emit_coalesce(struct expression const *left, struct expression const *right)
+{
+        emit_expression(left);
+        emit_instr(INSTR_DUP);
+
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t left_nil);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t left_good);
+
+        PATCH_JUMP(left_nil);
+
+        emit_instr(INSTR_POP);
+        emit_expression(right);
+
+        PATCH_JUMP(left_good);
 }
 
 static void
@@ -2163,7 +2182,7 @@ check_multi(struct expression *target, struct expression const *e, int *n)
 }
 
 static void
-emit_assignment(struct expression *target, struct expression const *e)
+emit_assignment(struct expression *target, struct expression const *e, bool maybe)
 {
 
         struct symbol *tmp;
@@ -2172,6 +2191,9 @@ emit_assignment(struct expression *target, struct expression const *e)
 
         if (e != NULL && target->type != EXPRESSION_LIST)
                 emit_expression(e);
+
+        char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
+        char multi = maybe ? INSTR_MAYBE_MULTI : INSTR_MULTI_ASSIGN;
 
         switch (target->type) {
         case EXPRESSION_ARRAY:
@@ -2195,7 +2217,7 @@ emit_assignment(struct expression *target, struct expression const *e)
                                 emit_int(1);
                                 emit_instr(INSTR_BAD_MATCH);
                         } else {
-                                emit_assignment(target->elements.items[i], &subscript);
+                                emit_assignment(target->elements.items[i], &subscript, maybe);
                                 emit_instr(INSTR_POP);
                         }
                 }
@@ -2205,18 +2227,18 @@ emit_assignment(struct expression *target, struct expression const *e)
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
-                emit_assignment(target->tagged, NULL);
+                emit_assignment(target->tagged, NULL, maybe);
                 break;
         case EXPRESSION_VIEW_PATTERN:
                 emit_expression(target->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
-                emit_assignment(target->right, NULL);
+                emit_assignment(target->right, NULL, maybe);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_instr(INSTR_THROW_IF_NIL);
                 emit_target(target);
-                emit_instr(INSTR_ASSIGN);
+                emit_instr(instr);
                 break;
         case EXPRESSION_LIST:
                 if (!check_multi(target, e, &n)) {
@@ -2243,13 +2265,13 @@ emit_assignment(struct expression *target, struct expression const *e)
                         emit_instr(INSTR_GET_EXTRA);
                 }
 
-                emit_instr(INSTR_MULTI_ASSIGN);
+                emit_instr(multi);
                 emit_int((int)target->es.count);
 
                 break;
         default:
                 emit_target(target);
-                emit_instr(INSTR_ASSIGN);
+                emit_instr(instr);
         }
 }
 
@@ -2288,7 +2310,10 @@ emit_expression(struct expression const *e)
                 emit_instr(INSTR_INCRANGE);
                 break;
         case EXPRESSION_EQ:
-                emit_assignment(e->target, e->value);
+                emit_assignment(e->target, e->value, false);
+                break;
+        case EXPRESSION_MAYBE_EQ:
+                emit_assignment(e->target, e->value, true);
                 break;
         case EXPRESSION_INTEGER:
                 emit_instr(INSTR_INTEGER);
@@ -2420,6 +2445,9 @@ emit_expression(struct expression const *e)
                 break;
         case EXPRESSION_OR:
                 emit_or(e->left, e->right);
+                break;
+        case EXPRESSION_WTF:
+                emit_coalesce(e->left, e->right);
                 break;
         case EXPRESSION_LT:
                 emit_expression(e->left);
@@ -2554,7 +2582,7 @@ emit_statement(struct statement const *s)
                 break;
         case STATEMENT_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
-                emit_assignment(s->target, s->value);
+                emit_assignment(s->target, s->value, false);
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_TAG_DEFINITION:

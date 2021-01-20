@@ -51,11 +51,13 @@ static struct {
         { "!",   TOKEN_BANG           },
         { "==",  TOKEN_DBL_EQ         },
         { "=",   TOKEN_EQ             },
+        { "?=",  TOKEN_MAYBE_EQ       },
         { "->",  TOKEN_ARROW          },
         { "=>",  TOKEN_FAT_ARROW      },
         { "~>",  TOKEN_SQUIGGLY_ARROW },
         { "&&",  TOKEN_AND            },
         { "||",  TOKEN_OR             },
+        { "??",  TOKEN_WTF            },
         { "|",   TOKEN_BIT_OR         },
         { "<=>", TOKEN_CMP            },
         { "<=",  TOKEN_LEQ            },
@@ -124,6 +126,8 @@ token_show_type(int type)
         case TOKEN_MINUS_EQ:       return "operator '-='";
         case TOKEN_PERCENT_EQ:     return "operator '%='";
         case TOKEN_EQ:             return "token '='";
+        case TOKEN_MAYBE_EQ:       return "token '?='";
+        case TOKEN_WTF:            return "token '??'";
         case TOKEN_ARROW:          return "token '->'";
         case TOKEN_FAT_ARROW:      return "token '=>'";
         case TOKEN_SQUIGGLY_ARROW: return "token '~>'";
