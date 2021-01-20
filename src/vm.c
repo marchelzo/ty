@@ -1111,11 +1111,21 @@ OutOfRange:
                                 vp = dict_get_value(container.dict, &subscript);
                                 push((vp == NULL) ? NIL : *vp);
                                 break;
+                        case VALUE_OBJECT:
+                                vp = class_method(container.class, "__subscript__");
+                                if (vp != NULL) {
+                                        push(subscript);
+                                        call(vp, &container, 1, false);
+                                } else {
+                                        goto BadContainer;
+                                }
+                                break;
                         case VALUE_NIL:
                                 push(NIL);
                                 break;
                         default:
-                                vm_panic("attempt to subscript something other than an object or array");
+BadContainer:
+                                vm_panic("invalid container in subscript expression: %s", value_show(&container));
                         }
                         break;
                 CASE(NOT)

@@ -48,7 +48,7 @@ execln(char *line)
                         system(line + 2) || 0;
                 else if (!vm_execute_file(line + 1))
                         fprintf(stderr, "%s\n", vm_error());
-                goto add;
+                goto Add;
 
         }
 
@@ -56,12 +56,12 @@ execln(char *line)
 
         sprintf(buffer, "print(%s);", line);
         if (vm_execute(buffer))
-                goto add;
+                goto Add;
         if (strstr(vm_error(), "ParseError") != NULL && vm_execute(line))
-                goto add;
+                goto Add;
 
         fprintf(stderr, "%s\n", vm_error());
-add:
+Add:
         if (use_readline) {
                 line[strcspn(line, "\n")] = '\0';
                 add_history(line);

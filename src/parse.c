@@ -710,6 +710,9 @@ prefix_array(void)
 {
         consume('[');
 
+        struct lex_state ls;
+        lex_save(&ls);
+
         if (token(1)->type == ']') switch (tok()->type) {
         case TOKEN_USER_OP:
         case TOKEN_PERCENT:
@@ -732,18 +735,16 @@ prefix_array(void)
         default: break;
         }
 
+        skip(2);
+        lex_rewind(&ls);
+
         struct expression *e = mkexpr();
         e->type = EXPRESSION_ARRAY;
         vec_init(e->elements);
 
-        if (tok()->type == ']') {
-                next();
-                return e;
-        } else {
-                vec_push(e->elements, parse_expr(0));
-        }
-
         while (tok()->type != ']') {
+                vec_push(e->elements, parse_expr(0));
+
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FOR) {
                         next();
                         e->type = EXPRESSION_ARRAY_COMPR;
@@ -757,13 +758,14 @@ prefix_array(void)
                                 e->compr.cond = NULL;
                         }
                         expect(']');
+                } else if (tok()->type == ',') {
+                        next();
                 } else {
-                        consume(',');
-                        vec_push(e->elements, parse_expr(0));
+                        expect(']');
                 }
         }
 
-        consume(']');
+        next();
 
         return e;
 }
@@ -998,6 +1000,7 @@ infix_user_op(struct expression *left)
         struct expression *e = mkexpr();
 
         e->type = EXPRESSION_METHOD_CALL;
+        e->maybe = false;
         e->object = left;
         e->method_name = tok()->identifier;
         consume(TOKEN_USER_OP);
@@ -1071,7 +1074,7 @@ infix_member_access(struct expression *left)
         lex_ctx = LEX_PREFIX;
 
         if (tok()->type == ')')
-                goto end;
+                goto End;
         else
                 vec_push(e->method_args, parse_expr(0));
 
@@ -1080,7 +1083,7 @@ infix_member_access(struct expression *left)
                 vec_push(e->method_args, parse_expr(0));
         }
 
-end:
+End:
         consume(')');
         return e;
 }
@@ -1234,7 +1237,7 @@ get_prefix_parser(void)
         case TOKEN_REGEX:          return prefix_regex;
 
         case TOKEN_IDENTIFIER:     return prefix_identifier;
-        case TOKEN_KEYWORD:        goto keyword;
+        case TOKEN_KEYWORD:        goto Keyword;
 
         case TOKEN_BIT_OR:         return prefix_implicit_lambda;
         case '#':                  return prefix_hash;
@@ -1263,7 +1266,7 @@ get_prefix_parser(void)
         default:                   return NULL;
         }
 
-keyword:
+Keyword:
 
         switch (tok()->keyword) {
         case KEYWORD_MATCH:    return prefix_match;
@@ -1281,7 +1284,7 @@ get_infix_parser(void)
         lex_ctx = LEX_INFIX;
 
         switch (tok()->type) {
-        case TOKEN_KEYWORD:        goto keyword;
+        case TOKEN_KEYWORD:        goto Keyword;
         case '(':                  return infix_function_call;
         case '.':                  return infix_member_access;
         case TOKEN_DOT_MAYBE:      return infix_member_access;
@@ -1316,7 +1319,7 @@ get_infix_parser(void)
         default:                   return NULL;
         }
 
-keyword:
+Keyword:
 
         switch (tok()->keyword) {
         case KEYWORD_IF: return infix_conditional;
@@ -1375,12 +1378,12 @@ get_infix_prec(void)
 
         case ',':                  return 0;
 
-        case TOKEN_KEYWORD:        goto keyword;
+        case TOKEN_KEYWORD:        goto Keyword;
 
         default:                   return -3;
         }
 
-keyword:
+Keyword:
 
         switch (tok()->keyword) {
         case KEYWORD_IF: return 3;
@@ -1472,15 +1475,15 @@ parse_definition_lvalue(int context)
         switch (context) {
         case LV_LET: 
                 if (tok()->type != TOKEN_EQ)
-                        goto error;
+                        goto Error;
                 break;
         case LV_EACH:
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IN)
                         break;
                 if (tok()->type != ',')
-                        goto error;
+                        goto Error;
                 if (token(1)->type != TOKEN_IDENTIFIER)
-                        goto error;
+                        goto Error;
                 break;
         default:
                 break;
@@ -1488,7 +1491,7 @@ parse_definition_lvalue(int context)
 
         return e;
 
-error:
+Error:
         free(e);
         tokidx = save;
         return NULL;
@@ -2068,11 +2071,11 @@ parse_statement(void)
         switch (tok()->type) {
         case '{':            return parse_block();
         case ';':            return parse_null_statement();
-        case TOKEN_KEYWORD:  goto keyword;
-        default:             goto expression;
+        case TOKEN_KEYWORD:  goto Keyword;
+        default:             goto Expression;
         }
 
-keyword:
+Keyword:
 
         switch (tok()->keyword) {
         case KEYWORD_CLASS:    return parse_class_definition();
@@ -2089,10 +2092,10 @@ keyword:
         case KEYWORD_CONTINUE: return parse_continue_statement();
         case KEYWORD_TRY:      return parse_try();
         case KEYWORD_THROW:    return parse_throw();
-        default:               goto expression;
+        default:               goto Expression;
         }
 
-expression:
+Expression:
 
         s = mkstmt();
         s->type = STATEMENT_EXPRESSION;

@@ -2604,6 +2604,7 @@ builtin_type(int argc)
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_FUNCTION: return (struct value) { .type = VALUE_CLASS, .class = 1 };
+        default:
         case VALUE_NIL:      return NIL;
         }
 }
