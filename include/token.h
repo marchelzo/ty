@@ -31,6 +31,7 @@ struct token {
                 TOKEN_PERCENT,
                 TOKEN_NOT_EQ,
                 TOKEN_BANG,
+                TOKEN_QUESTION,
                 TOKEN_DBL_EQ,
                 TOKEN_EQ,
                 TOKEN_PLUS_EQ,

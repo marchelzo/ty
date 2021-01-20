@@ -624,6 +624,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->right);
                 break;
         case EXPRESSION_PREFIX_BANG:
+        case EXPRESSION_PREFIX_QUESTION:
         case EXPRESSION_PREFIX_MINUS:
         case EXPRESSION_PREFIX_AT:
         case EXPRESSION_PREFIX_INC:
@@ -2487,6 +2488,10 @@ emit_expression(struct expression const *e)
         case EXPRESSION_PREFIX_BANG:
                 emit_expression(e->operand);
                 emit_instr(INSTR_NOT);
+                break;
+        case EXPRESSION_PREFIX_QUESTION:
+                emit_expression(e->operand);
+                emit_instr(INSTR_IS_NOT_NIL);
                 break;
         case EXPRESSION_PREFIX_AT:
                 emit_expression(e->operand);

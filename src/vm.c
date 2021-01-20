@@ -1161,6 +1161,10 @@ BadContainer:
                         v = pop();
                         push(unary_operator_not(&v));
                         break;
+                CASE(IS_NOT_NIL)
+                        v = pop();
+                        push(BOOLEAN(v.type != VALUE_NIL));
+                        break;
                 CASE(NEG)
                         v = pop();
                         push(unary_operator_negate(&v));

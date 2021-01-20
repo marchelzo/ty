@@ -133,6 +133,7 @@ enum instruction {
         // unary operators
         INSTR_NEG,
         INSTR_NOT,
+        INSTR_IS_NOT_NIL,
         INSTR_GET_TAG,
 };
 

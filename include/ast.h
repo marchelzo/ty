@@ -178,6 +178,7 @@ struct expression {
 
                 EXPRESSION_PREFIX_MINUS,
                 EXPRESSION_PREFIX_BANG,
+                EXPRESSION_PREFIX_QUESTION,
                 EXPRESSION_PREFIX_AT,
                 EXPRESSION_PREFIX_INC,
                 EXPRESSION_PREFIX_DEC,

@@ -101,7 +101,7 @@ class Array : Iterable {
 
     coalesce(xs) {
         for x in xs {
-            if (x != nil) return x;
+            if (?x) return x;
         }
     }
 
@@ -356,6 +356,10 @@ class Iterable {
     chain(A, B) {
         return A.__iter__().chain(B);
     }
+
+    cycle(I) {
+        return I.list().cycle();
+    }
 }
 
 class Iter {
@@ -368,7 +372,7 @@ class Iter {
     }
 
     fold(I, a, b) {
-        let [f, first] = ([b, a] if b != nil else [a, nil]);
+        let [f, first] = ([b, a] if ?b else [a]);
 
         if !let $x = match first { $x => x, _ => I.__next__() } {
             return nil;
@@ -395,7 +399,7 @@ class Iter {
     }
 
     group(I, f) {
-        let k = f ?? id;
+        f ?= id;
 
         if !let $x = I.__next__() {
             return Generator(-> nil);
@@ -405,7 +409,7 @@ class Iter {
 
         return Generator(function () {
             while let $x = I.__next__() {
-                if (k(x) == k(g[-1])) {
+                if (f(x) == f(g[-1])) {
                     g.push(x);
                 } else {
                     let group = g;
@@ -418,8 +422,6 @@ class Iter {
                 let group = g;
                 g = nil;
                 return group;
-            } else {
-                return nil;
             }
         });
     }
@@ -565,7 +567,7 @@ class Iter {
         let i = 0;
         let next = I.__next__();
         return Generator(function () {
-            if (next != nil) match i++ % 2 {
+            if (?next) match i++ % 2 {
                 0 => {
                     let r = next;
                     next = I.__next__();
@@ -585,12 +587,16 @@ class Iter {
         return Generator(function () {
             if let $x = its[i].__next__() {
                 return x;
-            } else if ((++i) >= its.len()) {
+            } else if (++i >= its.len()) {
                 return nil;
             } else {
                 return its[i].__next__();
             }
         });
+    }
+
+    cycle(I) {
+        return I.list().cycle();
     }
 
     sum(I) {
@@ -611,10 +617,7 @@ class ReverseIter : Iter {
     }
 
     __next__(R) {
-        if (R.xs)
-            return R.xs.pop();
-        else
-            return nil;
+        if (R.xs) return R.xs.pop();
     }
 }
 
@@ -642,8 +645,6 @@ class FilterIter : Iter {
             if (F.p(n))
                 return n;
         }
-
-        return nil;
     }
 }
 
@@ -654,10 +655,7 @@ class RangeIter : Iter {
     }
 
     __next__(R) {
-        if (R.a < R.b)
-            return R.a++;
-        else
-            return nil;
+        if (R.a < R.b) return R.a++;
     }
 }
 

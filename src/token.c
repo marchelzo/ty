@@ -119,6 +119,7 @@ token_show_type(int type)
         case TOKEN_PERCENT:        return "operator '%'";
         case TOKEN_NOT_EQ:         return "operator '!='";
         case TOKEN_BANG:           return "operator '!'";
+        case TOKEN_QUESTION:       return "operator '?'";
         case TOKEN_DBL_EQ:         return "operator '=='";
         case TOKEN_PLUS_EQ:        return "operator '+='";
         case TOKEN_STAR_EQ:        return "operator '*='";

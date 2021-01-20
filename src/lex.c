@@ -523,6 +523,12 @@ lex_token(enum lex_context ctx)
                         return lexregex();
                 } else if (isalpha(*chars) || *chars == '_' || (chars[0] == ':' && chars[1] == ':')) {
                         return lexword();
+                } else if (chars[0] == '!' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_BANG);
+                } else if (chars[0] == '?' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_QUESTION);
                 } else if (chars[0] == '$' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken('$');

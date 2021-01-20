@@ -937,9 +937,10 @@ prefix_object(void)
         return e;
 }
 
-PREFIX_OPERATOR(at,    AT,    9)
-PREFIX_OPERATOR(minus, MINUS, 9)
-PREFIX_OPERATOR(bang,  BANG,  10)
+PREFIX_OPERATOR(at,     AT,       9)
+PREFIX_OPERATOR(minus,  MINUS,    9)
+PREFIX_OPERATOR(bang,   BANG,     10)
+PREFIX_OPERATOR(is_nil, QUESTION, 10)
 
 PREFIX_LVALUE_OPERATOR(inc,   INC,   9)
 PREFIX_LVALUE_OPERATOR(dec,   DEC,   9)
@@ -1266,6 +1267,7 @@ get_prefix_parser(void)
         case TOKEN_DOT_DOT:        return prefix_range;
         case TOKEN_DOT_DOT_DOT:    return prefix_incrange;
 
+        case TOKEN_QUESTION:       return prefix_is_nil;
         case TOKEN_BANG:           return prefix_bang;
         case TOKEN_AT:             return prefix_at;
         case TOKEN_MINUS:          return prefix_minus;
@@ -1758,6 +1760,8 @@ parse_function_definition(void)
 static struct statement *
 parse_operator_directive(void)
 {
+        lex_ctx = LEX_INFIX;
+
         if (token(1)->type != TOKEN_USER_OP) {
                 consume_keyword(KEYWORD_OPERATOR);
                 expect(TOKEN_USER_OP);
