@@ -226,7 +226,11 @@ lexword(void)
 
         int keyword;
         if (keyword = keyword_get_number(w), keyword != -1) {
-                keep_next_newline |= (keyword == KEYWORD_IMPORT || keyword == KEYWORD_EXPORT);
+                keep_next_newline |= (
+                        keyword == KEYWORD_IMPORT
+                     || keyword == KEYWORD_EXPORT
+                     || keyword == KEYWORD_OPERATOR
+                );
                 return mkkw(keyword);
         } else {
                 return mkid(w, m);

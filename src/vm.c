@@ -1012,6 +1012,9 @@ Throw:
                         case VALUE_INTEGER:
                                 n = CLASS_INT;
                                 goto ClassLookup;
+                        case VALUE_REAL:
+                                n = CLASS_FLOAT;
+                                goto ClassLookup;
                         case VALUE_OBJECT:
                                 vp = table_lookup(v.object, member, h);
                                 if (vp != NULL) {
@@ -1514,6 +1517,9 @@ BadContainer:
                                 break;
                         case VALUE_INTEGER:
                                 vp = class_lookup_method(CLASS_INT, method, h);
+                                break;
+                        case VALUE_REAL:
+                                vp = class_lookup_method(CLASS_FLOAT, method, h);
                                 break;
                         case VALUE_REGEX:
                                 vp = class_lookup_method(CLASS_REGEX, method, h);

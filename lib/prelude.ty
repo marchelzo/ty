@@ -153,6 +153,10 @@ class String : Iterable {
         return s.chars().reverse!().sum() || '';
     }
 
+    num?(s) {
+        return s.match?(/^\d+(?:\.\d+)?$/);
+    }
+
     searchr(s, pattern) {
         for (let off = s.len() - 1; off >= 0; --off) {
             if let $i = s.search(pattern, off) {
@@ -199,6 +203,10 @@ class Int {
         return Generator(function () {
             return (a += k) - k;
         });
+    }
+
+    in?(k, r) {
+        return r ? k;
     }
 }
 
@@ -295,12 +303,12 @@ class Iterable {
         return I.__iter__().str();
     }
 
-    tally(I, f) {
-        return I.__iter__().tally(f);
+    join(I) {
+        return I.__iter__().join();
     }
 
-    group(I, f) {
-        return I.__iter__().group(f);
+    tally(I, f) {
+        return I.__iter__().tally(f);
     }
 
     count(I, x) {
@@ -398,10 +406,25 @@ class Iter {
         });
     }
 
+    join(I, sep) {
+        if !let (str ~> $s) = I.__next__() {
+            return '';
+        }
+
+        let b = Blob(s);
+
+        while let $s = I.__next__() {
+            b.push(sep);
+            b.push(s);
+        }
+
+        return b.str();
+    }
+
     count(I, x) {
         let n = 0;
 
-        if (type(x) == Function) {
+        if (type(x) == Function || type(x) == Regex) {
             while let $y = I.__next__() {
                 if (x(y)) n += 1;
             }
@@ -586,7 +609,7 @@ class Range : Iterable {
     }
 
     ?(self, k) {
-	return k >= self.low() && k < self.high();
+	return k >= self.low() && k <= self.high();
     }
 
     __iter__(self) {
@@ -605,10 +628,18 @@ class InclusiveRange : Range {
         return a.upto(b) if (a < b) else a.downto(b);
     }
 
-    ?(self, k) {
-	return k >= self.low() && k <= self.high();
+    high(self) {
+        return max(self.a, self.b);
     }
 }
 
 function id(x) { return x; }
-let chain = Iter.chain;
+
+
+operator ?  5  L
+operator ** 10 R
+operator << 7  L
+operator >> 7  L
+operator &  6  L
+operator ^  5  L
+operator .| 4  L

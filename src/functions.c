@@ -1036,7 +1036,7 @@ builtin_os_opendir(int argc)
         struct value path = ARG(0);
         DIR *d;
 
-        if (path.type != VALUE_STRING) {
+        if (path.type == VALUE_STRING) {
                 if (path.bytes >= sizeof buffer) {
                         errno = ENOENT;
                         return NIL;

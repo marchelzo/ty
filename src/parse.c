@@ -16,6 +16,7 @@
 #include "lex.h"
 #include "operators.h"
 #include "value.h"
+#include "table.h"
 #include "log.h"
 #include "vm.h"
 
@@ -89,6 +90,7 @@ enum {
 static jmp_buf jb;
 static char errbuf[MAX_ERR_LEN + 1];
 
+static struct table uops;
 static vec(struct token) tokens;
 static int tokidx = 0;
 enum lex_context lex_ctx = LEX_PREFIX;
@@ -1005,7 +1007,15 @@ infix_user_op(struct expression *left)
         e->method_name = tok()->identifier;
         consume(TOKEN_USER_OP);
         vec_init(e->method_args);
-        vec_push(e->method_args, parse_expr(2));
+
+        int prec = 8;
+
+        struct value *p = table_look(&uops, e->method_name);
+        if (p != NULL) {
+                prec = (p->integer > 0) ? p->integer : abs(p->integer) - 1;
+        }
+
+        vec_push(e->method_args, parse_expr(prec));
 
         return e;
 }
@@ -1330,6 +1340,7 @@ Keyword:
 static int
 get_infix_prec(void)
 {
+        struct value *p;
         lex_ctx = LEX_INFIX;
 
         switch (tok()->type) {
@@ -1367,7 +1378,6 @@ get_infix_prec(void)
 
         /* this may need to have lower precedence. I'm not sure yet. */
         case TOKEN_SQUIGGLY_ARROW: return 3;
-        case TOKEN_USER_OP:        return 3;
 
         case TOKEN_EQ:             return NoEquals ? -3 : 2;
         case TOKEN_PLUS_EQ:        return 2;
@@ -1379,16 +1389,20 @@ get_infix_prec(void)
         case ',':                  return 0;
 
         case TOKEN_KEYWORD:        goto Keyword;
+        case TOKEN_USER_OP:        goto UserOp;
 
         default:                   return -3;
         }
 
 Keyword:
-
         switch (tok()->keyword) {
         case KEYWORD_IF: return 3;
         default:         return -3;
         }
+
+UserOp:
+        p = table_look(&uops, tok()->identifier);
+        return (p != NULL) ? abs(p->integer) : 8;
 }
 
 static struct expression *
@@ -1734,17 +1748,36 @@ parse_function_definition(void)
 }
 
 static struct statement *
-parse_operator_definition(void)
+parse_operator_directive(void)
 {
-    if (token(1)->type != TOKEN_USER_OP) {
-        consume_keyword(KEYWORD_OPERATOR);
-        expect(TOKEN_USER_OP);
-    }
+        if (token(1)->type != TOKEN_USER_OP) {
+                consume_keyword(KEYWORD_OPERATOR);
+                expect(TOKEN_USER_OP);
+        }
 
-    tok()->keyword = KEYWORD_FUNCTION;
-    token(1)->type = TOKEN_IDENTIFIER;
+        next();
+        char const *uop = tok()->identifier;
+        next();
 
-    return parse_function_definition();
+        expect(TOKEN_INTEGER);
+        int p = tok()->integer;
+        next();
+
+        expect(TOKEN_IDENTIFIER);
+        char const *assoc = tok()->identifier;
+        next();
+
+        if (strcmp(assoc, "L") == 0) {
+                table_put(&uops, uop, INTEGER(p));
+        } else if (strcmp(assoc, "R") == 0) {
+                table_put(&uops, uop, INTEGER(-p));
+        } else {
+                error("expected L or R in operator directive");
+        }
+
+        consume(TOKEN_NEWLINE);
+
+        return &NULL_STATEMENT;
 }
 
 static struct statement *
@@ -2084,7 +2117,7 @@ Keyword:
         case KEYWORD_WHILE:    return parse_while_loop();
         case KEYWORD_IF:       return parse_if_statement();
         case KEYWORD_FUNCTION: return parse_function_definition();
-        case KEYWORD_OPERATOR: return parse_operator_definition();
+        case KEYWORD_OPERATOR: return parse_operator_directive();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
         case KEYWORD_LET:      return parse_let_definition();
