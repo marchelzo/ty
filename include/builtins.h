@@ -170,6 +170,7 @@
 { .module = "stdio",  .name = "fgetc",             .value = BUILTIN(builtin_stdio_fgetc)                   },
 { .module = "stdio",  .name = "fflush",            .value = BUILTIN(builtin_stdio_fflush)                  },
 { .module = "stdio",  .name = "fclose",            .value = BUILTIN(builtin_stdio_fclose)                  },
+{ .module = "stdio",  .name = "clearerr",          .value = BUILTIN(builtin_stdio_clearerr)                },
 { .module = "stdio",  .name = "setvbuf",           .value = BUILTIN(builtin_stdio_setvbuf)                 },
 { .module = "stdio",  .name = "_IOLBF",            .value = INT(_IOLBF)                                    },
 { .module = "stdio",  .name = "_IOFBF",            .value = INT(_IOFBF)                                    },

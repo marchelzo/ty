@@ -2554,6 +2554,20 @@ builtin_stdio_fclose(int argc)
 }
 
 struct value
+builtin_stdio_clearerr(int argc)
+{
+        ASSERT_ARGC("stdio::clearerr()", 1);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the argument to stdio::clearerr() must be a pointer");
+
+        clearerr(f.ptr);
+
+        return NIL;
+}
+
+struct value
 builtin_stdio_setvbuf(int argc)
 {
         ASSERT_ARGC("stdio::setvbuf()", 2);
