@@ -130,6 +130,7 @@ struct expression {
                 EXPRESSION_REAL,
                 EXPRESSION_REGEX,
 
+                EXPRESSION_STATEMENT,
                 EXPRESSION_FUNCTION_CALL,
                 EXPRESSION_MEMBER_ACCESS,
                 EXPRESSION_SUBSCRIPT,
@@ -202,6 +203,7 @@ struct expression {
                 bool boolean;
                 char *string;
                 float real;
+                struct statement *statement;
                 struct expression *operand;
                 struct {
                         vec(struct expression *) elements;
@@ -254,6 +256,7 @@ struct expression {
                         char *name;
                         struct symbol *function_symbol;
                         vec(char *) params;
+                        vec(struct expression *) dflts;
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;

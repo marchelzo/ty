@@ -1696,14 +1696,19 @@ vm_panic(char const *fmt, ...)
         char const *file;
         struct location loc = compiler_get_location(ip, &file);
 
-        int n;
-        if (file == NULL)
-                n = sprintf(err_buf, "RuntimeError: %d:%d: ", loc.line + 1, loc.col + 1);
-        else
-                n = sprintf(err_buf, "RuntimeError: %s:%d:%d: ", file, loc.line + 1, loc.col + 1);
-        vsnprintf(err_buf + n, sizeof err_buf - n, fmt, ap);
+        int sz = sizeof err_buf;
 
+        char const *f = (file != NULL) ? file : "PRELUDE";
+        int n = snprintf(err_buf, sz, "RuntimeError: %s:%d:%d: ", f, loc.line + 1, loc.col + 1);
+        n += vsnprintf(err_buf + n, max(sz - n, 0), fmt, ap);
         va_end(ap);
+
+        while (calls.count != 0 && n < sz) {
+                ip = *vec_pop(calls);
+                loc = compiler_get_location(ip, &file);
+                f = (file != NULL) ? file : "PRELUDE";
+                n += snprintf(err_buf + n, sz - n, "\n\tfrom: %s:%d:%d", f, loc.line + 1, loc.col + 1);
+        }
 
         LOG("VM Error: %s", err_buf);
 

@@ -118,6 +118,15 @@ static struct statement *
 parse_match_statement(void);
 
 static struct statement *
+parse_if_statement(void);
+
+static struct statement *
+parse_while_loop(void);
+
+static struct statement *
+parse_for_loop(void);
+
+static struct statement *
 parse_let_definition(void);
 
 static struct expression *
@@ -462,6 +471,7 @@ prefix_function(void)
         e->type = EXPRESSION_FUNCTION;
         e->rest = false;
         vec_init(e->params);
+        vec_init(e->dflts);
 
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
@@ -482,6 +492,13 @@ prefix_function(void)
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->params, sclone(tok()->identifier));
                 next();
+
+                if (!rest && tok()->type == ':') {
+                        next();
+                        vec_push(e->dflts, parse_expr(0));
+                } else {
+                        vec_push(e->dflts, NULL);
+                }
 
                 if (rest) {
                         e->params.count -= 1;
@@ -560,6 +577,39 @@ prefix_star(void)
                 error("unexpected module qualifier in lvalue");
 
         consume(TOKEN_IDENTIFIER);
+
+        return e;
+}
+
+static struct expression *
+prefix_if(void)
+{
+        struct expression *e = mkexpr();
+
+        e->type = EXPRESSION_STATEMENT;
+        e->statement = parse_if_statement();
+
+        return e;
+}
+
+static struct expression *
+prefix_while(void)
+{
+        struct expression *e = mkexpr();
+
+        e->type = EXPRESSION_STATEMENT;
+        e->statement = parse_while_loop();
+
+        return e;
+}
+
+static struct expression *
+prefix_for(void)
+{
+        struct expression *e = mkexpr();
+
+        e->type = EXPRESSION_STATEMENT;
+        e->statement = parse_for_loop();
 
         return e;
 }
@@ -901,6 +951,9 @@ prefix_implicit_method(void)
         vec_init(f->params);
         vec_push(f->params, o->identifier);
 
+        vec_init(f->dflts);
+        vec_push(f->params, NULL);
+
         return f;
 }
 
@@ -920,6 +973,7 @@ prefix_implicit_lambda(void)
 
         for (int i = 0; i < pnames.count; ++i) {
                 vec_push(f->params, pnames.items[i]);
+                vec_push(f->dflts, NULL);
         }
 
         vec_empty(pnames);
@@ -943,6 +997,7 @@ prefix_arrow(void)
 
         for (int i = 0; i < pnames.count; ++i) {
                 vec_push(f->params, pnames.items[i]);
+                vec_push(f->dflts, NULL);
         }
 
         vec_empty(pnames);
@@ -1194,6 +1249,7 @@ infix_arrow_function(struct expression *left)
         e->rest = false;
         e->name = NULL;
         vec_init(e->params);
+        vec_init(e->dflts);
 
         if (left->type != EXPRESSION_LIST) {
                 struct expression *l = mkexpr();
@@ -1220,6 +1276,7 @@ infix_arrow_function(struct expression *left)
                         vec_push(e->params, name);
                         vec_push(body->statements, mkdef(definition_lvalue(p), name));
                 }
+                vec_push(e->dflts, NULL);
         }
 
         struct statement *ret = mkret(parse_expr(0));
@@ -1358,6 +1415,9 @@ Keyword:
         case KEYWORD_TRUE:     return prefix_true;
         case KEYWORD_FALSE:    return prefix_false;
         case KEYWORD_NIL:      return prefix_nil;
+        case KEYWORD_IF:       return prefix_if;
+        case KEYWORD_FOR:      return prefix_for;
+        case KEYWORD_WHILE:    return prefix_while;
         default:               return NULL;
         }
 }
@@ -1721,7 +1781,10 @@ parse_if_statement(void)
         /*
          * Maybe it's an if-let statement.
          */
-        if (tok()->type == TOKEN_BANG || (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET)) {
+        bool if_let = (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET) ||
+                      (tok()->type == TOKEN_BANG && (token(1)->type == TOKEN_KEYWORD &&
+                                                     token(1)->keyword == KEYWORD_LET));
+        if (if_let) {
                 bool neg = tok()->type == TOKEN_BANG;
                 if (neg)
                         next();
@@ -1743,11 +1806,15 @@ parse_if_statement(void)
 
         s->type = STATEMENT_CONDITIONAL;
 
-        consume('(');
-        s->conditional.cond = parse_expr(0);
-        consume(')');
-
-        s->conditional.then_branch = parse_statement();
+        if (tok()->type == '(') {
+                consume('(');
+                s->conditional.cond = parse_expr(0);
+                consume(')');
+                s->conditional.then_branch = parse_statement();
+        } else {
+                s->conditional.cond = parse_expr(0);
+                s->conditional.then_branch = parse_block();
+        }
 
         if (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_ELSE) {
                 s->conditional.else_branch = NULL;
@@ -1913,8 +1980,20 @@ static struct statement *
 parse_break_statement(void)
 {
         consume_keyword(KEYWORD_BREAK);
+
+        struct statement *s;
+
+        if (tok()->type != ';') {
+                s = mkstmt();
+                s->type = STATEMENT_BREAK;
+                s->expression = parse_expr(0);
+        } else {
+                s = &BREAK_STATEMENT;
+        }
+
         consume(';');
-        return &BREAK_STATEMENT;
+
+        return s;
 }
 
 static struct statement *
@@ -2214,7 +2293,10 @@ Expression:
         s = mkstmt();
         s->type = STATEMENT_EXPRESSION;
         s->expression = parse_expr(-1);
-        consume(';');
+
+        if (tok()->type == ';') {
+                consume(';');
+        }
 
         return s;
 }

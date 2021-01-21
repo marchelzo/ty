@@ -69,11 +69,13 @@ class Array : Iterable {
 
     sorted?(xs) {
         if (!xs) return true;
+
         let y = xs[0];
         for x in xs {
             if (x < y) return false;
             y = x;
         }
+
         return true;
     }
 
@@ -115,7 +117,7 @@ class Array : Iterable {
 
 class Dict : Iterable {
     init(ks, vs) {
-        if (ks && vs) {
+        if ks && vs {
             return { k: v for [k, v] in ks.zip(vs) };
         } else {
             return {};
@@ -141,18 +143,13 @@ class String : Iterable {
     }
 
     repeat(s, n) {
-        match s, n {
-            $s, $n => {
-                let b = blob();
-                for _ in ..n { b.push(s); }
-                return b.str();
-            },
-            _ => {
-                return Generator(function () {
-                    return s;
-                });
-            }
-        }
+        return if ?n {
+            let b = blob();
+            for _ in ..n { b.push(s); }
+            b.str()
+        } else {
+            Generator(|s|);
+        };
     }
 
     reverse(s) {
@@ -408,7 +405,7 @@ class Iter {
         return Generator(function () {
             while let $x = I.__next__() {
                 let y = f(x) if f else x;
-                if (!(seen ? y)) {
+                if !(seen ? y) {
                     seen.put(y);
                     return x;
                 }
@@ -416,9 +413,7 @@ class Iter {
         });
     }
 
-    group(I, f) {
-        f ?= id;
-
+    group(I, f: id) {
         if !let $x = I.__next__() {
             return Generator(|nil|);
         }
@@ -427,7 +422,7 @@ class Iter {
 
         return Generator(function () {
             while let $x = I.__next__() {
-                if (f(x) == f(g[-1])) {
+                if f(x) == f(g[-1]) {
                     g.push(x);
                 } else {
                     let group = g;
@@ -436,7 +431,7 @@ class Iter {
                 }
             }
 
-            if (g) {
+            if g {
                 let group = g;
                 g = nil;
                 return group;
@@ -444,22 +439,20 @@ class Iter {
         });
     }
 
-    groupsOf(I, n, keepShort) {
-        keepShort ?= true;
-
+    groupsOf(I, n, keepShort: true) {
         let g = [];
 
         return Generator(function () {
-            while let $x = I.__next__() {
+            let group = while let $x = I.__next__() {
                 g.push(x);
-                if (g.len() == n) {
+                if #g == n {
                     let group = g;
                     g = [];
-                    return group;
+                    break group;
                 }
-            }
+            };
 
-            if (g && keepShort) {
+            if g && keepShort {
                 let group = g;
                 g = nil;
                 return group;
@@ -485,7 +478,7 @@ class Iter {
     count(I, x) {
         let n = 0;
 
-        if (type(x) == Function || type(x) == Regex) {
+        if type(x) == Function || type(x) == Regex {
             while let $y = I.__next__() {
                 if (x(y)) n += 1;
             }
@@ -513,7 +506,7 @@ class Iter {
     take(I, n) {
         let i = 0;
         return Generator(function () {
-            if (i++ < n) {
+            if i++ < n {
                 return I.__next__();
             }
         });
@@ -536,16 +529,13 @@ class Iter {
         return b.str();
     }
 
-    tally(I, f) {
+    tally(I, f: id) {
         let d = {*:0};
-        f ?= id;
         for x in I { d[f(x)] += 1; }
         return d;
     }
 
-    max(I, f) {
-        let k = f ?? id;
-
+    max(I, k: id) {
         if !let $x = I.__next__() {
             return nil;
         }
@@ -555,16 +545,15 @@ class Iter {
 
         while let $x = I.__next__() {
             let key = k(x);
-            if (key > mKey)
+            if key > mKey {
                 m, mKey = x, key;
+            }
         }
 
         return m;
     }
 
-    min(I, f) {
-        let k = f ?? id;
-
+    min(I, k: id) {
         if !let $x = I.__next__() {
             return nil;
         }
@@ -574,8 +563,9 @@ class Iter {
 
         while let $x = I.__next__() {
             let key = k(x);
-            if (key < mKey)
+            if key < mKey {
                 m, mKey = x, key;
+            }
         }
 
         return m;
@@ -601,11 +591,15 @@ class Iter {
     chain(it, *its) {
         let i = 0;
         its.insert(0, it);
-        its.map!(it -> it if it.is?(Iter) else it.__iter__());
+
+        for i in ..#its | !its[i].is?(Iter) {
+            its[i] = its[i].__iter__();
+        }
+
         return Generator(function () {
             if let $x = its[i].__next__() {
                 return x;
-            } else if (++i >= its.len()) {
+            } else if (++i >= #its) {
                 return nil;
             } else {
                 return its[i].__next__();
@@ -622,14 +616,13 @@ class Iter {
         let i = 0;
         let j = 0;
         return Generator(function () {
-            if (j == xs.len()) {
+            if j == #xs {
                 j = 0;
                 i += 1;
             }
-
-            if (i == n) return nil;
-
-            return xs[j++];
+            if i != n {
+                return xs[j++];
+            }
         });
     }
 
@@ -690,8 +683,7 @@ class FilterIter : Iter {
 
     __next__(F) {
         while let $n = F.I.__next__() {
-            if (F.p(n))
-                return n;
+            if F.p(n) { return n; }
         }
     }
 }
@@ -743,7 +735,13 @@ class Range : Iterable {
 
     __iter__(self) {
         let a, b = self.a, self.b;
-        return a.upto(b - 1) if (a < b) else (a - 1).downto(b);
+        return (
+            if a < b {
+                a.upto(b - 1)
+            } else {
+                (a - 1).downto(b)
+            }
+        );
     }
 }
 
@@ -754,7 +752,11 @@ class InclusiveRange : Range {
 
     __iter__(self) {
         let a, b = self.a, self.b;
-        return a.upto(b) if (a < b) else a.downto(b);
+        return if a < b {
+            a.upto(b)
+        } else {
+            a.downto(b);
+        };
     }
 
     high(self) {
@@ -763,7 +765,6 @@ class InclusiveRange : Range {
 }
 
 function id(x) { return x; }
-
 
 operator ?  5  left
 operator ** 10 right
