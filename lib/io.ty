@@ -76,7 +76,7 @@ class Stream : Iter {
 
 let stdin = Stream(0, 'r');
 let stdout = Stream(1, 'w');
-let stderr = Stream(2, 'w');
+let stderr = Stream(2, 'w', NBF);
 
 function open(path, mode, buffering) {
 
