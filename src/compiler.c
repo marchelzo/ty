@@ -1712,12 +1712,12 @@ emit_if_let(struct statement const *s, bool want_result)
         emit_list(s->if_let.e);
         emit_instr(INSTR_FIX_EXTRA);
 
-        bool returns = false;
+        bool returns;
 
         if (!s->if_let.neg) {
                 returns = emit_case(s->if_let.pattern, NULL, s->if_let.then, want_result);
                 emit_instr(INSTR_CLEAR_EXTRA);
-                if (s->if_let.otherwise != NULL) {
+                if (s->if_let.otherwise != NULL || (returns = false)) {
                         returns &= emit_statement(s->if_let.otherwise, want_result);
                 } else if (want_result) {
                         emit_instr(INSTR_NIL);

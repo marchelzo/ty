@@ -2583,6 +2583,27 @@ builtin_stdio_setvbuf(int argc)
         return INTEGER(setvbuf(f.ptr, NULL, mode.integer, 0));
 }
 
+
+struct value
+builtin_stdio_fseek(int argc)
+{
+        ASSERT_ARGC("stdio::fseek()", 3);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio::fseek() must be a pointer");
+
+        struct value off = ARG(1);
+        if (off.type != VALUE_INTEGER)
+                vm_panic("the second argument to stdio::fseek() must be an integer");
+
+        struct value whence = ARG(1);
+        if (whence.type != VALUE_INTEGER)
+                vm_panic("the third argument to stdio::fseek() must be an integer");
+
+        return INTEGER(fseek(f.ptr, off.integer, whence.integer));
+}
+
 struct value
 builtin_object(int argc)
 {

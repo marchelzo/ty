@@ -28,7 +28,15 @@ class Stream : Iter {
         if let $line = stdio::fgets(self.f) {
             return line;
         } else {
-            stdio::clearerr(self.f);
+            if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
+                stdio::clearerr(self.f);
+            }
+        }
+    }
+
+    rewind(self) {
+        if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
+            throw Err(errno::get());
         }
     }
 

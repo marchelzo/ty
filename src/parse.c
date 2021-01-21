@@ -952,7 +952,7 @@ prefix_implicit_method(void)
         vec_push(f->params, o->identifier);
 
         vec_init(f->dflts);
-        vec_push(f->params, NULL);
+        vec_push(f->dflts, NULL);
 
         return f;
 }

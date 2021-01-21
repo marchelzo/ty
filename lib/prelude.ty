@@ -588,6 +588,25 @@ class Iter {
         });
     }
 
+    chainAll(I) {
+        if !let $it = I.__next__() {
+            return nil;
+        }
+        if !it.is?(Iter) {
+            it = it.__iter__();
+        }
+        return Generator(function () {
+            if let $x = it.__next__() {
+                return x;
+            } else if !?(it = I.__next__()) {
+                return nil;
+            } else if !it.is?(Iter) {
+                it = it.__iter__();
+            }
+            return it.__next__();
+        });
+    }
+
     chain(it, *its) {
         let i = 0;
         its.insert(0, it);

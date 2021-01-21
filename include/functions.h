@@ -377,6 +377,9 @@ struct value
 builtin_stdio_clearerr(int argc);
 
 struct value
+builtin_stdio_fseek(int argc);
+
+struct value
 builtin_stdio_setvbuf(int argc);
 
 #endif
