@@ -44,4 +44,9 @@ class HtmlElement {
             return HtmlText(n.text);
         }
     }
+
+    __str__(E) {
+        let attrString = [ " {k}=\"{v}\"" for k, v in E.attrs ].join(' ') || '';
+        return "<{E.t}{attrString}>";
+    }
 }

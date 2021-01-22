@@ -49,6 +49,9 @@ struct value
 builtin_subclass(int argc);
 
 struct value
+builtin_members(int argc);
+
+struct value
 builtin_int(int argc);
 
 struct value

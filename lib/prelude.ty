@@ -50,6 +50,10 @@ class Object {
     is?(self, c) {
         return subclass?(type(self), c);
     }
+
+    members(self) {
+        return members(self);
+    }
 }
 
 class Function {

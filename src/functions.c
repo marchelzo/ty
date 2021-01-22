@@ -2658,3 +2658,30 @@ builtin_subclass(int argc)
 
         return BOOLEAN(class_is_subclass(sub.class, super.class));
 }
+
+struct value
+builtin_members(int argc)
+{
+        ASSERT_ARGC("members", 1);
+
+        struct value o = ARG(0);
+
+        struct dict *members = dict_new();
+
+        if (o.type != VALUE_OBJECT) {
+                return DICT(members);
+        }
+
+        NOGC(members);
+
+        for (int i = 0; i < TABLE_SIZE; ++i) {
+                for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
+                        char const *key = o.object->buckets[i].names.items[v];
+                        dict_put_member(members, key, o.object->buckets[i].values.items[v]);
+                }
+        }
+
+        OKGC(members);
+
+        return DICT(members);
+}
