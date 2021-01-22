@@ -490,6 +490,15 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                 for (size_t i = 0; i < target->elements.count; ++i)
                         symbolize_lvalue(scope, target->elements.items[i], decl);
                 break;
+        case EXPRESSION_DICT:
+                if (target->dflt != NULL) {
+                        fail("unexpected default clause in dict destructuring");
+                }
+                for (int i = 0; i < target->keys.count; ++i) {
+                        symbolize_expression(scope, target->keys.items[i]);
+                        symbolize_lvalue(scope, target->values.items[i], decl);
+                }
+                break;
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(scope, target->container);
                 symbolize_expression(scope, target->subscript);
@@ -514,7 +523,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         try_symbolize_application(scope, e);
 
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
-                goto tag;
+                goto Tag;
 
         state.loc = e->loc;
 
@@ -547,7 +556,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_pattern(scope, e->tagged);
                 break;
-        tag:
+        Tag:
                 symbolize_expression(scope, e);
                 e->type = EXPRESSION_MUST_EQUAL;
                 break;
@@ -2309,6 +2318,23 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 emit_instr(INSTR_POP_VAR);
                 emit_symbol(tmp->symbol);
                 break;
+        case EXPRESSION_DICT:
+                tmp = tmpsymbol();
+                emit_instr(INSTR_PUSH_VAR);
+                emit_symbol(tmp->symbol);
+                emit_instr(INSTR_TARGET_VAR);
+                emit_symbol(tmp->symbol);
+                emit_instr(INSTR_ASSIGN);
+                container = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = tmp, .local = true);
+                subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &container);
+                for (int i = 0; i < target->keys.count; ++i) {
+                        subscript.subscript = target->keys.items[i];
+                        emit_assignment(target->values.items[i], &subscript, maybe);
+                        emit_instr(INSTR_POP);
+                }
+                emit_instr(INSTR_POP_VAR);
+                emit_symbol(tmp->symbol);
+                break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
@@ -2946,7 +2972,7 @@ import_module(struct statement const *s)
          * where we add the module to the current scope.
          */
         if (module_scope != NULL)
-                goto import;
+                goto Import;
 
         char *source = slurp_module(name);
 
@@ -2980,7 +3006,7 @@ import_module(struct statement const *s)
         emit_instr(INSTR_EXEC_CODE);
         emit_symbol((uintptr_t) m.code);
 
-import:
+Import:
 {
         char const **identifiers = (char const **) s->import.identifiers.items;
         int n = s->import.identifiers.count;

@@ -1567,6 +1567,23 @@ definition_lvalue(struct expression *e)
                 for (size_t i = 0; i < e->elements.count; ++i)
                         e->elements.items[i] = assignment_lvalue(e->elements.items[i]);
                 return e;
+        case EXPRESSION_DICT:
+                if (e->keys.count == 0)
+                        break;
+                for (size_t i = 0; i < e->elements.count; ++i) {
+                        if (e->values.items[i] == NULL) {
+                                struct expression *key = mkexpr();
+                                if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
+                                        error("short-hand target in dict lvalue must be an identifier");
+                                }
+                                key->type = EXPRESSION_STRING;
+                                key->string = e->keys.items[i]->identifier;
+                                e->values.items[i] = e->keys.items[i];
+                                e->keys.items[i] = key;
+                        }
+                        e->values.items[i] = assignment_lvalue(e->values.items[i]);
+                }
+                return e;
         }
 
         error("expression is not a valid definition lvalue");
@@ -1589,6 +1606,21 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i)
                         e->elements.items[i] = assignment_lvalue(e->elements.items[i]);
+                return e;
+        case EXPRESSION_DICT:
+                for (size_t i = 0; i < e->keys.count; ++i) {
+                        if (e->values.items[i] == NULL) {
+                                struct expression *key = mkexpr();
+                                if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
+                                        error("short-hand target in dict lvalue must be an identifier");
+                                }
+                                key->type = EXPRESSION_STRING;
+                                key->string = e->keys.items[i]->identifier;
+                                e->values.items[i] = e->keys.items[i];
+                                e->keys.items[i] = key;
+                        }
+                        e->values.items[i] = assignment_lvalue(e->values.items[i]);
+                }
                 return e;
         default:
                 error("expression is not a valid assignment lvalue");
