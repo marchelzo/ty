@@ -52,7 +52,7 @@ struct value;
 #define CLASS_BLOB      7
 #define CLASS_BOOL      8
 #define CLASS_REGEX     9
-#define CLASS_PRIMITIVE 10
+#define CLASS_PRIMITIVE     9
 
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
@@ -136,7 +136,6 @@ struct value {
         uint16_t tags;
         union {
                 short tag;
-                intmax_t integer;
                 float real;
                 bool boolean;
                 struct array *array;
@@ -144,6 +143,10 @@ struct value {
                 struct value (*builtin_function)(int);
                 struct blob *blob;
                 void *ptr;
+                struct {
+                        intmax_t integer;
+                        char const *constant;
+                };
                 struct {
                         int class;
                         struct table *object;

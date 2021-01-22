@@ -107,6 +107,7 @@ enum instruction {
         INSTR_TRY_REGEX,
         INSTR_TRY_ASSIGN_NON_NIL,
         INSTR_BAD_MATCH,
+        INSTR_BAD_CALL,
         INSTR_UNTAG_OR_DIE,
         INSTR_ENSURE_LEN,
         INSTR_ENSURE_EQUALS_VAR,
@@ -124,6 +125,7 @@ enum instruction {
         INSTR_LEQ,
         INSTR_GEQ,
         INSTR_CMP,
+        INSTR_CHECK_MATCH,
 
         INSTR_MUT_ADD,
         INSTR_MUT_MUL,

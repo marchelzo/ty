@@ -64,6 +64,10 @@ class Function {
     flip(f) {
         return (a, b) -> f(b, a);
     }
+
+    __match__(self, x) {
+        return self(x);
+    }
 }
 
 class Array : Iterable {

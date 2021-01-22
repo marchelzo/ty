@@ -622,6 +622,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_AND:
         case EXPRESSION_OR:
         case EXPRESSION_WTF:
+        case EXPRESSION_CHECK_MATCH:
         case EXPRESSION_LT:
         case EXPRESSION_LEQ:
         case EXPRESSION_GT:
@@ -695,6 +696,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 vec_init(e->param_symbols);
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(scope, e->dflts.items[i]);
+                        symbolize_expression(scope, e->constraints.items[i]);
                         vec_push(e->param_symbols, addsymbol(scope, e->params.items[i]));
                 }
                 if (e->rest) {
@@ -1083,6 +1085,24 @@ emit_function(struct expression const *e)
                 emit_instr(INSTR_ASSIGN);
                 emit_instr(INSTR_POP);
                 PATCH_JUMP(skip_dflt);
+        }
+
+        for (int i = 0; i < e->param_symbols.count; ++i) {
+                if (e->constraints.items[i] == NULL)
+                        continue;
+                intptr_t s = e->param_symbols.items[i]->symbol;
+                emit_instr(INSTR_LOAD_VAR);
+                emit_symbol(s);
+                emit_expression(e->constraints.items[i]);
+                emit_instr(INSTR_CHECK_MATCH);
+                PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+                emit_instr(INSTR_BAD_CALL);
+                if (e->name != NULL)
+                        emit_string(e->name);
+                else
+                        emit_string("(anonymous function)");
+                emit_string(e->param_symbols.items[i]->identifier);
+                PATCH_JUMP(good);
         }
 
         bool returns = emit_statement(e->body, false);
@@ -2597,6 +2617,11 @@ emit_expression(struct expression const *e)
                 emit_expression(e->left);
                 emit_expression(e->right);
                 emit_instr(INSTR_NEQ);
+                break;
+        case EXPRESSION_CHECK_MATCH:
+                emit_expression(e->left);
+                emit_expression(e->right);
+                emit_instr(INSTR_CHECK_MATCH);
                 break;
         case EXPRESSION_PREFIX_BANG:
                 emit_expression(e->operand);

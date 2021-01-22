@@ -539,6 +539,11 @@ vm_exec(char *code)
                 CASE(BAD_MATCH)
                         push(TAG(tags_lookup("MatchError")));
                         goto Throw;
+                CASE(BAD_CALL)
+                        str = ip;
+                        ip += strlen(ip) + 1;
+                        vm_panic("Constraint on '%s' violated in call to '%s'", ip, str);
+                        break;
                 CASE(THROW)
 Throw:
                         if (try_stack.count == 0)
@@ -1042,6 +1047,9 @@ Throw:
                         case VALUE_REAL:
                                 n = CLASS_FLOAT;
                                 goto ClassLookup;
+                        case VALUE_FUNCTION:
+                                n = CLASS_FUNCTION;
+                                goto ClassLookup;
                         case VALUE_OBJECT:
                                 vp = table_lookup(v.object, member, h);
                                 if (vp != NULL) {
@@ -1224,6 +1232,32 @@ BadContainer:
                         left = pop();
                         push(binary_operator_equality(&left, &right));
                         --top()->boolean;
+                        break;
+                CASE(CHECK_MATCH)
+                        if (top()->type == VALUE_CLASS) {
+                                v = pop();
+                                if (v.class < CLASS_PRIMITIVE) switch (top()->type) {
+                                case VALUE_INTEGER:  push(BOOLEAN(v.class == CLASS_INT));      break;
+                                case VALUE_REAL:     push(BOOLEAN(v.class == CLASS_FLOAT));    break;
+                                case VALUE_BOOLEAN:  push(BOOLEAN(v.class == CLASS_BOOL));     break;
+                                case VALUE_ARRAY:    push(BOOLEAN(v.class == CLASS_ARRAY));    break;
+                                case VALUE_STRING:   push(BOOLEAN(v.class == CLASS_STRING));   break;
+                                case VALUE_BLOB:     push(BOOLEAN(v.class == CLASS_BLOB));     break;
+                                case VALUE_DICT:     push(BOOLEAN(v.class == CLASS_DICT));     break;
+                                case VALUE_FUNCTION: push(BOOLEAN(v.class == CLASS_FUNCTION)); break;
+                                case VALUE_REGEX:    push(BOOLEAN(v.class == CLASS_REGEX));    break;
+                                default:             push(BOOLEAN(false));                     break;
+                                } else {
+                                        *top() = BOOLEAN(top()->type == VALUE_OBJECT &&
+                                                         top()->class == v.class);
+                                }
+                        } else {
+                                n = 1;
+                                b = false;
+                                method = "__match__";
+                                h = strhash(method);
+                                goto CallMethod;
+                        }
                         break;
                 CASE(LT)
                         right = pop();
@@ -1572,6 +1606,9 @@ CallMethod:
                                 break;
                         case VALUE_REGEX:
                                 vp = class_lookup_method(CLASS_REGEX, method, h);
+                                break;
+                        case VALUE_FUNCTION:
+                                vp = class_lookup_method(CLASS_FUNCTION, method, h);
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_method(value.class, method, h);

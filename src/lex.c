@@ -152,6 +152,18 @@ nextchar(void)
 }
 
 static bool
+haveid(void)
+{
+        if (chars[0] == ':' && chars[1] == ':' && isalpha(chars[2]))
+                return true;
+
+        if (isalpha(chars[0]) || chars[0] == '_')
+                return true;
+        
+        return false;
+}
+
+static bool
 skipspace(void)
 {
         bool ret = false;
@@ -475,7 +487,7 @@ lexop(void)
                 if (op[0] == '|') {
                         chars -= (i - 1);
                         loc.col -= (i - 1);
-                        return mktoken(TOKEN_BIT_OR);
+                        return mktoken('|');
                 }
                 struct token t = mktoken(TOKEN_USER_OP);
                 t.identifier = sclone(op);
@@ -483,6 +495,23 @@ lexop(void)
         }
 
         return mktoken(toktype);
+}
+
+static bool
+lexlinecomment(void)
+{
+        // skip the leading slashes
+        nextchar();
+        nextchar();
+
+        bool need_nl = keep_next_newline;
+        
+        while (nextchar() != '\n')
+                ;
+
+        keep_next_newline = false;
+
+        return need_nl;
 }
 
 static void
@@ -519,10 +548,18 @@ lex_token(enum lex_context ctx)
                 startloc = loc;
                 if (chars[0] == '/' && chars[1] == '*') {
                         lexcomment();
+                } else if (chars[0] == '/' && chars[1] == '/') {
+                        if (lexlinecomment()) {
+                                return mktoken(TOKEN_NEWLINE);
+                        }
                 } else if (ctx == LEX_PREFIX && chars[0] == '/') {
                         return lexregex();
-                } else if (isalpha(*chars) || *chars == '_' || (chars[0] == ':' && chars[1] == ':')) {
+                } else if (haveid()) {
                         return lexword();
+                } else if (chars[0] == ':' && chars[1] == ':') {
+                        nextchar();
+                        nextchar();
+                        return mktoken(TOKEN_CHECK_MATCH);
                 } else if (chars[0] == '-' && chars[1] == '>' && ctx == LEX_PREFIX) {
                         nextchar();
                         nextchar();

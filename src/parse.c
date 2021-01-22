@@ -472,6 +472,7 @@ prefix_function(void)
         e->rest = false;
         vec_init(e->params);
         vec_init(e->dflts);
+        vec_init(e->constraints);
 
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
@@ -492,6 +493,13 @@ prefix_function(void)
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->params, sclone(tok()->identifier));
                 next();
+
+                if (!rest && tok()->type == TOKEN_CHECK_MATCH) {
+                        next();
+                        vec_push(e->constraints, parse_expr(0));
+                } else {
+                        vec_push(e->constraints, NULL);
+                }
 
                 if (!rest && tok()->type == ':') {
                         next();
@@ -631,7 +639,7 @@ prefix_match(void)
         vec_init(e->thens);
 
         vec_push(e->patterns, parse_expr(-1));
-        if (tok()->type == TOKEN_BIT_OR) {
+        if (tok()->type == '|') {
                 next();
                 vec_push(e->conds, parse_expr(0));
         } else {
@@ -644,7 +652,7 @@ prefix_match(void)
         while (tok()->type == ',') {
                 next();
                 vec_push(e->patterns, parse_expr(-1));
-                if (tok()->type == TOKEN_BIT_OR) {
+                if (tok()->type == '|') {
                         next();
                         vec_push(e->conds, parse_expr(0));
                 } else {
@@ -789,6 +797,7 @@ prefix_array(void)
         case TOKEN_AND:
         case TOKEN_OR:
         case TOKEN_WTF:
+        case TOKEN_CHECK_MATCH:
         case TOKEN_DOT_DOT:
         case TOKEN_DOT_DOT_DOT:
         case TOKEN_LT:
@@ -819,7 +828,7 @@ prefix_array(void)
                         e->compr.pattern = parse_target_list();
                         consume_keyword(KEYWORD_IN);
                         e->compr.iter = parse_expr(0);
-                        if (tok()->type == TOKEN_BIT_OR) {
+                        if (tok()->type == '|') {
                                 next();
                                 e->compr.cond = parse_expr(0);
                         } else {
@@ -954,6 +963,9 @@ prefix_implicit_method(void)
         vec_init(f->dflts);
         vec_push(f->dflts, NULL);
 
+        vec_init(f->constraints);
+        vec_push(f->constraints, NULL);
+
         return f;
 }
 
@@ -974,12 +986,13 @@ prefix_implicit_lambda(void)
         for (int i = 0; i < pnames.count; ++i) {
                 vec_push(f->params, pnames.items[i]);
                 vec_push(f->dflts, NULL);
+                vec_push(f->constraints, NULL);
         }
 
         vec_empty(pnames);
         pnames = pnames_save;
 
-        consume(TOKEN_BIT_OR);
+        consume('|');
 
         return f;
 }
@@ -998,6 +1011,7 @@ prefix_arrow(void)
         for (int i = 0; i < pnames.count; ++i) {
                 vec_push(f->params, pnames.items[i]);
                 vec_push(f->dflts, NULL);
+                vec_push(f->constraints, NULL);
         }
 
         vec_empty(pnames);
@@ -1040,7 +1054,7 @@ prefix_object(void)
                         e->dcompr.pattern = parse_target_list();
                         consume_keyword(KEYWORD_IN);
                         e->dcompr.iter = parse_expr(0);
-                        if (tok()->type == TOKEN_BIT_OR) {
+                        if (tok()->type == '|') {
                                 next();
                                 e->dcompr.cond = parse_expr(0);
                         } else {
@@ -1250,6 +1264,7 @@ infix_arrow_function(struct expression *left)
         e->name = NULL;
         vec_init(e->params);
         vec_init(e->dflts);
+        vec_init(e->constraints);
 
         if (left->type != EXPRESSION_LIST) {
                 struct expression *l = mkexpr();
@@ -1277,6 +1292,7 @@ infix_arrow_function(struct expression *left)
                         vec_push(body->statements, mkdef(definition_lvalue(p), name));
                 }
                 vec_push(e->dflts, NULL);
+                vec_push(e->constraints, NULL);
         }
 
         struct statement *ret = mkret(parse_expr(0));
@@ -1349,8 +1365,9 @@ BINARY_OPERATOR(geq,      GEQ,         7, false)
 BINARY_OPERATOR(leq,      LEQ,         7, false)
 BINARY_OPERATOR(cmp,      CMP,         7, false)
 
-BINARY_OPERATOR(not_eq,   NOT_EQ,      6, false)
-BINARY_OPERATOR(dbl_eq,   DBL_EQ,      6, false)
+BINARY_OPERATOR(not_eq,      NOT_EQ,      6, false)
+BINARY_OPERATOR(dbl_eq,      DBL_EQ,      6, false)
+BINARY_OPERATOR(check_match, CHECK_MATCH, 6, false)
 
 BINARY_OPERATOR(and,      AND,         5, false)
 
@@ -1379,7 +1396,7 @@ get_prefix_parser(void)
         case TOKEN_KEYWORD:        goto Keyword;
 
         case TOKEN_BIT_AND:        return prefix_implicit_method;
-        case TOKEN_BIT_OR:         return prefix_implicit_lambda;
+        case '|':                  return prefix_implicit_lambda;
         case '#':                  return prefix_hash;
 
         case '(':                  return prefix_parenthesis;
@@ -1458,6 +1475,7 @@ get_infix_parser(void)
         case TOKEN_CMP:            return infix_cmp;
         case TOKEN_NOT_EQ:         return infix_not_eq;
         case TOKEN_DBL_EQ:         return infix_dbl_eq;
+        case TOKEN_CHECK_MATCH:    return infix_check_match;
         case TOKEN_OR:             return infix_or;
         case TOKEN_WTF:            return infix_wtf;
         case TOKEN_AND:            return infix_and;
@@ -1507,6 +1525,7 @@ get_infix_prec(void)
 
         case TOKEN_NOT_EQ:         return 6;
         case TOKEN_DBL_EQ:         return 6;
+        case TOKEN_CHECK_MATCH:    return 6;
 
         case TOKEN_AND:            return 5;
 
@@ -1721,7 +1740,7 @@ parse_for_loop(void)
                 s->each.target = parse_target_list();
                 consume_keyword(KEYWORD_IN);
                 s->each.array = parse_expr(0);
-                if (tok()->type == TOKEN_BIT_OR) {
+                if (tok()->type == '|') {
                         next();
                         s->each.cond = parse_expr(0);
                 } else {
@@ -1877,7 +1896,7 @@ parse_match_statement(void)
         vec_init(s->match.statements);
 
         vec_push(s->match.patterns, parse_expr(-1));
-        if (tok()->type == TOKEN_BIT_OR) {
+        if (tok()->type == '|') {
                 next();
                 vec_push(s->match.conds, parse_expr(0));
         } else {
@@ -1890,7 +1909,7 @@ parse_match_statement(void)
         while (tok()->type == ',') {
                 next();
                 vec_push(s->match.patterns, parse_expr(-1));
-                if (tok()->type == TOKEN_BIT_OR) {
+                if (tok()->type == '|') {
                         next();
                         vec_push(s->match.conds, parse_expr(0));
                 } else {

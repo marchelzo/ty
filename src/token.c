@@ -15,6 +15,7 @@ static struct {
 } keywords[] = {
         { "break",    KEYWORD_BREAK    },
         { "class",    KEYWORD_CLASS    },
+        { "const",    KEYWORD_CONST    },
         { "continue", KEYWORD_CONTINUE },
         { "else",     KEYWORD_ELSE     },
         { "export",   KEYWORD_EXPORT   },
@@ -58,7 +59,7 @@ static struct {
         { "&&",  TOKEN_AND            },
         { "||",  TOKEN_OR             },
         { "??",  TOKEN_WTF            },
-        { "|",   TOKEN_BIT_OR         },
+        { "|",   '|'                  },
         { "<=>", TOKEN_CMP            },
         { "<=",  TOKEN_LEQ            },
         { ">=",  TOKEN_GEQ            },
@@ -71,6 +72,8 @@ static struct {
         { "*=",  TOKEN_STAR_EQ        },
         { "/=",  TOKEN_DIV_EQ         },
         { "-=",  TOKEN_MINUS_EQ       },
+        { ":",   ':'                  },
+        { "::",  TOKEN_CHECK_MATCH    },
         { ".",   '.'                  },
         { ".?",  TOKEN_DOT_MAYBE      },
         { "..",  TOKEN_DOT_DOT        },
@@ -129,6 +132,7 @@ token_show_type(int type)
         case TOKEN_EQ:             return "token '='";
         case TOKEN_MAYBE_EQ:       return "token '?='";
         case TOKEN_WTF:            return "token '??'";
+        case TOKEN_CHECK_MATCH:    return "token '::'";
         case TOKEN_ARROW:          return "token '->'";
         case TOKEN_FAT_ARROW:      return "token '=>'";
         case TOKEN_SQUIGGLY_ARROW: return "token '~>'";
@@ -136,7 +140,6 @@ token_show_type(int type)
         case TOKEN_DOT_DOT_DOT:    return "token '...'";
         case TOKEN_AND:            return "operator '&&'";
         case TOKEN_OR:             return "operator '||'";
-        case TOKEN_BIT_OR:         return "token '|'";
         case TOKEN_BIT_AND:        return "token '&'";
         case TOKEN_CMP:            return "operator '<=>'";
         case TOKEN_LEQ:            return "operator '<='";

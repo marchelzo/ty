@@ -61,6 +61,7 @@ struct token {
                 TOKEN_USER_OP,
                 TOKEN_MAYBE_EQ,
                 TOKEN_WTF,
+                TOKEN_CHECK_MATCH,
                 TOKEN_ERROR,
         } type;
         struct location loc;
@@ -78,6 +79,7 @@ struct token {
                         KEYWORD_WHILE,
                         KEYWORD_TRUE,
                         KEYWORD_FALSE,
+                        KEYWORD_CONST,
                         KEYWORD_NIL,
                         KEYWORD_IMPORT,
                         KEYWORD_EXPORT,

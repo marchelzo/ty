@@ -171,6 +171,7 @@ struct expression {
                 EXPRESSION_CMP,
                 EXPRESSION_DBL_EQ,
                 EXPRESSION_NOT_EQ,
+                EXPRESSION_CHECK_MATCH,
 
                 EXPRESSION_PLUS_EQ,
                 EXPRESSION_STAR_EQ,
@@ -257,6 +258,7 @@ struct expression {
                         struct symbol *function_symbol;
                         vec(char *) params;
                         vec(struct expression *) dflts;
+                        vec(struct expression *) constraints;
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;
