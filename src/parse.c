@@ -29,6 +29,8 @@
                 e->type = EXPRESSION_ ## token; \
                 e->left = left; \
                 e->right = parse_expr(prec - (right_assoc ? 1 : 0)); \
+                e->start = left->start; \
+                e->end = End; \
                 return e; \
         } \
 
@@ -41,6 +43,8 @@
                 e->type = EXPRESSION_ ## token; \
                 e->target = assignment_lvalue(left); \
                 e->value = parse_expr(prec - (right_assoc ? 1 : 0)); \
+                e->start = e->target->start; \
+                e->end = e->value->end; \
                 return e; \
         } \
 
@@ -86,9 +90,13 @@ enum {
 static jmp_buf jb;
 
 static struct table uops;
+
+static LexState CtxCheckpoint;
+static int Unconsumed;
 static vec(struct token) tokens;
-static int tokidx = 0;
-LexContext lex_ctx = LEX_PREFIX;
+
+static int TokenIndex = 0;
+LexContext lctx = LEX_PREFIX;
 
 static struct location Start;
 static struct location End;
@@ -213,34 +221,19 @@ mkdef(struct expression *lvalue, char *name)
         return s;
 }
 
-inline static void
-skip(int n)
-{
-        tokidx += n;
-}
-
-inline static void
-next(void)
-{
-        skip(1);
-}
-
 inline static struct token *
 token(int i)
 {
         struct token t;
-        while (tokens.count <= i + tokidx) {
-                t = lex_token(lex_ctx);
-                if (t.type == TOKEN_ERROR) {
-                        error(NULL);
+        while (tokens.count <= i + TokenIndex) {
+                if (tokens.count == TokenIndex) {
+                        lex_save(&CtxCheckpoint);
                 }
+                t = lex_token(lctx);
                 vec_push(tokens, t);
         }
 
-        Start = tokens.items[tokidx + i].start;
-        End = tokens.items[tokidx + i].end;
-
-        return &tokens.items[tokidx + i];
+        return &tokens.items[TokenIndex + i];
 }
 
 inline static struct token *
@@ -249,6 +242,46 @@ tok(void)
         return token(0);
 }
 
+inline static void
+skip(int n)
+{
+        TokenIndex += n;
+        Start = tok()->start;
+        End = token(-1)->end;
+}
+
+inline static void
+next(void)
+{
+        skip(1);
+}
+
+inline static void
+seek(int i)
+{
+        TokenIndex = i;
+        skip(0);
+}
+
+inline static void
+setctx(int ctx)
+{
+        if (lctx == ctx)
+                return;
+
+        if (tok()->ctx == LEX_FAKE)
+                return;
+
+        lctx = ctx;
+
+        lex_rewind(&tok()->start);
+
+        while (tokens.count > TokenIndex && !(vec_last(tokens)->ctx & (ctx | LEX_FAKE))) {
+                tokens.count -= 1;
+        }
+}
+
+
 /*
  * Push a token into the token stream, so that it will be returned by the next call
  * to tok().
@@ -256,54 +289,51 @@ tok(void)
 inline static void
 unconsume(int type)
 {
-        vec_insert(
-                tokens,
-                ((struct token){
-                        .type = type,
-                        .start = Start,
-                        .end = End
-                }),
-                tokidx
-        );
+        struct token t = {
+                .type = type,
+                .start = Start,
+                .end = End,
+                .ctx = LEX_FAKE
+        };
+
+        vec_insert(tokens, t, TokenIndex);
 }
 
 noreturn static void
 error(char const *fmt, ...)
 {
-        if (fmt == NULL) {
-                strcpy(ERR, lex_error());
-        } else {
-                va_list ap;
-                va_start(ap, fmt);
+        if (fmt == NULL)
+                goto End;
 
-                int sz = ERR_SIZE - 1;
-                char *err = ERR;
-                int n = snprintf(err, sz, "ParseError: ");
+        va_list ap;
+        va_start(ap, fmt);
 
-                n += vsnprintf(err + n, sz - n, fmt, ap);
-                va_end(ap);
+        int sz = ERR_SIZE - 1;
+        char *err = ERR;
+        int n = snprintf(err, sz, "ParseError: ");
 
-                struct location ctx = tok()->start;
-                for (int i = 0; i < tokens.count && token(-i)->start.line == ctx.line; ++i) {
-                        ctx = token(-i)->start;
-                }
-                
-                char buffer[256];
-                snprintf(buffer, sizeof buffer, "at %s:%d:%d", filename, tok()->start.line + 1, tok()->start.col + 1);
+        n += vsnprintf(err + n, sz - n, fmt, ap);
+        va_end(ap);
 
-                n += snprintf(
-                        err + n,
-                        sz - n,
-                        "\n\n\t%20.20s near: %.*s",
-                        buffer,
-                        (int)strcspn(ctx.s, "\n"),
-                        ctx.s
-                );
-
+        struct location ctx = tok()->start;
+        for (int i = 0; i < tokens.count && token(-i)->start.line == ctx.line; ++i) {
+                ctx = token(-i)->start;
         }
+        
+        char buffer[256];
+        snprintf(buffer, sizeof buffer, "at %s:%d:%d", filename, tok()->start.line + 1, tok()->start.col + 1);
+
+        n += snprintf(
+                err + n,
+                sz - n,
+                "\n\n\t%20.20s near: %.*s",
+                buffer,
+                (int)strcspn(ctx.s, "\n"),
+                ctx.s
+        );
 
         LOG("Parse Error: %s", ERR);
-
+End:
         longjmp(jb, 1);
 }
 
@@ -328,15 +358,14 @@ inline static void
 consume(int type)
 {
         expect(type);
-        tokidx += 1;
+        next();
 }
 
 inline static void
 consume_keyword(int type)
 {
         expect_keyword(type);
-        tokidx += 1;
-
+        next();
 }
 
 /* * * * | prefix parsers | * * * */
@@ -399,15 +428,28 @@ prefix_special_string(void)
 
         consume(TOKEN_SPECIAL_STRING);
 
+        int ti = TokenIndex;
+        LexState cp = CtxCheckpoint;
+        vec(struct token) ts;
+        memcpy(&ts, &tokens, sizeof ts);
+
         for (int i = 0; i < count; ++i) {
+                TokenIndex = 0;
+                vec_init(tokens);
                 lex_start(&exprs[i]);
+                lex_save(&CtxCheckpoint);
                 vec_push(e->expressions, parse_expr(0));
                 if (tok()->type != TOKEN_END) {
                         error("expression in interpolated string has trailing tokens");
                 }
                 consume(TOKEN_END);
                 lex_end();
+                free(tokens.items);
         }
+
+        TokenIndex = ti;
+        CtxCheckpoint = cp;
+        memcpy(&tokens, &ts, sizeof ts);
 
         return e;
 }
@@ -427,10 +469,10 @@ prefix_hash(void)
 static struct expression *
 prefix_dollar(void)
 {
-        consume('$');
-        lex_ctx = LEX_INFIX;
-
         struct expression *e = mkexpr();
+
+        consume('$');
+        setctx(LEX_INFIX);
 
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->type = EXPRESSION_MATCH_NOT_NIL;
@@ -457,6 +499,8 @@ prefix_dollar(void)
                 e->identifier = pnames.items[i - 1];
                 e->module = NULL;
         }
+
+        e->end = End;
 
         return e;
 }
@@ -548,6 +592,10 @@ prefix_function(void)
 static struct expression *
 opfunc(void)
 {
+        struct location start = tok()->start;
+
+        consume('[');
+
         struct token t = *tok();
         next();
 
@@ -587,6 +635,7 @@ opfunc(void)
         unconsume('(');
 
         struct expression *e = parse_expr(0);
+        e->start = start;
 
         return e;
 }
@@ -696,6 +745,9 @@ prefix_parenthesis(void)
          * or it can be an identifier list for an arrow function, e.g., (a, b, c).
          */
 
+        struct location start = tok()->start;
+        struct expression *e;
+
         consume('(');
 
         /*
@@ -703,17 +755,19 @@ prefix_parenthesis(void)
          */
         if (tok()->type == ')') {
                 next();
-                struct expression *list = mkexpr();
-                list->type = EXPRESSION_LIST;
-                list->only_identifiers = true;
-                vec_init(list->es);
-                return list;
+                e = mkexpr();
+                e->start = start;
+                e->type = EXPRESSION_LIST;
+                e->only_identifiers = true;
+                vec_init(e->es);
+                return e;
         }
 
-        struct expression *e = parse_expr(0);
+        e = parse_expr(0);
 
         if (tok()->type == ',') {
                 struct expression *list = mkexpr();
+                list->start = start;
                 list->only_identifiers = true;
 
                 /*
@@ -726,10 +780,12 @@ prefix_parenthesis(void)
                 list->type = EXPRESSION_LIST;
                 vec_init(list->es);
                 vec_push(list->es, e);
+                e->end = tok()->end;
 
                 while (tok()->type == ',') {
                         next();
                         struct expression *e = parse_expr(0);
+                        e->end = tok()->end;
                         if (e->type == EXPRESSION_MATCH_REST) {
                                 expect(')');
                         } else if (e->type != EXPRESSION_IDENTIFIER) {
@@ -742,6 +798,7 @@ prefix_parenthesis(void)
 
                 return list;
         } else {
+                e->start = start;
                 consume(')');
                 return e;
         }
@@ -800,13 +857,9 @@ prefix_regex(void)
 static struct expression *
 prefix_array(void)
 {
-        consume('[');
+        setctx(LEX_INFIX);
 
-        LexState ls;
-        lex_save(&ls);
-
-        lex_ctx = LEX_INFIX;
-        if (token(1)->type == ']') switch (tok()->type) {
+        if (token(2)->type == ']') switch (token(1)->type) {
         case TOKEN_USER_OP:
         case TOKEN_PERCENT:
         case TOKEN_PLUS:
@@ -830,14 +883,13 @@ prefix_array(void)
         default: break;
         }
 
-        skip(2);
-        lex_rewind(&ls);
-
-        lex_ctx = LEX_PREFIX;
+        setctx(LEX_PREFIX);
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_ARRAY;
         vec_init(e->elements);
+
+        consume('[');
 
         while (tok()->type != ']') {
                 vec_push(e->elements, parse_expr(0));
@@ -863,6 +915,9 @@ prefix_array(void)
         }
 
         next();
+
+        e->end = End;
+        printf("Got array: '%.*s'\n", (int)(e->end.s - e->start.s), e->start.s);
 
         return e;
 }
@@ -954,7 +1009,7 @@ prefix_implicit_method(void)
         if (tok()->type == '(') {
                 next();
 
-                lex_ctx = LEX_PREFIX;
+                setctx(LEX_PREFIX);
 
                 if (tok()->type == ')') {
                         next();
@@ -1113,7 +1168,7 @@ infix_function_call(struct expression *left)
 
         consume('(');
 
-        lex_ctx = LEX_PREFIX;
+        setctx(LEX_PREFIX);
 
         if (tok()->type == ')') {
                 next();
@@ -1140,12 +1195,16 @@ infix_eq(struct expression *left)
         e->type = tok()->type == TOKEN_EQ ? EXPRESSION_EQ : EXPRESSION_MAYBE_EQ;
         next();
 
+        e->start = left->start;
         e->target = assignment_lvalue(left);
+
         if (left->type == EXPRESSION_LIST) {
                 e->value = parse_expr(-1);
         } else {
                 e->value = parse_expr(1);
         }
+
+        e->end = e->value->end;
 
         return e;
 }
@@ -1241,7 +1300,7 @@ infix_member_access(struct expression *left)
 
         consume('(');
 
-        lex_ctx = LEX_PREFIX;
+        setctx(LEX_PREFIX);
 
         if (tok()->type == ')')
                 goto End;
@@ -1268,6 +1327,7 @@ infix_squiggly_arrow(struct expression *left)
 
         e->left = left;
         e->right = parse_expr(0);
+        e->end = End;
 
         return e;
 }
@@ -1403,7 +1463,7 @@ BINARY_LVALUE_OPERATOR(minus_eq, MINUS_EQ, 2, true)
 static parse_fn *
 get_prefix_parser(void)
 {
-        lex_ctx = LEX_PREFIX;
+        setctx(LEX_PREFIX);
 
         switch (tok()->type) {
         case TOKEN_INTEGER:        return prefix_integer;
@@ -1462,7 +1522,7 @@ Keyword:
 static parse_fn *
 get_infix_parser(void)
 {
-        lex_ctx = LEX_INFIX;
+        setctx(LEX_INFIX);
 
         switch (tok()->type) {
         case TOKEN_KEYWORD:        goto Keyword;
@@ -1515,7 +1575,7 @@ static int
 get_infix_prec(void)
 {
         struct value *p;
-        lex_ctx = LEX_INFIX;
+        setctx(LEX_INFIX);
 
         switch (tok()->type) {
         case '.':                  return 12;
@@ -1673,7 +1733,7 @@ static struct expression *
 parse_definition_lvalue(int context)
 {
         struct expression *e;
-        int save = tokidx;
+        int save = TokenIndex;
 
         NoEquals = true;
         e = definition_lvalue(parse_expr(1));
@@ -1712,11 +1772,12 @@ parse_definition_lvalue(int context)
                 break;
         }
 
+        e->end = End;
         return e;
 
 Error:
         free(e);
-        tokidx = save;
+        seek(save);
         return NULL;
 }
 
@@ -1968,7 +2029,7 @@ parse_function_definition(void)
 static struct statement *
 parse_operator_directive(void)
 {
-        lex_ctx = LEX_INFIX;
+        setctx(LEX_INFIX);
 
         if (token(1)->type != TOKEN_USER_OP) {
                 consume_keyword(KEYWORD_OPERATOR);
@@ -2116,7 +2177,7 @@ parse_expr(int prec)
         --depth;
 
         e->start = start;
-        e->end = token(-1)->end;
+        //e->end = token(-1)->end;
 
         return e;
 }
@@ -2124,20 +2185,22 @@ parse_expr(int prec)
 static struct statement *
 parse_block(void)
 {
-        struct statement *s = mkstmt();
+        struct statement *block = mkstmt();
 
         consume('{');
 
-        s->type = STATEMENT_BLOCK;
-        vec_init(s->statements);
+        block->type = STATEMENT_BLOCK;
+        vec_init(block->statements);
 
         while (tok()->type != '}') {
-                vec_push(s->statements, parse_statement());
+                struct statement *s = parse_statement();
+                s->end = End;
+                vec_push(block->statements, s);
         }
 
         consume('}');
 
-        return s;
+        return block;
 }
 
 static struct statement *
@@ -2180,7 +2243,7 @@ parse_class_definition(void)
                 next();
         } else {
                 consume('{');
-                lex_ctx = LEX_INFIX;
+                setctx(LEX_INFIX);
                 while (tok()->type != '}') {
                         /*
                          * Lol.
@@ -2205,7 +2268,7 @@ parse_class_definition(void)
 
                         vec_push(s->tag.methods, prefix_function());
                 }
-                lex_ctx = LEX_PREFIX;
+                setctx(LEX_PREFIX);
                 consume('}');
         }
 
@@ -2343,7 +2406,7 @@ parse_statement(void)
 {
         struct statement *s;
 
-        lex_ctx = LEX_PREFIX;
+        setctx(LEX_PREFIX);
 
         switch (tok()->type) {
         case '{':            return parse_block();
@@ -2401,11 +2464,13 @@ parse(char const *source, char const *file)
 
         filename = file;
 
+        TokenIndex = 0;
         vec_init(tokens);
-        tokidx = 0;
-        lex_ctx = LEX_PREFIX;
 
         lex_init(file, source);
+
+        lex_save(&CtxCheckpoint);
+        setctx(LEX_PREFIX);
 
         if (setjmp(jb) != 0) {
                 vec_empty(program);
@@ -2420,8 +2485,10 @@ parse(char const *source, char const *file)
 
         while (tok()->type != TOKEN_END) {
                 struct statement *s = parse_statement();
-                if (s != NULL)
+                if (s != NULL) {
+                        s->end = End;
                         vec_push(program, s);
+                }
         }
 
         vec_push(program, NULL);

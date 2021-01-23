@@ -15,6 +15,7 @@
 #include "gc.h"
 #include "value.h"
 #include "sqlite.h"
+#include "util.h"
 
 static bool use_readline = true;
 static char buffer[8192];

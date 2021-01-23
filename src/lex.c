@@ -23,7 +23,6 @@ static char const *filename;
 static struct location Start;
 
 static jmp_buf jb;
-static bool keep_next_newline;
 
 static LexState state;
 static vec(LexState) states;
@@ -62,7 +61,8 @@ mktoken(int type)
         return (struct token) {
                 .type = type,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -74,7 +74,8 @@ mkid(char *id, char *module)
                 .identifier = id,
                 .module = module,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -85,7 +86,8 @@ mkstring(char *string)
                 .type = TOKEN_STRING,
                 .string = string,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -111,7 +113,8 @@ mkregex(char const *pat, int flags)
                 .extra = extra,
                 .pattern = pat,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -122,7 +125,8 @@ mkreal(float real)
                 .type = TOKEN_REAL,
                 .real = real,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -133,7 +137,8 @@ mkinteger(intmax_t k)
                 .type = TOKEN_INTEGER,
                 .integer = k,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -144,7 +149,8 @@ mkkw(int kw)
                 .type = TOKEN_KEYWORD,
                 .keyword = kw,
                 .start = Start,
-                .end = state.loc
+                .end = state.loc,
+		.ctx = state.ctx
         };
 }
 
@@ -184,9 +190,9 @@ skipspace(void)
 
         int n = 0;
         while (isspace(C(n))) {
-                if (C(n) == '\n' && keep_next_newline) {
+                if (C(n) == '\n' && state.need_nl) {
                         nl = true;
-                        keep_next_newline = false;
+                        state.need_nl = false;
                 }
                 n += 1;
         }
@@ -252,7 +258,7 @@ lexword(void)
 
         int keyword;
         if (keyword = keyword_get_number(w), keyword != -1) {
-                keep_next_newline |= (
+                state.need_nl |= (
                         keyword == KEYWORD_IMPORT
                      || keyword == KEYWORD_EXPORT
                      || keyword == KEYWORD_OPERATOR
@@ -529,12 +535,12 @@ lexlinecomment(void)
         nextchar();
         nextchar();
 
-        bool need_nl = keep_next_newline;
+        bool need_nl = state.need_nl;
         
         while (nextchar() != '\n')
                 ;
 
-        keep_next_newline = false;
+        state.need_nl = false;
 
         return need_nl;
 }
@@ -567,13 +573,14 @@ struct token
 lex_token(LexContext ctx)
 {
         if (setjmp(jb) != 0)
-                return (struct token) { .type = TOKEN_ERROR, .start = Start, .end = state.loc };
+                return (struct token) { .type = TOKEN_ERROR, .start = Start, .end = state.loc, .ctx = state.ctx };
 
         if (skipspace()) {
                 return mktoken(TOKEN_NEWLINE);
         }
 
         Start = state.loc;
+        state.ctx = ctx;
 
         while (SRC < END) {
                 if (C(0) == '/' && C(1) == '*') {
@@ -635,7 +642,7 @@ lex_token(LexContext ctx)
                 }
         }
 
-        return (struct token) { .type = TOKEN_END, .start = Start, .end = state.loc };
+        return (struct token) { .type = TOKEN_END, .start = Start, .end = state.loc, .ctx = state.ctx };
 }
 
 char const *
@@ -648,7 +655,7 @@ void
 lex_init(char const *file, char const *src)
 {
         filename = file;
-        keep_next_newline = false;
+        state.need_nl = false;
 
         state = (LexState) {
                 .loc = (struct location) {
@@ -682,9 +689,9 @@ lex_save(LexState *s)
 }
 
 void
-lex_rewind(LexState const *s)
+lex_rewind(struct location const *where)
 {
-        state = *s;
+        state.loc = *where;
 }
 
 void

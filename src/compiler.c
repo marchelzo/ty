@@ -229,18 +229,20 @@ slurp_module(char const *name)
 }
 
 static void
-add_location(struct location start, struct location end, size_t start_off, size_t end_off)
+add_location(struct expression const *e, size_t start_off, size_t end_off)
 {
-        if (start.line == -1 && start.col == -1)
+        if (e->start.line == -1 && e->start.col == -1)
                 return;
+
+        printf("Location: (%zu, %zu) '%.*s'\n", start_off, end_off, (int)(e->end.s - e->start.s), e->start.s);
 
         vec_push(
                 state.expression_locations,
                 ((struct eloc) {
                         .start_off = start_off,
                         .end_off = end_off,
-                        .start = start,
-                        .end = end,
+                        .start = e->start,
+                        .end = e->end,
                         .filename = state.filename
                 })
         );
@@ -460,6 +462,8 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                         } else {
                                 struct expression *items = alloc(sizeof *items);
                                 items->type = EXPRESSION_ARRAY;
+                                items->start = tagged[0]->start;
+                                items->end = tagged[tagc - 1]->end;
                                 vec_init(items->elements);
                                 for (int i = 0; i < tagc; ++i)
                                         vec_push(items->elements, tagged[i]);
@@ -1275,8 +1279,13 @@ emit_special_string(struct expression const *e)
 static bool
 emit_throw(struct statement const *s)
 {
+        size_t start = state.code.count;
+
         emit_expression(s->throw);
         emit_instr(INSTR_THROW);
+
+        add_location(&((struct expression){ .start = s->start, .end = s->end }), start, state.code.count);
+
         return true;
 }
 
@@ -1435,6 +1444,9 @@ emit_for_loop(struct statement const *s, bool want_result)
 static void
 emit_try_match(struct expression const *pattern)
 {
+        size_t start = state.code.count;
+        bool need_loc = false;
+
         switch (pattern->type) {
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(pattern->identifier, "_") == 0) {
@@ -1513,6 +1525,7 @@ emit_try_match(struct expression const *pattern)
                 emit_symbol((uintptr_t) pattern->extra);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
+                need_loc = true;
                 break;
         case EXPRESSION_LIST:
                 for (int i = 0; i < pattern->es.count; ++i) {
@@ -1532,7 +1545,11 @@ emit_try_match(struct expression const *pattern)
                 emit_instr(INSTR_JUMP_IF_NOT);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
+                need_loc = true;
         }
+
+        if (pattern->type > EXPRESSION_KEEP_LOC || need_loc)
+                add_location(pattern, start, state.code.count);
 }
 
 static bool
@@ -1822,8 +1839,12 @@ emit_match_expression(struct expression const *e)
 static void
 emit_target(struct expression *target)
 {
+        size_t start = state.code.count;
+        bool need_loc = true;
+
         switch (target->type) {
         case EXPRESSION_IDENTIFIER:
+                need_loc = false;
         case EXPRESSION_MATCH_NOT_NIL:
                 if (target->local) {
                         emit_instr(INSTR_TARGET_VAR);
@@ -1847,6 +1868,9 @@ emit_target(struct expression *target)
         default:
                 fail("oh no!");
         }
+
+        if (need_loc)
+                add_location(target, start, state.code.count);
 }
 
 static void
@@ -2336,6 +2360,8 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
         char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
         char multi = maybe ? INSTR_MAYBE_MULTI : INSTR_MULTI_ASSIGN;
 
+        size_t start = state.code.count;
+
         switch (target->type) {
         case EXPRESSION_ARRAY:
                 tmp = tmpsymbol();
@@ -2426,11 +2452,14 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 emit_instr(multi);
                 emit_int((int)target->es.count);
 
-                break;
+                return;
         default:
                 emit_target(target);
                 emit_instr(instr);
+                return;
         }
+
+        add_location(target, start, state.code.count);
 }
 
 static void
@@ -2716,7 +2745,7 @@ emit_expr(struct expression const *e, bool need_loc)
         }
 
         if (e->type > EXPRESSION_KEEP_LOC || need_loc)
-                add_location(e->start, e->end, start, state.code.count);
+                add_location(e, start, state.code.count);
 }
 
 static void
@@ -3188,6 +3217,7 @@ compiler_get_location(char const *code, struct location *start, struct location 
         location_vector *locs = NULL;
         char const *file = NULL;
 
+        printf("Looking for %zu\n", (size_t)(code - state.code.items));
         uintptr_t c = (uintptr_t) code;
 
         /*
@@ -3206,6 +3236,7 @@ compiler_get_location(char const *code, struct location *start, struct location 
         }
 
         if (locs == NULL) {
+                printf("Couldn't find anything.\n");
                 *start = (struct location) { -1, -1 };
                 return NULL;
         }
@@ -3223,14 +3254,24 @@ compiler_get_location(char const *code, struct location *start, struct location 
                 else                           break;
         }
 
-        while (lo + 1 < locs->count && locs->items[lo].p_end < c)
+
+        printf("Initially: (%zu, %zu)\n", (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items), (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
+
+        while (lo + 1 < locs->count && locs->items[lo].p_start > c)
                 ++lo;
 
-        while (lo > 0 && (lo >= locs->count || locs->items[lo].p_start > c))
+        while (lo + 1 < locs->count && locs->items[lo + 1].p_end == locs->items[lo].p_end)
+                ++lo;
+
+        /*
+        while (lo > 0 && (lo >= locs->count || locs->items[lo - 1].p_start < c || locs->items[lo].p_start > c))
                 --lo;
+        */
 
         *start = locs->items[lo].start;
         *end = locs->items[lo].end;
+
+        printf("Found: (%zu, %zu)\n", (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items), (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
 
         return locs->items[lo].filename;
 }

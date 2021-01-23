@@ -152,11 +152,13 @@ token_show_type(int type)
         case TOKEN_IDENTIFIER:     return "identifier";
         case TOKEN_USER_OP:        return "user-defined operator";
         case TOKEN_STRING:         return "string";
+        case TOKEN_SPECIAL_STRING: return "interpolated string";
         case TOKEN_INTEGER:        return "integer";
         case TOKEN_REAL:           return "real";
         case TOKEN_NEWLINE:        return "newline";
         case TOKEN_KEYWORD:        return "keyword";
         case TOKEN_END:            return "end of input";
+        case TOKEN_ERROR:          return "ERROR";
         default:                   snprintf(token_show_buffer, 512, "token '%c'", type); return sclone(token_show_buffer);
         }
 }

@@ -545,30 +545,30 @@ vm_exec(char *code)
                         ip += strlen(ip) + 1;
                         vm_panic(
                                 "constraint on %s%s%s%s%s violated in call to %s%s%s%s%s: %s%s%s = %s%s%s",
-                                ESC(34),
-                                ESC(1),
+                                TERM(34),
+                                TERM(1),
                                 ip,
-                                ESC(22),
-                                ESC(39),
+                                TERM(22),
+                                TERM(39),
 
-                                ESC(34),
-                                ESC(1),
+                                TERM(34),
+                                TERM(1),
                                 str,
-                                ESC(22),
-                                ESC(39),
+                                TERM(22),
+                                TERM(39),
 
-                                ESC(34),
-                                ESC(1),
+                                TERM(34),
+                                TERM(1),
                                 ip,
                                 value_show(&v),
-                                ESC(22),
-                                ESC(39)
+                                TERM(22),
+                                TERM(39)
                         );
                         break;
                 CASE(THROW)
 Throw:
                         if (try_stack.count == 0)
-                                vm_panic("uncaught exception: %s", value_show(top()));
+                                vm_panic("uncaught exception: %s%s%s", TERM(31), value_show(top()), TERM(39));
 
                         struct try *t = vec_last(try_stack);
 
@@ -1772,7 +1772,7 @@ vm_panic(char const *fmt, ...)
 
         int sz = ERR_SIZE - 1;
 
-        int n = snprintf(ERR, sz, "%s%sRuntimeError%s%s: ", ESC(1), ESC(31), ESC(22), ESC(39));
+        int n = snprintf(ERR, sz, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
         n += vsnprintf(ERR + n, max(sz - n, 0), fmt, ap);
         va_end(ap);
 
@@ -1786,19 +1786,19 @@ vm_panic(char const *fmt, ...)
                         sizeof buffer - 1,
                         "%36s %s%s%s:%s%d%s:%s%d%s",
                         (i == 0) ? "at" : "from",
-                        ESC(34),
+                        TERM(34),
                         file,
-                        ESC(39),
-                        ESC(33),
+                        TERM(39),
+                        TERM(33),
                         start.line + 1,
-                        ESC(39),
-                        ESC(33),
+                        TERM(39),
+                        TERM(33),
                         start.col + 1,
-                        ESC(39)
+                        TERM(39)
                 );
 
                 char const *where = buffer;
-                int m = strlen(buffer) - 6*strlen(ESC(00));
+                int m = strlen(buffer) - 6*strlen(TERM(00));
 
                 while (m > 36) {
                         m -= 1;
@@ -1827,17 +1827,19 @@ vm_panic(char const *fmt, ...)
                 n += snprintf(
                         ERR + n,
                         sz - n,
-                        "%.*s%s%s%.*s%s%s%.*s",
+                        "%s%.*s%s%s%.*s%s%s%.*s%s",
+                        TERM(32),
                         before,
                         prefix,
-                        ESC(1),
-                        ESC(91),
+                        (i == 0) ? TERM(1) : "",
+                        (i == 0) ? TERM(91) : TERM(31),
                         length,
                         start.s,
-                        ESC(39),
-                        ESC(22),
+                        TERM(32),
+                        TERM(22),
                         after,
-                        end.s
+                        end.s,
+                        TERM(39)
                 );
 
                 n += snprintf(
@@ -1846,8 +1848,8 @@ vm_panic(char const *fmt, ...)
                         "\n\t%*s%s%s",
                         before + 35,
                         "",
-                        ESC(1),
-                        ESC(91)
+                        (i == 0) ? TERM(1) : "",
+                        (i == 0) ? TERM(91) : TERM(31)
                 );
 
                 for (int i = 0; i < length && n < sz; ++i)
@@ -1857,8 +1859,8 @@ vm_panic(char const *fmt, ...)
                         ERR + n,
                         sz - n,
                         "%s%s",
-                        ESC(39),
-                        ESC(22)
+                        TERM(39),
+                        TERM(22)
                 );
 
                 if (calls.count == 0) {
@@ -1890,7 +1892,7 @@ vm_execute_file(char const *path)
          * the beginning, so we need to subtract 1 here to get something appropriate
          * for free().
          */
-        free(source - 1);
+        //free(source - 1);
 
         filename = NULL;
 
@@ -1901,7 +1903,7 @@ bool
 vm_execute(char const *source)
 {
         if (filename == NULL)
-                filename = "<interactive>";
+                filename = "(repl)";
 
         char *code = compiler_compile_source(source, filename);
         if (code == NULL) {
@@ -1914,7 +1916,6 @@ vm_execute(char const *source)
         resize(vars, new_symbol_count * sizeof *vars);
         resize(used, new_symbol_count * sizeof *used);
         while (symbol_count < new_symbol_count) {
-                //LOG("SETTING %d TO NULL", symbol_count);
                 used[symbol_count] = false;
                 vars[symbol_count++] = NULL;
         }

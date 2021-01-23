@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <pcre.h>
+#include <stdbool.h>
 
 #include "vec.h"
 #include "location.h"
@@ -65,6 +66,7 @@ struct token {
                 TOKEN_CHECK_MATCH,
                 TOKEN_ERROR,
         } type;
+        int ctx;
         struct location start;
         struct location end;
         union {

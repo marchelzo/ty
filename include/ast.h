@@ -135,7 +135,6 @@ struct expression {
                 EXPRESSION_DICT_COMPR,
                 EXPRESSION_IDENTIFIER,
                 EXPRESSION_TAG,
-                EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
                 EXPRESSION_MAYBE_EQ,
@@ -147,6 +146,7 @@ struct expression {
 
                 EXPRESSION_KEEP_LOC,
 
+                EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_MUST_EQUAL,
                 EXPRESSION_REGEX,
                 EXPRESSION_SPECIAL_STRING,
