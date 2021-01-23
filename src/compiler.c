@@ -55,7 +55,7 @@
                 emit_int(loc - state.code.count - sizeof (int)); \
         } while (false)
 
-#define EXPR(...) ((struct expression){ .loc = { -1, -1 }, __VA_ARGS__ })
+#define EXPR(...) ((struct expression){ .start = { -1, -1 }, __VA_ARGS__ })
 
 #if 0
   #define INSTR_SAVE_STACK_POS INSTR_SAVE_STACK_POS), emit_int(__LINE__
@@ -64,10 +64,15 @@
 
 struct eloc {
         union {
-                uintptr_t p;
-                size_t offset;
+                uintptr_t p_start;
+                size_t start_off;
         };
-        struct location loc;
+        union {
+                uintptr_t p_end;
+                size_t end_off;
+        };
+        struct location start;
+        struct location end;
         char const *filename;
 };
 
@@ -120,14 +125,14 @@ struct state {
         struct scope *global;
 
         char const *filename;
-        struct location loc;
+        struct location start;
+        struct location end;
 
         location_vector expression_locations;
 };
 
 static jmp_buf jb;
-static char const *err_msg;
-static char err_buf[512];
+static char const *Error;
 
 static int builtin_modules;
 static int builtin_count;
@@ -159,6 +164,9 @@ static void
 emit_expression(struct expression const *e);
 
 static void
+emit_expr(struct expression const *e, bool need_loc);
+
+static void
 emit_assignment(struct expression *target, struct expression const *e, bool maybe);
 
 static bool
@@ -179,18 +187,24 @@ fail(char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        int n;
-        if (state.filename == NULL)
-                n = sprintf(err_buf, "CompileError: %d:%d: ", state.loc.line + 1,state.loc.col + 1);
-        else if (scope_is_subscope(state.global, global))
-                n = sprintf(err_buf, "CompileError: %s:%d:%d: ", state.filename, state.loc.line + 1,state.loc.col + 1);
-        else
-                n = sprintf(err_buf, "CompileError: module '%s':%d:%d: ", state.filename, state.loc.line + 1,state.loc.col + 1);
+        int n = sprintf(ERR, "CompileError: ");
+        n += vsnprintf(ERR + n, sizeof ERR - n, fmt, ap);
+        
+        char buffer[256];
+        snprintf(buffer, sizeof buffer, "at %s:%d:%d", state.filename, state.start.line + 1, state.start.col + 1);
 
-        vsnprintf(err_buf + n, sizeof err_buf - n, fmt, ap);
-        err_msg = err_buf;
+        n += snprintf(
+                ERR + n,
+                sizeof ERR - n,
+                "\n\n\t%20.20s near: %.*s",
+                buffer,
+                (int)strcspn(state.start.s, "\n"),
+                state.start.s
+        );
 
-        LOG("Failing with error: %s", err_buf);
+        Error = ERR;
+
+        LOG("Failing with error: %s", ERR);
 
         va_end(ap);
 
@@ -215,16 +229,18 @@ slurp_module(char const *name)
 }
 
 static void
-add_location(struct location loc)
+add_location(struct location start, struct location end, size_t start_off, size_t end_off)
 {
-        if (loc.line == -1 && loc.col == -1)
+        if (start.line == -1 && start.col == -1)
                 return;
 
         vec_push(
                 state.expression_locations,
                 ((struct eloc) {
-                        .offset = state.code.count,
-                        .loc = loc,
+                        .start_off = start_off,
+                        .end_off = end_off,
+                        .start = start,
+                        .end = end,
                         .filename = state.filename
                 })
         );
@@ -234,8 +250,10 @@ static void
 patch_location_info(void)
 {
         struct eloc *locs = state.expression_locations.items;
-        for (int i = 0; i < state.expression_locations.count; ++i)
-                locs[i].p = (uintptr_t)(state.code.items + locs[i].offset);
+        for (int i = 0; i < state.expression_locations.count; ++i) {
+                locs[i].p_start = (uintptr_t)(state.code.items + locs[i].start_off);
+                locs[i].p_end = (uintptr_t)(state.code.items + locs[i].end_off);
+        }
 }
 
 inline static void
@@ -367,7 +385,8 @@ freshstate(void)
         s.loop = 0;
 
         s.filename = NULL;
-        s.loc = (struct location){ 0, 0 };
+        s.start = (struct location){ 0, 0 };
+        s.end = (struct location){ 0, 0 };
 
         vec_init(s.expression_locations);
 
@@ -459,7 +478,8 @@ try_symbolize_application(struct scope *scope, struct expression *e)
 static void
 symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
 {
-        state.loc = target->loc;
+        state.start = target->start;
+        state.end = target->end;
 
         try_symbolize_application(scope, target);
 
@@ -525,7 +545,8 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
                 goto Tag;
 
-        state.loc = e->loc;
+        state.start = e->start;
+        state.end = e->end;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -572,7 +593,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
-        state.loc = e->loc;
+        state.start = e->start;
+        state.end = e->end;
 
         struct scope *subscope;
 
@@ -696,8 +718,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 vec_init(e->param_symbols);
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(scope, e->dflts.items[i]);
-                        symbolize_expression(scope, e->constraints.items[i]);
                         vec_push(e->param_symbols, addsymbol(scope, e->params.items[i]));
+                }
+                for (size_t i = 0; i < e->params.count; ++i) {
+                        symbolize_expression(scope, e->constraints.items[i]);
                 }
                 if (e->rest) {
                         vec_push(e->param_symbols, addsymbol(scope, e->params.items[e->params.count]));
@@ -763,7 +787,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 state.check_scope = scope;
         }
 
-        state.loc = s->loc;
+        state.start = s->start;
+        state.end = s->end;
 
         struct scope *subscope;
         struct symbol *sym;
@@ -948,7 +973,7 @@ emit_int(int k)
 inline static void
 emit_ulong(unsigned long k)
 {
-        LOG("emitting ulong: %u", k);
+        LOG("emitting ulong: %lu", k);
         char const *s = (char *) &k;
         for (int i = 0; i < sizeof (unsigned long); ++i)
                 vec_push(state.code, s[i]);
@@ -1093,9 +1118,11 @@ emit_function(struct expression const *e)
                 intptr_t s = e->param_symbols.items[i]->symbol;
                 emit_instr(INSTR_LOAD_VAR);
                 emit_symbol(s);
-                emit_expression(e->constraints.items[i]);
+                emit_expr(e->constraints.items[i], true);
                 emit_instr(INSTR_CHECK_MATCH);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+                emit_instr(INSTR_LOAD_VAR);
+                emit_symbol(s);
                 emit_instr(INSTR_BAD_CALL);
                 if (e->name != NULL)
                         emit_string(e->name);
@@ -1111,7 +1138,7 @@ emit_function(struct expression const *e)
          * Add an implicit 'return nil;' if the function doesn't explicitly return in its body.
          */
         if (!returns) {
-            struct statement empty = { .type = STATEMENT_RETURN, .loc = state.loc };
+            struct statement empty = { .type = STATEMENT_RETURN, .start = e->end };
             vec_init(empty.returns);
             emit_statement(&empty, false);
         }
@@ -2407,10 +2434,12 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 }
 
 static void
-emit_expression(struct expression const *e)
+emit_expr(struct expression const *e, bool need_loc)
 {
-        state.loc = e->loc;
-        add_location(e->loc);
+        state.start = e->start;
+        state.end = e->end;
+
+        size_t start = state.code.count;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -2685,12 +2714,23 @@ emit_expression(struct expression const *e)
         default:
                 fail("expression unexpected in this context");
         }
+
+        if (e->type > EXPRESSION_KEEP_LOC || need_loc)
+                add_location(e->start, e->end, start, state.code.count);
+}
+
+static void
+emit_expression(struct expression const *e)
+{
+        emit_expr(e, false);
 }
 
 static bool
 emit_statement(struct statement const *s, bool want_result)
 {
-        state.loc = s->loc;
+        state.start = s->start;
+        state.end = s->end;
+
         bool returns = false;
 
         switch (s->type) {
@@ -2890,14 +2930,18 @@ compile(char const *source)
 {
         struct statement **p = parse(source, state.filename);
         if (p == NULL) {
-                err_msg = parse_error();
+                Error = parse_error();
                 longjmp(jb, 1);
         }
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
                         symbolize_lvalue(state.global, p[i]->target, true);
-                        p[i]->value->name = NULL;
+                        /* 
+                         * TODO: figure out why this was ever here
+                         *
+                         * p[i]->value->name = NULL;
+                         */
                 } else if (p[i]->type == STATEMENT_CLASS_DEFINITION) {
                         if (scope_locally_defined(state.global, p[i]->class.name))
                                 fail("redeclaration of class: %s", p[i]->class.name);
@@ -2957,7 +3001,8 @@ compile(char const *source)
         /*
          * Add all of the location information from this compliation unit to the global list.
          */
-        add_location((struct location){});
+        //struct location end = { 0 };
+        //add_location(end, end, state);
         patch_location_info();
         vec_push(location_lists, state.expression_locations);
 }
@@ -3057,7 +3102,7 @@ Import:
 char const *
 compiler_error(void)
 {
-        return err_msg;
+        return Error;
 }
 
 void
@@ -3072,11 +3117,13 @@ char *
 compiler_load_prelude(void)
 {
         if (setjmp(jb) != 0) {
-                fprintf(stderr, "failed to load prelude: %s\n", compiler_error());
+                fprintf(stderr, "Aborting, failed to load prelude: %s\n", compiler_error());
                 exit(1);
         }
 
+        state.filename = "(prelude)";
         compile(slurp_module("prelude"));
+
         state.global = scope_new(state.global, false);
         return state.code.items;
 }
@@ -3135,11 +3182,11 @@ compiler_symbol_count(void)
         return scope_get_symbol();
 }
 
-struct location
-compiler_get_location(char const *code, char const **file)
+char const *
+compiler_get_location(char const *code, struct location *start, struct location *end)
 {
         location_vector *locs = NULL;
-        *file = NULL;
+        char const *file = NULL;
 
         uintptr_t c = (uintptr_t) code;
 
@@ -3150,16 +3197,18 @@ compiler_get_location(char const *code, char const **file)
         for (int i = 0; i < location_lists.count; ++i) {
                 if (location_lists.items[i].count == 0)
                         continue;
-                if (c < location_lists.items[i].items[0].p)
+                if (c < location_lists.items[i].items[0].p_start)
                         continue;
-                if (c > vec_last(location_lists.items[i])->p)
+                if (c > vec_last(location_lists.items[i])->p_end)
                         continue;
                 locs = &location_lists.items[i];
                 break;
         }
 
-        if (locs == NULL)
-                return (struct location) { -1, -1 };
+        if (locs == NULL) {
+                *start = (struct location) { -1, -1 };
+                return NULL;
+        }
 
         /*
          * Now do a binary search within this group of locations.
@@ -3169,15 +3218,19 @@ compiler_get_location(char const *code, char const **file)
 
         while (lo <= hi) {
                 int m = (lo / 2) + (hi / 2) + (lo & hi & 1);
-                if      (c < locs->items[m].p) hi = m - 1;
-                else if (c > locs->items[m].p) lo = m + 1;
+                if      (c < locs->items[m].p_end) hi = m - 1;
+                else if (c > locs->items[m].p_end) lo = m + 1;
                 else                           break;
         }
 
-        while (lo > 0 && (lo >= locs->count || locs->items[lo].p >= c))
+        while (lo + 1 < locs->count && locs->items[lo].p_end < c)
+                ++lo;
+
+        while (lo > 0 && (lo >= locs->count || locs->items[lo].p_start > c))
                 --lo;
 
-        *file = locs->items[lo].filename;
+        *start = locs->items[lo].start;
+        *end = locs->items[lo].end;
 
-        return locs->items[lo].loc;
+        return locs->items[lo].filename;
 }

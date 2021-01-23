@@ -17,20 +17,27 @@
 
 enum {
         MAX_OP_LEN   = 8,
-        MAX_ERR_LEN  = 2048
 };
 
 static char const *filename;
-static struct location startloc;
-static struct location loc;
+static struct location Start;
 
 static jmp_buf jb;
 static bool keep_next_newline;
 
-static char errbuf[MAX_ERR_LEN + 1];
+static LexState state;
+static vec(LexState) states;
 
-static vec(char const *) states;
-static char const *chars;
+#define SRC state.loc.s
+#define END state.end
+
+inline static char
+C(int n)
+{
+        if (SRC + n < END)
+                return SRC[n];
+        return '\0';
+}
 
 static char const *opchars = "/=<~|!@%^&*-+>?.$";
 
@@ -40,9 +47,9 @@ error(char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        char *err = errbuf;
-        err += sprintf(err, "SyntaxError %s:%d:%d: ", filename, loc.line + 1, loc.col + 1);
-        err[vsnprintf(err, MAX_ERR_LEN, fmt, ap)] = '\0';
+        int sz = ERR_SIZE - 1;
+        int n = snprintf(ERR, sz, "SyntaxError %s:%d:%d: ", filename, state.loc.line + 1, state.loc.col + 1);
+        vsnprintf(ERR + n, sz - n, fmt, ap);
 
         va_end(ap);
 
@@ -54,7 +61,8 @@ mktoken(int type)
 {
         return (struct token) {
                 .type = type,
-                .loc  = startloc,
+                .start = Start,
+                .end = state.loc
         };
 }
 
@@ -65,7 +73,8 @@ mkid(char *id, char *module)
                 .type = TOKEN_IDENTIFIER,
                 .identifier = id,
                 .module = module,
-                .loc  = startloc,
+                .start = Start,
+                .end = state.loc
         };
 }
 
@@ -75,7 +84,8 @@ mkstring(char *string)
         return (struct token) {
                 .type = TOKEN_STRING,
                 .string = string,
-                .loc  = startloc,
+                .start = Start,
+                .end = state.loc
         };
 }
 
@@ -100,7 +110,8 @@ mkregex(char const *pat, int flags)
                 .regex = re,
                 .extra = extra,
                 .pattern = pat,
-                .loc = startloc
+                .start = Start,
+                .end = state.loc
         };
 }
 
@@ -110,7 +121,8 @@ mkreal(float real)
         return (struct token) {
                 .type = TOKEN_REAL,
                 .real = real,
-                .loc = startloc
+                .start = Start,
+                .end = state.loc
         };
 }
 
@@ -120,7 +132,8 @@ mkinteger(intmax_t k)
         return (struct token) {
                 .type = TOKEN_INTEGER,
                 .integer = k,
-                .loc = startloc
+                .start = Start,
+                .end = state.loc
         };
 }
 
@@ -130,23 +143,24 @@ mkkw(int kw)
         return (struct token) {
                 .type = TOKEN_KEYWORD,
                 .keyword = kw,
-                .loc  = startloc,
+                .start = Start,
+                .end = state.loc
         };
 }
 
 static char
 nextchar(void)
 {
-        char c = *chars;
+        char c = C(0);
 
         if (c == '\n') {
-                loc.line += 1;
-                loc.col = 0;
+                state.loc.line += 1;
+                state.loc.col = 0;
         } else {
-                loc.col += 1;
+                state.loc.col += 1;
         }
 
-        chars += 1;
+        SRC += 1;
 
         return c;
 }
@@ -154,10 +168,10 @@ nextchar(void)
 static bool
 haveid(void)
 {
-        if (chars[0] == ':' && chars[1] == ':' && isalpha(chars[2]))
+        if (C(0) == ':' && C(1) == ':' && isalpha(C(2)))
                 return true;
 
-        if (isalpha(chars[0]) || chars[0] == '_')
+        if (isalpha(C(0)) || C(0) == '_')
                 return true;
         
         return false;
@@ -166,26 +180,26 @@ haveid(void)
 static bool
 skipspace(void)
 {
-        bool ret = false;
+        bool nl = false;
 
         int n = 0;
-        while (isspace(chars[n])) {
-                if (chars[n] == '\n' && keep_next_newline) {
-                        ret = true;
+        while (isspace(C(n))) {
+                if (C(n) == '\n' && keep_next_newline) {
+                        nl = true;
                         keep_next_newline = false;
                 }
                 n += 1;
         }
 
-        if (chars[n] == '\0') {
-                chars += n;
+        if (SRC + n == END) {
+                SRC += n;
         } else {
                 while (n --> 0) {
                         nextchar();
                 }
         }
 
-        return ret;
+        return nl;
 }
 
 /* lexes an identifier or a keyword */
@@ -201,10 +215,10 @@ lexword(void)
         bool has_module = false;
 
         for (;;) {
-                while (isalnum(*chars) || *chars == '_')
+                while (isalnum(C(0)) || C(0) == '_')
                         vec_push(word, nextchar());
 
-                if (chars[0] == ':' && chars[1] == ':' && ++has_module) {
+                if (C(0) == ':' && C(1) == ':' && ++has_module) {
                         nextchar();
                         nextchar();
                         
@@ -215,7 +229,7 @@ lexword(void)
                                 vec_push_n(module, word.items, word.count);
                         word.count = 0;
 
-                        if (!isalpha(*chars) && *chars != '_')
+                        if (!isalpha(C(0)) && C(0) != '_')
                                 error("expected name after '::' in identifier");
                 } else {
                         break;
@@ -225,7 +239,7 @@ lexword(void)
         /*
          * Identifiers are allowed to end in '?' or '!'. e.g., [1, 2, 3].map!(a -> a + 1)
          */
-        if (*chars == '!' || *chars == '?')
+        if (C(0) == '!' || C(0) == '?')
                 vec_push(word, nextchar());
 
         if (has_module != 0)
@@ -257,12 +271,12 @@ lexrawstr(void)
 
         nextchar();
 
-        while (*chars != '\'') {
-                switch (*chars) {
+        while (C(0) != '\'') {
+                switch (C(0)) {
                 case '\0': goto Unterminated;
                 case '\\':
                            nextchar();
-                           if (*chars == '\0') goto Unterminated;
+                           if (C(0) == '\0') goto Unterminated;
                            // fallthrough
                 default:
                            vec_push(str, nextchar());
@@ -280,35 +294,28 @@ Unterminated:
         error("unterminated string literal");
 }
 
-static char *
+static char const *
 lexexpr(void)
 {
-        vec(char) e;
-        vec_init(e);
+        int depth = 1;
 
-        nextchar();
-        while (*chars != '}') {
-                switch (*chars) {
-                case '\0': goto Unterminated;
-                case '\\':
-                           nextchar();
-                           if (*chars == '\0') goto Unterminated;
-                           if (*chars == 'n') {
-                                   nextchar();
-                                   vec_push(e, '\n');
-                                   break;
-                           }
-                           // fallthrough
-                default:
-                           vec_push(e, nextchar());
+        for (;;) {
+                switch (C(0)) {
+                case '\0':
+                        goto Unterminated;
+                case '{':
+                        depth += 1;
+                        break;
+                case '}':
+                        if (--depth == 0)
+                                goto End;
+                        break;
                 }
+                nextchar();
         }
+End:
 
-        assert(nextchar() == '}');
-
-        vec_push(e, '\0');
-
-        return e.items;
+        return SRC;
 
 Unterminated:
         error("unterminated expression in interpolated string");
@@ -320,23 +327,23 @@ lexspecialstr(void)
         struct token special = mktoken(TOKEN_SPECIAL_STRING);
         vec_init(special.strings);
         vec_init(special.expressions);
-        vec_init(special.locations);
+        vec_init(special.starts);
+        vec_init(special.ends);
 
         vec(char) str;
         vec_init(str);
-
 
         nextchar();
 
 Start:
 
-        while (*chars != '"') {
-                switch (*chars) {
+        while (C(0) != '"') {
+                switch (C(0)) {
                 case '\0': goto Unterminated;
                 case '{':  goto Expr;
                 case '\\':
                         nextchar();
-                        switch (*chars) {
+                        switch (C(0)) {
                         case '\0':
                                 goto Unterminated;
                         case 'n':
@@ -368,8 +375,17 @@ Expr:
         vec_push(str, '\0');
         vec_push(special.strings, str.items);
         vec_init(str);
-        vec_push(special.locations, loc);
-        vec_push(special.expressions, lexexpr());
+
+        /* Eat the initial { */
+        nextchar();
+
+        LexState st = state;
+        st.end = lexexpr();
+
+        /* Eat the terminating } */
+        nextchar();
+
+        vec_push(special.expressions, st);
 
         goto Start;
 
@@ -386,16 +402,16 @@ lexregex(void)
 
         nextchar();
 
-        while (*chars != '/') {
-                switch (*chars) {
+        while (C(0) != '/') {
+                switch (C(0)) {
                 case '\0': goto Unterminated;
                 case '\\':
-                        if (chars[1] == '\0') {
+                        if (C(1) == '\0') {
                                 goto Unterminated;
                         }
-                        if (chars[1] == '\\') {
+                        if (C(1) == '\\') {
                                 vec_push(pat, nextchar());
-                        } else if (chars[1] == '/') {
+                        } else if (C(1) == '/') {
                                 nextchar();
                         }
                         /* fallthrough */
@@ -408,10 +424,10 @@ lexregex(void)
 
         int flags = 0;
 
-        while (isalpha(*chars)) {
-                switch (*chars) {
+        while (isalpha(C(0))) {
+                switch (C(0)) {
                 case 'i': flags |= PCRE_CASELESS; break;
-                default:  error("invalid regex flag: '%c'", *chars);
+                default:  error("invalid regex flag: '%c'", C(0));
                 }
                 nextchar();
         }
@@ -430,7 +446,9 @@ lexnum(void)
 {
         char *end;
         errno = 0;
-        intmax_t integer = strtoull(chars, &end, 0);
+        intmax_t integer = strtoull(SRC, &end, 0);
+
+        int n = end - SRC;
 
         struct token num;
 
@@ -439,30 +457,37 @@ lexnum(void)
                 error("invalid numeric literal: %c%s", tolower(err[0]), err + 1);
         }
 
-        if (*end == '.' && !isalpha(end[1]) && end[1] != '_' && end[1] != '.') {
+        if (C(n) == '.' && !isalpha(C(n + 1)) && C(n + 1) != '_' && C(n + 1) != '.') {
                 errno = 0;
-                float real = strtof(chars, &end);
+                float real = strtof(SRC, &end);
+                n = end - SRC;
 
                 if (errno != 0) {
                         char const *err = strerror(errno);
                         error("invalid numeric literal: %c%s", tolower(err[0]), err + 1);
                 }
 
-                if (isalnum(*end))
-                        error("invalid trailing character after numeric literal: %c", *end);
+                if (isalnum(C(n))) {
+                        error("trailing character after numeric literal: '%c'", C(n));
+                }
+
+                while (SRC != end) nextchar();
 
                 num = mkreal(real);
-        } else if (*end == 'r') {
+        } else if (C(n) == 'r') {
+                errno = 0;
                 integer = strtoull(end + 1, &end, integer);
+                if (errno != 0) {
+                        error("what are you doing step bro?");
+                }
+                while (SRC != end) nextchar();
                 num = mkinteger(integer);
         } else {
-                if (isalnum(*end))
-                        error("invalid trailing character after numeric literal: %c", *end);
+                if (isalnum(C(n)))
+                        error("trailing character after numeric literal: '%c'", C(n));
+                while (SRC != end) nextchar();
                 num = mkinteger(integer);
         }
-
-        while (chars != end)
-                nextchar();
 
         return num;
 }
@@ -473,7 +498,7 @@ lexop(void)
         char op[MAX_OP_LEN + 1] = {0};
         size_t i = 0;
         
-        while (contains(opchars, *chars)) {
+        while (contains(opchars, C(0))) {
                 if (i == MAX_OP_LEN) {
                         error("operator contains too many characters: '%s...'", op);
                 } else {
@@ -485,8 +510,8 @@ lexop(void)
         if (toktype == -1) {
                 // this is kinda bad
                 if (op[0] == '|') {
-                        chars -= (i - 1);
-                        loc.col -= (i - 1);
+                        SRC -= (i - 1);
+                        state.loc.col -= (i - 1);
                         return mktoken('|');
                 }
                 struct token t = mktoken(TOKEN_USER_OP);
@@ -523,10 +548,10 @@ lexcomment(void)
 
         int level = 1;
 
-        while (*chars && level != 0) {
-                if (chars[0] == '/' && chars[1] == '*')
+        while (C(0) && level != 0) {
+                if (C(0) == '/' && C(1) == '*')
                         ++level;
-                if (chars[0] == '*' && chars[1] == '/')
+                if (C(0) == '*' && C(1) == '/')
                         --level;
                 nextchar();
         }
@@ -539,256 +564,149 @@ lexcomment(void)
 }
 
 struct token
-lex_token(enum lex_context ctx)
+lex_token(LexContext ctx)
 {
         if (setjmp(jb) != 0)
-                return (struct token) { .type = TOKEN_ERROR, .loc = loc };
+                return (struct token) { .type = TOKEN_ERROR, .start = Start, .end = state.loc };
 
-        while (*chars != '\0') {
-                startloc = loc;
-                if (chars[0] == '/' && chars[1] == '*') {
+        if (skipspace()) {
+                return mktoken(TOKEN_NEWLINE);
+        }
+
+        Start = state.loc;
+
+        while (SRC < END) {
+                if (C(0) == '/' && C(1) == '*') {
                         lexcomment();
-                } else if (chars[0] == '/' && chars[1] == '/') {
-                        if (lexlinecomment()) {
-                                return mktoken(TOKEN_NEWLINE);
-                        }
-                } else if (ctx == LEX_PREFIX && chars[0] == '/') {
-                        return lexregex();
-                } else if (haveid()) {
-                        return lexword();
-                } else if (chars[0] == ':' && chars[1] == ':') {
-                        nextchar();
-                        nextchar();
-                        return mktoken(TOKEN_CHECK_MATCH);
-                } else if (chars[0] == '-' && chars[1] == '>' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        nextchar();
-                        return mktoken(TOKEN_ARROW);
-                } else if (chars[0] == '-' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        return mktoken(TOKEN_MINUS);
-                } else if (chars[0] == '#' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        return mktoken('#');
-                } else if (chars[0] == '&' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        return mktoken(TOKEN_BIT_AND);
-                } else if (chars[0] == '!' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        return mktoken(TOKEN_BANG);
-                } else if (chars[0] == '?' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        return mktoken(TOKEN_QUESTION);
-                } else if (chars[0] == '$' && ctx == LEX_PREFIX) {
-                        nextchar();
-                        return mktoken('$');
-                } else if (contains(opchars, *chars)) {
-                        return lexop();
-                } else if (isdigit(*chars)) {
-                        return lexnum();
-                } else if (*chars == '\'') {
-                        return lexrawstr();
-                } else if (*chars == '"') {
-                        return lexspecialstr();
-                } else if (chars[0] == '.' && chars[1] == '.') {
-                        nextchar();
-                        nextchar();
-                        if (chars[0] == '.')
-                                return nextchar(), mktoken(TOKEN_DOT_DOT_DOT);
-                        else
-                                return mktoken(TOKEN_DOT_DOT);
-                } else if (isspace(*chars)) {
                         if (skipspace()) {
                                 return mktoken(TOKEN_NEWLINE);
                         }
+                } else if (C(0) == '/' && C(1) == '/') {
+                        if (lexlinecomment()) {
+                                return mktoken(TOKEN_NEWLINE);
+                        }
+                } else if (ctx == LEX_PREFIX && C(0) == '/') {
+                        return lexregex();
+                } else if (haveid()) {
+                        return lexword();
+                } else if (C(0) == ':' && C(1) == ':') {
+                        nextchar();
+                        nextchar();
+                        return mktoken(TOKEN_CHECK_MATCH);
+                } else if (C(0) == '-' && C(1) == '>' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        nextchar();
+                        return mktoken(TOKEN_ARROW);
+                } else if (C(0) == '-' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_MINUS);
+                } else if (C(0) == '#' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken('#');
+                } else if (C(0) == '&' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_BIT_AND);
+                } else if (C(0) == '!' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_BANG);
+                } else if (C(0) == '?' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_QUESTION);
+                } else if (C(0) == '$' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken('$');
+                } else if (contains(opchars, C(0))) {
+                        return lexop();
+                } else if (isdigit(C(0))) {
+                        return lexnum();
+                } else if (C(0) == '\'') {
+                        return lexrawstr();
+                } else if (C(0) == '"') {
+                        return lexspecialstr();
+                } else if (C(0) == '.' && C(1) == '.') {
+                        nextchar();
+                        nextchar();
+                        if (C(0) == '.')
+                                return nextchar(), mktoken(TOKEN_DOT_DOT_DOT);
+                        else
+                                return mktoken(TOKEN_DOT_DOT);
                 } else {
                         return mktoken(nextchar());
                 }
         }
 
-        return (struct token) { .type = TOKEN_END, .loc = loc };
+        return (struct token) { .type = TOKEN_END, .start = Start, .end = state.loc };
 }
 
 char const *
 lex_error(void)
 {
-        return errbuf;
+        return ERR;
 }
 
 void
-lex_init(char const *file)
+lex_init(char const *file, char const *src)
 {
         filename = file;
-        loc = (struct location) { 0, 0 };
         keep_next_newline = false;
+
+        state = (LexState) {
+                .loc = (struct location) {
+                        .s = src
+                },
+                .end = src + strlen(src)
+        };
+
         vec_init(states);
-        chars = NULL;
 }
 
 void
-lex_start(char const *s)
+lex_start(LexState const *st)
 {
-        vec_push(states, chars);
-        chars = s;
+        vec_push(states, state);
+
+        state = *st;
 
         /*
          * Eat the shebang if there is one.
          */
-        if (chars[0] == '#' && chars[1] == '!')
-                while (*chars != '\0' && *chars != '\n')
+        if (C(0) == '#' && C(1) == '!')
+                while (SRC != END && C(0) != '\n')
                         nextchar();
 }
 
 void
-lex_save(struct lex_state *state)
+lex_save(LexState *s)
 {
-        state->s = chars;
-        state->loc = loc;
+        *s = state;
 }
 
 void
-lex_rewind(struct lex_state const *state)
+lex_rewind(LexState const *s)
 {
-        chars = state->s;
-        loc = state->loc;
+        state = *s;
 }
 
 void
 lex_end(void)
 {
-        chars = *vec_pop(states);
+        state = *vec_pop(states);
 }
 
 static struct token *
 lex(char const *s)
 {
-        lex_start(s);
+        LexState st = {
+                .loc = (struct location) { 0 },
+                .end = s + strlen(s)
+        };
+
+        lex_start(&st);
+
         struct token *t = malloc(sizeof *t);
         *t = lex_token(LEX_INFIX);
+
         lex_end();
+
         return t;
-}
-
-TEST(bigop)
-{
-        claim(lex("\n\n+++++++++++++++++")->type == TOKEN_ERROR);
-}
-
-TEST(op)
-{
-        struct token op = (lex_start("&&"), lex_token(LEX_INFIX));
-        claim(op.type == TOKEN_AND);
-}
-
-TEST(id)
-{
-        struct token id = (lex_start("_abc123"), lex_token(LEX_INFIX));
-        claim(id.type == TOKEN_IDENTIFIER);
-        claim(strcmp(id.identifier, "_abc123") == 0);
-}
-
-TEST(str)
-{
-        struct token *str = lex("'test'");
-        claim(str->type == TOKEN_STRING);
-        claim(strcmp(str->string, "test") == 0);
-
-        str = lex("'test\\'ing'");
-        claim(str != NULL);
-        claim(str->type == TOKEN_STRING);
-        claim(strcmp(str->string, "test'ing") == 0);
-
-        str = lex("\"test'ing\"");
-        claim(str != NULL);
-        claim(str->type == TOKEN_SPECIAL_STRING);
-        claim(strcmp(str->strings.items[0], "test'ing") == 0);
-}
-
-TEST(integer)
-{
-        struct token *integer = lex("010");
-        claim(integer != NULL);
-        claim(integer->type == TOKEN_INTEGER);
-        claim(integer->integer == 010);
-
-        integer = lex("0xFF");
-        claim(integer != NULL);
-        claim(integer->type == TOKEN_INTEGER);
-        claim(integer->integer == 0xFF);
-
-        integer = lex("1283");
-        claim(integer != NULL);
-        claim(integer->type == TOKEN_INTEGER);
-        claim(integer->integer == 1283);
-
-        integer = lex("1283ssd");
-
-        claim(integer->type == TOKEN_ERROR);
-        claim(strstr(lex_error(), "trailing") != NULL);
-}
-
-TEST(special)
-{
-        struct token *s = lex("\"4 + 5 = {4 + 5}\"");
-        claim(s->type == TOKEN_SPECIAL_STRING);
-        claim(s->strings.count == 2);
-        claim(s->expressions.count == 1);
-}
-
-TEST(real)
-{
-#define almostequal(a, b) (fabs((a) - (b)) <= 0.001)
-        struct token *real = lex("10.0");
-        claim(real != NULL);
-        claim(real->type == TOKEN_REAL);
-        claim(almostequal(real->real, 10.0));
-
-        real = lex("0.123");
-        claim(real != NULL);
-        claim(real->type == TOKEN_REAL);
-        claim(almostequal(real->real, 0.123));
-
-        real = lex("0.4");
-        claim(real != NULL);
-        claim(real->type == TOKEN_REAL);
-        claim(almostequal(real->real, 0.4));
-#undef almostequal
-}
-
-TEST(keyword)
-{
-        struct token kw;
-
-        lex_start("return");
-        kw = lex_token(LEX_INFIX);
-        claim(kw.type == TOKEN_KEYWORD);
-        claim(kw.keyword == KEYWORD_RETURN);
-
-        lex_start("break;");
-        kw = lex_token(LEX_INFIX);
-        claim(kw.type == TOKEN_KEYWORD);
-        claim(kw.keyword == KEYWORD_BREAK);
-
-        lex_start("break_ing_news");
-        kw = lex_token(LEX_INFIX);
-        claim(kw.type == TOKEN_IDENTIFIER);
-        claim(strcmp(kw.identifier, "break_ing_news") == 0);
-}
-
-TEST(invalid_op)
-{
-        struct token t;
-
-        lex_start("a <$> b;");
-        t = lex_token(LEX_INFIX);
-        t = lex_token(LEX_INFIX);
-        claim(t.type == TOKEN_ERROR);
-        claim(strstr(lex_error(), "invalid operator") != NULL);
-}
-
-TEST(comment)
-{
-        claim((lex_start("/* /* good comment */ */"), lex_token(LEX_INFIX).type != TOKEN_ERROR));
-        claim((lex_start("/* /* /* bad comment */ */"), lex_token(LEX_INFIX).type == TOKEN_ERROR));
-        claim(strstr(lex_error(), "unterminated comment") != NULL);
 }

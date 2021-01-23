@@ -17,16 +17,17 @@
 #include "sqlite.h"
 
 static bool use_readline = true;
+static char buffer[8192];
+
 
 static char *
 readln(void)
 {
-        static char buffer[8192];
-
-        if (use_readline)
+        if (use_readline) {
                 return readline("> ");
-        else
+        } else {
                 return fgets(buffer, sizeof buffer, stdin);
+        }
 }
 
 static void
@@ -34,7 +35,7 @@ execln(char *line)
 {
         static char buffer[8192];
 
-        if (strspn(line, " \t\n") == strlen(line))
+        if (line[strspn(line, " \t\n")] == '\0')
                 return;
 
         /*
@@ -52,21 +53,18 @@ execln(char *line)
 
         }
 
-        strcat(line, "\n");
-
-        sprintf(buffer, "print(%s);", line);
-        if (vm_execute(buffer))
+        snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
+        if (vm_execute(buffer + 1))
                 goto Add;
-        if (strstr(vm_error(), "ParseError") != NULL && vm_execute(line))
+        snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
+        if (strstr(vm_error(), "ParseError") != NULL && vm_execute(buffer + 1))
                 goto Add;
 
         fprintf(stderr, "%s\n", vm_error());
 Add:
         if (use_readline) {
-                line[strcspn(line, "\n")] = '\0';
                 add_history(line);
         }
-
 
         fflush(stdout);
 }

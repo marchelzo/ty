@@ -4,6 +4,7 @@
 struct location {
         int line;
         int col;
+        char const *s;
 };
 
 #endif

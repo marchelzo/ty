@@ -3,35 +3,35 @@
 
 #include "location.h"
 
-enum lex_context {
+typedef enum LexContext {
         LEX_PREFIX,
         LEX_INFIX
-};
+} LexContext;
 
-struct lex_state {
-        char const *s;
+typedef struct LexState {
         struct location loc;
-};
+        char const *end;
+} LexState;
 
 char const *
 lex_error(void);
 
 void
-lex_init(char const *file);
+lex_init(char const *file, char const *src);
 
 void
-lex_start(char const *s);
+lex_start(LexState const *state);
+
+void
+lex_rewind(LexState const *s);
 
 void
 lex_end(void);
 
 struct token
-lex_token(enum lex_context ctx);
+lex_token(LexContext ctx);
 
 void
-lex_save(struct lex_state *state);
-
-void
-lex_rewind(struct lex_state const *state);
+lex_save(LexState *state);
 
 #endif

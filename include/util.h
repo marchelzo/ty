@@ -7,6 +7,12 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <unistd.h>
+
+#define ESC(n) (isatty(2) ? ("\x1b[" #n "m") : "")
+#define ERR_SIZE 4096
+
+extern char ERR[ERR_SIZE];
 
 uintmax_t
 umax(uintmax_t a, uintmax_t b);

@@ -68,10 +68,6 @@
 
 typedef struct expression *parse_fn();
 
-enum {
-        MAX_ERR_LEN  = 2048
-};
-
 /*
  * Meaningful names for different contexts in which we can parse lvalues.
  *
@@ -88,14 +84,15 @@ enum {
 };
 
 static jmp_buf jb;
-static char errbuf[MAX_ERR_LEN + 1];
 
 static struct table uops;
 static vec(struct token) tokens;
 static int tokidx = 0;
-enum lex_context lex_ctx = LEX_PREFIX;
+LexContext lex_ctx = LEX_PREFIX;
 
-static struct location loc;
+static struct location Start;
+static struct location End;
+
 static int depth;
 static bool NoEquals = false;
 
@@ -104,9 +101,8 @@ static param_list pnames;
 
 static char const *filename;
 
-static struct statement BREAK_STATEMENT    = { .type = STATEMENT_BREAK,    .loc = {42, 42}  };
-static struct statement CONTINUE_STATEMENT = { .type = STATEMENT_CONTINUE, .loc = {42, 42}  };
-static struct statement NULL_STATEMENT     = { .type = STATEMENT_NULL,     .loc = {42, 42}  };
+noreturn static void
+error(char const *fmt, ...);
 
 static struct statement *
 parse_statement(void);
@@ -150,6 +146,9 @@ prefix_parenthesis(void);
 inline static struct token *
 tok(void);
 
+inline static struct token *
+token(int i);
+
 char *
 mksym(int s)
 {
@@ -174,7 +173,8 @@ inline static struct expression *
 mkexpr(void)
 {
         struct expression *e = alloc(sizeof *e);
-        e->loc = loc;
+        e->start = Start;
+        e->end = End;
         return e;
 }
 
@@ -182,7 +182,8 @@ inline static struct statement *
 mkstmt(void)
 {
         struct statement *s = alloc(sizeof *s);
-        s->loc = loc;
+        s->start = Start;
+        s->end = End;
         return s;
 }
 
@@ -212,29 +213,6 @@ mkdef(struct expression *lvalue, char *name)
         return s;
 }
 
-noreturn static void
-error(char const *fmt, ...)
-{
-        if (fmt == NULL) {
-                strcpy(errbuf, lex_error());
-        } else {
-                va_list ap;
-                va_start(ap, fmt);
-
-                int n = 0;
-
-                char *err = errbuf;
-                n += sprintf(err, "ParseError: %s:%d:%d: ", filename, tok()->loc.line + 1, tok()->loc.col + 1);
-                vsnprintf(err + n, MAX_ERR_LEN - n, fmt, ap);
-
-                va_end(ap);
-        }
-
-        LOG("Parse Error: %s", errbuf);
-
-        longjmp(jb, 1);
-}
-
 inline static void
 skip(int n)
 {
@@ -259,7 +237,9 @@ token(int i)
                 vec_push(tokens, t);
         }
 
-        loc = tokens.items[tokidx + i].loc;
+        Start = tokens.items[tokidx + i].start;
+        End = tokens.items[tokidx + i].end;
+
         return &tokens.items[tokidx + i];
 }
 
@@ -280,10 +260,51 @@ unconsume(int type)
                 tokens,
                 ((struct token){
                         .type = type,
-                        .loc = loc
+                        .start = Start,
+                        .end = End
                 }),
                 tokidx
         );
+}
+
+noreturn static void
+error(char const *fmt, ...)
+{
+        if (fmt == NULL) {
+                strcpy(ERR, lex_error());
+        } else {
+                va_list ap;
+                va_start(ap, fmt);
+
+                int sz = ERR_SIZE - 1;
+                char *err = ERR;
+                int n = snprintf(err, sz, "ParseError: ");
+
+                n += vsnprintf(err + n, sz - n, fmt, ap);
+                va_end(ap);
+
+                struct location ctx = tok()->start;
+                for (int i = 0; i < tokens.count && token(-i)->start.line == ctx.line; ++i) {
+                        ctx = token(-i)->start;
+                }
+                
+                char buffer[256];
+                snprintf(buffer, sizeof buffer, "at %s:%d:%d", filename, tok()->start.line + 1, tok()->start.col + 1);
+
+                n += snprintf(
+                        err + n,
+                        sz - n,
+                        "\n\n\t%20.20s near: %.*s",
+                        buffer,
+                        (int)strcspn(ctx.s, "\n"),
+                        ctx.s
+                );
+
+        }
+
+        LOG("Parse Error: %s", ERR);
+
+        longjmp(jb, 1);
 }
 
 static void
@@ -373,22 +394,16 @@ prefix_special_string(void)
         e->strings.items = tok()->strings.items;
         e->strings.count = tok()->strings.count;
 
-        char **exprs = tok()->expressions.items;
+        LexState *exprs = tok()->expressions.items;
         int count = tok()->expressions.count;
-
-        struct location *locs = tok()->locations.items;
 
         consume(TOKEN_SPECIAL_STRING);
 
         for (int i = 0; i < count; ++i) {
-                lex_start(exprs[i]);
+                lex_start(&exprs[i]);
                 vec_push(e->expressions, parse_expr(0));
                 if (tok()->type != TOKEN_END) {
-                        /*
-                         * This results in a more accurate location in the error message.
-                         */
-                        tok()->loc = locs[i];
-                        error("expression in interpolated string has trailing tokens: %s", exprs[i]);
+                        error("expression in interpolated string has trailing tokens");
                 }
                 consume(TOKEN_END);
                 lex_end();
@@ -483,6 +498,9 @@ prefix_function(void)
 
         consume('(');
 
+        bool ne = NoEquals;
+        NoEquals = true;
+
         while (tok()->type != ')') {
                 bool rest = false;
                 if (tok()->type == TOKEN_STAR) {
@@ -494,14 +512,14 @@ prefix_function(void)
                 vec_push(e->params, sclone(tok()->identifier));
                 next();
 
-                if (!rest && tok()->type == TOKEN_CHECK_MATCH) {
+                if (!rest && tok()->type == ':') {
                         next();
                         vec_push(e->constraints, parse_expr(0));
                 } else {
                         vec_push(e->constraints, NULL);
                 }
 
-                if (!rest && tok()->type == ':') {
+                if (!rest && tok()->type == TOKEN_EQ) {
                         next();
                         vec_push(e->dflts, parse_expr(0));
                 } else {
@@ -516,6 +534,8 @@ prefix_function(void)
                         next();
                 }
         }
+
+        NoEquals = ne;
 
         consume(')');
 
@@ -782,7 +802,7 @@ prefix_array(void)
 {
         consume('[');
 
-        struct lex_state ls;
+        LexState ls;
         lex_save(&ls);
 
         lex_ctx = LEX_INFIX;
@@ -1882,10 +1902,10 @@ parse_if_statement(void)
 static struct statement *
 parse_match_statement(void)
 {
-        consume_keyword(KEYWORD_MATCH);
-
         struct statement *s = mkstmt();
         s->type = STATEMENT_MATCH;
+
+        consume_keyword(KEYWORD_MATCH);
 
         s->match.e = parse_expr(-1);
 
@@ -1927,17 +1947,18 @@ parse_match_statement(void)
 static struct statement *
 parse_function_definition(void)
 {
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_FUNCTION_DEFINITION;
+
         struct expression *f = prefix_function();
         if (f->name == NULL)
-                error("unnamed function definitions cannot be used as statements");
+                error("anonymous function definition used in statement context");
 
         struct expression *target = mkexpr();
         target->type = EXPRESSION_IDENTIFIER;
         target->identifier = f->name;
         target->module = NULL;
 
-        struct statement *s = mkstmt();
-        s->type = STATEMENT_FUNCTION_DEFINITION;
         s->target = target;
         s->value = f;
         
@@ -1976,17 +1997,17 @@ parse_operator_directive(void)
 
         consume(TOKEN_NEWLINE);
 
-        return &NULL_STATEMENT;
+        return NULL;
 }
 
 static struct statement *
 parse_return_statement(void)
 {
-        consume_keyword(KEYWORD_RETURN);
-
         struct statement *s = mkstmt();
         s->type = STATEMENT_RETURN;
         vec_init(s->returns);
+
+        consume_keyword(KEYWORD_RETURN);
 
         while (tok()->type != ';') {
         Expr:
@@ -2030,16 +2051,15 @@ parse_let_definition(void)
 static struct statement *
 parse_break_statement(void)
 {
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_BREAK;
+
         consume_keyword(KEYWORD_BREAK);
 
-        struct statement *s;
-
         if (tok()->type != ';') {
-                s = mkstmt();
-                s->type = STATEMENT_BREAK;
                 s->expression = parse_expr(0);
         } else {
-                s = &BREAK_STATEMENT;
+                s->expression = NULL;
         }
 
         consume(';');
@@ -2050,16 +2070,25 @@ parse_break_statement(void)
 static struct statement *
 parse_continue_statement(void)
 {
+        struct statement *s = mkstmt();
+
         consume_keyword(KEYWORD_CONTINUE);
         consume(';');
-        return &CONTINUE_STATEMENT;
+
+        s->type = STATEMENT_CONTINUE;
+
+        return s;
 }
 
 static struct statement *
 parse_null_statement()
 {
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_NULL;
+
         consume(';');
-        return &NULL_STATEMENT;
+
+        return s;
 }
 
 static struct expression *
@@ -2075,6 +2104,7 @@ parse_expr(int prec)
                 error("expected expression but found %s", token_show(tok()));
 
         e = f();
+        struct location start = e->start;
 
         while (prec < get_infix_prec()) {
                 f = get_infix_parser();
@@ -2084,6 +2114,9 @@ parse_expr(int prec)
         }
 
         --depth;
+
+        e->start = start;
+        e->end = token(-1)->end;
 
         return e;
 }
@@ -2355,7 +2388,7 @@ Expression:
 char const *
 parse_error(void)
 {
-        return errbuf;
+        return ERR;
 }
 
 struct statement **
@@ -2372,12 +2405,10 @@ parse(char const *source, char const *file)
         tokidx = 0;
         lex_ctx = LEX_PREFIX;
 
-        lex_init(file);
-        lex_start(source);
+        lex_init(file, source);
 
         if (setjmp(jb) != 0) {
                 vec_empty(program);
-                lex_end();
                 return NULL;
         }
 
@@ -2387,217 +2418,13 @@ parse(char const *source, char const *file)
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT)
                 vec_push(program, parse_export());
 
-        while (tok()->type != TOKEN_END)
-                vec_push(program, parse_statement());
+        while (tok()->type != TOKEN_END) {
+                struct statement *s = parse_statement();
+                if (s != NULL)
+                        vec_push(program, s);
+        }
 
         vec_push(program, NULL);
 
-        lex_end();
-
         return program.items;
-}
-
-#define parse(s) parse(s, "<test>")
-
-TEST(break_statement)
-{
-        char const *source = "break;";
-        struct statement **p = parse(source);
-        struct statement *s = p[0];
-
-        claim(p[1] == NULL);
-
-        claim(s != NULL);
-        claim(s->type == STATEMENT_BREAK);
-        claim(s == &BREAK_STATEMENT);
-}
-
-TEST(parse_error)
-{
-        char const *source = "function a (,) { }";
-        struct statement **p = parse(source);
-        claim(p == NULL);
-
-        claim(strstr(parse_error(), "but found token ','"));
-}
-
-TEST(trivial_function)
-{
-        claim(parse("function f();") != NULL);
-}
-
-TEST(number)
-{
-        claim(parse("45.3;") != NULL);
-}
-
-TEST(string)
-{
-        claim(parse("'hello, world!';") != NULL);
-}
-
-TEST(function_call)
-{
-        struct statement **s;
-
-        claim((s = parse("f();")) != NULL);
-
-        claim((s = parse("f(43);")) != NULL);
-
-        claim((s = parse("f(a, b, g(c));")) != NULL);
-}
-
-TEST(parenthesized_expression)
-{
-        claim(parse("(((3)));") != NULL);
-}
-
-TEST(plus_op)
-{
-        struct statement *s = parse("a + 4 + f();")[0];
-        claim(s->type == STATEMENT_EXPRESSION);
-        claim(s->expression->type == EXPRESSION_PLUS);
-        claim(s->expression->left->type == EXPRESSION_PLUS);
-        claim(s->expression->left->left->type == EXPRESSION_IDENTIFIER);
-        claim(s->expression->left->right->type == EXPRESSION_INTEGER);
-}
-
-TEST(object_literal)
-{
-        
-        struct statement *s = parse("1 + {};")[0];
-        claim(s->type == STATEMENT_EXPRESSION);
-        claim(s->expression->type == EXPRESSION_PLUS);
-        claim(s->expression->right->type == EXPRESSION_DICT);
-        claim(s->expression->right->keys.count == 0);
-        claim(s->expression->right->values.count == 0);
-
-        s = parse("1 + {4 + 3: 'test'};")[0];
-        claim(s->type == STATEMENT_EXPRESSION);
-        claim(s->expression->type == EXPRESSION_PLUS);
-        claim(s->expression->right->type == EXPRESSION_DICT);
-        claim(s->expression->right->keys.count == 1);
-        claim(s->expression->right->values.count == 1);
-        claim(s->expression->right->keys.items[0]->type == EXPRESSION_PLUS);
-        claim(s->expression->right->values.items[0]->type == EXPRESSION_STRING);
-}
-
-TEST(array_literal)
-{
-        struct statement *s = parse("[1, 2, 3];")[0];
-        claim(s->type == STATEMENT_EXPRESSION);
-        claim(s->expression->type == EXPRESSION_ARRAY);
-        claim(s->expression->elements.count == 3);
-}
-
-TEST(test_programs)
-{
-        char *test_progs[] = {
-                "tests/programs/hello",
-                "tests/programs/factorial",
-                "tests/programs/closure",
-        };
-
-        for (size_t i = 0; i < sizeof test_progs / sizeof test_progs[0]; ++i) {
-                struct statement **p = parse(slurp(test_progs[i]));
-                if (p == NULL) {
-                        printf("\n%s: %s\n", test_progs[i], parse_error());
-                        claim(false);
-                }
-        }
-}
-
-TEST(method_call)
-{
-        struct statement **p = parse("buffer.verticalSplit();");
-        claim(p != NULL);
-
-        struct statement *s = p[0];
-        claim(s->type == STATEMENT_EXPRESSION);
-        claim(s->expression->type == EXPRESSION_METHOD_CALL);
-        claim(s->expression->object->type == EXPRESSION_IDENTIFIER);
-        claim(strcmp(s->expression->object->identifier, "buffer") == 0);
-        claim(strcmp(s->expression->method_name, "verticalSplit") == 0);
-        claim(s->expression->method_args.count == 0);
-}
-
-TEST(let)
-{
-        claim(parse("let a = 12;") != NULL);
-        claim(parse("let [a, b] = [12, 14];") != NULL);
-        claim(parse("let [[a1, a2], b] = [[12, 19], 14];") != NULL);
-
-        claim(parse("let a[3] = 5;") == NULL);
-        claim(strstr(parse_error(), "failed to parse lvalue in 'let' definition") != NULL);
-}
-
-TEST(each_loop)
-{
-        struct statement **p = parse("for (a in as) print(a);");
-        claim(p != NULL);
-
-        struct statement *s = p[0];
-        claim(s->type == STATEMENT_EACH_LOOP);
-        claim(s->each.array->type == EXPRESSION_IDENTIFIER);
-        claim(s->each.target->type == EXPRESSION_IDENTIFIER);
-        claim(s->each.body->type == STATEMENT_EXPRESSION);
-        claim(s->each.body->expression->type == EXPRESSION_FUNCTION_CALL);
-}
-
-TEST(arrow)
-{
-        struct statement **p = parse("let f = (a, b) -> a + b;");
-        claim(p != NULL);
-
-        struct statement *s = p[0];
-        claim(s->type == STATEMENT_DEFINITION);
-        claim(s->value->type == EXPRESSION_FUNCTION);
-        claim(s->value->params.count == 2);
-        claim(s->value->body->type == STATEMENT_RETURN);
-        claim(s->value->body->returns.items[0]->type == EXPRESSION_PLUS);
-}
-
-TEST(import)
-{
-        struct statement **p = parse("import editor::buffer as buffer\n");
-        claim(p != NULL);
-
-        struct statement *s = p[0];
-        claim(s->type == STATEMENT_IMPORT);
-        printf("module: %s", s->import.module);
-        claim(strcmp(s->import.module, "editor/buffer") == 0);
-        claim(strcmp(s->import.as, "buffer") == 0);
-}
-
-TEST(div_vs_regex)
-{
-        claim(parse("print(100 / 5 / 2);") != NULL);
-}
-
-TEST(regex)
-{
-        parse("/hello/;");
-        printf("%s\n", parse_error());
-}
-
-TEST(match)
-{
-        claim(parse("match g(4, [4]) { Add([a, b]) | a != 0 => return a + b;, Mul([a, b]) => a * b; }") != NULL);
-}
-
-TEST(special_string)
-{
-        claim(parse("let s = \"{a +}\";") == NULL);
-        claim(parse("let s = \"{a + 4}\";") != NULL);
-}
-
-TEST(method_defs)
-{
-        claim(parse("tag Foo;") != NULL);
-        claim(parse("tag Baz {}") != NULL);
-        claim(parse("tag Baz { foo(a, b, c) { return 42 * 10; } }") != NULL);
-
-        claim(parse("tag Bar") == NULL);
-        claim(parse("tag Blah { 5 }") == NULL);
-        claim(parse("tag Blah {") == NULL);
 }

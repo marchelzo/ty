@@ -19,7 +19,7 @@ compiler_symbol_count(void);
 char *
 compiler_load_prelude(void);
 
-struct location
-compiler_get_location(char const *code, char const **file);
+char const *
+compiler_get_location(char const *code, struct location *start, struct location *end);
 
 #endif

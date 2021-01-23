@@ -47,7 +47,8 @@ struct statement {
                 STATEMENT_IMPORT,
                 STATEMENT_EXPORT,
         } type;
-        struct location loc;
+        struct location start;
+        struct location end;
         union {
                 struct expression *expression;
                 struct expression *throw;
@@ -126,36 +127,39 @@ struct expression {
                 EXPRESSION_INTEGER,
                 EXPRESSION_BOOLEAN,
                 EXPRESSION_STRING,
-                EXPRESSION_SPECIAL_STRING,
                 EXPRESSION_REAL,
-                EXPRESSION_REGEX,
-
-                EXPRESSION_STATEMENT,
-                EXPRESSION_FUNCTION_CALL,
-                EXPRESSION_MEMBER_ACCESS,
-                EXPRESSION_SUBSCRIPT,
                 EXPRESSION_ARRAY,
                 EXPRESSION_ARRAY_COMPR,
+                EXPRESSION_STATEMENT,
                 EXPRESSION_DICT,
                 EXPRESSION_DICT_COMPR,
-                EXPRESSION_METHOD_CALL,
                 EXPRESSION_IDENTIFIER,
                 EXPRESSION_TAG,
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_CONDITIONAL,
                 EXPRESSION_EQ,
                 EXPRESSION_MAYBE_EQ,
-                EXPRESSION_DOT_DOT,
-                EXPRESSION_DOT_DOT_DOT,
-
-                EXPRESSION_MATCH,
-
                 EXPRESSION_TICK,
+                EXPRESSION_PREFIX_QUESTION,
+                EXPRESSION_PREFIX_BANG,
+                EXPRESSION_NIL,
+                EXPRESSION_LIST,
+
+                EXPRESSION_KEEP_LOC,
+
+                EXPRESSION_MUST_EQUAL,
+                EXPRESSION_REGEX,
+                EXPRESSION_SPECIAL_STRING,
+                EXPRESSION_FUNCTION_CALL,
+                EXPRESSION_MEMBER_ACCESS,
+                EXPRESSION_SUBSCRIPT,
+                EXPRESSION_METHOD_CALL,
                 EXPRESSION_MATCH_NOT_NIL,
                 EXPRESSION_MATCH_REST,
+                EXPRESSION_DOT_DOT,
+                EXPRESSION_DOT_DOT_DOT,
+                EXPRESSION_MATCH,
                 EXPRESSION_VIEW_PATTERN,
-
-
                 EXPRESSION_PLUS,
                 EXPRESSION_MINUS,
                 EXPRESSION_STAR,
@@ -172,32 +176,22 @@ struct expression {
                 EXPRESSION_DBL_EQ,
                 EXPRESSION_NOT_EQ,
                 EXPRESSION_CHECK_MATCH,
-
                 EXPRESSION_PLUS_EQ,
                 EXPRESSION_STAR_EQ,
                 EXPRESSION_DIV_EQ,
                 EXPRESSION_MINUS_EQ,
-
                 EXPRESSION_PREFIX_MINUS,
-                EXPRESSION_PREFIX_BANG,
                 EXPRESSION_PREFIX_HASH,
-                EXPRESSION_PREFIX_QUESTION,
                 EXPRESSION_PREFIX_AT,
                 EXPRESSION_PREFIX_INC,
                 EXPRESSION_PREFIX_DEC,
-
                 EXPRESSION_POSTFIX_INC,
                 EXPRESSION_POSTFIX_DEC,
-
-                EXPRESSION_NIL,
-
-                EXPRESSION_LIST,
-
-                EXPRESSION_MUST_EQUAL,
         } type;
 
         char const *filename;
-        struct location loc;
+        struct location start;
+        struct location end;
 
         union {
                 intmax_t integer;

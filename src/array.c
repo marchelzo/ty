@@ -1477,18 +1477,20 @@ array_all(struct value *array, int argc)
         int n = array->array->count;
 
         if (argc == 0) {
-                for (int i = 0; i < n; ++i)
+                for (int i = 0; i < n; ++i) {
                         if (!value_truthy(&array->array->items[i]))
                                 return BOOLEAN(false);
+                }
         } else if (argc == 1) {
                 struct value pred = ARG(0);
 
                 if (!CALLABLE(pred))
                         vm_panic("non-predicate passed to the all? method on array");
 
-                for (int i = 0; i < n; ++i)
+                for (int i = 0; i < n; ++i) {
                         if (!value_apply_predicate(&pred, &array->array->items[i]))
                                 return BOOLEAN(false);
+                }
         } else {
                 vm_panic("the all? method on arrays expects 0 or 1 argument(s) but got %d", argc);
         }

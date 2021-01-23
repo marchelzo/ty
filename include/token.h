@@ -7,6 +7,7 @@
 
 #include "vec.h"
 #include "location.h"
+#include "lex.h"
 
 struct token {
         enum {
@@ -64,7 +65,8 @@ struct token {
                 TOKEN_CHECK_MATCH,
                 TOKEN_ERROR,
         } type;
-        struct location loc;
+        struct location start;
+        struct location end;
         union {
                 enum {
                         KEYWORD_RETURN,
@@ -99,8 +101,9 @@ struct token {
                 };
                 struct {
                         vec(char *) strings;
-                        vec(char *) expressions;
-                        vec(struct location) locations;
+                        vec(LexState) expressions;
+                        vec(struct location) starts;
+                        vec(struct location) ends;
                 };
                 struct {
                         char *module;

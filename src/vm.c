@@ -1,5 +1,6 @@
 #include <time.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <setjmp.h>
@@ -48,7 +49,7 @@
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
-  #define CASE(i) case INSTR_ ## i: loc = compiler_get_location(ip, &fname); LOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
+  #define CASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); LOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
 #else
   #define CASE(i) case INSTR_ ## i:
 #endif
@@ -95,8 +96,7 @@ static int symbol_count;
 
 static char const *filename;
 
-static char const *err_msg;
-static char err_buf[8192];
+static char const *Error;
 
 static struct {
         char const *module;
@@ -540,9 +540,30 @@ vm_exec(char *code)
                         push(TAG(tags_lookup("MatchError")));
                         goto Throw;
                 CASE(BAD_CALL)
+                        v = pop();
                         str = ip;
                         ip += strlen(ip) + 1;
-                        vm_panic("Constraint on '%s' violated in call to '%s'", ip, str);
+                        vm_panic(
+                                "constraint on %s%s%s%s%s violated in call to %s%s%s%s%s: %s%s%s = %s%s%s",
+                                ESC(34),
+                                ESC(1),
+                                ip,
+                                ESC(22),
+                                ESC(39),
+
+                                ESC(34),
+                                ESC(1),
+                                str,
+                                ESC(22),
+                                ESC(39),
+
+                                ESC(34),
+                                ESC(1),
+                                ip,
+                                value_show(&v),
+                                ESC(22),
+                                ESC(39)
+                        );
                         break;
                 CASE(THROW)
 Throw:
@@ -1048,8 +1069,20 @@ Throw:
                                 n = CLASS_FLOAT;
                                 goto ClassLookup;
                         case VALUE_FUNCTION:
+                        case VALUE_METHOD:
+                        case VALUE_BUILTIN_FUNCTION:
+                        case VALUE_BUILTIN_METHOD:
                                 n = CLASS_FUNCTION;
                                 goto ClassLookup;
+                        case VALUE_CLASS:
+                                vp = class_lookup_method(v.class, member, h);
+                                if (vp == NULL) {
+                                        n = CLASS_CLASS;
+                                        goto ClassLookup;
+                                } else {
+                                        push(*vp);
+                                }
+                                break;
                         case VALUE_OBJECT:
                                 vp = table_lookup(v.object, member, h);
                                 if (vp != NULL) {
@@ -1072,10 +1105,6 @@ ClassLookup:
                                 break;
                         case VALUE_TAG:
                                 vp = tags_lookup_method(v.tag, member, h);
-                                push(vp == NULL ? NIL : *vp);
-                                break;
-                        case VALUE_CLASS:
-                                vp = class_lookup_method(v.class, member, h);
                                 push(vp == NULL ? NIL : *vp);
                                 break;
                         default:
@@ -1237,19 +1266,23 @@ BadContainer:
                         if (top()->type == VALUE_CLASS) {
                                 v = pop();
                                 if (v.class < CLASS_PRIMITIVE) switch (top()->type) {
-                                case VALUE_INTEGER:  push(BOOLEAN(v.class == CLASS_INT));      break;
-                                case VALUE_REAL:     push(BOOLEAN(v.class == CLASS_FLOAT));    break;
-                                case VALUE_BOOLEAN:  push(BOOLEAN(v.class == CLASS_BOOL));     break;
-                                case VALUE_ARRAY:    push(BOOLEAN(v.class == CLASS_ARRAY));    break;
-                                case VALUE_STRING:   push(BOOLEAN(v.class == CLASS_STRING));   break;
-                                case VALUE_BLOB:     push(BOOLEAN(v.class == CLASS_BLOB));     break;
-                                case VALUE_DICT:     push(BOOLEAN(v.class == CLASS_DICT));     break;
-                                case VALUE_FUNCTION: push(BOOLEAN(v.class == CLASS_FUNCTION)); break;
-                                case VALUE_REGEX:    push(BOOLEAN(v.class == CLASS_REGEX));    break;
-                                default:             push(BOOLEAN(false));                     break;
+                                case VALUE_INTEGER:  *top() = BOOLEAN(v.class == CLASS_INT);      break;
+                                case VALUE_REAL:     *top() = BOOLEAN(v.class == CLASS_FLOAT);    break;
+                                case VALUE_BOOLEAN:  *top() = BOOLEAN(v.class == CLASS_BOOL);     break;
+                                case VALUE_ARRAY:    *top() = BOOLEAN(v.class == CLASS_ARRAY);    break;
+                                case VALUE_STRING:   *top() = BOOLEAN(v.class == CLASS_STRING);   break;
+                                case VALUE_BLOB:     *top() = BOOLEAN(v.class == CLASS_BLOB);     break;
+                                case VALUE_DICT:     *top() = BOOLEAN(v.class == CLASS_DICT);     break;
+                                case VALUE_CLASS:    *top() = BOOLEAN(v.class == CLASS_CLASS);    break;
+                                case VALUE_METHOD:
+                                case VALUE_BUILTIN_METHOD:
+                                case VALUE_BUILTIN_FUNCTION:
+                                case VALUE_FUNCTION: *top() = BOOLEAN(v.class == CLASS_FUNCTION); break;
+                                case VALUE_REGEX:    *top() = BOOLEAN(v.class == CLASS_REGEX);    break;
+                                default:             *top() = BOOLEAN(false);                     break;
                                 } else {
                                         *top() = BOOLEAN(top()->type == VALUE_OBJECT &&
-                                                         top()->class == v.class);
+                                                         class_is_subclass(top()->class, v.class));
                                 }
                         } else {
                                 n = 1;
@@ -1612,7 +1645,11 @@ CallMethod:
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_method(value.class, method, h);
-                                self = NULL;
+                                if (vp == NULL) {
+                                        vp = class_lookup_method(CLASS_CLASS, method, h);
+                                } else {
+                                        self = NULL;
+                                }
                                 break;
                         case VALUE_OBJECT:
                                 vp = table_lookup(value.object, method, h);
@@ -1679,7 +1716,7 @@ CallMethod:
 char const *
 vm_error(void)
 {
-        return err_msg;
+        return Error;
 }
 
 bool
@@ -1702,7 +1739,7 @@ vm_init(int ac, char **av)
 
         char *prelude = compiler_load_prelude();
         if (prelude == NULL) {
-                err_msg = compiler_error();
+                Error = compiler_error();
                 return false;
         }
 
@@ -1715,7 +1752,7 @@ vm_init(int ac, char **av)
         }
 
         if (setjmp(jb) != 0) {
-                err_msg = err_buf;
+                Error = ERR;
                 return false;
         }
 
@@ -1730,24 +1767,108 @@ vm_panic(char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        char const *file;
-        struct location loc = compiler_get_location(ip, &file);
+        struct location start;
+        struct location end;
 
-        int sz = sizeof err_buf;
+        int sz = ERR_SIZE - 1;
 
-        char const *f = (file != NULL) ? file : "PRELUDE";
-        int n = snprintf(err_buf, sz, "RuntimeError: %s:%d:%d: ", f, loc.line + 1, loc.col + 1);
-        n += vsnprintf(err_buf + n, max(sz - n, 0), fmt, ap);
+        int n = snprintf(ERR, sz, "%s%sRuntimeError%s%s: ", ESC(1), ESC(31), ESC(22), ESC(39));
+        n += vsnprintf(ERR + n, max(sz - n, 0), fmt, ap);
         va_end(ap);
 
-        while (calls.count != 0 && n < sz) {
+        for (int i = 0; n < sz; ++i) {
+                char const *file = compiler_get_location(ip, &start, &end);
+
+                char buffer[512];
+
+                snprintf(
+                        buffer,
+                        sizeof buffer - 1,
+                        "%36s %s%s%s:%s%d%s:%s%d%s",
+                        (i == 0) ? "at" : "from",
+                        ESC(34),
+                        file,
+                        ESC(39),
+                        ESC(33),
+                        start.line + 1,
+                        ESC(39),
+                        ESC(33),
+                        start.col + 1,
+                        ESC(39)
+                );
+
+                char const *where = buffer;
+                int m = strlen(buffer) - 6*strlen(ESC(00));
+
+                while (m > 36) {
+                        m -= 1;
+                        where += 1;
+                }
+
+                n += snprintf(
+                        ERR + n,
+                        sz - n,
+                        "\n%s near: ",
+                        where
+                );
+
+                char const *prefix = start.s;
+
+                while (prefix[-1] != '\0' && prefix[-1] != '\n')
+                        --prefix;
+
+                while (isspace(prefix[0]))
+                        ++prefix;
+
+                int before = start.s - prefix;
+                int length = end.s - start.s;
+                int after = strcspn(end.s, "\n");
+
+                n += snprintf(
+                        ERR + n,
+                        sz - n,
+                        "%.*s%s%s%.*s%s%s%.*s",
+                        before,
+                        prefix,
+                        ESC(1),
+                        ESC(91),
+                        length,
+                        start.s,
+                        ESC(39),
+                        ESC(22),
+                        after,
+                        end.s
+                );
+
+                n += snprintf(
+                        ERR + n,
+                        sz - n,
+                        "\n\t%*s%s%s",
+                        before + 35,
+                        "",
+                        ESC(1),
+                        ESC(91)
+                );
+
+                for (int i = 0; i < length && n < sz; ++i)
+                        ERR[n++] = '^';
+
+                n += snprintf(
+                        ERR + n,
+                        sz - n,
+                        "%s%s",
+                        ESC(39),
+                        ESC(22)
+                );
+
+                if (calls.count == 0) {
+                        break;
+                }
+
                 ip = *vec_pop(calls);
-                loc = compiler_get_location(ip, &file);
-                f = (file != NULL) ? file : "PRELUDE";
-                n += snprintf(err_buf + n, sz - n, "\n\tfrom: %s:%d:%d", f, loc.line + 1, loc.col + 1);
         }
 
-        LOG("VM Error: %s", err_buf);
+        LOG("VM Error: %s", ERR);
 
         longjmp(jb, 1);
 }
@@ -1757,14 +1878,19 @@ vm_execute_file(char const *path)
 {
         char *source = slurp(path);
         if (source == NULL) {
-                err_msg = "failed to read source file";
+                Error = "failed to read source file";
                 return false;
         }
 
         filename = path;
 
         bool success = vm_execute(source);
-        free(source);
+        /*
+         * When we read the file, we copy into an allocated buffer with a 0 byte at
+         * the beginning, so we need to subtract 1 here to get something appropriate
+         * for free().
+         */
+        free(source - 1);
 
         filename = NULL;
 
@@ -1779,8 +1905,8 @@ vm_execute(char const *source)
 
         char *code = compiler_compile_source(source, filename);
         if (code == NULL) {
-                err_msg = compiler_error();
-                LOG("compiler error was: %s", err_msg);
+                Error = compiler_error();
+                LOG("compiler error was: %s", Error);
                 return false;
         }
 
@@ -1799,7 +1925,7 @@ vm_execute(char const *source)
                 sp_stack.count = 0;
                 try_stack.count = 0;
                 targets.count = 0;
-                err_msg = err_buf;
+                Error = ERR;
                 return false;
         }
 

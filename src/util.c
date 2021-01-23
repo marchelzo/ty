@@ -11,7 +11,10 @@
 
 #include "panic.h"
 #include "alloc.h"
+#include "util.h"
 #include "vec.h"
+
+char ERR[ERR_SIZE];
 
 uintmax_t
 umax(uintmax_t a, uintmax_t b)
@@ -71,21 +74,23 @@ slurp(char const *path)
                         return NULL;
                 }
 
-                char *s = alloc(n + 1);
-                memcpy(s, p, n);
-                s[n] = '\0';
+                char *s = alloc(n + 2);
+                memcpy(s + 1, p, n);
+                s[0] = s[n + 1] = '\0';
 
                 munmap(p, n);
                 close(fd);
 
-                return s;
+                return s + 1;
         } else {
                 vec(char) s;
+                vec_init(s);
+
+                vec_push(s, '\0');
+
                 char b[1UL << 14];
                 int r;
 
-                vec_init(s);
-                
                 while ((r = read(fd, b, sizeof b)) > 0) {
                         for (int i = 0; i < r; ++i) {
                                 vec_push(s, b[i]);
@@ -93,7 +98,7 @@ slurp(char const *path)
                 }
 
                 vec_push(s, '\0');
-                return s.items;
-        }
 
+                return s.items + 1;
+        }
 }
