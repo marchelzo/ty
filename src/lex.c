@@ -505,7 +505,7 @@ lexop(void)
         char op[MAX_OP_LEN + 1] = {0};
         size_t i = 0;
         
-        while (contains(opchars, C(0))) {
+        while (contains(opchars, C(0)) || (C(0) == ':' && (C(-1) != '*' || i > 1 || (contains(opchars, C(1)) && C(1) != '-')))) {
                 if (i == MAX_OP_LEN) {
                         error("operator contains too many characters: '%s...'", op);
                 } else {
@@ -542,6 +542,7 @@ lexlinecomment(void)
                 ;
 
         state.need_nl = false;
+        Start = state.loc;
 
         return need_nl;
 }
@@ -568,6 +569,8 @@ lexcomment(void)
 
         /* skip the final / */
         nextchar();
+
+        Start = state.loc;
 }
 
 struct token
@@ -597,7 +600,7 @@ lex_token(LexContext ctx)
                         return lexregex();
                 } else if (haveid()) {
                         return lexword();
-                } else if (C(0) == ':' && C(1) == ':') {
+                } else if (C(0) == ':' && C(1) == ':' && !contains(opchars, C(2))) {
                         nextchar();
                         nextchar();
                         return mktoken(TOKEN_CHECK_MATCH);
@@ -605,7 +608,7 @@ lex_token(LexContext ctx)
                         nextchar();
                         nextchar();
                         return mktoken(TOKEN_ARROW);
-                } else if (C(0) == '-' && ctx == LEX_PREFIX) {
+                } else if (C(0) == '-' && C(1) != '-' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken(TOKEN_MINUS);
                 } else if (C(0) == '#' && ctx == LEX_PREFIX) {
@@ -623,7 +626,7 @@ lex_token(LexContext ctx)
                 } else if (C(0) == '$' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken('$');
-                } else if (contains(opchars, C(0))) {
+                } else if (contains(opchars, C(0)) || (C(0) == ':' && contains(opchars, C(1)) && C(1) != '-')) {
                         return lexop();
                 } else if (isdigit(C(0))) {
                         return lexnum();
@@ -643,7 +646,9 @@ lex_token(LexContext ctx)
                 }
         }
 
-        return (struct token) { .type = TOKEN_END, .start = Start, .end = state.loc, .ctx = state.ctx };
+        struct location start = Start;
+        struct location end = state.loc;
+        return (struct token) { .type = TOKEN_END, .start = start, .end = end, .ctx = state.ctx };
 }
 
 char const *

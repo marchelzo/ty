@@ -69,6 +69,7 @@ struct try {
         char *catch;
         char *finally;
         char *end;
+        bool executing;
 };
 
 struct target {
@@ -567,10 +568,20 @@ vm_exec(char *code)
                         break;
                 CASE(THROW)
 Throw:
-                        if (try_stack.count == 0)
+                        if (try_stack.count == 0) {
                                 vm_panic("uncaught exception: %s%s%s", TERM(31), value_show(top()), TERM(39));
+                        }
 
                         struct try *t = vec_last(try_stack);
+
+                        if (t->executing) {
+                                vm_panic(
+                                        "an exception was thrown while handling another exception: %s%s%s",
+                                        TERM(31), value_show(top()), TERM(39)
+                                );
+                        } else {
+                                t->executing = true;
+                        }
 
                         v = pop();
                         stack.count = t->sp;
@@ -621,6 +632,7 @@ Throw:
                         t.gc = gc_root_set_count();
                         t.cs = calls.count;
                         t.ts = targets.count;
+                        t.executing = false;
                         vec_push(try_stack, t);
                         break;
                 }
@@ -653,6 +665,26 @@ Throw:
                         v.extra = (pcre_extra *) s2;
                         if (!value_apply_predicate(&v, top()))
                                 ip += n;
+                        break;
+                CASE(ENSURE_DICT)
+                        READVALUE(n);
+                        if (top()->type != VALUE_DICT) {
+                                ip += n;
+                        }
+                        break;
+                CASE(ENSURE_CONTAINS)
+                        READVALUE(n);
+                        v = pop();
+                        if (!dict_has_value(top()->dict, &v)) {
+                                ip += n;
+                        }
+                        break;
+                CASE(ENSURE_SAME_KEYS)
+                        READVALUE(n);
+                        v = pop();
+                        if (!dict_same_keys(top()->dict, v.dict)) {
+                                ip += n;
+                        }
                         break;
                 CASE(TRY_INDEX)
                         READVALUE(i);
@@ -1647,10 +1679,9 @@ CallMethod:
                                 vp = class_lookup_method(CLASS_FUNCTION, method, h);
                                 break;
                         case VALUE_CLASS: /* lol */
-                                vp = class_lookup_method(value.class, method, h);
+                                vp = class_lookup_immediate(CLASS_CLASS, method, h);
                                 if (vp == NULL) {
-                                        vp = class_lookup_method(CLASS_CLASS, method, h);
-                                } else {
+                                        vp = class_lookup_method(value.class, method, h);
                                         self = NULL;
                                 }
                                 break;
@@ -1778,6 +1809,9 @@ vm_panic(char const *fmt, ...)
         int n = snprintf(ERR, sz, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
         n += vsnprintf(ERR + n, max(sz - n, 0), fmt, ap);
         va_end(ap);
+
+        if (n < sz)
+                ERR[n++] = '\n';
 
         for (int i = 0; n < sz; ++i) {
                 char const *file = compiler_get_location(ip, &start, &end);
@@ -2055,256 +2089,4 @@ vm_mark(void)
 
         for (int i = 0; i < sigfns.count; ++i)
                 value_mark(&sigfns.items[i].f);
-}
-
-TEST(let)
-{
-        char const *source = "let a = 5;";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.integer == 5);
-}
-
-TEST(loop)
-{
-        char const *source = "let a = 0; for (let i = 0; i < 10; i = i + 1) a = a + 2;";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        LOG("value is %d", (int) vars[0 + builtin_count]->value.integer);
-        claim(vars[0 + builtin_count]->value.integer == 20);
-}
-
-TEST(func)
-{
-        char const *source = "let a = 0; let f = function () { a = a + 1; }; f(); f();";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        LOG("value is %d", (int) vars[0 + builtin_count]->value.integer);
-        claim(vars[0 + builtin_count]->value.integer == 2);
-}
-
-TEST(stress) // OFF
-{
-        char const *source = "let n = 0; for (let i = 0; i < 1000000; i = i + 1) { n = n + 1; }";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        LOG("value is %d", (int) vars[0 + builtin_count]->value.integer);
-        claim(vars[0 + builtin_count]->value.integer == 1000000);
-}
-
-TEST(stress2) // OFF
-{
-        char const *source = "let n = 0; for (let i = 0; i < 1000000; i = i + 1) { n = n + (function () return 1;)(); }";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        LOG("value is %d", (int) vars[0 + builtin_count]->value.integer);
-        claim(vars[0 + builtin_count]->value.integer == 1000000);
-}
-
-TEST(array)
-{
-        char const *source = "let a = [1, 2 + 2, 16];";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_ARRAY);
-        claim(vars[0 + builtin_count]->value.array->count == 3);
-        claim(vars[0 + builtin_count]->value.array->items[0].type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.array->items[1].type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.array->items[2].type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.array->items[0].integer == 1);
-        claim(vars[0 + builtin_count]->value.array->items[1].integer == 4);
-        claim(vars[0 + builtin_count]->value.array->items[2].integer == 16);
-}
-
-TEST(object)
-{
-        char const *source = "let o = {'test': 'hello'};";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_DICT);
-        struct value *v = dict_get_member(vars[0 + builtin_count]->value.dict, "test");
-        claim(v != NULL);
-        claim(strcmp(v->string, "hello") == 0);
-}
-
-TEST(member_access)
-{
-        char const *source = "let o = {'test': 'hello'}; let h = o.test;";
-
-        vm_init(0, NULL);
-
-        if (!vm_execute(source))
-                printf("error: %s\n", vm_error());
-
-        claim(vars[1 + builtin_count]->value.type == VALUE_STRING);
-        claim(strcmp(vars[1 + builtin_count]->value.string, "hello") == 0);
-}
-
-TEST(subscript)
-{
-        char const *source = "let o = {'test': 'hello'}; let h = o['test'];";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[1 + builtin_count]->value.type == VALUE_STRING);
-        claim(strcmp(vars[1 + builtin_count]->value.string, "hello") == 0);
-}
-
-TEST(array_lvalue)
-{
-        char const *source = "let [a, [b, c]] = [4, [10, 16]];";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.integer == 4);
-
-        claim(vars[1 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[1 + builtin_count]->value.integer == 10);
-
-        claim(vars[2 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[2 + builtin_count]->value.integer == 16);
-}
-
-TEST(array_subscript)
-{
-        char const *source = "let a = [4, 5, 6]; a[0] = 42; let b = a[0];";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[1 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[1 + builtin_count]->value.integer == 42);
-}
-
-TEST(func_with_args)
-{
-        char const *source = "let a = 0; let f = function (k) { return k + 10; }; a = f(32);";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.integer == 42);
-}
-
-TEST(if_else)
-{
-        char const *source = "let [a, b] = [nil, nil]; if (false) { a = 48; } else { a = 42; } if (true) { b = 42; } else { b = 98; }";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[0 + builtin_count]->value.integer == 42);
-
-        claim(vars[1 + builtin_count]->value.type == VALUE_INTEGER);
-        claim(vars[1 + builtin_count]->value.integer == 42);
-}
-
-TEST(recursive_func)
-{
-        char const *source = "let a = 0; function f(k) if (k == 1) return 1; else return k * f(k - 1); a = f(5);";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_INTEGER);
-        LOG("a = %d", (int) vars[0 + builtin_count]->value.integer);
-        claim(vars[0 + builtin_count]->value.integer == 120);
-}
-
-TEST(method_call)
-{
-        char const *source = "let o = nil; o = {'name': 'foobar', 'getName': function () { return o.name; }}; o = o.getName();";
-
-        vm_init(0, NULL);
-
-        vm_execute(source);
-
-        claim(vars[0 + builtin_count]->value.type == VALUE_STRING);
-        claim(strcmp(vars[0 + builtin_count]->value.string, "foobar") == 0);
-}
-
-TEST(print)
-{
-        vm_init(0, NULL);
-        vm_execute("print(45);");
-}
-
-
-TEST(each)
-{
-        vm_init(0, NULL);
-        claim(vm_execute("let o = { 'name': 'Bob', 'age':  19 };"));
-        claim(vm_execute("for (k in @o) { print(k); print(o[k]); print('---'); }"));
-}
-
-TEST(bench)
-{
-        vm_init(0, NULL);
-        vm_execute("for (let i = 0; i < 1000; i = i + 1) { let [a, b, c] = [{}, {}, {}]; }");
-}
-
-TEST(factorial)
-{
-        vm_init(0, NULL);
-
-        vm_execute("let f = function (k) if (k == 1) return 1; else return k * f(k - 1);;");
-        vm_execute("f(5);");
-}
-
-TEST(match)
-{
-        vm_init(0, NULL);
-
-        vm_execute("match 4 { 4 | false => print('oh no!');, 5 => print('oh dear!');, 4 => print('Yes!'); }");
-}
-
-TEST(tagmatch)
-{
-
-        vm_init(0, NULL);
-
-        vm_execute("tag Add; match Add(4) { Add(k) => print(k); }");
-}
-
-TEST(matchrest)
-{
-        vm_init(0, NULL);
-        vm_execute("match [4, 5, 6] { [4, *xs] => print(xs); }");
 }

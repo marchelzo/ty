@@ -116,8 +116,9 @@ struct state {
         bool each_loop;
         bool loop_want_result;
 
-        uint64_t try;
-        uint64_t loop;
+        int finally;
+        int try;
+        int loop;
 
         import_vector imports;
         vec(char *) exports;
@@ -187,26 +188,106 @@ fail(char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        int n = sprintf(ERR, "CompileError: ");
-        n += vsnprintf(ERR + n, sizeof ERR - n, fmt, ap);
-        
-        char buffer[256];
-        snprintf(buffer, sizeof buffer, "at %s:%d:%d", state.filename, state.start.line + 1, state.start.col + 1);
+        int sz = ERR_SIZE - 1;
+        char *err = ERR;
+        int n = snprintf(ERR, sz, "%s%sCompileError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
+
+        n += vsnprintf(err + n, sz - n, fmt, ap);
+        va_end(ap);
+
+        struct location start = state.start;
+        struct location end = state.end;
+
+        char buffer[512];
+
+        snprintf(
+                buffer,
+                sizeof buffer - 1,
+                "%36s %s%s%s:%s%d%s:%s%d%s",
+                "at",
+                TERM(34),
+                state.filename,
+                TERM(39),
+                TERM(33),
+                start.line + 1,
+                TERM(39),
+                TERM(33),
+                start.col + 1,
+                TERM(39)
+        );
+
+        char const *where = buffer;
+        int m = strlen(buffer) - 6*strlen(TERM(00));
+
+        while (m > 36) {
+                m -= 1;
+                where += 1;
+        }
 
         n += snprintf(
                 ERR + n,
-                sizeof ERR - n,
-                "\n\n\t%20.20s near: %.*s",
-                buffer,
-                (int)strcspn(state.start.s, "\n"),
-                state.start.s
+                sz - n,
+                "\n\n%s near: ",
+                where
+        );
+
+        char const *prefix = start.s;
+
+        while (prefix[-1] != '\0' && prefix[-1] != '\n')
+                --prefix;
+
+        while (isspace(prefix[0]))
+                ++prefix;
+
+        int before = start.s - prefix;
+        int length = end.s - start.s;
+        int after = strcspn(end.s, "\n");
+
+        if (length == 0) {
+                length = 1;
+                end.s += 1;
+        }
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "%s%.*s%s%s%.*s%s%s%.*s%s",
+                TERM(32),
+                before,
+                prefix,
+                TERM(1),
+                TERM(91),
+                length,
+                start.s,
+                TERM(32),
+                TERM(22),
+                after,
+                end.s,
+                TERM(39)
+        );
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "\n\t%*s%s%s",
+                before + 35,
+                "",
+                TERM(1),
+                TERM(91)
+        );
+
+        for (int i = 0; i < length && n < sz; ++i)
+                ERR[n++] = '^';
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "%s%s",
+                TERM(39),
+                TERM(22)
         );
 
         Error = ERR;
-
-        LOG("Failing with error: %s", ERR);
-
-        va_end(ap);
 
         longjmp(jb, 1);
 }
@@ -516,6 +597,8 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                 break;
         case EXPRESSION_DICT:
                 if (target->dflt != NULL) {
+                        state.start = target->dflt->start;
+                        state.end = target->dflt->end;
                         fail("unexpected default clause in dict destructuring");
                 }
                 for (int i = 0; i < target->keys.count; ++i) {
@@ -566,6 +649,12 @@ symbolize_pattern(struct scope *scope, struct expression *e)
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < e->elements.count; ++i)
                         symbolize_pattern(scope, e->elements.items[i]);
+                break;
+        case EXPRESSION_DICT:
+                for (int i = 0; i < e->keys.count; ++i) {
+                        symbolize_expression(scope, e->keys.items[i]);
+                        symbolize_pattern(scope, e->values.items[i]);
+                }
                 break;
         case EXPRESSION_LIST:
                 for (int i = 0; i < e->es.count; ++i)
@@ -1071,10 +1160,13 @@ emit_function(struct expression const *e)
         state.bound_symbols.items = e->bound_symbols.items;
         state.bound_symbols.count = e->bound_symbols.count;
         ++state.function_depth;
-        uint64_t loop_save = state.loop;
-        uint64_t try_save = state.try;
-        uint64_t each_loop_save = state.each_loop;
-        state.loop = state.try = state.each_loop = 0;
+        int loop_save = state.loop;
+        int try_save = state.try;
+        bool finally_save = state.finally;
+        bool each_loop_save = state.each_loop;
+        int t_save = t;
+        state.loop = state.try = t = 0;
+        state.each_loop = state.finally = false;
 
         emit_int(e->param_symbols.count);
         emit_int(e->bound_symbols.count);
@@ -1164,7 +1256,9 @@ emit_function(struct expression const *e)
         --state.function_depth;
         state.loop = loop_save;
         state.try = try_save;
+        state.finally = finally_save;
         state.each_loop = each_loop_save;
+        t = t_save;
 
         if (e->function_symbol != NULL) {
                 emit_instr(INSTR_TARGET_VAR);
@@ -1305,8 +1399,11 @@ emit_try(struct statement const *s)
         size_t end_offset = state.code.count;
         emit_int(-1);
 
-        uint64_t try_save = state.try;
+        int try_save = state.try;
         state.try = ++t;
+
+        bool finally_save = state.finally;
+        state.finally = false;
 
         bool returns = emit_statement(s->try.s, false);
 
@@ -1329,10 +1426,13 @@ emit_try(struct statement const *s)
         state.match_successes = successes_save;
 
         state.try = try_save;
+        state.finally = finally_save;
 
         if (s->try.finally != NULL) {
                 PATCH_JUMP(finally_offset);
+                state.finally = true;
                 returns &= emit_statement(s->try.finally, false);
+                state.finally = false;
                 PATCH_JUMP(end_offset);
                 emit_instr(INSTR_NOP);
         } else {
@@ -1356,7 +1456,7 @@ emit_while_loop(struct statement const *s, bool want_result)
         bool loop_wr_save = state.loop_want_result;
         state.loop_want_result = want_result;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = loop_save;
 
         vec_init(state.continues);
@@ -1400,7 +1500,7 @@ emit_for_loop(struct statement const *s, bool want_result)
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         if (s->for_loop.init != NULL)
@@ -1448,6 +1548,7 @@ emit_try_match(struct expression const *pattern)
 {
         size_t start = state.code.count;
         bool need_loc = false;
+        bool set = true;
 
         switch (pattern->type) {
         case EXPRESSION_IDENTIFIER:
@@ -1470,6 +1571,7 @@ emit_try_match(struct expression const *pattern)
                 emit_symbol(pattern->symbol->symbol);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
+                need_loc = true;
                 break;
         case EXPRESSION_VIEW_PATTERN:
                 emit_instr(INSTR_DUP);
@@ -1510,6 +1612,50 @@ emit_try_match(struct expression const *pattern)
                         emit_int(0);
                 }
 
+                break;
+        case EXPRESSION_DICT:
+                /*
+                 * If there are only keys and no values, we interpret this as a Set
+                 * pattern and just test equality. Otherwise any keys without values
+                 * must be present, but they don't need to be the *only* entries.
+                 *
+                 *  e.g., { [4], 10, "foo" } will only match the Dict containing exactly
+                 *      those 3 values.
+                 *
+                 *      Meanwhile, { [4], 10, "foo": f } matches any Dict containing [4]
+                 *      and 10. "foo" doesn't need to be present because `f` is allowed to be
+                 *      nil. { [4], 10, "foo": $f } would require the key "foo" to be present.
+                 */
+                for (int i = 0; i < pattern->keys.count; ++i) {
+                        if (pattern->values.items[i] != NULL) {
+                                set = false;
+                                break;
+                        }
+                }
+                if (set) {
+                        emit_expression(pattern);
+                        emit_instr(INSTR_ENSURE_SAME_KEYS);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
+                } else {
+                        emit_instr(INSTR_ENSURE_DICT);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
+                        for (int i = 0; i < pattern->keys.count; ++i) {
+                                if (pattern->values.items[i] != NULL) {
+                                        emit_instr(INSTR_DUP);
+                                        emit_expression(pattern->keys.items[i]);
+                                        emit_instr(INSTR_SUBSCRIPT);
+                                        emit_try_match(pattern->values.items[i]);
+                                        emit_instr(INSTR_POP);
+                                } else {
+                                        emit_expression(pattern->keys.items[i]);
+                                        emit_instr(INSTR_ENSURE_CONTAINS);
+                                        vec_push(state.match_fails, state.code.count);
+                                        emit_int(0);
+                                }
+                        }
+                }
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_DUP);
@@ -1677,7 +1823,7 @@ emit_while_match(struct statement const *s, bool want_result)
         bool loop_wr_save = state.loop_want_result;
         state.loop_want_result = want_result;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = loop_save;
 
         vec_init(state.breaks);
@@ -1736,7 +1882,7 @@ emit_while_let(struct statement const *s, bool want_result)
         bool loop_wr_save = state.loop_want_result;
         state.loop_want_result = want_result;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         vec_init(state.breaks);
@@ -1882,7 +2028,7 @@ emit_dict_compr2(struct expression const *e)
         bool each_loop_save = state.each_loop;
         state.each_loop = true;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         offset_vector brk_save = state.breaks;
@@ -1975,7 +2121,7 @@ emit_dict_compr(struct expression const *e)
         bool each_loop_save = state.each_loop;
         state.each_loop = true;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         offset_vector brk_save = state.breaks;
@@ -2045,7 +2191,7 @@ emit_array_compr2(struct expression const *e)
         bool each_loop_save = state.each_loop;
         state.each_loop = true;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         offset_vector brk_save = state.breaks;
@@ -2133,7 +2279,7 @@ emit_array_compr(struct expression const *e)
         bool each_loop_save = state.each_loop;
         state.each_loop = true;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         offset_vector brk_save = state.breaks;
@@ -2200,7 +2346,7 @@ emit_for_each2(struct statement const *s, bool want_result)
         bool loop_wr_save = state.loop_want_result;
         state.loop_want_result = want_result;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         offset_vector brk_save = state.breaks;
@@ -2287,7 +2433,7 @@ emit_for_each(struct statement const *s)
         bool each_loop_save = state.each_loop;
         state.each_loop = true;
 
-        uint64_t loop_save = state.loop;
+        int loop_save = state.loop;
         state.loop = ++t;
 
         offset_vector brk_save = state.breaks;
@@ -2856,11 +3002,20 @@ emit_statement(struct statement const *s, bool want_result)
                 returns |= emit_try(s);
                 break;
         case STATEMENT_THROW:
+                if (state.finally) {
+                        fail("invalid 'throw' statment (occurs in a finally block)");
+                }
                 returns |= emit_throw(s);
                 break;
         case STATEMENT_RETURN:
-                if (state.function_depth == 0)
+                if (state.function_depth == 0) {
                         fail("invalid 'return' statement (not inside of a function)");
+                }
+
+                if (state.finally) {
+                        fail("invalid 'return' statment (occurs in a finally block)");
+                }
+
                 /* returning from within a for-each loop must be handled specially */
                 if (state.each_loop) {
                         emit_instr(INSTR_POP);
@@ -2877,8 +3032,11 @@ emit_statement(struct statement const *s, bool want_result)
                         emit_instr(INSTR_POP_VAR);
                         emit_symbol(state.bound_symbols.items[i]->symbol);
                 }
-                if (state.try)
+
+                if (state.try) {
                         emit_instr(INSTR_FINALLY);
+                }
+
                 if (s->returns.count > 1) {
                         emit_instr(INSTR_MULTI_RETURN);
                         emit_int((int)s->returns.count - 1);
@@ -2888,8 +3046,9 @@ emit_statement(struct statement const *s, bool want_result)
                 returns = true;
                 break;
         case STATEMENT_BREAK:
-                if (state.try > state.loop)
+                if (state.try > state.loop) {
                         emit_instr(INSTR_FINALLY);
+                }
 
                 if (state.each_loop) {
                         emit_instr(INSTR_POP);

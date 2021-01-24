@@ -128,6 +128,18 @@ dict_get_value(struct dict *d, struct value *key)
         return NULL;
 }
 
+bool
+dict_has_value(struct dict *d, struct value *key)
+{
+        unsigned long h = value_hash(key);
+        size_t i = find_spot(d->size, d->hashes, d->keys, h, key);
+
+        if (d->keys[i].type != 0)
+                return true;
+
+        return false;;
+}
+
 void
 dict_put_value(struct dict *d, struct value key, struct value value)
 {
@@ -303,6 +315,33 @@ dict_clone(struct value *d, int argc)
 
         OKGC(new);
         return DICT(new);
+}
+
+bool
+dict_same_keys(struct dict const *d, struct dict const *u)
+{
+        if (d->count != u->count)
+                return false;
+
+        for (size_t i = 0; i < d->size;) {
+                if (d->keys[i].type == 0) {
+                        i += 1;
+                        continue;
+                }
+                size_t j = find_spot(
+                        u->size,
+                        u->hashes,
+                        u->keys,
+                        d->hashes[i],
+                        &d->keys[i]
+                );
+                if (u->keys[j].type == 0) {
+                        return false;
+                }
+                i += 1;
+        }
+
+        return true;
 }
 
 struct value

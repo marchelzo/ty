@@ -111,6 +111,9 @@ enum instruction {
         INSTR_UNTAG_OR_DIE,
         INSTR_ENSURE_LEN,
         INSTR_ENSURE_EQUALS_VAR,
+        INSTR_ENSURE_DICT,
+        INSTR_ENSURE_CONTAINS,
+        INSTR_ENSURE_SAME_KEYS,
 
         // binary operators
         INSTR_ADD,

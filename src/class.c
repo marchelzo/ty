@@ -81,6 +81,13 @@ class_lookup_method(int class, char const *name, unsigned long h)
         return NULL;
 }
 
+struct value *
+class_lookup_immediate(int class, char const *name, unsigned long h)
+{
+        struct table const *t = &tables.items[class];
+        return table_lookup(t, name, h);
+}
+
 bool
 class_is_subclass(int sub, int super)
 {

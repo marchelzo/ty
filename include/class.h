@@ -24,6 +24,9 @@ class_copy_methods(int dst, int src);
 struct value *
 class_lookup_method(int class, char const *name, unsigned long h);
 
+struct value *
+class_lookup_immediate(int class, char const *name, unsigned long h);
+
 inline static struct value *
 class_method(int class, char const *name)
 {

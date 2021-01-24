@@ -54,6 +54,28 @@ class Object {
     members(self) {
         return members(self);
     }
+
+    <|>(self, other) {
+        return c -> (c :: self) || (c :: other);
+    }
+
+    <&>(self, other) {
+        return c -> (c :: self) && (c :: other);
+    }
+
+    <::>(self, other) {
+        return x -> (self(x) :: other);
+    }
+}
+
+class Class {
+    <|>(self, other) {
+        return c -> (c :: self) || (c :: other);
+    }
+
+    <&>(self, other) {
+        return c -> (c :: self) && (c :: other);
+    }
 }
 
 class Function {
@@ -120,6 +142,10 @@ class Array : Iterable {
         return Generator(function () {
             if (i < xs.len()) return xs[i++];
         });
+    }
+
+    __subscript__(T) {
+        return (xs -> xs.all?(x -> x :: T));
     }
 }
 
@@ -263,8 +289,14 @@ class Bool {
 
 class Regex {
     init(x)  { return regex(x);    }
+
     ~=(r, s) { return s.match!(r); }
+
     ?(r, s)  { return s.match?(r); }
+
+    __match__(r, s) {
+        return (s :: String) && s.match?(r);
+    }
 }
 
 class Generator : Iter {
@@ -752,6 +784,10 @@ class Range : Iterable {
 	return self ? k;
     }
 
+    __match__(self, x) {
+        return (x :: (Int <|> Float)) && (self ? x);
+    }
+
     has?(self, k) {
         return self ? k;
     }
@@ -793,10 +829,13 @@ class InclusiveRange : Range {
 
 function id(x) { return x; }
 
-operator ?  5  left
-operator ** 10 right
-operator << 7  left
-operator >> 7  left
-operator &  6  left
-operator ^  5  left
-operator .| 4  left
+operator ?    5  left
+operator **   10 right
+operator <<   7  left
+operator >>   7  left
+operator &    6  left
+operator ^    5  left
+operator .|   4  left
+operator <|>  5  left
+operator <&>  5  left
+operator <::>  3  left

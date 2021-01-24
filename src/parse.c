@@ -1,6 +1,7 @@
 #include <setjmp.h>
 #include <stdarg.h>
 #include <string.h>
+#include <ctype.h>
 #include <stdbool.h>
 #include <assert.h>
 #include <errno.h>
@@ -305,32 +306,120 @@ error(char const *fmt, ...)
         if (fmt == NULL)
                 goto End;
 
+        if (tok()->type == TOKEN_ERROR) {
+                /*
+                 * The lexer already wrote an error message into ERR
+                 */
+                goto End;
+        }
+
         va_list ap;
         va_start(ap, fmt);
 
         int sz = ERR_SIZE - 1;
         char *err = ERR;
-        int n = snprintf(err, sz, "ParseError: ");
+        int n = snprintf(ERR, sz, "%s%sParseError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
 
         n += vsnprintf(err + n, sz - n, fmt, ap);
         va_end(ap);
 
-        struct location ctx = tok()->start;
-        for (int i = 0; i < tokens.count && token(-i)->start.line == ctx.line; ++i) {
-                ctx = token(-i)->start;
+        struct location start = tok()->start;
+        struct location end = tok()->end;
+
+        char buffer[512];
+
+        snprintf(
+                buffer,
+                sizeof buffer - 1,
+                "%36s %s%s%s:%s%d%s:%s%d%s",
+                "at",
+                TERM(34),
+                filename,
+                TERM(39),
+                TERM(33),
+                start.line + 1,
+                TERM(39),
+                TERM(33),
+                start.col + 1,
+                TERM(39)
+        );
+
+        char const *where = buffer;
+        int m = strlen(buffer) - 6*strlen(TERM(00));
+
+        while (m > 36) {
+                m -= 1;
+                where += 1;
         }
-        
-        char buffer[256];
-        snprintf(buffer, sizeof buffer, "at %s:%d:%d", filename, tok()->start.line + 1, tok()->start.col + 1);
 
         n += snprintf(
-                err + n,
+                ERR + n,
                 sz - n,
-                "\n\n\t%20.20s near: %.*s",
-                buffer,
-                (int)strcspn(ctx.s, "\n"),
-                ctx.s
+                "\n\n%s near: ",
+                where
         );
+
+        if (tok()->type == TOKEN_END) {
+                start.s -= 2;
+                end.s = start.s + 1;
+        }
+
+        char const *prefix = start.s;
+
+        while (prefix[-1] != '\0' && prefix[-1] != '\n')
+                --prefix;
+
+        while (isspace(prefix[0]))
+                ++prefix;
+
+        int before = start.s - prefix;
+        int length = end.s - start.s;
+        int after = strcspn(end.s, "\n");
+
+        if (length == 0) {
+                length = 1;
+                end.s += 1;
+        }
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "%s%.*s%s%s%.*s%s%s%.*s%s",
+                TERM(32),
+                before,
+                prefix,
+                TERM(1),
+                TERM(91),
+                length,
+                start.s,
+                TERM(32),
+                TERM(22),
+                after,
+                end.s,
+                TERM(39)
+        );
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "\n\t%*s%s%s",
+                before + 35,
+                "",
+                TERM(1),
+                TERM(91)
+        );
+
+        for (int i = 0; i < length && n < sz; ++i)
+                ERR[n++] = '^';
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "%s%s",
+                TERM(39),
+                TERM(22)
+        );
+
 
         LOG("Parse Error: %s", ERR);
 End:
@@ -645,17 +734,19 @@ opfunc(void)
 static struct expression *
 prefix_star(void)
 {
-        consume(TOKEN_STAR);
-
         struct expression *e = mkexpr();
         e->type = EXPRESSION_MATCH_REST;
 
+        consume(TOKEN_STAR);
         expect(TOKEN_IDENTIFIER);
+
         e->identifier = tok()->identifier;
         if (tok()->module != NULL)
                 error("unexpected module qualifier in lvalue");
 
         consume(TOKEN_IDENTIFIER);
+
+        e->end = End;
 
         return e;
 }
@@ -668,6 +759,8 @@ prefix_if(void)
         e->type = EXPRESSION_STATEMENT;
         e->statement = parse_if_statement();
 
+        e->end = e->statement->end;
+
         return e;
 }
 
@@ -678,6 +771,7 @@ prefix_while(void)
 
         e->type = EXPRESSION_STATEMENT;
         e->statement = parse_while_loop();
+        e->end = e->statement->end;
 
         return e;
 }
@@ -689,6 +783,7 @@ prefix_for(void)
 
         e->type = EXPRESSION_STATEMENT;
         e->statement = parse_for_loop();
+        e->end = e->statement->end;
 
         return e;
 }
@@ -696,12 +791,13 @@ prefix_for(void)
 static struct expression *
 prefix_match(void)
 {
-        consume_keyword(KEYWORD_MATCH);
-
         struct expression *e = mkexpr();
         e->type = EXPRESSION_MATCH;
 
+        consume_keyword(KEYWORD_MATCH);
+
         e->subject = parse_expr(-1);
+        e->end = e->subject->end = End;
 
         consume('{');
 
@@ -957,7 +1053,7 @@ prefix_incrange(void)
         consume(TOKEN_DOT_DOT_DOT);
 
         e->left = zero;
-        e->right = parse_expr(0);
+        e->right = parse_expr(7);
         e->end = e->right->end;
 
         return e;
@@ -976,7 +1072,7 @@ prefix_range(void)
         consume(TOKEN_DOT_DOT);
 
         e->left = zero;
-        e->right = parse_expr(0);
+        e->right = parse_expr(7);
         e->end = e->right->end;
 
         return e;
@@ -1101,21 +1197,24 @@ prefix_arrow(void)
 static struct expression *
 prefix_object(void)
 {
-        consume('{');
-
         struct expression *e = mkexpr();
         e->type = EXPRESSION_DICT;
         e->dflt = NULL;
+
+        consume('{');
 
         vec_init(e->keys);
         vec_init(e->values);
 
         while (tok()->type != '}') {
                 if (tok()->type == TOKEN_STAR && token(1)->type == ':') {
+                        struct location start = tok()->start;
                         next();
                         next();
                         unconsume(TOKEN_ARROW);
                         e->dflt = parse_expr(0);
+                        e->dflt->start = start;
+                        e->dflt->end = End;
                 } else {
                         vec_push(e->keys, parse_expr(0));
                         if (tok()->type == ':') {
@@ -1228,6 +1327,7 @@ infix_user_op(struct expression *left)
         struct expression *e = mkexpr();
 
         e->type = EXPRESSION_METHOD_CALL;
+        e->start = left->start;
         e->maybe = false;
         e->object = left;
         e->method_name = tok()->identifier;
@@ -2292,13 +2392,16 @@ parse_class_definition(void)
 static struct statement *
 parse_throw(void)
 {
-        consume_keyword(KEYWORD_THROW);
-
         struct statement *s = mkstmt();
         s->type = STATEMENT_THROW;
+
+        consume_keyword(KEYWORD_THROW);
+
         s->throw = parse_expr(0);
 
         consume(';');
+
+        s->end = End;
 
         return s;
 }
