@@ -375,6 +375,7 @@ Start:
         vec_push(str, '\0');
         vec_push(special.strings, str.items);
 
+        special.end = state.loc;
         return special;
 
 Expr:

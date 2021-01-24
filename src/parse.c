@@ -20,27 +20,27 @@
 #include "log.h"
 #include "vm.h"
 
-#define BINARY_OPERATOR(name, token, prec, right_assoc) \
+#define BINARY_OPERATOR(name, t, prec, right_assoc) \
         static struct expression * \
         infix_ ## name(struct expression *left) \
         { \
-                consume(TOKEN_ ## token); \
+                consume(TOKEN_ ## t); \
                 struct expression *e = mkexpr(); \
-                e->type = EXPRESSION_ ## token; \
+                e->type = EXPRESSION_ ## t; \
                 e->left = left; \
                 e->right = parse_expr(prec - (right_assoc ? 1 : 0)); \
                 e->start = left->start; \
-                e->end = End; \
+                e->end = token(-1)->end; \
                 return e; \
         } \
 
-#define BINARY_LVALUE_OPERATOR(name, token, prec, right_assoc) \
+#define BINARY_LVALUE_OPERATOR(name, t, prec, right_assoc) \
         static struct expression * \
         infix_ ## name(struct expression *left) \
         { \
-                consume(TOKEN_ ## token); \
+                consume(TOKEN_ ## t); \
                 struct expression *e = mkexpr(); \
-                e->type = EXPRESSION_ ## token; \
+                e->type = EXPRESSION_ ## t; \
                 e->target = assignment_lvalue(left); \
                 e->value = parse_expr(prec - (right_assoc ? 1 : 0)); \
                 e->start = e->target->start; \
@@ -56,6 +56,7 @@
                 struct expression *e = mkexpr(); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = parse_expr(prec); \
+                e->end = End; \
                 return e; \
         } \
 
@@ -67,6 +68,7 @@
                 struct expression *e = mkexpr(); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = assignment_lvalue(parse_expr(prec)); \
+                e->end = End; \
                 return e; \
         } \
 
@@ -98,7 +100,6 @@ static vec(struct token) tokens;
 static int TokenIndex = 0;
 LexContext lctx = LEX_PREFIX;
 
-static struct location Start;
 static struct location End;
 
 static int depth;
@@ -181,8 +182,8 @@ inline static struct expression *
 mkexpr(void)
 {
         struct expression *e = alloc(sizeof *e);
-        e->start = Start;
-        e->end = End;
+        e->start = tok()->start;
+        e->end = tok()->end;
         return e;
 }
 
@@ -190,8 +191,8 @@ inline static struct statement *
 mkstmt(void)
 {
         struct statement *s = alloc(sizeof *s);
-        s->start = Start;
-        s->end = End;
+        s->start = tok()->start;
+        s->end = tok()->start;
         return s;
 }
 
@@ -246,7 +247,6 @@ inline static void
 skip(int n)
 {
         TokenIndex += n;
-        Start = tok()->start;
         End = token(-1)->end;
 }
 
@@ -291,7 +291,7 @@ unconsume(int type)
 {
         struct token t = {
                 .type = type,
-                .start = Start,
+                .start = End,
                 .end = End,
                 .ctx = LEX_FAKE
         };
@@ -439,6 +439,7 @@ prefix_special_string(void)
                 lex_start(&exprs[i]);
                 lex_save(&CtxCheckpoint);
                 vec_push(e->expressions, parse_expr(0));
+                (*vec_last(e->expressions))->end = End;
                 if (tok()->type != TOKEN_END) {
                         error("expression in interpolated string has trailing tokens");
                 }
@@ -553,12 +554,13 @@ prefix_function(void)
                 }
 
                 expect(TOKEN_IDENTIFIER);
-                vec_push(e->params, sclone(tok()->identifier));
+                vec_push(e->params, tok()->identifier);
                 next();
 
                 if (!rest && tok()->type == ':') {
                         next();
                         vec_push(e->constraints, parse_expr(0));
+                        (*vec_last(e->constraints))->end = End;
                 } else {
                         vec_push(e->constraints, NULL);
                 }
@@ -917,7 +919,6 @@ prefix_array(void)
         next();
 
         e->end = End;
-        printf("Got array: '%.*s'\n", (int)(e->end.s - e->start.s), e->start.s);
 
         return e;
 }
@@ -957,6 +958,7 @@ prefix_incrange(void)
 
         e->left = zero;
         e->right = parse_expr(0);
+        e->end = e->right->end;
 
         return e;
 }
@@ -975,6 +977,7 @@ prefix_range(void)
 
         e->left = zero;
         e->right = parse_expr(0);
+        e->end = e->right->end;
 
         return e;
 }
@@ -1164,6 +1167,7 @@ infix_function_call(struct expression *left)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_FUNCTION_CALL;
         e->function = left;
+        e->start = left->start;
         vec_init(e->args);
 
         consume('(');
@@ -1172,6 +1176,7 @@ infix_function_call(struct expression *left)
 
         if (tok()->type == ')') {
                 next();
+                e->end = End;
                 return e;
         } else {
                 vec_push(e->args, parse_expr(0));
@@ -1183,6 +1188,8 @@ infix_function_call(struct expression *left)
         }
 
         consume(')');
+
+        e->end = End;
 
         return e;
 }
@@ -1236,6 +1243,8 @@ infix_user_op(struct expression *left)
 
         vec_push(e->method_args, parse_expr(prec));
 
+        e->end = End;
+
         return e;
 }
 
@@ -1264,11 +1273,12 @@ static struct expression *
 infix_subscript(struct expression *left)
 {
         consume('[');
-        
+
         struct expression *e = mkexpr();
         e->type = EXPRESSION_SUBSCRIPT;
         e->container = left;
         e->subscript = parse_expr(0);
+        e->end = End;
 
         consume(']');
 
@@ -1279,6 +1289,7 @@ static struct expression *
 infix_member_access(struct expression *left)
 {
         struct expression *e = mkexpr();
+        e->start = tok()->start;
         e->object = left;
 
         e->maybe = tok()->type == TOKEN_DOT_MAYBE;
@@ -1288,13 +1299,14 @@ infix_member_access(struct expression *left)
 
         if (token(1)->type != '(') {
                 e->type = EXPRESSION_MEMBER_ACCESS;
-                e->member_name = sclone(tok()->identifier);
+                e->member_name = tok()->identifier;
                 consume(TOKEN_IDENTIFIER);
+                e->end = End;
                 return e;
         }
 
         e->type = EXPRESSION_METHOD_CALL;
-        e->method_name = sclone(tok()->identifier);
+        e->method_name = tok()->identifier;
         consume(TOKEN_IDENTIFIER);
         vec_init(e->method_args);
 
@@ -1314,6 +1326,7 @@ infix_member_access(struct expression *left)
 
 End:
         consume(')');
+        e->end = End;
         return e;
 }
 
@@ -1327,6 +1340,7 @@ infix_squiggly_arrow(struct expression *left)
 
         e->left = left;
         e->right = parse_expr(0);
+        e->start = left->start;
         e->end = End;
 
         return e;
@@ -2176,7 +2190,7 @@ parse_expr(int prec)
 
         --depth;
 
-        e->start = start;
+        //e->start = start;
         //e->end = token(-1)->end;
 
         return e;

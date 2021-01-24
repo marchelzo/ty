@@ -234,7 +234,7 @@ add_location(struct expression const *e, size_t start_off, size_t end_off)
         if (e->start.line == -1 && e->start.col == -1)
                 return;
 
-        printf("Location: (%zu, %zu) '%.*s'\n", start_off, end_off, (int)(e->end.s - e->start.s), e->start.s);
+//        printf("Location: (%zu, %zu) (%d) '%.*s'\n", start_off, end_off, e->type, (int)(e->end.s - e->start.s), e->start.s);
 
         vec_push(
                 state.expression_locations,
@@ -1120,9 +1120,10 @@ emit_function(struct expression const *e)
                 if (e->constraints.items[i] == NULL)
                         continue;
                 intptr_t s = e->param_symbols.items[i]->symbol;
+                size_t start = state.code.count;
                 emit_instr(INSTR_LOAD_VAR);
                 emit_symbol(s);
-                emit_expr(e->constraints.items[i], true);
+                emit_expression(e->constraints.items[i]);
                 emit_instr(INSTR_CHECK_MATCH);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
                 emit_instr(INSTR_LOAD_VAR);
@@ -1133,6 +1134,7 @@ emit_function(struct expression const *e)
                 else
                         emit_string("(anonymous function)");
                 emit_string(e->param_symbols.items[i]->identifier);
+                add_location(e->constraints.items[i], start, state.code.count);
                 PATCH_JUMP(good);
         }
 
@@ -1474,6 +1476,7 @@ emit_try_match(struct expression const *pattern)
                 emit_expression(pattern->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
+                add_location(pattern->left, start, state.code.count);
                 emit_try_match(pattern->right);
                 emit_instr(INSTR_POP);
                 break;
@@ -2222,6 +2225,8 @@ emit_for_each2(struct statement const *s, bool want_result)
         emit_instr(INSTR_GET_NEXT);
         emit_instr(INSTR_READ_INDEX);
 
+        add_location(s->each.array, start, state.code.count);
+
         size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
 
@@ -2384,7 +2389,9 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                                 emit_int(1);
                                 emit_instr(INSTR_BAD_MATCH);
                         } else {
+                                size_t s = state.code.count;
                                 emit_assignment(target->elements.items[i], &subscript, maybe);
+                                add_location(target->elements.items[i], s, state.code.count);
                                 emit_instr(INSTR_POP);
                         }
                 }
@@ -2417,6 +2424,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 emit_expression(target->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
+                add_location(target->left, start, state.code.count);
                 emit_assignment(target->right, NULL, maybe);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
@@ -3217,7 +3225,7 @@ compiler_get_location(char const *code, struct location *start, struct location 
         location_vector *locs = NULL;
         char const *file = NULL;
 
-        printf("Looking for %zu\n", (size_t)(code - state.code.items));
+//        printf("Looking for %zu\n", (size_t)(code - state.code.items));
         uintptr_t c = (uintptr_t) code;
 
         /*
@@ -3236,7 +3244,6 @@ compiler_get_location(char const *code, struct location *start, struct location 
         }
 
         if (locs == NULL) {
-                printf("Couldn't find anything.\n");
                 *start = (struct location) { -1, -1 };
                 return NULL;
         }
@@ -3251,27 +3258,39 @@ compiler_get_location(char const *code, struct location *start, struct location 
                 int m = (lo / 2) + (hi / 2) + (lo & hi & 1);
                 if      (c < locs->items[m].p_end) hi = m - 1;
                 else if (c > locs->items[m].p_end) lo = m + 1;
-                else                           break;
+                else {
+                        lo = m;
+                        break;
+                }
         }
 
+//        printf("Initially: (%zu, %zu)\n",
+//               (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items),
+//               (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
 
-        printf("Initially: (%zu, %zu)\n", (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items), (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
+        if (c < locs->items[lo].p_start) {
+                for (int i = lo + 1; i < locs->count; ++i) {
+//                printf("Checking: (%zu, %zu)\n",
+//                       (size_t)(locs->items[i].p_start - (uintptr_t)state.code.items),
+//                       (size_t)(locs->items[i].p_end - (uintptr_t)state.code.items));
+                        if (locs->items[i].p_start <= c && locs->items[i].p_end >= c) {
+                                lo = i;
+                                break;
+                        }
+                }
+        }
 
-        while (lo + 1 < locs->count && locs->items[lo].p_start > c)
-                ++lo;
-
-        while (lo + 1 < locs->count && locs->items[lo + 1].p_end == locs->items[lo].p_end)
-                ++lo;
-
-        /*
-        while (lo > 0 && (lo >= locs->count || locs->items[lo - 1].p_start < c || locs->items[lo].p_start > c))
-                --lo;
-        */
+        while (lo + 1 < locs->count && locs->items[lo + 1].p_start <= c &&
+                        locs->items[lo + 1].p_end == locs->items[lo].p_end) {
+                lo += 1;
+        }
 
         *start = locs->items[lo].start;
         *end = locs->items[lo].end;
 
-        printf("Found: (%zu, %zu)\n", (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items), (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
+//        printf("Found: (%zu, %zu)\n",
+//               (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items),
+//               (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
 
         return locs->items[lo].filename;
 }
