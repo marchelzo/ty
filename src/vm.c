@@ -1284,6 +1284,9 @@ BadContainer:
                                         *top() = BOOLEAN(top()->type == VALUE_OBJECT &&
                                                          class_is_subclass(top()->class, v.class));
                                 }
+                        } else if (top()->type == VALUE_BOOLEAN) {
+                                v = pop();
+                                *top() = v;
                         } else {
                                 n = 1;
                                 b = false;
