@@ -25,7 +25,7 @@
         static struct expression * \
         infix_ ## name(struct expression *left) \
         { \
-                consume(TOKEN_ ## t); \
+                next(); \
                 struct expression *e = mkexpr(); \
                 e->type = EXPRESSION_ ## t; \
                 e->left = left; \
@@ -53,11 +53,11 @@
         static struct expression * \
         prefix_ ## name(void) \
         { \
-                consume(TOKEN_ ## token); \
                 struct expression *e = mkexpr(); \
+                consume(TOKEN_ ## token); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = parse_expr(prec); \
-                e->end = End; \
+                e->end = e->operand->end; \
                 return e; \
         } \
 
@@ -93,6 +93,7 @@ enum {
 static jmp_buf jb;
 
 static struct table uops;
+static struct table uopcs;
 
 static LexState CtxCheckpoint;
 static int Unconsumed;
@@ -101,10 +102,20 @@ static vec(struct token) tokens;
 static int TokenIndex = 0;
 LexContext lctx = LEX_PREFIX;
 
+static struct location EStart;
+static struct location EEnd;
+
 static struct location End;
 
 static int depth;
 static bool NoEquals = false;
+static bool NoConstraint = true; 
+
+#define SAVE_NE(b) bool NESave = NoEquals; NoEquals = (b);
+#define SAVE_NC(b) bool NCSave = NoConstraint; NoConstraint = (b);
+
+#define LOAD_NE() NoEquals = NESave;
+#define LOAD_NC() NoConstraint = NCSave;
 
 typedef vec(char *) param_list;
 static param_list pnames;
@@ -183,6 +194,7 @@ inline static struct expression *
 mkexpr(void)
 {
         struct expression *e = alloc(sizeof *e);
+        e->constraint = NULL;
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -249,6 +261,8 @@ skip(int n)
 {
         TokenIndex += n;
         End = token(-1)->end;
+        EStart = tok()->start;
+        EEnd = tok()->end;
 }
 
 inline static void
@@ -323,8 +337,8 @@ error(char const *fmt, ...)
         n += vsnprintf(err + n, sz - n, fmt, ap);
         va_end(ap);
 
-        struct location start = tok()->start;
-        struct location end = tok()->end;
+        struct location start = EStart;
+        struct location end = EEnd;
 
         char buffer[512];
 
@@ -360,8 +374,10 @@ error(char const *fmt, ...)
         );
 
         if (tok()->type == TOKEN_END) {
-                start.s -= 2;
-                end.s = start.s + 1;
+                while ((start.s[0] == '\0' || isspace(start.s[0])) && start.s[-1] != '\0') {
+                        start.s -= 1;
+                }
+                end.s = start.s;
         }
 
         char const *prefix = start.s;
@@ -375,11 +391,6 @@ error(char const *fmt, ...)
         int before = start.s - prefix;
         int length = end.s - start.s;
         int after = strcspn(end.s, "\n");
-
-        if (length == 0) {
-                length = 1;
-                end.s += 1;
-        }
 
         n += snprintf(
                 ERR + n,
@@ -608,6 +619,15 @@ prefix_identifier(void)
 
         consume(TOKEN_IDENTIFIER);
 
+        if (NoEquals && tok()->type == ':') {
+                SAVE_NE(true);
+                next();
+                e->constraint = parse_expr(0);
+                LOAD_NE();
+        }
+
+        e->end = End;
+
         return e;
 }
 
@@ -657,6 +677,7 @@ prefix_function(void)
                 if (!rest && tok()->type == TOKEN_EQ) {
                         next();
                         vec_push(e->dflts, parse_expr(0));
+                        (*vec_last(e->dflts))->end = End;
                 } else {
                         vec_push(e->dflts, NULL);
                 }
@@ -789,6 +810,48 @@ prefix_for(void)
 }
 
 static struct expression *
+next_pattern(void)
+{
+        struct expression *p = parse_expr(0);
+        p->end = End;
+
+        if (p->type == EXPRESSION_IDENTIFIER && tok()->type != ':') {
+                next();
+                p->constraint = parse_expr(0);
+                p->constraint->end = End;
+        }
+
+        return p;
+}
+
+static struct expression *
+parse_pattern(void)
+{
+        struct expression *pattern = next_pattern();
+
+        if (tok()->type == ',') {
+                struct expression *p = mkexpr();
+
+                p->type = EXPRESSION_LIST;
+                p->start = pattern->start;
+
+                vec_init(p->es);
+                vec_push(p->es, pattern);
+
+                while (tok()->type == ',') {
+                        next();
+                        vec_push(p->es, next_pattern());
+                }
+
+                p->end = (*vec_last(p->es))->end;
+
+                pattern = p;
+        }
+
+        return pattern;
+}
+
+static struct expression *
 prefix_match(void)
 {
         struct expression *e = mkexpr();
@@ -802,16 +865,9 @@ prefix_match(void)
         consume('{');
 
         vec_init(e->patterns);
-        vec_init(e->conds);
         vec_init(e->thens);
 
-        vec_push(e->patterns, parse_expr(-1));
-        if (tok()->type == '|') {
-                next();
-                vec_push(e->conds, parse_expr(0));
-        } else {
-                vec_push(e->conds, NULL);
-        }
+        vec_push(e->patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
         vec_push(e->thens, parse_expr(0));
@@ -819,13 +875,6 @@ prefix_match(void)
         while (tok()->type == ',') {
                 next();
                 vec_push(e->patterns, parse_expr(-1));
-                if (tok()->type == '|') {
-                        next();
-                        vec_push(e->conds, parse_expr(0));
-                } else {
-                        vec_push(e->conds, NULL);
-                }
-
                 consume(TOKEN_FAT_ARROW);
                 vec_push(e->thens, parse_expr(0));
         }
@@ -977,6 +1026,8 @@ prefix_array(void)
         case TOKEN_GEQ:
         case TOKEN_NOT_EQ:
         case TOKEN_DBL_EQ:
+        case '|':
+        case '&':
                 return opfunc();
         default: break;
         }
@@ -998,7 +1049,7 @@ prefix_array(void)
                         e->compr.pattern = parse_target_list();
                         consume_keyword(KEYWORD_IN);
                         e->compr.iter = parse_expr(0);
-                        if (tok()->type == '|') {
+                        if (tok()->type == ':') {
                                 next();
                                 e->compr.cond = parse_expr(0);
                         } else {
@@ -1081,7 +1132,7 @@ prefix_range(void)
 static struct expression *
 prefix_implicit_method(void)
 {
-        consume(TOKEN_BIT_AND);
+        consume('&');
 
         bool maybe = false;
         if (tok()->type == TOKEN_QUESTION) {
@@ -1098,6 +1149,7 @@ prefix_implicit_method(void)
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_METHOD_CALL;
+        e->sc = NULL;
         e->maybe = maybe;
         e->object = o;
         e->method_name = tok()->identifier;
@@ -1166,7 +1218,7 @@ prefix_implicit_lambda(void)
         vec_empty(pnames);
         pnames = pnames_save;
 
-        consume('|');
+        consume('\\');
 
         return f;
 }
@@ -1216,12 +1268,13 @@ prefix_object(void)
                         e->dflt->start = start;
                         e->dflt->end = End;
                 } else {
-                        vec_push(e->keys, parse_expr(0));
+                        struct expression *key = parse_expr(0);
+                        vec_push(e->keys, key);
+                        vec_push(e->values, key->constraint);
+                        key->constraint = NULL;
                         if (tok()->type == ':') {
                                 next();
-                                vec_push(e->values, parse_expr(0));
-                        } else {
-                                vec_push(e->values, NULL);
+                                *vec_last(e->values) = parse_expr(0);
                         }
                 }
 
@@ -1231,7 +1284,7 @@ prefix_object(void)
                         e->dcompr.pattern = parse_target_list();
                         consume_keyword(KEYWORD_IN);
                         e->dcompr.iter = parse_expr(0);
-                        if (tok()->type == '|') {
+                        if (tok()->type == ':') {
                                 next();
                                 e->dcompr.cond = parse_expr(0);
                         } else {
@@ -1326,13 +1379,11 @@ infix_user_op(struct expression *left)
 {
         struct expression *e = mkexpr();
 
-        e->type = EXPRESSION_METHOD_CALL;
+        e->type = EXPRESSION_USER_OP;
         e->start = left->start;
-        e->maybe = false;
-        e->object = left;
-        e->method_name = tok()->identifier;
+        e->left = left;
+        e->op_name = tok()->identifier;
         consume(TOKEN_USER_OP);
-        vec_init(e->method_args);
 
         int prec = 8;
 
@@ -1341,8 +1392,14 @@ infix_user_op(struct expression *left)
                 prec = (p->integer > 0) ? p->integer : abs(p->integer) - 1;
         }
 
-        vec_push(e->method_args, parse_expr(prec));
+        struct value *sc = table_look(&uopcs, e->op_name);
+        if (sc != NULL) {
+                e->sc = sc->ptr;
+        } else {
+                e->sc = NULL;
+        }
 
+        e->right = parse_expr(prec);
         e->end = End;
 
         return e;
@@ -1357,6 +1414,7 @@ infix_list(struct expression *left)
         vec_init(e->es);
         vec_push(e->es, left);
 
+        bool ne = NoEquals;
         NoEquals = true;
 
         while (tok()->type == ',') {
@@ -1364,7 +1422,7 @@ infix_list(struct expression *left)
                 vec_push(e->es, parse_expr(1));
         }
 
-        NoEquals = false;
+        NoEquals = ne;
 
         return e;
 }
@@ -1406,6 +1464,7 @@ infix_member_access(struct expression *left)
         }
 
         e->type = EXPRESSION_METHOD_CALL;
+        e->sc = NULL;
         e->method_name = tok()->identifier;
         consume(TOKEN_IDENTIFIER);
         vec_init(e->method_args);
@@ -1559,14 +1618,17 @@ BINARY_OPERATOR(geq,      GEQ,         7, false)
 BINARY_OPERATOR(leq,      LEQ,         7, false)
 BINARY_OPERATOR(cmp,      CMP,         7, false)
 
-BINARY_OPERATOR(not_eq,      NOT_EQ,      6, false)
-BINARY_OPERATOR(dbl_eq,      DBL_EQ,      6, false)
-BINARY_OPERATOR(check_match, CHECK_MATCH, 6, false)
+BINARY_OPERATOR(not_eq,      NOT_EQ,    6, false)
+BINARY_OPERATOR(dbl_eq,      DBL_EQ,    6, false)
 
 BINARY_OPERATOR(and,      AND,         5, false)
+BINARY_OPERATOR(bit_and,  BIT_AND,     5, false)
+BINARY_OPERATOR(bit_or,   BIT_OR,      5, false)
 
-BINARY_OPERATOR(or,       OR,          4, false)
-BINARY_OPERATOR(wtf,      WTF,         4, false)
+BINARY_OPERATOR(or,           OR,          4, false)
+BINARY_OPERATOR(wtf,          WTF,         4, false)
+
+BINARY_OPERATOR(check_match, CHECK_MATCH,  3, false)
 
 BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  2, true)
 BINARY_LVALUE_OPERATOR(star_eq,  STAR_EQ,  2, true)
@@ -1589,8 +1651,8 @@ get_prefix_parser(void)
         case TOKEN_IDENTIFIER:     return prefix_identifier;
         case TOKEN_KEYWORD:        goto Keyword;
 
-        case TOKEN_BIT_AND:        return prefix_implicit_method;
-        case '|':                  return prefix_implicit_lambda;
+        case '&':                  return prefix_implicit_method;
+        case '\\':                 return prefix_implicit_lambda;
         case '#':                  return prefix_hash;
 
         case '(':                  return prefix_parenthesis;
@@ -1645,6 +1707,8 @@ get_infix_parser(void)
         case TOKEN_DOT_MAYBE:      return infix_member_access;
         case '[':                  return infix_subscript;
         case ',':                  return infix_list;
+        case '&':                  return infix_bit_and;
+        case '|':                  return infix_bit_or;
         case TOKEN_INC:            return postfix_inc;
         case TOKEN_DEC:            return postfix_dec;
         case TOKEN_ARROW:          return infix_arrow_function;
@@ -1719,15 +1783,17 @@ get_infix_prec(void)
 
         case TOKEN_NOT_EQ:         return 6;
         case TOKEN_DBL_EQ:         return 6;
-        case TOKEN_CHECK_MATCH:    return 6;
 
         case TOKEN_AND:            return 5;
+        case '&':                  return 5;
+        case '|':                  return 5;
 
         case TOKEN_OR:             return 4;
         case TOKEN_WTF:            return 4;
 
         /* this may need to have lower precedence. I'm not sure yet. */
         case TOKEN_SQUIGGLY_ARROW: return 3;
+        case TOKEN_CHECK_MATCH:    return 3;
 
         case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return NoEquals ? -3 : 2;
@@ -1787,6 +1853,8 @@ definition_lvalue(struct expression *e)
                         if (e->values.items[i] == NULL) {
                                 struct expression *key = mkexpr();
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
+                                        EStart = e->keys.items[i]->start;
+                                        EStart = e->keys.items[i]->end;
                                         error("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
@@ -1825,6 +1893,8 @@ assignment_lvalue(struct expression *e)
                         if (e->values.items[i] == NULL) {
                                 struct expression *key = mkexpr();
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
+                                        EStart = key->start;
+                                        EEnd = key->end;
                                         error("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
@@ -1849,9 +1919,13 @@ parse_definition_lvalue(int context)
         struct expression *e;
         int save = TokenIndex;
 
+        bool ne = NoEquals;
         NoEquals = true;
-        e = definition_lvalue(parse_expr(1));
-        NoEquals = false;
+        e = parse_expr(1);
+        EStart = e->start;
+        EEnd = e->end;
+        e = definition_lvalue(e);
+        NoEquals = ne;
 
         if (context == LV_LET && tok()->type == ',') {
                 struct expression *l = mkexpr();
@@ -1879,7 +1953,7 @@ parse_definition_lvalue(int context)
                         break;
                 if (tok()->type != ',')
                         goto Error;
-                if (token(1)->type != TOKEN_IDENTIFIER)
+                if (false && token(1)->type != TOKEN_IDENTIFIER)
                         goto Error;
                 break;
         default:
@@ -1903,9 +1977,10 @@ parse_target_list(void)
         vec_init(e->es);
         vec_push(e->es, parse_definition_lvalue(LV_EACH));
 
-        if (e->es.items[0] == NULL)
+        if (e->es.items[0] == NULL) {
         Error:
                 error("expected lvalue in for-each loop");
+        }
 
         while (tok()->type == ',' && (token(1)->type == TOKEN_IDENTIFIER || token(1)->type == '[')) {
                 next();
@@ -1935,7 +2010,7 @@ parse_for_loop(void)
                 s->each.target = parse_target_list();
                 consume_keyword(KEYWORD_IN);
                 s->each.array = parse_expr(0);
-                if (tok()->type == '|') {
+                if (tok()->type == ':') {
                         next();
                         s->each.cond = parse_expr(0);
                 } else {
@@ -2087,29 +2162,16 @@ parse_match_statement(void)
         consume('{');
 
         vec_init(s->match.patterns);
-        vec_init(s->match.conds);
         vec_init(s->match.statements);
 
-        vec_push(s->match.patterns, parse_expr(-1));
-        if (tok()->type == '|') {
-                next();
-                vec_push(s->match.conds, parse_expr(0));
-        } else {
-                vec_push(s->match.conds, NULL);
-        }
+        vec_push(s->match.patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
         vec_push(s->match.statements, parse_statement());
 
         while (tok()->type == ',') {
                 next();
-                vec_push(s->match.patterns, parse_expr(-1));
-                if (tok()->type == '|') {
-                        next();
-                        vec_push(s->match.conds, parse_expr(0));
-                } else {
-                        vec_push(s->match.conds, NULL);
-                }
+                vec_push(s->match.patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
                 vec_push(s->match.statements, parse_statement());
         }
@@ -2168,6 +2230,11 @@ parse_operator_directive(void)
                 table_put(&uops, uop, INTEGER(-p));
         } else {
                 error("expected 'left' or 'right' in operator directive");
+        }
+
+        if (tok()->type != TOKEN_NEWLINE) {
+                struct expression *e = parse_expr(0);
+                table_put(&uopcs, uop, PTR(e));
         }
 
         consume(TOKEN_NEWLINE);
@@ -2290,9 +2357,6 @@ parse_expr(int prec)
 
         --depth;
 
-        //e->start = start;
-        //e->end = token(-1)->end;
-
         return e;
 }
 
@@ -2370,9 +2434,12 @@ parse_class_definition(void)
                         case TOKEN_MINUS:   tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-";    break;
                         case TOKEN_STAR:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*";    break;
                         case TOKEN_PERCENT: tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "%";    break;
+                        case '&':           tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "&";    break;
+                        case '|':           tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "|";    break;
                         case TOKEN_USER_OP: tok()->type = TOKEN_IDENTIFIER;                             break;
                         default:                                                                        break;
                         }
+                        struct location start = tok()->start;
                         /*
                          * Push a 'function' keyword token back onto the stream so that we can
                          * use the existing function parsing code to parse the method.
@@ -2381,6 +2448,8 @@ parse_class_definition(void)
                         tok()->keyword = KEYWORD_FUNCTION;
 
                         vec_push(s->tag.methods, prefix_function());
+                        (*vec_last(s->tag.methods))->start = start;
+                        (*vec_last(s->tag.methods))->start = End;
                 }
                 setctx(LEX_PREFIX);
                 consume('}');

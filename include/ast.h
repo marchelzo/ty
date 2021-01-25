@@ -154,6 +154,9 @@ struct expression {
                 EXPRESSION_MEMBER_ACCESS,
                 EXPRESSION_SUBSCRIPT,
                 EXPRESSION_METHOD_CALL,
+                EXPRESSION_USER_OP,
+                EXPRESSION_BIT_AND,
+                EXPRESSION_BIT_OR,
                 EXPRESSION_MATCH_NOT_NIL,
                 EXPRESSION_MATCH_REST,
                 EXPRESSION_DOT_DOT,
@@ -229,13 +232,16 @@ struct expression {
                 struct {
                         bool local;
                         struct expression *tagged;
+                        struct expression *constraint;
                         struct symbol *symbol;
                         char *module;
                         char *identifier;
                 };
                 struct {
+                        char const *op_name;
                         struct expression *left;
                         struct expression *right;
+                        struct expression *sc;
                 };
                 struct {
                         struct expression *target;
@@ -244,7 +250,6 @@ struct expression {
                 struct {
                         struct expression *subject;
                         vec(struct expression *) patterns;
-                        vec(struct expression *) conds;
                         vec(struct expression *) thens;
                 };
                 struct {

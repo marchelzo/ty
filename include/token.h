@@ -46,8 +46,6 @@ struct token {
                 TOKEN_SQUIGGLY_ARROW,
                 TOKEN_AND,
                 TOKEN_OR,
-                TOKEN_BIT_OR,
-                TOKEN_BIT_AND,
                 TOKEN_CMP,
                 TOKEN_LEQ,
                 TOKEN_GEQ,

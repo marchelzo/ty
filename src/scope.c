@@ -71,6 +71,7 @@ scope_add(struct scope *s, char const *id)
         sym->identifier = id;
         sym->symbol = SYMBOL++;
         sym->public = false;
+        sym->cnst = false;
         sym->tag = -1;
         sym->class = -1;
         sym->scope = s;

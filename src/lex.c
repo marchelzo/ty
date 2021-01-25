@@ -47,10 +47,58 @@ error(char const *fmt, ...)
         va_start(ap, fmt);
 
         int sz = ERR_SIZE - 1;
-        int n = snprintf(ERR, sz, "SyntaxError %s:%d:%d: ", filename, state.loc.line + 1, state.loc.col + 1);
-        vsnprintf(ERR + n, sz - n, fmt, ap);
-
+        int n = snprintf(
+                ERR,
+                sz,
+                "%s%sSyntaxError%s%s %s%s%s:%s%d%s:%s%d%s: ",
+                TERM(1),
+                TERM(31),
+                TERM(22),
+                TERM(39),
+                TERM(34),
+                filename,
+                TERM(39),
+                TERM(33),
+                state.loc.line + 1,
+                TERM(39),
+                TERM(33),
+                state.loc.col + 1,
+                TERM(39)
+        );
+        n += vsnprintf(ERR + n, sz - n, fmt, ap);
         va_end(ap);
+
+        char const *prefix = state.loc.s;
+        while (prefix[-1] != '\n' && prefix[-1] != '\0')
+                --prefix;
+
+        int before = state.loc.s - prefix;
+        int after = strcspn(state.loc.s + 1, "\n");
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "\n\n\tnear: %.*s%s%s%.1s%s%s%.*s\n",
+                before,
+                prefix,
+                TERM(1),
+                TERM(31),
+                state.loc.s,
+                TERM(22),
+                TERM(39),
+                after,
+                state.loc.s + 1
+        );
+
+        n += snprintf(
+                ERR + n,
+                sz - n,
+                "\t%*s%s^%s",
+                6 + before,
+                " ",
+                TERM(31),
+                TERM(39)
+        );
 
         longjmp(jb, 1);
 }
@@ -99,12 +147,23 @@ mkregex(char const *pat, int flags)
 
         pcre *re = pcre_compile(pat, flags, &err, &offset, NULL);
         if (re == NULL) {
-                error("error compiling regular expression: %s at position %d", err, offset);
+                error(
+                        "error compiling regular expression: %s/%s/%s at position %d",
+                        TERM(36),
+                        err,
+                        TERM(39),
+                        offset
+                );
         }
 
         pcre_extra *extra = pcre_study(re, PCRE_STUDY_EXTRA_NEEDED | PCRE_STUDY_JIT_COMPILE, &err);
         if (extra == NULL) {
-                error("error studying regular expression: %s", err);
+                error(
+                        "error studying regular expression: %s/%s/%s",
+                        TERM(36),
+                        err,
+                        TERM(39)
+                );
         }
 
         return (struct token) {
@@ -235,8 +294,13 @@ lexword(void)
                                 vec_push_n(module, word.items, word.count);
                         word.count = 0;
 
-                        if (!isalpha(C(0)) && C(0) != '_')
-                                error("expected name after '::' in identifier");
+                        if (!isalpha(C(0)) && C(0) != '_') {
+                                error(
+                                        "expected name after %s'::'%s in identifier",
+                                        TERM(36),
+                                        TERM(39)
+                                );
+                        }
                 } else {
                         break;
                 }
@@ -434,7 +498,7 @@ lexregex(void)
         while (isalpha(C(0))) {
                 switch (C(0)) {
                 case 'i': flags |= PCRE_CASELESS; break;
-                default:  error("invalid regex flag: '%c'", C(0));
+                default:  error("invalid regex flag: %s'%c'%s", TERM(36), C(0), TERM(39));
                 }
                 nextchar();
         }
@@ -444,8 +508,8 @@ lexregex(void)
         return mkregex(pat.items, flags);
 
 Unterminated:
-
-        error("unterminated regular expression");
+        vec_push(pat, '\0');
+        error("unterminated regular expression: %s/%.20s%s...", TERM(36), pat.items, TERM(39));
 }
 
 static struct token
@@ -475,7 +539,12 @@ lexnum(void)
                 }
 
                 if (isalnum(C(n))) {
-                        error("trailing character after numeric literal: '%c'", C(n));
+                        error(
+                                "trailing character after numeric literal: %s'%c'%s",
+                                TERM(36),
+                                C(n),
+                                TERM(39)
+                        );
                 }
 
                 while (SRC != end) nextchar();
@@ -490,8 +559,14 @@ lexnum(void)
                 while (SRC != end) nextchar();
                 num = mkinteger(integer);
         } else {
-                if (isalnum(C(n)))
-                        error("trailing character after numeric literal: '%c'", C(n));
+                if (isalnum(C(n))) {
+                        error(
+                                "trailing character after numeric literal: %s'%c'%s",
+                                TERM(36),
+                                C(n),
+                                TERM(39)
+                        );
+                }
                 while (SRC != end) nextchar();
                 num = mkinteger(integer);
         }
@@ -507,7 +582,12 @@ lexop(void)
         
         while (contains(opchars, C(0)) || (C(0) == ':' && (C(-1) != '*' || i > 1 || (contains(opchars, C(1)) && C(1) != '-')))) {
                 if (i == MAX_OP_LEN) {
-                        error("operator contains too many characters: '%s...'", op);
+                        error(
+                                "operator contains too many characters: %s'%s...'%s",
+                                TERM(36),
+                                op,
+                                TERM(39)
+                        );
                 } else {
                         op[i++] = nextchar();
                 }
@@ -515,12 +595,6 @@ lexop(void)
 
         int toktype = operator_get_token_type(op);
         if (toktype == -1) {
-                // this is kinda bad
-                if (op[0] == '|') {
-                        SRC -= (i - 1);
-                        state.loc.col -= (i - 1);
-                        return mktoken('|');
-                }
                 struct token t = mktoken(TOKEN_USER_OP);
                 t.identifier = sclone(op);
                 return t;
@@ -593,7 +667,7 @@ lex_token(LexContext ctx)
                                 return mktoken(TOKEN_NEWLINE);
                         }
                 } else if (C(0) == '/' && C(1) == '/') {
-                        if (lexlinecomment()) {
+                        if (lexlinecomment() || skipspace()) {
                                 return mktoken(TOKEN_NEWLINE);
                         }
                 } else if (ctx == LEX_PREFIX && C(0) == '/') {
@@ -616,7 +690,7 @@ lex_token(LexContext ctx)
                         return mktoken('#');
                 } else if (C(0) == '&' && ctx == LEX_PREFIX) {
                         nextchar();
-                        return mktoken(TOKEN_BIT_AND);
+                        return mktoken('&');
                 } else if (C(0) == '!' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken(TOKEN_BANG);

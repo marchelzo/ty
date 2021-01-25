@@ -16,6 +16,7 @@ struct symbol {
         int tag;
         int class;
         bool public;
+        bool cnst;
 
         struct scope *scope;
 

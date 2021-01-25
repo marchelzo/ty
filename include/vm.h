@@ -80,6 +80,7 @@ enum instruction {
         INSTR_SENTINEL,
         INSTR_FIX_TO,
         INSTR_REVERSE,
+        INSTR_SWAP,
         INSTR_NONE_IF_NIL,
         INSTR_CLEAR_RC,
         INSTR_GET_EXTRA,
@@ -108,6 +109,7 @@ enum instruction {
         INSTR_TRY_ASSIGN_NON_NIL,
         INSTR_BAD_MATCH,
         INSTR_BAD_CALL,
+        INSTR_BAD_ASSIGN,
         INSTR_UNTAG_OR_DIE,
         INSTR_ENSURE_LEN,
         INSTR_ENSURE_EQUALS_VAR,
@@ -138,7 +140,7 @@ enum instruction {
         // unary operators
         INSTR_NEG,
         INSTR_NOT,
-        INSTR_IS_NOT_NIL,
+        INSTR_QUESTION,
         INSTR_COUNT,
         INSTR_GET_TAG,
 };

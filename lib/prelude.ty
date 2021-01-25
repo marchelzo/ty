@@ -55,32 +55,49 @@ class Object {
         return members(self);
     }
 
-    <|>(self, other) {
+    |(self, other) {
         return c -> (c :: self) || (c :: other);
     }
 
-    <&>(self, other) {
+    &(self, other) {
         return c -> (c :: self) && (c :: other);
     }
 
-    <::>(self, other) {
+    :>(self, other) {
         return x -> (self(x) :: other);
+    }
+
+    __match__(self, other) {
+        print("Object match");
+        return self == other;
+    }
+
+    __question__(self) {
+        return \$ == nil\ | self;
     }
 }
 
 class Class {
-    <|>(self, other) {
+    |(self, other) {
         return c -> (c :: self) || (c :: other);
     }
 
-    <&>(self, other) {
+    &(self, other) {
         return c -> (c :: self) && (c :: other);
+    }
+
+    __match__(self, other) {
+        return type(other) != Class && other.is?(self);
+    }
+
+    __question__(self) {
+        return ?self;
     }
 }
 
 class Function {
     init() {
-        return |$|;
+        return id;
     }
 
     flip(f) {
@@ -132,8 +149,8 @@ class Array : Iterable {
     }
 
     coalesce(xs) {
-        for x in xs {
-            if (?x) return x;
+        for x in xs : x != nil {
+            return x;
         }
     }
 
@@ -177,12 +194,12 @@ class String : Iterable {
     }
 
     repeat(s, n) {
-        return if ?n {
+        return if n != nil {
             let b = blob();
             for _ in ..n { b.push(s); }
             b.str()
         } else {
-            Generator(|s|);
+            Generator(-> s);
         };
     }
 
@@ -216,33 +233,30 @@ class Int {
 
     &(a, b)  { return bit::and(a, b);        }
     ^(a, b)  { return bit::xor(a, b);        }
-    .|(a, b) { return bit::or(a, b);         }
+    |(a, b)  { return bit::or(a, b);         }
     <<(a, b) { return bit::shiftLeft(a, b);  }
     >>(a, b) { return bit::shiftRight(a, b); }
     **(a, b) { return math::pow(a, b);       }
 
-    upto(a, b) {
-        let i = a;
+    upto(a: Int, b: Int) {
         return Generator(function () {
-            if (i <= b) return i++;
+            if (a <= b) return a++;
         });
     }
 
-    downto(a, b) {
-        let i = a;
+    downto(a: Int, b: Int) {
         return Generator(function () {
-            if (i >= b) return i--;
+            if (a >= b) return a--;
         });
     }
 
-    count(a, k) {
-        k ?= 1;
+    count(a: Int, k: Int = 1) {
         return Generator(function () {
             return (a += k) - k;
         });
     }
 
-    in?(k, r) {
+    in?(k: Int, r: Range) {
         return r ? k;
     }
 }
@@ -252,7 +266,7 @@ class Float {
         return float(x);
     }
 
-    **(a, b) {
+    **(a: Float, b: Float) {
         return math::pow(a, b);
     }
 }
@@ -283,7 +297,7 @@ class Blob : Iterable {
 
 class Bool {
     init(x) {
-        return !(!x);
+        return ! ! x;
     }
 }
 
@@ -411,7 +425,7 @@ class Iterable {
     }
 }
 
-class Iter {
+class Iter : Iterable {
     map(I, f) {
         return MapIter(I, f);
     }
@@ -421,7 +435,7 @@ class Iter {
     }
 
     fold(I, a, b) {
-        let [f, first] = ([b, a] if ?b else [a]);
+        let [f, first] = ([b, a] if b != nil else [a]);
 
         if !let $x = match first { $x => x, _ => I.__next__() } {
             return nil;
@@ -455,7 +469,7 @@ class Iter {
 
     group(I, f: id) {
         if !let $x = I.__next__() {
-            return Generator(|nil|);
+            return Generator(-> nil);
         }
 
         let g = [x];
@@ -615,7 +629,7 @@ class Iter {
         let i = 0;
         let next = I.__next__();
         return Generator(function () {
-            if (?next) match i++ % 2 {
+            if (next != nil) match i++ % 2 {
                 0 => {
                     let r = next;
                     next = I.__next__();
@@ -638,7 +652,7 @@ class Iter {
         return Generator(function () {
             if let $x = it.__next__() {
                 return x;
-            } else if !?(it = I.__next__()) {
+            } else if ((it = I.__next__()) == nil) {
                 return nil;
             } else if !it.is?(Iter) {
                 it = it.__iter__();
@@ -651,7 +665,7 @@ class Iter {
         let i = 0;
         its.insert(0, it);
 
-        for i in ..#its | !its[i].is?(Iter) {
+        for i in ..#its : !its[i].is?(Iter) {
             its[i] = its[i].__iter__();
         }
 
@@ -688,7 +702,7 @@ class Iter {
     replicate(x, n) {
         let i = 0;
         return Generator(function () {
-            if (!?n || i++ < n) return x;
+            if n == nil || i++ < n { return x; }
         });
     }
 
@@ -702,10 +716,12 @@ class Iter {
 
     __subscript__(I, i) {
         for _ in ..(i - 1) {
-            if (!?I.__next__()) return nil;
+            if I.__next__() == nil { return nil; }
         }
         return I.__next__();
     }
+
+    __iter__(I) { return I; }
 }
 
 class ReverseIter : Iter {
@@ -785,7 +801,7 @@ class Range : Iterable {
     }
 
     __match__(self, x) {
-        return (x :: (Int <|> Float)) && (self ? x);
+        return (x :: (Int | Float)) && (self ? x);
     }
 
     has?(self, k) {
@@ -833,9 +849,5 @@ operator ?    5  left
 operator **   10 right
 operator <<   7  left
 operator >>   7  left
-operator &    6  left
 operator ^    5  left
-operator .|   4  left
-operator <|>  5  left
-operator <&>  5  left
-operator <::>  3  left
+operator :>   3  left

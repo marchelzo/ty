@@ -88,6 +88,7 @@ struct sigfn {
 static vec(struct sigfn) sigfns;
 static vec(struct value) stack;
 static vec(char *) calls;
+static vec(char *) contexts;
 static vec(size_t) sp_stack;
 static vec(struct target) targets;
 static vec(struct try) try_stack;
@@ -288,6 +289,8 @@ call(struct value const *f, struct value const *self, int n, bool exec)
         /* fill in 'self' / 'this' */
         if (has_self)
                 vars[f->symbols[0]]->value = *self;
+
+        vec_push(contexts, ip);
 
         if (exec) {
                 vec_push(calls, &halt);
@@ -555,6 +558,25 @@ vm_exec(char *code)
                                 TERM(34),
                                 TERM(1),
                                 str,
+                                TERM(22),
+                                TERM(39),
+
+                                TERM(34),
+                                TERM(1),
+                                ip,
+                                value_show(&v),
+                                TERM(22),
+                                TERM(39)
+                        );
+                        break;
+                CASE(BAD_ASSIGN)
+                        v = pop();
+                        str = ip;
+                        vm_panic(
+                                "constraint on %s%s%s%s%s violated in assignment: %s%s%s = %s%s%s",
+                                TERM(34),
+                                TERM(1),
+                                ip,
                                 TERM(22),
                                 TERM(39),
 
@@ -915,6 +937,11 @@ Throw:
                                 top()[-j] = v;
                         }
                         break;
+                CASE(SWAP)
+                        v = top()[-1];
+                        top()[-1] = top()[0];
+                        top()[0] = v;
+                        break;
                 CASE(REVERSE)
                         for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
                                 ;
@@ -1100,6 +1127,9 @@ Throw:
                         case VALUE_REAL:
                                 n = CLASS_FLOAT;
                                 goto ClassLookup;
+                        case VALUE_BOOLEAN:
+                                n = CLASS_BOOL;
+                                goto ClassLookup;
                         case VALUE_FUNCTION:
                         case VALUE_METHOD:
                         case VALUE_BUILTIN_FUNCTION:
@@ -1231,9 +1261,16 @@ BadContainer:
                         v = pop();
                         push(unary_operator_not(&v));
                         break;
-                CASE(IS_NOT_NIL)
-                        v = pop();
-                        push(BOOLEAN(v.type != VALUE_NIL));
+                CASE(QUESTION)
+                        if (top()->type == VALUE_NIL) {
+                                *top() = BOOLEAN(false);
+                        } else {
+                                n = 0;
+                                b = false;
+                                method = "__question__";
+                                h = strhash(method);
+                                goto CallMethod;
+                        }
                         break;
                 CASE(NEG)
                         v = pop();
@@ -1297,24 +1334,23 @@ BadContainer:
                 CASE(CHECK_MATCH)
                         if (top()->type == VALUE_CLASS) {
                                 v = pop();
-                                if (v.class < CLASS_PRIMITIVE) switch (top()->type) {
-                                case VALUE_INTEGER:  *top() = BOOLEAN(v.class == CLASS_INT);      break;
-                                case VALUE_REAL:     *top() = BOOLEAN(v.class == CLASS_FLOAT);    break;
-                                case VALUE_BOOLEAN:  *top() = BOOLEAN(v.class == CLASS_BOOL);     break;
-                                case VALUE_ARRAY:    *top() = BOOLEAN(v.class == CLASS_ARRAY);    break;
-                                case VALUE_STRING:   *top() = BOOLEAN(v.class == CLASS_STRING);   break;
-                                case VALUE_BLOB:     *top() = BOOLEAN(v.class == CLASS_BLOB);     break;
-                                case VALUE_DICT:     *top() = BOOLEAN(v.class == CLASS_DICT);     break;
-                                case VALUE_CLASS:    *top() = BOOLEAN(v.class == CLASS_CLASS);    break;
+                                switch (top()->type) {
+                                case VALUE_INTEGER:  *top() = BOOLEAN(class_is_subclass(CLASS_INT, v.class));      break;
+                                case VALUE_REAL:     *top() = BOOLEAN(class_is_subclass(CLASS_FLOAT, v.class));    break;
+                                case VALUE_BOOLEAN:  *top() = BOOLEAN(class_is_subclass(CLASS_BOOL, v.class));     break;
+                                case VALUE_ARRAY:    *top() = BOOLEAN(class_is_subclass(CLASS_ARRAY, v.class));    break;
+                                case VALUE_STRING:   *top() = BOOLEAN(class_is_subclass(CLASS_STRING, v.class));   break;
+                                case VALUE_BLOB:     *top() = BOOLEAN(class_is_subclass(CLASS_BLOB, v.class));     break;
+                                case VALUE_DICT:     *top() = BOOLEAN(class_is_subclass(CLASS_DICT, v.class));     break;
                                 case VALUE_METHOD:
                                 case VALUE_BUILTIN_METHOD:
                                 case VALUE_BUILTIN_FUNCTION:
-                                case VALUE_FUNCTION: *top() = BOOLEAN(v.class == CLASS_FUNCTION); break;
-                                case VALUE_REGEX:    *top() = BOOLEAN(v.class == CLASS_REGEX);    break;
-                                default:             *top() = BOOLEAN(false);                     break;
-                                } else {
+                                case VALUE_FUNCTION: *top() = BOOLEAN(class_is_subclass(CLASS_FUNCTION, v.class)); break;
+                                case VALUE_REGEX:    *top() = BOOLEAN(class_is_subclass(CLASS_REGEX, v.class));    break;
+                                case VALUE_OBJECT:
                                         *top() = BOOLEAN(top()->type == VALUE_OBJECT &&
-                                                         class_is_subclass(top()->class, v.class));
+                                                         class_is_subclass(top()->class, v.class));                break;
+                                default:             *top() = BOOLEAN(false);                                      break;
                                 }
                         } else if (top()->type == VALUE_BOOLEAN) {
                                 v = pop();
@@ -1672,6 +1708,9 @@ CallMethod:
                         case VALUE_REAL:
                                 vp = class_lookup_method(CLASS_FLOAT, method, h);
                                 break;
+                        case VALUE_BOOLEAN:
+                                vp = class_lookup_method(CLASS_BOOL, method, h);
+                                break;
                         case VALUE_REGEX:
                                 vp = class_lookup_method(CLASS_REGEX, method, h);
                                 break;
@@ -1737,6 +1776,7 @@ CallMethod:
                         /* fallthrough */
                 CASE(RETURN)
                         ip = *vec_pop(calls);
+                        vec_pop(contexts);
                         LOG("returning: ip = %p", ip);
                         break;
                 CASE(HALT)
@@ -1815,7 +1855,6 @@ vm_panic(char const *fmt, ...)
 
         for (int i = 0; n < sz; ++i) {
                 char const *file = compiler_get_location(ip, &start, &end);
-
                 char buffer[512];
 
                 snprintf(
@@ -1849,8 +1888,12 @@ vm_panic(char const *fmt, ...)
                         where
                 );
 
-                char const *prefix = start.s;
+                if (start.s == NULL) {
+                        start.s = "\n(unknown location)" + 1;
+                        end.s = start.s;
+                }
 
+                char const *prefix = start.s;
                 while (prefix[-1] != '\0' && prefix[-1] != '\n')
                         --prefix;
 
@@ -1899,12 +1942,12 @@ vm_panic(char const *fmt, ...)
                         TERM(39),
                         TERM(22)
                 );
-
-                if (calls.count == 0) {
+Next:
+                if (contexts.count == 0) {
                         break;
                 }
 
-                ip = *vec_pop(calls);
+                ip = *vec_pop(contexts);
         }
 
         LOG("VM Error: %s", ERR);

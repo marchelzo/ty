@@ -2626,19 +2626,20 @@ builtin_type(int argc)
         char const *s = NULL;
         
         switch (v.type) {
-        case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = 5 };
-        case VALUE_REAL:     return (struct value) { .type = VALUE_CLASS, .class = 6 };
-        case VALUE_STRING:   return (struct value) { .type = VALUE_CLASS, .class = 4 };
-        case VALUE_ARRAY:    return (struct value) { .type = VALUE_CLASS, .class = 2 };
-        case VALUE_DICT:     return (struct value) { .type = VALUE_CLASS, .class = 3 };
-        case VALUE_BLOB:     return (struct value) { .type = VALUE_CLASS, .class = 7 };
-        case VALUE_OBJECT:   return (struct value) { .type = VALUE_CLASS, .class = v.class };
-        case VALUE_BOOLEAN:  return (struct value) { .type = VALUE_CLASS, .class = 8 };
-        case VALUE_REGEX:    return (struct value) { .type = VALUE_CLASS, .class = 9 };
+        case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_INT    };
+        case VALUE_REAL:     return (struct value) { .type = VALUE_CLASS, .class = CLASS_FLOAT  };
+        case VALUE_STRING:   return (struct value) { .type = VALUE_CLASS, .class = CLASS_STRING };
+        case VALUE_ARRAY:    return (struct value) { .type = VALUE_CLASS, .class = CLASS_ARRAY  };
+        case VALUE_DICT:     return (struct value) { .type = VALUE_CLASS, .class = CLASS_DICT   };
+        case VALUE_BLOB:     return (struct value) { .type = VALUE_CLASS, .class = CLASS_BLOB   };
+        case VALUE_OBJECT:   return (struct value) { .type = VALUE_CLASS, .class = v.class      };
+        case VALUE_BOOLEAN:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_BOOL   };
+        case VALUE_REGEX:    return (struct value) { .type = VALUE_CLASS, .class = CLASS_REGEX  };
+        case VALUE_CLASS:    return (struct value) { .type = VALUE_CLASS, .class = CLASS_CLASS  };
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
-        case VALUE_FUNCTION: return (struct value) { .type = VALUE_CLASS, .class = 1 };
+        case VALUE_FUNCTION: return (struct value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION };
         default:
         case VALUE_NIL:      return NIL;
         }
