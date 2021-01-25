@@ -812,14 +812,18 @@ prefix_for(void)
 static struct expression *
 next_pattern(void)
 {
+        SAVE_NE(true);
+
         struct expression *p = parse_expr(0);
         p->end = End;
 
-        if (p->type == EXPRESSION_IDENTIFIER && tok()->type != ':') {
+        if (p->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
                 next();
                 p->constraint = parse_expr(0);
                 p->constraint->end = End;
         }
+
+        LOAD_NE();
 
         return p;
 }
@@ -874,7 +878,7 @@ prefix_match(void)
 
         while (tok()->type == ',') {
                 next();
-                vec_push(e->patterns, parse_expr(-1));
+                vec_push(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
                 vec_push(e->thens, parse_expr(0));
         }

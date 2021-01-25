@@ -1249,6 +1249,14 @@ OutOfRange:
                                         goto BadContainer;
                                 }
                                 break;
+                        case VALUE_CLASS:
+                                push(subscript);
+                                push(container);
+                                n = 1;
+                                b = false;
+                                method = "__subscript__";
+                                h = strhash(method);
+                                goto CallMethod;
                         case VALUE_NIL:
                                 push(NIL);
                                 break;

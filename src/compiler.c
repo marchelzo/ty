@@ -682,9 +682,9 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                         struct scope *s = (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module);
                         e->symbol = getsymbol(s, e->identifier, NULL);
                 } else {
-                        symbolize_expression(scope, e->constraint);
         case EXPRESSION_MATCH_NOT_NIL:
                         e->symbol = addsymbol(scope, e->identifier);
+                        symbolize_expression(scope, e->constraint);
                 }
                 break;
         case EXPRESSION_ARRAY:
