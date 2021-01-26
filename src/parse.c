@@ -25,8 +25,8 @@
         static struct expression * \
         infix_ ## name(struct expression *left) \
         { \
-                next(); \
                 struct expression *e = mkexpr(); \
+                next(); \
                 e->type = EXPRESSION_ ## t; \
                 e->left = left; \
                 e->right = parse_expr(prec - (right_assoc ? 1 : 0)); \
@@ -39,8 +39,8 @@
         static struct expression * \
         infix_ ## name(struct expression *left) \
         { \
-                consume(TOKEN_ ## t); \
                 struct expression *e = mkexpr(); \
+                consume(TOKEN_ ## t); \
                 e->type = EXPRESSION_ ## t; \
                 e->target = assignment_lvalue(left); \
                 e->value = parse_expr(prec - (right_assoc ? 1 : 0)); \
@@ -53,8 +53,8 @@
         static struct expression * \
         prefix_ ## name(void) \
         { \
-                struct expression *e = mkexpr(); \
                 consume(TOKEN_ ## token); \
+                struct expression *e = mkexpr(); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = parse_expr(prec); \
                 e->end = e->operand->end; \
@@ -65,8 +65,8 @@
         static struct expression * \
         prefix_ ## name(void) \
         { \
-                consume(TOKEN_ ## token); \
                 struct expression *e = mkexpr(); \
+                consume(TOKEN_ ## token); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = assignment_lvalue(parse_expr(prec)); \
                 e->end = End; \
@@ -96,7 +96,6 @@ static struct table uops;
 static struct table uopcs;
 
 static LexState CtxCheckpoint;
-static int Unconsumed;
 static vec(struct token) tokens;
 
 static int TokenIndex = 0;
@@ -109,7 +108,6 @@ static struct location End;
 
 static int depth;
 static bool NoEquals = false;
-static bool NoConstraint = true; 
 
 #define SAVE_NE(b) bool NESave = NoEquals; NoEquals = (b);
 #define SAVE_NC(b) bool NCSave = NoConstraint; NoConstraint = (b);
@@ -958,11 +956,11 @@ prefix_parenthesis(void)
 static struct expression *
 prefix_true(void)
 {
-        consume_keyword(KEYWORD_TRUE);
-
         struct expression *e = mkexpr();
         e->type = EXPRESSION_BOOLEAN;
         e->boolean = true;
+
+        consume_keyword(KEYWORD_TRUE);
 
         return e;
 }
@@ -970,11 +968,11 @@ prefix_true(void)
 static struct expression *
 prefix_false(void)
 {
-        consume_keyword(KEYWORD_FALSE);
-
         struct expression *e = mkexpr();
         e->type = EXPRESSION_BOOLEAN;
         e->boolean = false;
+
+        consume_keyword(KEYWORD_FALSE);
 
         return e;
 }
@@ -982,10 +980,11 @@ prefix_false(void)
 static struct expression *
 prefix_nil(void)
 {
-        consume_keyword(KEYWORD_NIL);
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_NIL;
+
+        consume_keyword(KEYWORD_NIL);
 
         return e;
 }
@@ -996,8 +995,6 @@ prefix_regex(void)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_REGEX;
         e->regex = tok()->regex;
-        e->extra = tok()->extra;
-        e->pattern = tok()->pattern;
 
         consume(TOKEN_REGEX);
 
@@ -1391,7 +1388,7 @@ infix_user_op(struct expression *left)
 
         int prec = 8;
 
-        struct value *p = table_look(&uops, e->method_name);
+        struct value *p = table_look(&uops, e->op_name);
         if (p != NULL) {
                 prec = (p->integer > 0) ? p->integer : abs(p->integer) - 1;
         }

@@ -912,7 +912,7 @@ array_min_by(struct value *array, int argc)
 
         r = k = NIL;
 
-        if (f.type == VALUE_FUNCTION && f.params > 1) {
+        if (f.type == VALUE_FUNCTION && f.info[2] > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function(&f, &v, &min, NULL);
@@ -983,7 +983,7 @@ array_max_by(struct value *array, int argc)
 
         k = r = NIL;
 
-        if (f.type == VALUE_FUNCTION && f.params > 1) {
+        if (f.type == VALUE_FUNCTION && f.info[2] > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function(&f, &v, &max, NULL);
@@ -1772,7 +1772,7 @@ array_sort_by(struct value *array, int argc)
 
         comparison_fn = &f;
 
-        if (f.type == VALUE_FUNCTION && f.params > 1)
+        if (f.type == VALUE_FUNCTION && f.info[2] > 1)
                 qsort(array->array->items, array->array->count, sizeof (struct value), compare_by2);
         else
                 qsort(array->array->items, array->array->count, sizeof (struct value), compare_by);

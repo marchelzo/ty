@@ -47,6 +47,7 @@ enum instruction {
         INSTR_MEMBER_ACCESS,
         INSTR_TRY_MEMBER_ACCESS,
         INSTR_SUBSCRIPT,
+        INSTR_TAIL_CALL,
         INSTR_CALL,
         INSTR_CALL_METHOD,
         INSTR_TRY_CALL_METHOD,
@@ -73,6 +74,7 @@ enum instruction {
         INSTR_JUMP_IF_NOT,
         INSTR_JUMP_IF_NONE,
         INSTR_RETURN,
+        INSTR_RETURN_PRESERVE_CTX,
         INSTR_EXEC_CODE,
         INSTR_HALT,
 

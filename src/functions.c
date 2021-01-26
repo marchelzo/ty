@@ -29,6 +29,7 @@
 #include "vm.h"
 #include "log.h"
 #include "util.h"
+#include "token.h"
 #include "json.h"
 #include "dict.h"
 #include "object.h"
@@ -509,8 +510,6 @@ builtin_str(int argc)
         if (argc == 0)
                 return STRING_NOGC(NULL, 0);
 
-        struct value *f;
-
         struct value arg = ARG(0);
         if (arg.type == VALUE_STRING) {
                 return arg;
@@ -569,11 +568,12 @@ builtin_regex(int argc)
         if (extra == NULL)
                 return NIL;
 
-        struct value regex = REGEX(re);
-        regex.extra = extra;
-        regex.pattern = sclone(buffer);
+        struct regex *r = alloc(sizeof *r);
+        r->pcre = re;
+        r->extra = extra;
+        r->pattern = sclone(buffer);
 
-        return regex;
+        return REGEX(r);
 }
 
 struct value
@@ -2622,8 +2622,6 @@ builtin_type(int argc)
         ASSERT_ARGC("type()", 1);
 
         struct value v = ARG(0);
-
-        char const *s = NULL;
         
         switch (v.type) {
         case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_INT    };

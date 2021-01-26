@@ -86,6 +86,24 @@ gc_alloc_object(size_t n, char type)
         return a->data;
 }
 
+inline static void *
+gc_alloc_object_aligned(size_t align, size_t n, char type)
+{
+        struct alloc *a = aligned_alloc(align, sizeof *a + n);
+
+        allocated += n;
+
+        a->mark = GC_NONE;
+        a->type = type;
+
+        if (allocated > GC_THRESHOLD)
+                gc();
+
+        vec_push(allocs, a);
+
+        return a->data;
+}
+
 void
 gc_register(void *p);
 

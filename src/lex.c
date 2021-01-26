@@ -166,11 +166,14 @@ mkregex(char const *pat, int flags)
                 );
         }
 
+        struct regex *r = alloc(sizeof *r);
+        r->pattern = pat;
+        r->pcre = re;
+        r->extra = extra;
+
         return (struct token) {
                 .type = TOKEN_REGEX,
-                .regex = re,
-                .extra = extra,
-                .pattern = pat,
+                .regex = r,
                 .start = Start,
                 .end = state.loc,
 		.ctx = state.ctx

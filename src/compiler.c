@@ -1205,6 +1205,7 @@ emit_constraint(struct expression const *c)
         size_t sc;
 
         if (c->type == EXPRESSION_BIT_AND) {
+                emit_instr(INSTR_DUP);
                 emit_constraint(c->left);
                 emit_instr(INSTR_DUP);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, sc);
@@ -1212,6 +1213,7 @@ emit_constraint(struct expression const *c)
                 emit_constraint(c->right);
                 PATCH_JUMP(sc);
         } else if (c->type == EXPRESSION_BIT_OR) {
+                emit_instr(INSTR_DUP);
                 emit_constraint(c->left);
                 emit_instr(INSTR_DUP);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF, sc);
@@ -1219,7 +1221,6 @@ emit_constraint(struct expression const *c)
                 emit_constraint(c->right);
                 PATCH_JUMP(sc);
         } else {
-                emit_instr(INSTR_DUP);
                 emit_expression(c);
                 emit_instr(INSTR_CHECK_MATCH);
         }
@@ -1248,22 +1249,26 @@ emit_function(struct expression const *e)
         state.loop = state.try = t = 0;
         state.each_loop = state.finally = false;
 
-        emit_int(e->param_symbols.count);
-        emit_int(e->bound_symbols.count);
-        emit_boolean(e->rest);
-
         while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
                 vec_push(state.code, 0x00);
         vec_push(state.code, 0xFF);
 
-        for (int i = 0; i < e->bound_symbols.count; ++i)
-                emit_int(e->bound_symbols.items[i]->symbol);
-
         /*
-         * Write an int to the emitted code just to make some room.
+         * Write an int to the emitted code just to make some room
+         * to store the size of the function later on.
          */
         size_t size_offset = state.code.count;
         emit_int(0);
+
+        emit_int(e->bound_symbols.count);
+        emit_int(e->param_symbols.count);
+        emit_int(e->rest);
+
+        size_t nr_offset = state.code.count;
+        emit_int(0);
+
+        for (int i = 0; i < e->bound_symbols.count; ++i)
+                emit_int(e->bound_symbols.items[i]->symbol);
 
         /*
          * Remember where in the code this function's code begins so that we can compute
@@ -1321,11 +1326,16 @@ emit_function(struct expression const *e)
             emit_statement(&empty, false);
         }
 
-        int bytes = state.code.count - size_offset - sizeof (int);
-        LOG("bytes in func = %d", bytes);
-        memcpy(state.code.items + size_offset, &bytes, sizeof (int));
+        while ((state.code.count - start_offset) % P_ALIGN != 0)
+                vec_push(state.code, 0x00);
 
-        emit_int(state.refs.count);
+        int bytes = state.code.count - start_offset;
+        memcpy(state.code.items + size_offset, &bytes, sizeof bytes);
+        LOG("bytes in func = %d", bytes);
+
+        int nr = state.refs.count;
+        memcpy(state.code.items + nr_offset, &nr, sizeof nr);
+
         for (int i = 0; i < state.refs.count; ++i) {
                 emit_symbol(state.refs.items[i].symbol);
                 emit_symbol(state.refs.items[i].offset - start_offset);
@@ -1639,6 +1649,7 @@ emit_try_match(struct expression const *pattern)
                         emit_symbol(pattern->symbol->symbol);
                         emit_instr(INSTR_ASSIGN);
                         if (pattern->constraint != NULL) {
+                                emit_instr(INSTR_DUP);
                                 emit_constraint(pattern->constraint);
                                 emit_instr(INSTR_JUMP_IF_NOT);
                                 vec_push(state.match_fails, state.code.count);
@@ -1757,7 +1768,6 @@ emit_try_match(struct expression const *pattern)
         case EXPRESSION_REGEX:
                 emit_instr(INSTR_TRY_REGEX);
                 emit_symbol((uintptr_t) pattern->regex);
-                emit_symbol((uintptr_t) pattern->extra);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
                 need_loc = true;
@@ -2759,8 +2769,6 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_REGEX:
                 emit_instr(INSTR_REGEX);
                 emit_symbol((uintptr_t) e->regex);
-                emit_symbol((uintptr_t) e->extra);
-                emit_symbol((uintptr_t) e->pattern);
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = e->elements.count - 1; i >= 0; --i) {
@@ -3124,6 +3132,10 @@ emit_statement(struct statement const *s, bool want_result)
                 if (state.each_loop) {
                         emit_instr(INSTR_POP);
                         emit_instr(INSTR_POP);
+                }
+
+                if (false && s->returns.count == 1 && is_call(s->returns.items[0])) {
+                        emit_instr(INSTR_TAIL_CALL);
                 }
 
                 if (s->returns.count > 0) for (int i = 0; i < s->returns.count; ++i) {
@@ -3495,7 +3507,6 @@ char const *
 compiler_get_location(char const *code, struct location *start, struct location *end)
 {
         location_vector *locs = NULL;
-        char const *file = NULL;
 
 //        printf("Looking for %zu\n", (size_t)(code - state.code.items));
         uintptr_t c = (uintptr_t) code;

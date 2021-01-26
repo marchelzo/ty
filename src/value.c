@@ -15,6 +15,7 @@
 #include "log.h"
 #include "gc.h"
 #include "vm.h"
+#include "token.h"
 
 static bool
 arrays_equal(struct value const *v1, struct value const *v2)
@@ -299,7 +300,7 @@ value_show(struct value const *v)
                 s = show_array(v);
                 break;
         case VALUE_REGEX:
-                snprintf(buffer, 1024, "/%s/", v->pattern);
+                snprintf(buffer, 1024, "/%s/", v->regex->pattern);
                 break;
         case VALUE_DICT:
                 s = show_dict(v);
@@ -459,8 +460,8 @@ value_apply_predicate(struct value *p, struct value *v)
                         int rc;
 
                         rc = pcre_exec(
-                                p->regex,
-                                NULL,
+                                p->regex->pcre,
+                                p->regex->extra,
                                 s,
                                 len,
                                 0,
@@ -505,8 +506,8 @@ value_apply_callable(struct value *f, struct value *v)
                 int rc;
 
                 rc = pcre_exec(
-                        f->regex,
-                        NULL,
+                        f->regex->pcre,
+                        f->regex->extra,
                         s,
                         len,
                         0,
@@ -599,14 +600,17 @@ value_array_mark(struct array *a)
 inline static void
 mark_function(struct value const *v)
 {
-        if (MARKED(v->code))
+        int n = v->info[4];
+
+        if (n == 0 || MARKED(v->code))
                 return;
 
         MARK(v->code);
-        MARK(v->refs);
 
-        for (size_t i = 0; i < v->refs->count; ++i) {
-                struct variable *var = (struct variable *)v->refs->refs[i].pointer;
+        uintptr_t const *refs = (uintptr_t const *)(v->code + v->info[0]);
+
+        for (size_t i = 0; i < n; ++i) {
+                struct variable *var = (struct variable *)refs[i];
                 MARK(var);
                 value_mark(&var->value);
         }
@@ -634,7 +638,7 @@ _value_mark(struct value const *v)
         case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);                break;
         case VALUE_ARRAY:           value_array_mark(v->array);                        break;
         case VALUE_DICT:            dict_mark(v->dict);                                break;
-        case VALUE_FUNCTION:        if (v->refs != NULL) mark_function(v);             break;
+        case VALUE_FUNCTION:        mark_function(v);                                  break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);              break;
         case VALUE_OBJECT:          object_mark(v->object);                            break;
         case VALUE_BLOB:            MARK(v->blob);                                     break;

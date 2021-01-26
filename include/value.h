@@ -38,9 +38,9 @@ struct value;
 /* This is getting ugly */
 #define NONE                     ((struct value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                 .tags = 0 })
 
-#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
+//#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
 
-#define BUILTIN_OBJECT_TYPE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_STRING | VALUE_ARRAY | VALUE_BLOB)) != 0))
+#define CALLABLE(v) ((v).type <= VALUE_BUILTIN_METHOD)
 
 #define CLASS_OBJECT    0
 #define CLASS_CLASS     1
@@ -109,35 +109,35 @@ struct ref_vector {
 };
 
 enum {
-        VALUE_REGEX            = 1 << 0,
-        VALUE_INTEGER          = 1 << 1,
-        VALUE_REAL             = 1 << 2,
-        VALUE_BOOLEAN          = 1 << 3,
-        VALUE_NIL              = 1 << 4,
-        VALUE_ARRAY            = 1 << 5,
-        VALUE_DICT             = 1 << 6,
-        VALUE_OBJECT           = 1 << 7,
-        VALUE_CLASS            = 1 << 8,
-        VALUE_FUNCTION         = 1 << 9,
-        VALUE_METHOD           = 1 << 10,
-        VALUE_BUILTIN_FUNCTION = 1 << 11,
-        VALUE_BUILTIN_METHOD   = 1 << 12,
-        VALUE_TAG              = 1 << 13,
-        VALUE_STRING           = 1 << 14,
-        VALUE_BLOB             = 1 << 15,
-        VALUE_SENTINEL         = 1 << 16,
-        VALUE_INDEX            = 1 << 17,
-        VALUE_NONE             = 1 << 18,
-        VALUE_PTR              = 1 << 19,
-        VALUE_TAGGED           = 1 << 20,
+        VALUE_FUNCTION         , // = 1 << 9,
+        VALUE_METHOD           , // = 1 << 10,
+        VALUE_BUILTIN_FUNCTION , // = 1 << 11,
+        VALUE_BUILTIN_METHOD   , // = 1 << 12,
+        VALUE_REGEX            , // = 1 << 0,
+        VALUE_INTEGER          , // = 1 << 1,
+        VALUE_REAL             , // = 1 << 2,
+        VALUE_BOOLEAN          , // = 1 << 3,
+        VALUE_NIL              , // = 1 << 4,
+        VALUE_ARRAY            , // = 1 << 5,
+        VALUE_DICT             , // = 1 << 6,
+        VALUE_OBJECT           , // = 1 << 7,
+        VALUE_CLASS            , // = 1 << 8,
+        VALUE_TAG              , // = 1 << 13,
+        VALUE_STRING           , // = 1 << 14,
+        VALUE_BLOB             , // = 1 << 15,
+        VALUE_SENTINEL         , // = 1 << 16,
+        VALUE_INDEX            , // = 1 << 17,
+        VALUE_NONE             , // = 1 << 18,
+        VALUE_PTR              , // = 1 << 19,
+        VALUE_TAGGED           = 1 << 7
 };
 
 struct value {
-        uint32_t type;
+        uint8_t type;
         uint16_t tags;
         union {
                 short tag;
-                float real;
+                double real;
                 bool boolean;
                 struct array *array;
                 struct dict *dict;
@@ -162,26 +162,17 @@ struct value {
                 };
                 struct {
                         char const *string;
-                        size_t bytes;
-                        size_t gcb;
+                        uint32_t bytes;
                         char *gcstr;
                 };
                 struct {
                         intmax_t i;
-                        size_t off;
+                        int off;
                         int nt;
                 };
+                struct regex *regex;
                 struct {
-                        pcre *regex;
-                        pcre_extra *extra;
-                        char const *pattern;
-                };
-                struct {
-                        int *symbols;
-                        unsigned char params;
-                        bool rest;
-                        unsigned short bound;
-                        struct ref_vector *refs;
+                        int *info;
                         char *code;
                 };
         };
@@ -308,8 +299,7 @@ STRING_VIEW(struct value s, int offset, int n)
                 .tags = 0,
                 .string = s.string + offset,
                 .bytes = n,
-                .gcstr = s.gcstr,
-                .gcb = s.gcb
+                .gcstr = s.gcstr
         };
 }
 
@@ -321,8 +311,7 @@ STRING_NOGC(char const *s, int n)
                 .tags = 0,
                 .string = s,
                 .bytes = n,
-                .gcstr = NULL,
-                .gcb = 0
+                .gcstr = NULL
         };
 }
 

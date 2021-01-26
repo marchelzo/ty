@@ -66,6 +66,7 @@ struct try {
         int gc;
         int cs;
         int ts;
+        int ctxs;
         char *catch;
         char *finally;
         char *end;
@@ -258,18 +259,23 @@ pushtarget(struct value *v, void *gc)
 inline static void
 call(struct value const *f, struct value const *self, int n, bool exec)
 {
-        for (int i = 0; i < f->bound; ++i)
-                pushvar(f->symbols[i]);
+        int bound = f->info[1];
+        int np = f->info[2];
+        bool rest = f->info[3];
+        int const *symbols = f->info + 5;
 
-        bool has_self = (f->params > 0) && (self != NULL);
+        for (int i = 0; i < bound; ++i)
+                pushvar(symbols[i]);
 
-        int params = f->params - has_self - f->rest;
+        bool has_self = (np > 0) && (self != NULL);
 
-        if (f->rest) {
+        int params = np - has_self - rest;
+
+        if (rest) {
                 struct value v = ARRAY(value_array_new());
                 for (int i = n - params - 1; i >= 0; --i)
                         value_array_push(v.array, top()[-i]);
-                vars[f->symbols[f->params - 1]]->value = v;
+                vars[symbols[params - 1]]->value = v;
         }
 
         /* throw away extra arguments */
@@ -279,16 +285,16 @@ call(struct value const *f, struct value const *self, int n, bool exec)
 
         /* default missing parameters to nil */
         for (int i = n; i < params; ++i)
-                vars[f->symbols[i + has_self]]->value = NIL;
+                vars[symbols[i + has_self]]->value = NIL;
 
         /* fill in the rest of the arguments */
         while (n --> 0) {
-                vars[f->symbols[n + has_self]]->value = pop();
+                vars[symbols[n + has_self]]->value = pop();
         }
 
         /* fill in 'self' / 'this' */
         if (has_self)
-                vars[f->symbols[0]]->value = *self;
+                vars[symbols[0]]->value = *self;
 
         vec_push(contexts, ip);
 
@@ -357,9 +363,9 @@ vm_exec(char *code)
         char *save = ip;
         ip = code;
 
-        uintptr_t s, s2, off;
+        uintptr_t s, off;
         intmax_t k;
-        bool b;
+        bool b = false, tco = false;
         float f;
         int n, i, j, tag, rc = 0;
         unsigned long h;
@@ -610,6 +616,8 @@ Throw:
                         push(SENTINEL);
                         push(v);
 
+                        vec_push(contexts, ip);
+
                         targets.count = t->ts;
                         calls.count = t->cs;
                         ip = t->catch;
@@ -637,6 +645,7 @@ Throw:
                         break;
                 }
                 CASE(POP_TRY)
+                        contexts.count = vec_last(try_stack)->ctxs;
                         --try_stack.count;
                         break;
                 CASE(TRY)
@@ -654,6 +663,7 @@ Throw:
                         t.gc = gc_root_set_count();
                         t.cs = calls.count;
                         t.ts = targets.count;
+                        t.ctxs = targets.count;
                         t.executing = false;
                         vec_push(try_stack, t);
                         break;
@@ -681,10 +691,8 @@ Throw:
                         break;
                 CASE(TRY_REGEX)
                         READVALUE(s);
-                        READVALUE(s2);
                         READVALUE(n);
-                        v = REGEX((pcre *) s);
-                        v.extra = (pcre_extra *) s2;
+                        v = REGEX((struct regex const *) s);
                         if (!value_apply_predicate(&v, top()))
                                 ip += n;
                         break;
@@ -766,11 +774,7 @@ Throw:
                         break;
                 CASE(REGEX)
                         READVALUE(s);
-                        v = REGEX((pcre *) s);
-                        READVALUE(s);
-                        v.extra = (pcre_extra *) s;
-                        READVALUE(s);
-                        v.pattern = (char const *) s;
+                        v = REGEX((struct regex const *) s);
                         push(v);
                         break;
                 CASE(ARRAY)
@@ -835,13 +839,13 @@ Throw:
                                 break;
                         case VALUE_OBJECT:
                                 if ((vp = class_method(v.class, "__next__")) != NULL) {
-                                        static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN };
+                                        static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
                                         push(INTEGER(i));
                                         vec_push(calls, ip);
                                         call(vp, &v, 1, false);
                                         *vec_last(calls) = next_fix;
                                 } else if ((vp = class_method(v.class, "__iter__")) != NULL) {
-                                        static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN };
+                                        static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
                                         pop();
                                         pop();
                                         --top()->i;
@@ -1497,8 +1501,6 @@ BadContainer:
                         READVALUE(n);
                         while (n --> 0) {
                                 v = pop();
-                                if (v.refs != NULL)
-                                        NOGC(v.refs);
                                 tags_add_method(tag, ip, v);
                                 ip += strlen(ip) + 1;
                         }
@@ -1514,8 +1516,6 @@ BadContainer:
                         READVALUE(n);
                         while (n --> 0) {
                                 v = pop();
-                                if (v.refs != NULL)
-                                        NOGC(v.refs);
                                 class_add_method(class, ip, v);
                                 ip += strlen(ip) + 1;
                         }
@@ -1526,62 +1526,49 @@ BadContainer:
                 {
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
-                        v.this = NULL;
-
-                        int params;
-                        int bound;
-                        bool rest;
-
-                        READVALUE(params);
-                        READVALUE(bound);
-                        READVALUE(rest);
-
-                        v.bound = bound;
-                        v.params = params;
-                        v.rest = rest;
 
                         while (*ip != ((char)0xFF))
                                 ++ip;
                         ++ip;
 
-                        v.symbols = (int *) ip;
-                        ip += bound * sizeof (int);
+                        v.info = (int const *) ip;
 
-                        READVALUE(n);
-                        size_t sz = n;
-                        char *code = ip;
+                        int size  = v.info[0];
+                        int bound = v.info[1];
+                        int refs = v.info[4];
+                        char *code = ip + (bound + 5 ) * sizeof (int);
 
-                        ip += n;
+                        ip = code + size;
 
-                        READVALUE(n);
-                        if (n == 0) {
-                                v.code = code;
-                                v.refs = NULL;
+                        if (refs > 0) {
+                                v.code = gc_alloc_object_aligned(P_ALIGN, size + sizeof (uintptr_t) * refs, GC_CODE);
+                                memcpy(v.code, code, size);
+                                for (int i = 0; i < refs; ++i) {
+                                        READVALUE(s);
+                                        READVALUE(off);
+                                        vars[s]->captured = true;
+                                        uintptr_t ptr = (uintptr_t)vars[s];
+                                        memcpy(v.code + off, &ptr, sizeof ptr);
+                                        ((uintptr_t *)(v.code + size))[i] = ptr;
+                                }
                         } else {
-                                v.refs = ref_vector_new(n);
-                                v.code = gc_alloc_object(sz, GC_CODE);
-                                memcpy(v.code, code, sz);
-                        }
-
-                        for (int i = 0; i < n; ++i) {
-                                READVALUE(s);
-                                READVALUE(off);
-                                vars[s]->captured = true;
-                                uintptr_t ptr = (uintptr_t)vars[s];
-                                memcpy(v.code + off, &ptr, sizeof ptr);
-                                struct reference ref = {
-                                        .pointer = ptr,
-                                        .offset = off
-                                };
-                                v.refs->refs[i] = ref;
+                                v.code = code;
                         }
 
                         push(v);
                         break;
                 }
+                CASE(TAIL_CALL)
+                        tco = true;
+                        break;
                 CASE(CALL)
                         v = pop();
                         READVALUE(n);
+                        if (tco) {
+                                vec_pop(contexts);
+                                ip = *vec_pop(calls);
+                                tco = false;
+                        }
                 Call:
                         gc_push(&v);
                         switch (v.type) {
@@ -1668,6 +1655,12 @@ CallMethod:
                         vp = NULL;
                         func = NULL;
                         struct value *self = NULL;
+
+                        if (tco) {
+                                vec_pop(contexts);
+                                ip = *vec_pop(calls);
+                                tco = false;
+                        }
 
                         for (int tags = value.tags; tags != 0; tags = tags_pop(tags)) {
                                 vp = tags_lookup_method(tags_first(tags), method, h);
@@ -1783,8 +1776,9 @@ CallMethod:
                         stack.count -= rc;
                         /* fallthrough */
                 CASE(RETURN)
-                        ip = *vec_pop(calls);
                         vec_pop(contexts);
+                CASE(RETURN_PRESERVE_CTX)
+                        ip = *vec_pop(calls);
                         LOG("returning: ip = %p", ip);
                         break;
                 CASE(HALT)

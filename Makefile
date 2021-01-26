@@ -25,21 +25,24 @@ PREFIX ?= /usr/local
 
 bindir := /bin
 
-ifdef NOLOG
+ifndef LOG
         CFLAGS += -DTY_NO_LOG
 endif
 
-ifndef RELEASE
-        CFLAGS += -O0
-        CFLAGS += -fsanitize=undefined
-        CFLAGS += -fsanitize=address
-        CFLAGS += -fsanitize=leak
-else
+ifdef RELEASE
         CFLAGS += -Ofast
         CFLAGS += -march=native
         CFLAGS += -pipe
         CFLAGS += -DTY_RELEASE
-        CFLAGS += -DTY_NO_LOG
+else ifdef DEBUG
+        CFLAGS += -O0
+        CFLAGS += -fsanitize=undefined
+        CFLAGS += -fsanitize=address
+        CFLAGS += -fsanitize=leak
+        CFLAGS += -ggdb3
+else
+        CFLAGS += -Og
+        CFLAGS += -DTY_RELEASE
 endif
 
 ifdef GENPROF

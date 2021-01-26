@@ -12,6 +12,8 @@
 #define TERM(n) (isatty(2) ? ("\x1b[" #n "m") : "")
 #define ERR_SIZE 4096
 
+#define P_ALIGN (_Alignof (uintptr_t))
+
 extern char ERR[ERR_SIZE];
 
 uintmax_t

@@ -8,6 +8,7 @@
 #include "util.h"
 #include "gc.h"
 #include "vm.h"
+#include "token.h"
 #include "functions.h"
 
 static struct stringpos limitpos;
@@ -220,11 +221,11 @@ string_search(struct value *string, int argc)
 
                 n = match - s;
         } else {
-                pcre *re = pattern.regex;
+                pcre *re = pattern.regex->pcre;
                 int rc;
                 int out[3];
 
-                rc = pcre_exec(re, NULL, s, bytes, 0, 0, out, 3);
+                rc = pcre_exec(re, pattern.regex->extra, s, bytes, 0, 0, out, 3);
 
                 if (rc == -1)
                         return NIL;
@@ -440,13 +441,13 @@ string_split(struct value *string, int argc)
                 if (i == len)
                         value_array_push(result.array, STRING_EMPTY);
         } else {
-                pcre *re = pattern.regex;
+                pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
                 int start = 0;
                 int out[3];
 
                 while (start < len) {
-                        if (pcre_exec(re, NULL, s, len, start, 0, out, 3) != 1)
+                        if (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) != 1)
                                 out[0] = out[1] = len;
 
                         if (out[0] == out[1]) {
@@ -498,8 +499,8 @@ string_count(struct value *string, int argc)
                 int rc;
 
                 while ((rc = pcre_exec(
-                                pattern.regex,
-                                pattern.extra,
+                                pattern.regex->pcre,
+                                pattern.regex->extra,
                                 s,
                                 len,
                                 0,
@@ -562,13 +563,13 @@ string_comb(struct value *string, int argc)
 
                 vec_push_n(chars, s, len);
         } else {
-                pcre *re = pattern.regex;
+                pcre *re = pattern.regex->pcre;
                 char const *r = replacement.string;
                 int len = string->bytes;
                 int start = 0;
                 int out[3];
 
-                while (pcre_exec(re, NULL, s, len, start, 0, out, 3) == 1) {
+                while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
 
                         vec_push_n(chars, s + start, out[0] - start);
 
@@ -637,13 +638,13 @@ string_replace(struct value *string, int argc)
 
                 vec_push_n(chars, s, len);
         } else if (replacement.type == VALUE_STRING) {
-                pcre *re = pattern.regex;
+                pcre *re = pattern.regex->pcre;
                 char const *r = replacement.string;
                 int len = string->bytes;
                 int start = 0;
                 int out[3];
 
-                while (pcre_exec(re, NULL, s, len, start, 0, out, 3) == 1) {
+                while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
 
                         vec_push_n(chars, s + start, out[0] - start);
 
@@ -655,13 +656,13 @@ string_replace(struct value *string, int argc)
                 vec_push_n(chars, s + start, len - start);
 
         } else if (CALLABLE(replacement)) {
-                pcre *re = pattern.regex;
+                pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
                 int start = 0;
                 int out[30];
                 int rc;
 
-                while ((rc = pcre_exec(re, NULL, s, len, start, 0, out, 30)) > 0) {
+                while ((rc = pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 30)) > 0) {
 
                         vec_push_n(chars, s + start, out[0] - start);
 
@@ -719,8 +720,8 @@ string_is_match(struct value *string, int argc)
         int rc;
 
         rc = pcre_exec(
-                pattern.regex,
-                NULL,
+                pattern.regex->pcre,
+                pattern.regex->extra,
                 string->string,
                 len,
                 0,
@@ -751,8 +752,8 @@ string_match(struct value *string, int argc)
         int rc;
 
         rc = pcre_exec(
-                pattern.regex,
-                NULL,
+                pattern.regex->pcre,
+                pattern.regex->extra,
                 string->string,
                 len,
                 0,
@@ -807,8 +808,8 @@ string_matches(struct value *string, int argc)
         int rc;
 
         while ((rc = pcre_exec(
-                        pattern.regex,
-                        pattern.extra,
+                        pattern.regex->pcre,
+                        pattern.regex->extra,
                         s,
                         len,
                         0,

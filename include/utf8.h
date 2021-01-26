@@ -18,6 +18,8 @@ next_utf8(const char *str, int len, uint32_t *cp)
         unsigned char b0 = (str++)[0];
         int nbytes;
 
+        *cp = 0;
+
         if (!len)
                 return -1;
 

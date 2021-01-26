@@ -10,6 +10,12 @@
 #include "location.h"
 #include "lex.h"
 
+struct regex {
+        pcre *pcre;
+        pcre_extra *extra;
+        char const *pattern;
+};
+
 struct token {
         enum {
                 /*
@@ -94,11 +100,7 @@ struct token {
                         KEYWORD_THROW,
                         KEYWORD_OPERATOR,
                 } keyword;
-                struct {
-                        pcre *regex;
-                        pcre_extra *extra;
-                        char const *pattern;
-                };
+                struct regex const *regex;
                 struct {
                         vec(char *) strings;
                         vec(LexState) expressions;

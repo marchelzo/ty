@@ -220,11 +220,7 @@ struct expression {
                         struct expression *then;
                         struct expression *otherwise;
                 };
-                struct {
-                        pcre *regex;
-                        pcre_extra *extra;
-                        char const *pattern;
-                };
+                struct regex const *regex;
                 struct {
                         vec(char *) strings;
                         vec(struct expression *) expressions;
