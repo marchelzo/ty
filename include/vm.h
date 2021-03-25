@@ -12,13 +12,17 @@ struct variable;
 enum instruction {
         INSTR_NOP,
 
-        INSTR_LOAD_VAR,
+        INSTR_LOAD_LOCAL,
         INSTR_LOAD_REF,
+        INSTR_LOAD_CAPTURED,
+        INSTR_LOAD_GLOBAL,
         INSTR_PUSH_VAR,
         INSTR_CHECK_VARS,
         INSTR_POP_VAR,
-        INSTR_TARGET_VAR,
+        INSTR_TARGET_LOCAL,
         INSTR_TARGET_REF,
+        INSTR_TARGET_CAPTURED,
+        INSTR_TARGET_GLOBAL,
         INSTR_TARGET_MEMBER,
         INSTR_TARGET_SUBSCRIPT,
         INSTR_ASSIGN,
@@ -35,6 +39,7 @@ enum instruction {
         INSTR_DICT,
         INSTR_DICT_DEFAULT,
         INSTR_NIL,
+        INSTR_SELF,
         INSTR_TAG,
         INSTR_CLASS,
 
@@ -93,6 +98,9 @@ enum instruction {
         INSTR_CLEAR_EXTRA,
         INSTR_FIX_EXTRA,
 
+        INSTR_FUCK,
+        INSTR_FUCK2,
+        INSTR_FUCK3,
 
         INSTR_SAVE_STACK_POS,
         INSTR_RESTORE_STACK_POS,

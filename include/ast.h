@@ -104,12 +104,14 @@ struct statement {
                 struct {
                         struct expression *e;
                         struct expression *pattern;
+                        struct expression *cond;
                         struct statement *block;
                         int_vector check;
                 } while_let;
                 struct {
                         struct expression *e;
                         struct expression *pattern;
+                        struct expression *cond;
                         struct statement *then;
                         struct statement *otherwise;
                         bool neg;
@@ -142,6 +144,7 @@ struct expression {
                 EXPRESSION_PREFIX_QUESTION,
                 EXPRESSION_PREFIX_BANG,
                 EXPRESSION_NIL,
+                EXPRESSION_SELF,
                 EXPRESSION_LIST,
 
                 EXPRESSION_KEEP_LOC,
@@ -170,6 +173,8 @@ struct expression {
                 EXPRESSION_PERCENT,
                 EXPRESSION_AND,
                 EXPRESSION_OR,
+                EXPRESSION_KW_AND,
+                EXPRESSION_KW_OR,
                 EXPRESSION_WTF,
                 EXPRESSION_LT,
                 EXPRESSION_LEQ,
@@ -204,6 +209,7 @@ struct expression {
                 struct statement *statement;
                 struct expression *operand;
                 struct {
+                        struct symbol *atmp;
                         vec(struct expression *) elements;
                         struct {
                                 struct expression *pattern;
@@ -251,6 +257,7 @@ struct expression {
                 struct {
                         char *name;
                         struct symbol *function_symbol;
+                        struct scope *scope;
                         vec(char *) params;
                         vec(struct expression *) dflts;
                         vec(struct expression *) constraints;
@@ -265,6 +272,7 @@ struct expression {
                         vec(struct expression *) args;
                 };
                 struct {
+                        struct symbol *dtmp;
                         vec(struct expression *) keys;
                         vec(struct expression *) values;
                         struct {

@@ -7,9 +7,12 @@
 #include "vm.h"
 #include "log.h"
 
-size_t allocated = 0;
-alloc_list allocs;
-static vec(struct value const *) root_set;
+AllocList allocs;
+
+size_t MemoryUsed = 0;
+size_t MemoryLimit = GC_INITIAL_LIMIT;
+
+static vec(struct value const *) RootSet;
 
 bool GC_ENABLED = true;
 
@@ -19,24 +22,33 @@ collect(struct alloc *a)
         void *p = a->data;
 
         switch (a->type) {
-        case GC_ARRAY:   free(((struct array *)p)->items); break;
-        case GC_BLOB:    free(((struct blob *)p)->items);  break;
-        case GC_DICT:    dict_free(p);                     break;
-        case GC_OBJECT:  table_release(p);                 break;
+        case GC_ARRAY:   gc_free(((struct array *)p)->items); break;
+        case GC_BLOB:    gc_free(((struct blob *)p)->items);  break;
+        case GC_DICT:    dict_free(p);                        break;
+        case GC_OBJECT:  table_release(p);                    break;
         }
 }
 
 void
 gc(void)
 {
+        if (!GC_ENABLED) {
+                return;
+        }
+
+        printf("Running GC\n");
+
+        GC_ENABLED = false;
+
         vm_mark();
 
-        for (int i = 0; i < root_set.count; ++i)
-                value_mark(root_set.items[i]);
+        for (int i = 0; i < RootSet.count; ++i)
+                value_mark(RootSet.items[i]);
 
         int n = 0;
         for (int i = 0; i < allocs.count; ++i) {
                 if (allocs.items[i]->mark == GC_NONE) {
+                        MemoryUsed -= allocs.items[i]->size;
                         collect(allocs.items[i]);
                         free(allocs.items[i]);
                 } else {
@@ -46,13 +58,8 @@ gc(void)
         }
 
         allocs.count = n;
-        allocated = 0;
-}
 
-void
-gc_notify(size_t n)
-{
-        allocated += n;
+        GC_ENABLED = true;
 }
 
 void
@@ -62,25 +69,25 @@ gc_register(void *p)
 }
 
 void
-_gc_push(struct value const *v)
+_gc_push(struct value *v)
 {
-        vec_push(root_set, v);
+        vec_push(RootSet, v);
 }
 
 void
 gc_pop(void)
 {
-        --root_set.count;
+        --RootSet.count;
 }
 
 void
 gc_remove(struct value *v)
 {
-        for (int i = 0; i < root_set.count; ++i) {
-                if (root_set.items[i] == v) {
-                        int j = root_set.count - 1;
-                        root_set.items[i] = root_set.items[j];
-                        --root_set.count;
+        for (int i = 0; i < RootSet.count; ++i) {
+                if (RootSet.items[i] == v) {
+                        int j = RootSet.count - 1;
+                        RootSet.items[i] = RootSet.items[j];
+                        --RootSet.count;
                 }
         }
 }
@@ -88,17 +95,17 @@ gc_remove(struct value *v)
 void
 gc_clear_root_set(void)
 {
-        root_set.count = 0;
+        RootSet.count = 0;
 }
 
 void
 gc_truncate_root_set(size_t n)
 {
-        root_set.count = n;
+        RootSet.count = n;
 }
 
 size_t
 gc_root_set_count(void)
 {
-        return root_set.count;
+        return RootSet.count;
 }

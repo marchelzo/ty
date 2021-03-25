@@ -136,8 +136,8 @@ hash(struct value const *val)
         case VALUE_OBJECT:            return obj_hash(val);
         case VALUE_METHOD:            return ptr_hash(val->method) ^ ptr_hash(val->this);
         case VALUE_BUILTIN_METHOD:    return ptr_hash(val->builtin_method) ^ ptr_hash(val->this);
-        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->code);
         case VALUE_FUNCTION:          return ptr_hash(val->builtin_function);
+        case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->info) ^ ptr_hash(val->env);
         case VALUE_REGEX:             return ptr_hash(val->regex);
         case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
         case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
@@ -165,7 +165,7 @@ show_dict(struct value const *d)
         size_t capacity = 1;
         size_t len = 1;
         size_t n;
-        char *s = alloc(2);
+        char *s = gc_alloc(2);
         strcpy(s, "{");
 
 #define add(str) \
@@ -187,8 +187,8 @@ show_dict(struct value const *d)
                         add(": ");
                         add(val);
                 }
-                free(key);
-                free(val);
+                gc_free(key);
+                gc_free(val);
                 j += 1;
         }
 
@@ -214,7 +214,7 @@ show_array(struct value const *a)
         size_t capacity = 1;
         size_t len = 1;
         size_t n;
-        char *s = alloc(2);
+        char *s = gc_alloc(2);
         strcpy(s, "[");
 
 #define add(str) \
@@ -230,7 +230,7 @@ show_array(struct value const *a)
                 char *val = value_show(&a->array->items[i]);
                 add(i == 0 ? "" : ", ");
                 add(val);
-                free(val);
+                gc_free(val);
         }
 
         add("]");
@@ -306,7 +306,12 @@ value_show(struct value const *v)
                 s = show_dict(v);
                 break;
         case VALUE_FUNCTION:
-                snprintf(buffer, 1024, "<function at %p>", (void *) v->code);
+                if (v->info[6] == -1) {
+                        snprintf(buffer, 1024, "<function '%s' at %p>", (char *)(v->info + 7), (void *)((char *)v->info + v->info[0]));
+                } else {
+                        char const *class = class_name(v->info[6]);
+                        snprintf(buffer, 1024, "<function '%s.%s' at %p>", class, (char *)(v->info + 7), (void *)((char *)v->info + v->info[0]));
+                }
                 break;
         case VALUE_METHOD:
                 if (v->this == NULL)
@@ -349,7 +354,7 @@ value_show(struct value const *v)
                         struct value str = vm_eval_function(fp, v, NULL);
                         if (str.type != VALUE_STRING)
                                 vm_panic("%s.__str__() returned non-string", class_name(v->class));
-                        s = alloc(str.bytes + 1);
+                        s = gc_alloc(str.bytes + 1);
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
@@ -361,7 +366,7 @@ value_show(struct value const *v)
         }
 
         char *result = tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0);
-        free(s);
+        gc_free(s);
 
         return result;
 }
@@ -559,7 +564,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_STRING:           if (v1->bytes != v2->bytes || memcmp(v1->string, v2->string, v1->bytes) != 0)  return false; break;
         case VALUE_ARRAY:            if (!arrays_equal(v1, v2))                                                     return false; break;
         case VALUE_REGEX:            if (v1->regex != v2->regex)                                                    return false; break;
-        case VALUE_FUNCTION:         if (v1->code != v2->code)                                                      return false; break;
+        case VALUE_FUNCTION:         if (v1->info != v2->info)                                                      return false; break;
         case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
         case VALUE_DICT:             if (v1->dict != v2->dict)                                                      return false; break;
         case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
@@ -600,19 +605,16 @@ value_array_mark(struct array *a)
 inline static void
 mark_function(struct value const *v)
 {
-        int n = v->info[4];
+        int n = v->info[2];
 
-        if (n == 0 || MARKED(v->code))
+        if (n == 0 || MARKED(v->env))
                 return;
 
-        MARK(v->code);
-
-        uintptr_t const *refs = (uintptr_t const *)(v->code + v->info[0]);
+        MARK(v->env);
 
         for (size_t i = 0; i < n; ++i) {
-                struct variable *var = (struct variable *)refs[i];
-                MARK(var);
-                value_mark(&var->value);
+                MARK(v->env[i]);
+                value_mark(v->env[i]);
         }
 }
 
@@ -641,6 +643,7 @@ _value_mark(struct value const *v)
         case VALUE_FUNCTION:        mark_function(v);                                  break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);              break;
         case VALUE_OBJECT:          object_mark(v->object);                            break;
+        case VALUE_REF:             value_mark(v->ptr);                                break;
         case VALUE_BLOB:            MARK(v->blob);                                     break;
         default:                                                                       break;
         }
@@ -697,45 +700,4 @@ value_array_extend(struct array *a, struct array const *other)
                 memcpy(a->items + a->count, other->items, other->count * sizeof (struct value));
 
         a->count = n;
-}
-
-struct ref_vector *
-ref_vector_new(int n)
-{
-        struct ref_vector *v = gc_alloc_object(sizeof *v + sizeof (struct reference) * n, GC_REF_VECTOR);
-        v->count = n;
-        return v;
-}
-
-TEST(hash)
-{
-        struct value v1 = STRING_NOGC("hello", 5);
-        struct value v2 = STRING_NOGC("world", 5);
-
-        claim(value_hash(&v1) != value_hash(&v2));
-}
-
-TEST(equality)
-{
-        vm_init(0, NULL);
-
-        struct value v1 = BOOLEAN(true);
-        struct value v2 = BOOLEAN(false);
-        claim(!value_test_equality(&v1, &v2));
-
-        v1.type = VALUE_INTEGER;
-        v2.type = VALUE_STRING;
-        claim(!value_test_equality(&v1, &v2));
-
-        v2.type = VALUE_INTEGER;
-
-        v1.integer = v2.integer = 19;
-        claim(value_test_equality(&v1, &v2));
-
-        claim(
-                value_test_equality(
-                        &NIL,
-                        &NIL
-                )
-        );
 }

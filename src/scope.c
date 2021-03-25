@@ -3,9 +3,12 @@
 
 #include "scope.h"
 #include "alloc.h"
+#include "log.h"
 #include "util.h"
 
+static int GLOBAL;
 static int SYMBOL;
+
 static vec(char const *) names;
 
 inline static struct symbol *
@@ -24,14 +27,15 @@ local_lookup(struct scope const *s, char const *id)
 struct scope *
 scope_new(struct scope *parent, bool is_function)
 {
-        struct scope *s = alloc(sizeof *s);
+        struct scope *s = gc_alloc(sizeof *s);
 
         s->is_function = is_function;
         s->parent = parent;
         s->function = (is_function || parent == NULL) ? s : parent->function;
         s->external = false;
 
-        vec_init(s->function_symbols);
+        vec_init(s->owned);
+        vec_init(s->captured);
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i)
                 s->table[i] = NULL;
@@ -42,14 +46,33 @@ scope_new(struct scope *parent, bool is_function)
 struct symbol *
 scope_lookup(struct scope const *s, char const *id)
 {
-        while (s != NULL) {
-                struct symbol *sym = local_lookup(s, id);
-                if (sym != NULL)
-                        return sym;
-                s = s->parent;
+        if (s == NULL) {
+                return NULL;
         }
 
-        return NULL;
+        struct symbol *sym = local_lookup(s, id);
+
+        if (sym != NULL) {
+                return sym;
+        }
+
+        sym = scope_lookup(s->parent, id);
+
+        if (sym == NULL) {
+                return NULL;
+        }
+
+        if (sym->scope->function != s->function && !sym->global) {
+                sym->captured = true;
+                for (int i = 0; i < s->function->captured.count; ++i) {
+                        if (s->function->captured.items[i] == sym) {
+                                return sym;
+                        }
+                }
+                vec_push(s->function->captured, sym);
+        }
+
+        return sym;
 }
 
 bool
@@ -66,7 +89,7 @@ scope_add(struct scope *s, char const *id)
 
         vec_push(names, id);
 
-        struct symbol *sym = alloc(sizeof *sym);
+        struct symbol *sym = gc_alloc(sizeof *sym);
 
         sym->identifier = id;
         sym->symbol = SYMBOL++;
@@ -75,11 +98,28 @@ scope_add(struct scope *s, char const *id)
         sym->tag = -1;
         sym->class = -1;
         sym->scope = s;
+        sym->captured = false;
+        sym->ci = -1;
+
+        sym->global = (s->function->parent == NULL || s->function->parent->parent == NULL);
 
         sym->hash = h;
         sym->next = s->table[i];
 
-        vec_push(s->function->function_symbols, sym);
+        struct scope *owner = s;
+        while (owner->function != owner && owner->parent != NULL) {
+                owner = owner->parent;
+        }
+
+        if (sym->global) {
+                sym->i = GLOBAL++;
+        } else {
+                sym->i = owner->owned.count;
+        }
+
+        LOG("Symbol %d (%s) is getting i = %d", sym->symbol, id, sym->i);
+
+        vec_push(owner->owned, sym);
 
         s->table[i] = sym;
         
@@ -89,7 +129,7 @@ scope_add(struct scope *s, char const *id)
 void
 scope_insert(struct scope *s, struct symbol *sym)
 {
-        struct symbol *newsym = alloc(sizeof *newsym);
+        struct symbol *newsym = gc_alloc(sizeof *newsym);
         *newsym = *sym;
 
         newsym->scope = s;

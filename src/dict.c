@@ -20,9 +20,9 @@ dict_new(void)
         struct dict *d = gc_alloc_object(sizeof *d, GC_DICT);
 
         d->size = INITIAL_SIZE;
-        d->hashes = alloc(sizeof (unsigned long [INITIAL_SIZE]));
-        d->keys = alloc(sizeof (struct value [INITIAL_SIZE]));
-        d->values = alloc(sizeof (struct value [INITIAL_SIZE]));
+        d->hashes = gc_alloc(sizeof (unsigned long [INITIAL_SIZE]));
+        d->keys = gc_alloc(sizeof (struct value [INITIAL_SIZE]));
+        d->values = gc_alloc(sizeof (struct value [INITIAL_SIZE]));
         d->count = 0;
         d->dflt = NONE;
         memset(d->keys, 0, sizeof (struct value [INITIAL_SIZE]));
@@ -71,9 +71,9 @@ grow(struct dict *d)
         size_t oldsz = d->size;
         d->size *= 2;
 
-        unsigned long *hashes = alloc(sizeof (unsigned long [d->size]));
-        struct value *keys = alloc(sizeof (struct value [d->size]));
-        struct value *values = alloc(sizeof (struct value [d->size]));
+        unsigned long *hashes = gc_alloc(sizeof (unsigned long [d->size]));
+        struct value *keys = gc_alloc(sizeof (struct value [d->size]));
+        struct value *values = gc_alloc(sizeof (struct value [d->size]));
 
         memset(keys, 0, sizeof (struct value [d->size]));
         
@@ -86,9 +86,9 @@ grow(struct dict *d)
                 values[j] = d->values[i];
         }
 
-        free(d->hashes);
-        free(d->keys);
-        free(d->values);
+        gc_free(d->hashes);
+        gc_free(d->keys);
+        gc_free(d->values);
 
         d->hashes = hashes;
         d->keys = keys;
@@ -221,9 +221,9 @@ dict_mark(struct dict *d)
 void
 dict_free(struct dict *d)
 {
-        free(d->hashes);
-        free(d->keys);
-        free(d->values);
+        gc_free(d->hashes);
+        gc_free(d->keys);
+        gc_free(d->values);
 }
 
 static struct value

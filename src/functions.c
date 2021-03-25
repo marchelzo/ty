@@ -63,7 +63,7 @@ builtin_print(int argc)
                 } else {
                         char *s = value_show(&ARG(i));
                         fputs(s, stdout);
-                        free(s);
+                        gc_free(s);
                 }
         }
 
@@ -516,7 +516,7 @@ builtin_str(int argc)
         } else {
                 char *str = value_show(&arg);
                 struct value result = STRING_CLONE(str, strlen(str));
-                free(str);
+                gc_free(str);
                 return result;
         }
 }
@@ -568,7 +568,7 @@ builtin_regex(int argc)
         if (extra == NULL)
                 return NIL;
 
-        struct regex *r = alloc(sizeof *r);
+        struct regex *r = gc_alloc(sizeof *r);
         r->pcre = re;
         r->extra = extra;
         r->pattern = sclone(buffer);
@@ -1355,7 +1355,7 @@ builtin_os_spawn(int argc)
                 vec_init(args);
 
                 for (int i = 0; i < cmd.array->count; ++i) {
-                        char *arg = alloc(cmd.array->items[i].bytes + 1);
+                        char *arg = gc_alloc(cmd.array->items[i].bytes + 1);
                         memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
                         arg[cmd.array->items[i].bytes] = '\0';
                         vec_push(args, arg);
@@ -1881,7 +1881,7 @@ builtin_os_exec(int argc)
         vec_init(argv);
 
         for (int i = 0; i < cmd.array->count; ++i) {
-                char *arg = alloc(cmd.array->items[i].bytes + 1);
+                char *arg = gc_alloc(cmd.array->items[i].bytes + 1);
                 memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
                 arg[cmd.array->items[i].bytes] = '\0';
                 vec_push(argv, arg);

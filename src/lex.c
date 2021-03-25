@@ -166,7 +166,7 @@ mkregex(char const *pat, int flags)
                 );
         }
 
-        struct regex *r = alloc(sizeof *r);
+        struct regex *r = gc_alloc(sizeof *r);
         r->pattern = pat;
         r->pcre = re;
         r->extra = extra;
@@ -748,14 +748,6 @@ lex_init(char const *file, char const *src)
         };
 
         vec_init(states);
-}
-
-void
-lex_start(LexState const *st)
-{
-        vec_push(states, state);
-
-        state = *st;
 
         /*
          * Eat the shebang if there is one.
@@ -763,6 +755,13 @@ lex_start(LexState const *st)
         if (C(0) == '#' && C(1) == '!')
                 while (SRC != END && C(0) != '\n')
                         nextchar();
+}
+
+void
+lex_start(LexState const *st)
+{
+        vec_push(states, state);
+        state = *st;
 }
 
 void

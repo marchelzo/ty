@@ -78,24 +78,30 @@ struct target {
         void *gc;
 };
 
-static struct variable **vars;
-static bool *used;
+vec(struct value) Globals;
 
 struct sigfn {
         int sig;
         struct value f;
 };
 
+typedef struct Frame {
+        size_t fp;
+        struct value f;
+        char const *ip;
+} Frame;
+
+#define IS_METH(f) ((f).info[6] != -1)
+#define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
+
 static vec(struct sigfn) sigfns;
 static vec(struct value) stack;
 static vec(char *) calls;
-static vec(char *) contexts;
+static vec(Frame) frames;
 static vec(size_t) sp_stack;
 static vec(struct target) targets;
 static vec(struct try) try_stack;
 static char *ip;
-
-static int symbol_count;
 
 static char const *filename;
 
@@ -114,32 +120,6 @@ static int builtin_count = sizeof builtins / sizeof builtins[0];
 static void
 vm_exec(char *code);
 
-inline static struct variable *
-newvar(struct variable *next)
-{
-        struct variable *v = gc_alloc_unregistered(sizeof *v, GC_VARIABLE);
-        v->captured = false;
-        v->try = try_stack.count;
-        v->prev = NULL;
-        v->next = next;
-        return v;
-}
-
-inline static void
-pushvar(int s)
-{
-        if (vars[s] == NULL) {
-                vars[s] = newvar(vars[s]);
-        } else if (used[s]) {
-                vars[s] = newvar(vars[s]);
-                vars[s]->next->prev = vars[s];
-        }
-
-        vars[s]->try = try_stack.count;
-        vars[s]->captured = false;
-        used[s] = true;
-}
-
 /*
  * This relies on no other symbols being introduced to the compiler
  * up until the point that this is called. i.e., it assumes that the
@@ -148,14 +128,9 @@ pushvar(int s)
 static void
 add_builtins(int ac, char **av)
 {
-        resize(vars, sizeof *vars * (builtin_count + 1));
-        resize(used, sizeof *used * (builtin_count + 1));
-
         for (int i = 0; i < builtin_count; ++i) {
                 compiler_introduce_symbol(builtins[i].module, builtins[i].name);
-                vars[i] = newvar(NULL);
-                vars[i]->value = builtins[i].value;
-                used[i] = true;
+                vec_push(Globals, builtins[i].value);
         }
 
         struct array *args = value_array_new();
@@ -165,16 +140,14 @@ add_builtins(int ac, char **av)
                 value_array_push(args, STRING_NOGC(av[i], strlen(av[i])));
 
         compiler_introduce_symbol("os", "args");
-        vars[builtin_count] = newvar(NULL);
-        vars[builtin_count]->value = ARRAY(args);
-        used[builtin_count] = true;
 
-        symbol_count = builtin_count + 1;
+        vec_push(Globals, ARRAY(args));
 }
 
 void
 vm_load_c_module(char const *name, void *p)
 {
+        return;
 
         struct {
                 char const *name;
@@ -185,23 +158,30 @@ vm_load_c_module(char const *name, void *p)
         while (mod[n].name != NULL)
                 n += 1;
 
-        resize(vars, sizeof *vars * (symbol_count + n));
-        resize(used, sizeof *used * (symbol_count + n));
-
         for (int i = 0; i < n; ++i) {
                 compiler_introduce_symbol(name, mod[i].name);
-                vars[symbol_count + i] = newvar(NULL);
-                vars[symbol_count + i]->value = mod[i].value;
-                used[symbol_count + i] = true;
         }
-
-        symbol_count += n;
 }
 
 inline static struct value *
 top(void)
 {
         return &stack.items[stack.count] - 1;
+}
+
+static void
+print_stack(int n)
+{
+#ifndef TY_NO_LOG
+        LOG("STACK:");
+        for (int i = 0; i < n && i < stack.count; ++i) {
+                if (frames.count > 0 && stack.count - (i + 1) == vec_last(frames)->fp) {
+                        LOG(" -->  %s", value_show(top() - i));
+                } else {
+                        LOG("      %s", value_show(top() - i));
+                }
+        }
+#endif
 }
 
 inline static struct value
@@ -221,17 +201,15 @@ inline static void
 push(struct value v)
 {
         LOG("PUSH: %s", value_show(&v));
+        int i = stack.capacity;
         vec_push(stack, v);
+        if (stack.capacity != i) { LOG("!!! STACK WAS REALLOCATED !!!"); }
 }
 
-static void
-print_stack(int n)
+inline static struct value *
+local(int i)
 {
-        return;
-        for (int i = 0; i < n && i < stack.count; ++i) {
-                char const *s = i ? "     " : "TOP: ";
-                printf("%s%s\n", s, value_show(top() - i));
-        }
+        return &stack.items[vec_last(frames)->fp + i];
 }
 
 inline static struct value *
@@ -259,51 +237,74 @@ pushtarget(struct value *v, void *gc)
 inline static void
 call(struct value const *f, struct value const *self, int n, bool exec)
 {
-        int bound = f->info[1];
-        int np = f->info[2];
-        bool rest = f->info[3];
-        int const *symbols = f->info + 5;
+        int hs = f->info[0];
+        int bound = f->info[3];
+        int np = f->info[4];
+        bool rest = f->info[5];
+        char *code = (char *)f->info + hs;
+        int argc = n;
 
-        for (int i = 0; i < bound; ++i)
-                pushvar(symbols[i]);
+        /*
+         * This is the index of the beginning of the stack frame for this call to f.
+         */
+        int fp = stack.count - n;
 
-        bool has_self = (np > 0) && (self != NULL);
+        /*
+         * Default missing arguments to NIL and make space for all of this function's local variables.
+         */
+        while (n < bound) {
+                push(NIL);
+                n += 1;
+        }
 
-        int params = np - has_self - rest;
-
+        /*
+         * If the function was declared with the form f(..., *extra) then we create
+         * an array and add any extra arguments to it. Also write over them with NIL
+         * so they're not kept around by the GC longer than necessary.
+         */
         if (rest) {
-                struct value v = ARRAY(value_array_new());
-                for (int i = n - params - 1; i >= 0; --i)
-                        value_array_push(v.array, top()[-i]);
-                vars[symbols[params - 1]]->value = v;
+                struct array *extra = value_array_new();
+                NOGC(extra);
+
+                for (int i = np - 1; i < argc; ++i) {
+                        value_array_push(extra, stack.items[i]);
+                        stack.items[i] = NIL;
+                }
+
+                stack.items[np - 1] = ARRAY(extra);
+                OKGC(extra);
         }
 
-        /* throw away extra arguments */
-        while (n > params) {
-                pop(), --n;
+        /*
+         * Throw away extra arguments.
+         */
+        while (n > bound) {
+                pop();
+                n -= 1;
         }
 
-        /* default missing parameters to nil */
-        for (int i = n; i < params; ++i)
-                vars[symbols[i + has_self]]->value = NIL;
 
-        /* fill in the rest of the arguments */
-        while (n --> 0) {
-                vars[symbols[n + has_self]]->value = pop();
+        /*
+         * We're assuming that f truly refers to a method here and has
+         * extra space in its stack frame for a 'self' value.
+         */
+        if (self != NULL) {
+                stack.items[fp + np] = *self;
         }
 
-        /* fill in 'self' / 'this' */
-        if (has_self)
-                vars[symbols[0]]->value = *self;
+        vec_push(frames, FRAME(fp, *f, ip));
 
-        vec_push(contexts, ip);
+        LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", value_show(f), argc, bound, self ? value_show(self) : "none", f->info[2]);
+        print_stack(max(bound + 2, 5));
 
         if (exec) {
                 vec_push(calls, &halt);
-                vm_exec(f->code);
+                gc_push(f);
+                vm_exec(code);
+                gc_pop();
         } else {
                 vec_push(calls, ip);
-                ip = f->code;
+                ip = code;
         }
 }
 
@@ -376,8 +377,6 @@ vm_exec(char *code)
 
         struct value (*func)(struct value *, int);
 
-        struct variable *next;
-
 #ifdef TY_LOG_VERBOSE
         struct location loc;
         char const *fname;
@@ -387,45 +386,29 @@ vm_exec(char *code)
                 switch (*ip++) {
                 CASE(NOP)
                         continue;
-                CASE(PUSH_VAR)
-                        READVALUE(s);
-                        pushvar(s);
-                        break;
-                CASE(POP_VAR)
-                        READVALUE(s);
-                        next = vars[s]->next;
-                        if (vars[s]->captured) {
-                                gc_register(vars[s]);
-                                if (vars[s]->next != NULL)
-                                        vars[s]->next->prev = vars[s]->prev;
-                                if (vars[s]->prev != NULL)
-                                        vars[s]->prev->next = vars[s]->next;
-                        }
-                        if (next == NULL && !vars[s]->captured)
-                                used[s] = false;
-                        else
-                                vars[s] = next;
-                        break;
-                CASE(LOAD_VAR)
-                        READVALUE(s);
-                        push(vars[s]->value);
-                        break;
-                CASE(CHECK_VARS)
+                CASE(LOAD_LOCAL)
                         READVALUE(n);
-                        while (n --> 0) {
-                                READVALUE(s);
-                                if (vars[s] != NULL && vars[s]->captured) {
-                                        gc_register(vars[s]);
-                                        struct variable *new = newvar(vars[s]->next);
-                                        new->value = vars[s]->value;
-                                        new->prev = vars[s]->prev;
-                                        if (new->next != NULL)
-                                                new->next->prev = new;
-                                        if (new->prev != NULL)
-                                                new->prev->next = new;
-                                        vars[s] = new;
-                                }
+                        LOG("Loading %d", n);
+                        push(*local(n));
+                        break;
+                CASE(LOAD_REF)
+                        READVALUE(n);
+                        vp = local(n);
+                        if (vp->type == VALUE_REF) {
+                                push(*(struct value *)vp->ptr);
+                        } else {
+                                push(*vp);
                         }
+                        break;
+                CASE(LOAD_CAPTURED)
+                        READVALUE(n);
+                        LOG("Loading capture %d of %s", n, value_show(&vec_last(frames)->f));
+                        push(*vec_last(frames)->f.env[n]);
+                        break;
+                CASE(LOAD_GLOBAL)
+                        READVALUE(n);
+                        LOG("Loading global: %d", n);
+                        push(Globals.items[n]);
                         break;
                 CASE(EXEC_CODE)
                         READVALUE(s);
@@ -465,17 +448,35 @@ vm_exec(char *code)
                                 ip += n;
                         }
                         break;
-                CASE(TARGET_VAR)
-                        READVALUE(s);
-                        pushtarget(&vars[s]->value, NULL);
+                CASE(TARGET_GLOBAL)
+                TargetGlobal:
+                        READVALUE(n);
+                        while (Globals.count <= n)
+                                vec_push(Globals, NIL);
+                        pushtarget(Globals.items + n, NULL);
+                        break;
+                CASE(TARGET_LOCAL)
+                        if (frames.count == 0)
+                                goto TargetGlobal;
+                        READVALUE(n);
+                        pushtarget(local(n), NULL);
                         break;
                 CASE(TARGET_REF)
-                        READVALUE(s);
-                        pushtarget(&((struct variable *) s)->value, NULL);
+                        READVALUE(n);
+                        vp = local(n);
+                        if (vp->type == VALUE_REF) {
+                                pushtarget((struct value *)vp->ptr, NULL);
+                        } else {
+                                pushtarget(vp, NULL);
+                        }
+                        break;
+                CASE(TARGET_CAPTURED)
+                        READVALUE(n);
+                        pushtarget(vec_last(frames)->f.env[n], NULL);
                         break;
                 CASE(TARGET_MEMBER)
                         v = pop();
-                        if (!(v.type & VALUE_OBJECT))
+                        if (v.type != VALUE_OBJECT)
                                 vm_panic("assignment to member of non-object");
                         str = ip;
                         ip += strlen(ip) + 1;
@@ -518,16 +519,17 @@ vm_exec(char *code)
                         top()->type |= VALUE_TAGGED;
                         break;
                 CASE(ARRAY_REST)
-                        READVALUE(s);
                         READVALUE(i);
                         READVALUE(n);
                         if (top()->type != VALUE_ARRAY) {
                                 LOG("cannot do rest: top is not an array");
                                 ip += n;
                         } else {
-                                //LOG("Assigning rest to: %d", (int) s);
-                                vars[s]->value = ARRAY(value_array_new());
-                                vec_push_n(*vars[s]->value.array, top()->array->items + i, top()->array->count - i);
+                                //TODO: fix this
+                                //vec_push_n(*vars[s]->value.array, top()->array->items + i, top()->array->count - i);
+                                struct array *rest = value_array_new();
+                                vec_push_n(*rest, top()->array->items + i, top()->array->count - i);
+                                *poptarget() = ARRAY(rest);
                         }
                         break;
                 CASE(THROW_IF_NIL)
@@ -616,20 +618,9 @@ Throw:
                         push(SENTINEL);
                         push(v);
 
-                        vec_push(contexts, ip);
-
                         targets.count = t->ts;
                         calls.count = t->cs;
                         ip = t->catch;
-
-                        for (i = 0; i < symbol_count; ++i) {
-                                while (vars[i] != NULL && vars[i]->try >= try_stack.count) {
-                                        if (vars[i]->captured && vars[i]->next != NULL)
-                                                vars[i]->next->prev = vars[i]->prev;
-                                        vars[i] = vars[i]->next;
-                                }
-                        }
-
                         gc_truncate_root_set(t->gc);
 
                         longjmp(t->jb, 1);
@@ -645,7 +636,7 @@ Throw:
                         break;
                 }
                 CASE(POP_TRY)
-                        contexts.count = vec_last(try_stack)->ctxs;
+                        frames.count = vec_last(try_stack)->ctxs;
                         --try_stack.count;
                         break;
                 CASE(TRY)
@@ -676,18 +667,17 @@ Throw:
                                 ip += n;
                         break;
                 CASE(ENSURE_EQUALS_VAR)
-                        READVALUE(s);
+                        v = pop();
                         READVALUE(n);
-                        if (!value_test_equality(top(), &vars[s]->value))
+                        if (!value_test_equality(top(), &v))
                                 ip += n;
                         break;
                 CASE(TRY_ASSIGN_NON_NIL)
-                        READVALUE(s);
                         READVALUE(n);
                         if (top()->type == VALUE_NIL)
                                 ip += n;
                         else
-                                vars[s]->value = peek();
+                                *poptarget() = peek();
                         break;
                 CASE(TRY_REGEX)
                         READVALUE(s);
@@ -741,11 +731,6 @@ Throw:
                         break;
                 CASE(POP)
                         pop();
-                        break;
-                CASE(LOAD_REF)
-                        READVALUE(s);
-                        //LOG("reference is: %p", (void *) s);
-                        push(((struct variable *) s)->value);
                         break;
                 CASE(INTEGER)
                         READVALUE(k);
@@ -803,6 +788,12 @@ Throw:
                         v = pop();
                         top()->dict->dflt = v;
                         break;
+                CASE(SELF)
+                        if (frames.count == 0) {
+                        } else {
+                                push(NIL);
+                        }
+                        break;
                 CASE(NIL)
                         push(NIL);
                         break;
@@ -811,11 +802,16 @@ Throw:
                         pop();
                         push(v);
                         break;
+                CASE(FUCK)
+                CASE(FUCK2)
+                CASE(FUCK3)
+                        break;
                 CASE(GET_NEXT)
                         v = top()[-1];
                         i = top()[-2].i++;
-                        LOG("GET_NEXT: v = %s", value_show(&v));
-                        LOG("GET_NEXT: i = %d", i);
+                        //LOG("GET_NEXT: v = %s\n", value_show(&v));
+                        //LOG("GET_NEXT: i = %d\n", i);
+                        print_stack(5);
                         switch (v.type) {
                         case VALUE_ARRAY:
                                 if (i < v.array->count) {
@@ -839,13 +835,13 @@ Throw:
                                 break;
                         case VALUE_OBJECT:
                                 if ((vp = class_method(v.class, "__next__")) != NULL) {
-                                        static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
+                                        static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_FUCK2, INSTR_RETURN_PRESERVE_CTX };
                                         push(INTEGER(i));
                                         vec_push(calls, ip);
                                         call(vp, &v, 1, false);
                                         *vec_last(calls) = next_fix;
                                 } else if ((vp = class_method(v.class, "__iter__")) != NULL) {
-                                        static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
+                                        static char iter_fix[] = { INSTR_SENTINEL, INSTR_FUCK3, INSTR_RETURN_PRESERVE_CTX };
                                         pop();
                                         pop();
                                         --top()->i;
@@ -916,6 +912,7 @@ Throw:
                         rc = 0;
                         break;
                 CASE(GET_EXTRA)
+                        LOG("GETTING %d EXTRA", rc);
                         stack.count += rc;
                         break;
                 CASE(FIX_EXTRA)
@@ -1531,28 +1528,39 @@ BadContainer:
                                 ++ip;
                         ++ip;
 
-                        v.info = (int const *) ip;
+                        v.info = (int *) ip;
 
-                        int size  = v.info[0];
-                        int bound = v.info[1];
-                        int refs = v.info[4];
-                        char *code = ip + (bound + 5 ) * sizeof (int);
+                        int hs = v.info[0];
+                        int size  = v.info[1];
+                        int ncaps = v.info[2];
+                        int bound = v.info[3];
 
-                        ip = code + size;
+                        LOG("Header size: %d", hs);
+                        LOG("Code size: %d", size);
+                        LOG("Bound: %d", bound);
+                        LOG("ncaps: %d", ncaps);
+                        LOG("Name: %s", value_show(&v));
 
-                        if (refs > 0) {
-                                v.code = gc_alloc_object_aligned(P_ALIGN, size + sizeof (uintptr_t) * refs, GC_CODE);
-                                memcpy(v.code, code, size);
-                                for (int i = 0; i < refs; ++i) {
-                                        READVALUE(s);
-                                        READVALUE(off);
-                                        vars[s]->captured = true;
-                                        uintptr_t ptr = (uintptr_t)vars[s];
-                                        memcpy(v.code + off, &ptr, sizeof ptr);
-                                        ((uintptr_t *)(v.code + size))[i] = ptr;
+                        ip += size + hs;
+
+                        if (ncaps > 0) {
+                                LOG("Allocating ENV for %d caps", ncaps);
+                                v.env = gc_alloc_object(ncaps * sizeof (struct value *), GC_ENV);
+                                for (int i = 0; i < ncaps; ++i) {
+                                        READVALUE(b);
+                                        struct value *p = poptarget();
+                                        if (b) {
+                                                struct value *new = gc_alloc_object(sizeof (struct value), GC_VALUE);
+                                                *new = *p;
+                                                *p = REF(new);
+                                                v.env[i] = new;
+                                        } else {
+                                                v.env[i] = p;
+                                        }
                                 }
                         } else {
-                                v.code = code;
+                                LOG("Setting ENV to NULL");
+                                v.env = NULL;
                         }
 
                         push(v);
@@ -1565,7 +1573,7 @@ BadContainer:
                         v = pop();
                         READVALUE(n);
                         if (tco) {
-                                vec_pop(contexts);
+                                vec_pop(frames);
                                 ip = *vec_pop(calls);
                                 tco = false;
                         }
@@ -1573,6 +1581,8 @@ BadContainer:
                         gc_push(&v);
                         switch (v.type) {
                         case VALUE_FUNCTION:
+                                LOG("CALLING %s with %d arguments", value_show(&v), n);
+                                print_stack(n);
                                 call(&v, NULL, n, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
@@ -1621,11 +1631,13 @@ BadContainer:
                         case VALUE_REGEX:
                                 if (n != 1)
                                         vm_panic("attempt to apply a regex to an invalid number of values");
-                                value = pop();
+                                value = peek();
                                 if (value.type != VALUE_STRING)
                                         vm_panic("attempt to apply a regex to a non-string: %s", value_show(&value));
                                 push(v);
-                                *top() = get_string_method("match!")(&value, 1);
+                                v = get_string_method("match!")(&value, 1);
+                                pop();
+                                *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
                                 v = v.builtin_method(v.this, n);
@@ -1651,13 +1663,16 @@ BadContainer:
                         READVALUE(h);
                         READVALUE(n);
 CallMethod:
+                        LOG("METHOD = %s, n = %d", method, n);
+                        print_stack(3);
+
                         value = peek();
                         vp = NULL;
                         func = NULL;
                         struct value *self = NULL;
 
                         if (tco) {
-                                vec_pop(contexts);
+                                vec_pop(frames);
                                 ip = *vec_pop(calls);
                                 tco = false;
                         }
@@ -1716,13 +1731,15 @@ CallMethod:
                                 vp = class_lookup_method(CLASS_REGEX, method, h);
                                 break;
                         case VALUE_FUNCTION:
+                        case VALUE_BUILTIN_FUNCTION:
+                        case VALUE_METHOD:
+                        case VALUE_BUILTIN_METHOD:
                                 vp = class_lookup_method(CLASS_FUNCTION, method, h);
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_immediate(CLASS_CLASS, method, h);
                                 if (vp == NULL) {
                                         vp = class_lookup_method(value.class, method, h);
-                                        self = NULL;
                                 }
                                 break;
                         case VALUE_OBJECT:
@@ -1734,8 +1751,7 @@ CallMethod:
                                 }
                                 break;
                         case VALUE_NIL:
-                                pop();
-                                stack.count -= n;
+                                stack.count -= (n + 1);
                                 push(NIL);
                                 continue;
                         }
@@ -1746,20 +1762,19 @@ CallMethod:
                                 pop();
                                 gc_push(&value);
                                 v = func(&value, n);
-                                gc_pop();
                                 stack.count -= n;
                                 push(v);
+                                gc_pop();
                         } else if (vp != NULL) {
+                                pop();
                                 if (self != NULL) {
-                                        v = METHOD(method, vp, self);
+                                        v = METHOD(method, vp, &value);
                                 } else {
                                         v = *vp;
                                 }
-                                --stack.count;
                                 goto Call;
                         } else if (b) {
-                                pop();
-                                stack.count -= n;
+                                stack.count -= (n + 1);
                                 push(NIL);
                         } else {
                                 vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
@@ -1776,7 +1791,11 @@ CallMethod:
                         stack.count -= rc;
                         /* fallthrough */
                 CASE(RETURN)
-                        vec_pop(contexts);
+                        n = vec_last(frames)->fp;
+                        stack.items[n] = pop();
+                        stack.count = n + 1;
+                        LOG("POPPING FRAME");
+                        vec_pop(frames);
                 CASE(RETURN_PRESERVE_CTX)
                         ip = *vec_pop(calls);
                         LOG("returning: ip = %p", ip);
@@ -1801,10 +1820,8 @@ vm_init(int ac, char **av)
         vec_init(stack);
         vec_init(calls);
         vec_init(targets);
-        vars = NULL;
-        symbol_count = 0;
 
-        pcre_malloc = alloc;
+        pcre_malloc = malloc;
 
         srand48(time(NULL));
         srandom(lrand48());
@@ -1817,14 +1834,6 @@ vm_init(int ac, char **av)
         if (prelude == NULL) {
                 Error = compiler_error();
                 return false;
-        }
-
-        int new_symbol_count = compiler_symbol_count();
-        resize(vars, new_symbol_count * sizeof *vars);
-        resize(used, new_symbol_count * sizeof *used);
-        while (symbol_count < new_symbol_count) {
-                used[symbol_count] = false;
-                vars[symbol_count++] = NULL;
         }
 
         if (setjmp(jb) != 0) {
@@ -1945,11 +1954,11 @@ vm_panic(char const *fmt, ...)
                         TERM(22)
                 );
 Next:
-                if (contexts.count == 0) {
+                if (frames.count == 0) {
                         break;
                 }
 
-                ip = *vec_pop(contexts);
+                ip = vec_pop(frames)->ip;
         }
 
         LOG("VM Error: %s", ERR);
@@ -1974,7 +1983,7 @@ vm_execute_file(char const *path)
          * the beginning, so we need to subtract 1 here to get something appropriate
          * for free().
          */
-        //free(source - 1);
+        gc_free(source - 1);
 
         filename = NULL;
 
@@ -1993,15 +2002,7 @@ vm_execute(char const *source)
                 LOG("compiler error was: %s", Error);
                 return false;
         }
-
-        int new_symbol_count = compiler_symbol_count();
-        resize(vars, new_symbol_count * sizeof *vars);
-        resize(used, new_symbol_count * sizeof *used);
-        while (symbol_count < new_symbol_count) {
-                used[symbol_count] = false;
-                vars[symbol_count++] = NULL;
-        }
-
+        
         if (setjmp(jb) != 0) {
                 gc_clear_root_set();
                 stack.count = 0;
@@ -2050,11 +2051,11 @@ vm_call(struct value const *f, int argc)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc);
-                stack.count -= argc;
+                stack.count -= (argc + 1);
                 return r;
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(f->this, argc);
-                stack.count -= argc;
+                stack.count -= (argc + 1);
                 return r;
         case VALUE_TAG:
                 r = pop();
@@ -2067,6 +2068,8 @@ vm_call(struct value const *f, int argc)
                         if (init != NULL) {
                                 call(init, NULL, argc, true);
                                 return pop();
+                        } else {
+                                vm_panic("Couldn't find init method for built-in class. Was prelude loaded?");
                         }
                 } else {
                         r = OBJECT(object_new(), f->class);
@@ -2074,7 +2077,7 @@ vm_call(struct value const *f, int argc)
                                 call(init, &r, argc, true);
                                 pop();
                         } else {
-                                stack.count -= argc;
+                                stack.count -= (argc + 1);
                         }
                         return r;
                 }
@@ -2110,7 +2113,11 @@ vm_eval_function(struct value const *f, ...)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc);
-                stack.count -= argc;
+                stack.count -= (argc + 1);
+                return r;
+        case VALUE_BUILTIN_METHOD:
+                r = f->builtin_method(f->this, argc);
+                stack.count -= (argc + 1);
                 return r;
         default:
                 abort();
@@ -2120,11 +2127,8 @@ vm_eval_function(struct value const *f, ...)
 void
 vm_mark(void)
 {
-        for (int i = 0; i < symbol_count; ++i) if (used[i]) {
-                for (struct variable *v = vars[i]; v != NULL; v = v->next) {
-                        value_mark(&v->value);
-                }
-        }
+        for (int i = 0; i < Globals.count; ++i)
+                value_mark(&Globals.items[i]);
 
         for (int i = 0; i < stack.count; ++i)
                 value_mark(&stack.items[i]);
@@ -2134,4 +2138,8 @@ vm_mark(void)
 
         for (int i = 0; i < sigfns.count; ++i)
                 value_mark(&sigfns.items[i].f);
+
+        for (int i = 0; i < frames.count; ++i) {
+                value_mark(&frames.items[i].f);
+        }
 }

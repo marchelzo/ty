@@ -30,7 +30,7 @@ static vec(struct table) tables;
 static struct tags *
 mklist(int tag, struct tags *next)
 {
-        struct tags *t = alloc(sizeof *t);
+        struct tags *t = gc_alloc(sizeof *t);
 
         vec_init(t->links);
         t->n = lists.count;

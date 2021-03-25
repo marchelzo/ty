@@ -17,6 +17,10 @@ struct symbol {
         int class;
         bool public;
         bool cnst;
+        bool captured;
+        int i;
+        int ci;
+        bool global;
 
         struct scope *scope;
 
@@ -30,7 +34,8 @@ struct scope {
 
         struct symbol *table[SYMBOL_TABLE_SIZE];
 
-        vec(struct symbol *) function_symbols;
+        vec(struct symbol *) owned;
+        vec(struct symbol *) captured;
 
         struct scope *parent;
         struct scope *function;

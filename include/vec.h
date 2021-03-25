@@ -1,7 +1,12 @@
 #include <stdlib.h>
 
-#include "alloc.h"
+inline static void *
+gc_resize(void *p, size_t n);
+
 #include "panic.h"
+#include "gc.h"
+#include "alloc.h"
+
 
 #define vec(T) \
         struct { \
@@ -39,7 +44,7 @@
     (((v).capacity = 0), ((v).count = 0), ((v).items = NULL))
 
 #define vec_empty(v) \
-    (((v).capacity = 0), ((v).count = 0), free((v).items), ((v).items = NULL))
+    (((v).capacity = 0), ((v).count = 0), gc_free((v).items), ((v).items = NULL))
 
 #define vec_insert(v, item, i) \
         ((vec_reserve((v), (v).count + 1)), memmove((v).items + (i) + 1, (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), ++(v).count, ((v).items[(i)] = (item)))

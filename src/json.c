@@ -393,7 +393,6 @@ json_parse(char const *s, int n)
                 v = NIL;
 
         gc_enable();
-        gc_alloc(0);
 
         return v;
 }
@@ -412,28 +411,4 @@ json_encode(struct value const *v)
         }
 
         return r;
-}
-
-TEST(null)
-{
-        vm_init(0, NULL);
-        char const *s = " null ";
-        struct value v = json_parse(s, 6);
-        claim(value_test_equality(&v, &NIL));
-}
-
-TEST(jtrue)
-{
-        vm_init(0, NULL);
-        char const *s = " true";
-        struct value v = json_parse(s, 5);
-        claim(value_test_equality(&v, &BOOLEAN(true)));
-}
-
-TEST(jfalse)
-{
-        vm_init(0, NULL);
-        char const *s = " false";
-        struct value v = json_parse(s, 6);
-        claim(value_test_equality(&v, &BOOLEAN(false)));
 }

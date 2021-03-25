@@ -11,11 +11,11 @@ tag None {
 }
 
 tag Some {
-     map(self, f) {
+     map(f) {
           return Some(f(self));
      }
 
-     flatMap(self, f) {
+     flatMap(f) {
           return f(self);
      }
 
@@ -28,18 +28,18 @@ tag Some {
 }
 
 tag Ok {
-     map(self, f) {
+     map(f) {
           return Ok(f(self));
      }
 
-     flatMap(self, f) {
+     flatMap(f) {
           return f(self);
      }
 }
 
 tag Err {
-     map(self)     { return self; }
-     flatMap(self) { return self; }
+     map()     { return self; }
+     flatMap() { return self; }
 }
 
 class Object {
@@ -47,46 +47,45 @@ class Object {
         return object(Object);
     }
 
-    is?(self, c) {
+    is?(c) {
         return subclass?(type(self), c);
     }
 
-    members(self) {
+    members() {
         return members(self);
     }
 
-    |(self, other) {
+    |(other) {
         return c -> (c :: self) || (c :: other);
     }
 
-    &(self, other) {
+    &(other) {
         return c -> (c :: self) && (c :: other);
     }
 
-    :>(self, other) {
+    :>(other) {
         return x -> (self(x) :: other);
     }
 
-    __match__(self, other) {
-        print("Object match");
+    __match__(other) {
         return self == other;
     }
 
-    __question__(self) {
+    __question__() {
         return \$ == nil\ | self;
     }
 }
 
 class Class {
-    |(self, other) {
+    |(other) {
         return c -> (c :: self) || (c :: other);
     }
 
-    &(self, other) {
+    &(other) {
         return c -> (c :: self) && (c :: other);
     }
 
-    __match__(self, other) {
+    __match__(other) {
         return type(other) != Class && other.is?(self);
     }
 }
@@ -96,25 +95,25 @@ class Function {
         return id;
     }
 
-    flip(f) {
-        return (a, b) -> f(b, a);
+    flip() {
+        return (a, b) -> self(b, a);
     }
 
-    __match__(self, x) {
+    __match__(x) {
         return self(x);
     }
 }
 
 class Array : Iterable {
-    init(*xs) {
-        return xs;
+    init(*self) {
+        return self;
     }
 
-    sorted?(xs) {
-        if (!xs) return true;
+    sorted?() {
+        if (!self) return true;
 
-        let y = xs[0];
-        for x in xs {
+        let y = self[0];
+        for x in self {
             if (x < y) return false;
             y = x;
         }
@@ -122,38 +121,38 @@ class Array : Iterable {
         return true;
     }
 
-    cycle(xs) {
+    cycle() {
         let i = 0;
         return Generator(function () {
-            return xs[i++ % xs.len()];
+            return self[i++ % self.len()];
         });
     }
 
-    str(xs) {
-        return xs.map(str).sum();
+    str() {
+        return self.map(str).sum();
     }
 
-    list(xs) {
-        return xs;
+    list() {
+        return self;
     }
 
-    mean(xs) {
-        return match xs {
+    mean() {
+        return match self {
             [] => nil,
-            _  => xs.map(float).sum() / xs.len()
+            _  => self.map(float).sum() / self.len()
         };
     }
 
-    coalesce(xs) {
-        for x in xs : x != nil {
+    coalesce() {
+        for x in self if x != nil {
             return x;
         }
     }
 
-    __iter__(xs) {
+    __iter__() {
         let i = 0;
         return Generator(function () {
-            if (i < xs.len()) return xs[i++];
+            if (i < self.len()) return self[i++];
         });
     }
 
@@ -171,16 +170,16 @@ class Dict : Iterable {
         }
     }
 
-    map(d, f) {
-        return { k: f(v) for k, v in d };
+    map(f) {
+        return { k: f(v) for k, v in self };
     }
 
-    kmap(d, f) {
-        return { f(k): v for k, v in d };
+    kmap(f) {
+        return { f(k): v for k, v in self };
     }
 
-    __iter__(d) {
-        return d.keys().zip(d.values()).__iter__();
+    __iter__() {
+        return self.keys().zip(self.values()).__iter__();
     }
 }
 
@@ -189,36 +188,36 @@ class String : Iterable {
         return str(x);
     }
 
-    repeat(s, n) {
+    repeat(n) {
         return if n != nil {
             let b = blob();
-            for _ in ..n { b.push(s); }
+            for _ in ..n { b.push(self); }
             b.str()
         } else {
-            Generator(-> s);
+            Generator(-> self);
         };
     }
 
-    reverse(s) {
-        return s.chars().reverse!().sum() ?? '';
+    reverse() {
+        return self.chars().reverse!().sum() ?? '';
     }
 
-    num?(s) {
-        return s.match?(/^\d+(?:\.\d+)?$/);
+    num?() {
+        return self.match?(/^\d+(?:\.\d+)?$/);
     }
 
-    searchr(s, pattern) {
-        for (let off = s.len() - 1; off >= 0; --off) {
-            if let $i = s.search(pattern, off) {
+    searchr(pattern) {
+        for (let off = self.len() - 1; off >= 0; --off) {
+            if let $i = self.search(pattern, off) {
                 return i;
             }
         }
     }
 
-    __iter__(s) {
-        let cs = s.chars();
+    __iter__() {
+        let cs = self.chars();
         let i = 0;
-        return Generator(function () {
+        return Generator(function StringGen() {
             if (i < cs.len()) return cs[i++];
         });
     }
@@ -227,33 +226,33 @@ class String : Iterable {
 class Int {
     init(x)  { return int(x ?? 0);           }
 
-    &(a, b)  { return bit::and(a, b);        }
-    ^(a, b)  { return bit::xor(a, b);        }
-    |(a, b)  { return bit::or(a, b);         }
-    <<(a, b) { return bit::shiftLeft(a, b);  }
-    >>(a, b) { return bit::shiftRight(a, b); }
-    **(a, b) { return math::pow(a, b);       }
+    ^(b)    { return bit::XOR(self, b);        }
+    .&.(b)  { return bit::AND(self, b);        }
+    .|.(b)  { return bit::OR(self, b);         }
+    <<(b)   { return bit::shiftLeft(self, b);  }
+    >>(b)   { return bit::shiftRight(self, b); }
+    **(b)   { return math::pow(self, b);       }
 
-    upto(a: Int, b: Int) {
-        return Generator(function () {
-            if (a <= b) return a++;
+    upto(b: Int) {
+        return Generator(function UpToFunc() {
+            if (self <= b) return self++;
         });
     }
 
-    downto(a: Int, b: Int) {
+    downto(b: Int) {
         return Generator(function () {
-            if (a >= b) return a--;
+            if (self >= b) return self--;
         });
     }
 
-    count(a: Int, k: Int = 1) {
+    count(k: Int = 1) {
         return Generator(function () {
-            return (a += k) - k;
+            return (self += k) - k;
         });
     }
 
-    in?(k: Int, r: Range) {
-        return r ? k;
+    in?(r: Range) {
+        return r ? self;
     }
 }
 
@@ -262,8 +261,8 @@ class Float {
         return float(x);
     }
 
-    **(a: Float, b: Float) {
-        return math::pow(a, b);
+    **(b: Int | Float) {
+        return math::pow(self, b);
     }
 }
 
@@ -274,187 +273,188 @@ class Blob : Iterable {
         return b;
     }
 
-    searchr(b, s) {
-        for (let off = b.size() - 1; off >= 0; --off) {
-            if let $i = b.search(off, s) {
+    searchr(s) {
+        for (let off = self.size() - 1; off >= 0; --off) {
+            if let $i = self.search(off, s) {
                 return i;
             }
         }
     }
 
-    __iter__(b) {
+    __iter__() {
         let i = 0;
         return Generator(function () {
-            if (i < b.size())
-                return b[i++];
+            if (i < self.size())
+                return self[i++];
         });
     }
 }
 
 class Bool {
     init(x) {
-        return ! ! x;
+        return bool(x);
     }
 }
 
 class Regex {
     init(x)  { return regex(x);    }
 
-    ~=(r, s) { return s.match!(r); }
+    ~=(s) { return s.match!(self); }
 
-    ?(r, s)  { return s.match?(r); }
+    ?(s)  { return s.match?(self); }
 
-    __match__(r, s) {
-        return (s :: String) && s.match?(r);
+    __match__(s) {
+        return (s :: String) && s.match?(self);
     }
 }
 
 class Generator : Iter {
-    init(self, f) {
+    init(f) {
         self.f = f;
     }
 
-    __next__(self) {
+    __next__() {
         return (self.f)();
     }
 }
 
 class Iterable {
-    map(I, f) {
-        return I.__iter__().map(f);
+    map(f) {
+        return self.__iter__().map(f);
     }
 
-    filter(I, f) {
-        return I.__iter__().filter(f);
+    filter(f) {
+        return self.__iter__().filter(f);
     }
 
-    reverse(I) {
-        return I.__iter__().reverse();
+    reverse() {
+        return self.__iter__().reverse();
     }
 
-    list(I) {
-        return I.__iter__().list();
+    list() {
+        return self.__iter__().list();
     }
 
-    uniq(I, f) {
-        return I.__iter__().uniq(f);
+    uniq(f) {
+        return self.__iter__().uniq(f);
     }
 
-    take(I, n) {
-        return I.__iter__().take(n);
+    take(n) {
+        return self.__iter__().take(n);
     }
 
-    drop(I, n) {
-        return I.__iter__().drop(n);
+    drop(n) {
+        return self.__iter__().drop(n);
     }
 
-    set(I) {
-        return I.__iter__().set();
+    set() {
+        return self.__iter__().set();
     }
 
-    str(I) {
-        return I.__iter__().str();
+    str() {
+        return self.__iter__().str();
     }
 
-    join(I) {
-        return I.__iter__().join();
+    join(s) {
+        return self.__iter__().join(s);
     }
 
-    tally(I, f) {
-        return I.__iter__().tally(f);
+    tally(f) {
+        return self.__iter__().tally(f);
     }
 
-    min(I, k) {
-        return I.__iter__().min(k);
+    min(k) {
+        return self.__iter__().min(k);
     }
 
-    max(I, k) {
-        return I.__iter__().max(k);
+    max(k) {
+        return self.__iter__().max(k);
     }
 
-    count(I, x) {
-        return I.__iter__().count(x);
+    count(x) {
+        return self.__iter__().count(x);
     }
 
-    intersperse(I, x) {
-        return I.__iter__().intersperse(x);
+    intersperse(x) {
+        return self.__iter__().intersperse(x);
     }
 
-    groupsOf(I, n, keepShort) {
-        return I.__iter__().groupsOf(n, keepShort);
+    groupsOf(n, keepShort) {
+        return self.__iter__().groupsOf(n, keepShort);
     }
 
-    mean(I) {
-        return I.__iter__().mean();
+    mean() {
+        return self.__iter__().mean();
     }
 
-    sum(I) {
-        return I.__iter__().sum();
+    sum() {
+        return self.__iter__().sum();
     }
 
-    fold(I, a, b) {
-        return I.__iter__().fold(a, b);
+    fold(a, b) {
+        return self.__iter__().fold(a, b);
     }
 
-    group(I, f) {
-        return I.__iter__().group(f);
+    group(f) {
+        return self.__iter__().group(f);
     }
 
     chain(A, B) {
         return A.__iter__().chain(B);
     }
 
-    cycle(I) {
-        return I.list().cycle();
+    cycle() {
+        return self.list().cycle();
     }
 
-    repeat(I, n) {
-        return I.__iter__().repeat(n);
+    repeat(n) {
+        return self.__iter__().repeat(n);
     }
 
-    __len__(I) {
-        return I.__iter__().__len__();
+    __len__() {
+        return self.__iter__().__len__();
     }
 
-    __subscript__(I, i) {
-        return I.__iter__().__subscript__(i);
+    __subscript__(i) {
+        return self.__iter__().__subscript__(i);
     }
 }
 
 class Iter : Iterable {
-    map(I, f) {
-        return MapIter(I, f);
+    map(f) {
+        return MapIter(self, f);
     }
 
-    filter(I, f) {
-        return FilterIter(I, f);
+    filter(f) {
+        return FilterIter(self, f);
     }
 
-    fold(I, a, b) {
-        let [f, first] = ([b, a] if b != nil else [a]);
-
-        if !let $x = match first { $x => x, _ => I.__next__() } {
-            return nil;
+    fold(x, f) {
+        if f == nil {
+            f = x;
+            if true && (x = self.__next__()) == nil {
+                return nil;
+            }
         }
 
-        while let $y = I.__next__() {
+        while let $y = self.__next__() {
             x = f(x, y);
         }
 
         return x;
     }
 
-    __len__(I) {
+    __len__() {
         let n = 0;
-        while let $_ = I.__next__() { n += 1; }
+        while let $_ = self.__next__() { n += 1; }
         return n;
     }
 
-    uniq(I, f) {
+    uniq(f: Function = id) {
         let seen = {};
         return Generator(function () {
-            while let $x = I.__next__() {
-                let y = f(x) if f else x;
+            while let $x = self.__next__() {
+                let y = f(x);
                 if !(seen ? y) {
                     seen.put(y);
                     return x;
@@ -463,15 +463,15 @@ class Iter : Iterable {
         });
     }
 
-    group(I, f: id) {
-        if !let $x = I.__next__() {
+    group(f = id) {
+        if !let $x = self.__next__() {
             return Generator(-> nil);
         }
 
         let g = [x];
 
         return Generator(function () {
-            while let $x = I.__next__() {
+            while let $x = self.__next__() {
                 if f(x) == f(g[-1]) {
                     g.push(x);
                 } else {
@@ -489,51 +489,41 @@ class Iter : Iterable {
         });
     }
 
-    groupsOf(I, n, keepShort: true) {
-        let g = [];
-
+    groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
         return Generator(function () {
-            let group = while let $x = I.__next__() {
-                g.push(x);
-                if #g == n {
-                    let group = g;
-                    g = [];
-                    break group;
-                }
+            return match self.take(n).list() {
+                xs: #xs == n             => xs,
+                xs: #xs > 0 && keepShort => xs,
+                _ => nil
             };
-
-            if g && keepShort {
-                let group = g;
-                g = nil;
-                return group;
-            }
         });
     }
 
-    join(I, sep) {
-        if !let (str ~> $s) = I.__next__() {
+    join(sep: String) {
+        if !let (str ~> $s) = self.__next__() {
             return '';
         }
 
-        let b = Blob(s);
+        let b = blob();
+        b.push(s);
 
-        while let $s = I.__next__() {
+        while let $s = self.__next__() {
             b.push(sep);
-            b.push(s);
+            b.push(str(s));
         }
 
         return b.str();
     }
 
-    count(I, x) {
+    count(x) {
         let n = 0;
 
         if type(x) == Function || type(x) == Regex {
-            while let $y = I.__next__() {
+            while let $y = self.__next__() {
                 if (x(y)) n += 1;
             }
         } else {
-            while let $y = I.__next__() {
+            while let $y = self.__next__() {
                 if (x == y) n += 1;
             }
         }
@@ -541,59 +531,59 @@ class Iter : Iterable {
         return n;
     }
 
-    list(I) {
+    list() {
         let xs = [];
-        while let $x = I.__next__() {
+        while let $x = self.__next__() {
             xs.push(x);
         }
         return xs;
     }
 
-    reverse(I) {
-        return ReverseIter(I);
+    reverse() {
+        return ReverseIter(self);
     }
 
-    take(I, n) {
+    take(n) {
         let i = 0;
         return Generator(function () {
             if i++ < n {
-                return I.__next__();
+                return self.__next__();
             }
         });
     }
 
-    drop(I, n) {
-        for _ in ..n { I.__next__(); }
-        return I;
+    drop(n) {
+        for _ in ..n { self.__next__(); }
+        return self;
     }
 
-    set(I) {
-        return { x for x in I };
+    set() {
+        return { x for x in self };
     }
 
-    str(I) {
+    str() {
         let b = blob();
-        for s in I {
+        for s in self {
             b.push(str(s));
         }
         return b.str();
     }
 
-    tally(I, f: id) {
+    tally(f = id) {
         let d = {*:0};
-        for x in I { d[f(x)] += 1; }
+        for x in self { d[f(x)] += 1; }
         return d;
     }
 
-    max(I, k: id) {
-        if !let $x = I.__next__() {
+    max(k = id) {
+        if !let $x = self.__next__() {
             return nil;
         }
 
         let m = x;
         let mKey = k(m);
 
-        while let $x = I.__next__() {
+        while let $x = self.__next__() {
             let key = k(x);
             if key > mKey {
                 m, mKey = x, key;
@@ -603,15 +593,15 @@ class Iter : Iterable {
         return m;
     }
 
-    min(I, k: id) {
-        if !let $x = I.__next__() {
+    min(k = id) {
+        if !let $x = self.__next__() {
             return nil;
         }
 
         let m = x;
         let mKey = k(m);
 
-        while let $x = I.__next__() {
+        while let $x = self.__next__() {
             let key = k(x);
             if key < mKey {
                 m, mKey = x, key;
@@ -621,14 +611,14 @@ class Iter : Iterable {
         return m;
     }
 
-    intersperse(I, x) {
+    intersperse(x) {
         let i = 0;
-        let next = I.__next__();
+        let next = self.__next__();
         return Generator(function () {
             if (next != nil) match i++ % 2 {
                 0 => {
                     let r = next;
-                    next = I.__next__();
+                    next = self.__next__();
                     return r;
                 },
                 1 => {
@@ -638,8 +628,8 @@ class Iter : Iterable {
         });
     }
 
-    chainAll(I) {
-        if !let $it = I.__next__() {
+    chainAll() {
+        if !let $it = self.__next__() {
             return nil;
         }
         if !it.is?(Iter) {
@@ -648,7 +638,7 @@ class Iter : Iterable {
         return Generator(function () {
             if let $x = it.__next__() {
                 return x;
-            } else if ((it = I.__next__()) == nil) {
+            } else if ((it = self.__next__()) == nil) {
                 return nil;
             } else if !it.is?(Iter) {
                 it = it.__iter__();
@@ -657,11 +647,10 @@ class Iter : Iterable {
         });
     }
 
-    chain(it, *its) {
+    chain(*its) {
         let i = 0;
-        its.insert(0, it);
 
-        for i in ..#its : !its[i].is?(Iter) {
+        for i in ..#its if !its[i].is?(Iter) {
             its[i] = its[i].__iter__();
         }
 
@@ -676,12 +665,12 @@ class Iter : Iterable {
         });
     }
 
-    cycle(I) {
-        return I.list().cycle();
+    cycle() {
+        return self.list().cycle();
     }
 
-    repeat(I, n) {
-        let xs = I.list();
+    repeat(n) {
+        let xs = self.list();
         let i = 0;
         let j = 0;
         return Generator(function () {
@@ -702,113 +691,113 @@ class Iter : Iterable {
         });
     }
 
-    sum(I) {
-        return I.list().sum();
+    sum() {
+        return self.list().sum();
     }
 
-    mean(I) {
-        return I.list().mean();
+    mean() {
+        return self.list().mean();
     }
 
-    __subscript__(I, i) {
+    __subscript__(i) {
         for _ in ..(i - 1) {
-            if I.__next__() == nil { return nil; }
+            if self.__next__() == nil { return nil; }
         }
-        return I.__next__();
+        return self.__next__();
     }
 
-    __iter__(I) { return I; }
+    __iter__() { return self.__iter__(); }
 }
 
 class ReverseIter : Iter {
-    init(R, I) {
-        R.xs = [];
+    init(I) {
+        self.xs = [];
         while let $x = I.__next__() {
-            R.xs.push(x);
+            self.xs.push(x);
         }
     }
 
-    __next__(R) {
-        if (R.xs) return R.xs.pop();
+    __next__() {
+        if (self.xs) return self.xs.pop();
     }
 }
 
 class MapIter : Iter {
-    init(M, I, f) {
-        M.I = I;
-        M.f = f;
+    init(I, f) {
+        self.I = I;
+        self.f = f;
     }
 
-    __next__(M) {
-        if let $n = M.I.__next__() {
-            return M.f(n);
+    __next__() {
+        if let $n = self.I.__next__() {
+            return (self.f)(n);
         }
     }
 }
 
 class FilterIter : Iter {
-    init(F, I, p) {
-        F.I = I;
-        F.p = p;
+    init(I, p) {
+        self.I = I;
+        self.p = p;
     }
 
-    __next__(F) {
-        while let $n = F.I.__next__() {
-            if F.p(n) { return n; }
+    __next__() {
+        while let $n = self.I.__next__() {
+            if self.p(n) { return n; }
         }
     }
 }
 
 class RangeIter : Iter {
-    init(R, a, b) {
-        R.a = a;
-        R.b = b;
-    }
-
-    __next__(R) {
-        if (R.a < R.b) return R.a++;
-    }
-}
-
-class Range : Iterable {
-    init(self, a, b) {
+    init(a, b) {
         self.a = a;
         self.b = b;
     }
 
-    low(self) {
+    __next__() {
+        if (self.a < self.b) return self.a++;
+    }
+}
+
+class Range : Iterable {
+    init(a, b) {
+        self.a = a;
+        self.b = b;
+    }
+
+    low() {
         return min(self.a, self.b);
     }
 
-    high(self) {
+    high() {
         return max(self.a, self.b) - 1;
     }
 
-    __len__(self) {
+    __len__() {
         return self.high() - self.low() + 1;
     }
 
-    __str__(self) {
+    __str__() {
 	return "({self.a} .. {self.b})";
     }
 
-    contains?(self, k) {
+    contains?(k) {
 	return self ? k;
     }
 
-    __match__(self, x) {
-        return (x :: (Int | Float)) && (self ? x);
+    __match__(x) {
+        return x :: (Int | Float) & (self ? x);
     }
 
-    has?(self, k) {
+    has?(k) {
         return self ? k;
     }
 
-    ?(self, k) {
+    ?(k) {
 	return k >= self.low() && k <= self.high();
     }
 
-    __iter__(self) {
+    __iter__() {
         let a, b = self.a, self.b;
         return (
             if a < b {
@@ -821,11 +810,11 @@ class Range : Iterable {
 }
 
 class InclusiveRange : Range {
-    __str__(self) {
+    __str__() {
         return "({self.a} ... {self.b})";
     }
 
-    __iter__(self) {
+    __iter__() {
         let a, b = self.a, self.b;
         return if a < b {
             a.upto(b)
@@ -834,7 +823,7 @@ class InclusiveRange : Range {
         };
     }
 
-    high(self) {
+    high() {
         return max(self.a, self.b);
     }
 }
@@ -846,4 +835,4 @@ operator **   10 right
 operator <<   7  left
 operator >>   7  left
 operator ^    5  left
-operator :>   3  left
+operator :>   5  left

@@ -44,7 +44,7 @@ char *
 sclone(char const *s)
 {
         size_t n = strlen(s);
-        char *new = alloc(n + 1);
+        char *new = gc_alloc(n + 1);
         memcpy(new, s, n + 1);
         return new;
 }
@@ -74,7 +74,7 @@ slurp(char const *path)
                         return NULL;
                 }
 
-                char *s = alloc(n + 2);
+                char *s = gc_alloc(n + 2);
                 memcpy(s + 1, p, n);
                 s[0] = s[n + 1] = '\0';
 

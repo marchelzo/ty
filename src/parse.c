@@ -191,8 +191,9 @@ gensym(void)
 inline static struct expression *
 mkexpr(void)
 {
-        struct expression *e = alloc(sizeof *e);
+        struct expression *e = gc_alloc(sizeof *e);
         e->constraint = NULL;
+        e->is_method = false;
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -201,7 +202,7 @@ mkexpr(void)
 inline static struct statement *
 mkstmt(void)
 {
-        struct statement *s = alloc(sizeof *s);
+        struct statement *s = gc_alloc(sizeof *s);
         s->start = tok()->start;
         s->end = tok()->start;
         return s;
@@ -543,7 +544,7 @@ prefix_special_string(void)
                 }
                 consume(TOKEN_END);
                 lex_end();
-                free(tokens.items);
+                gc_free(tokens.items);
         }
 
         TokenIndex = ti;
@@ -978,6 +979,18 @@ prefix_false(void)
 }
 
 static struct expression *
+prefix_self(void)
+{
+
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_SELF;
+
+        consume_keyword(KEYWORD_SELF);
+
+        return e;
+}
+
+static struct expression *
 prefix_nil(void)
 {
 
@@ -1050,7 +1063,7 @@ prefix_array(void)
                         e->compr.pattern = parse_target_list();
                         consume_keyword(KEYWORD_IN);
                         e->compr.iter = parse_expr(0);
-                        if (tok()->type == ':') {
+                        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IF) {
                                 next();
                                 e->compr.cond = parse_expr(0);
                         } else {
@@ -1285,7 +1298,7 @@ prefix_object(void)
                         e->dcompr.pattern = parse_target_list();
                         consume_keyword(KEYWORD_IN);
                         e->dcompr.iter = parse_expr(0);
-                        if (tok()->type == ':') {
+                        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IF) {
                                 next();
                                 e->dcompr.cond = parse_expr(0);
                         } else {
@@ -1552,12 +1565,42 @@ infix_arrow_function(struct expression *left)
         struct statement *ret = mkret(parse_expr(0));
 
         if (body->statements.count == 0) {
-                free(body);
+                gc_free(body);
                 e->body = ret;
         } else {
                 vec_push(body->statements, ret);
                 e->body = body;
         }
+
+        return e;
+}
+
+static struct expression *
+infix_kw_or(struct expression *left)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_KW_OR;
+        e->left = left;
+        e->start = left->start;
+
+        consume_keyword(KEYWORD_OR);
+
+        e->right = parse_expr(4);
+
+        return e;
+}
+
+static struct expression *
+infix_kw_and(struct expression *left)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_KW_AND;
+        e->left = left;
+        e->start = left->start;
+
+        consume_keyword(KEYWORD_AND);
+
+        e->right = parse_expr(4);
 
         return e;
 }
@@ -1688,6 +1731,7 @@ Keyword:
         case KEYWORD_FUNCTION: return prefix_function;
         case KEYWORD_TRUE:     return prefix_true;
         case KEYWORD_FALSE:    return prefix_false;
+        case KEYWORD_SELF:     return prefix_self;
         case KEYWORD_NIL:      return prefix_nil;
         case KEYWORD_IF:       return prefix_if;
         case KEYWORD_FOR:      return prefix_for;
@@ -1745,8 +1789,10 @@ get_infix_parser(void)
 Keyword:
 
         switch (tok()->keyword) {
-        case KEYWORD_IF: return infix_conditional;
-        default:         return NULL;
+        //case KEYWORD_IF: return infix_conditional;
+        case KEYWORD_AND: return infix_kw_and;
+        case KEYWORD_OR:  return infix_kw_or;
+        default:          return NULL;
         }
 }
 
@@ -1814,8 +1860,9 @@ get_infix_prec(void)
 
 Keyword:
         switch (tok()->keyword) {
-        case KEYWORD_IF: return 3;
-        default:         return -3;
+        //case KEYWORD_OR:  return 4;
+        //case KEYWORD_AND: return 4;
+        default:          return -3;
         }
 
 UserOp:
@@ -1965,7 +2012,7 @@ parse_definition_lvalue(int context)
         return e;
 
 Error:
-        free(e);
+        gc_free(e);
         seek(save);
         return NULL;
 }
@@ -2011,7 +2058,7 @@ parse_for_loop(void)
                 s->each.target = parse_target_list();
                 consume_keyword(KEYWORD_IN);
                 s->each.array = parse_expr(0);
-                if (tok()->type == ':') {
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IF) {
                         next();
                         s->each.cond = parse_expr(0);
                 } else {
@@ -2072,6 +2119,14 @@ parse_while_loop(void)
                 consume(TOKEN_EQ);
 
                 s->while_let.e = parse_expr(-1);
+
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_AND) {
+                        next();
+                        s->while_let.cond = parse_expr(0);
+                } else {
+                        s->while_let.cond = NULL;
+                }
+
                 s->while_let.block = parse_block();
 
                 return s;
@@ -2116,6 +2171,12 @@ parse_if_statement(void)
                 s->if_let.pattern = parse_definition_lvalue(LV_LET);
                 consume(TOKEN_EQ);
                 s->if_let.e = parse_expr(-1);
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_AND) {
+                        next();
+                        s->if_let.cond = parse_expr(0);
+                } else {
+                        s->if_let.cond = NULL;
+                }
                 s->if_let.then = parse_block();
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
                         next();
@@ -2545,7 +2606,7 @@ parse_import(void)
         int modlen = (mod == NULL) ? 0 : strlen(mod);
         int idlen = strlen(id);
 
-        char *module = alloc(modlen + idlen + 2);
+        char *module = gc_alloc(modlen + idlen + 2);
         if (mod != NULL) {
                 strcpy(module, mod);
                 strcat(module, "/");

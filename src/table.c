@@ -79,8 +79,8 @@ void
 table_release(struct table *t)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
-                free(t->buckets[i].values.items);
-                free(t->buckets[i].names.items);
-                free(t->buckets[i].hashes.items);
+                gc_free(t->buckets[i].values.items);
+                gc_free(t->buckets[i].names.items);
+                gc_free(t->buckets[i].hashes.items);
         }
 }

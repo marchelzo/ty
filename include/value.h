@@ -13,6 +13,8 @@ struct value;
 #include "tags.h"
 #include "vec.h"
 
+#define V_ALIGN (_Alignof (struct value))
+
 #define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                              .tags = 0 })
 #define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                              .tags = 0 })
 #define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                              .tags = 0 })
@@ -22,6 +24,7 @@ struct value;
 #define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                              .tags = 0 })
 #define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                           .tags = 0 })
 #define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),                              .tags = 0 })
+#define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                              .tags = 0 })
 #define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                              .tags = 0 })
 #define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c), .object = NULL,              .tags = 0 })
 #define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o), .class  = (c),               .tags = 0 })
@@ -95,19 +98,6 @@ struct blob {
         size_t capacity;
 };
 
-struct reference {
-        union {
-                uintptr_t symbol;
-                uintptr_t pointer;
-        };
-        uintptr_t offset;
-};
-
-struct ref_vector {
-        size_t count;
-        struct reference refs[];
-};
-
 enum {
         VALUE_FUNCTION         , // = 1 << 9,
         VALUE_METHOD           , // = 1 << 10,
@@ -129,6 +119,7 @@ enum {
         VALUE_INDEX            , // = 1 << 17,
         VALUE_NONE             , // = 1 << 18,
         VALUE_PTR              , // = 1 << 19,
+        VALUE_REF              ,
         VALUE_TAGGED           = 1 << 7
 };
 
@@ -173,7 +164,7 @@ struct value {
                 struct regex *regex;
                 struct {
                         int *info;
-                        char *code;
+                        struct value **env;
                 };
         };
 };
@@ -185,14 +176,6 @@ struct dict {
         size_t size;
         size_t count;
         struct value dflt;
-};
-
-struct variable {
-        struct value value;
-        struct variable *prev;
-        struct variable *next;
-        bool captured;
-        int try;
 };
 
 unsigned long
@@ -230,9 +213,6 @@ value_array_clone(struct array const *);
 
 void
 value_array_extend(struct array *, struct array const *);
-
-struct ref_vector *
-ref_vector_new(int n);
 
 struct blob *
 value_blob_new(void);

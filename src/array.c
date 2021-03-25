@@ -64,7 +64,7 @@ shrink(struct value *array)
         if (array->array->capacity > 8 * array->array->count || (array->array->capacity - array->array->count) > 1000) {
                 array->array->capacity = array->array->count;
                 if (array->array->count == 0)
-                        free(array->array->items), array->array->items = NULL;
+                        gc_free(array->array->items), array->array->items = NULL;
                 else
                         resize(array->array->items, array->array->count * sizeof (struct value));
         }
