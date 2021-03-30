@@ -2705,7 +2705,7 @@ parse_error(void)
 struct statement **
 parse(char const *source, char const *file)
 {
-        vec(struct statement *) program;
+        volatile vec(struct statement *) program;
         vec_init(program);
 
         depth = 0;
@@ -2725,11 +2725,13 @@ parse(char const *source, char const *file)
                 return NULL;
         }
 
-        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT)
+        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT) {
                 vec_push(program, parse_import());
+        }
 
-        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT)
+        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT) {
                 vec_push(program, parse_export());
+        }
 
         while (tok()->type != TOKEN_END) {
                 struct statement *s = parse_statement();
