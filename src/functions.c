@@ -2409,7 +2409,7 @@ builtin_stdio_fgets(int argc)
                 vec_push(line, c);
         }
 
-        if (c == EOF && line.count == 0)
+        if (line.count == 0)
                 return NIL;
 
         struct value s = STRING_CLONE(line.items, line.count);

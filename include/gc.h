@@ -95,6 +95,9 @@ gc_alloc(size_t n)
 inline static void *
 gc_alloc_object(size_t n, char type)
 {
+        if (n == 0)
+                return NULL;
+
         MemoryUsed += n;
         CheckUsed();
 
