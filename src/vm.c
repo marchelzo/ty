@@ -173,7 +173,7 @@ static void
 print_stack(int n)
 {
 #ifndef TY_NO_LOG
-        LOG("STACK:");
+        LOG("STACK: (%zu)", stack.count);
         for (int i = 0; i < n && i < stack.count; ++i) {
                 if (frames.count > 0 && stack.count - (i + 1) == vec_last(frames)->fp) {
                         LOG(" -->  %s", value_show(top() - i));
@@ -188,7 +188,9 @@ inline static struct value
 pop(void)
 {
         LOG("POP: %s", value_show(top()));
-        return *vec_pop(stack);
+        struct value v = *vec_pop(stack);
+        print_stack(5);
+        return v;
 }
 
 inline static struct value
@@ -204,6 +206,7 @@ push(struct value v)
         int i = stack.capacity;
         vec_push(stack, v);
         if (stack.capacity != i) { LOG("!!! STACK WAS REALLOCATED !!!"); }
+        print_stack(5);
 }
 
 inline static struct value *
@@ -217,6 +220,7 @@ poptarget(void)
 {
         struct target t = *vec_pop(targets);
         if (t.gc != NULL) OKGC(t.gc);
+        LOG("Popping Target: %p", (void *)t.t);
         return t.t;
 }
 
@@ -232,6 +236,10 @@ pushtarget(struct value *v, void *gc)
         struct target t = { .t = v, .gc = gc };
         if (gc != NULL) NOGC(gc);
         vec_push(targets, t);
+        LOG("TARGETS: (%zu)", targets.count);
+        for (int i = 0; i < targets.count; ++i) {
+                LOG("\t%d: %p", i + 1, (void *)targets.items[i].t);
+        }
 }
 
 inline static void
@@ -451,6 +459,7 @@ vm_exec(char *code)
                 CASE(TARGET_GLOBAL)
                 TargetGlobal:
                         READVALUE(n);
+                        LOG("Global: %d", (int)n);
                         while (Globals.count <= n)
                                 vec_push(Globals, NIL);
                         pushtarget(Globals.items + n, NULL);
@@ -674,10 +683,11 @@ Throw:
                         break;
                 CASE(TRY_ASSIGN_NON_NIL)
                         READVALUE(n);
+                        vp = poptarget();
                         if (top()->type == VALUE_NIL)
                                 ip += n;
                         else
-                                *poptarget() = peek();
+                                *vp = peek();
                         break;
                 CASE(TRY_REGEX)
                         READVALUE(s);
@@ -955,6 +965,7 @@ Throw:
                         }
                         break;
                 CASE(MULTI_ASSIGN)
+                        print_stack(5);
                         READVALUE(n);
                         for (i = 0, vp = top(); pop().type != VALUE_SENTINEL; ++i)
                                 ;
@@ -1664,7 +1675,7 @@ BadContainer:
                         READVALUE(n);
 CallMethod:
                         LOG("METHOD = %s, n = %d", method, n);
-                        print_stack(3);
+                        print_stack(5);
 
                         value = peek();
                         vp = NULL;
@@ -1787,12 +1798,17 @@ CallMethod:
                         stack.count = *vec_pop(sp_stack);
                         break;
                 CASE(MULTI_RETURN)
-                        READVALUE(rc);
-                        stack.count -= rc;
-                        /* fallthrough */
                 CASE(RETURN)
                         n = vec_last(frames)->fp;
-                        stack.items[n] = pop();
+                        if (ip[-1] == INSTR_MULTI_RETURN) {
+                                READVALUE(rc);
+                                stack.count -= rc;
+                                for (int i = 0; i <= rc; ++i) {
+                                        stack.items[n + i] = top()[i];
+                                }
+                        } else {
+                                stack.items[n] = peek();
+                        }
                         stack.count = n + 1;
                         LOG("POPPING FRAME");
                         vec_pop(frames);
