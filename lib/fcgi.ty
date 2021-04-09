@@ -1,6 +1,7 @@
 import os
-import fs
-import bit (shiftLeft, shiftRight, and)
+import io
+import bit (shiftLeft, shiftRight, AND)
+import errno
 
 export FCGIApp
 
@@ -64,14 +65,14 @@ class FCGIRecord {
         return r;
     }
 
-    beginRequest(self) {
+    beginRequest() {
         let b = self.content.splice(0, 8);
-        self.role = shiftLeft(b[0], 8) + b[1];
+        self.role = (b[0] << 8) + b[1];
         self.flags = b[2];
         return self;
     }
 
-    getParams(self) {
+    getParams() {
         let b = self.content;
         let ps = {};
 
@@ -86,16 +87,16 @@ class FCGIRecord {
         return self.params = ps;
     }
 
-    readInput(self) {
+    readInput() {
         return self.content;
     }
 }
 
 function getLength(b) {
-    if (shiftRight(b[0], 7) == 1) {
-        let n = shiftLeft(and(b[0], 0x7F), 24)
-              + shiftLeft(b[1], 16)
-              + shiftLeft(b[2], 8)
+    if ((b[0] >> 7) == 1) {
+        let n = ((b[0] .&. 0x7F) << 24)
+              + (b[1] << 16)
+              + (b[2] << 8)
               + b[3];
         b.splice(0, 4);
         return n;
@@ -111,7 +112,7 @@ function nextShort(f) {
     let B0 = f.next();
     if (B1 == nil || B0 == nil)
         return nil;
-    return shiftLeft(B1, 8) + B0;
+    return (B1 << 8) + B0;
 }
 
 function decode(s) {
@@ -128,25 +129,25 @@ function urlDecode(s) {
 }
 
 class FCGIRequest {
-    init(self, fd, body, ps) {
+    init(fd, body, ps) {
         self.socket = fd;
         self.body = body;
         self.params = ps;
     }
 
-    sendHTML(self, html) {
+    sendHTML(html) {
         self.sendResponse(0, "Content-type: text/html\r\n\r\n{html}\r\n");
     }
 
-    sendResponse(self, status, body) {
+    sendResponse(status, body) {
         let size = body.size();
         let response = blob();
         response.push(FCGI_VERSION_1);
         response.push(FCGI_STDOUT);
         response.push(0);
         response.push(1);
-        response.push(shiftRight(size, 8));
-        response.push(and(0xFF, size));
+        response.push(size >> 8);
+        response.push(0xFF .&. size);
         response.push(0);
         response.push(0);
         response.push(body);
@@ -172,10 +173,10 @@ class FCGIRequest {
         response.push(8);
         response.push(0);
         response.push(0);
-        response.push(and(shiftRight(status, 24), 0xFF));
-        response.push(and(shiftRight(status, 16), 0xFF));
-        response.push(and(shiftRight(status, 8), 0xFF));
-        response.push(and(status, 0xFF));
+        response.push((status >> 24) .&. 0xFF);
+        response.push((status >> 16) .&. 0xFF);
+        response.push((status >> 8) .&. 0xFF);
+        response.push(status .&. 0xFF);
         response.push(FCGI_REQUEST_COMPLETE);
         response.push(0);
         response.push(0);
@@ -186,11 +187,11 @@ class FCGIRequest {
         os::close(self.socket);
     }
 
-    queryParams(self) {
+    queryParams() {
         return urlDecode(self.params['QUERY_STRING']);
     }
 
-    formData(self) {
+    formData() {
         if (self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/)) {
             let [_, delim] = self.body.match!(/^(.*)\r\n/);
             let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})");
@@ -203,16 +204,16 @@ class FCGIRequest {
 }
 
 class FCGIApp {
-    init(self, socket) {
+    init(socket) {
         self.socket = socket;
     }
 
-    waitRequest(self) {
+    waitRequest() {
         if !let [$fd, addr] = os::accept(self.socket) {
             return nil;
         }
 
-        let stream = fs::File.from(fd);
+        let stream = io::open(fd);
 
         let body = blob();
         let params = {};

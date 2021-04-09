@@ -359,6 +359,9 @@ struct value
 builtin_stdio_fgets(int argc);
 
 struct value
+builtin_stdio_fread(int argc);
+
+struct value
 builtin_stdio_puts(int argc);
 
 struct value

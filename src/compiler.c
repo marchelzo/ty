@@ -1711,13 +1711,13 @@ emit_try_match(struct expression const *pattern)
                 } else {
                         emit_tgt(pattern->symbol, state.fscope);
                         emit_instr(INSTR_ASSIGN);
-                        if (pattern->constraint != NULL) {
-                                emit_instr(INSTR_DUP);
-                                emit_constraint(pattern->constraint);
-                                emit_instr(INSTR_JUMP_IF_NOT);
-                                vec_push(state.match_fails, state.code.count);
-                                emit_int(0);
-                        }
+                }
+                if (pattern->constraint != NULL) {
+                        emit_instr(INSTR_DUP);
+                        emit_constraint(pattern->constraint);
+                        emit_instr(INSTR_JUMP_IF_NOT);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
                 }
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
@@ -1847,10 +1847,14 @@ emit_try_match(struct expression const *pattern)
                 }
                 break;
         default:
+                /*
+                 * Need to think about how this should work...
+                 */
                 emit_instr(INSTR_DUP);
                 emit_expression(pattern);
-                emit_instr(INSTR_CHECK_MATCH);
-                emit_instr(INSTR_JUMP_IF_NOT);
+                //emit_instr(INSTR_CHECK_MATCH);
+                //emit_instr(INSTR_JUMP_IF_NOT);
+                emit_instr(INSTR_ENSURE_EQUALS_VAR);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
                 need_loc = true;

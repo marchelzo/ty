@@ -1687,7 +1687,7 @@ builtin_os_accept(int argc)
         struct value sockfd = ARG(0);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the argument to os::listen() must be an integer");
+                vm_panic("the argument to os::accept() must be an integer");
 
         struct sockaddr a;
         socklen_t n = sizeof a;
@@ -2417,6 +2417,36 @@ builtin_stdio_fgets(int argc)
         vec_empty(line);
 
         return s;
+}
+
+struct value
+builtin_stdio_fread(int argc)
+{
+        ASSERT_ARGC("stdio::fread()", 2);
+
+        vec(char) line;
+        vec_init(line);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio::fread() must be a pointer");
+
+        struct value n = ARG(1);
+        if (n.type != VALUE_INTEGER || n.integer < 0)
+                vm_panic("the second argument to stdio::fread() must be a non-negative integer");
+
+        FILE *fp = f.ptr;
+        struct blob *b = value_blob_new();
+
+        int c;
+        while (b->count < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
+                vec_push(*b, c);
+        }
+
+        if (b->count == 0 && n.integer > 0 && c == EOF)
+                return NIL;
+
+        return BLOB(b);
 }
 
 struct value

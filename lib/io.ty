@@ -7,69 +7,72 @@ export open, stdin, stdout, stderr, FBF, LBF, NBF
 let FBF = stdio::_IOFBF;
 let LBF = stdio::_IOLBF;
 let NBF = stdio::_IONBF;
+let BufferingMethod = FBF | LBF | NBF;
 
 class Stream : Iter {
-    init(self, fd, mode, buffering) {
+    init(fd: Int, mode: ?String = 'a+', buffering: ?BufferingMethod) {
         self.fd = fd;
 
-        if ((self.f = stdio::fdopen(fd, mode || 'a+')) == nil) {
+        if let $f = stdio::fdopen(fd, mode) {
+            self.f = f;
+        } else {
             throw Err(errno::get());
         }
 
-        if (buffering)
+        if buffering != nil {
             stdio::setvbuf(self.f, buffering);
-    }
-
-    close(self) {
-        return stdio::fclose(self.f);
-    }
-
-    nextLine(self) {
-        if let $line = stdio::fgets(self.f) {
-            return line;
-        } else {
-            if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
-                stdio::clearerr(self.f);
-            }
         }
     }
 
-    rewind(self) {
+    close() {
+        return stdio::fclose(self.f);
+    }
+
+    nextLine() {
+        if let $line = stdio::fgets(self.f) {
+            return line;
+        } else if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
+                stdio::clearerr(self.f);
+        }
+    }
+
+    rewind() {
         if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
             throw Err(errno::get());
         }
     }
 
-    next(self, n) {
-        return stdio::fgetc(self.f);
-    }
-
-    write(self, s) {
-        return match type(s) {
-            ::Blob   => stdio::fwrite(self.f, s),
-            ::String => stdio::fwrite(self.f, s),
-            _        => stdio::fwrite(self.f, str(s))
+    next(n: ?Int) {
+        return match n {
+            $n  => stdio::fread(self.f, n),
+            _   => stdio::fgetc(self.f)
         };
     }
 
-    print(self, s) {
-        if (s == nil) s = '';
-        return match type(s) {
-            ::Blob   => stdio::puts(self.f, s),
-            ::String => stdio::puts(self.f, s),
-            _        => stdio::puts(self.f, str(s))
+    write(s) {
+        return match s {
+            Blob | String => stdio::fwrite(self.f, s),
+            _             => stdio::fwrite(self.f, str(s))
         };
     }
 
-    slurp(self) {
+    print(s = '') {
+        return match s {
+            Blob   => stdio::puts(self.f, s),
+            String => stdio::puts(self.f, s),
+            _      => stdio::puts(self.f, str(s))
+        };
+    }
+
+    slurp() {
         return stdio::slurp(self.f);
     }
 
-    flush(self) {
+    flush() {
         return stdio::fflush(self.f);
     }
 
-    __next__(self) {
+    __next__() {
         return self.nextLine();
     }
 }
@@ -78,13 +81,13 @@ let stdin = Stream(0, 'r');
 let stdout = Stream(1, 'w');
 let stderr = Stream(2, 'w', NBF);
 
-function open(path, mode, buffering) {
+function open(path: String | Int, mode: String = 'a+', buffering) {
 
-    if (type(path) == Int) {
+    if path :: Int {
         return Stream(path, mode, buffering);
     }
 
-    let flags = match mode || 'a+' {
+    let flags = match mode {
         'r'  => [os::O_RDONLY],
         'w'  => [os::O_WRONLY, os::O_CREAT, os::O_TRUNC],
         'wx' => [os::O_WRONLY, os::O_CREAT],
@@ -95,14 +98,16 @@ function open(path, mode, buffering) {
         _    => nil
     };
 
-    if (flags == nil)
+    if flags == nil {
         throw Err(errno::EINVAL);
+    }
 
     let creat = flags.contains?(os::O_CREAT);
 
-    let fd = match creat {
-        true  => os::open(path, flags, 0666),
-        false => os::open(path, flags)
+    let fd = if creat {
+        os::open(path, flags, 0666)
+    } else {
+        os::open(path, flags)
     };
 
     return match fd {
