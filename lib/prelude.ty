@@ -99,6 +99,10 @@ class Function {
         return (a, b) -> self(b, a);
     }
 
+    bind(x) {
+        return bindMethod(self, x);
+    }
+
     __match__(x) {
         return self(x);
     }

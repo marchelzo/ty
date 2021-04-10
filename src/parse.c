@@ -2626,6 +2626,8 @@ parse_import(void)
                 s->import.as = module;
         }
 
+        s->start = tok()->start;
+
         vec_init(s->import.identifiers);
 
         if (tok()->type == '(') {
@@ -2643,6 +2645,8 @@ parse_import(void)
                 }
                 consume(')');
         }
+
+        s->end = End;
 
         consume(TOKEN_NEWLINE);
 

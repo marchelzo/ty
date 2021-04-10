@@ -2647,6 +2647,34 @@ builtin_object(int argc)
 }
 
 struct value
+builtin_bind(int argc)
+{
+        ASSERT_ARGC("bind()", 2);
+
+        struct value f = ARG(0);
+        struct value x = ARG(1);
+
+        struct value *this;
+        struct value *fp;
+
+        if (f.type == VALUE_METHOD) {
+                this = gc_alloc_object(sizeof x, GC_VALUE);
+                *this = x;
+                return METHOD(f.name, f.method, this);
+        }
+
+        if (f.type == VALUE_FUNCTION) {
+                this = gc_alloc_object(sizeof x, GC_VALUE);
+                *this = x;
+                fp = gc_alloc_object(sizeof x, GC_VALUE);
+                *fp = f;
+                return METHOD(f.name, fp, this);
+        }
+
+        return f;
+}
+
+struct value
 builtin_type(int argc)
 {
         ASSERT_ARGC("type()", 1);

@@ -34,7 +34,7 @@ class_set_super(int class, int super)
          * if unspecified, but we don't want this behaviour when Object
          * itself is defined, otherwise we'd have a cyclic inheritance graph.
          */
-        if (class)
+        if (class != 0)
                 supers.items[class] = super;
 }
 

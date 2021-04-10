@@ -249,6 +249,7 @@ call(struct value const *f, struct value const *self, int n, bool exec)
         int bound = f->info[3];
         int np = f->info[4];
         bool rest = f->info[5];
+        int class = f->info[6];
         char *code = (char *)f->info + hs;
         int argc = n;
 
@@ -291,12 +292,10 @@ call(struct value const *f, struct value const *self, int n, bool exec)
                 n -= 1;
         }
 
-
         /*
-         * We're assuming that f truly refers to a method here and has
-         * extra space in its stack frame for a 'self' value.
+         * Fill in 'self' as an implicit additional parameter.
          */
-        if (self != NULL) {
+        if (self != NULL && class != -1) {
                 stack.items[fp + np] = *self;
         }
 
