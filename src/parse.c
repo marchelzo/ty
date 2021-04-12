@@ -1424,6 +1424,7 @@ infix_list(struct expression *left)
 {
 
         struct expression *e = mkexpr();
+        e->start = left->start;
         e->type = EXPRESSION_LIST;
         vec_init(e->es);
         vec_push(e->es, left);
@@ -1437,6 +1438,8 @@ infix_list(struct expression *left)
         }
 
         NoEquals = ne;
+
+        e->end = End;
 
         return e;
 }
@@ -2608,9 +2611,7 @@ parse_import(void)
 
         char *module = gc_alloc(modlen + idlen + 2);
         if (mod != NULL) {
-                strcpy(module, mod);
-                strcat(module, "/");
-                strcat(module, id);
+                sprintf(module, "%s/%s", mod, id);
         } else {
                 strcpy(module, id);
         }

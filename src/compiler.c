@@ -2632,7 +2632,7 @@ check_multi(struct expression *target, struct expression const *e, int *n)
                         return true;
         }
 
-        return *n == e->es.count;
+        return *n == target->es.count;
 }
 
 static void
@@ -2705,6 +2705,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 break;
         case EXPRESSION_LIST:
                 if (!check_multi(target, e, &n)) {
+                        state.start = e->start;
                         fail("wrong number of values on RHS of assignment. expected %d but found %d", target->es.count, n);
                 }
 
