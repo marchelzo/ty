@@ -2582,10 +2582,11 @@ parse_export(void)
         while (tok()->type == TOKEN_IDENTIFIER || tok()->type == TOKEN_USER_OP) {
                 vec_push(s->exports, tok()->identifier);
                 next();
-                if (tok()->type == ',')
+                if (tok()->type == ',') {
                         next();
-                else
+                } else {
                         expect(TOKEN_NEWLINE);
+                }
         }
 
         consume(TOKEN_NEWLINE);

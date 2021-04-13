@@ -1853,8 +1853,8 @@ emit_try_match(struct expression const *pattern)
                 emit_instr(INSTR_DUP);
                 emit_expression(pattern);
                 //emit_instr(INSTR_CHECK_MATCH);
-                //emit_instr(INSTR_JUMP_IF_NOT);
-                emit_instr(INSTR_ENSURE_EQUALS_VAR);
+                emit_instr(INSTR_EQ);
+                emit_instr(INSTR_JUMP_IF_NOT);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
                 need_loc = true;
