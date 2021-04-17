@@ -25,7 +25,13 @@ class Stream : Iter {
     }
 
     close() {
-        return stdio::fclose(self.f);
+        if self.f != nil {
+            let r = stdio::fclose(self.f);
+            self.f = nil;
+            return r;
+        } else {
+            throw Err(errno::EBADF);
+        }
     }
 
     nextLine() {

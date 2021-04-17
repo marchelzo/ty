@@ -103,23 +103,25 @@ class Function {
         return bindMethod(self, x);
     }
 
+    apply(x, *ys) {
+        return apply(self, x, *ys);
+    }
+
     __match__(x) {
         return self(x);
     }
 }
 
 class Array : Iterable {
-    init(*self) {
-        return self;
+    init(*xs) {
+        return xs;
     }
 
     sorted?() {
-        if (!self) return true;
-
-        let y = self[0];
-        for x in self {
-            if (x < y) return false;
-            y = x;
+        for i in 1..#self {
+            if self[i - 1] > self[i] {
+                return false;
+            }
         }
 
         return true;

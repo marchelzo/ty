@@ -12,26 +12,26 @@ function parse(s) {
 }
 
 tag HtmlText {
-    text(t) { return t; }
+    text() { return self; }
 }
 
 
 class HtmlElement {
-    init(E, t, p) {
-        E.parent = p;
-        E.children = [];
-        E.t = t;
-        E.attrs = {};
+    init(t, p) {
+        self.parent = p;
+        self.children = [];
+        self.t = t;
+        self.attrs = {};
     }
 
-    attr(E, a) {
-        return E.attrs[a];
+    attr(a) {
+        return self.attrs[a];
     }
 
-    text(E) {
-        return E.children.filter(HtmlText).map(e -> e.text()).join(' ')
-                .sub(/\s+/, ' ')
-                .sub(/(^\s*)|(\s*$)/, '');
+    text() {
+        return self.children.filter(HtmlText).map(e -> e.text()).join(' ')
+                   .sub(/\s+/, ' ')
+                   .sub(/(^\s*)|(\s*$)/, '');
     }
 
     from(n, p) {
@@ -45,8 +45,8 @@ class HtmlElement {
         }
     }
 
-    __str__(E) {
-        let attrString = [ " {k}=\"{v}\"" for k, v in E.attrs ].join(' ') || '';
-        return "<{E.t}{attrString}>";
+    __str__() {
+        let attrString = [ " {k}=\"{v}\"" for k, v in self.attrs ].join(' ') || '';
+        return "<{self.t}{attrString}>";
     }
 }
