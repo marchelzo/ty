@@ -97,6 +97,7 @@ enum instruction {
         INSTR_JUMP_IF_SENTINEL,
         INSTR_CLEAR_EXTRA,
         INSTR_FIX_EXTRA,
+        INSTR_PUSH_ALL,
 
         INSTR_FUCK,
         INSTR_FUCK2,

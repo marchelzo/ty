@@ -150,6 +150,7 @@ struct expression {
                 EXPRESSION_KEEP_LOC,
 
                 EXPRESSION_TAG_APPLICATION,
+                EXPRESSION_SPREAD,
                 EXPRESSION_MUST_EQUAL,
                 EXPRESSION_REGEX,
                 EXPRESSION_SPECIAL_STRING,

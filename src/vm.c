@@ -267,20 +267,19 @@ call(struct value const *f, struct value const *self, int n, bool exec)
         }
 
         /*
-         * If the function was declared with the form f(..., *extra) then we create
-         * an array and add any extra arguments to it. Also write over them with NIL
-         * so they're not kept around by the GC longer than necessary.
+         * If the function was declared with the form f(..., *extra) then we
+         * create an array and add any extra arguments to it.
          */
         if (rest) {
                 struct array *extra = value_array_new();
                 NOGC(extra);
 
                 for (int i = np - 1; i < argc; ++i) {
-                        value_array_push(extra, stack.items[i]);
-                        stack.items[i] = NIL;
+                        value_array_push(extra, stack.items[fp + i]);
+                        stack.items[fp + i] = NIL;
                 }
 
-                stack.items[np - 1] = ARRAY(extra);
+                stack.items[fp + np - 1] = ARRAY(extra);
                 OKGC(extra);
         }
 
@@ -773,11 +772,17 @@ Throw:
                         break;
                 CASE(ARRAY)
                         v = ARRAY(value_array_new());
+                        n = stack.count - *vec_pop(sp_stack);
 
-                        READVALUE(n);
                         vec_reserve(*v.array, n);
-                        for (i = 0; i < n; ++i)
-                                vec_push(*v.array, pop());
+                        memcpy(
+                                v.array->items,
+                                stack.items + stack.count - n,
+                                sizeof (struct value [n])
+                        );
+                        v.array->count = n;
+
+                        stack.count -= n;
 
                         push(v);
                         break;
@@ -953,9 +958,6 @@ Throw:
                         top()[0] = v;
                         break;
                 CASE(REVERSE)
-                        for (i = 0; top()[-i].type != VALUE_SENTINEL; ++i)
-                                ;
-
                         READVALUE(n);
                         for (--n, i = 0; i < n; ++i, --n) {
                                 v = top()[-i];
@@ -1004,6 +1006,14 @@ Throw:
                 CASE(PUSH_NTH)
                         READVALUE(n);
                         push(top()[-n]);
+                        break;
+                CASE(PUSH_ALL)
+                        v = pop();
+                        gc_push(&v);
+                        for (int i = 0; i < v.array->count; ++i) {
+                                push(v.array->items[i]);
+                        }
+                        gc_pop();
                         break;
                 CASE(CONCAT_STRINGS)
                         READVALUE(n);
@@ -1582,6 +1592,9 @@ BadContainer:
                 CASE(CALL)
                         v = pop();
                         READVALUE(n);
+                        if (n == -1) {
+                                n = stack.count - *vec_pop(sp_stack);
+                        }
                         if (tco) {
                                 vec_pop(frames);
                                 ip = *vec_pop(calls);
@@ -1667,11 +1680,15 @@ BadContainer:
                 CASE(CALL_METHOD)
                         b = ip[-1] == INSTR_TRY_CALL_METHOD;
 
+                        READVALUE(n);
+                        if (n == -1) {
+                                n = stack.count - *vec_pop(sp_stack) - 1;
+                        }
+
                         method = ip;
                         ip += strlen(ip) + 1;
 
                         READVALUE(h);
-                        READVALUE(n);
 CallMethod:
                         LOG("METHOD = %s, n = %d", method, n);
                         print_stack(5);

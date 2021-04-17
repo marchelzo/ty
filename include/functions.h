@@ -46,6 +46,9 @@ struct value
 builtin_bind(int argc);
 
 struct value
+builtin_apply(int argc);
+
+struct value
 builtin_type(int argc);
 
 struct value

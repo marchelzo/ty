@@ -2675,6 +2675,29 @@ builtin_bind(int argc)
 }
 
 struct value
+builtin_apply(int argc)
+{
+        if (argc < 2) {
+                vm_panic("apply() expects at least 2 arguments but got %d", argc);
+        }
+
+        struct value f = ARG(0);
+        struct value x = ARG(1);
+
+        if (f.type != VALUE_FUNCTION) {
+                vm_panic("the first argument to apply() must be a function, got: %s", value_show(&f));
+        }
+
+        struct value m = METHOD(f.name, &f, &x);
+
+        for (int i = 2; i < argc; ++i) {
+                vm_push(&ARG(i));
+        }
+
+        return vm_call(&m, argc - 2);
+}
+
+struct value
 builtin_type(int argc)
 {
         ASSERT_ARGC("type()", 1);

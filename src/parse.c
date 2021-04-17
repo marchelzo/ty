@@ -1055,7 +1055,16 @@ prefix_array(void)
         consume('[');
 
         while (tok()->type != ']') {
-                vec_push(e->elements, parse_expr(0));
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *item = mkexpr();
+                        item->type = EXPRESSION_SPREAD;
+                        item->value = parse_expr(0);
+                        item->start = item->value->start;
+                        vec_push(e->elements, item);
+                } else {
+                        vec_push(e->elements, parse_expr(0));
+                }
 
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FOR) {
                         next();
@@ -1345,12 +1354,30 @@ infix_function_call(struct expression *left)
                 e->end = End;
                 return e;
         } else {
-                vec_push(e->args, parse_expr(0));
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *arg = mkexpr();
+                        arg->type = EXPRESSION_SPREAD;
+                        arg->value = parse_expr(0);
+                        arg->start = arg->value->start;
+                        vec_push(e->args, arg);
+                } else {
+                        vec_push(e->args, parse_expr(0));
+                }
         }
 
         while (tok()->type == ',') {
                 next();
-                vec_push(e->args, parse_expr(0));
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *arg = mkexpr();
+                        arg->type = EXPRESSION_SPREAD;
+                        arg->value = parse_expr(0);
+                        arg->start = arg->value->start;
+                        vec_push(e->args, arg);
+                } else {
+                        vec_push(e->args, parse_expr(0));
+                }
         }
 
         consume(')');

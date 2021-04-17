@@ -373,6 +373,29 @@ is_const(struct scope const *scope, char const *name)
         return s != NULL && s->cnst;
 }
 
+static bool
+has_spread(struct expression const *e)
+{
+        int n = 0;
+        struct expression * const *args = NULL;
+
+        if (e->type == EXPRESSION_FUNCTION_CALL) {
+                n = e->args.count;
+                args = e->args.items;
+        } else if (e->type == EXPRESSION_METHOD_CALL) {
+                n = e->method_args.count;
+                args = e->method_args.items;
+        }
+
+        for (int i = 0; i < n; ++i) {
+                if (args[i]->type == EXPRESSION_SPREAD) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 inline static struct symbol *
 addsymbol(struct scope *scope, char const *name)
 {
@@ -914,6 +937,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_expression(scope, e->es.items[i]);
                 }
+                break;
+        case EXPRESSION_SPREAD:
+                symbolize_expression(scope, e->value);
                 break;
         case EXPRESSION_MATCH_REST:
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
@@ -2342,8 +2368,8 @@ emit_array_compr2(struct expression const *e)
         vec_init(state.match_successes);
         vec_init(state.match_fails);
 
+        emit_instr(INSTR_SAVE_STACK_POS);
         emit_instr(INSTR_ARRAY);
-        emit_int(0);
 
         emit_instr(INSTR_PUSH_INDEX);
         if (e->compr.pattern->type == EXPRESSION_LIST) {
@@ -2474,6 +2500,49 @@ emit_array_compr(struct expression const *e)
         state.continues = cont_save;
         state.each_loop = each_loop_save;
         state.loop = loop_save;
+}
+
+static void
+emit_spread(struct expression const *e)
+{
+        emit_instr(INSTR_PUSH_INDEX);
+        emit_int(1);
+
+        emit_expression(e->value);
+
+        size_t start = state.code.count;
+        emit_instr(INSTR_SENTINEL);
+        emit_instr(INSTR_CLEAR_RC);
+        emit_instr(INSTR_GET_NEXT);
+        emit_instr(INSTR_READ_INDEX);
+
+        size_t done;
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
+
+        emit_instr(INSTR_FIX_TO);
+        emit_int(1);
+
+        emit_instr(INSTR_SWAP);
+        emit_instr(INSTR_POP);
+
+        emit_instr(INSTR_REVERSE);
+        emit_int(3);
+
+        emit_instr(INSTR_SWAP);
+
+        JUMP(start);
+
+        PATCH_JUMP(done);
+
+        emit_instr(INSTR_FIX_TO);
+        emit_int(1);
+
+        emit_instr(INSTR_SWAP);
+        emit_instr(INSTR_POP);
+
+        emit_instr(INSTR_POP);
+        emit_instr(INSTR_POP);
+        emit_instr(INSTR_POP);
 }
 
 static void
@@ -2628,7 +2697,7 @@ check_multi(struct expression *target, struct expression const *e, int *n)
                 return (*n = 1), false;
 
         for (*n = 0; *n < e->es.count; ++*n) {
-                if (is_call(e->es.items[*n]))
+                if (is_call(e->es.items[*n]) || e->es.items[*n]->type == EXPRESSION_SPREAD)
                         return true;
         }
 
@@ -2760,6 +2829,7 @@ emit_expr(struct expression const *e, bool need_loc)
         state.end = e->end;
 
         size_t start = state.code.count;
+        int ac;
 
         char const *method = NULL;
 
@@ -2819,11 +2889,11 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_symbol((uintptr_t) e->regex);
                 break;
         case EXPRESSION_ARRAY:
-                for (int i = e->elements.count - 1; i >= 0; --i) {
+                emit_instr(INSTR_SAVE_STACK_POS);
+                for (int i = 0; i < e->elements.count; ++i) {
                         emit_expression(e->elements.items[i]);
                 }
                 emit_instr(INSTR_ARRAY);
-                emit_int(e->elements.count);
                 break;
         case EXPRESSION_ARRAY_COMPR:
                 emit_array_compr2(e);
@@ -2870,23 +2940,42 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_statement(e->statement, true);
                 break;
         case EXPRESSION_FUNCTION_CALL:
-                for (size_t i = 0; i < e->args.count; ++i)
+                if (has_spread(e)) {
+                        emit_instr(INSTR_SAVE_STACK_POS);
+                }
+                for (size_t i = 0; i < e->args.count; ++i) {
                         emit_expression(e->args.items[i]);
+                }
                 emit_expression(e->function);
                 emit_instr(INSTR_CALL);
-                emit_int(e->args.count);
+                if (has_spread(e)) {
+                        emit_int(-1);
+                } else {
+                        emit_int(e->args.count);
+                }
                 break;
         case EXPRESSION_METHOD_CALL:
-                for (size_t i = 0; i < e->method_args.count; ++i)
+                if (has_spread(e)) {
+                        emit_instr(INSTR_SAVE_STACK_POS);
+                }
+                for (size_t i = 0; i < e->method_args.count; ++i) {
                         emit_expression(e->method_args.items[i]);
+                }
                 emit_expression(e->object);
                 if (e->maybe)
                         emit_instr(INSTR_TRY_CALL_METHOD);
                 else
                         emit_instr(INSTR_CALL_METHOD);
+                if (has_spread(e)) {
+                        emit_int(-1);
+                } else {
+                        emit_int(e->method_args.count);
+                }
                 emit_string(e->method_name);
                 emit_ulong(strhash(e->method_name));
-                emit_int(e->method_args.count);
+                break;
+        case EXPRESSION_SPREAD:
+                emit_spread(e);
                 break;
         case EXPRESSION_USER_OP:
                 emit_expression(e->left);
@@ -2900,9 +2989,9 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_expression(e->right);
                 emit_instr(INSTR_SWAP);
                 emit_instr(INSTR_CALL_METHOD);
+                emit_int(1);
                 emit_string(e->op_name);
                 emit_ulong(strhash(e->op_name));
-                emit_int(1);
                 if (e->sc != NULL) {
                         PATCH_JUMP(sc);
                 }
@@ -2918,9 +3007,9 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_expression(e->right);
                 emit_expression(e->left);
                 emit_instr(INSTR_CALL_METHOD);
+                emit_int(1);
                 emit_string(method);
                 emit_ulong(strhash(method));
-                emit_int(1);
                 break;
         case EXPRESSION_FUNCTION:
                 emit_function(e, -1);
