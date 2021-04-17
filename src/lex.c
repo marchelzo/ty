@@ -694,6 +694,9 @@ lex_token(LexContext ctx)
                 } else if (C(0) == '&' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken('&');
+                } else if (C(0) == '*' && ctx == LEX_PREFIX) {
+                        nextchar();
+                        return mktoken(TOKEN_STAR);
                 } else if (C(0) == '!' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken(TOKEN_BANG);
