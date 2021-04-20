@@ -420,7 +420,7 @@ struct value
 dict_update(struct value *d, int argc)
 {
         if (argc != 1 && argc != 2) {
-                vm_panic("dict.update() expects 1 argument but got %d", argc);
+                vm_panic("dict.update() expects 1 or 2 arguments but got %d", argc);
         }
 
         struct value u = ARG(0);

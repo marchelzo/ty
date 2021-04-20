@@ -2503,7 +2503,7 @@ emit_array_compr(struct expression const *e)
 }
 
 static void
-emit_spread(struct expression const *e)
+emit_spread(struct expression const *e, bool nils)
 {
         emit_instr(INSTR_PUSH_INDEX);
         emit_int(1);
@@ -2528,7 +2528,13 @@ emit_spread(struct expression const *e)
         emit_instr(INSTR_REVERSE);
         emit_int(3);
 
-        emit_instr(INSTR_SWAP);
+        if (nils) {
+                emit_instr(INSTR_NIL);
+                emit_instr(INSTR_REVERSE);
+                emit_int(3);
+        } else {
+                emit_instr(INSTR_SWAP);
+        }
 
         JUMP(start);
 
@@ -2537,9 +2543,7 @@ emit_spread(struct expression const *e)
         emit_instr(INSTR_FIX_TO);
         emit_int(1);
 
-        emit_instr(INSTR_SWAP);
         emit_instr(INSTR_POP);
-
         emit_instr(INSTR_POP);
         emit_instr(INSTR_POP);
         emit_instr(INSTR_POP);
@@ -2899,15 +2903,19 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_array_compr2(e);
                 break;
         case EXPRESSION_DICT:
+                emit_instr(INSTR_SAVE_STACK_POS);
                 for (int i = e->keys.count - 1; i >= 0; --i) {
-                        emit_expression(e->keys.items[i]);
-                        if (e->values.items[i] == NULL)
-                                emit_instr(INSTR_NIL);
-                        else
-                                emit_expression(e->values.items[i]);
+                        if (e->keys.items[i]->type == EXPRESSION_SPREAD) {
+                                emit_spread(e->keys.items[i], true);
+                        } else {
+                                emit_expression(e->keys.items[i]);
+                                if (e->values.items[i] == NULL)
+                                        emit_instr(INSTR_NIL);
+                                else
+                                        emit_expression(e->values.items[i]);
+                        }
                 }
                 emit_instr(INSTR_DICT);
-                emit_int(e->keys.count);
                 if (e->dflt != NULL) {
                         emit_expression(e->dflt);
                         emit_instr(INSTR_DICT_DEFAULT);
@@ -2975,7 +2983,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_ulong(strhash(e->method_name));
                 break;
         case EXPRESSION_SPREAD:
-                emit_spread(e);
+                emit_spread(e, false);
                 break;
         case EXPRESSION_USER_OP:
                 emit_expression(e->left);

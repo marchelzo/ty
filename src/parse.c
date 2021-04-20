@@ -1270,7 +1270,7 @@ prefix_arrow(void)
 }
 
 static struct expression *
-prefix_object(void)
+prefix_dict(void)
 {
         struct expression *e = mkexpr();
         e->type = EXPRESSION_DICT;
@@ -1290,6 +1290,14 @@ prefix_object(void)
                         e->dflt = parse_expr(0);
                         e->dflt->start = start;
                         e->dflt->end = End;
+                } else if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *spread = mkexpr();
+                        spread->type = EXPRESSION_SPREAD;
+                        spread->value = parse_expr(0);
+                        spread->start = spread->value->start;
+                        vec_push(e->keys, spread);
+                        vec_push(e->values, NULL);
                 } else {
                         struct expression *key = parse_expr(0);
                         vec_push(e->keys, key);
@@ -1731,7 +1739,7 @@ get_prefix_parser(void)
 
         case '(':                  return prefix_parenthesis;
         case '[':                  return prefix_array;
-        case '{':                  return prefix_object;
+        case '{':                  return prefix_dict;
 
         case '$':                  return prefix_dollar;
         case '`':                  return prefix_tick;
@@ -1951,6 +1959,8 @@ definition_lvalue(struct expression *e)
 static struct expression *
 assignment_lvalue(struct expression *e)
 {
+        struct expression *v;
+
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
@@ -1962,6 +1972,13 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_LIST:
                 return e;
+        case EXPRESSION_SPREAD:
+                // TODO: fix this so spread/match-rest are differentiated earlier
+                v = e->value;
+                assert(v->type == EXPRESSION_IDENTIFIER);
+                v->type = EXPRESSION_MATCH_REST;
+                gc_free(e);
+                return v;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i)
                         e->elements.items[i] = assignment_lvalue(e->elements.items[i]);

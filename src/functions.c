@@ -2675,6 +2675,34 @@ builtin_bind(int argc)
 }
 
 struct value
+builtin_define_method(int argc)
+{
+        ASSERT_ARGC("defineMethod()", 3);
+
+        struct value class = ARG(0);
+        struct value name = ARG(1);
+        struct value f = ARG(2);
+
+        if (class.type != VALUE_CLASS) {
+                vm_panic("the first argument to defineMethod() must be a class");
+        }
+
+        if (name.type != VALUE_STRING) {
+                vm_panic("the second argument to defineMethod() must be a string");
+        }
+
+        if (f.type != VALUE_FUNCTION) {
+                vm_panic("the third argument to defineMethod() must be a function");
+        }
+
+        snprintf(buffer, sizeof buffer - 1, "%*s", (int)name.bytes, name.string);
+
+        class_add_method(class.class, buffer, f);
+
+        return NIL;
+}
+
+struct value
 builtin_apply(int argc)
 {
         if (argc < 2) {

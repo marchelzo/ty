@@ -789,7 +789,7 @@ Throw:
                 CASE(DICT)
                         v = DICT(dict_new());
 
-                        READVALUE(n);
+                        n = (stack.count - *vec_pop(sp_stack)) / 2;
                         for (i = 0; i < n; ++i) {
                                 value = pop();
                                 key = pop();
