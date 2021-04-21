@@ -2083,11 +2083,11 @@ vm_call(struct value const *f, int argc)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc);
-                stack.count -= (argc + 1);
+                stack.count -= argc;
                 return r;
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(f->this, argc);
-                stack.count -= (argc + 1);
+                stack.count -= argc;
                 return r;
         case VALUE_TAG:
                 r = pop();
