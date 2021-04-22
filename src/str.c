@@ -63,7 +63,7 @@ string_length(struct value *string, int argc)
         while (size > 0) {
                 int codepoint;
                 int n = utf8proc_iterate(s + offset, size, &codepoint);
-                if (n == -1) {
+                if (n <= 0) {
                         size -= 1;
                         offset += 1;
                         continue;

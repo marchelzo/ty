@@ -501,6 +501,7 @@ lexregex(void)
         while (isalpha(C(0))) {
                 switch (C(0)) {
                 case 'i': flags |= PCRE_CASELESS; break;
+                case 'u': flags |= PCRE_UTF8;     break;
                 default:  error("invalid regex flag: %s'%c'%s", TERM(36), C(0), TERM(39));
                 }
                 nextchar();
