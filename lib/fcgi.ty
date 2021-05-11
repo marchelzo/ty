@@ -46,8 +46,9 @@ class FCGIRecord {
         let r = FCGIRecord();
 
         r.version = f.next();
-        if (r.version == nil)
+        if r.version == nil {
             return nil;
+        }
 
         r.type = f.next();
 
@@ -76,7 +77,7 @@ class FCGIRecord {
         let b = self.content;
         let ps = {};
 
-        while (b.size() != 0) {
+        while b.size() != 0 {
             let nameLength = getLength(b);
             let valueLength = getLength(b);
             let name = b.splice(0, nameLength).str();
@@ -93,7 +94,7 @@ class FCGIRecord {
 }
 
 function getLength(b) {
-    if ((b[0] >> 7) == 1) {
+    if (b[0] >> 7) == 1 {
         let n = ((b[0] .&. 0x7F) << 24)
               + (b[1] << 16)
               + (b[2] << 8)
@@ -110,8 +111,9 @@ function getLength(b) {
 function nextShort(f) {
     let B1 = f.next();
     let B0 = f.next();
-    if (B1 == nil || B0 == nil)
+    if B1 == nil || B0 == nil {
         return nil;
+    }
     return (B1 << 8) + B0;
 }
 
@@ -192,7 +194,7 @@ class FCGIRequest {
     }
 
     formData() {
-        if (self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/)) {
+        if self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/) {
             let [_, delim] = self.body.match!(/^(.*)\r\n/);
             let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})");
             let fields = self.body.matches(pattern);
@@ -230,10 +232,11 @@ class FCGIApp {
 
                 ::FCGI_STDIN => {
                     let input = r.readInput();
-                    if (input.size() == 0)
+                    if input.size() == 0 {
                         break;
-                    else
+                    } else {
                         body.push(input);
+                    }
                 },
 
                 t => { print("Type = {t}"); }

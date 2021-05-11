@@ -9,11 +9,13 @@ function sh(c, input) {
 
     let out = blob();
 
-    if (input != nil)
+    if input != nil {
         os::write(p.stdin, input);
+    }
+
     os::close(p.stdin);
 
-    while (os::read(p.stdout, out, 4096) > 0) {
+    while os::read(p.stdout, out, 4096) > 0 {
         ;
     }
 

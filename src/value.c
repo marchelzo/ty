@@ -353,7 +353,7 @@ value_show(struct value const *v)
 #else
                 struct value *fp = NULL;
 #endif
-                if (fp != NULL) {
+                if (fp != NULL && fp != class_method(CLASS_OBJECT, "__str__")) {
                         struct value str = vm_eval_function(fp, v, NULL);
                         if (str.type != VALUE_STRING)
                                 vm_panic("%s.__str__() returned non-string", class_name(v->class));
