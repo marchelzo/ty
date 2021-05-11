@@ -26,10 +26,11 @@ struct value;
 #define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),                              .tags = 0 })
 #define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                              .tags = 0 })
 #define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                              .tags = 0 })
-#define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c), .object = NULL,              .tags = 0 })
-#define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o), .class  = (c),               .tags = 0 })
-#define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m), .this   = (t), .name = (n),  .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m), .this   = (t), .name = (n),  .tags = 0 })
+#define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,             .tags = 0 })
+#define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),              .tags = 0 })
+#define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t), .name = (n), .tags = 0 })
+#define GENERATOR(g)             ((struct value){ .type = VALUE_GENERATOR,      .gen            = (g),                              .tags = 0 })
+#define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t), .name = (n), .tags = 0 })
 #define NIL                      ((struct value){ .type = VALUE_NIL,                                                                .tags = 0 })
 
 /* Special kind of value, only used as an iteration counter in for-each loops */
@@ -56,7 +57,8 @@ struct value;
 #define CLASS_BLOB      8
 #define CLASS_BOOL      9
 #define CLASS_REGEX     10
-#define CLASS_PRIMITIVE 11
+#define CLASS_GENERATOR 11
+#define CLASS_PRIMITIVE 12
 
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
@@ -98,6 +100,10 @@ struct blob {
         size_t capacity;
 };
 
+typedef vec(struct value) ValueVector;
+
+typedef struct generator Generator;
+
 enum {
         VALUE_FUNCTION         , // = 1 << 9,
         VALUE_METHOD           , // = 1 << 10,
@@ -120,6 +126,7 @@ enum {
         VALUE_NONE             , // = 1 << 18,
         VALUE_PTR              , // = 1 << 19,
         VALUE_REF              ,
+        VALUE_GENERATOR        ,
         VALUE_TAGGED           = 1 << 7
 };
 
@@ -166,7 +173,18 @@ struct value {
                         int *info;
                         struct value **env;
                 };
+                Generator *gen;
         };
+};
+
+struct generator {
+        char *ip;
+        struct value f;
+        struct {
+                struct value *items;
+                uint16_t count;
+                uint16_t capacity;
+        } frame;
 };
 
 struct dict {

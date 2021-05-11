@@ -43,6 +43,20 @@ scope_new(struct scope *parent, bool is_function)
         return s;
 }
 
+void
+scope_capture(struct scope *s, struct symbol *sym)
+{
+                sym->captured = true;
+
+                for (int i = 0; i < s->captured.count; ++i) {
+                        if (s->captured.items[i] == sym) {
+                                return;
+                        }
+                }
+
+                vec_push(s->captured, sym);
+}
+
 struct symbol *
 scope_lookup(struct scope const *s, char const *id)
 {
@@ -63,13 +77,7 @@ scope_lookup(struct scope const *s, char const *id)
         }
 
         if (sym->scope->function != s->function && !sym->global) {
-                sym->captured = true;
-                for (int i = 0; i < s->function->captured.count; ++i) {
-                        if (s->function->captured.items[i] == sym) {
-                                return sym;
-                        }
-                }
-                vec_push(s->function->captured, sym);
+                scope_capture(s->function, sym);
         }
 
         return sym;

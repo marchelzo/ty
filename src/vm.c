@@ -57,6 +57,8 @@
 #define inline __attribute__((always_inline)) inline
 
 static char halt = INSTR_HALT;
+static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
+static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
 static jmp_buf jb;
 
@@ -91,8 +93,18 @@ typedef struct Frame {
         char const *ip;
 } Frame;
 
-#define IS_METH(f) ((f).info[6] != -1)
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
+
+typedef vec(struct value) ValueStack;
+typedef vec(Frame) FrameStack;
+typedef vec(char *) CallStack;
+typedef vec(size_t) SPStack;
+typedef vec(struct target) TargetStack;
+
+typedef struct ctx {
+        ValueStack vs;
+        char *ip;
+} Context;
 
 static vec(struct sigfn) sigfns;
 static vec(struct value) stack;
@@ -101,6 +113,7 @@ static vec(Frame) frames;
 static vec(size_t) sp_stack;
 static vec(struct target) targets;
 static vec(struct try) try_stack;
+static vec(Context) contexts;
 static char *ip;
 
 static char const *filename;
@@ -189,7 +202,7 @@ pop(void)
 {
         LOG("POP: %s", value_show(top()));
         struct value v = *vec_pop(stack);
-        print_stack(5);
+        print_stack(15);
         return v;
 }
 
@@ -206,7 +219,7 @@ push(struct value v)
         int i = stack.capacity;
         vec_push(stack, v);
         if (stack.capacity != i) { LOG("!!! STACK WAS REALLOCATED !!!"); }
-        print_stack(5);
+        print_stack(15);
 }
 
 inline static struct value *
@@ -312,6 +325,21 @@ call(struct value const *f, struct value const *self, int n, bool exec)
                 vec_push(calls, ip);
                 ip = code;
         }
+}
+
+inline static void
+call_co(struct value *v)
+{
+        push(*v);
+
+        call(&v->gen->f, NULL, 0, false);
+        stack.count = vec_last(frames)->fp;
+
+        for (int i = 0; i < v->gen->frame.count; ++i) {
+                push(v->gen->frame.items[i]);
+        }
+
+        ip = v->gen->ip;
 }
 
 void
@@ -812,10 +840,44 @@ Throw:
                         push(NIL);
                         break;
                 CASE(TO_STRING)
-                        v = builtin_str(1);
-                        pop();
-                        push(v);
+                        str = ip;
+                        n = strlen(str);
+                        ip += n + 1;
+                        if (n > 0) {
+                                v = pop();
+                                push(STRING_NOGC(str, n));
+                                push(v);
+                                n = 1;
+                                method = "__fmt__";
+                        } else {
+                                n = 0;
+                                method = "__str__";
+                        }
+                        b = false;
+                        h = strhash(method);
+                        goto CallMethod;
+                CASE(YIELD)
+                        n = vec_last(frames)->fp;
+                        v.gen = stack.items[n - 1].gen;
+                        v.gen->ip = ip;
+                        v.gen->frame.count = 0;
+                        vec_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
+                        stack.items[n - 1] = peek();
+                        stack.count = n;
+                        vec_pop(frames);
+                        ip = *vec_pop(calls);
                         break;
+                CASE(MAKE_GENERATOR)
+                        v.type = VALUE_GENERATOR;
+                        v.tags = 0;
+                        v.gen = gc_alloc_object(sizeof *v.gen, GC_GENERATOR);
+                        v.gen->ip = ip;
+                        v.gen->f = vec_last(frames)->f;
+                        n = stack.count - vec_last(frames)->fp;
+                        vec_init(v.gen->frame);
+                        vec_push_n(v.gen->frame, stack.items + stack.count - n, n);
+                        push(v);
+                        goto Return;
                 CASE(FUCK)
                 CASE(FUCK2)
                 CASE(FUCK3)
@@ -825,7 +887,7 @@ Throw:
                         i = top()[-2].i++;
                         //LOG("GET_NEXT: v = %s\n", value_show(&v));
                         //LOG("GET_NEXT: i = %d\n", i);
-                        print_stack(5);
+                        print_stack(10);
                         switch (v.type) {
                         case VALUE_ARRAY:
                                 if (i < v.array->count) {
@@ -849,13 +911,11 @@ Throw:
                                 break;
                         case VALUE_OBJECT:
                                 if ((vp = class_method(v.class, "__next__")) != NULL) {
-                                        static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_FUCK2, INSTR_RETURN_PRESERVE_CTX };
                                         push(INTEGER(i));
                                         vec_push(calls, ip);
                                         call(vp, &v, 1, false);
                                         *vec_last(calls) = next_fix;
                                 } else if ((vp = class_method(v.class, "__iter__")) != NULL) {
-                                        static char iter_fix[] = { INSTR_SENTINEL, INSTR_FUCK3, INSTR_RETURN_PRESERVE_CTX };
                                         pop();
                                         pop();
                                         --top()->i;
@@ -883,6 +943,11 @@ Throw:
                                 } else {
                                         push(NONE);
                                 }
+                                break;
+                        case VALUE_GENERATOR:
+                                vec_push(calls, ip);
+                                call_co(&v);
+                                *vec_last(calls) = next_fix;
                                 break;
                         default:
                         NoIter:
@@ -1566,6 +1631,8 @@ BadContainer:
                         if (ncaps > 0) {
                                 LOG("Allocating ENV for %d caps", ncaps);
                                 v.env = gc_alloc_object(ncaps * sizeof (struct value *), GC_ENV);
+                                GC_ENABLED = false;
+
                                 for (int i = 0; i < ncaps; ++i) {
                                         READVALUE(b);
                                         struct value *p = poptarget();
@@ -1578,6 +1645,8 @@ BadContainer:
                                                 v.env[i] = p;
                                         }
                                 }
+
+                                GC_ENABLED = true;
                         } else {
                                 LOG("Setting ENV to NULL");
                                 v.env = NULL;
@@ -1612,6 +1681,9 @@ BadContainer:
                                 v = v.builtin_function(n);
                                 stack.count -= n;
                                 push(v);
+                                break;
+                        case VALUE_GENERATOR:
+                                call_co(&v);
                                 break;
                         case VALUE_TAG:
                                 if (n == 1) {
@@ -1689,7 +1761,7 @@ BadContainer:
                         ip += strlen(ip) + 1;
 
                         READVALUE(h);
-CallMethod:
+                CallMethod:
                         LOG("METHOD = %s, n = %d", method, n);
                         print_stack(5);
 
@@ -1763,6 +1835,9 @@ CallMethod:
                         case VALUE_BUILTIN_METHOD:
                                 vp = class_lookup_method(CLASS_FUNCTION, method, h);
                                 break;
+                        case VALUE_GENERATOR:
+                                vp = class_lookup_method(CLASS_GENERATOR, method, h);
+                                break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_immediate(CLASS_CLASS, method, h);
                                 if (vp == NULL) {
@@ -1815,6 +1890,7 @@ CallMethod:
                         break;
                 CASE(MULTI_RETURN)
                 CASE(RETURN)
+                Return:
                         n = vec_last(frames)->fp;
                         if (ip[-1] == INSTR_MULTI_RETURN) {
                                 READVALUE(rc);

@@ -447,11 +447,13 @@ string_split(struct value *string, int argc)
                 int out[3];
 
                 while (start < len) {
-                        if (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) != 1)
-                                out[0] = out[1] = len;
+                        if (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) != 1) {
+                                out[0] = len;
+                                out[1] = len + 1;
+                        }
 
-                        if (out[0] == out[1]) {
-                                ++out[1];
+                        if (out[0] == out[1] && out[0] == start) {
+                                out[0] = ++out[1];
                         }
 
                         int n = out[0] - start;

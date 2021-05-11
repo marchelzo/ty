@@ -522,6 +522,9 @@ prefix_special_string(void)
         e->strings.items = tok()->strings.items;
         e->strings.count = tok()->strings.count;
 
+        e->fmts.items = tok()->fmts.items;
+        e->fmts.count = tok()->fmts.count;
+
         LexState *exprs = tok()->expressions.items;
         int count = tok()->expressions.count;
 
@@ -633,14 +636,19 @@ prefix_identifier(void)
 static struct expression *
 prefix_function(void)
 {
-        consume_keyword(KEYWORD_FUNCTION);
-
         struct expression *e = mkexpr();
-        e->type = EXPRESSION_FUNCTION;
         e->rest = false;
         vec_init(e->params);
         vec_init(e->dflts);
         vec_init(e->constraints);
+
+        if (tok()->keyword == KEYWORD_GENERATOR) {
+                e->type = EXPRESSION_GENERATOR;
+        } else {
+                e->type = EXPRESSION_FUNCTION;
+        }
+
+        next();
 
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
@@ -1153,9 +1161,60 @@ prefix_range(void)
 }
 
 static struct expression *
+implicit_subscript(struct expression *o)
+{
+        consume('[');
+
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_SUBSCRIPT;
+        e->sc = NULL;
+        e->container = o;
+
+        setctx(LEX_PREFIX);
+        e->subscript = parse_expr(0);
+
+        consume(']');
+
+        struct expression *f = mkexpr();
+        f->type = EXPRESSION_FUNCTION;
+        f->rest = false;
+        f->name = NULL;
+        f->body = mkret(e);
+
+        vec_init(f->params);
+        vec_push(f->params, o->identifier);
+
+        vec_init(f->dflts);
+        vec_push(f->dflts, NULL);
+
+        vec_init(f->constraints);
+        vec_push(f->constraints, NULL);
+
+        return f;
+}
+
+static struct expression *
 prefix_implicit_method(void)
 {
         consume('&');
+
+        struct expression *o = mkexpr();
+        o->type = EXPRESSION_IDENTIFIER;
+        o->identifier = gensym();
+        o->module = NULL;
+
+        if (tok()->type == TOKEN_INTEGER) {
+                intmax_t k = tok()->integer;
+                next();
+                unconsume(']');
+                unconsume(TOKEN_INTEGER);
+                tok()->integer = k;
+                unconsume('[');
+        }
+
+        if (tok()->type == '[') {
+                return implicit_subscript(o);
+        }
 
         bool maybe = false;
         if (tok()->type == TOKEN_QUESTION) {
@@ -1164,11 +1223,6 @@ prefix_implicit_method(void)
         }
 
         expect(TOKEN_IDENTIFIER);
-
-        struct expression *o = mkexpr();
-        o->type = EXPRESSION_IDENTIFIER;
-        o->identifier = gensym();
-        o->module = NULL;
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_METHOD_CALL;
@@ -1765,16 +1819,17 @@ get_prefix_parser(void)
 Keyword:
 
         switch (tok()->keyword) {
-        case KEYWORD_MATCH:    return prefix_match;
-        case KEYWORD_FUNCTION: return prefix_function;
-        case KEYWORD_TRUE:     return prefix_true;
-        case KEYWORD_FALSE:    return prefix_false;
-        case KEYWORD_SELF:     return prefix_self;
-        case KEYWORD_NIL:      return prefix_nil;
-        case KEYWORD_IF:       return prefix_if;
-        case KEYWORD_FOR:      return prefix_for;
-        case KEYWORD_WHILE:    return prefix_while;
-        default:               return NULL;
+        case KEYWORD_MATCH:     return prefix_match;
+        case KEYWORD_FUNCTION:  return prefix_function;
+        case KEYWORD_GENERATOR: return prefix_function;
+        case KEYWORD_TRUE:      return prefix_true;
+        case KEYWORD_FALSE:     return prefix_false;
+        case KEYWORD_SELF:      return prefix_self;
+        case KEYWORD_NIL:       return prefix_nil;
+        case KEYWORD_IF:        return prefix_if;
+        case KEYWORD_FOR:       return prefix_for;
+        case KEYWORD_WHILE:     return prefix_while;
+        default:                return NULL;
         }
 }
 
@@ -2152,13 +2207,13 @@ parse_while_loop(void)
                 return m;
         }
 
+        struct statement *s = mkstmt();
+
         /*
          * Maybe it's a while-let loop.
          */
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET) {
                 next();
-
-                struct statement *s = mkstmt();
 
                 s->type = STATEMENT_WHILE_LET;
                 s->while_let.pattern = parse_definition_lvalue(LV_LET);
@@ -2183,14 +2238,9 @@ parse_while_loop(void)
          * Nope; just a plain old while loop.
          */
 
-        struct statement *s = mkstmt();
         s->type = STATEMENT_WHILE_LOOP;
-
-        consume('(');
         s->while_loop.cond = parse_expr(0);
-        consume(')');
-
-        s->while_loop.body = parse_statement();
+        s->while_loop.body = parse_block();
 
         return s;
 }
@@ -2235,25 +2285,15 @@ parse_if_statement(void)
         }
 
         s->type = STATEMENT_CONDITIONAL;
+        s->conditional.cond = parse_expr(0);
+        s->conditional.then_branch = parse_block();
 
-        if (tok()->type == '(') {
-                consume('(');
-                s->conditional.cond = parse_expr(0);
-                consume(')');
-                s->conditional.then_branch = parse_statement();
+        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
+                next();
+                s->conditional.else_branch = parse_statement();
         } else {
-                s->conditional.cond = parse_expr(0);
-                s->conditional.then_branch = parse_block();
-        }
-
-        if (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_ELSE) {
                 s->conditional.else_branch = NULL;
-                return s;
         }
-
-        consume_keyword(KEYWORD_ELSE);
-
-        s->conditional.else_branch = parse_statement();
 
         return s;
 }
@@ -2352,6 +2392,29 @@ parse_operator_directive(void)
 }
 
 static struct statement *
+parse_yield_statement(void)
+{
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_YIELD;
+        vec_init(s->returns);
+
+        consume_keyword(KEYWORD_YIELD);
+
+        while (tok()->type != ';') {
+        Expr:
+                vec_push(s->returns, parse_expr(0));
+                if (tok()->type == ',') {
+                        next();
+                        goto Expr;
+                }
+        }
+
+        consume(';');
+
+        return s;
+}
+
+static struct statement *
 parse_return_statement(void)
 {
         struct statement *s = mkstmt();
@@ -2395,6 +2458,25 @@ parse_let_definition(void)
 
         s->target = target;
         s->value = value;
+
+        return s;
+}
+
+static struct statement *
+parse_next_statement(void)
+{
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_NEXT;
+
+        consume_keyword(KEYWORD_NEXT);
+
+        if (tok()->type != ';') {
+                s->expression = parse_expr(0);
+        } else {
+                s->expression = NULL;
+        }
+
+        consume(';');
 
         return s;
 }
@@ -2725,6 +2807,8 @@ Keyword:
         case KEYWORD_OPERATOR: return parse_operator_directive();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
+        case KEYWORD_YIELD:    return parse_yield_statement();
+        case KEYWORD_NEXT:     return parse_next_statement();
         case KEYWORD_LET:      return parse_let_definition();
         case KEYWORD_BREAK:    return parse_break_statement();
         case KEYWORD_CONTINUE: return parse_continue_statement();

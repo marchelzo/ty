@@ -106,6 +106,10 @@ enum instruction {
         INSTR_SAVE_STACK_POS,
         INSTR_RESTORE_STACK_POS,
 
+        INSTR_NEXT,
+        INSTR_YIELD,
+        INSTR_MAKE_GENERATOR,
+
         INSTR_THROW,
         INSTR_TRY,
         INSTR_POP_TRY,

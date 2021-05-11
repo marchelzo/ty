@@ -47,6 +47,9 @@ scope_new(struct scope *parent, bool function);
 struct symbol *
 scope_add(struct scope *s, char const *id);
 
+void
+scope_capture(struct scope *s, struct symbol *sym);
+
 bool
 scope_locally_defined(struct scope const *s, char const *id);
 

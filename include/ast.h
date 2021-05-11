@@ -36,6 +36,9 @@ struct statement {
                 STATEMENT_MATCH,
                 STATEMENT_CONDITIONAL,
                 STATEMENT_RETURN,
+                STATEMENT_RETURN_GENERATOR,
+                STATEMENT_YIELD,
+                STATEMENT_NEXT,
                 STATEMENT_CONTINUE,
                 STATEMENT_THROW,
                 STATEMENT_TRY,
@@ -126,6 +129,7 @@ struct statement {
 struct expression {
         enum {
                 EXPRESSION_FUNCTION,
+                EXPRESSION_GENERATOR,
                 EXPRESSION_INTEGER,
                 EXPRESSION_BOOLEAN,
                 EXPRESSION_STRING,
@@ -230,6 +234,7 @@ struct expression {
                 struct regex const *regex;
                 struct {
                         vec(char *) strings;
+                        vec(char *) fmts;
                         vec(struct expression *) expressions;
                 };
                 struct {

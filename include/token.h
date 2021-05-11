@@ -103,10 +103,14 @@ struct token {
                         KEYWORD_FINALLY,
                         KEYWORD_THROW,
                         KEYWORD_OPERATOR,
+                        KEYWORD_YIELD,
+                        KEYWORD_NEXT,
+                        KEYWORD_GENERATOR,
                 } keyword;
                 struct regex const *regex;
                 struct {
                         vec(char *) strings;
+                        vec(char *) fmts;
                         vec(LexState) expressions;
                         vec(struct location) starts;
                         vec(struct location) ends;

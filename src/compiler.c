@@ -115,6 +115,8 @@ struct state {
         bool each_loop;
         bool loop_want_result;
 
+        enum { FT_NONE, FT_FUNC, FT_GEN } ftype;
+
         int finally;
         int try;
         int loop;
@@ -486,6 +488,8 @@ freshstate(void)
         s.each_loop = false;
         s.loop_want_result = false;
 
+        s.ftype = FT_NONE;
+
         s.try = 0;
         s.loop = 0;
 
@@ -742,6 +746,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
         struct scope *subscope;
 
+        int ftype = state.ftype;
+
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 LOG("symbolizing var: %s%s%s", (e->module == NULL ? "" : e->module), (e->module == NULL ? "" : "::"), e->identifier);
@@ -861,7 +867,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->value);
                 symbolize_lvalue(scope, e->target, false);
                 break;
+        case EXPRESSION_GENERATOR:
         case EXPRESSION_FUNCTION:
+                state.ftype = FT_NONE;
 
                 if (e->name != NULL) {
                         scope = scope_new(scope, false);
@@ -872,7 +880,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         e->function_symbol = NULL;
                 }
 
-                e->scope = scope = scope_new(scope, true);
+                scope = scope_new(scope, true);
 
                 vec_init(e->param_symbols);
                 for (size_t i = 0; i < e->params.count; ++i) {
@@ -897,9 +905,13 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
                 symbolize_statement(scope, e->body);
 
+                e->scope = scope;
                 e->bound_symbols.items = scope->owned.items;
                 e->bound_symbols.count = scope->owned.count;
-                e->scope = scope;
+
+                if (state.ftype == FT_GEN) {
+                        e->type = EXPRESSION_GENERATOR;
+                }
 
                 break;
         case EXPRESSION_ARRAY:
@@ -944,6 +956,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_MATCH_REST:
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
         }
+
+        state.ftype = ftype;
 }
 
 static void
@@ -951,9 +965,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
 {
         if (s == NULL)
                 return;
-
-        if (is_loop(s)) {
-        }
 
         state.start = s->start;
         state.end = s->end;
@@ -970,6 +981,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 break;
         case STATEMENT_EXPRESSION:
         case STATEMENT_BREAK:
+        case STATEMENT_NEXT:
                 symbolize_expression(scope, s->expression);
                 break;
         case STATEMENT_CLASS_DEFINITION:
@@ -1073,10 +1085,23 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_statement(scope, s->conditional.then_branch);
                 symbolize_statement(scope, s->conditional.else_branch);
                 break;
-        case STATEMENT_RETURN:
+        case STATEMENT_YIELD:
+                if (state.ftype == FT_FUNC) {
+                        fail("yield statement cannot appear outside of generator context");
+                }
                 for (int i = 0; i < s->returns.count; ++i) {
                     symbolize_expression(scope, s->returns.items[i]);
                 }
+                state.ftype = FT_GEN;
+                break;
+        case STATEMENT_RETURN:
+                if (state.ftype == FT_GEN) {
+                        fail("return statement cannot appear in generator context");
+                }
+                for (int i = 0; i < s->returns.count; ++i) {
+                    symbolize_expression(scope, s->returns.items[i]);
+                }
+                state.ftype = FT_FUNC;
                 break;
         case STATEMENT_DEFINITION:
                 if (s->value->type == EXPRESSION_LIST) {
@@ -1091,9 +1116,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_FUNCTION_DEFINITION:
                 symbolize_expression(scope, s->value);
                 break;
-        }
-
-        if (is_loop(s)) {
         }
 }
 
@@ -1300,7 +1322,7 @@ emit_constraint(struct expression const *c)
 static void
 emit_function(struct expression const *e, int class)
 {
-        assert(e->type == EXPRESSION_FUNCTION);
+        //assert(e->type == EXPRESSION_FUNCTION);
         
         /*
          * Save the current reference and bound-symbols vectors so we can
@@ -1410,19 +1432,30 @@ emit_function(struct expression const *e, int class)
                 PATCH_JUMP(good);
         }
 
-        bool returns = emit_statement(e->body, false);
-
-        /*
-         * Add an implicit 'return nil;' if the function doesn't explicitly return in its body.
-         */
-        if (!returns) {
-            struct statement empty = { .type = STATEMENT_RETURN, .start = e->end, .end = e->end };
-            vec_init(empty.returns);
-            emit_statement(&empty, false);
+        if (e->type == EXPRESSION_GENERATOR) {
+                emit_instr(INSTR_MAKE_GENERATOR);
+                emit_statement(e->body, false);
+                size_t end = state.code.count;
+                emit_instr(INSTR_NIL);
+                emit_instr(INSTR_YIELD);
+                JUMP(end);
+        } else if (!emit_statement(e->body, false)) {
+                /*
+                 * Add an implicit 'return nil;' if the function
+                 * doesn't explicitly return in its body.
+                 */
+                struct statement empty = {
+                        .type = STATEMENT_RETURN,
+                        .start = e->end,
+                        .end = e->end
+                };
+                vec_init(empty.returns);
+                emit_statement(&empty, false);
         }
 
-        while ((state.code.count - start_offset) % P_ALIGN != 0)
+        while ((state.code.count - start_offset) % P_ALIGN != 0) {
                 vec_push(state.code, 0x00);
+        }
 
         int bytes = state.code.count - start_offset;
         memcpy(state.code.items + size_offset, &bytes, sizeof bytes);
@@ -1546,6 +1579,10 @@ emit_special_string(struct expression const *e)
         for (int i = 0; i < e->expressions.count; ++i) {
                 emit_expression(e->expressions.items[i]);
                 emit_instr(INSTR_TO_STRING);
+                if (e->fmts.items[i] != NULL) {
+                        vec_push_n(state.code, e->fmts.items[i], strcspn(e->fmts.items[i], "{"));
+                }
+                vec_push(state.code, '\0');
                 emit_instr(INSTR_STRING);
                 emit_string(e->strings.items[i + 1]);
         }
@@ -2205,8 +2242,8 @@ emit_dict_compr2(struct expression const *e)
         vec_init(state.match_successes);
         vec_init(state.match_fails);
 
+        emit_instr(INSTR_SAVE_STACK_POS);
         emit_instr(INSTR_DICT);
-        emit_int(0);
 
         emit_instr(INSTR_PUSH_INDEX);
         if (e->dcompr.pattern->type == EXPRESSION_LIST) {
@@ -3019,6 +3056,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_string(method);
                 emit_ulong(strhash(method));
                 break;
+        case EXPRESSION_GENERATOR:;
         case EXPRESSION_FUNCTION:
                 emit_function(e, -1);
                 break;
@@ -3270,17 +3308,19 @@ emit_statement(struct statement const *s, bool want_result)
                 }
                 returns |= emit_throw(s);
                 break;
+        case STATEMENT_YIELD:
+        case STATEMENT_RETURN_GENERATOR:
         case STATEMENT_RETURN:
                 if (state.function_depth == 0) {
-                        fail("invalid 'return' statement (not inside of a function)");
+                        fail("invalid return statement (not inside of a function)");
                 }
 
                 if (state.finally) {
-                        fail("invalid 'return' statment (occurs in a finally block)");
+                        fail("invalid return statment (occurs in a finally block)");
                 }
 
                 /* returning from within a for-each loop must be handled specially */
-                if (state.each_loop) {
+                if (state.each_loop && s->type != STATEMENT_YIELD) {
                         emit_instr(INSTR_POP);
                         emit_instr(INSTR_POP);
                 }
@@ -3299,13 +3339,18 @@ emit_statement(struct statement const *s, bool want_result)
                         emit_instr(INSTR_FINALLY);
                 }
 
-                if (s->returns.count > 1) {
+                returns = true;
+
+                if (s->type == STATEMENT_YIELD) {
+                        emit_instr(INSTR_YIELD);
+                        returns = false;
+                } else if (s->returns.count > 1) {
                         emit_instr(INSTR_MULTI_RETURN);
                         emit_int((int)s->returns.count - 1);
                 } else {
                         emit_instr(INSTR_RETURN);
                 }
-                returns = true;
+
                 break;
         case STATEMENT_BREAK:
                 if (state.try > state.loop) {
@@ -3335,6 +3380,10 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_instr(INSTR_JUMP); 
                 vec_push(state.continues, state.code.count);
                 emit_int(0);
+                break;
+        case STATEMENT_NEXT:
+                emit_expression(s->expression);
+                emit_instr(INSTR_NEXT);
                 break;
         }
 

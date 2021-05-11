@@ -337,6 +337,9 @@ value_show(struct value const *v)
         case VALUE_PTR:
                 snprintf(buffer, 1024, "<pointer at %p>", v->ptr);
                 break;
+        case VALUE_GENERATOR:
+                snprintf(buffer, 1024, "<generator at %p>", v->gen);
+                break;
         case VALUE_SENTINEL:
                 return sclone("<sentinel>");
         case VALUE_NONE:
@@ -598,8 +601,23 @@ value_array_mark(struct array *a)
 
         MARK(a);
 
-        for (int i = 0; i < a->count; ++i)
+        for (int i = 0; i < a->count; ++i) {
                 value_mark(&a->items[i]);
+        }
+}
+
+inline static void
+mark_generator(struct value const *v)
+{
+        if (MARKED(v->gen)) return;
+
+        MARK(v->gen);
+
+        value_mark(&v->gen->f);
+
+        for (int i = 0; i < v->gen->frame.count; ++i) {
+                value_mark(&v->gen->frame.items[i]);
+        }
 }
 
 inline static void
@@ -641,6 +659,7 @@ _value_mark(struct value const *v)
         case VALUE_ARRAY:           value_array_mark(v->array);                        break;
         case VALUE_DICT:            dict_mark(v->dict);                                break;
         case VALUE_FUNCTION:        mark_function(v);                                  break;
+        case VALUE_GENERATOR:       mark_generator(v);                                 break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);              break;
         case VALUE_OBJECT:          object_mark(v->object);                            break;
         case VALUE_REF:             value_mark(v->ptr);                                break;

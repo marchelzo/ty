@@ -399,6 +399,7 @@ lexspecialstr(void)
 {
         struct token special = mktoken(TOKEN_SPECIAL_STRING);
         vec_init(special.strings);
+        vec_init(special.fmts);
         vec_init(special.expressions);
         vec_init(special.starts);
         vec_init(special.ends);
@@ -408,12 +409,28 @@ lexspecialstr(void)
 
         nextchar();
 
+        char *fmt = NULL;
+
 Start:
 
         while (C(0) != '"') {
                 switch (C(0)) {
                 case '\0': goto Unterminated;
                 case '{':  goto Expr;
+                case '%':
+                        nextchar();
+                        if (C(0) != '%') {
+                                fmt = SRC;
+                                while (C(0) != '\0' && C(0) != '{') {
+                                        nextchar();
+                                }
+                                if (C(0) != '{') {
+                                        error("unterminated format specifier");
+                                }
+                        } else {
+                                vec_push(str, nextchar());
+                        }
+                        break;
                 case '\\':
                         nextchar();
                         switch (C(0)) {
@@ -449,6 +466,9 @@ Expr:
         vec_push(str, '\0');
         vec_push(special.strings, str.items);
         vec_init(str);
+
+        vec_push(special.fmts, fmt);
+        fmt = NULL;
 
         /* Eat the initial { */
         nextchar();
@@ -616,8 +636,11 @@ lexlinecomment(void)
 
         bool need_nl = state.need_nl;
         
-        while (nextchar() != '\n')
-                ;
+        while (C(0) != '\n' && C(0) != '\0') {
+                nextchar();
+        }
+
+        nextchar();
 
         state.need_nl = false;
         Start = state.loc;

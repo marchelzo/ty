@@ -22,10 +22,11 @@ collect(struct alloc *a)
         void *p = a->data;
 
         switch (a->type) {
-        case GC_ARRAY:   gc_free(((struct array *)p)->items); break;
-        case GC_BLOB:    gc_free(((struct blob *)p)->items);  break;
-        case GC_DICT:    dict_free(p);                        break;
-        case GC_OBJECT:  table_release(p);                    break;
+        case GC_ARRAY:     gc_free(((struct array *)p)->items);    break;
+        case GC_BLOB:      gc_free(((struct blob *)p)->items);     break;
+        case GC_DICT:      dict_free(p);                           break;
+        case GC_OBJECT:    table_release(p);                       break;
+        case GC_GENERATOR: gc_free(((Generator *)p)->frame.items); break;
         }
 }
 
@@ -36,7 +37,7 @@ gc(void)
                 return;
         }
 
-        printf("Running GC\n");
+        LOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
 
         GC_ENABLED = false;
 

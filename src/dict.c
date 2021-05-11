@@ -18,6 +18,7 @@ struct dict *
 dict_new(void)
 {
         struct dict *d = gc_alloc_object(sizeof *d, GC_DICT);
+        NOGC(d);
 
         d->size = INITIAL_SIZE;
         d->hashes = gc_alloc(sizeof (unsigned long [INITIAL_SIZE]));
@@ -26,6 +27,8 @@ dict_new(void)
         d->count = 0;
         d->dflt = NONE;
         memset(d->keys, 0, sizeof (struct value [INITIAL_SIZE]));
+
+        OKGC(d);
 
         return d;
 }
@@ -68,19 +71,18 @@ delete(struct dict *d, size_t i)
 inline static void
 grow(struct dict *d)
 {
-        size_t oldsz = d->size;
-        d->size *= 2;
+        size_t new_size = d->size << 1;
 
-        unsigned long *hashes = gc_alloc(sizeof (unsigned long [d->size]));
-        struct value *keys = gc_alloc(sizeof (struct value [d->size]));
-        struct value *values = gc_alloc(sizeof (struct value [d->size]));
+        unsigned long *hashes = gc_alloc(sizeof (unsigned long [new_size]));
+        struct value *keys = gc_alloc(sizeof (struct value [new_size]));
+        struct value *values = gc_alloc(sizeof (struct value [new_size]));
 
-        memset(keys, 0, sizeof (struct value [d->size]));
+        memset(keys, 0, sizeof (struct value [new_size]));
         
-        for (size_t i = 0; i < oldsz; ++i) {
+        for (size_t i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0)
                         continue;
-                size_t j = find_spot(d->size, hashes, keys, d->hashes[i], &d->keys[i]);
+                size_t j = find_spot(new_size, hashes, keys, d->hashes[i], &d->keys[i]);
                 hashes[j] = d->hashes[i];
                 keys[j] = d->keys[i];
                 values[j] = d->values[i];
@@ -93,6 +95,8 @@ grow(struct dict *d)
         d->hashes = hashes;
         d->keys = keys;
         d->values = values;
+
+        d->size = new_size;
 }
 
 inline static struct value *
@@ -122,7 +126,10 @@ dict_get_value(struct dict *d, struct value *key)
 
         if (d->dflt.type != VALUE_NONE) {
                 struct value dflt = value_apply_callable(&d->dflt, key);
-                return put(d, i, h, *key, dflt);
+                GC_ENABLED = false;
+                struct value *v = put(d, i, h, *key, dflt);
+                GC_ENABLED = true;
+                return v;
         }
 
         return NULL;
@@ -137,7 +144,7 @@ dict_has_value(struct dict *d, struct value *key)
         if (d->keys[i].type != 0)
                 return true;
 
-        return false;;
+        return false;
 }
 
 void

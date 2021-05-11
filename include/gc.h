@@ -19,7 +19,7 @@
 #define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
 #define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
 
-#define GC_INITIAL_LIMIT (1ULL << 32)
+#define GC_INITIAL_LIMIT (1ULL << 18)
 
 typedef vec(struct alloc *) AllocList;
 
@@ -49,6 +49,7 @@ enum {
         GC_BLOB,
         GC_VALUE,
         GC_ENV,
+        GC_GENERATOR,
         GC_ANY
 };
 
@@ -64,11 +65,12 @@ gc(void);
 inline static void
 CheckUsed(void)
 {
-        if (MemoryUsed > MemoryLimit) {
+        if (GC_ENABLED && MemoryUsed > MemoryLimit) {
                 gc();
-                if (MemoryUsed > MemoryLimit) {
+                LOG("gc() returned: %zu MB still in use", MemoryUsed / 1000000);
+                while ((MemoryUsed << 1) > MemoryLimit) {
                         MemoryLimit <<= 1;
-                        printf("Increasing memory limit to %zu kB\n", MemoryLimit / 1000);
+                        LOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
                 }
         }
 
