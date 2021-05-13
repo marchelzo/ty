@@ -733,7 +733,7 @@ string_is_match(struct value *string, int argc)
         );
 
         if (rc < -1)
-                vm_panic("error while executing regular expression");
+                vm_panic("error while executing regular expression: %d", rc);
 
         return BOOLEAN(rc != -1);
 }
@@ -765,7 +765,7 @@ string_match(struct value *string, int argc)
         );
 
         if (rc < -1)
-                vm_panic("error while executing regular expression");
+                vm_panic("error while executing regular expression: %d", rc);
 
         if (rc == -1)
                 return NIL;
@@ -842,7 +842,7 @@ string_matches(struct value *string, int argc)
         }
 
         if (rc < -1)
-                vm_panic("error while executing regular expression");
+                vm_panic("error while executing regular expression: %d", rc);
 
         gc_pop();
 
