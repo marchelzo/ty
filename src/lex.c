@@ -27,12 +27,6 @@ static jmp_buf jb;
 static LexState state;
 static vec(LexState) states;
 
-static pcre_jit_stack *jit_stack;
-enum {
-        JIT_STACK_START = 1 << 10,
-        JIT_STACK_MAX   = 1 << 22
-};
-
 #define SRC state.loc.s
 #define END state.end
 
@@ -172,7 +166,7 @@ mkregex(char const *pat, int flags)
                 );
         }
 
-        pcre_assign_jit_stack(extra, NULL, jit_stack);
+        pcre_assign_jit_stack(extra, NULL, JITStack);
 
         struct regex *r = gc_alloc(sizeof *r);
         r->pattern = pat;
@@ -788,13 +782,6 @@ lex_init(char const *file, char const *src)
         Start = state.loc;
 
         vec_init(states);
-
-        if (jit_stack == NULL) {
-                jit_stack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
-                if (jit_stack == NULL) {
-                        panic("out of memory");
-                }
-        }
 
         /*
          * Eat the shebang if there is one.

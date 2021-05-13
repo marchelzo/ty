@@ -80,7 +80,7 @@ struct target {
         void *gc;
 };
 
-vec(struct value) Globals;
+static vec(struct value) Globals;
 
 struct sigfn {
         int sig;
@@ -129,6 +129,8 @@ static struct {
 };
 
 static int builtin_count = sizeof builtins / sizeof builtins[0];
+
+pcre_jit_stack *JITStack = NULL;
 
 static void
 vm_exec(char *code);
@@ -1930,6 +1932,10 @@ vm_init(int ac, char **av)
         vec_init(targets);
 
         pcre_malloc = malloc;
+        JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
+        if (JITStack == NULL) {
+                panic("out of memory");
+        }
 
         srand48(time(NULL));
         srandom(lrand48());

@@ -568,6 +568,8 @@ builtin_regex(int argc)
         if (extra == NULL)
                 return NIL;
 
+        pcre_assign_jit_stack(extra, NULL, JITStack);
+
         struct regex *r = gc_alloc(sizeof *r);
         r->pcre = re;
         r->extra = extra;

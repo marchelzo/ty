@@ -20,7 +20,6 @@
 static bool use_readline = true;
 static char buffer[8192];
 
-
 static char *
 readln(void)
 {

@@ -8,6 +8,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <pcre.h>
 
 #define TERM(n) (isatty(2) ? ("\x1b[" #n "m") : "")
 #define ERR_SIZE 4096
@@ -15,6 +16,12 @@
 #define P_ALIGN (_Alignof (uintptr_t))
 
 extern char ERR[ERR_SIZE];
+
+extern pcre_jit_stack *JITStack;
+enum {
+        JIT_STACK_START = 1 << 10,
+        JIT_STACK_MAX   = 1 << 22
+};
 
 uintmax_t
 umax(uintmax_t a, uintmax_t b);
