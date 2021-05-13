@@ -657,7 +657,7 @@ lexcomment(void)
 
         int level = 1;
 
-        while (C(0) && level != 0) {
+        while (C(0) != '\0' && level != 0) {
                 if (C(0) == '/' && C(1) == '*')
                         ++level;
                 if (C(0) == '*' && C(1) == '/')
@@ -668,7 +668,7 @@ lexcomment(void)
         if (level != 0)
                 error("unterminated comment");
 
-        /* skip the final / */
+        // skip the final /
         nextchar();
 
         Start = state.loc;
@@ -765,14 +765,19 @@ void
 lex_init(char const *file, char const *src)
 {
         filename = file;
-        state.need_nl = false;
 
         state = (LexState) {
                 .loc = (struct location) {
-                        .s = src
+                        .s = src,
+                        .line = 0,
+                        .col = 0
                 },
-                .end = src + strlen(src)
+                .end = src + strlen(src),
+                .need_nl = false,
+                .ctx = LEX_PREFIX
         };
+
+        Start = state.loc;
 
         vec_init(states);
 

@@ -719,6 +719,10 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->left);
                 symbolize_pattern(scope, e->right);
                 break;
+        case EXPRESSION_SPREAD:
+                assert(e->value->type == EXPRESSION_IDENTIFIER);
+                e->type = EXPRESSION_MATCH_REST;
+                e->identifier = e->value->identifier;
         case EXPRESSION_MATCH_REST:
                 e->symbol = addsymbol(scope, e->identifier);
                 break;

@@ -2859,6 +2859,10 @@ parse(char const *source, char const *file)
                 return NULL;
         }
 
+        while (tok()->type == TOKEN_NEWLINE) {
+                next();
+        }
+
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT) {
                 vec_push(program, parse_import());
         }
