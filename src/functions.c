@@ -2411,10 +2411,17 @@ builtin_stdio_fgets(int argc)
                 vec_push(line, c);
         }
 
-        if (line.count == 0)
+        if (line.count == 0 && c == EOF)
                 return NIL;
 
-        struct value s = STRING_CLONE(line.items, line.count);
+        struct value s;
+
+        if (line.count == 0) {
+                s = (c == EOF) ? NIL : STRING_EMPTY;
+        } else {
+                s = STRING_CLONE(line.items, line.count);
+        }
+
 
         vec_empty(line);
 

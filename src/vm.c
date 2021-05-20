@@ -330,8 +330,10 @@ call(struct value const *f, struct value const *self, int n, bool exec)
 }
 
 inline static void
-call_co(struct value *v)
+call_co(struct value *v, int n)
 {
+        vec_push_n(v->gen->frame, top() - n, n);
+
         push(*v);
 
         call(&v->gen->f, NULL, 0, false);
@@ -948,7 +950,7 @@ Throw:
                                 break;
                         case VALUE_GENERATOR:
                                 vec_push(calls, ip);
-                                call_co(&v);
+                                call_co(&v, 0);
                                 *vec_last(calls) = next_fix;
                                 break;
                         default:
@@ -1685,7 +1687,7 @@ BadContainer:
                                 push(v);
                                 break;
                         case VALUE_GENERATOR:
-                                call_co(&v);
+                                call_co(&v, n);
                                 break;
                         case VALUE_TAG:
                                 if (n == 1) {
