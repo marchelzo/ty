@@ -37,7 +37,6 @@ struct statement {
                 STATEMENT_CONDITIONAL,
                 STATEMENT_RETURN,
                 STATEMENT_RETURN_GENERATOR,
-                STATEMENT_YIELD,
                 STATEMENT_NEXT,
                 STATEMENT_CONTINUE,
                 STATEMENT_THROW,
@@ -153,6 +152,7 @@ struct expression {
 
                 EXPRESSION_KEEP_LOC,
 
+                EXPRESSION_YIELD,
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_SPREAD,
                 EXPRESSION_MUST_EQUAL,

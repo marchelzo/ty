@@ -315,4 +315,10 @@ STRING_NOGC(char const *s, int n)
 
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))
 
+inline static char *
+code_of(struct value const *v)
+{
+        return ((char *)v->info) + v->info[0];
+}
+
 #endif

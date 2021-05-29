@@ -260,12 +260,11 @@ pushtarget(struct value *v, void *gc)
 inline static void
 call(struct value const *f, struct value const *self, int n, bool exec)
 {
-        int hs = f->info[0];
         int bound = f->info[3];
         int np = f->info[4];
         bool rest = f->info[5];
         int class = f->info[6];
-        char *code = (char *)f->info + hs;
+        char *code = code_of(f);
         int argc = n;
 
         /*
@@ -332,7 +331,14 @@ call(struct value const *f, struct value const *self, int n, bool exec)
 inline static void
 call_co(struct value *v, int n)
 {
-        vec_push_n(v->gen->frame, top() - n, n);
+        if (v->gen->ip != code_of(&v->gen->f)) {
+                if (n == 0) {
+                        vec_push(v->gen->frame, NIL);
+                } else {
+                        vec_push_n(v->gen->frame, top() - (n - 1), n);
+                        stack.count -= n;
+                }
+        }
 
         push(*v);
 

@@ -917,6 +917,17 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         e->type = EXPRESSION_GENERATOR;
                 }
 
+                state.ftype = ftype;
+
+                break;
+        case EXPRESSION_YIELD:
+                if (state.ftype == FT_FUNC) {
+                        fail("yield expression cannot appear outside of generator context");
+                }
+                for (int i = 0; i < e->es.count; ++i) {
+                    symbolize_expression(scope, e->es.items[i]);
+                }
+                state.ftype = FT_GEN;
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i) {
@@ -960,8 +971,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_MATCH_REST:
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
         }
-
-        state.ftype = ftype;
 }
 
 static void
@@ -1089,15 +1098,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_statement(scope, s->conditional.then_branch);
                 symbolize_statement(scope, s->conditional.else_branch);
                 break;
-        case STATEMENT_YIELD:
-                if (state.ftype == FT_FUNC) {
-                        fail("yield statement cannot appear outside of generator context");
-                }
-                for (int i = 0; i < s->returns.count; ++i) {
-                    symbolize_expression(scope, s->returns.items[i]);
-                }
-                state.ftype = FT_GEN;
-                break;
         case STATEMENT_RETURN:
                 if (state.ftype == FT_GEN) {
                         fail("return statement cannot appear in generator context");
@@ -1181,7 +1181,7 @@ emit_symbol(uintptr_t sym)
 inline static void
 emit_integer(intmax_t k)
 {
-        
+
         LOG("emitting integer: %"PRIiMAX, k);
         vec_push_n(state.code, (char const *)&k, sizeof k);
 }
@@ -1189,7 +1189,7 @@ emit_integer(intmax_t k)
 inline static void
 emit_boolean(bool b)
 {
-        
+
         LOG("emitting boolean: %s", b ? "true" : "false");
         char const *s = (char *) &b;
         for (int i = 0; i < sizeof (bool); ++i)
@@ -1199,7 +1199,7 @@ emit_boolean(bool b)
 inline static void
 emit_float(float f)
 {
-        
+
         LOG("emitting float: %f", f);
         vec_push_n(state.code, (char const *)&f, sizeof f);
 }
@@ -1207,7 +1207,7 @@ emit_float(float f)
 inline static void
 emit_string(char const *s)
 {
-        
+
         LOG("emitting string: %s", s);
         vec_push_n(state.code, s, strlen(s) + 1);
 }
@@ -1327,7 +1327,7 @@ static void
 emit_function(struct expression const *e, int class)
 {
         //assert(e->type == EXPRESSION_FUNCTION);
-        
+
         /*
          * Save the current reference and bound-symbols vectors so we can
          * restore them after compiling the current function.
@@ -1604,6 +1604,67 @@ emit_throw(struct statement const *s)
         emit_instr(INSTR_THROW);
 
         add_location(&((struct expression){ .start = s->start, .end = s->end }), start, state.code.count);
+
+        return true;
+}
+
+static void
+emit_yield(struct expression const *e)
+{
+        if (state.function_depth == 0) {
+                fail("invalid yield expression (not inside of a function)");
+        }
+
+        if (e->es.count > 1) {
+                fail("yielding multiple values isn't implemented yet");
+        }
+
+        if (e->es.count > 0) for (int i = 0; i < e->es.count; ++i) {
+                emit_expression(e->es.items[i]);
+        } else {
+                emit_instr(INSTR_NIL);
+        }
+
+        emit_instr(INSTR_YIELD);
+}
+
+static bool
+emit_return(struct statement const *s)
+{
+        if (state.function_depth == 0) {
+                fail("invalid return statement (not inside of a function)");
+        }
+
+        if (state.finally) {
+                fail("invalid return statement (occurs in a finally block)");
+        }
+
+        /* returning from within a for-each loop must be handled specially */
+        if (state.each_loop && s->type) {
+                emit_instr(INSTR_POP);
+                emit_instr(INSTR_POP);
+        }
+
+        if (false && s->returns.count == 1 && is_call(s->returns.items[0])) {
+                emit_instr(INSTR_TAIL_CALL);
+        }
+
+        if (s->returns.count > 0) for (int i = 0; i < s->returns.count; ++i) {
+                emit_expression(s->returns.items[i]);
+        } else {
+                emit_instr(INSTR_NIL);
+        }
+
+        if (state.try) {
+                emit_instr(INSTR_FINALLY);
+        }
+
+        if (s->returns.count > 1) {
+                emit_instr(INSTR_MULTI_RETURN);
+                emit_int((int)s->returns.count - 1);
+        } else {
+                emit_instr(INSTR_RETURN);
+        }
 
         return true;
 }
@@ -1936,7 +1997,7 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
 {
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
-        
+
         emit_instr(INSTR_SAVE_STACK_POS);
         emit_try_match(pattern);
 
@@ -1974,7 +2035,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
 {
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
-        
+
         emit_instr(INSTR_SAVE_STACK_POS);
         emit_try_match(pattern);
 
@@ -3023,6 +3084,9 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_string(e->method_name);
                 emit_ulong(strhash(e->method_name));
                 break;
+        case EXPRESSION_YIELD:
+                emit_yield(e);
+                break;
         case EXPRESSION_SPREAD:
                 emit_spread(e, false);
                 break;
@@ -3045,7 +3109,7 @@ emit_expr(struct expression const *e, bool need_loc)
                         PATCH_JUMP(sc);
                 }
                 break;
-        case EXPRESSION_BIT_OR: 
+        case EXPRESSION_BIT_OR:
                 if (method == NULL) method = "|";
         case EXPRESSION_BIT_AND:
                 if (method == NULL) method = "&";
@@ -3308,53 +3372,13 @@ emit_statement(struct statement const *s, bool want_result)
                 break;
         case STATEMENT_THROW:
                 if (state.finally) {
-                        fail("invalid 'throw' statment (occurs in a finally block)");
+                        fail("invalid 'throw' statement (occurs in a finally block)");
                 }
                 returns |= emit_throw(s);
                 break;
-        case STATEMENT_YIELD:
         case STATEMENT_RETURN_GENERATOR:
         case STATEMENT_RETURN:
-                if (state.function_depth == 0) {
-                        fail("invalid return statement (not inside of a function)");
-                }
-
-                if (state.finally) {
-                        fail("invalid return statment (occurs in a finally block)");
-                }
-
-                /* returning from within a for-each loop must be handled specially */
-                if (state.each_loop && s->type != STATEMENT_YIELD) {
-                        emit_instr(INSTR_POP);
-                        emit_instr(INSTR_POP);
-                }
-
-                if (false && s->returns.count == 1 && is_call(s->returns.items[0])) {
-                        emit_instr(INSTR_TAIL_CALL);
-                }
-
-                if (s->returns.count > 0) for (int i = 0; i < s->returns.count; ++i) {
-                        emit_expression(s->returns.items[i]);
-                } else { 
-                        emit_instr(INSTR_NIL);
-                }
-
-                if (state.try) {
-                        emit_instr(INSTR_FINALLY);
-                }
-
-                returns = true;
-
-                if (s->type == STATEMENT_YIELD) {
-                        emit_instr(INSTR_YIELD);
-                        returns = false;
-                } else if (s->returns.count > 1) {
-                        emit_instr(INSTR_MULTI_RETURN);
-                        emit_int((int)s->returns.count - 1);
-                } else {
-                        emit_instr(INSTR_RETURN);
-                }
-
+                returns |= emit_return(s);
                 break;
         case STATEMENT_BREAK:
                 if (state.try > state.loop) {
@@ -3378,10 +3402,10 @@ emit_statement(struct statement const *s, bool want_result)
                 vec_push(state.breaks, state.code.count);
                 emit_int(0);
                 break;
-        case STATEMENT_CONTINUE: 
+        case STATEMENT_CONTINUE:
                 if (state.try > state.loop)
                         emit_instr(INSTR_FINALLY);
-                emit_instr(INSTR_JUMP); 
+                emit_instr(INSTR_JUMP);
                 vec_push(state.continues, state.code.count);
                 emit_int(0);
                 break;
@@ -3454,7 +3478,7 @@ compile(char const *source)
         for (size_t i = 0; p[i] != NULL; ++i) {
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
                         symbolize_lvalue(state.global, p[i]->target, true);
-                        /* 
+                        /*
                          * TODO: figure out why this was ever here
                          *
                          * p[i]->value->name = NULL;
@@ -3490,7 +3514,7 @@ compile(char const *source)
 
         emit_new_globals();
 
-        /* 
+        /*
          * Move all function definitions to the beginning so that top-level functions have file scope.
          * This allows us to write programs such as
          *
@@ -3583,7 +3607,7 @@ import_module(struct statement const *s)
         compile(source);
 
         module_scope = state.global;
-        
+
         /*
          * Mark it as external so that only public symbols can be used by other modules.
          */

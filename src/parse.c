@@ -863,6 +863,26 @@ parse_pattern(void)
 }
 
 static struct expression *
+prefix_yield(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_YIELD;
+        vec_init(e->es);
+
+        consume_keyword(KEYWORD_YIELD);
+
+        vec_push(e->es, parse_expr(1));
+        while (tok()->type == ',') {
+                next();
+                vec_push(e->es, parse_expr(1));
+        }
+
+        e->end = End;
+
+        return e;
+}
+
+static struct expression *
 prefix_match(void)
 {
         struct expression *e = mkexpr();
@@ -1829,6 +1849,7 @@ Keyword:
         case KEYWORD_IF:        return prefix_if;
         case KEYWORD_FOR:       return prefix_for;
         case KEYWORD_WHILE:     return prefix_while;
+        case KEYWORD_YIELD:     return prefix_yield;
         default:                return NULL;
         }
 }
@@ -2392,29 +2413,6 @@ parse_operator_directive(void)
 }
 
 static struct statement *
-parse_yield_statement(void)
-{
-        struct statement *s = mkstmt();
-        s->type = STATEMENT_YIELD;
-        vec_init(s->returns);
-
-        consume_keyword(KEYWORD_YIELD);
-
-        while (tok()->type != ';') {
-        Expr:
-                vec_push(s->returns, parse_expr(0));
-                if (tok()->type == ',') {
-                        next();
-                        goto Expr;
-                }
-        }
-
-        consume(';');
-
-        return s;
-}
-
-static struct statement *
 parse_return_statement(void)
 {
         struct statement *s = mkstmt();
@@ -2807,7 +2805,6 @@ Keyword:
         case KEYWORD_OPERATOR: return parse_operator_directive();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
-        case KEYWORD_YIELD:    return parse_yield_statement();
         case KEYWORD_NEXT:     return parse_next_statement();
         case KEYWORD_LET:      return parse_let_definition();
         case KEYWORD_BREAK:    return parse_break_statement();
