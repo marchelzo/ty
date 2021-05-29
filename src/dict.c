@@ -78,7 +78,7 @@ grow(struct dict *d)
         struct value *values = gc_alloc(sizeof (struct value [new_size]));
 
         memset(keys, 0, sizeof (struct value [new_size]));
-        
+
         for (size_t i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0)
                         continue;

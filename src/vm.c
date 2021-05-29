@@ -1386,7 +1386,7 @@ BadContainer:
                         case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
                         case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
                         case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
-                        case VALUE_STRING: 
+                        case VALUE_STRING:
                                 push(get_string_method("len")(&v, 0));
                                 break;
                         case VALUE_OBJECT:
@@ -2124,7 +2124,7 @@ vm_execute(char const *source)
                 LOG("compiler error was: %s", Error);
                 return false;
         }
-        
+
         if (setjmp(jb) != 0) {
                 gc_clear_root_set();
                 stack.count = 0;

@@ -1008,7 +1008,7 @@ builtin_os_mktemp(int argc)
         if (argc > 2) {
                 vm_panic("os::mktemp() expects 0, 1, or 2 arguments but got %d", argc);
         }
-        
+
         if (argc >= 1 && ARG(0).type != VALUE_NIL) {
                 struct value s = ARG(0);
                 if (s.type != VALUE_STRING)
@@ -1215,7 +1215,7 @@ builtin_os_read(int argc)
 
         if (argc == 3) {
                 blob = ARG(1);
-                n = ARG(2); 
+                n = ARG(2);
         } else {
                 blob = BLOB(value_blob_new());
                 n = ARG(1);
@@ -2740,7 +2740,7 @@ builtin_type(int argc)
         ASSERT_ARGC("type()", 1);
 
         struct value v = ARG(0);
-        
+
         switch (v.type) {
         case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_INT    };
         case VALUE_REAL:     return (struct value) { .type = VALUE_CLASS, .class = CLASS_FLOAT  };

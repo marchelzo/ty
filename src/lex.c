@@ -243,7 +243,7 @@ haveid(void)
 
         if (isalpha(C(0)) || C(0) == '_')
                 return true;
-        
+
         return false;
 }
 
@@ -291,7 +291,7 @@ lexword(void)
                 if (C(0) == ':' && C(1) == ':' && ++has_module) {
                         nextchar();
                         nextchar();
-                        
+
                         if (module.count != 0)
                                 vec_push(module, '/');
 
@@ -605,7 +605,7 @@ lexop(void)
 {
         char op[MAX_OP_LEN + 1] = {0};
         size_t i = 0;
-        
+
         while (contains(opchars, C(0)) || (C(0) == ':' && (C(-1) != '*' || i > 1 || (contains(opchars, C(1)) && C(1) != '-')))) {
                 if (i == MAX_OP_LEN) {
                         error(
@@ -637,7 +637,7 @@ lexlinecomment(void)
         nextchar();
 
         bool need_nl = state.need_nl;
-        
+
         while (C(0) != '\n' && C(0) != '\0') {
                 nextchar();
         }

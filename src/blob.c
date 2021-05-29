@@ -198,7 +198,7 @@ blob_set(struct value *blob, int argc)
                 i.integer += blob->blob->count;
         if (i.integer < 0 || i.integer >= blob->blob->count)
                 vm_panic("invalid index passed to blob.get()");
-        
+
         struct value arg = ARG(1);
         if (arg.type != VALUE_INTEGER || arg.integer < 0 || arg.integer > UCHAR_MAX)
                 vm_panic("invalid integer passed to blob.set()");

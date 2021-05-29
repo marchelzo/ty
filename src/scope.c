@@ -130,7 +130,7 @@ scope_add(struct scope *s, char const *id)
         vec_push(owner->owned, sym);
 
         s->table[i] = sym;
-        
+
         return sym;
 }
 

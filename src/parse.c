@@ -518,7 +518,7 @@ prefix_special_string(void)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_SPECIAL_STRING;
         vec_init(e->expressions);
-        
+
         e->strings.items = tok()->strings.items;
         e->strings.count = tok()->strings.count;
 
@@ -1741,7 +1741,7 @@ postfix_inc(struct expression *left)
 
         e->type = EXPRESSION_POSTFIX_INC;
         e->operand = assignment_lvalue(left);
-        
+
         return e;
 }
 
@@ -1754,7 +1754,7 @@ postfix_dec(struct expression *left)
 
         e->type = EXPRESSION_POSTFIX_DEC;
         e->operand = assignment_lvalue(left);
-        
+
         return e;
 }
 
@@ -1817,7 +1817,7 @@ get_prefix_parser(void)
 
         case '$':                  return prefix_dollar;
         case '`':                  return prefix_tick;
-        
+
         case TOKEN_DOT_DOT:        return prefix_range;
         case TOKEN_DOT_DOT_DOT:    return prefix_incrange;
 
@@ -2115,7 +2115,7 @@ parse_definition_lvalue(int context)
         }
 
         switch (context) {
-        case LV_LET: 
+        case LV_LET:
                 if (tok()->type != TOKEN_EQ)
                         goto Error;
                 break;
@@ -2368,7 +2368,7 @@ parse_function_definition(void)
 
         s->target = target;
         s->value = f;
-        
+
         return s;
 }
 
@@ -2451,7 +2451,7 @@ parse_let_definition(void)
         consume(TOKEN_EQ);
 
         struct expression *value = parse_expr(-1);
-        
+
         consume(';');
 
         s->target = target;
@@ -2605,7 +2605,7 @@ parse_class_definition(void)
                 tok()->keyword = KEYWORD_TAG;
                 unconsume(';');
         }
-                
+
         if (tag && tok()->type == ';') {
                 next();
         } else {

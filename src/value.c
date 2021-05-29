@@ -194,7 +194,7 @@ show_dict(struct value const *d)
 
         add("}");
 #undef add
-        
+
         --show_dicts.count;
 
         return s;
@@ -235,7 +235,7 @@ show_array(struct value const *a)
 
         add("]");
 #undef add
-        
+
         --show_arrays.count;
 
         return s;
@@ -385,7 +385,7 @@ value_compare(void const *_v1, void const *_v2)
                 v = REAL(v2->integer);
                 v2 = &v;
         }
-                
+
         if (v1->type == VALUE_INTEGER && v2->type == VALUE_REAL) {
                 v = REAL(v1->integer);
                 v1 = &v;

@@ -272,7 +272,7 @@ utf8_nth_char(char const *str, int n, int *nb)
         return result;
 }
 
-inline static int 
+inline static int
 utf8_char_len(char const *s)
 {
 	if (*s == '\n' || *s == '\t' || *s == '\r')

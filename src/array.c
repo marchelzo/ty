@@ -171,7 +171,7 @@ array_slice_mut(struct value *array, int argc)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("array.slice!() expects 1 or 2 arguments but got %d", argc);
-        
+
         struct value start = ARG(0);
 
         if (start.type != VALUE_INTEGER)
@@ -307,7 +307,7 @@ array_slice(struct value *array, int argc)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("array.slice() expects 1 or 2 arguments but got %d", argc);
-        
+
         struct value start = ARG(0);
         if (start.type != VALUE_INTEGER)
                 vm_panic("non-integer passed as first argument to array.slice()");
@@ -766,7 +766,7 @@ array_groups_of(struct value *array, int argc)
 
         array->array->count = n;
         shrink(array);
-        
+
         return *array;
 }
 
@@ -777,7 +777,7 @@ array_group_by(struct value *array, int argc)
                 vm_panic("array.groupBy() expects 1 argument but got %d", argc);
 
         struct value f = ARG(0);
-        
+
         if (!CALLABLE(f))
                 vm_panic("the argument to array.groupBy() must be callable");
 

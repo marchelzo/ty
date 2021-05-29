@@ -221,7 +221,7 @@ object(void)
 {
         if (next() != '{')
                 FAIL;
-        
+
         struct dict *obj = dict_new();
 
         while (peek() != '\0' && peek() != '}') {
@@ -367,7 +367,7 @@ encode(struct value const *v, str *out)
                 break;
         default:
                 return false;
-                
+
         }
 
         return true;
@@ -402,7 +402,7 @@ json_encode(struct value const *v)
 {
         str s;
         vec_init(s);
-        
+
         struct value r = NIL;
 
         if (encode(v, &s)) {

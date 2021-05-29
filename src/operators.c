@@ -23,7 +23,7 @@ str_concat(struct value const *s1, struct value const *s2)
 struct value
 binary_operator_addition(struct value const *left, struct value const *right)
 {
-        
+
         if (left->type == VALUE_OBJECT) {
                 struct value const *f = class_method(left->class, "+");
                 if (f == NULL)

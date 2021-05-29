@@ -167,7 +167,7 @@ string_slice(struct value *string, int argc)
         if (n < 0)
                 n += outpos.graphemes;
         n = min(max(0, n), outpos.graphemes - i);
-        
+
         stringcount(s, string->bytes, i);
 
         i = outpos.bytes;
@@ -322,7 +322,7 @@ string_words(struct value *string, int argc)
                         break;
 
                 struct value str = STRING_VIEW(*string, i, 0);
-                
+
                 do {
                         str.bytes += n;
                         i += n;
@@ -332,7 +332,7 @@ string_words(struct value *string, int argc)
 
                 value_array_push(a, str);
         }
-End: 
+End:
         gc_pop();
         OKGC(a);
 
@@ -372,7 +372,7 @@ string_lines(struct value *string, int argc)
                 if (i < len)
                         i += 1 + (s[i] == '\r');
         }
-End: 
+End:
         gc_pop();
         OKGC(a);
 
@@ -998,7 +998,7 @@ string_pad_left(struct value *string, int argc)
                 stringcount(pad, pad_bytes, -1);
                 pad_len = outpos.graphemes;
         }
-        
+
         int n = (len.integer - string_len) / pad_len + 1;
         char *result = value_string_alloc(string->bytes + pad_bytes * n);
 
@@ -1053,7 +1053,7 @@ string_pad_right(struct value *string, int argc)
                 stringcount(pad, pad_bytes, -1);
                 pad_len = outpos.graphemes;
         }
-        
+
         int n = (len.integer - current) / pad_len + 1;
         char *result = value_string_alloc(string->bytes + pad_bytes * n);
         int bytes = string->bytes;

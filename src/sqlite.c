@@ -188,7 +188,7 @@ fetch(int argc)
         struct blob *b;
         struct value a = ARRAY(value_array_new());
         gc_push(&a);
-        
+
         int n = sqlite3_column_count(stmt);
         for (int i = 0; i < n; ++i) {
                 switch (sqlite3_column_type(stmt, i)) {
@@ -241,7 +241,7 @@ fetch_dict(int argc)
         struct blob *b;
         struct value d = DICT(dict_new());
         gc_push(&d);
-        
+
         int n = sqlite3_column_count(stmt);
         for (int i = 0; i < n; ++i) {
                 char const *name = sqlite3_column_name(stmt, i);
