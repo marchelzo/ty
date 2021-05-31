@@ -3,6 +3,7 @@ CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pcre-config --cflags)
+CFLAGS += $(shell pkg-config --cflags libcurl)
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
@@ -17,6 +18,7 @@ LDFLAGS += -ldl
 LDFLAGS += -lcrypto
 LDFLAGS += $(shell pcre-config --libs)
 LDFLAGS += $(shell pkg-config --libs gumbo)
+LDFLAGS += $(shell pkg-config --libs libcurl)
 
 TEST_FILTER ?= "."
 

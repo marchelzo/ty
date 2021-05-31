@@ -2,6 +2,6 @@
 #define HTML_H_INCLUDED
 
 struct value
-html_parse(int arg);
+html_parse(int argc);
 
 #endif

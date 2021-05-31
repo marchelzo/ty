@@ -9,6 +9,8 @@
 #include <stdnoreturn.h>
 
 #include <pcre.h>
+#include <curl/curl.h>
+
 #include <poll.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -43,6 +45,7 @@
 #include "utf8.h"
 #include "functions.h"
 #include "html.h"
+#include "curl.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -1944,6 +1947,8 @@ vm_init(int ac, char **av)
         if (JITStack == NULL) {
                 panic("out of memory");
         }
+
+        curl_global_init(CURL_GLOBAL_ALL);
 
         srand48(time(NULL));
         srandom(lrand48());

@@ -239,6 +239,11 @@
 { .module = "gumbo",  .name = "NODE_ELEMENT",      .value = INT(1)                                         },
 { .module = "gumbo",  .name = "NODE_TEXT",         .value = INT(2)                                         },
 
+{ .module = "curl",   .name = "init",              .value = BUILTIN(builtin_curl_init)                     },
+{ .module = "curl",   .name = "setopt",            .value = BUILTIN(builtin_curl_setopt)                   },
+{ .module = "curl",   .name = "perform",           .value = BUILTIN(builtin_curl_perform)                  },
+{ .module = "curl",   .name = "CURLOPT_URL",       .value = INTEGER(CURLOPT_URL)                           },
+
 #ifdef SIGHUP
 { .module = "os",      .name = "SIGHUP",                 .value = INT(SIGHUP)                              },
 #endif
