@@ -116,7 +116,6 @@ static vec(Frame) frames;
 static vec(size_t) sp_stack;
 static vec(struct target) targets;
 static vec(struct try) try_stack;
-static vec(Context) contexts;
 static char *ip;
 
 static char const *filename;

@@ -232,6 +232,7 @@
 #ifdef CLOCK_MONOTONIC_RAW
 { .module = "time",   .name = "CLOCK_MONOTONIC_RAW",    .value = INT(CLOCK_MONOTONIC_RAW)                            },
 #endif
+{ .module = "ptr",    .name = "null",              .value = PTR(NULL)                                      },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
 { .module = "gumbo",  .name = "parse",             .value = BUILTIN(html_parse)                            },
@@ -239,10 +240,18 @@
 { .module = "gumbo",  .name = "NODE_ELEMENT",      .value = INT(1)                                         },
 { .module = "gumbo",  .name = "NODE_TEXT",         .value = INT(2)                                         },
 
-{ .module = "curl",   .name = "init",              .value = BUILTIN(builtin_curl_init)                     },
-{ .module = "curl",   .name = "setopt",            .value = BUILTIN(builtin_curl_setopt)                   },
-{ .module = "curl",   .name = "perform",           .value = BUILTIN(builtin_curl_perform)                  },
-{ .module = "curl",   .name = "CURLOPT_URL",       .value = INTEGER(CURLOPT_URL)                           },
+{ .module = "curl",       .name = "init",              .value = BUILTIN(builtin_curl_init)                     },
+{ .module = "curl",       .name = "setopt",            .value = BUILTIN(builtin_curl_setopt)                   },
+{ .module = "curl",       .name = "perform",           .value = BUILTIN(builtin_curl_perform)                  },
+{ .module = "curl",       .name = "CURLOPT_URL",       .value = INTEGER(CURLOPT_URL)                           },
+{ .module = "curl",       .name = "CURLOPT_MIMEPOST",  .value = INTEGER(CURLOPT_MIMEPOST)                      },
+{ .module = "curl",       .name = "CURLOPT_POST",      .value = INTEGER(CURLOPT_POST)                          },
+{ .module = "curl/mime",  .name = "init",              .value = BUILTIN(builtin_curl_mime)                     },
+{ .module = "curl/mime",  .name = "add",               .value = BUILTIN(builtin_curl_mime_add)                 },
+{ .module = "curl/mime",  .name = "data",              .value = BUILTIN(builtin_curl_mime_data)                },
+{ .module = "curl/mime",  .name = "name",              .value = BUILTIN(builtin_curl_mime_name)                },
+{ .module = "curl/slist", .name = "append",            .value = BUILTIN(builtin_curl_slist_append)             },
+{ .module = "curl/slist", .name = "free",              .value = BUILTIN(builtin_curl_slist_free)               },
 
 #ifdef SIGHUP
 { .module = "os",      .name = "SIGHUP",                 .value = INT(SIGHUP)                              },
