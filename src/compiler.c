@@ -303,8 +303,14 @@ slurp_module(char const *name)
         snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
 
         char *source = slurp(pathbuf);
-        if (source == NULL)
+        if (source == NULL) {
+                snprintf(pathbuf, sizeof pathbuf, "%s.ty", name);
+                source = slurp(pathbuf);
+        }
+
+        if (source == NULL) {
                 fail("failed to read file: %s", pathbuf);
+        }
 
         return source;
 }
