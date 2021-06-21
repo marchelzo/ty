@@ -423,7 +423,7 @@ Start:
                         nextchar();
                         if (C(0) != '%') {
                                 fmt = SRC;
-                                while (C(0) != '\0' && C(0) != '{') {
+                                while (C(0) != '\0' && C(0) != '{' && C(0) != '"') {
                                         nextchar();
                                 }
                                 if (C(0) != '{') {
