@@ -814,7 +814,10 @@ Throw:
                         v = ARRAY(value_array_new());
                         n = stack.count - *vec_pop(sp_stack);
 
+                        NOGC(v.array);
                         vec_reserve(*v.array, n);
+                        OKGC(v.array);
+
                         memcpy(
                                 v.array->items,
                                 stack.items + stack.count - n,
