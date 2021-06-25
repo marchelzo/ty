@@ -1584,19 +1584,9 @@ infix_member_access(struct expression *left)
         expect(TOKEN_IDENTIFIER);
 
         if (!e->maybe && left->type == EXPRESSION_IDENTIFIER &&
-            table_look(&modules, left->identifier)) {
-                char *mod;
-                if (left->module == NULL) {
-                        mod = left->identifier;
-                } else {
-                        mod = gc_alloc(strlen(left->module) + strlen(left->identifier) + 2);
-                        strcpy(mod, left->module);
-                        strcat(mod, "/");
-                        strcat(mod, left->identifier);
-                }
-                e->type = EXPRESSION_IDENTIFIER;
-                e->module = mod;
-                e->identifier = tok()->identifier;
+            table_look(&modules, left->identifier) != NULL) {
+                e->type = EXPRESSION_MODULE_ACCESS;
+                e->member_name = tok()->identifier;
                 next();
                 e->end = End;
                 return e;

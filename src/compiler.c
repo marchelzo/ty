@@ -778,6 +778,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         );
                 }
                 break;
+        case EXPRESSION_MODULE_ACCESS:
+                e->symbol = getsymbol(get_import_scope(e->object->identifier), e->member_name, &e->local);
+                e->type = EXPRESSION_IDENTIFIER;
+                break;
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
                         symbolize_expression(scope, e->expressions.items[i]);

@@ -348,11 +348,28 @@ lexrawstr(void)
 
         while (C(0) != '\'') {
                 switch (C(0)) {
-                case '\0': goto Unterminated;
+                case '\0':
+                Unterminated:
+                        error("unterminated string literal");
                 case '\\':
-                           nextchar();
-                           if (C(0) == '\0') goto Unterminated;
-                           // fallthrough
+                        nextchar();
+                        switch (C(0)) {
+                        case '\0':
+                                goto Unterminated;
+                        case 'n':
+                                nextchar();
+                                vec_push(str, '\n');
+                                continue;
+                        case 'r':
+                                nextchar();
+                                vec_push(str, '\r');
+                                continue;
+                        case 't':
+                                nextchar();
+                                vec_push(str, '\t');
+                                continue;
+                        }
+                        // fallthrough
                 default:
                            vec_push(str, nextchar());
                 }
@@ -363,10 +380,6 @@ lexrawstr(void)
         vec_push(str, '\0');
 
         return mkstring(str.items);
-
-Unterminated:
-
-        error("unterminated string literal");
 }
 
 static char const *
