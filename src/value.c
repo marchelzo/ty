@@ -478,7 +478,7 @@ value_apply_predicate(struct value *p, struct value *v)
                                 0
                         );
 
-                        if (rc < -1)
+                        if (rc < -2)
                                 vm_panic("error while executing regular expression: %d", rc);
 
                         return rc == 0;
@@ -524,10 +524,10 @@ value_apply_callable(struct value *f, struct value *v)
                         30
                 );
 
-                if (rc < -1)
+                if (rc < -2)
                         vm_panic("error while executing regular expression: %d", rc);
 
-                if (rc == -1)
+                if (rc < 0)
                         return NIL;
 
                 struct value match;

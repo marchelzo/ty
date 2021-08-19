@@ -227,11 +227,11 @@ string_search(struct value *string, int argc)
 
                 rc = pcre_exec(re, pattern.regex->extra, s, bytes, 0, 0, out, 3);
 
-                if (rc == -1)
+                if (rc == -1 || rc == -2)
                         return NIL;
 
                 if (rc < -1)
-                        vm_panic("error executing regular expression");
+                        vm_panic("error executing regular expression: %d", rc);
 
                 n = out[0];
         }
@@ -732,10 +732,10 @@ string_is_match(struct value *string, int argc)
                 0
         );
 
-        if (rc < -1)
+        if (rc < -2)
                 vm_panic("error while executing regular expression: %d", rc);
 
-        return BOOLEAN(rc != -1);
+        return BOOLEAN(rc > -1);
 }
 
 static struct value
@@ -764,10 +764,10 @@ string_match(struct value *string, int argc)
                 30
         );
 
-        if (rc < -1)
+        if (rc < -2)
                 vm_panic("error while executing regular expression: %d", rc);
 
-        if (rc == -1)
+        if (rc < 0)
                 return NIL;
 
         struct value match;
@@ -841,7 +841,7 @@ string_matches(struct value *string, int argc)
                 len -= ovec[1];
         }
 
-        if (rc < -1)
+        if (rc < -2)
                 vm_panic("error while executing regular expression: %d", rc);
 
         gc_pop();

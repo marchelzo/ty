@@ -628,6 +628,8 @@ prefix_identifier(void)
                 next();
                 e->constraint = parse_expr(0);
                 LOAD_NE();
+        } else {
+                e->constraint = NULL;
         }
 
         e->end = End;
@@ -1377,8 +1379,12 @@ prefix_dict(void)
                 } else {
                         struct expression *key = parse_expr(0);
                         vec_push(e->keys, key);
-                        vec_push(e->values, key->constraint);
-                        key->constraint = NULL;
+                        if (key->type == EXPRESSION_IDENTIFIER) {
+                                vec_push(e->values, key->constraint);
+                                key->constraint = NULL;
+                        } else {
+                                vec_push(e->values, NULL);
+                        }
                         if (tok()->type == ':') {
                                 next();
                                 *vec_last(e->values) = parse_expr(0);
