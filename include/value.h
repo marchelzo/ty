@@ -44,7 +44,7 @@ struct value;
 
 //#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
 
-#define CALLABLE(v) ((v).type <= VALUE_BUILTIN_METHOD)
+#define CALLABLE(v) ((v).type <= VALUE_REGEX)
 
 #define CLASS_OBJECT    0
 #define CLASS_CLASS     1
