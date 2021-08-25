@@ -1354,7 +1354,12 @@ emit_function(struct expression const *e, int class)
         int ncaps = e->scope->captured.count;
 
         for (int i = 0; i < ncaps; ++i) {
-                emit_tgt(caps[ncaps - (i + 1)], fs_save, false);
+                /*
+                 * Don't call emit_tgt because despite these being captured,
+                 * we need to use TARGET_LOCAL to avoid following the reference.
+                 */
+                emit_instr(INSTR_TARGET_LOCAL);
+                emit_int(caps[ncaps - (i + 1)]->i);
         }
 
         emit_instr(INSTR_FUNCTION);
