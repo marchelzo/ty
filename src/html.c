@@ -7,6 +7,7 @@
 #include "table.h"
 #include "object.h"
 #include "util.h"
+#include "gc.h"
 
 static struct value
 convert_node(GumboNode const *n, struct table *p);
@@ -148,7 +149,9 @@ html_parse(int argc)
                 vec_empty(b);
                 return NIL;
         } else {
+                gc_disable();
                 struct value v = convert(out);
+                gc_enable();
                 vec_empty(b);
                 gumbo_destroy_output(&kGumboDefaultOptions, out);
                 return v;

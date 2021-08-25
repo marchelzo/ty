@@ -168,7 +168,7 @@ static void
 emit_expr(struct expression const *e, bool need_loc);
 
 static void
-emit_assignment(struct expression *target, struct expression const *e, bool maybe);
+emit_assignment(struct expression *target, struct expression const *e, bool maybe, bool def);
 
 static bool
 emit_case(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
@@ -1223,15 +1223,6 @@ emit_string(char const *s)
 }
 
 inline static void
-emit_checks(int_vector check)
-{
-        //emit_instr(INSTR_CHECK_VARS);
-        //emit_int(check.count);
-        //for (int i = 0; i < check.count; ++i)
-        //        emit_symbol(check.items[i]);
-}
-
-inline static void
 emit_load(struct symbol const *s, struct scope const *scope)
 {
         bool local = !s->global && (s->scope->function == scope->function);
@@ -1260,14 +1251,14 @@ emit_load(struct symbol const *s, struct scope const *scope)
 }
 
 inline static void
-emit_tgt(struct symbol const *s, struct scope const *scope)
+emit_tgt(struct symbol const *s, struct scope const *scope, bool def)
 {
         bool local = !s->global && (s->scope->function == scope->function);
 
         if (s->global) {
                 emit_instr(INSTR_TARGET_GLOBAL);
                 emit_int(s->i);
-        } else if (local && !s->captured) {
+        } else if (def || (local && !s->captured)) {
                 emit_instr(INSTR_TARGET_LOCAL);
                 emit_int(s->i);
         } else if (!local && s->captured) {
@@ -1363,7 +1354,7 @@ emit_function(struct expression const *e, int class)
         int ncaps = e->scope->captured.count;
 
         for (int i = 0; i < ncaps; ++i) {
-                emit_tgt(caps[ncaps - (i + 1)], fs_save);
+                emit_tgt(caps[ncaps - (i + 1)], fs_save, false);
         }
 
         emit_instr(INSTR_FUNCTION);
@@ -1491,7 +1482,7 @@ emit_function(struct expression const *e, int class)
         t = t_save;
 
         if (e->function_symbol != NULL) {
-                emit_tgt(e->function_symbol, e->scope);
+                emit_tgt(e->function_symbol, e->scope, false);
                 emit_instr(INSTR_ASSIGN);
         }
 }
@@ -1847,7 +1838,7 @@ emit_try_match(struct expression const *pattern)
                 if (strcmp(pattern->identifier, "_") == 0) {
                         /* nothing to do */
                 } else {
-                        emit_tgt(pattern->symbol, state.fscope);
+                        emit_tgt(pattern->symbol, state.fscope, true);
                         emit_instr(INSTR_ASSIGN);
                 }
                 if (pattern->constraint != NULL) {
@@ -1859,7 +1850,7 @@ emit_try_match(struct expression const *pattern)
                 }
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
-                emit_tgt(pattern->symbol, state.fscope);
+                emit_tgt(pattern->symbol, state.fscope, true);
                 emit_instr(INSTR_TRY_ASSIGN_NON_NIL);
                 vec_push(state.match_fails, state.code.count);
                 emit_int(0);
@@ -1883,7 +1874,7 @@ emit_try_match(struct expression const *pattern)
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < pattern->elements.count; ++i) {
                         if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST) {
-                                emit_tgt(pattern->elements.items[i]->symbol, state.fscope);
+                                emit_tgt(pattern->elements.items[i]->symbol, state.fscope, true);
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_int(i);
                                 vec_push(state.match_fails, state.code.count);
@@ -2268,7 +2259,7 @@ emit_match_expression(struct expression const *e)
 }
 
 static void
-emit_target(struct expression *target)
+emit_target(struct expression *target, bool def)
 {
         size_t start = state.code.count;
         bool need_loc = true;
@@ -2277,7 +2268,7 @@ emit_target(struct expression *target)
         case EXPRESSION_IDENTIFIER:
                 need_loc = false;
         case EXPRESSION_MATCH_NOT_NIL:
-                emit_tgt(target->symbol, state.fscope);
+                emit_tgt(target->symbol, state.fscope, def);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
                 LOG("MEMBER ACCESS: %s", target->member_name);
@@ -2423,7 +2414,7 @@ emit_dict_compr(struct expression const *e)
         size_t start = state.code.count;
 
         for (int i = 0; i < e->dcompr.pattern->es.count; ++i) {
-                emit_target(e->dcompr.pattern->es.items[i]);
+                emit_target(e->dcompr.pattern->es.items[i], true);
         }
 
         emit_instr(INSTR_SENTINEL);
@@ -2581,7 +2572,7 @@ emit_array_compr(struct expression const *e)
         size_t start = state.code.count;
 
         for (int i = 0; i < e->compr.pattern->es.count; ++i) {
-                emit_target(e->compr.pattern->es.items[i]);
+                emit_target(e->compr.pattern->es.items[i], true);
         }
 
         emit_instr(INSTR_SENTINEL);
@@ -2779,7 +2770,7 @@ emit_for_each(struct statement const *s)
         size_t start = state.code.count;
 
         for (int i = 0; i < s->each.target->es.count; ++i) {
-                emit_target(s->each.target->es.items[i]);
+                emit_target(s->each.target->es.items[i], true);
         }
 
         emit_instr(INSTR_SENTINEL);
@@ -2821,7 +2812,7 @@ check_multi(struct expression *target, struct expression const *e, int *n)
 }
 
 static void
-emit_assignment(struct expression *target, struct expression const *e, bool maybe)
+emit_assignment(struct expression *target, struct expression const *e, bool maybe, bool def)
 {
 
         struct expression container, index, subscript;
@@ -2837,7 +2828,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 
         switch (target->type) {
         case EXPRESSION_ARRAY:
-                emit_tgt(target->atmp, state.fscope);
+                emit_tgt(target->atmp, state.fscope, false);
                 emit_instr(INSTR_ASSIGN);
                 container = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = target->atmp, .local = true);
                 index = EXPR(.type = EXPRESSION_INTEGER);
@@ -2845,7 +2836,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 for (int i = 0; i < target->elements.count; ++i) {
                         index.integer = i;
                         if (i == target->elements.count - 1 && target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
-                                emit_tgt(target->elements.items[i]->symbol, state.fscope);
+                                emit_tgt(target->elements.items[i]->symbol, state.fscope, def);
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_int(i);
                                 emit_int(sizeof (int) + 1);
@@ -2854,38 +2845,38 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                                 emit_instr(INSTR_BAD_MATCH);
                         } else {
                                 size_t s = state.code.count;
-                                emit_assignment(target->elements.items[i], &subscript, maybe);
+                                emit_assignment(target->elements.items[i], &subscript, maybe, def);
                                 add_location(target->elements.items[i], s, state.code.count);
                                 emit_instr(INSTR_POP);
                         }
                 }
                 break;
         case EXPRESSION_DICT:
-                emit_tgt(target->dtmp, state.fscope);
+                emit_tgt(target->dtmp, state.fscope, false);
                 emit_instr(INSTR_ASSIGN);
                 container = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = target->dtmp, .local = true);
                 subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &container);
                 for (int i = 0; i < target->keys.count; ++i) {
                         subscript.subscript = target->keys.items[i];
-                        emit_assignment(target->values.items[i], &subscript, maybe);
+                        emit_assignment(target->values.items[i], &subscript, maybe, def);
                         emit_instr(INSTR_POP);
                 }
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
-                emit_assignment(target->tagged, NULL, maybe);
+                emit_assignment(target->tagged, NULL, maybe, def);
                 break;
         case EXPRESSION_VIEW_PATTERN:
                 emit_expression(target->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
                 add_location(target->left, start, state.code.count);
-                emit_assignment(target->right, NULL, maybe);
+                emit_assignment(target->right, NULL, maybe, def);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_instr(INSTR_THROW_IF_NIL);
-                emit_target(target);
+                emit_target(target, def);
                 emit_instr(instr);
                 break;
         case EXPRESSION_LIST:
@@ -2895,7 +2886,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 }
 
                 for (int i = 0; i < target->es.count; ++i) {
-                        emit_target(target->es.items[i]);
+                        emit_target(target->es.items[i], def);
                 }
 
                 emit_instr(INSTR_SENTINEL);
@@ -2919,7 +2910,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 
                 return;
         default:
-                emit_target(target);
+                emit_target(target, def);
                 emit_instr(instr);
                 if (target->type == EXPRESSION_IDENTIFIER && target->constraint != NULL) {
                         size_t start = state.code.count;
@@ -2972,10 +2963,10 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_instr(INSTR_INCRANGE);
                 break;
         case EXPRESSION_EQ:
-                emit_assignment(e->target, e->value, false);
+                emit_assignment(e->target, e->value, false, false);
                 break;
         case EXPRESSION_MAYBE_EQ:
-                emit_assignment(e->target, e->value, true);
+                emit_assignment(e->target, e->value, true, false);
                 break;
         case EXPRESSION_INTEGER:
                 emit_instr(INSTR_INTEGER);
@@ -3236,38 +3227,38 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_instr(INSTR_NEG);
                 break;
         case EXPRESSION_PREFIX_INC:
-                emit_target(e->operand);
+                emit_target(e->operand, false);
                 emit_instr(INSTR_PRE_INC);
                 break;
         case EXPRESSION_PREFIX_DEC:
-                emit_target(e->operand);
+                emit_target(e->operand, false);
                 emit_instr(INSTR_PRE_DEC);
                 break;
         case EXPRESSION_POSTFIX_INC:
-                emit_target(e->operand);
+                emit_target(e->operand, false);
                 emit_instr(INSTR_POST_INC);
                 break;
         case EXPRESSION_POSTFIX_DEC:
-                emit_target(e->operand);
+                emit_target(e->operand, false);
                 emit_instr(INSTR_POST_DEC);
                 break;
         case EXPRESSION_PLUS_EQ:
-                emit_target(e->target);
+                emit_target(e->target, false);
                 emit_expression(e->value);
                 emit_instr(INSTR_MUT_ADD);
                 break;
         case EXPRESSION_STAR_EQ:
-                emit_target(e->target);
+                emit_target(e->target, false);
                 emit_expression(e->value);
                 emit_instr(INSTR_MUT_MUL);
                 break;
         case EXPRESSION_DIV_EQ:
-                emit_target(e->target);
+                emit_target(e->target, false);
                 emit_expression(e->value);
                 emit_instr(INSTR_MUT_DIV);
                 break;
         case EXPRESSION_MINUS_EQ:
-                emit_target(e->target);
+                emit_target(e->target, false);
                 emit_expression(e->value);
                 emit_instr(INSTR_MUT_SUB);
                 break;
@@ -3345,7 +3336,7 @@ emit_statement(struct statement const *s, bool want_result)
                 break;
         case STATEMENT_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
-                emit_assignment(s->target, s->value, false);
+                emit_assignment(s->target, s->value, false, true);
                 emit_instr(INSTR_POP);
                 break;
         case STATEMENT_TAG_DEFINITION:

@@ -8,6 +8,9 @@ struct value
 builtin_curl_perform(int argc);
 
 struct value
+builtin_curl_strerror(int argc);
+
+struct value
 builtin_curl_setopt(int argc);
 
 struct value

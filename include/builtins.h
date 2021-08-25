@@ -243,6 +243,7 @@
 { .module = "curl/core",  .name = "init",              .value = BUILTIN(builtin_curl_init)                     },
 { .module = "curl/core",  .name = "setopt",            .value = BUILTIN(builtin_curl_setopt)                   },
 { .module = "curl/core",  .name = "perform",           .value = BUILTIN(builtin_curl_perform)                  },
+{ .module = "curl/core",  .name = "strerror",          .value = BUILTIN(builtin_curl_strerror)                 },
 { .module = "curl/core",  .name = "CURLOPT_URL",       .value = INTEGER(CURLOPT_URL)                           },
 { .module = "curl/core",  .name = "CURLOPT_MIMEPOST",  .value = INTEGER(CURLOPT_MIMEPOST)                      },
 { .module = "curl/core",  .name = "CURLOPT_POST",      .value = INTEGER(CURLOPT_POST)                          },

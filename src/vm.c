@@ -220,10 +220,8 @@ inline static void
 push(struct value v)
 {
         LOG("PUSH: %s", value_show(&v));
-        int i = stack.capacity;
         vec_push(stack, v);
-        if (stack.capacity != i) { LOG("!!! STACK WAS REALLOCATED !!!"); }
-        print_stack(15);
+        print_stack(10);
 }
 
 inline static struct value *

@@ -342,6 +342,9 @@ value_show(struct value const *v)
                 break;
         case VALUE_SENTINEL:
                 return sclone("<sentinel>");
+        case VALUE_REF:
+                snprintf(buffer, 1024, "<reference to %p>", v->ptr);
+                break;
         case VALUE_NONE:
                 return sclone("<none>");
         case VALUE_INDEX:

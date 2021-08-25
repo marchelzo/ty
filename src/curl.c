@@ -272,3 +272,22 @@ builtin_curl_perform(int argc)
 
         return BLOB(b);
 }
+
+struct value
+builtin_curl_strerror(int argc)
+{
+        if (argc != 1) {
+                vm_panic("curl::strerror() expects 1 argument but got %d", argc);
+        }
+
+        struct value n = ARG(0);
+
+        if (n.type != VALUE_INTEGER) {
+                vm_panic("the argument to curl::strerror() must be an integer");
+        }
+
+
+        char const *msg = curl_easy_strerror(n.integer);
+
+        return STRING_NOGC(msg, strlen(msg));
+}
