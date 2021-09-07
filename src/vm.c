@@ -498,7 +498,7 @@ vm_exec(char *code)
                         LOG("Global: %d", (int)n);
                         while (Globals.count <= n)
                                 vec_push(Globals, NIL);
-                        pushtarget(Globals.items + n, NULL);
+                        pushtarget(&Globals.items[n], NULL);
                         break;
                 CASE(TARGET_LOCAL)
                         if (frames.count == 0)
