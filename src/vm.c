@@ -46,6 +46,7 @@
 #include "functions.h"
 #include "html.h"
 #include "curl.h"
+#include "sqlite.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -164,8 +165,6 @@ add_builtins(int ac, char **av)
 void
 vm_load_c_module(char const *name, void *p)
 {
-        return;
-
         struct {
                 char const *name;
                 struct value value;
@@ -177,6 +176,7 @@ vm_load_c_module(char const *name, void *p)
 
         for (int i = 0; i < n; ++i) {
                 compiler_introduce_symbol(name, mod[i].name);
+                vec_push(Globals, mod[i].value);
         }
 }
 
@@ -1974,6 +1974,8 @@ vm_init(int ac, char **av)
         }
 
         vm_exec(prelude);
+
+        sqlite_load();
 
         return true;
 }

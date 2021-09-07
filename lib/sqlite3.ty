@@ -3,22 +3,22 @@ import sqlite3c (..)
 export SQLite3
 
 class SQLite3RowIter {
-    init(self, s) {
+    init(s) {
         self.s = s;
     }
 
-    __next__(self) {
+    __next__() {
         return self.s.nextRow();
     }
 }
 
 class SQLite3Statement {
-    init(self, p) {
+    init(p) {
         self.p = p;
     }
 
-    exec(self) {
-        if (self.p) {
+    exec() {
+        if self.p {
             let r = step(self.p);
             finalize(self.p);
             self.p = nil;
@@ -28,8 +28,8 @@ class SQLite3Statement {
         }
     }
 
-    step(self) {
-        if (self.p) {
+    step() {
+        if self.p {
             self.status = step(self.p);
             return self.status;
         } else {
@@ -37,9 +37,9 @@ class SQLite3Statement {
         }
     }
 
-    row(self) {
-        if (self.p) {
-            if (self.status == SQLITE_ROW) {
+    row() {
+        if self.p {
+            if self.status == SQLITE_ROW {
                 return fetchAssoc(self.p);
             } else {
                 return nil;
@@ -49,35 +49,37 @@ class SQLite3Statement {
         }
     }
 
-    nextRow(self) {
+    nextRow() {
         self.step();
         let row = self.row();
-        if (self.status == SQLITE_DONE) {
+        if self.status == SQLITE_DONE {
             self.finalize();
         }
         return row;
     }
 
-    finalize(self) {
-        if (self.p) {
+    finalize() {
+        if self.p {
             finalize(self.p);
             self.p = nil;
         }
     }
 
-    rows(self) {
-        if (!self.p) throw Err(SQLITE_MISUSE);
+    rows() {
+        if !self.p {
+            throw Err(SQLITE_MISUSE);
+        }
         reset(self.p);
         return SQLite3RowIter(self);
     }
 
-    __iter__(self) {
+    __iter__() {
         return self.rows();
     }
 }
 
 class SQLite3 {
-    init(self, path) {
+    init(path) {
         if let $db = open(path) {
             self.db = db;
         } else {
@@ -85,16 +87,18 @@ class SQLite3 {
         }
     }
 
-    close(self) {
+    close() {
         if (self.db) {
             close(self.db);
             self.db = nil;
         }
     }
 
-    query(self, sql, *ps) {
-        let s = prepare(self.db, sql);
-        if (!s) throw Err(error(self.db));
+    query(sql, *ps) {
+        if !let $s  = prepare(self.db, sql) {
+            throw Err(error(self.db));
+        }
+
         for p, i in ps {
             match bind(s, i + 1, p) {
                 SQLITE_OK => { },
