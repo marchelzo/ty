@@ -1028,7 +1028,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 sym->cnst = true;
                 sym->tag = tags_new(s->tag.name);
                 s->tag.symbol = sym->tag;
-                symbolize_methods(scope, s->tag.methods.items, s->tag.methods.count);
+                subscope = scope_new(scope, false);
+                symbolize_methods(subscope, s->tag.methods.items, s->tag.methods.count);
                 break;
         case STATEMENT_BLOCK:
                 scope = scope_new(scope, false);

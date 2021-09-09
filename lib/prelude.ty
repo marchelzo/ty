@@ -9,13 +9,13 @@ tag None {
 }
 
 tag Some {
-     map(f) {
-          return Some(f(self));
-     }
+    map(f) {
+        return Some(f(self));
+    }
 
-     flatMap(f) {
-          return f(self);
-     }
+    flatMap(f) {
+        return f(self);
+    }
 
     from(x) {
         return match x {
@@ -249,17 +249,25 @@ class String : Iterable {
             if i < cs.len() { return cs[i++]; }
         });
     }
+
+    __fmt__(s) {
+        return match int(s) {
+            nil       => self,
+            n : n > 0 => self.padRight(n),
+            n : n < 0 => self.padLeft(-n)
+        };
+    }
 }
 
 class Int {
     init(x)  { return int(x ?? 0);           }
 
-    ^(b)    { return bit::XOR(self, b);        }
-    .&.(b)  { return bit::AND(self, b);        }
-    .|.(b)  { return bit::OR(self, b);         }
-    <<(b)   { return bit::shiftLeft(self, b);  }
-    >>(b)   { return bit::shiftRight(self, b); }
-    **(b)   { return math::pow(self, b);       }
+    ^(b)    { return bit.XOR(self, b);        }
+    .&.(b)  { return bit.AND(self, b);        }
+    .|.(b)  { return bit.OR(self, b);         }
+    <<(b)   { return bit.shiftLeft(self, b);  }
+    >>(b)   { return bit.shiftRight(self, b); }
+    **(b)   { return math.pow(self, b);       }
 
     upto(b: Int) {
         return Generator(function UpToFunc() {
@@ -291,7 +299,7 @@ class Float {
     }
 
     **(b: Int | Float) {
-        return math::pow(self, b);
+        return math.pow(self, b);
     }
 }
 
@@ -387,6 +395,10 @@ class Iterable {
 
     join(s) {
         return self.__iter__().join(s);
+    }
+
+    unlines() {
+        return self.__iter__().unlines();
     }
 
     tally(f) {
@@ -490,20 +502,18 @@ class Iter : Iterable {
 
     uniq(f: Function = id) {
         let seen = {};
-        return Generator(function () {
-            while let $x = self.__next__() {
-                let y = f(x);
-                if !(seen ? y) {
-                    seen.put(y);
-                    return x;
-                }
+        for x in self {
+            let y = f(x);
+            if !(seen ? y) {
+                seen << y;
+                yield x;
             }
-        });
+        }
     }
 
     group(f = id) {
         if !let $x = self.__next__() {
-            return Generator(-> nil);
+            return Generator(() -> nil);
         }
 
         let g = [x];
@@ -551,6 +561,10 @@ class Iter : Iterable {
         }
 
         return b.str();
+    }
+
+    unlines() {
+        return self.join("\n");
     }
 
     count(x) {
@@ -601,9 +615,11 @@ class Iter : Iterable {
 
     str() {
         let b = blob();
+
         for s in self {
             b.push(str(s));
         }
+
         return b.str();
     }
 
