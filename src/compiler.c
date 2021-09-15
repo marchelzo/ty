@@ -1328,8 +1328,6 @@ emit_constraint(struct expression const *c)
 static void
 emit_function(struct expression const *e, int class)
 {
-        //assert(e->type == EXPRESSION_FUNCTION);
-
         /*
          * Save the current reference and bound-symbols vectors so we can
          * restore them after compiling the current function.
@@ -3347,7 +3345,7 @@ emit_statement(struct statement const *s, bool want_result)
                 break;
         case STATEMENT_TAG_DEFINITION:
                 for (int i = 0; i < s->tag.methods.count; ++i) {
-                        emit_function(s->tag.methods.items[i], -1);
+                        emit_function(s->tag.methods.items[i], CLASS_TAG);
                 }
 
                 emit_instr(INSTR_DEFINE_TAG);

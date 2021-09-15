@@ -29,13 +29,13 @@ class HtmlElement {
     }
 
     text() {
-        return self.children.filter(HtmlText).map(e -> e.text()).join(' ')
+        return self.children.filter(-> match $ { HtmlText(_) => true, _ => false }).map(e -> e.text()).join(' ')
                    .sub(/\s+/, ' ')
                    .sub(/(^\s*)|(\s*$)/, '');
     }
 
     from(n, p) {
-        if (n.type == gumbo::NODE_ELEMENT) {
+        if n.type == gumbo::NODE_ELEMENT {
             let e = HtmlElement(n.element.t, p);
             e.children = n.element.children.map(c -> HtmlElement.from(c, e));
             e.attrs = { a.name : (a.value || true) for a in n.element.attributes };
@@ -48,5 +48,14 @@ class HtmlElement {
     __str__() {
         let attrString = [ " {k}=\"{v}\"" for k, v in self.attrs ].join(' ') || '';
         return "<{self.t}{attrString}>";
+    }
+
+    find(q) {
+        let rest = self.children.filter(-> $ :: HtmlElement).map(&find(q)).sum() || [];
+        return if self.t == q {
+            [self] + rest
+        } else {
+            rest
+        };
     }
 }

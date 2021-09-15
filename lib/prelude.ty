@@ -10,6 +10,7 @@ tag None {
 
 tag Some {
     map(f) {
+        print(f, self);
         return Some(f(self));
     }
 
@@ -243,11 +244,9 @@ class String : Iterable {
     }
 
     __iter__() {
-        let cs = self.chars();
-        let i = 0;
-        return Generator(function StringGen() {
-            if i < cs.len() { return cs[i++]; }
-        });
+        for c in self.chars() {
+            yield c;
+        }
     }
 
     __fmt__(s) {
@@ -260,7 +259,9 @@ class String : Iterable {
 }
 
 class Int {
-    init(x)  { return int(x ?? 0);           }
+    init(x)  {
+        return int(x ?? 0);
+    }
 
     ^(b)    { return bit.XOR(self, b);        }
     .&.(b)  { return bit.AND(self, b);        }
@@ -354,6 +355,9 @@ class Generator : Iter {
     __next__() {
         return self();
     }
+}
+
+class Tag {
 }
 
 class Iterable {

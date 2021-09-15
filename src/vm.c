@@ -309,6 +309,7 @@ call(struct value const *f, struct value const *self, int n, bool exec)
          * Fill in 'self' as an implicit additional parameter.
          */
         if (self != NULL && class != -1) {
+                LOG("setting self = %s", value_show(self));
                 stack.items[fp + np] = *self;
         }
 
@@ -1888,7 +1889,7 @@ BadContainer:
                         } else if (vp != NULL) {
                                 pop();
                                 if (self != NULL) {
-                                        v = METHOD(method, vp, &value);
+                                        v = METHOD(method, vp, self);
                                 } else {
                                         v = *vp;
                                 }

@@ -58,7 +58,8 @@ struct value;
 #define CLASS_BOOL      9
 #define CLASS_REGEX     10
 #define CLASS_GENERATOR 11
-#define CLASS_PRIMITIVE 12
+#define CLASS_TAG       12
+#define CLASS_PRIMITIVE 13
 
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
