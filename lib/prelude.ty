@@ -10,7 +10,6 @@ tag None {
 
 tag Some {
     map(f) {
-        print(f, self);
         return Some(f(self));
     }
 
