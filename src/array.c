@@ -1355,8 +1355,7 @@ array_tally(struct value *array, int argc)
                         vm_panic("non-callable passed to array.tally()");
 
                 for (int i = 0; i < array->array->count; ++i) {
-                        vm_push(&array->array->items[i]);
-                        struct value v = vm_call(&f, 1);
+                        struct value v = value_apply_callable(&f, &array->array->items[i]);
                         struct value *c = dict_get_value(d.dict, &v);
                         if (c == NULL) {
                                 dict_put_value(d.dict, v, INTEGER(1));
