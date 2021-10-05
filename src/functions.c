@@ -1711,6 +1711,87 @@ builtin_os_accept(int argc)
 }
 
 struct value
+builtin_os_recvfrom(int argc)
+{
+	ASSERT_ARGC_2("os::recvfrom()", 3, 4);
+
+	struct value fd = ARG(0);
+	if (fd.type != VALUE_INTEGER)
+		vm_panic("the first argument to os::recvfrom() must be an integer");
+
+	struct value buffer;
+	struct value size;
+	struct value flags;
+
+	if (argc == 3) {
+		buffer = BLOB(value_blob_new());
+		size = ARG(1);
+		flags = ARG(2);
+	} else {
+		buffer = ARG(1);
+		size = ARG(2);
+		flags = ARG(3);
+	}
+
+	if (buffer.type != VALUE_BLOB)
+		vm_panic("the buffer argument to os::recvfrom() must be a blob");
+
+	if (size.type != VALUE_INTEGER || size.integer < 0)
+		vm_panic("the size argument to os::recvfrom() must be a non-negative integer");
+
+	if (flags.type != VALUE_INTEGER)
+		vm_panic("the flags argument to os::recvfrom() must be an integer");
+
+	vec_reserve(*buffer.blob, size.integer);
+
+	struct sockaddr_storage addr;
+	socklen_t addr_size = sizeof addr;
+
+	ssize_t r = recvfrom(fd.integer, buffer.blob->items, size.integer, flags.integer, (void *)&addr, &addr_size);
+	if (r < 0)
+		return NIL;
+
+	buffer.blob->count = r;
+
+	struct array *result = value_array_new();
+	value_array_push(result, INTEGER(r));
+	value_array_push(result, buffer);
+
+	struct blob *b = value_blob_new();
+	vec_push_n(*b, &addr, min(addr_size, sizeof addr));
+
+	value_array_push(result, BLOB(b));
+
+	return ARRAY(result);
+}
+
+struct value
+builtin_os_sendto(int argc)
+{
+	ASSERT_ARGC_2("os::sendto()", 3, 4);
+
+	struct value fd = ARG(0);
+	if (fd.type != VALUE_INTEGER)
+		vm_panic("the first argument to os::sendto() must be an integer (fd)");
+
+	struct value buffer = ARG(1);
+	if (buffer.type != VALUE_BLOB)
+		vm_panic("the second argument to os::sendto() must be a blob");
+
+	struct value flags = ARG(2);
+	if (flags.type != VALUE_INTEGER)
+		vm_panic("the third argument to os::sendto() must be an integer (flags)");
+
+	struct value addr = ARG(3);
+	if (addr.type != VALUE_BLOB)
+		vm_panic("the fourth argument to os::sendto() must be a blob (sockaddr)");
+
+	ssize_t r = sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count);
+
+	return r < 0 ? NIL : INTEGER(r);
+}
+
+struct value
 builtin_os_poll(int argc)
 {
         ASSERT_ARGC("os::poll()", 2);

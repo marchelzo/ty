@@ -259,6 +259,12 @@ struct value
 builtin_os_connect(int argc);
 
 struct value
+builtin_os_recvfrom(int argc);
+
+struct value
+builtin_os_sendto(int argc);
+
+struct value
 builtin_os_shutdown(int argc);
 
 struct value

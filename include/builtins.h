@@ -120,6 +120,8 @@
 #ifdef WIFCONTINUED
 { .module = "os",     .name = "WIFCONTINUED",      .value = BUILTIN(builtin_os_WIFCONTINUED)               },
 #endif
+{ .module = "os",     .name = "recvfrom",          .value = BUILTIN(builtin_os_recvfrom)                   },
+{ .module = "os",     .name = "sendto",            .value = BUILTIN(builtin_os_sendto)                     },
 { .module = "os",     .name = "connect",           .value = BUILTIN(builtin_os_connect)                    },
 { .module = "os",     .name = "usleep",            .value = BUILTIN(builtin_os_usleep)                     },
 { .module = "os",     .name = "POLLIN",            .value = INT(POLLIN)                                    },
