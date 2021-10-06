@@ -136,6 +136,7 @@
 { .module = "os",     .name = "O_TRUNC",           .value = INT(O_TRUNC)                                   },
 { .module = "os",     .name = "O_APPEND",          .value = INT(O_APPEND)                                  },
 { .module = "os",     .name = "O_NONBLOCK",        .value = INT(O_NONBLOCK)                                },
+{ .module = "os",     .name = "O_ASYNC",           .value = INT(O_ASYNC)                                   },
 #ifdef WNOHANG
 { .module = "os",     .name = "WNOHANG",           .value = INT(WNOHANG)                                   },
 #endif
@@ -150,6 +151,8 @@
 { .module = "os",     .name = "F_GETFL",           .value = INT(F_GETFL)                                   },
 { .module = "os",     .name = "F_SETFL",           .value = INT(F_SETFL)                                   },
 { .module = "os",     .name = "F_DUPFD",           .value = INT(F_DUPFD)                                   },
+{ .module = "os",     .name = "F_SETSIG",          .value = INT(F_SETSIG)                                  },
+{ .module = "os",     .name = "F_GETSIG",          .value = INT(F_GETSIG)                                  },
 #ifdef __APPLE__
 { .module = "os",     .name = "F_DUPFD_CLOEXEC",   .value = INT(F_DUPFD_CLOEXEC)                           },
 { .module = "os",     .name = "F_GETOWN",          .value = INT(F_GETOWN)                                  },
@@ -323,7 +326,7 @@
 { .module = "os",      .name = "SIGTTOU",                 .value = INT(SIGTTOU)                              },
 #endif
 #ifdef SIGIO
-{ .module = "os",      .name = "SIGIO",                 .value = INT(SIGIO)                              },
+{ .module = "os",      .name = "SIGIO",                   .value = INT(SIGIO)                                },
 #endif
 #ifdef SIGXCPU
 { .module = "os",      .name = "SIGXCPU",                 .value = INT(SIGXCPU)                              },
@@ -332,13 +335,13 @@
 { .module = "os",      .name = "SIGXFSZ",                 .value = INT(SIGXFSZ)                              },
 #endif
 #ifdef SIGVTALRM
-{ .module = "os",      .name = "SIGVTALRM",                 .value = INT(SIGVTALRM)                              },
+{ .module = "os",      .name = "SIGVTALRM",               .value = INT(SIGVTALRM)                            },
 #endif
 #ifdef SIGPROF
 { .module = "os",      .name = "SIGPROF",                 .value = INT(SIGPROF)                              },
 #endif
 #ifdef SIGWINCH
-{ .module = "os",      .name = "SIGWINCH",                 .value = INT(SIGWINCH)                              },
+{ .module = "os",      .name = "SIGWINCH",                .value = INT(SIGWINCH)                             },
 #endif
 #ifdef SIGINFO
 { .module = "os",      .name = "SIGINFO",                 .value = INT(SIGINFO)                              },
@@ -349,6 +352,7 @@
 #ifdef SIGUSR2
 { .module = "os",      .name = "SIGUSR2",                 .value = INT(SIGUSR2)                              },
 #endif
+
 { .module = "os",      .name = "S_IFMT",                  .value = INT(S_IFMT)                              },
 { .module = "os",      .name = "S_IFSOCK",                .value = INT(S_IFSOCK)                              },
 { .module = "os",      .name = "S_IFLNK",                 .value = INT(S_IFLNK)                              },

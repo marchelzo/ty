@@ -158,8 +158,11 @@ add_builtins(int ac, char **av)
                 value_array_push(args, STRING_NOGC(av[i], strlen(av[i])));
 
         compiler_introduce_symbol("os", "args");
-
         vec_push(Globals, ARRAY(args));
+
+		/* Add this here because SIGRTMIN doesn't expand to a constant */
+		compiler_introduce_symbol("os", "SIGRTMIN");
+		vec_push(Globals, INTEGER(SIGRTMIN));
 }
 
 void
@@ -393,11 +396,18 @@ vm_get_sigfn(int sig)
 }
 
 void
-vm_do_signal(int sig)
+vm_do_signal(int sig, siginfo_t *info, void *ctx)
 {
         for (int i = 0; i < sigfns.count; ++i) {
                 if (sigfns.items[i].sig == sig) {
-                        call(&sigfns.items[i].f, NULL, 0, true);
+                        switch (sig) {
+                        case SIGIO:
+                                push(INTEGER(info->si_fd));
+                                call(&sigfns.items[i].f, NULL, 1, true);
+                                break;
+                        default:
+                                call(&sigfns.items[i].f, NULL, 0, true);
+                        }
                         return;
                 }
         }

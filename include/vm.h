@@ -5,6 +5,8 @@
 #include <stdarg.h>
 #include <stdnoreturn.h>
 
+#include <signal.h>
+
 #include "value.h"
 
 struct variable;
@@ -182,7 +184,7 @@ struct value
 vm_get_sigfn(int);
 
 void
-vm_do_signal(int);
+vm_do_signal(int, siginfo_t *, void *);
 
 bool
 vm_execute(char const *source);
