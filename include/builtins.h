@@ -47,7 +47,7 @@
 { .module = "math",   .name = "tan",               .value = BUILTIN(builtin_tan)                           },
 { .module = "math",   .name = "sqrt",              .value = BUILTIN(builtin_sqrt)                          },
 { .module = "math",   .name = "cbrt",              .value = BUILTIN(builtin_cbrt)                          },
-{ .module = "math",   .name = "PI",                .value = FLOAT(3.1415926535f)                           },
+{ .module = "math",   .name = "pi",                .value = FLOAT(3.1415926535f)                           },
 { .module = "bit",    .name = "AND",               .value = BUILTIN(builtin_bit_and)                       },
 { .module = "bit",    .name = "OR",                .value = BUILTIN(builtin_bit_or)                        },
 { .module = "bit",    .name = "XOR",               .value = BUILTIN(builtin_bit_xor)                       },
