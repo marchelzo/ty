@@ -241,6 +241,15 @@ struct value
 builtin_os_poll(int argc);
 
 struct value
+builtin_os_epoll_create(int argc);
+
+struct value
+builtin_os_epoll_ctl(int argc);
+
+struct value
+builtin_os_epoll_wait(int argc);
+
+struct value
 builtin_os_getaddrinfo(int argc);
 
 struct value

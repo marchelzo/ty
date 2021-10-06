@@ -23,6 +23,7 @@
 #include <sys/mman.h>
 #include <openssl/md5.h>
 #include <utf8proc.h>
+#include <sys/epoll.h>
 
 #include "tags.h"
 #include "value.h"
@@ -1710,88 +1711,88 @@ builtin_os_accept(int argc)
         return ARRAY(result);
 }
 
-struct value
+        struct value
 builtin_os_recvfrom(int argc)
 {
-	ASSERT_ARGC_2("os::recvfrom()", 3, 4);
+        ASSERT_ARGC_2("os::recvfrom()", 3, 4);
 
-	struct value fd = ARG(0);
-	if (fd.type != VALUE_INTEGER)
-		vm_panic("the first argument to os::recvfrom() must be an integer");
+        struct value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::recvfrom() must be an integer");
 
-	struct value buffer;
-	struct value size;
-	struct value flags;
+        struct value buffer;
+        struct value size;
+        struct value flags;
 
-	if (argc == 3) {
-		buffer = BLOB(value_blob_new());
-		size = ARG(1);
-		flags = ARG(2);
-	} else {
-		buffer = ARG(1);
-		size = ARG(2);
-		flags = ARG(3);
-	}
+        if (argc == 3) {
+                buffer = BLOB(value_blob_new());
+                size = ARG(1);
+                flags = ARG(2);
+        } else {
+                buffer = ARG(1);
+                size = ARG(2);
+                flags = ARG(3);
+        }
 
-	if (buffer.type != VALUE_BLOB)
-		vm_panic("the buffer argument to os::recvfrom() must be a blob");
+        if (buffer.type != VALUE_BLOB)
+                vm_panic("the buffer argument to os::recvfrom() must be a blob");
 
-	if (size.type != VALUE_INTEGER || size.integer < 0)
-		vm_panic("the size argument to os::recvfrom() must be a non-negative integer");
+        if (size.type != VALUE_INTEGER || size.integer < 0)
+                vm_panic("the size argument to os::recvfrom() must be a non-negative integer");
 
-	if (flags.type != VALUE_INTEGER)
-		vm_panic("the flags argument to os::recvfrom() must be an integer");
+        if (flags.type != VALUE_INTEGER)
+                vm_panic("the flags argument to os::recvfrom() must be an integer");
 
-	vec_reserve(*buffer.blob, size.integer);
+        vec_reserve(*buffer.blob, size.integer);
 
-	struct sockaddr_storage addr;
-	socklen_t addr_size = sizeof addr;
+        struct sockaddr_storage addr;
+        socklen_t addr_size = sizeof addr;
 
-	ssize_t r = recvfrom(fd.integer, buffer.blob->items, size.integer, flags.integer, (void *)&addr, &addr_size);
-	if (r < 0)
-		return NIL;
+        ssize_t r = recvfrom(fd.integer, buffer.blob->items, size.integer, flags.integer, (void *)&addr, &addr_size);
+        if (r < 0)
+                return NIL;
 
-	buffer.blob->count = r;
+        buffer.blob->count = r;
 
-	struct array *result = value_array_new();
-	value_array_push(result, INTEGER(r));
-	value_array_push(result, buffer);
+        struct array *result = value_array_new();
+        value_array_push(result, INTEGER(r));
+        value_array_push(result, buffer);
 
-	struct blob *b = value_blob_new();
-	vec_push_n(*b, &addr, min(addr_size, sizeof addr));
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, &addr, min(addr_size, sizeof addr));
 
-	value_array_push(result, BLOB(b));
+        value_array_push(result, BLOB(b));
 
-	return ARRAY(result);
+        return ARRAY(result);
 }
 
-struct value
+        struct value
 builtin_os_sendto(int argc)
 {
-	ASSERT_ARGC_2("os::sendto()", 3, 4);
+        ASSERT_ARGC_2("os::sendto()", 3, 4);
 
-	struct value fd = ARG(0);
-	if (fd.type != VALUE_INTEGER)
-		vm_panic("the first argument to os::sendto() must be an integer (fd)");
+        struct value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os::sendto() must be an integer (fd)");
 
-	struct value buffer = ARG(1);
-	if (buffer.type != VALUE_BLOB)
-		vm_panic("the second argument to os::sendto() must be a blob");
+        struct value buffer = ARG(1);
+        if (buffer.type != VALUE_BLOB)
+                vm_panic("the second argument to os::sendto() must be a blob");
 
-	struct value flags = ARG(2);
-	if (flags.type != VALUE_INTEGER)
-		vm_panic("the third argument to os::sendto() must be an integer (flags)");
+        struct value flags = ARG(2);
+        if (flags.type != VALUE_INTEGER)
+                vm_panic("the third argument to os::sendto() must be an integer (flags)");
 
-	struct value addr = ARG(3);
-	if (addr.type != VALUE_BLOB)
-		vm_panic("the fourth argument to os::sendto() must be a blob (sockaddr)");
+        struct value addr = ARG(3);
+        if (addr.type != VALUE_BLOB)
+                vm_panic("the fourth argument to os::sendto() must be a blob (sockaddr)");
 
-	ssize_t r = sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count);
+        ssize_t r = sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count);
 
-	return r < 0 ? NIL : INTEGER(r);
+        return r < 0 ? NIL : INTEGER(r);
 }
 
-struct value
+        struct value
 builtin_os_poll(int argc)
 {
         ASSERT_ARGC("os::poll()", 2);
@@ -1835,6 +1836,83 @@ builtin_os_poll(int argc)
                 dict_put_member(fds.array->items[i].dict, "revents", INTEGER(pfds.items[i].revents));
 
         return INTEGER(ret);
+}
+
+        struct value
+builtin_os_epoll_create(int argc)
+{
+        ASSERT_ARGC("os.epoll_create()", 1);
+
+        struct value flags = ARG(0);
+        if (flags.type != VALUE_INTEGER)
+                vm_panic("the argument to os.epoll_create() must be an integer");
+
+        return INTEGER(epoll_create1(flags.integer));
+}
+
+        struct value
+builtin_os_epoll_ctl(int argc)
+{
+        ASSERT_ARGC("os.epoll_ctl()", 4);
+
+        struct value efd = ARG(0);
+        if (efd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os.epoll_ctl() must be an integer");
+
+        struct value op = ARG(1);
+        if (op.type != VALUE_INTEGER)
+                vm_panic("the second argument to os.epoll_ctl() must be an integer");
+
+        struct value fd = ARG(2);
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the third argument to os.epoll_ctl() must be an integer");
+
+        struct value events = ARG(3);
+        if (events.type != VALUE_INTEGER)
+                vm_panic("the fourth argument to os.epoll_ctl() must be an integer");
+
+        struct epoll_event ev;
+        ev.events = events.integer;
+        ev.data.fd = fd.integer;
+
+        return INTEGER(epoll_ctl(efd.integer, op.integer, fd.integer, &ev));
+}
+
+        struct value
+builtin_os_epoll_wait(int argc)
+{
+        ASSERT_ARGC("os.epoll_wait()", 2);
+
+        struct value efd = ARG(0);
+        if (efd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os.epoll_wait() must be an integer (epoll fd)");
+
+        struct value timeout = ARG(1);
+        if (timeout.type != VALUE_INTEGER)
+                vm_panic("the second argument to os.epoll_wait() must be an integer (timeout in ms)");
+
+        struct epoll_event events[16];
+        int n = epoll_wait(efd.integer, events, 16, timeout.integer);
+
+        if (n == -1)
+                return NIL;
+
+        struct array *result = value_array_new();
+
+        gc_push(&ARRAY(result));
+
+        for (int i = 0; i < n; ++i) {
+                struct array *ev = value_array_new();
+                NOGC(ev);
+                value_array_push(ev, INTEGER(events[i].data.fd));
+                value_array_push(ev, INTEGER(events[i].events));
+                value_array_push(result, ARRAY(ev));
+                OKGC(ev);
+        }
+
+        gc_pop();
+
+        return ARRAY(result);
 }
 
 struct value

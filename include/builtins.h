@@ -120,6 +120,16 @@
 #ifdef WIFCONTINUED
 { .module = "os",     .name = "WIFCONTINUED",      .value = BUILTIN(builtin_os_WIFCONTINUED)               },
 #endif
+{ .module = "os",     .name = "epoll_create",      .value = BUILTIN(builtin_os_epoll_create)               },
+{ .module = "os",     .name = "epoll_ctl",         .value = BUILTIN(builtin_os_epoll_ctl)                  },
+{ .module = "os",     .name = "epoll_wait",        .value = BUILTIN(builtin_os_epoll_wait)                 },
+{ .module = "os",     .name = "EPOLL_CTL_ADD",     .value = INT(EPOLL_CTL_ADD)                             },
+{ .module = "os",     .name = "EPOLL_CTL_DEL",     .value = INT(EPOLL_CTL_DEL)                             },
+{ .module = "os",     .name = "EPOLL_CTL_MOD",     .value = INT(EPOLL_CTL_MOD)                             },
+{ .module = "os",     .name = "EPOLLIN",           .value = INT(EPOLLIN)                                   },
+{ .module = "os",     .name = "EPOLLET",           .value = INT(EPOLLET)                                   },
+{ .module = "os",     .name = "EPOLLOUT",          .value = INT(EPOLLOUT)                                  },
+{ .module = "os",     .name = "EPOLLHUP",          .value = INT(EPOLLHUP)                                  },
 { .module = "os",     .name = "recvfrom",          .value = BUILTIN(builtin_os_recvfrom)                   },
 { .module = "os",     .name = "sendto",            .value = BUILTIN(builtin_os_sendto)                     },
 { .module = "os",     .name = "connect",           .value = BUILTIN(builtin_os_connect)                    },
