@@ -1456,6 +1456,64 @@ builtin_os_socket(int argc)
 }
 
 struct value
+builtin_os_setsockopt(int argc)
+{
+        ASSERT_ARGC_2("os.setsockopt()", 3, 4);
+
+        struct value sock = ARG(0);
+        if (sock.type != VALUE_INTEGER)
+                vm_panic("the first argument to os.setsockopt() must be an integer (socket fd)");
+
+        struct value level = ARG(1);
+        if (level.type != VALUE_INTEGER)
+                vm_panic("the second argument to os.setsockopt() must be an integer (level)");
+
+        struct value option = ARG(2);
+        if (level.type != VALUE_INTEGER)
+                vm_panic("the third argument to os.setsockopt() must be an integer (option)");
+
+        int o;
+
+        if (argc == 4) {
+                struct value v = ARG(3);
+                if (v.type != VALUE_INTEGER)
+                        vm_panic("the fourth argument to os.setsockopt() must be an integer (opt value)");
+                o = v.integer;
+        } else {
+                o = 1;
+        }
+        
+        return INTEGER(setsockopt(sock.integer, level.integer, option.integer, &o, sizeof o));
+}
+
+struct value
+builtin_os_getsockopt(int argc)
+{
+        ASSERT_ARGC("os.getsockopt()", 3);
+
+        struct value sock = ARG(0);
+        if (sock.type != VALUE_INTEGER)
+                vm_panic("the first argument to os.getsockopt() must be an integer (socket fd)");
+
+        struct value level = ARG(1);
+        if (level.type != VALUE_INTEGER)
+                vm_panic("the second argument to os.getsockopt() must be an integer (level)");
+
+        struct value option = ARG(2);
+        if (level.type != VALUE_INTEGER)
+                vm_panic("the third argument to os.getsockopt() must be an integer (option)");
+
+        int o;
+        socklen_t n = sizeof o;
+
+        if (getsockopt(sock.integer, level.integer, option.integer, &o, &n) == 0) {
+                return INTEGER(o);
+        } else {
+                return NIL;
+        }
+}
+
+struct value
 builtin_os_shutdown(int argc)
 {
         ASSERT_ARGC("os::shutdown()", 2);
@@ -1711,7 +1769,7 @@ builtin_os_accept(int argc)
         return ARRAY(result);
 }
 
-        struct value
+struct value
 builtin_os_recvfrom(int argc)
 {
         ASSERT_ARGC_2("os::recvfrom()", 3, 4);
@@ -1755,7 +1813,6 @@ builtin_os_recvfrom(int argc)
         buffer.blob->count = r;
 
         struct array *result = value_array_new();
-        value_array_push(result, INTEGER(r));
         value_array_push(result, buffer);
 
         struct blob *b = value_blob_new();
@@ -1766,7 +1823,7 @@ builtin_os_recvfrom(int argc)
         return ARRAY(result);
 }
 
-        struct value
+struct value
 builtin_os_sendto(int argc)
 {
         ASSERT_ARGC_2("os::sendto()", 3, 4);
@@ -1792,7 +1849,7 @@ builtin_os_sendto(int argc)
         return r < 0 ? NIL : INTEGER(r);
 }
 
-        struct value
+struct value
 builtin_os_poll(int argc)
 {
         ASSERT_ARGC("os::poll()", 2);
@@ -1838,7 +1895,7 @@ builtin_os_poll(int argc)
         return INTEGER(ret);
 }
 
-        struct value
+struct value
 builtin_os_epoll_create(int argc)
 {
         ASSERT_ARGC("os.epoll_create()", 1);
@@ -1850,7 +1907,7 @@ builtin_os_epoll_create(int argc)
         return INTEGER(epoll_create1(flags.integer));
 }
 
-        struct value
+struct value
 builtin_os_epoll_ctl(int argc)
 {
         ASSERT_ARGC("os.epoll_ctl()", 4);
@@ -1878,7 +1935,7 @@ builtin_os_epoll_ctl(int argc)
         return INTEGER(epoll_ctl(efd.integer, op.integer, fd.integer, &ev));
 }
 
-        struct value
+struct value
 builtin_os_epoll_wait(int argc)
 {
         ASSERT_ARGC("os.epoll_wait()", 2);

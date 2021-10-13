@@ -259,6 +259,12 @@ struct value
 builtin_os_socket(int argc);
 
 struct value
+builtin_os_setsockopt(int argc);
+
+struct value
+builtin_os_getsockopt(int argc);
+
+struct value
 builtin_os_listen(int argc);
 
 struct value
