@@ -896,12 +896,14 @@ Throw:
                         v.type = VALUE_GENERATOR;
                         v.tags = 0;
                         v.gen = gc_alloc_object(sizeof *v.gen, GC_GENERATOR);
+                        NOGC(v.gen);
                         v.gen->ip = ip;
                         v.gen->f = vec_last(frames)->f;
                         n = stack.count - vec_last(frames)->fp;
                         vec_init(v.gen->frame);
                         vec_push_n(v.gen->frame, stack.items + stack.count - n, n);
                         push(v);
+                        OKGC(v.gen);
                         goto Return;
                 CASE(FUCK)
                 CASE(FUCK2)

@@ -1,5 +1,6 @@
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+#define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
 
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
@@ -251,7 +252,7 @@
 #ifdef CLOCK_MONOTONIC_RAW
 { .module = "time",   .name = "CLOCK_MONOTONIC_RAW",    .value = INT(CLOCK_MONOTONIC_RAW)                            },
 #endif
-{ .module = "ptr",    .name = "null",              .value = PTR(NULL)                                      },
+{ .module = "ptr",    .name = "null",              .value = POINTER(NULL)                                  },
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
 { .module = "gumbo",  .name = "parse",             .value = BUILTIN(html_parse)                            },
@@ -263,9 +264,9 @@
 { .module = "curl/core",  .name = "setopt",            .value = BUILTIN(builtin_curl_setopt)                   },
 { .module = "curl/core",  .name = "perform",           .value = BUILTIN(builtin_curl_perform)                  },
 { .module = "curl/core",  .name = "strerror",          .value = BUILTIN(builtin_curl_strerror)                 },
-{ .module = "curl/core",  .name = "CURLOPT_URL",       .value = INTEGER(CURLOPT_URL)                           },
-{ .module = "curl/core",  .name = "CURLOPT_MIMEPOST",  .value = INTEGER(CURLOPT_MIMEPOST)                      },
-{ .module = "curl/core",  .name = "CURLOPT_POST",      .value = INTEGER(CURLOPT_POST)                          },
+{ .module = "curl/core",  .name = "CURLOPT_URL",       .value = INT(CURLOPT_URL)                               },
+{ .module = "curl/core",  .name = "CURLOPT_MIMEPOST",  .value = INT(CURLOPT_MIMEPOST)                          },
+{ .module = "curl/core",  .name = "CURLOPT_POST",      .value = INT(CURLOPT_POST)                              },
 { .module = "curl/mime",  .name = "init",              .value = BUILTIN(builtin_curl_mime)                     },
 { .module = "curl/mime",  .name = "add",               .value = BUILTIN(builtin_curl_mime_add)                 },
 { .module = "curl/mime",  .name = "data",              .value = BUILTIN(builtin_curl_mime_data)                },
