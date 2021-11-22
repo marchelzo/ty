@@ -38,9 +38,9 @@ ifdef RELEASE
         CFLAGS += -DTY_RELEASE
 else ifdef DEBUG
         CFLAGS += -O0
-        #CFLAGS += -fsanitize=undefined
-        #CFLAGS += -fsanitize=address
-        #CFLAGS += -fsanitize=leak
+        CFLAGS += -fsanitize=undefined
+        CFLAGS += -fsanitize=address
+        CFLAGS += -fsanitize=leak
         CFLAGS += -ggdb3
 else
         CFLAGS += -Og

@@ -41,6 +41,21 @@ min(intmax_t a, intmax_t b)
 }
 
 char *
+sclone_malloc(char const *s)
+{
+        size_t n = strlen(s);
+        char *new = malloc(n + 1);
+
+        if (new == NULL) {
+                panic("out of memory");
+        }
+
+        memcpy(new, s, n + 1);
+
+        return new;
+}
+
+char *
 sclone(char const *s)
 {
         size_t n = strlen(s);

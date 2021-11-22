@@ -196,3 +196,20 @@ scope_symbol_name(int s)
 {
         return names.items[s];
 }
+
+int
+scope_get_completions(struct scope *scope, char const *prefix, char **out, int max)
+{
+        int n = 0;
+        int prefix_len = strlen(prefix);
+
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (struct symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
+                        if (n < max && sym->public && strncmp(sym->identifier, prefix, prefix_len) == 0) {
+                                out[n++] = sclone_malloc(sym->identifier);
+                        }
+                }
+        }
+
+        return n;
+}

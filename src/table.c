@@ -84,3 +84,20 @@ table_release(struct table *t)
                 gc_free(t->buckets[i].hashes.items);
         }
 }
+
+int
+table_get_completions(struct table const *t, char const *prefix, char **out, int max)
+{
+        int n = 0;
+        int prefix_len = strlen(prefix);
+
+        for (int i = 0; i < TABLE_SIZE; ++i) {
+                for (int j = 0; j < t->buckets[i].names.count; ++j) {
+                        if (n < max && strncmp(t->buckets[i].names.items[j], prefix, prefix_len) == 0) {
+                                out[n++] = sclone_malloc(t->buckets[i].names.items[j]);
+                        }
+                }
+        }
+
+        return n;
+}

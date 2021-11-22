@@ -74,4 +74,7 @@ scope_set_symbol(int s);
 char const *
 scope_symbol_name(int s);
 
+int
+scope_get_completions(struct scope *scope, char const *prefix, char **out, int max);
+
 #endif

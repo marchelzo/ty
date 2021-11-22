@@ -11,14 +11,26 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
+#include <pcre.h>
+
 #include "vm.h"
 #include "gc.h"
 #include "value.h"
 #include "sqlite.h"
 #include "util.h"
+#include "table.h"
+#include "compiler.h"
+#include "class.h"
+#include "blob.h"
+#include "str.h"
+#include "dict.h"
+#include "array.h"
+
+#define MAX_COMPLETIONS 200
 
 static bool use_readline = true;
 static char buffer[8192];
+static char *completions[MAX_COMPLETIONS + 1];
 
 static char *
 readln(void)
@@ -80,6 +92,86 @@ repl(void)
         exit(EXIT_SUCCESS);
 }
 
+static char *
+clone(char const *s)
+{
+        char *new = malloc(strlen(s) + 1);
+        strcpy(new, s);
+        return new;
+}
+
+char *
+completion_generator(char const *text, int state)
+{
+        return completions[state];
+}
+
+static char **
+complete(char const *s, int start, int end)
+{
+        rl_completion_append_character = '\0';
+
+        if (start == 0 || rl_line_buffer[start - 1] != '.') {
+                int n = compiler_get_completions(NULL, s, completions, 99);
+                if (n == 0) {
+                        return NULL;
+                } else {
+                        completions[n] = NULL;
+                        return rl_completion_matches(s, completion_generator);
+                }
+        }
+
+        int before_len = start - 1;
+
+        char before[500] = {0};
+        memcpy(before + 1, rl_line_buffer, before_len);
+        before[1 + before_len] = 0;
+
+        int n = 0;
+
+        /*
+         * First check if it's a module name, otherwise treat it as an expression that
+         * will evaluate to an object and then complete its members.
+         */
+        if (compiler_has_module(before + 1)) {
+                n = compiler_get_completions(before + 1, s, completions, MAX_COMPLETIONS);
+        } else {
+                vm_execute(before + 1);
+
+                struct value *v = vm_get(-1);
+
+                switch (v->type) {
+                case VALUE_OBJECT:
+                        n += class_get_completions(v->class, s, completions, MAX_COMPLETIONS);
+                        n += table_get_completions(v->object, s, completions + n, MAX_COMPLETIONS - n);
+                        break;
+                case VALUE_ARRAY:
+                        n += array_get_completions(s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(CLASS_ARRAY, s, completions, MAX_COMPLETIONS - n);
+                        break;
+                case VALUE_DICT:
+                        n += dict_get_completions(s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(CLASS_DICT, s, completions, MAX_COMPLETIONS - n);
+                        break;
+                case VALUE_STRING:
+                        n += string_get_completions(s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(CLASS_STRING, s, completions, MAX_COMPLETIONS - n);
+                        break;
+                case VALUE_BLOB:
+                        n += blob_get_completions(s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(CLASS_BLOB, s, completions, MAX_COMPLETIONS - n);
+                        break;
+                }
+        }
+
+        if (n == 0) {
+                return NULL;
+        } else {
+                completions[n] = NULL;
+                return rl_completion_matches(s, completion_generator);
+        }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -89,6 +181,11 @@ main(int argc, char **argv)
         use_readline = isatty(0) && argc < 2;
 
         sqlite_load();
+
+        if (use_readline) {
+                rl_attempted_completion_function = complete;
+                rl_basic_word_break_characters = ".\t\n\r ";
+        }
 
         if (argc <= 1)
                 repl();

@@ -98,3 +98,13 @@ class_is_subclass(int sub, int super)
 
         return false;
 }
+
+int
+class_get_completions(int class, char const *prefix, char **out, int max)
+{
+        if (class == -1)
+                return 0;
+
+        int n = table_get_completions(&tables.items[class], prefix, out, max);
+        return n + class_get_completions(supers.items[class], prefix, out + n, max - n);
+}

@@ -39,4 +39,7 @@ class_set_super(int class, int super);
 bool
 class_is_subclass(int sub, int super);
 
+int
+class_get_completions(int class, char const *prefix, char **out, int max);
+
 #endif

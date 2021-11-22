@@ -42,6 +42,9 @@ table_look(struct table const *t, char const *name)
         return table_lookup(t, name, strhash(name));
 }
 
+int
+table_get_completions(struct table const *t, char const *prefix, char **out, int max);
+
 void
 table_release(struct table *t);
 

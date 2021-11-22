@@ -3814,3 +3814,67 @@ compiler_get_location(char const *code, struct location *start, struct location 
 
         return locs->items[lo].filename;
 }
+
+static bool
+module_match(char const *path, char const *id)
+{
+        int i = 0;
+
+        while (id[i] != '\0' && (id[i] == path[i] || (id[i] == '.' && path[i] == '/'))) {
+                i += 1;
+        }
+
+        return id[i] == path[i];
+}
+
+/*
+ * If we pass 'math.ve', it matches 'math/vector', and we return a pointer into
+ * the path here: 'math/vector'
+ *                      ^
+ */
+static char const *
+module_prefix(char const *path, char const *id)
+{
+        char const *last_slash = strrchr(path, '/');
+        char const *start = last_slash == NULL ? path : last_slash + 1;
+
+        if (strncmp(path, id, strlen(id)) == 0) {
+                return start;
+        } else {
+                return NULL;
+        }
+}
+
+int
+compiler_get_completions(char const *mod, char const *prefix, char **out, int max)
+{
+        int n = 0;
+
+        for (int i = 0; i < modules.count; ++i) {
+
+        }
+
+        if (mod == NULL) {
+                n += scope_get_completions(state.global, prefix, out + n, max - n);
+                n += scope_get_completions(global, prefix, out + n, max - n);
+                return n;
+        }
+
+        for (int i = 0; i < modules.count; ++i) {
+                if (module_match(modules.items[i].path, mod)) {
+                        return n + scope_get_completions(modules.items[i].scope, prefix, out + n, max - n);
+                }
+        }
+}
+
+bool
+compiler_has_module(char const *name)
+{
+        for (int i = 0; i < modules.count; ++i) {
+                if (module_match(modules.items[i].path, name)) {
+                        return true;
+                }
+        }
+
+        return false;
+}

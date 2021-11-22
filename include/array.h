@@ -5,4 +5,7 @@
 
 struct value (*get_array_method(char const *))(struct value *, int);
 
+int
+array_get_completions(char const *prefix, char **out, int max);
+
 #endif

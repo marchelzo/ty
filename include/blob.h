@@ -5,4 +5,7 @@
 
 struct value (*get_blob_method(char const *))(struct value *, int);
 
+int
+blob_get_completions(char const *prefix, char **out, int max);
+
 #endif

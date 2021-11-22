@@ -38,6 +38,9 @@ min(intmax_t a, intmax_t b);
 char *
 sclone(char const *s);
 
+char *
+sclone_malloc(char const *s);
+
 bool
 contains(char const *s, char c);
 

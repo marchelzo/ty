@@ -50,4 +50,7 @@ dict_free(struct dict *obj);
 
 struct value (*get_dict_method(char const *))(struct value *, int);
 
+int
+dict_get_completions(char const *prefix, char **out, int max);
+
 #endif

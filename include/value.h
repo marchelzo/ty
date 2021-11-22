@@ -85,6 +85,22 @@ struct value;
                 return NULL; \
         }
 
+#define DEFINE_METHOD_COMPLETER(type) \
+        int \
+        type ## _get_completions(char const *prefix, char **out, int max) \
+        { \
+                int n = 0; \
+                int len = strlen(prefix); \
+\
+                for (int i = 0; i < nfuncs; ++i) { \
+                        if (n < max && strncmp(funcs[i].name, prefix, len) == 0) { \
+                                out[n++] = sclone_malloc(funcs[i].name); \
+                        } \
+                } \
+\
+                return n; \
+        }
+
 #define ARG(i) (*vm_get(argc - 1 - (i)))
 
 #define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
