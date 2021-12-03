@@ -1116,8 +1116,10 @@ Throw:
                         v = STRING(str, k);
                         k = 0;
                         for (i = stack.count - n; i < stack.count; ++i) {
-                                memcpy(str + k, stack.items[i].string, stack.items[i].bytes);
-                                k += stack.items[i].bytes;
+                                if (stack.items[i].bytes > 0) {
+                                        memcpy(str + k, stack.items[i].string, stack.items[i].bytes);
+                                        k += stack.items[i].bytes;
+                                }
                         }
                         stack.count -= n - 1;
                         stack.items[stack.count - 1] = v;

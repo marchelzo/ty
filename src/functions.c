@@ -1801,24 +1801,34 @@ builtin_os_recvfrom(int argc)
         if (flags.type != VALUE_INTEGER)
                 vm_panic("the flags argument to os::recvfrom() must be an integer");
 
+		NOGC(buffer.blob);
+
         vec_reserve(*buffer.blob, size.integer);
 
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
         ssize_t r = recvfrom(fd.integer, buffer.blob->items, size.integer, flags.integer, (void *)&addr, &addr_size);
-        if (r < 0)
+        if (r < 0) {
+                OKGC(buffer.blob);
                 return NIL;
+		}
 
         buffer.blob->count = r;
 
         struct array *result = value_array_new();
+        NOGC(result);
         value_array_push(result, buffer);
 
         struct blob *b = value_blob_new();
+        NOGC(b);
         vec_push_n(*b, &addr, min(addr_size, sizeof addr));
 
         value_array_push(result, BLOB(b));
+
+        OKGC(b);
+        OKGC(result);
+        OKGC(buffer.blob);
 
         return ARRAY(result);
 }
