@@ -1564,15 +1564,18 @@ infix_list(struct expression *left)
 static struct expression *
 infix_subscript(struct expression *left)
 {
-        consume('[');
 
         struct expression *e = mkexpr();
+
+        consume('[');
+
         e->type = EXPRESSION_SUBSCRIPT;
         e->container = left;
         e->subscript = parse_expr(0);
-        e->end = End;
 
         consume(']');
+
+        e->end = End;
 
         return e;
 }
@@ -1616,10 +1619,18 @@ infix_member_access(struct expression *left)
 
         setctx(LEX_PREFIX);
 
-        if (tok()->type == ')')
+        if (tok()->type == ')') {
                 goto End;
-        else
+        } else if (tok()->type == TOKEN_STAR) {
+                next();
+                struct expression *arg = mkexpr();
+                arg->type = EXPRESSION_SPREAD;
+                arg->value = parse_expr(0);
+                arg->start = arg->value->start;
+                vec_push(e->method_args, arg);
+        } else {
                 vec_push(e->method_args, parse_expr(0));
+        }
 
         while (tok()->type == ',') {
                 next();

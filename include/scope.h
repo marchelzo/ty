@@ -36,6 +36,7 @@ struct scope {
 
         vec(struct symbol *) owned;
         vec(struct symbol *) captured;
+        vec(int) cap_indices;
 
         struct scope *parent;
         struct scope *function;
@@ -47,8 +48,8 @@ scope_new(struct scope *parent, bool function);
 struct symbol *
 scope_add(struct scope *s, char const *id);
 
-void
-scope_capture(struct scope *s, struct symbol *sym);
+int
+scope_capture(struct scope *s, struct symbol *sym, int parent_index);
 
 bool
 scope_locally_defined(struct scope const *s, char const *id);

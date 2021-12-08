@@ -36,6 +36,7 @@ scope_new(struct scope *parent, bool is_function)
 
         vec_init(s->owned);
         vec_init(s->captured);
+        vec_init(s->cap_indices);
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i)
                 s->table[i] = NULL;
@@ -43,18 +44,21 @@ scope_new(struct scope *parent, bool is_function)
         return s;
 }
 
-void
-scope_capture(struct scope *s, struct symbol *sym)
+int
+scope_capture(struct scope *s, struct symbol *sym, int parent_index)
 {
-                sym->captured = true;
-
                 for (int i = 0; i < s->captured.count; ++i) {
                         if (s->captured.items[i] == sym) {
-                                return;
+                                return i;
                         }
                 }
 
+                sym->captured = true;
+
                 vec_push(s->captured, sym);
+                vec_push(s->cap_indices, parent_index);
+
+                return s->captured.count - 1;
 }
 
 struct symbol *
@@ -77,7 +81,20 @@ scope_lookup(struct scope const *s, char const *id)
         }
 
         if (sym->scope->function != s->function && !sym->global) {
-                scope_capture(s->function, sym);
+                vec(struct scope *) scopes = {0};
+
+                struct scope *scope = s->function;
+
+                while (scope->parent->function != sym->scope->function) {
+                        vec_push(scopes, scope);
+                        scope = scope->parent->function;
+                }
+
+                int parent_index = scope_capture(scope, sym, -1);
+
+                for (int i = scopes.count - 1; i >= 0; --i) {
+                        parent_index = scope_capture(scopes.items[i], sym, parent_index);
+                }
         }
 
         return sym;

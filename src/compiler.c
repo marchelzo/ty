@@ -1350,15 +1350,22 @@ emit_function(struct expression const *e, int class)
         state.fscope = e->scope;
 
         struct symbol **caps = e->scope->captured.items;
+        int *cap_indices = e->scope->cap_indices.items;
         int ncaps = e->scope->captured.count;
 
-        for (int i = 0; i < ncaps; ++i) {
-                /*
-                 * Don't call emit_tgt because despite these being captured,
-                 * we need to use TARGET_LOCAL to avoid following the reference.
-                 */
-                emit_instr(INSTR_TARGET_LOCAL);
-                emit_int(caps[ncaps - (i + 1)]->i);
+        for (int i = ncaps - 1; i >= 0; --i) {
+                if (cap_indices[i] == -1) {
+                        /*
+                         * Don't call emit_tgt because despite these being captured,
+                         * we need to use TARGET_LOCAL to avoid following the reference.
+                         */
+                        emit_instr(INSTR_TARGET_LOCAL);
+                        emit_int(caps[i]->i);
+                } else {
+                        // FIXME: should just use same allocated variable
+                        emit_instr(INSTR_TARGET_CAPTURED);
+                        emit_int(cap_indices[i]);
+                }
         }
 
         emit_instr(INSTR_FUNCTION);

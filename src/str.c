@@ -22,6 +22,24 @@ stringcount(char const *s, int byte_lim, int grapheme_lim)
         utf8_stringcount(s, byte_lim, &outpos, &limitpos);
 }
 
+inline static int
+stringwidth(char const *s, int byte_lim)
+{
+        int width = 0;
+        limitpos.graphemes = -1;
+
+        while (byte_lim > 0) {
+                limitpos.bytes = byte_lim;
+                utf8_stringcount(s, byte_lim, &outpos, &limitpos);
+                int n = max(1, outpos.bytes);
+                byte_lim -= n;
+                s += n;
+                width += outpos.graphemes;
+        }
+
+        return width;
+}
+
 inline static bool
 is_prefix(char const *big, int blen, char const *small, int slen)
 {
@@ -977,9 +995,7 @@ string_pad_left(struct value *string, int argc)
         if (len.type != VALUE_INTEGER)
                 vm_panic("the first argument to str.padLeft() must be an integer");
 
-        stringcount(string->string, string->bytes, -1);
-        int string_len = outpos.graphemes;
-
+        int string_len = stringwidth(string->string, string->bytes);
         if (string_len >= len.integer)
                 return *string;
 
@@ -1032,9 +1048,7 @@ string_pad_right(struct value *string, int argc)
         if (len.type != VALUE_INTEGER)
                 vm_panic("the first argument to str.padRight() must be an integer");
 
-        stringcount(string->string, string->bytes, -1);
-        int current = outpos.graphemes;
-
+        int current = stringwidth(string->string, string->bytes);
         if (current >= len.integer)
                 return *string;
 
