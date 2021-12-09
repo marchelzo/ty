@@ -398,7 +398,7 @@ value_compare(void const *_v1, void const *_v2)
                 vm_panic("attempt to compare values of different types");
 
         switch (v1->type) {
-        case VALUE_INTEGER: return (v1->integer - v2->integer); // TODO
+        case VALUE_INTEGER: return (v1->integer < v2->integer) ? -1 : (v1->integer != v2->integer);
         case VALUE_REAL:    return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
         case VALUE_STRING:;
                 int c = memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
