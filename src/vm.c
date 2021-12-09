@@ -545,8 +545,8 @@ vm_exec(char *code)
                                 pushtarget(table_add(v.object, str, h, NIL), v.object);
                         break;
                 CASE(TARGET_SUBSCRIPT)
-                        subscript = pop();
-                        container = pop();
+                        subscript = top()[0];
+                        container = top()[-1];
 
                         if (container.type == VALUE_ARRAY) {
                                 if (subscript.type != VALUE_INTEGER)
@@ -561,6 +561,10 @@ vm_exec(char *code)
                         } else {
                                 vm_panic("attempt to perform subscript assignment on something other than an object or array");
                         }
+
+                        pop();
+                        pop();
+
                         break;
                 CASE(ASSIGN)
                         *poptarget() = peek();
