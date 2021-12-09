@@ -444,6 +444,7 @@ value_truthy(struct value const *v)
         case VALUE_OBJECT:           return true;
         case VALUE_METHOD:           return true;
         case VALUE_TAG:              return true;
+        case VALUE_GENERATOR:        return true;
         case VALUE_PTR:              return v->ptr != NULL;
         default:                     return false;
         }
