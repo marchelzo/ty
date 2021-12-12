@@ -49,6 +49,14 @@ class Object {
         return subclass?(type(self), c);
     }
 
+    drill(path) {
+        let x = self;
+        for i in path {
+            x = x[i];
+        }
+        return x;
+    }
+
     members() {
         return members(self);
     }
@@ -135,6 +143,28 @@ class Array : Iterable {
         return xs;
     }
 
+    shape() {
+        let s = [];
+        let x = self;
+        while x :: Array {
+            s.push(#x);
+            x = x[0];
+        }
+        return s;
+    }
+
+    indices() {
+        for x, i in self {
+            if x :: Array {
+                for idx in x.indices() {
+                    yield if idx :: Array { [i] + idx } else { [i, idx] };
+                }
+            } else {
+                yield i;
+            }
+        }
+    }
+
     sorted?() {
         for i in 1..#self {
             if self[i - 1] > self[i] {
@@ -160,10 +190,18 @@ class Array : Iterable {
         return self;
     }
 
-    mean() {
+    mean(f = id) {
         return match self {
             [] => nil,
-            _  => self.map(float).sum() / self.len()
+            _  => self.map(f |> float).sum() / self.len()
+        };
+    }
+
+    median() {
+        return match self {
+            []                => nil,
+            xs : xs.sorted?() => xs[#xs / 2],
+            xs                => self.sort()[#self / 2]
         };
     }
 
@@ -171,6 +209,21 @@ class Array : Iterable {
         for x in self if x != nil {
             return x;
         }
+    }
+
+    argmax(f = id) {
+        if #self == 0 { return nil; }
+
+        let i, max = 0, f(self[0]);
+
+        for j in 1..#self {
+            let y = f(self[j]);
+            if y > max {
+                i, max = j, y;
+            }
+        }
+
+        return i;
     }
 
     __iter__() {
@@ -234,6 +287,14 @@ class String : Iterable {
         return self.match?(/^\d+(?:\.\d+)?$/);
     }
 
+    lower?() {
+        return self == self.lower();
+    }
+
+    upper?() {
+        return self == self.upper();
+    }
+
     searchr(pattern) {
         for (let off = self.len() - 1; off >= 0; --off) {
             if let $i = self.search(pattern, off) {
@@ -288,8 +349,32 @@ class Int {
         }
     }
 
+    negate() {
+        return -self;
+    }
+
+    sub(n) {
+        return self - n;
+    }
+
+    add(n) {
+        return self + n;
+    }
+
+    mul(n) {
+        return self * n;
+    }
+
     in?(r: Range) {
         return r ? self;
+    }
+
+    pred() {
+        return self - 1;
+    }
+
+    succ() {
+        return self + 1;
     }
 }
 
@@ -300,6 +385,22 @@ class Float {
 
     **(b: Int | Float) {
         return math.pow(self, b);
+    }
+
+    negate() {
+        return -self;
+    }
+
+    sub(n) {
+        return self - n;
+    }
+
+    add(n) {
+        return self + n;
+    }
+
+    mul(n) {
+        return self * n;
     }
 }
 
@@ -428,8 +529,20 @@ class Iterable {
         return self.__iter__().groupsOf(n, keepShort);
     }
 
+    pad(n, x) {
+        return self.__iter__().pad(n, x);
+    }
+
+    zip(*its) {
+        return self.__iter__().zip(*its);
+    }
+
     mean() {
         return self.__iter__().mean();
+    }
+
+    median() {
+        return self.__iter__().median();
     }
 
     sum() {
@@ -454,6 +567,10 @@ class Iterable {
 
     repeat(n) {
         return self.__iter__().repeat(n);
+    }
+
+    all?(pred) {
+        return self.__iter__().all?(pred);
     }
 
     __len__() {
@@ -511,6 +628,37 @@ class Iter : Iterable {
                 seen << y;
                 yield x;
             }
+        }
+    }
+
+    zip(*its) {
+        its.map!(&__iter__);
+        its.insert(0, self);
+        let stop = false;
+        while !stop {
+            let group = [];
+            for it in its {
+                if !let $x = it.__next__() {
+                    stop = true;
+                    break;
+                }
+                group.push(x);
+            }
+            if !stop {
+                yield group;
+            }
+        }
+    }
+
+    pad(n, x) {
+        let i = 0;
+        for x in self {
+            yield x;
+            i += 1;
+        }
+        while i < n {
+            yield x;
+            i += 1;
         }
     }
 
@@ -758,6 +906,18 @@ class Iter : Iterable {
         return self.list().mean();
     }
 
+    median() {
+        return self.list().median();
+    }
+
+    all?(pred) {
+        for x in self {
+            if !pred(x) { return false; }
+        }
+
+        return true;
+    }
+
     __subscript__(i) {
         for _ in ..(i - 1) {
             if self.__next__() == nil { return nil; }
@@ -765,7 +925,7 @@ class Iter : Iterable {
         return self.__next__();
     }
 
-    __iter__() { return self.__iter__(); }
+    __iter__() { return self; }
 }
 
 class ReverseIter : Iter {
@@ -802,11 +962,11 @@ class Range : Iterable {
     }
 
     __str__() {
-	return "({self.a} .. {self.b})";
+        return "({self.a} .. {self.b})";
     }
 
     contains?(k) {
-	return self ? k;
+        return self ? k;
     }
 
     __match__(x) {
@@ -818,7 +978,7 @@ class Range : Iterable {
     }
 
     ?(k) {
-	return k >= self.low() && k <= self.high();
+        return k >= self.low() && k <= self.high();
     }
 
     __iter__() {
