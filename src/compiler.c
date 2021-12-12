@@ -1098,6 +1098,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(subscope, s->each.target, true);
                 symbolize_statement(subscope, s->each.body);
                 symbolize_expression(subscope, s->each.cond);
+                symbolize_expression(subscope, s->each.stop);
                 break;
         case STATEMENT_WHILE_LOOP:
                 symbolize_expression(scope, s->while_loop.cond);
@@ -2718,13 +2719,22 @@ emit_for_each2(struct statement const *s, bool want_result)
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, cond_fail);
         }
 
+        size_t should_stop = 0;
+        if (s->each.stop != NULL) {
+                emit_expression(s->each.stop);
+                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, should_stop);
+        }
+
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
 
         patch_jumps_to(&state.match_fails, state.code.count);
+
         emit_instr(INSTR_RESTORE_STACK_POS);
+
         if (s->each.cond != NULL)
                 PATCH_JUMP(cond_fail);
         emit_instr(INSTR_RESTORE_STACK_POS);
+
         JUMP(start);
 
         PATCH_JUMP(match);
@@ -2733,9 +2743,13 @@ emit_for_each2(struct statement const *s, bool want_result)
         emit_statement(s->each.body, false);
 
         JUMP(start);
-        PATCH_JUMP(done);
-        emit_instr(INSTR_RESTORE_STACK_POS);
 
+        if (s->each.stop != NULL)
+                PATCH_JUMP(should_stop);
+
+        PATCH_JUMP(done);
+
+        emit_instr(INSTR_RESTORE_STACK_POS);
         emit_instr(INSTR_POP);
         emit_instr(INSTR_POP);
 

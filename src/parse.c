@@ -2215,6 +2215,12 @@ parse_for_loop(void)
                 } else {
                         s->each.cond = NULL;
                 }
+                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_WHILE) {
+                        next();
+                        s->each.stop = parse_expr(0);
+                } else {
+                        s->each.stop = NULL;
+                }
                 s->each.body = parse_statement();
                 return s;
         }

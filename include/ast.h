@@ -78,6 +78,7 @@ struct statement {
                         struct expression *array;
                         struct statement *body;
                         struct expression *cond;
+                        struct expression *stop;
                         int_vector check;
                 } each;
                 struct {
