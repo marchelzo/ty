@@ -2689,7 +2689,6 @@ emit_for_each2(struct statement const *s, bool want_result)
         emit_int((int)s->each.target->es.count);
 
         emit_expression(s->each.array);
-        emit_instr(INSTR_FUCK);
 
         size_t start = state.code.count;
         emit_instr(INSTR_SAVE_STACK_POS);
