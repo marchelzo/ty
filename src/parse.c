@@ -962,7 +962,7 @@ prefix_parenthesis(void)
                 list->type = EXPRESSION_LIST;
                 vec_init(list->es);
                 vec_push(list->es, e);
-                e->end = tok()->end;
+                e->end = End;
 
                 while (tok()->type == ',') {
                         next();
