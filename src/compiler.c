@@ -910,6 +910,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         vec_push(e->param_symbols, addsymbol(scope, e->params.items[e->params.count]));
                 }
 
+                if (e->has_kwargs) {
+                        vec_push(e->param_symbols, addsymbol(scope, e->params.items[e->params.count + e->rest]));
+                }
+
                 /*
                  * This is trash.
                  */
@@ -1390,7 +1394,7 @@ emit_function(struct expression const *e, int class)
         emit_int(ncaps);
         emit_int(bound);
         emit_int(e->param_symbols.count);
-        emit_int(e->rest);
+        emit_int((e->rest << 1) + e->has_kwargs);
 
         emit_int(class);
 

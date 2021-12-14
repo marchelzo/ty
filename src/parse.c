@@ -642,6 +642,7 @@ prefix_function(void)
 {
         struct expression *e = mkexpr();
         e->rest = false;
+        e->has_kwargs = false;
         vec_init(e->params);
         vec_init(e->dflts);
         vec_init(e->constraints);
@@ -667,17 +668,22 @@ prefix_function(void)
         NoEquals = true;
 
         while (tok()->type != ')') {
-                bool rest = false;
-                if (tok()->type == TOKEN_STAR) {
-                        rest = true;
+                bool special = tok()->type == TOKEN_STAR;
+                if (special) {
                         next();
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                e->has_kwargs = true;
+                        } else {
+                                e->rest = true;
+                        }
                 }
 
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->params, tok()->identifier);
                 next();
 
-                if (!rest && tok()->type == ':') {
+                if (!special && tok()->type == ':') {
                         next();
                         vec_push(e->constraints, parse_expr(0));
                         (*vec_last(e->constraints))->end = End;
@@ -685,7 +691,7 @@ prefix_function(void)
                         vec_push(e->constraints, NULL);
                 }
 
-                if (!rest && tok()->type == TOKEN_EQ) {
+                if (!special && tok()->type == TOKEN_EQ) {
                         next();
                         vec_push(e->dflts, parse_expr(0));
                         (*vec_last(e->dflts))->end = End;
@@ -693,7 +699,7 @@ prefix_function(void)
                         vec_push(e->dflts, NULL);
                 }
 
-                if (rest) {
+                if (false && special) {
                         e->params.count -= 1;
                         e->rest = 1;
                         expect(')');
@@ -701,6 +707,8 @@ prefix_function(void)
                         next();
                 }
         }
+
+        e->params.count -= (e->rest + e->has_kwargs);
 
         NoEquals = ne;
 

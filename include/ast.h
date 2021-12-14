@@ -274,6 +274,7 @@ struct expression {
                         struct statement *body;
                         bool is_method;
                         bool rest;
+                        bool has_kwargs;
                 };
                 struct {
                         struct expression *function;

@@ -266,13 +266,11 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 {
         int bound = f->info[3];
         int np = f->info[4];
-        bool rest = f->info[5];
+        bool rest = f->info[5] & 2;
+        bool has_kwargs = f->info[5] & 1;
         int class = f->info[6];
         char *code = code_of(f);
         int argc = n;
-
-        if (self)
-                printf("self = %s\n", value_show(self));
 
         struct value kwargs = (nkw > 0) ? pop() : NIL;
 
@@ -297,13 +295,17 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 struct array *extra = value_array_new();
                 NOGC(extra);
 
-                for (int i = np - 1; i < argc; ++i) {
+                for (int i = np - 1 - has_kwargs; i < argc; ++i) {
                         value_array_push(extra, stack.items[fp + i]);
                         stack.items[fp + i] = NIL;
                 }
 
-                stack.items[fp + np - 1] = ARRAY(extra);
+                stack.items[fp + np - 1 - has_kwargs] = ARRAY(extra);
                 OKGC(extra);
+        }
+
+        if (has_kwargs) {
+                stack.items[fp + np - 1] = kwargs;
         }
 
         /*
@@ -331,7 +333,6 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                         name += strlen(name) + 1;
                         struct value *arg = dict_get_member(kwargs.dict, name);
                         if (arg != NULL) {
-                                printf("Setting arg %d ('%s') to '%s'\n", i, name, value_show(arg));
                                 *local(i) = *arg;
                         }
                 }
@@ -1734,7 +1735,6 @@ BadContainer:
                          */
                         if (nkw > 0) {
                 CallKwArgs:
-                                printf("Have %d kwargs\n", nkw);
                                 container = DICT(dict_new());
                                 NOGC(container.dict);
                                 for (int i = 0; i < nkw; ++i) {
@@ -1797,7 +1797,6 @@ BadContainer:
                                 }
                                 break;
                         case VALUE_METHOD:
-                                printf("Calling method.\n");
                                 call(v.method, v.this, n, nkw, false);
                                 break;
                         case VALUE_REGEX:
