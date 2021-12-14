@@ -255,8 +255,17 @@ class Dict : Iterable {
         return { k: f(v) for k, v in self };
     }
 
-    kmap(f) {
-        return { f(k): v for k, v in self };
+    kmap(f, combine) {
+        let new = {};
+        for k, v in self {
+            let key = f(k);
+            if new.has?(key) {
+                new[key] = combine(new[key], v);
+            } else {
+                new[key] = v;
+            }
+        }
+        return new;
     }
 
     __iter__() {
@@ -573,6 +582,10 @@ class Iterable {
         return self.__iter__().all?(pred);
     }
 
+    interleave(xs) {
+        return self.__iter__().interleave(xs);
+    }
+
     __len__() {
         return self.__iter__().__len__();
     }
@@ -732,6 +745,16 @@ class Iter : Iterable {
         }
 
         return n;
+    }
+
+    interleave(ys) {
+        ys = ys.__iter__();
+        for x in self {
+            yield x;
+            if let $y = ys.__next__() {
+                yield y;
+            }
+        }
     }
 
     list() {
