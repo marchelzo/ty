@@ -1210,6 +1210,7 @@ implicit_subscript(struct expression *o)
         struct expression *f = mkexpr();
         f->type = EXPRESSION_FUNCTION;
         f->rest = false;
+        f->has_kwargs = false;
         f->name = NULL;
         f->body = mkret(e);
 
@@ -1291,6 +1292,7 @@ prefix_implicit_method(void)
         struct expression *f = mkexpr();
         f->type = EXPRESSION_FUNCTION;
         f->rest = false;
+        f->has_kwargs = false;
         f->name = NULL;
         f->body = mkret(e);
 
@@ -1711,6 +1713,7 @@ infix_arrow_function(struct expression *left)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_FUNCTION;
         e->rest = false;
+        e->has_kwargs = false;
         e->name = NULL;
         vec_init(e->params);
         vec_init(e->dflts);
