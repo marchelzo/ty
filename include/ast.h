@@ -278,6 +278,8 @@ struct expression {
                 struct {
                         struct expression *function;
                         vec(struct expression *) args;
+                        vec(struct expression *) kwargs;
+                        vec(char *) kws;
                 };
                 struct {
                         struct symbol *dtmp;
@@ -301,6 +303,8 @@ struct expression {
                                 struct {
                                         char const *method_name;
                                         vec(struct expression *) method_args;
+                                        vec(struct expression *) method_kwargs;
+                                        vec(char *) method_kws;
                                 };
                         };
                         bool maybe;

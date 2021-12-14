@@ -1255,6 +1255,8 @@ prefix_implicit_method(void)
         e->object = o;
         e->method_name = tok()->identifier;
         vec_init(e->method_args);
+        vec_init(e->method_kwargs);
+        vec_init(e->method_kws);
 
         next();
 
@@ -1434,6 +1436,8 @@ infix_function_call(struct expression *left)
         e->function = left;
         e->start = left->start;
         vec_init(e->args);
+        vec_init(e->kws);
+        vec_init(e->kwargs);
 
         consume('(');
 
@@ -1451,6 +1455,11 @@ infix_function_call(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         vec_push(e->args, arg);
+				} else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                        vec_push(e->kws, tok()->identifier);
+                        next();
+                        next();
+                        vec_push(e->kwargs, parse_expr(0));
                 } else {
                         vec_push(e->args, parse_expr(0));
                 }
@@ -1465,6 +1474,11 @@ infix_function_call(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         vec_push(e->args, arg);
+				} else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                        vec_push(e->kws, tok()->identifier);
+                        next();
+                        next();
+                        vec_push(e->kwargs, parse_expr(0));
                 } else {
                         vec_push(e->args, parse_expr(0));
                 }
@@ -1614,6 +1628,8 @@ infix_member_access(struct expression *left)
         e->method_name = tok()->identifier;
         consume(TOKEN_IDENTIFIER);
         vec_init(e->method_args);
+        vec_init(e->method_kwargs);
+        vec_init(e->method_kws);
 
         consume('(');
 
@@ -1628,13 +1644,32 @@ infix_member_access(struct expression *left)
                 arg->value = parse_expr(0);
                 arg->start = arg->value->start;
                 vec_push(e->method_args, arg);
+        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                vec_push(e->method_kws, tok()->identifier);
+                next();
+                next();
+                vec_push(e->method_kwargs, parse_expr(0));
         } else {
                 vec_push(e->method_args, parse_expr(0));
         }
 
         while (tok()->type == ',') {
                 next();
-                vec_push(e->method_args, parse_expr(0));
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *arg = mkexpr();
+                        arg->type = EXPRESSION_SPREAD;
+                        arg->value = parse_expr(0);
+                        arg->start = arg->value->start;
+                        vec_push(e->method_args, arg);
+                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                        vec_push(e->method_kws, tok()->identifier);
+                        next();
+                        next();
+                        vec_push(e->method_kwargs, parse_expr(0));
+                } else {
+                        vec_push(e->method_args, parse_expr(0));
+                }
         }
 
 End:

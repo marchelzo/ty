@@ -262,7 +262,7 @@ pushtarget(struct value *v, void *gc)
 }
 
 inline static void
-call(struct value const *f, struct value const *self, int n, bool exec)
+call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 {
         int bound = f->info[3];
         int np = f->info[4];
@@ -270,6 +270,11 @@ call(struct value const *f, struct value const *self, int n, bool exec)
         int class = f->info[6];
         char *code = code_of(f);
         int argc = n;
+
+        if (self)
+                printf("self = %s\n", value_show(self));
+
+        struct value kwargs = (nkw > 0) ? pop() : NIL;
 
         /*
          * This is the index of the beginning of the stack frame for this call to f.
@@ -319,6 +324,19 @@ call(struct value const *f, struct value const *self, int n, bool exec)
 
         vec_push(frames, FRAME(fp, *f, ip));
 
+        /* Fill in keyword args (overwriting positional args) */
+        if (kwargs.type != VALUE_NIL) {
+                char const *name = (char const *)(f->info + 7);
+                for (int i = 0; i < np; ++i) {
+                        name += strlen(name) + 1;
+                        struct value *arg = dict_get_member(kwargs.dict, name);
+                        if (arg != NULL) {
+                                printf("Setting arg %d ('%s') to '%s'\n", i, name, value_show(arg));
+                                *local(i) = *arg;
+                        }
+                }
+        }
+
         LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", value_show(f), argc, bound, self ? value_show(self) : "none", f->info[2]);
         print_stack(max(bound + 2, 5));
 
@@ -347,7 +365,7 @@ call_co(struct value *v, int n)
 
         push(*v);
 
-        call(&v->gen->f, NULL, 0, false);
+        call(&v->gen->f, NULL, 0, 0, false);
         stack.count = vec_last(frames)->fp;
 
         for (int i = 0; i < v->gen->frame.count; ++i) {
@@ -404,10 +422,10 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
                         switch (sig) {
                         case SIGIO:
                                 push(INTEGER(info->si_fd));
-                                call(&sigfns.items[i].f, NULL, 1, true);
+                                call(&sigfns.items[i].f, NULL, 1, 0, true);
                                 break;
                         default:
-                                call(&sigfns.items[i].f, NULL, 0, true);
+                                call(&sigfns.items[i].f, NULL, 0, 0, true);
                         }
                         return;
                 }
@@ -424,7 +442,7 @@ vm_exec(char *code)
         intmax_t k;
         bool b = false, tco = false;
         float f;
-        int n, i, j, tag, rc = 0;
+        int n, nkw = 0, i, j, tag, rc = 0;
         unsigned long h;
 
         struct value left, right, v, key, value, container, subscript, *vp;
@@ -944,7 +962,7 @@ Throw:
                                 if ((vp = class_method(v.class, "__next__")) != NULL) {
                                         push(INTEGER(i));
                                         vec_push(calls, ip);
-                                        call(vp, &v, 1, false);
+                                        call(vp, &v, 1, 0, false);
                                         *vec_last(calls) = next_fix;
                                 } else if ((vp = class_method(v.class, "__iter__")) != NULL) {
                                         pop();
@@ -952,7 +970,7 @@ Throw:
                                         --top()->i;
                                         /* Have to repeat this instruction */
                                         vec_push(calls, ip - 1);
-                                        call(vp, &v, 0, false);
+                                        call(vp, &v, 0, 0, false);
                                         *vec_last(calls) = iter_fix;
                                         continue;
                                 } else {
@@ -1140,7 +1158,7 @@ Throw:
                         v = OBJECT(object_new(), i);
                         push(left);
                         push(right);
-                        call(vp, &v, 2, true);
+                        call(vp, &v, 2, 0, true);
                         pop();
                         push(v);
                         break;
@@ -1156,7 +1174,7 @@ Throw:
                         v = OBJECT(object_new(), i);
                         push(left);
                         push(right);
-                        call(vp, &v, 2, true);
+                        call(vp, &v, 2, 0, true);
                         pop();
                         push(v);
                         break;
@@ -1310,7 +1328,7 @@ ObjectSubscript:
                                                 if (vp == NULL) {
                                                         vm_panic("non-iterable object used in subscript expression");
                                                 }
-                                                call(vp, &subscript, 0, true);
+                                                call(vp, &subscript, 0, 0, true);
                                                 subscript = pop();
                                                 goto ObjectSubscript;
                                         }
@@ -1318,7 +1336,7 @@ ObjectSubscript:
                                         NOGC(a);
                                         for (int i = 0; ; ++i) {
                                                 push(INTEGER(i));
-                                                call(vp, &subscript, 1, true);
+                                                call(vp, &subscript, 1, 0, true);
                                                 struct value r = pop();
                                                 if (r.type == VALUE_NIL)
                                                         break;
@@ -1363,7 +1381,7 @@ OutOfRange:
                                 vp = class_method(container.class, "__subscript__");
                                 if (vp != NULL) {
                                         push(subscript);
-                                        call(vp, &container, 1, false);
+                                        call(vp, &container, 1, 0, false);
                                 } else {
                                         goto BadContainer;
                                 }
@@ -1702,18 +1720,38 @@ BadContainer:
                         if (n == -1) {
                                 n = stack.count - *vec_pop(sp_stack);
                         }
+
+                        READVALUE(nkw);
+
                         if (tco) {
                                 vec_pop(frames);
                                 ip = *vec_pop(calls);
                                 tco = false;
                         }
+
+                        /*
+                         * Move all the keyword args into a dict.
+                         */
+                        if (nkw > 0) {
+                CallKwArgs:
+                                printf("Have %d kwargs\n", nkw);
+                                container = DICT(dict_new());
+                                NOGC(container.dict);
+                                for (int i = 0; i < nkw; ++i) {
+                                        dict_put_member(container.dict, ip, pop());
+                                        ip += strlen(ip) + 1;
+                                }
+                                OKGC(container.dict);
+                                push(container);
+                        }
+
                 Call:
                         gc_push(&v);
                         switch (v.type) {
                         case VALUE_FUNCTION:
                                 LOG("CALLING %s with %d arguments", value_show(&v), n);
                                 print_stack(n);
-                                call(&v, NULL, n, false);
+                                call(&v, NULL, n, nkw, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
                                 v = v.builtin_function(n);
@@ -1743,14 +1781,14 @@ BadContainer:
                                 vp = class_method(v.class, "init");
                                 if (v.class < CLASS_PRIMITIVE) {
                                         if (vp != NULL) {
-                                                call(vp, NULL, n, true);
+                                                call(vp, NULL, n, nkw, true);
                                         } else {
                                                 vm_panic("primitive class has no init method. was prelude loaded?");
                                         }
                                 } else {
                                         value = OBJECT(object_new(), v.class);
                                         if (vp != NULL) {
-                                                call(vp, &value, n, true);
+                                                call(vp, &value, n, nkw, true);
                                                 pop();
                                         } else {
                                                 stack.count -= n;
@@ -1759,7 +1797,8 @@ BadContainer:
                                 }
                                 break;
                         case VALUE_METHOD:
-                                call(v.method, v.this, n, false);
+                                printf("Calling method.\n");
+                                call(v.method, v.this, n, nkw, false);
                                 break;
                         case VALUE_REGEX:
                                 if (n != 1)
@@ -1785,6 +1824,7 @@ BadContainer:
                                 vm_panic("attempt to call non-callable value %s", value_show(&v));
                         }
                         gc_pop();
+                        nkw = 0;
                         break;
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
@@ -1799,6 +1839,9 @@ BadContainer:
                         ip += strlen(ip) + 1;
 
                         READVALUE(h);
+
+                        READVALUE(nkw);
+
                 CallMethod:
                         LOG("METHOD = %s, n = %d", method, n);
                         print_stack(5);
@@ -1912,7 +1955,11 @@ BadContainer:
                                 } else {
                                         v = *vp;
                                 }
-                                goto Call;
+                                if (nkw > 0) {
+                                        goto CallKwArgs;
+                                } else {
+                                        goto Call;
+                                }
                         } else if (b) {
                                 stack.count -= (n + 1);
                                 push(NIL);
@@ -2198,10 +2245,10 @@ vm_call(struct value const *f, int argc)
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                call(f, NULL, argc, true);
+                call(f, NULL, argc, 0, true);
                 return pop();
         case VALUE_METHOD:
-                call(f->method, f->this, argc, true);
+                call(f->method, f->this, argc, 0, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc);
@@ -2220,7 +2267,7 @@ vm_call(struct value const *f, int argc)
                 init = class_method(f->class, "init");
                 if (f->class < CLASS_PRIMITIVE) {
                         if (init != NULL) {
-                                call(init, NULL, argc, true);
+                                call(init, NULL, argc, 0, true);
                                 return pop();
                         } else {
                                 vm_panic("Couldn't find init method for built-in class. Was prelude loaded?");
@@ -2228,7 +2275,7 @@ vm_call(struct value const *f, int argc)
                 } else {
                         r = OBJECT(object_new(), f->class);
                         if (init != NULL) {
-                                call(init, &r, argc, true);
+                                call(init, &r, argc, 0, true);
                                 pop();
                         } else {
                                 stack.count -= (argc + 1);
@@ -2260,10 +2307,10 @@ vm_eval_function(struct value const *f, ...)
 
         switch (f->type) {
         case VALUE_FUNCTION:
-                call(f, NULL, argc, true);
+                call(f, NULL, argc, 0, true);
                 return pop();
         case VALUE_METHOD:
-                call(f->method, f->this, argc, true);
+                call(f->method, f->this, argc, 0, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc);

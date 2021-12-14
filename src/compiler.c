@@ -859,6 +859,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->function);
                 for (size_t i = 0;  i < e->args.count; ++i)
                         symbolize_expression(scope, e->args.items[i]);
+                for (size_t i = 0; i < e->kwargs.count; ++i)
+                        symbolize_expression(scope, e->kwargs.items[i]);
                 break;
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(scope, e->container);
@@ -871,6 +873,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->object);
                 for (size_t i = 0;  i < e->method_args.count; ++i)
                         symbolize_expression(scope, e->method_args.items[i]);
+                for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                        symbolize_expression(scope, e->method_kwargs.items[i]);
                 break;
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
@@ -3081,12 +3085,19 @@ emit_expr(struct expression const *e, bool need_loc)
                 for (size_t i = 0; i < e->args.count; ++i) {
                         emit_expression(e->args.items[i]);
                 }
+                for (size_t i = 0; i < e->kwargs.count; ++i) {
+                        emit_expression(e->kwargs.items[i]);
+                }
                 emit_expression(e->function);
                 emit_instr(INSTR_CALL);
                 if (has_spread(e)) {
                         emit_int(-1);
                 } else {
                         emit_int(e->args.count);
+                }
+                emit_int(e->kwargs.count);
+                for (size_t i = e->kws.count; i > 0; --i) {
+                        emit_string(e->kws.items[i - 1]);
                 }
                 break;
         case EXPRESSION_METHOD_CALL:
@@ -3095,6 +3106,9 @@ emit_expr(struct expression const *e, bool need_loc)
                 }
                 for (size_t i = 0; i < e->method_args.count; ++i) {
                         emit_expression(e->method_args.items[i]);
+                }
+                for (size_t i = 0; i < e->method_kwargs.count; ++i) {
+                        emit_expression(e->method_kwargs.items[i]);
                 }
                 emit_expression(e->object);
                 if (e->maybe)
@@ -3108,6 +3122,11 @@ emit_expr(struct expression const *e, bool need_loc)
                 }
                 emit_string(e->method_name);
                 emit_ulong(strhash(e->method_name));
+
+                emit_int(e->method_kwargs.count);
+                for (size_t i = e->method_kws.count; i > 0; --i) {
+                        emit_string(e->method_kws.items[i - 1]);
+                }
                 break;
         case EXPRESSION_YIELD:
                 emit_yield(e);
