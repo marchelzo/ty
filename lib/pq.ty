@@ -1,35 +1,37 @@
 export Heap
 
 class Heap {
-     init(self) {
+     init() {
           self.keys = [];
           self.values = [];
           self.n = 0;
      }
 
-     swap(self, i, j) {
+     swap(i, j) {
           [self.keys[i], self.keys[j]] = [self.keys[j], self.keys[i]];
           [self.values[i], self.values[j]] = [self.values[j], self.values[i]];
      }
 
-     push(self, key, value) {
+     push(key, value) {
           self.keys.push(key);
           self.values.push(value);
           
           let i = self.values.len() - 1;
           let p = (i - 1) / 2;
-          while (p >= 0 && self.keys[i] < self.keys[p]) {
+          while p >= 0 && self.keys[i] < self.keys[p] {
                self.swap(i, p);
                i = p;
                p = (p - 1) / 2;
           }
      }
 
-     pop(self) {
-          if (self.values.len() == 0)
+     pop() {
+          if self.values.len() == 0 {
                return nil;
+		  }
 
           let result = self.values[0];
+		  let priority = self.keys[0];
 
           self.keys[0] = self.keys[-1];
           self.values[0] = self.values[-1];
@@ -41,24 +43,27 @@ class Heap {
           let left = 1;
           let right = 2;
 
-          while (left < self.values.len()) {
+          while left < self.values.len() {
                let c = i;
-               if (self.keys[left] < self.keys[c])
+               if self.keys[left] < self.keys[c] {
                     c = left;
-               if (right < self.values.len() && self.keys[right] < self.keys[c])
+			   }
+               if right < self.values.len() && self.keys[right] < self.keys[c] {
                     c = right;
-               if (c == i)
+			   }
+               if c == i {
                     break;
+			   }
                self.swap(i, c);
                i = c;
                left = 2 * i + 1;
                right = left + 1;
           }
 
-          return result;
+          return result, priority;
      }
 
-     size(self) {
+     size() {
           return self.values.len();
      }
 }
