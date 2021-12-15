@@ -864,14 +864,18 @@ Throw:
                         break;
                 CASE(DICT)
                         v = DICT(dict_new());
+                        NOGC(v.dict);
 
                         n = (stack.count - *vec_pop(sp_stack)) / 2;
                         for (i = 0; i < n; ++i) {
-                                value = pop();
-                                key = pop();
+                                value = top()[0];
+                                key = top()[-1];
                                 dict_put_value(v.dict, key, value);
+                                pop();
+                                pop();
                         }
 
+                        OKGC(v.dict);
                         push(v);
                         break;
                 CASE(DICT_DEFAULT)
