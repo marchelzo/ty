@@ -278,6 +278,10 @@ class String : Iterable {
         return str(x);
     }
 
+	i(base: Int = 10) {
+		return int(self, base);
+	}
+
     repeat(n) {
         return if n != nil {
             let b = blob();
@@ -344,6 +348,22 @@ class Int {
             if self <= b { return self++; }
         });
     }
+
+	s(base: Int = 10) {
+		let digits = '0123456789ABCDEF';
+
+		if base == 10 { return str(self); }
+
+		let s = '';
+		let k = abs(self);
+
+		while k != 0 || #s == 0 {
+			s = digits[k % base] + s;
+			k /= base;
+		}
+
+		return if self < 0 { '-' + s } else { s };
+	}
 
     downto(b: Int) {
         return Generator(function () {
