@@ -1041,8 +1041,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 break;
         case STATEMENT_BLOCK:
                 scope = scope_new(scope, false);
-                for (size_t i = 0; i < s->statements.count; ++i)
+
+                for (size_t i = 0; i < s->statements.count; ++i) {
                         symbolize_statement(scope, s->statements.items[i]);
+                }
+
                 break;
         case STATEMENT_THROW:
                 symbolize_expression(scope, s->throw);
@@ -1138,6 +1141,9 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(scope, s->target, true);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
+                if (scope != state.global) {
+                        symbolize_lvalue(scope, s->target, true);
+                }
                 symbolize_expression(scope, s->value);
                 break;
         }
@@ -1502,7 +1508,7 @@ emit_function(struct expression const *e, int class)
         t = t_save;
 
         if (e->function_symbol != NULL) {
-                emit_tgt(e->function_symbol, e->scope, false);
+                emit_tgt(e->function_symbol, e->scope->parent, false);
                 emit_instr(INSTR_ASSIGN);
         }
 }
