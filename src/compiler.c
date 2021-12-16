@@ -3159,6 +3159,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_int(1);
                 emit_string(e->op_name);
                 emit_ulong(strhash(e->op_name));
+				emit_int(0);
                 if (e->sc != NULL) {
                         PATCH_JUMP(sc);
                 }
@@ -3177,6 +3178,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_int(1);
                 emit_string(method);
                 emit_ulong(strhash(method));
+				emit_int(0);
                 break;
         case EXPRESSION_GENERATOR:;
         case EXPRESSION_FUNCTION:

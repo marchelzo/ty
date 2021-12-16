@@ -161,9 +161,9 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "args");
         vec_push(Globals, ARRAY(args));
 
-		/* Add this here because SIGRTMIN doesn't expand to a constant */
-		compiler_introduce_symbol("os", "SIGRTMIN");
-		vec_push(Globals, INTEGER(SIGRTMIN));
+        /* Add this here because SIGRTMIN doesn't expand to a constant */
+        compiler_introduce_symbol("os", "SIGRTMIN");
+        vec_push(Globals, INTEGER(SIGRTMIN));
 }
 
 void
@@ -1745,8 +1745,8 @@ BadContainer:
                                         dict_put_member(container.dict, ip, pop());
                                         ip += strlen(ip) + 1;
                                 }
-                                OKGC(container.dict);
                                 push(container);
+                                OKGC(container.dict);
                         }
 
                 Call:
@@ -1758,6 +1758,10 @@ BadContainer:
                                 call(&v, NULL, n, nkw, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
+                                if (nkw > 0) {
+                                        pop();
+                                        nkw = 0;
+                                }
                                 v = v.builtin_function(n);
                                 stack.count -= n;
                                 push(v);
@@ -1815,6 +1819,10 @@ BadContainer:
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
+                                if (nkw > 0) {
+                                        pop();
+                                        nkw = 0;
+                                }
                                 v = v.builtin_method(v.this, n);
                                 stack.count -= n;
                                 push(v);
