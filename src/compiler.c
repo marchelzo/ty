@@ -1893,6 +1893,7 @@ emit_try_match(struct expression const *pattern)
                 emit_expression(pattern->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
+                emit_int(0);
                 add_location(pattern->left, start, state.code.count);
                 emit_try_match(pattern->right);
                 emit_instr(INSTR_POP);
@@ -2909,6 +2910,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                 emit_expression(target->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
+                emit_int(0);
                 add_location(target->left, start, state.code.count);
                 emit_assignment(target->right, NULL, maybe, def);
                 break;
@@ -3159,7 +3161,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_int(1);
                 emit_string(e->op_name);
                 emit_ulong(strhash(e->op_name));
-				emit_int(0);
+                emit_int(0);
                 if (e->sc != NULL) {
                         PATCH_JUMP(sc);
                 }
@@ -3178,7 +3180,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_int(1);
                 emit_string(method);
                 emit_ulong(strhash(method));
-				emit_int(0);
+                emit_int(0);
                 break;
         case EXPRESSION_GENERATOR:;
         case EXPRESSION_FUNCTION:

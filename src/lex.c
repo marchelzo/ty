@@ -30,7 +30,7 @@ static vec(LexState) states;
 #define SRC state.loc.s
 #define END state.end
 
-inline static char
+inline static unsigned char
 C(int n)
 {
         if (SRC + n < END)
@@ -241,7 +241,7 @@ haveid(void)
         if (C(0) == ':' && C(1) == ':' && isalpha(C(2)))
                 return true;
 
-        if (isalpha(C(0)) || C(0) == '_')
+        if (isalpha(C(0)) || C(0) == '_' || (C(0) > 0xC0))
                 return true;
 
         return false;
@@ -285,7 +285,7 @@ lexword(void)
         bool has_module = false;
 
         for (;;) {
-                while (isalnum(C(0)) || C(0) == '_')
+                while (isalnum(C(0)) || C(0) == '_' || (C(0) & 0x80))
                         vec_push(word, nextchar());
 
                 if (C(0) == ':' && C(1) == ':' && ++has_module) {
