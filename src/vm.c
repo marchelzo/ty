@@ -1697,7 +1697,8 @@ BadContainer:
                                                         /* This variable was already captured, just refer to the same object */
                                                         v.env[i] = p->ptr;
                                                 } else {
-                                                        struct value *new = gc_alloc_object(sizeof (struct value), GC_VALUE);
+                                                        // TODO: this leaks memory
+                                                        struct value *new = gc_alloc(sizeof (struct value));
                                                         *new = *p;
                                                         *p = REF(new);
                                                         v.env[i] = new;

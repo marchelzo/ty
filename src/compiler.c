@@ -2925,10 +2925,6 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                         fail("wrong number of values on RHS of assignment. expected %d but found %d", target->es.count, n);
                 }
 
-                for (int i = 0; i < target->es.count; ++i) {
-                        emit_target(target->es.items[i], def);
-                }
-
                 emit_instr(INSTR_SENTINEL);
 
                 if (e->type == EXPRESSION_LIST) for (int i = 0; i < e->es.count; ++i) {
@@ -2943,6 +2939,10 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                         emit_instr(INSTR_CLEAR_RC);
                         emit_expression(e);
                         emit_instr(INSTR_GET_EXTRA);
+                }
+
+                for (int i = 0; i < target->es.count; ++i) {
+                        emit_target(target->es.items[i], def);
                 }
 
                 emit_instr(multi);
@@ -3300,8 +3300,8 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_instr(INSTR_POST_DEC);
                 break;
         case EXPRESSION_PLUS_EQ:
-                emit_target(e->target, false);
                 emit_expression(e->value);
+                emit_target(e->target, false);
                 emit_instr(INSTR_MUT_ADD);
                 break;
         case EXPRESSION_STAR_EQ:
