@@ -96,3 +96,6 @@ install: $(PROG)
 	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)
 	install -d $(HOME)/.ty
 	install -m644 lib/* $(HOME)/.ty
+
+based: $(SOURCES)
+	cat $^ | gcc -c -x c -o $@ -

@@ -1792,6 +1792,28 @@ infix_kw_and(struct expression *left)
 }
 
 static struct expression *
+infix_kw_in(struct expression *left)
+{
+        struct expression *e = mkexpr();
+        e->left = left;
+        e->start = left->start;
+        
+        if (tok()->keyword == KEYWORD_NOT) {
+                next();
+                e->type = EXPRESSION_NOT_IN;
+        } else {
+                e->type = EXPRESSION_IN;
+        }
+
+        consume_keyword(KEYWORD_IN);
+
+        e->right = parse_expr(3);
+        e->end = e->right->end;
+
+        return e;
+}
+
+static struct expression *
 infix_conditional(struct expression *left)
 {
         struct expression *e = mkexpr();
@@ -1980,6 +2002,8 @@ Keyword:
         //case KEYWORD_IF: return infix_conditional;
         case KEYWORD_AND: return infix_kw_and;
         case KEYWORD_OR:  return infix_kw_or;
+        case KEYWORD_NOT:
+        case KEYWORD_IN:  return infix_kw_in;
         default:          return NULL;
         }
 }
@@ -2050,6 +2074,8 @@ Keyword:
         switch (tok()->keyword) {
         //case KEYWORD_OR:  return 4;
         //case KEYWORD_AND: return 4;
+        case KEYWORD_NOT:
+        case KEYWORD_IN:  return NoEquals ? -3 : 3;
         default:          return -3;
         }
 

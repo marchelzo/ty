@@ -833,6 +833,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_BIT_AND:
         case EXPRESSION_KW_OR:
         case EXPRESSION_KW_AND:
+        case EXPRESSION_IN:
+        case EXPRESSION_NOT_IN:
                 symbolize_expression(scope, e->left);
                 symbolize_expression(scope, e->right);
                 break;
@@ -3182,7 +3184,21 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_ulong(strhash(method));
                 emit_int(0);
                 break;
-        case EXPRESSION_GENERATOR:;
+        case EXPRESSION_IN:
+        case EXPRESSION_NOT_IN:
+                method = "contains?";
+                emit_expression(e->left);
+                emit_expression(e->right);
+                emit_instr(INSTR_CALL_METHOD);
+                emit_int(1);
+                emit_string(method);
+                emit_ulong(strhash(method));
+                emit_int(0);
+                if (e->type == EXPRESSION_NOT_IN) {
+                        emit_instr(INSTR_NOT);
+                }
+                break;
+        case EXPRESSION_GENERATOR:
         case EXPRESSION_FUNCTION:
                 emit_function(e, -1);
                 break;

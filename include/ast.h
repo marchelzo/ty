@@ -150,6 +150,8 @@ struct expression {
                 EXPRESSION_NIL,
                 EXPRESSION_SELF,
                 EXPRESSION_LIST,
+                EXPRESSION_IN,
+                EXPRESSION_NOT_IN,
 
                 EXPRESSION_KEEP_LOC,
 
