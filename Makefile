@@ -1,4 +1,4 @@
-CFLAGS = -std=c11
+CFLAGS += -std=c11
 CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -isystem/usr/local/include
@@ -8,7 +8,7 @@ CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
-LDFLAGS ?= -L/usr/local/lib
+LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
 LDFLAGS += -lm
 LDFLAGS += -lreadline
