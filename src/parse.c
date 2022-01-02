@@ -117,9 +117,6 @@ static bool NoEquals = false;
 #define LOAD_NE() NoEquals = NESave;
 #define LOAD_NC() NoConstraint = NCSave;
 
-typedef vec(char *) param_list;
-static param_list pnames;
-
 static char const *filename;
 
 noreturn static void
@@ -579,31 +576,16 @@ prefix_dollar(void)
         consume('$');
         setctx(LEX_INFIX);
 
-        if (tok()->type == TOKEN_IDENTIFIER) {
-                e->type = EXPRESSION_MATCH_NOT_NIL;
-                e->identifier = tok()->identifier;
-                e->module = tok()->module;
+        expect(TOKEN_IDENTIFIER);
 
-                if (e->module != NULL)
-                        error("unpexpected module in lvalue");
+        e->type = EXPRESSION_MATCH_NOT_NIL;
+        e->identifier = tok()->identifier;
+        e->module = tok()->module;
 
-                consume(TOKEN_IDENTIFIER);
-        } else {
-                int i = 1;
-                if (tok()->type == TOKEN_INTEGER) {
-                        i = tok()->integer;
-                        next();
-                }
-                if (i < 1) {
-                        error("invalid implicit parameter index: $%d", i);
-                }
-                while (pnames.count < i) {
-                        vec_push(pnames, gensym());
-                }
-                e->type = EXPRESSION_IDENTIFIER;
-                e->identifier = pnames.items[i - 1];
-                e->module = NULL;
-        }
+        if (e->module != NULL)
+                error("unpexpected module in lvalue");
+
+        consume(TOKEN_IDENTIFIER);
 
         e->end = End;
 
@@ -1311,9 +1293,6 @@ prefix_implicit_method(void)
 static struct expression *
 prefix_implicit_lambda(void)
 {
-        param_list pnames_save = pnames;
-        vec_init(pnames);
-
         next();
 
         unconsume(TOKEN_ARROW);
@@ -1321,15 +1300,7 @@ prefix_implicit_lambda(void)
         unconsume('(');
 
         struct expression *f = parse_expr(0);
-
-        for (int i = 0; i < pnames.count; ++i) {
-                vec_push(f->params, pnames.items[i]);
-                vec_push(f->dflts, NULL);
-                vec_push(f->constraints, NULL);
-        }
-
-        vec_empty(pnames);
-        pnames = pnames_save;
+        f->type = EXPRESSION_IMPLICIT_FUNCTION;
 
         consume('\\');
 
@@ -1339,22 +1310,11 @@ prefix_implicit_lambda(void)
 static struct expression *
 prefix_arrow(void)
 {
-        param_list pnames_save = pnames;
-        vec_init(pnames);
-
         unconsume(')');
         unconsume('(');
 
         struct expression *f = parse_expr(0);
-
-        for (int i = 0; i < pnames.count; ++i) {
-                vec_push(f->params, pnames.items[i]);
-                vec_push(f->dflts, NULL);
-                vec_push(f->constraints, NULL);
-        }
-
-        vec_empty(pnames);
-        pnames = pnames_save;
+        f->type = EXPRESSION_IMPLICIT_FUNCTION;
 
         return f;
 }

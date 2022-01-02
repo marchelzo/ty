@@ -111,6 +111,9 @@ struct state {
         struct scope *method;
         struct scope *fscope;
 
+        struct scope *implicit_fscope;
+        struct expression *implicit_func;
+
         int function_depth;
         bool each_loop;
         bool loop_want_result;
@@ -437,6 +440,24 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         if (strcmp(name, "_") == 0)
                 fail("the special identifier '_' can only be used as an lvalue");
 
+        /*
+         * let f = -> function () { let _2 = 4; return _1 + _2; };
+         *
+         * // f = const . (+ 4)
+         */
+        if (name[0] == '_' && isdigit(name[1]) && name[2] == '\0' && state.implicit_fscope != NULL) {
+                int n = name[1] - '0';
+                for (int i = state.implicit_func->params.count + 1; i <= n; ++i) {
+                        char b[] = { '_', i + '0', '\0' };
+                        char *id = sclone(b);
+                        struct symbol *sym = addsymbol(state.implicit_fscope, id);
+                        vec_push(state.implicit_func->params, id);
+                        vec_push(state.implicit_func->param_symbols, sym);
+                        vec_push(state.implicit_func->dflts, NULL);
+                        vec_push(state.implicit_func->constraints, NULL);
+                }
+        }
+
         struct symbol *s = scope_lookup(scope, name);
         if (s == NULL)
                 fail("reference to undefined variable: %s", name);
@@ -489,6 +510,9 @@ freshstate(void)
         s.method = NULL;
         s.global = scope_new(global, false);
         s.fscope = NULL;
+
+        s.implicit_fscope = NULL;
+        s.implicit_func = NULL;
 
         s.function_depth = 0;
         s.each_loop = false;
@@ -757,6 +781,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         struct scope *subscope;
 
         int ftype = state.ftype;
+        struct scope *implicit_fscope = state.implicit_fscope;
+        struct expression *implicit_func = state.implicit_func;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -805,6 +831,22 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
                         subscope = scope_new(scope, false);
+                        if (e->patterns.items[i]->type == EXPRESSION_REGEX) {
+                                /*
+                                 * /(\w+) = (\d+)/ => $0, $1, $2
+                                 */
+                                int n;
+                                struct regex const *re = e->patterns.items[i]->regex;
+                                pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT, &n);
+
+                                e->patterns.items[i]->match_symbol = addsymbol(subscope, "_0");
+
+                                for (int i = 1; i <= n; ++i) {
+                                        char id[16];
+                                        sprintf(id, "_%d", i);
+                                        addsymbol(subscope, sclone(id));
+                                }
+                        }
                         symbolize_pattern(subscope, e->patterns.items[i]);
                         symbolize_expression(subscope, e->thens.items[i]);
                 }
@@ -887,6 +929,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->value);
                 symbolize_lvalue(scope, e->target, false);
                 break;
+        case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
         case EXPRESSION_FUNCTION:
                 state.ftype = FT_NONE;
@@ -901,6 +944,12 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
 
                 scope = scope_new(scope, true);
+
+                if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {
+                        state.implicit_fscope = scope;
+                        state.implicit_func = e;
+                        e->type = EXPRESSION_FUNCTION;
+                }
 
                 vec_init(e->param_symbols);
                 for (size_t i = 0; i < e->params.count; ++i) {
@@ -938,6 +987,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
 
                 state.ftype = ftype;
+                state.implicit_fscope = implicit_fscope;
+                state.implicit_func = implicit_func;
 
                 break;
         case EXPRESSION_YIELD:
@@ -1987,6 +2038,7 @@ emit_try_match(struct expression const *pattern)
                 emit_instr(INSTR_POP);
                 break;
         case EXPRESSION_REGEX:
+                emit_tgt(pattern->match_symbol, state.fscope, true);
                 emit_instr(INSTR_TRY_REGEX);
                 emit_symbol((uintptr_t) pattern->regex);
                 vec_push(state.match_fails, state.code.count);

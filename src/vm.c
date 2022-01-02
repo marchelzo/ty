@@ -764,8 +764,17 @@ Throw:
                         READVALUE(s);
                         READVALUE(n);
                         v = REGEX((struct regex const *) s);
-                        if (!value_apply_predicate(&v, top()))
+                        value = value_apply_callable(&v, top());
+                        vp = poptarget();
+                        if (value.type == VALUE_NIL) {
                                 ip += n;
+                        } else if (value.type == VALUE_STRING) {
+                                *vp = value;
+                        } else {
+                                for (int i = 0; i < value.array->count; ++i) {
+                                        vp[i] = value.array->items[i];
+                                }
+                        }
                         break;
                 CASE(ENSURE_DICT)
                         READVALUE(n);

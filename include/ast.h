@@ -129,6 +129,7 @@ struct statement {
 struct expression {
         enum {
                 EXPRESSION_FUNCTION,
+                EXPRESSION_IMPLICIT_FUNCTION,
                 EXPRESSION_GENERATOR,
                 EXPRESSION_INTEGER,
                 EXPRESSION_BOOLEAN,
@@ -235,7 +236,10 @@ struct expression {
                         struct expression *then;
                         struct expression *otherwise;
                 };
-                struct regex const *regex;
+                struct {
+                        struct regex const *regex;
+                        struct symbol const *match_symbol;
+                };
                 struct {
                         vec(char *) strings;
                         vec(char *) fmts;
