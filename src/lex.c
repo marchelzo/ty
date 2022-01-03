@@ -254,10 +254,7 @@ skipspace(void)
 
         int n = 0;
         while (isspace(C(n))) {
-                if (C(n) == '\n' && state.need_nl) {
-                        nl = true;
-                        state.need_nl = false;
-                }
+                nl |= (C(n) == '\n');
                 n += 1;
         }
 
@@ -268,6 +265,9 @@ skipspace(void)
                         nextchar();
                 }
         }
+
+        nl &= state.need_nl;
+        state.need_nl &= !nl;
 
         return nl;
 }

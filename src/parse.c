@@ -442,7 +442,11 @@ static void
 expect(int type)
 {
         if (tok()->type != type) {
-                error("expected %s but found %s", token_show_type(type), token_show(tok()));
+                error(
+                        "expected %s but found %s",
+                        token_show_type(type),
+                        token_show(tok())
+                );
         }
 }
 
@@ -451,7 +455,11 @@ static void
 expect_keyword(int type)
 {
         if (tok()->type != TOKEN_KEYWORD || tok()->keyword != type) {
-                error("expected %s but found %s", token_show(&(struct token){ .type = TOKEN_KEYWORD, .keyword = type }), token_show(tok()));
+                error(
+                        "expected %s but found %s",
+                        token_show(&(struct token){ .type = TOKEN_KEYWORD, .keyword = type }),
+                        token_show(tok())
+                );
         }
 }
 
