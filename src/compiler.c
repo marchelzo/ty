@@ -835,16 +835,41 @@ symbolize_expression(struct scope *scope, struct expression *e)
                                 /*
                                  * /(\w+) = (\d+)/ => $0, $1, $2
                                  */
-                                int n;
                                 struct regex const *re = e->patterns.items[i]->regex;
+
+                                int n;
                                 pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT, &n);
+
+                                int n_named;
+                                pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT, &n_named);
+
+                                char const *names;
+                                pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE, &names);
 
                                 e->patterns.items[i]->match_symbol = addsymbol(subscope, "_0");
 
                                 for (int i = 1; i <= n; ++i) {
+                                        char const *nt = names;
+                                        for (int j = 0; j < n_named; ++j) {
+                                                int capture_index = (nt[0] << 8) + nt[1];
+                                                nt += 2;
+
+                                                if (capture_index == i) {
+                                                        /*
+                                                         * Don't think clone is necessary here...
+                                                         */
+                                                        addsymbol(subscope, nt);
+                                                        goto NextCapture;
+                                                }
+                                        }
+
+                                        /*
+                                         * This is not a named capture group
+                                         */
                                         char id[16];
                                         sprintf(id, "_%d", i);
                                         addsymbol(subscope, sclone(id));
+                                NextCapture:
                                 }
                         }
                         symbolize_pattern(subscope, e->patterns.items[i]);

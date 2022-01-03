@@ -161,6 +161,9 @@ infix_member_access(struct expression *e);
 static struct expression *
 prefix_parenthesis(void);
 
+static struct expression *
+prefix_implicit_lambda(void);
+
 inline static struct token *
 tok(void);
 
@@ -1213,6 +1216,10 @@ prefix_implicit_method(void)
 {
         consume('&');
 
+        if (tok()->type == '(') {
+                return prefix_implicit_lambda();
+        }
+
         struct expression *o = mkexpr();
         o->type = EXPRESSION_IDENTIFIER;
         o->identifier = gensym();
@@ -1293,7 +1300,7 @@ prefix_implicit_method(void)
 static struct expression *
 prefix_implicit_lambda(void)
 {
-        next();
+        consume('(');
 
         unconsume(TOKEN_ARROW);
         unconsume(')');
@@ -1302,7 +1309,7 @@ prefix_implicit_lambda(void)
         struct expression *f = parse_expr(0);
         f->type = EXPRESSION_IMPLICIT_FUNCTION;
 
-        consume('\\');
+        consume(')');
 
         return f;
 }
@@ -1864,7 +1871,7 @@ get_prefix_parser(void)
         case TOKEN_KEYWORD:        goto Keyword;
 
         case '&':                  return prefix_implicit_method;
-        case '\\':                 return prefix_implicit_lambda;
+        case TOKEN_PERCENT:        return prefix_implicit_lambda;
         case '#':                  return prefix_hash;
 
         case '(':                  return prefix_parenthesis;
