@@ -82,7 +82,7 @@ class Object {
     }
 
     __question__() {
-        return \$ == nil\ | self;
+        return (x -> x == nil) | self;
     }
 
     __str__() {
@@ -661,7 +661,7 @@ class Iter : Iterable {
         let seen = {};
         for x in self {
             let y = f(x);
-            if !(seen ? y) {
+            if y not in seen {
                 seen << y;
                 yield x;
             }
@@ -682,7 +682,7 @@ class Iter : Iterable {
                 group.push(x);
             }
             if !stop {
-                yield group;
+                yield group.tuple();
             }
         }
     }

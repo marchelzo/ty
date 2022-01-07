@@ -236,14 +236,12 @@ array_zip(struct value *array, int argc)
 
         for (int i = 0; i < n; ++i) {
                 if (f.type == VALUE_NIL) {
-                        struct value a = ARRAY(value_array_new());
-                        gc_push(&a);
-                        value_array_push(a.array, array->array->items[i]);
+                        struct value t = value_tuple(ac + 1);
+                        t.items[0] = array->array->items[i];
                         for (int j = 0; j < ac; ++j) {
-                                value_array_push(a.array, ARG(j).array->items[i]);
+                                t.items[j + 1] = ARG(j).array->items[i];
                         }
-                        array->array->items[i] = a;
-                        gc_pop();
+                        array->array->items[i] = t;
                 } else {
                         vm_push(&array->array->items[i]);
                         for (int j = 0; j < ac; ++j) {
@@ -1332,6 +1330,21 @@ array_contains(struct value *array, int argc)
 }
 
 static struct value
+array_tuple(struct value *array, int argc)
+{
+        if (argc != 0) {
+                vm_panic("array.tuple() expects 0 arguments but got %d", argc);
+        }
+
+        int n = array->array->count;
+
+        struct value v = value_tuple(n);
+        memcpy(v.items, array->array->items, sizeof (struct value [n]));
+
+        return v;
+}
+
+static struct value
 array_tally(struct value *array, int argc)
 {
         if (argc != 0 && argc != 1)
@@ -1899,6 +1912,7 @@ DEFINE_METHOD_TABLE(
         { .name = "takeWhile",         .func = array_take_while              },
         { .name = "takeWhile!",        .func = array_take_while_mut          },
         { .name = "tally",             .func = array_tally                   },
+        { .name = "tuple",             .func = array_tuple                   },
         { .name = "uniq",              .func = array_uniq_no_mut             },
         { .name = "uniq!",             .func = array_uniq                    },
         { .name = "window",            .func = array_window_no_mut           },

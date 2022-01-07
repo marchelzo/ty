@@ -19,6 +19,7 @@ struct value;
 #define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                              .tags = 0 })
 #define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                              .tags = 0 })
 #define ARRAY(a)                 ((struct value){ .type = VALUE_ARRAY,          .array          = (a),                              .tags = 0 })
+#define TUPLE(vs, n)             ((struct value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),               .tags = 0 })
 #define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                              .tags = 0 })
 #define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                              .tags = 0 })
 #define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                              .tags = 0 })
@@ -122,28 +123,29 @@ typedef vec(struct value) ValueVector;
 typedef struct generator Generator;
 
 enum {
-        VALUE_FUNCTION         , // = 1 << 9,
-        VALUE_METHOD           , // = 1 << 10,
-        VALUE_BUILTIN_FUNCTION , // = 1 << 11,
-        VALUE_BUILTIN_METHOD   , // = 1 << 12,
-        VALUE_REGEX            , // = 1 << 0,
-        VALUE_INTEGER          , // = 1 << 1,
-        VALUE_REAL             , // = 1 << 2,
-        VALUE_BOOLEAN          , // = 1 << 3,
-        VALUE_NIL              , // = 1 << 4,
-        VALUE_ARRAY            , // = 1 << 5,
-        VALUE_DICT             , // = 1 << 6,
-        VALUE_OBJECT           , // = 1 << 7,
-        VALUE_CLASS            , // = 1 << 8,
-        VALUE_TAG              , // = 1 << 13,
-        VALUE_STRING           , // = 1 << 14,
-        VALUE_BLOB             , // = 1 << 15,
-        VALUE_SENTINEL         , // = 1 << 16,
-        VALUE_INDEX            , // = 1 << 17,
-        VALUE_NONE             , // = 1 << 18,
-        VALUE_PTR              , // = 1 << 19,
+        VALUE_FUNCTION         ,
+        VALUE_METHOD           ,
+        VALUE_BUILTIN_FUNCTION ,
+        VALUE_BUILTIN_METHOD   ,
+        VALUE_REGEX            , // CALLABLE here and above
+        VALUE_INTEGER          ,
+        VALUE_REAL             ,
+        VALUE_BOOLEAN          ,
+        VALUE_NIL              ,
+        VALUE_ARRAY            ,
+        VALUE_DICT             ,
+        VALUE_OBJECT           ,
+        VALUE_CLASS            ,
+        VALUE_TAG              ,
+        VALUE_STRING           ,
+        VALUE_BLOB             ,
+        VALUE_SENTINEL         ,
+        VALUE_INDEX            ,
+        VALUE_NONE             ,
+        VALUE_PTR              ,
         VALUE_REF              ,
         VALUE_GENERATOR        ,
+        VALUE_TUPLE            ,
         VALUE_TAGGED           = 1 << 7
 };
 
@@ -184,6 +186,10 @@ struct value {
                         intmax_t i;
                         int off;
                         int nt;
+                };
+                struct {
+                        struct value *items;
+                        int count;
                 };
                 struct regex *regex;
                 struct {
@@ -251,6 +257,9 @@ value_array_extend(struct array *, struct array const *);
 
 struct blob *
 value_blob_new(void);
+
+struct value
+value_tuple(int n);
 
 void
 _value_mark(struct value const *v);
@@ -331,6 +340,25 @@ STRING_NOGC(char const *s, int n)
 }
 
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))
+
+inline static struct value
+PAIR(struct value a, struct value b)
+{
+        struct value v = value_tuple(2);
+        v.items[0] = a;
+        v.items[1] = b;
+        return v;
+}
+
+inline static struct value
+TRIPLE(struct value a, struct value b, struct value c)
+{
+        struct value v = value_tuple(3);
+        v.items[0] = a;
+        v.items[1] = b;
+        v.items[2] = c;
+        return v;
+}
 
 inline static char *
 code_of(struct value const *v)

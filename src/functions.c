@@ -2969,6 +2969,28 @@ builtin_type(int argc)
 
         struct value v = ARG(0);
 
+        if (v.type == VALUE_TUPLE) {
+                int n = v.count;
+
+                if (n == 0) {
+                        return v;
+                }
+
+                struct value *types = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+
+                NOGC(types);
+
+                for (int i = 0; i < n; ++i) {
+                        vm_push(&v.items[i]);
+                        types[i] = builtin_type(1);
+                        vm_pop();
+                }
+
+                OKGC(types);
+
+                return TUPLE(types, n);
+        }
+
         switch (v.type) {
         case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_INT    };
         case VALUE_REAL:     return (struct value) { .type = VALUE_CLASS, .class = CLASS_FLOAT  };

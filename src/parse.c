@@ -940,7 +940,7 @@ prefix_parenthesis(void)
                 next();
                 e = mkexpr();
                 e->start = start;
-                e->type = EXPRESSION_LIST;
+                e->type = EXPRESSION_TUPLE;
                 e->only_identifiers = true;
                 vec_init(e->es);
                 return e;
@@ -960,7 +960,7 @@ prefix_parenthesis(void)
                         list->only_identifiers = false;
                 }
 
-                list->type = EXPRESSION_LIST;
+                list->type = EXPRESSION_TUPLE;
                 vec_init(list->es);
                 vec_push(list->es, e);
                 e->end = End;
@@ -1584,10 +1584,27 @@ infix_member_access(struct expression *left)
 {
         struct expression *e = mkexpr();
         e->start = tok()->start;
+
+        next();
+
+        /*
+         * xs.<N> is syntactic sugar for xs[N - 1]
+         */
+        if (tok()->type == TOKEN_INTEGER) {
+                e->type = EXPRESSION_SUBSCRIPT;
+                e->container = left;
+                e->subscript = mkexpr();
+                e->subscript->type = EXPRESSION_INTEGER;
+                e->subscript->integer = tok()->integer;
+                next();
+                e->start = left->start;
+                e->end = End;
+                return e;
+        }
+
         e->object = left;
 
         e->maybe = tok()->type == TOKEN_DOT_MAYBE;
-        next();
 
         expect(TOKEN_IDENTIFIER);
 
@@ -1694,12 +1711,14 @@ infix_arrow_function(struct expression *left)
         vec_init(e->dflts);
         vec_init(e->constraints);
 
-        if (left->type != EXPRESSION_LIST) {
+        if (left->type != EXPRESSION_TUPLE) {
                 struct expression *l = mkexpr();
                 l->type = EXPRESSION_LIST;
                 vec_init(l->es);
                 vec_push(l->es, left);
                 left = l;
+        } else {
+                left->type = EXPRESSION_LIST;
         }
 
         struct statement *body = mkstmt();
@@ -2068,6 +2087,7 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_LIST:
+        case EXPRESSION_TUPLE:
                 return e;
         case EXPRESSION_FUNCTION_CALL:
                 for (int i = 0; i < e->args.count; ++i) {
@@ -2122,6 +2142,7 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_FUNCTION_CALL:
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_LIST:
+        case EXPRESSION_TUPLE:
                 return e;
         case EXPRESSION_SPREAD:
                 // TODO: fix this so spread/match-rest are differentiated earlier

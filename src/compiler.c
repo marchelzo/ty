@@ -696,6 +696,8 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
         case EXPRESSION_MEMBER_ACCESS:
                 symbolize_expression(scope, target->object);
                 break;
+        case EXPRESSION_TUPLE:
+                target->ltmp = tmpsymbol(scope);
         case EXPRESSION_LIST:
                 for (int i = 0; i < target->es.count; ++i) {
                         symbolize_lvalue(scope, target->es.items[i], decl);
@@ -742,6 +744,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                 }
                 break;
         case EXPRESSION_LIST:
+        case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i)
                         symbolize_pattern(scope, e->es.items[i]);
                 break;
@@ -1056,6 +1059,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         symbolize_expression(subscope, e->values.items[i]);
                 }
                 break;
+        case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_expression(scope, e->es.items[i]);
@@ -2070,6 +2074,37 @@ emit_try_match(struct expression const *pattern)
                 emit_int(0);
                 need_loc = true;
                 break;
+        case EXPRESSION_TUPLE:
+                for (int i = 0; i < pattern->es.count; ++i) {
+                        if (pattern->es.items[i]->type == EXPRESSION_MATCH_REST) {
+                                emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
+                                emit_instr(INSTR_TUPLE_REST);
+                                emit_int(i);
+                                vec_push(state.match_fails, state.code.count);
+                                emit_int(0);
+
+                                if (i + 1 != pattern->es.count)
+                                        fail("the *<id> tuple-matching pattern must be the last pattern in the tuple");
+                        } else {
+                                emit_instr(INSTR_TRY_INDEX_TUPLE);
+                                emit_int(i);
+                                vec_push(state.match_fails, state.code.count);
+                                emit_int(0);
+
+                                emit_try_match(pattern->es.items[i]);
+
+                                emit_instr(INSTR_POP);
+                        }
+                }
+
+                if (pattern->es.count == 0 || pattern->es.items[pattern->es.count - 1]->type != EXPRESSION_MATCH_REST) {
+                        emit_instr(INSTR_ENSURE_LEN_TUPLE);
+                        emit_int(pattern->es.count);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
+                }
+
+                break;
         case EXPRESSION_LIST:
                 for (int i = 0; i < pattern->es.count; ++i) {
                         emit_instr(INSTR_PUSH_NTH);
@@ -2372,6 +2407,7 @@ emit_target(struct expression *target, bool def)
 
         switch (target->type) {
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_REST:
                 need_loc = false;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_tgt(target->symbol, state.fscope, def);
@@ -2930,15 +2966,8 @@ check_multi(struct expression *target, struct expression const *e, int *n)
 }
 
 static void
-emit_assignment(struct expression *target, struct expression const *e, bool maybe, bool def)
+emit_assignment2(struct expression *target, bool maybe, bool def)
 {
-
-        struct expression container, index, subscript;
-        int n = 0;
-
-        if (e != NULL && target->type != EXPRESSION_LIST)
-                emit_expression(e);
-
         char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
         char multi = maybe ? INSTR_MAYBE_MULTI : INSTR_MULTI_ASSIGN;
 
@@ -2946,15 +2975,13 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 
         switch (target->type) {
         case EXPRESSION_ARRAY:
-                emit_tgt(target->atmp, state.fscope, false);
-                emit_instr(INSTR_ASSIGN);
-                container = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = target->atmp, .local = true);
-                index = EXPR(.type = EXPRESSION_INTEGER);
-                subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &container, .subscript = &index);
                 for (int i = 0; i < target->elements.count; ++i) {
-                        index.integer = i;
-                        if (i == target->elements.count - 1 && target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
-                                emit_tgt(target->elements.items[i]->symbol, state.fscope, def);
+                        if (target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
+                                // might use later
+                                int after = target->elements.count - (i + 1);
+
+                                emit_target(target->elements.items[i], def);
+
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_int(i);
                                 emit_int(sizeof (int) + 1);
@@ -2962,72 +2989,64 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                                 emit_int(1);
                                 emit_instr(INSTR_BAD_MATCH);
                         } else {
-                                size_t s = state.code.count;
-                                emit_assignment(target->elements.items[i], &subscript, maybe, def);
-                                add_location(target->elements.items[i], s, state.code.count);
+                                emit_instr(INSTR_PUSH_ARRAY_ELEM);
+                                emit_int(i);
+                                emit_assignment2(target->elements.items[i], maybe, def);
                                 emit_instr(INSTR_POP);
                         }
                 }
                 break;
         case EXPRESSION_DICT:
-                emit_tgt(target->dtmp, state.fscope, false);
-                emit_instr(INSTR_ASSIGN);
-                container = EXPR(.type = EXPRESSION_IDENTIFIER, .symbol = target->dtmp, .local = true);
-                subscript = EXPR(.type = EXPRESSION_SUBSCRIPT, .container = &container);
                 for (int i = 0; i < target->keys.count; ++i) {
-                        subscript.subscript = target->keys.items[i];
-                        emit_assignment(target->values.items[i], &subscript, maybe, def);
+                        emit_instr(INSTR_DUP);
+                        emit_expression(target->keys.items[i]);
+                        emit_instr(INSTR_SUBSCRIPT);
+                        emit_assignment2(target->values.items[i], maybe, def);
                         emit_instr(INSTR_POP);
                 }
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_UNTAG_OR_DIE);
                 emit_int(target->symbol->tag);
-                emit_assignment(target->tagged, NULL, maybe, def);
+                emit_assignment2(target->tagged, maybe, def);
                 break;
         case EXPRESSION_VIEW_PATTERN:
+                emit_instr(INSTR_DUP);
                 emit_expression(target->left);
                 emit_instr(INSTR_CALL);
                 emit_int(1);
                 emit_int(0);
                 add_location(target->left, start, state.code.count);
-                emit_assignment(target->right, NULL, maybe, def);
+                emit_assignment2(target->right, maybe, def);
+                emit_instr(INSTR_POP);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_instr(INSTR_THROW_IF_NIL);
                 emit_target(target, def);
                 emit_instr(instr);
                 break;
-        case EXPRESSION_LIST:
-                if (!check_multi(target, e, &n)) {
-                        state.start = e->start;
-                        fail("wrong number of values on RHS of assignment. expected %d but found %d", target->es.count, n);
-                }
-
-                emit_instr(INSTR_SENTINEL);
-
-                if (e->type == EXPRESSION_LIST) for (int i = 0; i < e->es.count; ++i) {
-                        if (is_call(e->es.items[i])) {
-                                emit_instr(INSTR_CLEAR_RC);
-                                emit_expression(e->es.items[i]);
-                                emit_instr(INSTR_GET_EXTRA);
-                        } else {
-                                emit_expression(e->es.items[i]);
-                        }
-                } else {
-                        emit_instr(INSTR_CLEAR_RC);
-                        emit_expression(e);
-                        emit_instr(INSTR_GET_EXTRA);
-                }
-
+        case EXPRESSION_TUPLE:
                 for (int i = 0; i < target->es.count; ++i) {
-                        emit_target(target->es.items[i], def);
+                        if (target->es.items[i]->type == EXPRESSION_MATCH_REST) {
+                                // might use later
+                                int after = target->es.count - (i + 1);
+
+                                emit_target(target->es.items[i], def);
+
+                                emit_instr(INSTR_TUPLE_REST);
+                                emit_int(i);
+                                emit_int(sizeof (int) + 1);
+                                emit_instr(INSTR_JUMP);
+                                emit_int(1);
+                                emit_instr(INSTR_BAD_MATCH);
+                        } else {
+                                emit_instr(INSTR_PUSH_TUPLE_ELEM);
+                                emit_int(i);
+                                emit_assignment2(target->es.items[i], maybe, def);
+                                emit_instr(INSTR_POP);
+                        }
                 }
-
-                emit_instr(multi);
-                emit_int((int)target->es.count);
-
-                return;
+                break;
         default:
                 emit_target(target, def);
                 emit_instr(instr);
@@ -3042,10 +3061,29 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
                         PATCH_JUMP(good);
                         add_location(target->constraint, start, state.code.count);
                 }
+
+                // Don't need location info, can't fail here
                 return;
         }
 
         add_location(target, start, state.code.count);
+}
+
+static void
+emit_assignment(struct expression *target, struct expression const *e, bool maybe, bool def)
+{
+        if (target->type == EXPRESSION_LIST) {
+                emit_list(e);
+                for (int i = target->es.count - 1; i >= 0; --i) {
+                        emit_assignment2(target->es.items[i], maybe, def);
+                        emit_instr(INSTR_POP);
+                }
+                emit_instr(INSTR_POP);
+                emit_instr(INSTR_NIL);
+        } else {
+                emit_expression(e);
+                emit_assignment2(target, maybe, def);
+        }
 }
 
 static void
@@ -3412,8 +3450,12 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_expression(e->value);
                 emit_instr(INSTR_MUT_SUB);
                 break;
-        case EXPRESSION_LIST:
-                fail("list in invalid context");
+        case EXPRESSION_TUPLE:
+                emit_instr(INSTR_SAVE_STACK_POS);
+                for (int i = 0; i < e->es.count; ++i) {
+                        emit_expression(e->es.items[i]);
+                }
+                emit_instr(INSTR_TUPLE);
                 break;
         default:
                 fail("expression unexpected in this context");

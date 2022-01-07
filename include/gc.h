@@ -44,6 +44,7 @@ struct alloc {
 enum {
         GC_STRING,
         GC_ARRAY,
+        GC_TUPLE,
         GC_OBJECT,
         GC_DICT,
         GC_BLOB,

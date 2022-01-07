@@ -151,6 +151,7 @@ struct expression {
                 EXPRESSION_NIL,
                 EXPRESSION_SELF,
                 EXPRESSION_LIST,
+                EXPRESSION_TUPLE,
                 EXPRESSION_IN,
                 EXPRESSION_NOT_IN,
 
@@ -228,6 +229,7 @@ struct expression {
                         } compr;
                 };
                 struct {
+                        struct symbol *ltmp;
                         bool only_identifiers;
                         vec(struct expression *) es;
                 };

@@ -458,7 +458,7 @@ vm_exec(char *code)
 #endif
 
         for (;;) {
-                switch (*ip++) {
+                switch ((unsigned char)*ip++) {
                 CASE(NOP)
                         continue;
                 CASE(LOAD_LOCAL)
@@ -612,6 +612,18 @@ vm_exec(char *code)
                                 *poptarget() = ARRAY(rest);
                         }
                         break;
+                CASE(TUPLE_REST)
+                        READVALUE(i);
+                        READVALUE(n);
+                        if (top()->type != VALUE_TUPLE) {
+                                ip += n;
+                        } else {
+                                int count = top()->count - i;
+                                struct value *rest = gc_alloc_object(sizeof (struct value[count]), GC_TUPLE);
+                                memcpy(rest, top()->items + i, count * sizeof (struct value));
+                                *poptarget() = TUPLE(rest, count);
+                        }
+                        break;
                 CASE(THROW_IF_NIL)
                         if (top()->type == VALUE_NIL) {
                                 push(TAG(tags_lookup("MatchError")));
@@ -746,6 +758,13 @@ Throw:
                         if (!b)
                                 ip += n;
                         break;
+                CASE(ENSURE_LEN_TUPLE)
+                        READVALUE(n);
+                        b = top()->count == n;
+                        READVALUE(n);
+                        if (!b)
+                                ip += n;
+                        break;
                 CASE(ENSURE_EQUALS_VAR)
                         v = pop();
                         READVALUE(n);
@@ -805,6 +824,14 @@ Throw:
                         else
                                 push(top()->array->items[i]);
                         break;
+                CASE(TRY_INDEX_TUPLE)
+                        READVALUE(i);
+                        READVALUE(n);
+                        if (top()->type != VALUE_TUPLE || top()->count <= i)
+                                ip += n;
+                        else
+                                push(top()->items[i]);
+                        break;
                 CASE(TRY_TAG_POP)
                         READVALUE(tag);
                         READVALUE(n);
@@ -821,6 +848,9 @@ Throw:
                         break;
                 CASE(POP)
                         pop();
+                        break;
+                CASE(UNPOP)
+                        stack.count += 1;
                         break;
                 CASE(INTEGER)
                         READVALUE(k);
@@ -857,8 +887,8 @@ Throw:
                         n = stack.count - *vec_pop(sp_stack);
 
                         NOGC(v.array);
+
                         vec_reserve(*v.array, n);
-                        OKGC(v.array);
 
                         memcpy(
                                 v.array->items,
@@ -870,6 +900,32 @@ Throw:
                         stack.count -= n;
 
                         push(v);
+                        OKGC(v.array);
+
+                        break;
+                CASE(TUPLE)
+                        n = stack.count - *vec_pop(sp_stack);
+
+                        if (n == 0) {
+                                push(TUPLE(NULL, 0));
+                                break;
+                        }
+
+                        vp = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+
+                        memcpy(
+                                vp,
+                                stack.items + stack.count - n,
+                                sizeof (struct value [n])
+                        );
+
+                        NOGC(vp);
+
+                        stack.count -= n;
+                        push(TUPLE(vp, n));
+
+                        OKGC(vp);
+
                         break;
                 CASE(DICT)
                         v = DICT(dict_new());
@@ -1135,6 +1191,26 @@ Throw:
                         READVALUE(n);
                         push(top()[-n]);
                         break;
+                CASE(PUSH_ARRAY_ELEM)
+                        READVALUE(n);
+                        if (top()->type != VALUE_ARRAY) {
+                                vm_panic("attempt to destructure non-array as array in assignment");
+                        }
+                        if (n >= top()->array->count) {
+                                vm_panic("elment index out of range in destructuring assignment");
+                        }
+                        push(top()->array->items[n]);
+                        break;
+                CASE(PUSH_TUPLE_ELEM)
+                        READVALUE(n);
+                        if (top()->type != VALUE_TUPLE) {
+                                vm_panic("attempt to destructure non-tuple as tuple in assignment");
+                        }
+                        if (n >= top()->array->count) {
+                                vm_panic("elment index out of range in destructuring assignment");
+                        }
+                        push(top()->items[n]);
+                        break;
                 CASE(PUSH_ALL)
                         v = pop();
                         gc_push(&v);
@@ -1371,6 +1447,17 @@ ObjectSubscript:
 OutOfRange:
                                                 vm_panic("array index out of range in subscript expression");
                                         push(container.array->items[subscript.integer]);
+                                } else {
+                                        vm_panic("non-integer array index used in subscript expression");
+                                }
+                                break;
+                        case VALUE_TUPLE:
+                                if (subscript.type == VALUE_INTEGER) {
+                                        if (subscript.integer < 0)
+                                                subscript.integer += container.count;
+                                        if (subscript.integer < 0 || subscript.integer >= container.count)
+                                                vm_panic("list index out of range in subscript expression");
+                                        push(container.items[subscript.integer]);
                                 } else {
                                         vm_panic("non-integer array index used in subscript expression");
                                 }

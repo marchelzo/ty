@@ -20,6 +20,9 @@
 static bool
 arrays_equal(struct value const *v1, struct value const *v2)
 {
+        if (v1->array == v2->array)
+                return true;
+
         if (v1->array->count != v2->array->count)
                 return false;
 
@@ -27,6 +30,24 @@ arrays_equal(struct value const *v1, struct value const *v2)
 
         for (size_t i = 0; i < n; ++i)
                 if (!value_test_equality(&v1->array->items[i], &v2->array->items[i]))
+                        return false;
+
+        return true;
+}
+
+static bool
+tuples_equal(struct value const *v1, struct value const *v2)
+{
+        if (v1->items == v2->items)
+                return true;
+
+        if (v1->count != v2->count)
+                return false;
+
+        size_t n = v1->count;
+
+        for (size_t i = 0; i < n; ++i)
+                if (!value_test_equality(&v1->items[i], &v2->items[i]))
                         return false;
 
         return true;
@@ -107,6 +128,19 @@ ary_hash(struct value const *a)
 }
 
 inline static unsigned long
+tpl_hash(struct value const *t)
+{
+        unsigned long hash = 5381;
+
+        for (int i = 0; i < t->count; ++i) {
+                unsigned long c = value_hash(&t->items[i]);
+                hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+        }
+
+        return hash;
+}
+
+inline static unsigned long
 obj_hash(struct value const *v)
 {
         struct value const *f = class_method(v->class, "__hash__");
@@ -132,6 +166,7 @@ hash(struct value const *val)
         case VALUE_INTEGER:           return int_hash(val->integer);
         case VALUE_REAL:              return flt_hash(val->real);
         case VALUE_ARRAY:             return ary_hash(val);
+        case VALUE_TUPLE:             return tpl_hash(val);
         case VALUE_DICT:              return ptr_hash(val->dict);
         case VALUE_OBJECT:            return obj_hash(val);
         case VALUE_METHOD:            return ptr_hash(val->method) ^ ptr_hash(val->this);
@@ -241,6 +276,47 @@ show_array(struct value const *a)
         return s;
 }
 
+char *
+show_tuple(struct value const *v)
+{
+        static vec(struct value *) show_tuples;
+
+        for (int i = 0; i < show_tuples.count; ++i)
+                if (show_tuples.items[i] == v->items)
+                        return sclone("(...)");
+
+        vec_push(show_tuples, v->items);
+
+        size_t capacity = 1;
+        size_t len = 1;
+        size_t n;
+        char *s = gc_alloc(2);
+        strcpy(s, "(");
+
+#define add(str) \
+                n = strlen(str); \
+                if (len + n >= capacity) {\
+                        capacity = 2 * (len + n) + 1; \
+                        resize(s, capacity); \
+                } \
+                strcpy(s + len, str); \
+                len += n;
+
+        for (size_t i = 0; i < v->count; ++i) {
+                char *val = value_show(&v->items[i]);
+                add(i == 0 ? "" : ", ");
+                add(val);
+                gc_free(val);
+        }
+
+        add(")");
+#undef add
+
+        --show_tuples.count;
+
+        return s;
+}
+
 static char *
 show_string(char const *s, size_t n)
 {
@@ -298,6 +374,9 @@ value_show(struct value const *v)
                 break;
         case VALUE_ARRAY:
                 s = show_array(v);
+                break;
+        case VALUE_TUPLE:
+                s = show_tuple(v);
                 break;
         case VALUE_REGEX:
                 snprintf(buffer, 1024, "/%s/", v->regex->pattern);
@@ -411,6 +490,13 @@ value_compare(void const *_v1, void const *_v2)
                                 return o;
                 }
                 return ((int)v1->array->count) - ((int)v2->array->count);
+        case VALUE_TUPLE:
+                for (int i = 0; i < v1->count && i < v2->count; ++i) {
+                        int o = value_compare(&v1->items[i], &v2->items[i]);
+                        if (o != 0)
+                                return o;
+                }
+                return ((int)v1->count) - ((int)v2->count);
         case VALUE_OBJECT:;
                 struct value const *cmpfn = class_method(v1->class, "<=>");
                 if (cmpfn == NULL)
@@ -434,6 +520,7 @@ value_truthy(struct value const *v)
         case VALUE_INTEGER:          return (v->integer != 0);
         case VALUE_STRING:           return (v->bytes > 0);
         case VALUE_ARRAY:            return (v->array->count != 0);
+        case VALUE_TUPLE:            return (v->count != 0);
         case VALUE_BLOB:             return (v->blob->count != 0);
         case VALUE_REGEX:            return true;
         case VALUE_FUNCTION:         return true;
@@ -570,6 +657,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_INTEGER:          if (v1->integer != v2->integer)                                                return false; break;
         case VALUE_STRING:           if (v1->bytes != v2->bytes || memcmp(v1->string, v2->string, v1->bytes) != 0)  return false; break;
         case VALUE_ARRAY:            if (!arrays_equal(v1, v2))                                                     return false; break;
+        case VALUE_TUPLE:            if (!tuples_equal(v1, v2))                                                     return false; break;
         case VALUE_REGEX:            if (v1->regex != v2->regex)                                                    return false; break;
         case VALUE_FUNCTION:         if (v1->info != v2->info)                                                      return false; break;
         case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
@@ -607,6 +695,18 @@ value_array_mark(struct array *a)
 
         for (int i = 0; i < a->count; ++i) {
                 value_mark(&a->items[i]);
+        }
+}
+
+inline static void
+mark_tuple(struct value const *v)
+{
+        if (MARKED(v->items)) return;
+
+        MARK(v->items);
+
+        for (int i = 0; i < v->count; ++i) {
+                value_mark(&v->items[i]);
         }
 }
 
@@ -661,6 +761,7 @@ _value_mark(struct value const *v)
         case VALUE_METHOD:          MARK(v->this); value_mark(v->this);                break;
         case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);                break;
         case VALUE_ARRAY:           value_array_mark(v->array);                        break;
+        case VALUE_TUPLE:           mark_tuple(v);                                     break;
         case VALUE_DICT:            dict_mark(v->dict);                                break;
         case VALUE_FUNCTION:        mark_function(v);                                  break;
         case VALUE_GENERATOR:       mark_generator(v);                                 break;
@@ -686,6 +787,13 @@ value_array_new(void)
         struct array *a = gc_alloc_object(sizeof *a, GC_ARRAY);
         vec_init(*a);
         return a;
+}
+
+struct value
+value_tuple(int n)
+{
+        struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+        return TUPLE(items, n);
 }
 
 struct array *
