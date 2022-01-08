@@ -2523,16 +2523,19 @@ parse_return_statement(void)
 
         consume_keyword(KEYWORD_RETURN);
 
-        while (tok()->type != ';') {
-        Expr:
-                vec_push(s->returns, parse_expr(0));
-                if (tok()->type == ',') {
-                        next();
-                        goto Expr;
-                }
+        if (tok()->start.line != s->start.line) {
+                return s;
         }
 
-        consume(';');
+        vec_push(s->returns, parse_expr(0));
+
+        while (tok()->type == ',') {
+                next();
+                vec_push(s->returns, parse_expr(0));
+        }
+
+        if (tok()->type == ';')
+                next();
 
         return s;
 }
@@ -2554,7 +2557,8 @@ parse_let_definition(void)
 
         struct expression *value = parse_expr(-1);
 
-        consume(';');
+        if (tok()->type == ';')
+                next();
 
         s->target = target;
         s->value = value;
@@ -2589,13 +2593,14 @@ parse_break_statement(void)
 
         consume_keyword(KEYWORD_BREAK);
 
-        if (tok()->type != ';') {
+        if (tok()->start.line == s->start.line && get_prefix_parser() != NULL) {
                 s->expression = parse_expr(0);
         } else {
                 s->expression = NULL;
         }
 
-        consume(';');
+        if (tok()->type == ';')
+                consume(';');
 
         return s;
 }
@@ -2606,7 +2611,9 @@ parse_continue_statement(void)
         struct statement *s = mkstmt();
 
         consume_keyword(KEYWORD_CONTINUE);
-        consume(';');
+
+        if (tok()->type == ';')
+                next();
 
         s->type = STATEMENT_CONTINUE;
 
@@ -2759,7 +2766,8 @@ parse_throw(void)
 
         s->throw = parse_expr(0);
 
-        consume(';');
+        if (tok()->type == ';')
+                next();
 
         s->end = End;
 
