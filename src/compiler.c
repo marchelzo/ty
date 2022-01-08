@@ -873,6 +873,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                                         sprintf(id, "_%d", i);
                                         addsymbol(subscope, sclone(id));
                                 NextCapture:
+                                        ;
                                 }
                         }
                         symbolize_pattern(subscope, e->patterns.items[i]);
