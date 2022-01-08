@@ -203,12 +203,18 @@ array_slice_mut(struct value *array, int argc)
         s = min(s, array->array->count);
         n = min(n, array->array->count - s);
 
-        memmove(array->array->items, array->array->items + s, n * sizeof (struct value));
-        array->array->count = n;
+        struct array *slice = value_array_new();
+        NOGC(slice);
 
+        vec_push_n(*slice, array->array->items + s, n);
+        memmove(array->array->items + s, array->array->items + s + n, sizeof (struct value[array->array->count - (s + n)]));
+
+        array->array->count -= n;
         shrink(array);
 
-        return *array;
+        OKGC(slice);
+
+        return ARRAY(slice);
 }
 
 static struct value
