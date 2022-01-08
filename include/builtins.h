@@ -24,6 +24,7 @@
 { .module = NULL,     .name = "type",              .value = BUILTIN(builtin_type)                          },
 { .module = NULL,     .name = "subclass?",         .value = BUILTIN(builtin_subclass)                      },
 { .module = NULL,     .name = "members",           .value = BUILTIN(builtin_members)                       },
+{ .module = NULL,     .name = "member",            .value = BUILTIN(builtin_member)                        },
 { .module = NULL,     .name = "object",            .value = BUILTIN(builtin_object)                        },
 { .module = NULL,     .name = "bindMethod",        .value = BUILTIN(builtin_bind)                          },
 { .module = NULL,     .name = "apply",             .value = BUILTIN(builtin_apply)                         },

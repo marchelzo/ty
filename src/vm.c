@@ -1884,7 +1884,7 @@ BadContainer:
                                 break;
                         case VALUE_CLASS:
                                 vp = class_method(v.class, "init");
-                                if (v.class < CLASS_PRIMITIVE) {
+                                if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
                                         if (vp != NULL) {
                                                 call(vp, NULL, n, nkw, true);
                                         } else {

@@ -1552,7 +1552,7 @@ emit_function(struct expression const *e, int class)
                 emit_instr(INSTR_NIL);
                 emit_instr(INSTR_YIELD);
                 JUMP(end);
-        } else if (!emit_statement(e->body, false)) {
+        } else if (false && !emit_statement(e->body, false)) {
                 /*
                  * Add an implicit 'return nil;' if the function
                  * doesn't explicitly return in its body.
@@ -1564,6 +1564,9 @@ emit_function(struct expression const *e, int class)
                 };
                 vec_init(empty.returns);
                 emit_statement(&empty, false);
+        } else {
+                emit_statement(e->body, true);
+                emit_instr(INSTR_RETURN);
         }
 
         while ((state.code.count - start_offset) % P_ALIGN != 0) {

@@ -3052,3 +3052,50 @@ builtin_members(int argc)
 
         return DICT(members);
 }
+
+struct value
+builtin_member(int argc)
+{
+        ASSERT_ARGC_2("member", 2, 3);
+
+        struct value o = ARG(0);
+        struct value name = ARG(1);
+
+        if (o.type != VALUE_OBJECT) {
+                vm_panic("the first argument to member() must be an object");
+        }
+
+        if (name.type != VALUE_STRING) {
+                vm_panic("the second argument to member() must be a string");
+        }
+
+        if (name.bytes >= sizeof buffer) {
+                // sus
+                return NIL;
+        }
+
+        memcpy(buffer, name.string, name.bytes);
+        buffer[name.bytes] = '\0';
+
+        if (argc == 2) {
+                struct value *v = table_look(o.object, buffer);
+
+                if (v == NULL) {
+                        return NIL;
+                }
+
+                return *v;
+        } else {
+                static struct table NameTable;
+
+                struct value *np = table_look(&NameTable, buffer);
+
+                table_put(
+                        o.object,
+                        ((np == NULL) ? table_put(&NameTable, buffer, PTR(sclone(buffer))) : np)->ptr,
+                        ARG(2)
+                );
+
+                return NIL;
+        }
+}

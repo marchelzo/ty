@@ -661,15 +661,14 @@ prefix_function(void)
         NoEquals = true;
 
         while (tok()->type != ')') {
-                bool special = tok()->type == TOKEN_STAR;
+                bool rest = tok()->type == TOKEN_STAR;
+                bool kwargs = tok()->type == TOKEN_USER_OP && strcmp(tok()->identifier, "**") == 0;
+                bool special = rest || kwargs;
+
                 if (special) {
                         next();
-                        if (tok()->type == TOKEN_STAR) {
-                                next();
-                                e->has_kwargs = true;
-                        } else {
-                                e->rest = true;
-                        }
+                        e->has_kwargs |= kwargs;
+                        e->rest |= rest;
                 }
 
                 expect(TOKEN_IDENTIFIER);
@@ -908,8 +907,7 @@ prefix_match(void)
         consume(TOKEN_FAT_ARROW);
         vec_push(e->thens, parse_expr(0));
 
-        while (tok()->type == ',') {
-                next();
+        while (tok()->type != '}') {
                 vec_push(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
                 vec_push(e->thens, parse_expr(0));
@@ -2441,8 +2439,7 @@ parse_match_statement(void)
         consume(TOKEN_FAT_ARROW);
         vec_push(s->match.statements, parse_statement());
 
-        while (tok()->type == ',') {
-                next();
+        while (tok()->type != '}') {
                 vec_push(s->match.patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
                 vec_push(s->match.statements, parse_statement());

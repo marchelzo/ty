@@ -48,5 +48,4 @@ table_get_completions(struct table const *t, char const *prefix, char **out, int
 void
 table_release(struct table *t);
 
-
 #endif
