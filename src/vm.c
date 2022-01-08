@@ -1206,7 +1206,7 @@ Throw:
                         if (top()->type != VALUE_TUPLE) {
                                 vm_panic("attempt to destructure non-tuple as tuple in assignment");
                         }
-                        if (n >= top()->array->count) {
+                        if (n >= top()->count) {
                                 vm_panic("elment index out of range in destructuring assignment");
                         }
                         push(top()->items[n]);
