@@ -4,82 +4,82 @@ import stdio
 
 export open, stdin, stdout, stderr, FBF, LBF, NBF
 
-let FBF = stdio::_IOFBF;
-let LBF = stdio::_IOLBF;
-let NBF = stdio::_IONBF;
+let FBF = stdio._IOFBF;
+let LBF = stdio._IOLBF;
+let NBF = stdio._IONBF;
 let BufferingMethod = FBF | LBF | NBF;
 
 class Stream : Iter {
     init(fd: Int, mode: ?String = 'a+', buffering: ?BufferingMethod) {
         self.fd = fd;
 
-        if let $f = stdio::fdopen(fd, mode) {
+        if let $f = stdio.fdopen(fd, mode) {
             self.f = f;
         } else {
-            throw Err(errno::get());
+            throw Err(errno.get());
         }
 
         if buffering != nil {
-            stdio::setvbuf(self.f, buffering);
+            stdio.setvbuf(self.f, buffering);
         }
     }
 
     close() {
         if self.f != nil {
-            let r = stdio::fclose(self.f);
+            let r = stdio.fclose(self.f);
             self.f = nil;
             return r;
         } else {
-            throw Err(errno::EBADF);
+            throw Err(errno.EBADF);
         }
     }
 
     nextLine() {
-        if let $line = stdio::fgets(self.f) {
+        if let $line = stdio.fgets(self.f) {
             return line;
-        } else if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
-                stdio::clearerr(self.f);
+        } else if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
+                stdio.clearerr(self.f);
         }
     }
 
     rewind() {
-        if stdio::fseek(self.f, 0, stdio::SEEK_SET) == -1 {
-            throw Err(errno::get());
+        if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
+            throw Err(errno.get());
         }
     }
 
     next(n: ?Int) {
-        return match n {
-            $n  => stdio::fread(self.f, n),
-            _   => stdio::fgetc(self.f)
-        };
+        match n {
+            $n  => stdio.fread(self.f, n)
+            _   => stdio.fgetc(self.f)
+        }
     }
 
     write(s) {
-        return match s {
-            Blob | String => stdio::fwrite(self.f, s),
-            _             => stdio::fwrite(self.f, str(s))
-        };
+        match s {
+            Blob | String => stdio.fwrite(self.f, s)
+            _             => stdio.fwrite(self.f, str(s))
+        }
     }
 
     print(s = '') {
-        return match s {
-            Blob   => stdio::puts(self.f, s),
-            String => stdio::puts(self.f, s),
-            _      => stdio::puts(self.f, str(s))
-        };
+        match s {
+            Blob   => stdio.puts(self.f, s)
+            String => stdio.puts(self.f, s)
+            _      => stdio.puts(self.f, str(s))
+        }
     }
 
     slurp() {
-        return stdio::slurp(self.f);
+        stdio.slurp(self.f)
     }
 
     flush() {
-        return stdio::fflush(self.f);
+        stdio.fflush(self.f)
     }
 
     __next__() {
-        return self.nextLine();
+        self.nextLine()
     }
 }
 
@@ -94,30 +94,30 @@ function open(path: String | Int, mode: String = 'a+', buffering) {
     }
 
     let flags = match mode {
-        'r'  => [os::O_RDONLY],
-        'w'  => [os::O_WRONLY, os::O_CREAT, os::O_TRUNC],
-        'wx' => [os::O_WRONLY, os::O_CREAT],
-        'a'  => [os::O_WRONLY, os::O_CREAT, os::O_APPEND],
-        'r+' => [os::O_RDWR],
-        'w+' => [os::O_RDWR, os::O_CREAT, os::O_TRUNC],
-        'a+' => [os::O_RDWR, os::O_CREAT, os::O_APPEND],
+        'r'  => [os.O_RDONLY]
+        'w'  => [os.O_WRONLY, os.O_CREAT, os.O_TRUNC]
+        'wx' => [os.O_WRONLY, os.O_CREAT]
+        'a'  => [os.O_WRONLY, os.O_CREAT, os.O_APPEND]
+        'r+' => [os.O_RDWR]
+        'w+' => [os.O_RDWR, os.O_CREAT, os.O_TRUNC]
+        'a+' => [os.O_RDWR, os.O_CREAT, os.O_APPEND]
         _    => nil
     };
 
     if flags == nil {
-        throw Err(errno::EINVAL);
+        throw Err(errno.EINVAL)
     }
 
-    let creat = flags.contains?(os::O_CREAT);
+    let creat = flags.contains?(os.O_CREAT)
 
     let fd = if creat {
-        os::open(path, flags, 0666)
+        os.open(path, flags, 0666)
     } else {
-        os::open(path, flags)
-    };
+        os.open(path, flags)
+    }
 
-    return match fd {
-        -1 => nil,
+    match fd {
+        -1 => nil
         _   => Stream(fd, mode, buffering)
-    };
+    }
 }

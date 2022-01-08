@@ -153,7 +153,7 @@ class FCGIRequest {
         response.push(0);
         response.push(0);
         response.push(body);
-        os::write(self.socket, response);
+        os.write(self.socket, response);
         response.clear();
 
         response.push(FCGI_VERSION_1);
@@ -164,7 +164,7 @@ class FCGIRequest {
         response.push(0);
         response.push(0);
         response.push(0);
-        os::write(self.socket, response);
+        os.write(self.socket, response);
         response.clear();
 
         response.push(FCGI_VERSION_1);
@@ -184,9 +184,9 @@ class FCGIRequest {
         response.push(0);
         response.push(0);
 
-        os::write(self.socket, response);
+        os.write(self.socket, response);
 
-        os::close(self.socket);
+        os.close(self.socket);
     }
 
     queryParams() {
@@ -211,11 +211,11 @@ class FCGIApp {
     }
 
     waitRequest() {
-        if !let [$fd, addr] = os::accept(self.socket) {
+        if !let [$fd, addr] = os.accept(self.socket) {
             return nil;
         }
 
-        let stream = io::open(fd);
+        let stream = io.open(fd);
 
         let body = blob();
         let params = {};
@@ -223,12 +223,12 @@ class FCGIApp {
         while let $r = FCGIRecord.read(stream) {
             match r.type {
                 ::FCGI_BEGIN_REQUEST => {
-                    let role, flags = r.beginRequest();
-                },
+                    let role, flags = r.beginRequest()
+                }
 
                 ::FCGI_PARAMS => {
-                    params += r.getParams();
-                },
+                    params += r.getParams()
+                }
 
                 ::FCGI_STDIN => {
                     let input = r.readInput();
@@ -237,9 +237,9 @@ class FCGIApp {
                     } else {
                         body.push(input);
                     }
-                },
+                }
 
-                t => { print("Type = {t}"); }
+                t => { print("Type = {t}") }
             }
         }
 
