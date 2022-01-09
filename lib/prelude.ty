@@ -486,6 +486,8 @@ class Bool {
     init(x) {
         return bool(x)
     }
+
+    __not__() { return !self }
 }
 
 class Regex {
@@ -1046,7 +1048,8 @@ class InclusiveRange : Range {
 
     __iter__() {
         let a, b = self.a, self.b
-        return if a < b {
+
+        if a < b {
             a.upto(b)
         } else {
             a.downto(b)
@@ -1054,7 +1057,7 @@ class InclusiveRange : Range {
     }
 
     high() {
-        return max(self.a, self.b)
+        max(self.a, self.b)
     }
 }
 

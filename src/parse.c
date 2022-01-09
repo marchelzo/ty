@@ -201,6 +201,24 @@ mkexpr(void)
         return e;
 }
 
+inline static struct expression *
+mkfunc(void)
+{
+        struct expression *f = mkexpr();
+
+        f->type = EXPRESSION_FUNCTION;
+        f->rest = false;
+        f->has_kwargs = false;
+        f->name = NULL;
+        f->body = NULL;
+
+        vec_init(f->params);
+        vec_init(f->dflts);
+        vec_init(f->constraints);
+
+        return f;
+}
+
 inline static struct statement *
 mkstmt(void)
 {
@@ -633,12 +651,7 @@ prefix_identifier(void)
 static struct expression *
 prefix_function(void)
 {
-        struct expression *e = mkexpr();
-        e->rest = false;
-        e->has_kwargs = false;
-        vec_init(e->params);
-        vec_init(e->dflts);
-        vec_init(e->constraints);
+        struct expression *e = mkfunc();
 
         if (tok()->keyword == KEYWORD_GENERATOR) {
                 e->type = EXPRESSION_GENERATOR;
@@ -1089,9 +1102,47 @@ prefix_array(void)
         default: break;
         }
 
+        struct expression *e, *f;
+
+        struct location start = tok()->start;
+
+        int in_type = EXPRESSION_IN;
+
+        if (token(1)->type == TOKEN_KEYWORD) switch (token(1)->keyword) {
+        case KEYWORD_IN:
+        InSlice:
+                next();
+                next();
+                e = parse_expr(0);
+                consume(']');
+                f = mkfunc();
+                vec_push(f->params, gensym());
+                vec_push(f->dflts, NULL);
+                vec_push(f->constraints, NULL);
+                f->body = mkstmt();
+                f->body->type = STATEMENT_EXPRESSION;
+                f->body->expression = mkexpr();
+                f->body->expression->type = in_type;
+                f->body->expression->left = mkexpr();
+                f->body->expression->left->type = EXPRESSION_IDENTIFIER;
+                f->body->expression->left->identifier = f->params.items[0];
+                f->body->expression->left->module = NULL;
+                f->body->expression->right = e;
+                f->start = start;
+                f->end = End;
+                return f;
+        case KEYWORD_NOT:
+                next();
+                if (token(1)->type == TOKEN_KEYWORD && token(1)->keyword == KEYWORD_IN) {
+                        in_type = EXPRESSION_NOT_IN;
+                        goto InSlice;
+                }
+                break;
+        }
+
         setctx(LEX_PREFIX);
 
-        struct expression *e = mkexpr();
+        e = mkexpr();
         e->type = EXPRESSION_ARRAY;
         vec_init(e->elements);
 
@@ -1210,20 +1261,11 @@ implicit_subscript(struct expression *o)
 
         consume(']');
 
-        struct expression *f = mkexpr();
-        f->type = EXPRESSION_FUNCTION;
-        f->rest = false;
-        f->has_kwargs = false;
-        f->name = NULL;
+        struct expression *f = mkfunc();
         f->body = mkret(e);
 
-        vec_init(f->params);
         vec_push(f->params, o->identifier);
-
-        vec_init(f->dflts);
         vec_push(f->dflts, NULL);
-
-        vec_init(f->constraints);
         vec_push(f->constraints, NULL);
 
         return f;
@@ -1236,6 +1278,13 @@ prefix_implicit_method(void)
 
         if (tok()->type == '(') {
                 return prefix_implicit_lambda();
+        }
+
+        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_NOT) {
+                next();
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->identifier = "__not__";
+                tok()->module = NULL;
         }
 
         struct expression *o = mkexpr();
@@ -1296,20 +1345,11 @@ prefix_implicit_method(void)
                 consume(')');
         }
 
-        struct expression *f = mkexpr();
-        f->type = EXPRESSION_FUNCTION;
-        f->rest = false;
-        f->has_kwargs = false;
-        f->name = NULL;
+        struct expression *f = mkfunc();
         f->body = mkret(e);
 
-        vec_init(f->params);
         vec_push(f->params, o->identifier);
-
-        vec_init(f->dflts);
         vec_push(f->dflts, NULL);
-
-        vec_init(f->constraints);
         vec_push(f->constraints, NULL);
 
         return f;
@@ -2675,7 +2715,6 @@ parse_expr(int prec)
                 error("expected expression but found %s", token_show(tok()));
 
         e = f();
-        struct location start = e->start;
 
         while (!should_split() && prec < get_infix_prec()) {
                 f = get_infix_parser();
