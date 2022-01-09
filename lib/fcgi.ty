@@ -246,4 +246,9 @@ class FCGIApp {
         return FCGIRequest(fd, body.str(), params);
     }
 
+    requests() {
+        while let $r = self.waitRequest() {
+            yield r
+        }
+    }
 }

@@ -2,109 +2,110 @@ import sqlite3c (..)
 
 export SQLite3
 
-class SQLite3RowIter {
+class SQLite3RowIter : Iter {
     init(s) {
-        self.s = s;
+        self.s = s
     }
 
     __next__() {
-        return self.s.nextRow();
+        Some.from(self.s.nextRow())
     }
 }
 
-class SQLite3Statement {
+class SQLite3Statement : Iterable {
     init(p) {
-        self.p = p;
+        self.p = p
     }
 
     exec() {
         if self.p {
-            let r = step(self.p);
-            finalize(self.p);
-            self.p = nil;
-            return r;
+            let r = step(self.p)
+            finalize(self.p)
+            self.p = nil
+            return r
         } else {
-            throw Err(SQLITE_MISUSE);
+            throw Err(SQLITE_MISUSE)
         }
     }
 
     step() {
         if self.p {
-            self.status = step(self.p);
-            return self.status;
+            self.status = step(self.p)
+            return self.status
         } else {
-            throw Err(SQLITE_MISUSE);
+            throw Err(SQLITE_MISUSE)
         }
     }
 
     row() {
         if self.p {
             if self.status == SQLITE_ROW {
-                return fetchAssoc(self.p);
+                return fetchAssoc(self.p)
             } else {
-                return nil;
+                return nil
             }
         } else {
-            throw Err(SQLITE_MISUSE);
+            throw Err(SQLITE_MISUSE)
         }
     }
 
     nextRow() {
-        self.step();
-        let row = self.row();
+        self.step()
+        let row = self.row()
         if self.status == SQLITE_DONE {
-            self.finalize();
+            self.finalize()
         }
-        return row;
+        return row
     }
 
     finalize() {
         if self.p {
-            finalize(self.p);
-            self.p = nil;
+            finalize(self.p)
+            self.p = nil
         }
     }
 
     rows() {
         if !self.p {
-            throw Err(SQLITE_MISUSE);
+            throw Err(SQLITE_MISUSE)
         }
-        reset(self.p);
-        return SQLite3RowIter(self);
+        reset(self.p)
+        return SQLite3RowIter(self)
     }
 
     __iter__() {
-        return self.rows();
+        return self.rows()
     }
 }
 
 class SQLite3 {
     init(path) {
         if let $db = open(path) {
-            self.db = db;
+            self.db = db
         } else {
-            throw Err(error());
+            throw Err(error())
         }
     }
 
     close() {
-        if (self.db) {
-            close(self.db);
-            self.db = nil;
+        if self.db {
+            close(self.db)
+            self.db = nil
         }
     }
 
     query(sql, *ps) {
         if !let $s  = prepare(self.db, sql) {
-            throw Err(error(self.db));
+            throw Err(error(self.db))
         }
 
         for p, i in ps {
             match bind(s, i + 1, p) {
                 SQLITE_OK => { },
-                e         => throw Err(e);
+                e         => throw Err(e)
             }
         }
-        return SQLite3Statement(s);
+
+        return SQLite3Statement(s)
     }
 }

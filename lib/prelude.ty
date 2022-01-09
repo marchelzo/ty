@@ -112,7 +112,7 @@ class Class {
     }
 }
 
-class Function {
+class Function : Iter {
     init() {
         id
     }
@@ -138,7 +138,7 @@ class Function {
     }
 
     __next__() {
-        self()
+        Some(self())
     }
 }
 
@@ -352,9 +352,9 @@ class Int {
     **(b)   { math.pow(self, b)       }
 
     upto(b: Int) {
-        Generator(function UpToFunc() {
-            if self <= b { return self++ }
-        })
+        while self <= b {
+            yield self++
+        }
     }
 
     str(base: Int = 10) {
@@ -375,7 +375,7 @@ class Int {
 
     downto(b: Int) {
         Generator(function () {
-            if self >= b { return self-- }
+            if self >= b { self-- }
         })
     }
 
@@ -412,6 +412,22 @@ class Int {
 
     succ() {
         self + 1
+    }
+
+    zero?() {
+        self == 0
+    }
+
+    nonZero?() {
+        self != 0
+    }
+
+    positive?() {
+        self > 0
+    }
+
+    negative?() {
+        self < 0
     }
 }
 
@@ -486,11 +502,13 @@ class Regex {
 
 class Generator : Iter {
     init(f) {
-        while true { yield f() }
+        while let Some(x) = f() {
+            yield x
+        }
     }
 
     __next__() {
-        return self()
+        self()
     }
 }
 
@@ -639,12 +657,14 @@ class Iter : Iterable {
     fold(x, f) {
         if f == nil {
             f = x
-            if (x = self.__next__()) == nil {
+            if x = self.__next__() == None {
                 return nil
             }
         }
 
-        while let $y = self.__next__() {
+        Some(x) = x
+
+        while let Some(y) = self.__next__() {
             x = f(x, y)
         }
 
@@ -654,7 +674,7 @@ class Iter : Iterable {
     __len__() {
         let n = 0
 
-        while self.__next__() != nil {
+        for _ in self {
             n += 1
         }
 
@@ -679,7 +699,7 @@ class Iter : Iterable {
         while !stop {
             let group = []
             for it in its {
-                if !let $x = it.__next__() {
+                if !let Some(x) = it.__next__() {
                     stop = true
                     break
                 }
@@ -704,27 +724,29 @@ class Iter : Iterable {
     }
 
     group(f = id) {
-        if !let $x = self.__next__() {
-            return Generator(() -> nil)
+        if !let Some(x) = self.__next__() {
+            return Generator(_ -> None)
         }
 
         let g = [x]
 
         return Generator(function () {
-            while let $x = self.__next__() {
+            while let Some(x) = self.__next__() {
                 if f(x) == f(g[-1]) {
                     g.push(x)
                 } else {
                     let group = g
                     g = [x]
-                    return group
+                    return Some(group)
                 }
             }
 
             if g {
                 let group = g
                 g = nil
-                return group
+                return Some(group)
+            } else {
+                None
             }
         })
     }
@@ -732,22 +754,22 @@ class Iter : Iterable {
     groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
         return Generator(function () {
             match self.take(n).list() {
-                xs: #xs == n             => xs,
-                xs: #xs > 0 && keepShort => xs,
-                _ => nil
+                xs: #xs == n             => Some(xs),
+                xs: #xs > 0 && keepShort => Some(xs),
+                _ => None
             }
         })
     }
 
     join(sep: String) {
-        if !let (str ~> $s) = self.__next__() {
+        if !let Some(str ~> $s) = self.__next__() {
             return ''
         }
 
         let b = blob()
         b.push(s)
 
-        while let $s = self.__next__() {
+        while let Some(s) = self.__next__() {
             b.push(sep)
             b.push(str(s))
         }
@@ -763,11 +785,11 @@ class Iter : Iterable {
         let n = 0
 
         if x :: (Function | Regex) {
-            while let $y = self.__next__() {
+            while let Some(y) = self.__next__() {
                 if x(y) { n += 1 }
             }
         } else {
-            while let $y = self.__next__() {
+            while let Some(y) = self.__next__() {
                 if x == y { n += 1 }
             }
         }
@@ -779,18 +801,14 @@ class Iter : Iterable {
         ys = ys.__iter__()
         for x in self {
             yield x
-            if let $y = ys.__next__() {
+            if let Some(y) = ys.__next__() {
                 yield y
             }
         }
     }
 
     list() {
-        let xs = []
-        while let $x = self.__next__() {
-            xs.push(x)
-        }
-        return xs
+        [x for x in self]
     }
 
     reverse() {
@@ -798,12 +816,13 @@ class Iter : Iterable {
     }
 
     take(n) {
-        let i = 0
-        return Generator(function () {
-            if i++ < n {
-                return self.__next__()
+        for _ in ..n {
+            if let Some(x) = self.__next__() {
+                yield x
+            } else {
+                break
             }
-        })
+        }
     }
 
     drop(n) {
@@ -832,14 +851,14 @@ class Iter : Iterable {
     }
 
     max(k = id) {
-        if !let $x = self.__next__() {
+        if !let Some(x) = self.__next__() {
             return nil
         }
 
         let m = x
         let mKey = k(m)
 
-        while let $x = self.__next__() {
+        while let Some(x) = self.__next__() {
             let key = k(x)
             if key > mKey {
                 m, mKey = x, key
@@ -850,14 +869,14 @@ class Iter : Iterable {
     }
 
     min(k = id) {
-        if !let $x = self.__next__() {
+        if !let Some(x) = self.__next__() {
             return nil
         }
 
         let m = x
         let mKey = k(m)
 
-        while let $x = self.__next__() {
+        while let Some(x) = self.__next__() {
             let key = k(x)
             if key < mKey {
                 m, mKey = x, key
@@ -867,61 +886,33 @@ class Iter : Iterable {
         return m
     }
 
-    intersperse(x) {
-        let i = 0
-        let next = self.__next__()
-        return Generator(function () {
-            if next != nil {
-                match i++ % 2 {
-                    0 => {
-                        let r = next
-                        next = self.__next__()
-                        return r
-                    },
-
-                    1 => {
-                        return x
-                    }
-                }
+    intersperse(sep) {
+        let first = true;
+        for x in self {
+            if !first {
+                yield sep
             }
-        })
+
+            yield x
+
+            first = false
+        }
     }
 
     chainAll() {
-        if !let $it = self.__next__() {
-            return nil
-        }
-        if !it.is?(Iter) {
-            it = it.__iter__()
-        }
-        return Generator(function () {
-            if let $x = it.__next__() {
-                return x
-            } else if ((it = self.__next__()) == nil) {
-                return nil
-            } else if !it.is?(Iter) {
-                it = it.__iter__()
+        for it in self {
+            for x in it.__iter__() {
+                yield x
             }
-            return it.__next__()
-        })
+        }
     }
 
     chain(*its) {
-        let i = 0
-
-        for i in ..#its if !its[i].is?(Iter) {
-            its[i] = its[i].__iter__()
-        }
-
-        return Generator(function () {
-            if let $x = its[i].__next__() {
-                return x
-            } else if (++i >= #its) {
-                return nil
-            } else {
-                return its[i].__next__()
+        for it in its {
+            for x in it.__iter__() {
+                yield x
             }
-        })
+        }
     }
 
     cycle() {
@@ -929,25 +920,25 @@ class Iter : Iterable {
     }
 
     repeat(n) {
-        let xs = self.list()
-        let i = 0
-        let j = 0
-        return Generator(function () {
-            if j == #xs {
-                j = 0
-                i += 1
-            }
-            if i != n {
-                return xs[j++]
-            }
-        })
+        let xs = []
+
+        for x in self {
+            yield x
+            xs.push(x)
+        }
+
+        let i = 1
+
+        while i != n {
+            for x in xs { yield x }
+            i += 1
+        }
     }
 
     replicate(x, n) {
-        let i = 0
-        return Generator(function () {
-            if n == nil || i++ < n { return x }
-        })
+        for _ in ..n {
+            yield x
+        }
     }
 
     sum() {
@@ -972,9 +963,12 @@ class Iter : Iterable {
 
     __subscript__(i) {
         for _ in ..(i - 1) {
-            if self.__next__() == nil { return nil }
+            if self.__next__() == None { return nil }
         }
-        return self.__next__()
+
+        if let Some(x) = self.__next__() {
+            return x
+        }
     }
 
     __iter__() { return self }
@@ -983,14 +977,16 @@ class Iter : Iterable {
 class ReverseIter : Iter {
     init(I) {
         self.xs = []
-        while let $x = I.__next__() {
+        while let Some(x) = I.__next__() {
             self.xs.push(x)
         }
     }
 
     __next__() {
         if self.xs {
-            return self.xs.pop()
+            Some(self.xs.pop())
+        } else {
+            None
         }
     }
 }

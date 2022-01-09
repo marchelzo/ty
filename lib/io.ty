@@ -79,7 +79,7 @@ class Stream : Iter {
     }
 
     __next__() {
-        self.nextLine()
+        Some.from(self.nextLine())
     }
 }
 

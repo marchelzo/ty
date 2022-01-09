@@ -1105,18 +1105,20 @@ Throw:
                         push(SENTINEL);
                         break;
                 CASE(NONE_IF_NIL)
-                        if (top()->type == VALUE_NIL)
-                                *top() = NONE;
+                        //if (top()->type == VALUE_NIL)
+                                //*top() = NONE;
                 // Once iterators are fixed:
-                /*
                         if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
                                 *top() = NONE;
                         } else if (top()->tags != 0 && tags_first(top()->tags) == TAG_SOME) {
+                                LOG("Dumping in a tag pop: %s", value_show(top()));
                                 top()->tags = tags_pop(top()->tags);
+                                if (top()->tags == 0) {
+                                        top()->type &= ~VALUE_TAGGED;
+                                }
                         } else {
                                 vm_panic("iterator returned invalid type. expected None or Some(x) but got %s", value_show(top()));
                         }
-                */
                         break;
                 CASE(CLEAR_RC)
                         rc = 0;

@@ -1550,8 +1550,10 @@ emit_function(struct expression const *e, int class)
                 emit_instr(INSTR_MAKE_GENERATOR);
                 emit_statement(e->body, false);
                 size_t end = state.code.count;
-                emit_instr(INSTR_NIL);
+                emit_instr(INSTR_TAG);
+                emit_int(TAG_NONE);
                 emit_instr(INSTR_YIELD);
+                emit_instr(INSTR_POP);
                 JUMP(end);
         } else if (false && !emit_statement(e->body, false)) {
                 /*
@@ -1734,6 +1736,8 @@ emit_yield(struct expression const *e)
 
         if (e->es.count > 0) for (int i = 0; i < e->es.count; ++i) {
                 emit_expression(e->es.items[i]);
+                emit_instr(INSTR_TAG_PUSH);
+                emit_int(TAG_SOME);
         } else {
                 emit_instr(INSTR_NIL);
         }
@@ -2476,6 +2480,8 @@ emit_dict_compr2(struct expression const *e)
         emit_instr(INSTR_GET_NEXT);
         emit_instr(INSTR_READ_INDEX);
 
+        add_location(e, start, state.code.count);
+
         size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
 
@@ -2641,6 +2647,8 @@ emit_array_compr2(struct expression const *e)
 
         size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
+
+        add_location(e, start, state.code.count);
 
         emit_instr(INSTR_FIX_TO);
         emit_int((int)e->compr.pattern->es.count);
