@@ -224,11 +224,11 @@ class FCGIApp {
             match r.type {
                 ::FCGI_BEGIN_REQUEST => {
                     let role, flags = r.beginRequest()
-                }
+                },
 
                 ::FCGI_PARAMS => {
                     params += r.getParams()
-                }
+                },
 
                 ::FCGI_STDIN => {
                     let input = r.readInput();
@@ -237,7 +237,7 @@ class FCGIApp {
                     } else {
                         body.push(input);
                     }
-                }
+                },
 
                 t => { print("Type = {t}") }
             }

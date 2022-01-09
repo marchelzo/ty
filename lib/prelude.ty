@@ -19,7 +19,7 @@ tag Some {
 
     from(x) {
         match x {
-            nil => None
+            nil => None,
             _   => Some(x)
         }
     }
@@ -196,15 +196,15 @@ class Array : Iterable {
 
     mean(f = id) {
         match self {
-            [] => nil
+            [] => nil,
             _  => self.map(f |> float).sum() / self.len()
         }
     }
 
     median() {
         match self {
-            []                => nil
-            xs : xs.sorted?() => xs[#xs / 2]
+            []                => nil,
+            xs : xs.sorted?() => xs[#xs / 2],
             xs                => self.sort()[#self / 2]
         }
     }
@@ -332,8 +332,8 @@ class String : Iterable {
 
     __fmt__(s) {
         match int(s) {
-            nil       => self
-            n : n > 0 => self.padRight(n)
+            nil       => self,
+            n : n > 0 => self.padRight(n),
             n : n < 0 => self.padLeft(-n)
         }
     }
@@ -732,8 +732,8 @@ class Iter : Iterable {
     groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
         return Generator(function () {
             match self.take(n).list() {
-                xs: #xs == n             => xs
-                xs: #xs > 0 && keepShort => xs
+                xs: #xs == n             => xs,
+                xs: #xs > 0 && keepShort => xs,
                 _ => nil
             }
         })
@@ -877,7 +877,7 @@ class Iter : Iterable {
                         let r = next
                         next = self.__next__()
                         return r
-                    }
+                    },
 
                     1 => {
                         return x

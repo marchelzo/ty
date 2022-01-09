@@ -50,22 +50,22 @@ class Stream : Iter {
 
     next(n: ?Int) {
         match n {
-            $n  => stdio.fread(self.f, n)
+            $n  => stdio.fread(self.f, n),
             _   => stdio.fgetc(self.f)
         }
     }
 
     write(s) {
         match s {
-            Blob | String => stdio.fwrite(self.f, s)
+            Blob | String => stdio.fwrite(self.f, s),
             _             => stdio.fwrite(self.f, str(s))
         }
     }
 
     print(s = '') {
         match s {
-            Blob   => stdio.puts(self.f, s)
-            String => stdio.puts(self.f, s)
+            Blob   => stdio.puts(self.f, s),
+            String => stdio.puts(self.f, s),
             _      => stdio.puts(self.f, str(s))
         }
     }
@@ -94,13 +94,13 @@ function open(path: String | Int, mode: String = 'a+', buffering) {
     }
 
     let flags = match mode {
-        'r'  => [os.O_RDONLY]
-        'w'  => [os.O_WRONLY, os.O_CREAT, os.O_TRUNC]
-        'wx' => [os.O_WRONLY, os.O_CREAT]
-        'a'  => [os.O_WRONLY, os.O_CREAT, os.O_APPEND]
-        'r+' => [os.O_RDWR]
-        'w+' => [os.O_RDWR, os.O_CREAT, os.O_TRUNC]
-        'a+' => [os.O_RDWR, os.O_CREAT, os.O_APPEND]
+        'r'  => [os.O_RDONLY],
+        'w'  => [os.O_WRONLY, os.O_CREAT, os.O_TRUNC],
+        'wx' => [os.O_WRONLY, os.O_CREAT],
+        'a'  => [os.O_WRONLY, os.O_CREAT, os.O_APPEND],
+        'r+' => [os.O_RDWR],
+        'w+' => [os.O_RDWR, os.O_CREAT, os.O_TRUNC],
+        'a+' => [os.O_RDWR, os.O_CREAT, os.O_APPEND],
         _    => nil
     };
 
@@ -117,7 +117,7 @@ function open(path: String | Int, mode: String = 'a+', buffering) {
     }
 
     match fd {
-        -1 => nil
+        -1 => nil,
         _   => Stream(fd, mode, buffering)
     }
 }

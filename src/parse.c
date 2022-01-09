@@ -123,7 +123,7 @@ noreturn static void
 error(char const *fmt, ...);
 
 static struct statement *
-parse_statement(void);
+parse_statement(int);
 
 static struct expression *
 parse_expr(int);
@@ -711,7 +711,7 @@ prefix_function(void)
 
         consume(')');
 
-        e->body = parse_statement();
+        e->body = parse_statement(-1);
 
         return e;
 }
@@ -912,7 +912,14 @@ prefix_match(void)
         consume(TOKEN_FAT_ARROW);
         vec_push(e->thens, parse_expr(0));
 
-        while (tok()->type != '}') {
+        while (tok()->type == ',') {
+                next();
+
+                // Trailing comma is allowed
+                if (tok()->type == '}') {
+                        break;
+                }
+
                 vec_push(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
                 vec_push(e->thens, parse_expr(0));
@@ -2292,13 +2299,13 @@ parse_for_loop(void)
                 } else {
                         s->each.stop = NULL;
                 }
-                s->each.body = parse_statement();
+                s->each.body = parse_statement(-1);
                 return s;
         }
 
         consume('(');
 
-        s->for_loop.init = parse_statement();
+        s->for_loop.init = parse_statement(-1);
 
         if (tok()->type == ';')
                 s->for_loop.cond = NULL;
@@ -2314,7 +2321,7 @@ parse_for_loop(void)
 
         consume(')');
 
-        s->for_loop.body = parse_statement();
+        s->for_loop.body = parse_statement(-1);
 
         return s;
 }
@@ -2403,7 +2410,7 @@ parse_if_statement(void)
                 s->if_let.then = parse_block();
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
                         next();
-                        s->if_let.otherwise = parse_statement();
+                        s->if_let.otherwise = parse_statement(-1);
                 } else {
                         s->if_let.otherwise = NULL;
                 }
@@ -2416,7 +2423,7 @@ parse_if_statement(void)
 
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
                 next();
-                s->conditional.else_branch = parse_statement();
+                s->conditional.else_branch = parse_statement(-1);
         } else {
                 s->conditional.else_branch = NULL;
         }
@@ -2442,12 +2449,18 @@ parse_match_statement(void)
         vec_push(s->match.patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
-        vec_push(s->match.statements, parse_statement());
+        vec_push(s->match.statements, parse_statement(0));
 
-        while (tok()->type != '}') {
+        while (tok()->type == ',') {
+                next();
+
+                if (tok()->type == '}') {
+                        break;
+                }
+
                 vec_push(s->match.patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
-                vec_push(s->match.statements, parse_statement());
+                vec_push(s->match.statements, parse_statement(0));
         }
 
         consume('}');
@@ -2671,7 +2684,7 @@ parse_block(void)
         vec_init(block->statements);
 
         while (tok()->type != '}') {
-                struct statement *s = parse_statement();
+                struct statement *s = parse_statement(-1);
                 s->end = End;
                 vec_push(block->statements, s);
         }
@@ -2784,7 +2797,7 @@ parse_try(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_TRY;
 
-        s->try.s = parse_statement();
+        s->try.s = parse_statement(-1);
 
         vec_init(s->try.patterns);
         vec_init(s->try.handlers);
@@ -2792,12 +2805,12 @@ parse_try(void)
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_CATCH) {
                 next();
                 vec_push(s->try.patterns, parse_expr(0));
-                vec_push(s->try.handlers, parse_statement());
+                vec_push(s->try.handlers, parse_statement(-1));
         }
 
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FINALLY) {
                 next();
-                s->try.finally = parse_statement();
+                s->try.finally = parse_statement(-1);
         } else {
                 s->try.finally = NULL;
         }
@@ -2894,7 +2907,7 @@ parse_import(void)
 }
 
 static struct statement *
-parse_statement(void)
+parse_statement(int prec)
 {
         struct statement *s;
 
@@ -2932,7 +2945,7 @@ Expression:
 
         s = mkstmt();
         s->type = STATEMENT_EXPRESSION;
-        s->expression = parse_expr(-1);
+        s->expression = parse_expr(prec);
 
         if (tok()->type == ';') {
                 consume(';');
@@ -2983,7 +2996,7 @@ parse(char const *source, char const *file)
         }
 
         while (tok()->type != TOKEN_END) {
-                struct statement *s = parse_statement();
+                struct statement *s = parse_statement(-1);
                 if (s != NULL) {
                         s->end = End;
                         vec_push(program, s);
