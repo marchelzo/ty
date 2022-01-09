@@ -62,6 +62,9 @@ struct value;
 #define CLASS_TAG       12
 #define CLASS_PRIMITIVE 13
 
+#define TAG_NONE 2
+#define TAG_SOME 3
+
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
                 char const *name; \
@@ -364,6 +367,15 @@ inline static char *
 code_of(struct value const *v)
 {
         return ((char *)v->info) + v->info[0];
+}
+
+#define None                     TAG(TAG_NONE)
+
+inline static struct value
+Some(struct value v)
+{
+        v.tags = tags_push(v.tags, TAG_SOME);
+        return v;
 }
 
 #endif

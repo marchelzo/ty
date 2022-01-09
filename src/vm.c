@@ -1017,7 +1017,9 @@ Throw:
                                 break;
                         case VALUE_DICT:
                                 off = top()[-2].off;
-                                while (off < v.dict->size && v.dict->keys[off].type == 0) ++off;
+                                while (off < v.dict->size && v.dict->keys[off].type == 0) {
+                                        off += 1;
+                                }
                                 if (off < v.dict->size) {
                                         top()[-2].off = off + 1;
                                         push(v.dict->keys[off]);
@@ -1105,6 +1107,16 @@ Throw:
                 CASE(NONE_IF_NIL)
                         if (top()->type == VALUE_NIL)
                                 *top() = NONE;
+                // Once iterators are fixed:
+                /*
+                        if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
+                                *top() = NONE;
+                        } else if (top()->tags != 0 && tags_first(top()->tags) == TAG_SOME) {
+                                top()->tags = tags_pop(top()->tags);
+                        } else {
+                                vm_panic("iterator returned invalid type. expected None or Some(x) but got %s", value_show(top()));
+                        }
+                */
                         break;
                 CASE(CLEAR_RC)
                         rc = 0;

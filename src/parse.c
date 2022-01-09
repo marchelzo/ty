@@ -2646,6 +2646,22 @@ parse_null_statement()
         return s;
 }
 
+inline static bool
+should_split(void)
+{
+        if (tok()->start.line == End.line) {
+                return false;
+        }
+
+        switch (tok()->type) {
+        case '(':
+        case '[':
+                return true;
+        }
+
+        return false;
+}
+
 static struct expression *
 parse_expr(int prec)
 {
@@ -2661,7 +2677,7 @@ parse_expr(int prec)
         e = f();
         struct location start = e->start;
 
-        while (prec < get_infix_prec()) {
+        while (!should_split() && prec < get_infix_prec()) {
                 f = get_infix_parser();
                 if (f == NULL)
                         error("unexpected token after expression: %s", token_show(tok()));
