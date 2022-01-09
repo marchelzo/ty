@@ -2158,6 +2158,7 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
         emit_instr(INSTR_CLEAR_EXTRA);
 
         bool returns = false;
+
         if (s != NULL) {
                 returns = emit_statement(s, want_result);
         } else if (want_result) {
@@ -2208,7 +2209,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
 }
 
 static bool
-emit_match_statement(struct statement const *s)
+emit_match_statement(struct statement const *s, bool want_result)
 {
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -2216,9 +2217,11 @@ emit_match_statement(struct statement const *s)
         emit_list(s->match.e);
         emit_instr(INSTR_FIX_EXTRA);
 
+        bool returns = true;
+
         for (int i = 0; i < s->match.patterns.count; ++i) {
                 LOG("emitting case %d", i + 1);
-                emit_case(s->match.patterns.items[i], NULL, s->match.statements.items[i], false);
+                returns &= emit_case(s->match.patterns.items[i], NULL, s->match.statements.items[i], want_result);
         }
 
         /*
@@ -2229,7 +2232,7 @@ emit_match_statement(struct statement const *s)
         patch_jumps_to(&state.match_successes, state.code.count);
         state.match_successes = successes_save;
 
-        return false;
+        return returns;
 }
 
 static void
@@ -3492,7 +3495,8 @@ emit_statement(struct statement const *s, bool want_result)
                 want_result = false;
                 break;
         case STATEMENT_MATCH:
-                returns |= emit_match_statement(s);
+                returns |= emit_match_statement(s, want_result);
+                want_result = false;
                 break;
         case STATEMENT_CONDITIONAL:
                 returns |= emit_conditional_statement(s, want_result);
