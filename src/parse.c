@@ -661,14 +661,19 @@ prefix_function(void)
         NoEquals = true;
 
         while (tok()->type != ')') {
-                bool rest = tok()->type == TOKEN_STAR;
-                bool kwargs = tok()->type == TOKEN_USER_OP && strcmp(tok()->identifier, "**") == 0;
-                bool special = rest || kwargs;
+                setctx(LEX_PREFIX);
 
-                if (special) {
+                bool special = false;
+
+                if (tok()->type == TOKEN_STAR) {
                         next();
-                        e->has_kwargs |= kwargs;
-                        e->rest |= rest;
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                e->has_kwargs = true;
+                        } else {
+                                e->rest = true;
+                        }
+                        special = true;
                 }
 
                 expect(TOKEN_IDENTIFIER);
