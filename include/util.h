@@ -50,7 +50,7 @@ char *slurp(char const *path);
 inline static char const *
 strstrn(char const *haystack, int hn, char const *needle, int nn)
 {
-        for (int i = 0; i < hn - nn; ++i) {
+        for (int i = 0; i <= hn - nn; ++i) {
                 if (memcmp(haystack + i, needle, nn) == 0)
                         return haystack + i;
         }

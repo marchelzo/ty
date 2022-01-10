@@ -42,7 +42,7 @@ readln(void)
         }
 }
 
-static void
+static bool
 execln(char *line)
 {
         static char buffer[8192];
@@ -65,6 +65,8 @@ execln(char *line)
 
         }
 
+        bool good = true;
+
         snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
         if (vm_execute(buffer + 1))
                 goto Add;
@@ -72,6 +74,7 @@ execln(char *line)
         if (strstr(vm_error(), "ParseError") != NULL && vm_execute(buffer + 1))
                 goto Add;
 
+        good = false;
         fprintf(stderr, "%s\n", vm_error());
 Add:
         if (use_readline) {
@@ -79,6 +82,8 @@ Add:
         }
 
         fflush(stdout);
+
+        return good;
 }
 
 noreturn static void
@@ -193,10 +198,14 @@ main(int argc, char **argv)
         if (strcmp(argv[1], "-e") == 0) {
                 if (argc < 3) {
                         fputs("error: -e with no program specified", stderr);
+                        return -1;
                 }
                 char buffer[8192] = {0};
                 strncpy(buffer, argv[2], sizeof buffer - 1);
-                execln(buffer);
+
+                if (!execln(buffer)) {
+                        return -1;
+                }
         } else {
                 char const *file = (argc > 1 && strcmp(argv[1], "-") != 0) ? argv[1] : "/dev/stdin";
                 if (!vm_execute_file(file)) {

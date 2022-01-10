@@ -2008,15 +2008,7 @@ Bad:
         if (ret <= 0)
                 return INTEGER(ret);
 
-        struct array *result = value_array_new();
-        NOGC(result);
-
-        value_array_push(result, INTEGER(ret));
-        value_array_push(result, INTEGER(status));
-
-        OKGC(result);
-
-        return ARRAY(result);
+        return PAIR(INTEGER(ret), INTEGER(status));
 }
 
 #define WAITMACRO(name) \
