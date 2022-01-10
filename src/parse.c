@@ -110,12 +110,27 @@ static struct location End;
 
 static int depth;
 static bool NoEquals = false;
+static bool NoIn = false;
+
+// Maybe try to use this instead, might be cleaner.
+/*
+static enum {
+	PC_NORMAL,
+	PC_LVALUE,
+	PC_MATCH_PATTERN
+} ParseContext = PC_NORMAL;
+
+#define SAVE_PC(e) int PCSave = ParseContext; ParseContext = (e);
+#define LOAD_PC(e) ParseContext = PCSave;
+*/
 
 #define SAVE_NE(b) bool NESave = NoEquals; NoEquals = (b);
 #define SAVE_NC(b) bool NCSave = NoConstraint; NoConstraint = (b);
+#define SAVE_NI(b) bool NISave = NoIn; NoIn = (b);
 
 #define LOAD_NE() NoEquals = NESave;
 #define LOAD_NC() NoConstraint = NCSave;
+#define LOAD_NI() NoIn = NISave;
 
 static char const *filename;
 
@@ -2212,7 +2227,7 @@ Keyword:
         //case KEYWORD_OR:  return 4;
         //case KEYWORD_AND: return 4;
         case KEYWORD_NOT:
-        case KEYWORD_IN:  return NoEquals ? -3 : 3;
+        case KEYWORD_IN:  return NoIn ? -3 : 3;
         default:          return -3;
         }
 
@@ -2329,13 +2344,14 @@ parse_definition_lvalue(int context)
         struct expression *e;
         int save = TokenIndex;
 
-        bool ne = NoEquals;
-        NoEquals = true;
+		SAVE_NI(true);
+		SAVE_NE(true);
         e = parse_expr(1);
         EStart = e->start;
         EEnd = e->end;
         e = definition_lvalue(e);
-        NoEquals = ne;
+        LOAD_NE();
+		LOAD_NI();
 
         if (context == LV_LET && tok()->type == ',') {
                 struct expression *l = mkexpr();
