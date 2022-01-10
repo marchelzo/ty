@@ -46,9 +46,10 @@ static bool
 execln(char *line)
 {
         static char buffer[8192];
+        bool good = true;
 
         if (line[strspn(line, " \t\n")] == '\0')
-                return;
+                return true;
 
         /*
          * Very bad.
@@ -57,15 +58,15 @@ execln(char *line)
                 line = realloc(line, strlen(line) + 2);
 
         if (line[0] == ':') {
-                if (line[1] == '!')
+                if (line[1] == '!') {
                         system(line + 2) || 0;
-                else if (!vm_execute_file(line + 1))
+				} else if (!vm_execute_file(line + 1)) {
                         fprintf(stderr, "%s\n", vm_error());
+						good = false;
+				}
                 goto Add;
 
         }
-
-        bool good = true;
 
         snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
         if (vm_execute(buffer + 1))
