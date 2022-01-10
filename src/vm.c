@@ -272,7 +272,7 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
         char *code = code_of(f);
         int argc = n;
 
-        struct value kwargs = (nkw > 0) ? pop() : DICT(dict_new());
+        struct value kwargs = (nkw > 0) ? pop() : NIL;
 
         /*
          * This is the index of the beginning of the stack frame for this call to f.
@@ -305,7 +305,7 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
         }
 
         if (has_kwargs) {
-                stack.items[fp + np - 1] = kwargs;
+                stack.items[fp + np - 1] = (nkw > 0) ? kwargs : DICT(dict_new());
         }
 
         /*
@@ -1260,11 +1260,13 @@ Throw:
                         }
 
                         v = OBJECT(object_new(), i);
+                        NOGC(v.object);
                         push(left);
                         push(right);
                         call(vp, &v, 2, 0, true);
                         pop();
                         push(v);
+                        OKGC(v.object);
                         break;
                 CASE(INCRANGE)
                         right = pop();
@@ -1276,11 +1278,13 @@ Throw:
                         }
 
                         v = OBJECT(object_new(), i);
+                        NOGC(v.object);
                         push(left);
                         push(right);
                         call(vp, &v, 2, 0, true);
                         pop();
                         push(v);
+                        OKGC(v.object);
                         break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
@@ -1807,8 +1811,8 @@ BadContainer:
                                                         /* This variable was already captured, just refer to the same object */
                                                         v.env[i] = p->ptr;
                                                 } else {
-                                                        // TODO: this leaks memory
-                                                        struct value *new = gc_alloc(sizeof (struct value));
+                                                        // TODO: figure out if this is getting freed too early
+                                                        struct value *new = gc_alloc_object(sizeof (struct value), GC_VALUE);
                                                         *new = *p;
                                                         *p = REF(new);
                                                         v.env[i] = new;

@@ -231,10 +231,7 @@ class Array : Iterable {
     }
 
     __iter__() {
-        let i = 0
-        return Generator(function () {
-            if i < self.len() { return self[i++] }
-        })
+        for x in self { yield x }
     }
 
     __subscript__(T) {
@@ -787,11 +784,11 @@ class Iter : Iterable {
         let n = 0
 
         if x :: (Function | Regex) {
-            while let Some(y) = self.__next__() {
+            for y in self {
                 if x(y) { n += 1 }
             }
         } else {
-            while let Some(y) = self.__next__() {
+            for y in self {
                 if x == y { n += 1 }
             }
         }
@@ -1016,19 +1013,19 @@ class Range : Iterable {
     }
 
     contains?(k) {
-        return self ? k
+        k :: self
     }
 
     __match__(x) {
-        return x :: (Int | Float) & (self ? x)
+        (x :: (Int | Float)) && (x >= self.low() && x <= self.high())
     }
 
     has?(k) {
-        return self ? k
+        k :: self
     }
 
     ?(k) {
-        return k >= self.low() && k <= self.high()
+        k :: self
     }
 
     __iter__() {

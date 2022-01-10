@@ -2337,10 +2337,10 @@ emit_while_let(struct statement const *s, bool want_result)
 
         PATCH_JUMP(finished);
 
+        patch_loop_jumps(begin, state.code.count);
+
         if (want_result)
                 emit_instr(INSTR_NIL);
-
-        patch_loop_jumps(begin, state.code.count);
 
         state.match_successes = successes_save;
         state.breaks = brk_save;

@@ -3,8 +3,8 @@ import os
 export ls, sh, expand
 
 function sh(c, input) {
-    if !let $p = os::spawn(['bash', '-c', c]) {
-	return nil;
+    if not let $p = os::spawn(['bash', '-c', c]) {
+	      return nil;
     }
 
     let out = blob();
@@ -22,7 +22,7 @@ function sh(c, input) {
     os::close(p.stdout);
     os::close(p.stderr);
 
-    let [_, s] = os::waitpid(p.pid);
+    let (_, s) = os::waitpid(p.pid);
 
     return out.str(), os::WEXITSTATUS(s), out;
 }
