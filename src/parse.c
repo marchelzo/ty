@@ -122,6 +122,12 @@ static char const *filename;
 noreturn static void
 error(char const *fmt, ...);
 
+static parse_fn *
+get_infix_parser(void);
+
+static parse_fn *
+get_prefix_parser(void);
+
 static struct statement *
 parse_statement(int);
 
@@ -456,6 +462,15 @@ End:
         longjmp(jb, 1);
 }
 
+static bool
+have_not_in(void)
+{
+        return tok()->type == TOKEN_KEYWORD &&
+               tok()->keyword == KEYWORD_NOT &&
+               token(1)->type == TOKEN_KEYWORD &&
+               token(1)->keyword == KEYWORD_IN;
+}
+
 static void
 expect(int type)
 {
@@ -680,12 +695,11 @@ prefix_function(void)
 
                 if (tok()->type == TOKEN_STAR) {
                         next();
-                        if (tok()->type == TOKEN_STAR) {
-                                next();
-                                e->has_kwargs = true;
-                        } else {
-                                e->rest = true;
-                        }
+                        e->rest = true;
+                        special = true;
+                } else if (tok()->type == TOKEN_PERCENT) {
+                        next();
+                        e->has_kwargs = true;
                         special = true;
                 }
 
@@ -969,6 +983,30 @@ prefix_parenthesis(void)
                 return e;
         }
 
+        /*
+         * If we have an infix operator that cannot also be a prefix
+         * operator, assume this is an operator section.
+         */
+        if (get_infix_parser() != NULL && get_prefix_parser() == NULL) {
+                e = mkfunc();
+                vec_push(e->params, gensym());
+                vec_push(e->dflts, NULL);
+                vec_push(e->constraints, NULL);
+
+                struct expression *t = mkexpr();
+                t->type = EXPRESSION_IDENTIFIER;
+                t->identifier = e->params.items[0];
+                t->module = NULL;
+
+                e->body = mkstmt();
+                e->body->type = STATEMENT_EXPRESSION;
+                e->body->expression = get_infix_parser()(t);
+
+                consume(')');
+
+                return e;
+        }
+
         e = parse_expr(0);
 
         if (tok()->type == ',') {
@@ -1110,7 +1148,7 @@ prefix_array(void)
 
         if (token(1)->type == TOKEN_KEYWORD) switch (token(1)->keyword) {
         case KEYWORD_IN:
-        InSlice:
+        InSection:
                 next();
                 next();
                 e = parse_expr(0);
@@ -1135,7 +1173,7 @@ prefix_array(void)
                 next();
                 if (token(1)->type == TOKEN_KEYWORD && token(1)->keyword == KEYWORD_IN) {
                         in_type = EXPRESSION_NOT_IN;
-                        goto InSlice;
+                        goto InSection;
                 }
                 break;
         }
@@ -1175,6 +1213,37 @@ prefix_array(void)
                         expect(']');
                 } else if (tok()->type == ',') {
                         next();
+                } else if (
+                        e->elements.count == 1 &&
+                        get_infix_parser() != NULL &&
+                        (token(1)->type == ']' || (have_not_in() && token(2)->type == ']'))
+                ) {
+                        f = mkfunc();
+                        vec_push(f->params, gensym());
+                        vec_push(f->dflts, NULL);
+                        vec_push(f->constraints, NULL);
+                        struct token t = *tok();
+                        next();
+                        struct token t2 = *tok();
+                        if (t2.type != ']') {
+                                next();
+                        }
+                        unconsume(TOKEN_IDENTIFIER);
+                        tok()->identifier = f->params.items[0];
+                        tok()->module = NULL;
+                        if (t2.type != ']') {
+                                unconsume(TOKEN_STAR);
+                                *tok() = t2;
+                        }
+                        unconsume(TOKEN_STAR);
+                        *tok() = t;
+                        f->body = mkstmt();
+                        f->body->type = STATEMENT_EXPRESSION;
+                        f->body->expression = get_infix_parser()(e->elements.items[0]);
+                        consume(']');
+                        f->start = start;
+                        f->end = End;
+                        return f;
                 } else {
                         expect(']');
                 }
@@ -1276,7 +1345,7 @@ prefix_implicit_method(void)
 {
         consume('&');
 
-        if (tok()->type == '(') {
+        if (tok()->type == '{') {
                 return prefix_implicit_lambda();
         }
 
@@ -1358,7 +1427,7 @@ prefix_implicit_method(void)
 static struct expression *
 prefix_implicit_lambda(void)
 {
-        consume('(');
+        consume('{');
 
         unconsume(TOKEN_ARROW);
         unconsume(')');
@@ -1367,7 +1436,7 @@ prefix_implicit_lambda(void)
         struct expression *f = parse_expr(0);
         f->type = EXPRESSION_IMPLICIT_FUNCTION;
 
-        consume(')');
+        consume('}');
 
         return f;
 }
@@ -2052,6 +2121,18 @@ Keyword:
         }
 }
 
+static bool
+is_postfix(struct token const *t)
+{
+        switch (t->type) {
+        case TOKEN_INC:
+        case TOKEN_DEC:
+                return true;
+        default:
+                return false;
+        }
+}
+
 static int
 get_infix_prec(void)
 {
@@ -2718,11 +2799,16 @@ parse_expr(int prec)
 
         while (!should_split() && prec < get_infix_prec()) {
                 f = get_infix_parser();
-                if (f == NULL)
+                if (f == NULL) {
                         error("unexpected token after expression: %s", token_show(tok()));
+                }
+                if ((token(1)->type == ']' || (have_not_in() && token(2)->type == ']')) && !is_postfix(tok())) {
+                        // Special case for operator slices. Very based!
+                        goto End;
+                }
                 e = f(e);
         }
-
+End:
         --depth;
 
         return e;

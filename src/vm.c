@@ -272,7 +272,7 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
         char *code = code_of(f);
         int argc = n;
 
-        struct value kwargs = (nkw > 0) ? pop() : NIL;
+        struct value kwargs = (nkw > 0) ? pop() : DICT(dict_new());
 
         /*
          * This is the index of the beginning of the stack frame for this call to f.

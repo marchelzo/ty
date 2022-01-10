@@ -41,7 +41,7 @@ tag Err {
 }
 
 class Object {
-    init(**props) {
+    init(%props) {
         for k, v in props {
             member(self, k, v)
         }
