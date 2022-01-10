@@ -701,7 +701,7 @@ class Iter : Iterable {
         while !stop {
             let group = []
             for it in its {
-                if !let Some(x) = it.__next__() {
+                if not let Some(x) = it.__next__() {
                     stop = true
                     break
                 }
@@ -726,7 +726,7 @@ class Iter : Iterable {
     }
 
     group(f = id) {
-        if !let Some(x) = self.__next__() {
+        if not let Some(x) = self.__next__() {
             return Generator(_ -> None)
         }
 
@@ -764,7 +764,7 @@ class Iter : Iterable {
     }
 
     join(sep: String) {
-        if !let Some(str ~> $s) = self.__next__() {
+        if not let Some(str ~> $s) = self.__next__() {
             return ''
         }
 
@@ -853,7 +853,7 @@ class Iter : Iterable {
     }
 
     max(k = id) {
-        if !let Some(x) = self.__next__() {
+        if not let Some(x) = self.__next__() {
             return nil
         }
 
@@ -871,7 +871,7 @@ class Iter : Iterable {
     }
 
     min(k = id) {
-        if !let Some(x) = self.__next__() {
+        if not let Some(x) = self.__next__() {
             return nil
         }
 

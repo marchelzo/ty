@@ -156,7 +156,7 @@ static void
 symbolize_statement(struct scope *scope, struct statement *s);
 
 static void
-symbolize_pattern(struct scope *scope, struct expression *e);
+symbolize_pattern(struct scope *scope, struct expression *e, bool def);
 
 static void
 symbolize_expression(struct scope *scope, struct expression *e);
@@ -707,7 +707,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
 }
 
 static void
-symbolize_pattern(struct scope *scope, struct expression *e)
+symbolize_pattern(struct scope *scope, struct expression *e, bool def)
 {
         if (e == NULL)
                 return;
@@ -728,29 +728,29 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                         e->symbol = getsymbol(s, e->identifier, NULL);
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
-                        e->symbol = addsymbol(scope, e->identifier);
+                        e->symbol = def ? addsymbol(scope, e->identifier) : getsymbol(scope, e->identifier, NULL);
                         symbolize_expression(scope, e->constraint);
                 }
                 e->local = true;
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < e->elements.count; ++i)
-                        symbolize_pattern(scope, e->elements.items[i]);
+                        symbolize_pattern(scope, e->elements.items[i], def);
                 break;
         case EXPRESSION_DICT:
                 for (int i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(scope, e->keys.items[i]);
-                        symbolize_pattern(scope, e->values.items[i]);
+                        symbolize_pattern(scope, e->values.items[i], def);
                 }
                 break;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i)
-                        symbolize_pattern(scope, e->es.items[i]);
+                        symbolize_pattern(scope, e->es.items[i], def);
                 break;
         case EXPRESSION_VIEW_PATTERN:
                 symbolize_expression(scope, e->left);
-                symbolize_pattern(scope, e->right);
+                symbolize_pattern(scope, e->right, def);
                 break;
         case EXPRESSION_SPREAD:
                 assert(e->value->type == EXPRESSION_IDENTIFIER);
@@ -760,7 +760,7 @@ symbolize_pattern(struct scope *scope, struct expression *e)
                 e->symbol = addsymbol(scope, e->identifier);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                symbolize_pattern(scope, e->tagged);
+                symbolize_pattern(scope, e->tagged, def);
                 break;
         Tag:
                 symbolize_expression(scope, e);
@@ -876,7 +876,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                                         ;
                                 }
                         }
-                        symbolize_pattern(subscope, e->patterns.items[i]);
+                        symbolize_pattern(subscope, e->patterns.items[i], true);
                         symbolize_expression(subscope, e->thens.items[i]);
                 }
                 break;
@@ -1139,7 +1139,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
 
                 for (int i = 0; i < s->try.patterns.count; ++i) {
                         struct scope *catch = scope_new(scope, false);
-                        symbolize_pattern(catch, s->try.patterns.items[i]);
+                        symbolize_pattern(catch, s->try.patterns.items[i], true);
                         symbolize_statement(catch, s->try.handlers.items[i]);
                 }
 
@@ -1153,14 +1153,14 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
                         subscope = scope_new(scope, false);
-                        symbolize_pattern(subscope, s->match.patterns.items[i]);
+                        symbolize_pattern(subscope, s->match.patterns.items[i], true);
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }
                 break;
         case STATEMENT_WHILE_LET:
                 symbolize_expression(scope, s->while_let.e);
                 subscope = scope_new(scope, false);
-                symbolize_pattern(subscope, s->while_let.pattern);
+                symbolize_pattern(subscope, s->while_let.pattern, s->while_let.def);
                 symbolize_expression(subscope, s->while_let.cond);
                 symbolize_statement(subscope, s->while_let.block);
                 break;
@@ -1169,12 +1169,12 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 subscope = scope_new(scope, false);
                 if (s->if_let.neg) {
                         symbolize_statement(subscope, s->if_let.then);
-                        symbolize_pattern(scope, s->if_let.pattern);
+                        symbolize_pattern(scope, s->if_let.pattern, s->if_let.def);
                         symbolize_expression(subscope, s->if_let.cond);
                         symbolize_statement(subscope, s->if_let.otherwise);
                 } else {
                         symbolize_statement(subscope, s->if_let.otherwise);
-                        symbolize_pattern(subscope, s->if_let.pattern);
+                        symbolize_pattern(subscope, s->if_let.pattern, s->if_let.def);
                         symbolize_expression(subscope, s->if_let.cond);
                         symbolize_statement(subscope, s->if_let.then);
                 }
@@ -1874,10 +1874,10 @@ emit_while_loop(struct statement const *s, bool want_result)
 
         PATCH_JUMP(end);
 
+        patch_loop_jumps(begin, state.code.count);
+
         if (want_result)
                 emit_instr(INSTR_NIL);
-
-        patch_loop_jumps(begin, state.code.count);
 
         state.continues = cont_save;
         state.breaks = brk_save;

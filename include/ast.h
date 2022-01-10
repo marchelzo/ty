@@ -110,6 +110,7 @@ struct statement {
                         struct expression *cond;
                         struct statement *block;
                         int_vector check;
+                        bool def;
                 } while_let;
                 struct {
                         struct expression *e;
@@ -118,6 +119,7 @@ struct statement {
                         struct statement *then;
                         struct statement *otherwise;
                         bool neg;
+                        bool def;
                 } if_let;
                 struct {
                         struct expression *target;

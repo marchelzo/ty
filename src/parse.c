@@ -2499,7 +2499,8 @@ parse_while_loop(void)
 
                 s->type = STATEMENT_WHILE_LET;
                 s->while_let.pattern = parse_definition_lvalue(LV_LET);
-
+                s->while_let.def = true;
+WhileLet:
                 consume(TOKEN_EQ);
 
                 s->while_let.e = parse_expr(-1);
@@ -2516,15 +2517,21 @@ parse_while_loop(void)
                 return s;
         }
 
-        /*
-         * Nope; just a plain old while loop.
-         */
+        SAVE_NE(true);
+        struct expression *e = parse_expr(0);
+        LOAD_NE();
 
-        s->type = STATEMENT_WHILE_LOOP;
-        s->while_loop.cond = parse_expr(0);
-        s->while_loop.body = parse_block();
-
-        return s;
+        if (tok()->type == TOKEN_EQ) {
+                s->type = STATEMENT_WHILE_LET;
+                s->while_let.pattern = e;
+                s->while_let.def = false;
+                goto WhileLet;
+        } else {
+                s->type = STATEMENT_WHILE_LOOP;
+                s->while_loop.cond = e;
+                s->while_loop.body = parse_block();
+                return s;
+        }
 }
 
 static struct statement *
@@ -2534,29 +2541,37 @@ parse_if_statement(void)
 
         struct statement *s = mkstmt();
 
+        bool neg = tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_NOT;
+        if (neg) {
+                next();
+        }
+
         /*
          * Maybe it's an if-let statement.
          */
-        bool if_let = (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET) ||
-                      (tok()->type == TOKEN_BANG && (token(1)->type == TOKEN_KEYWORD &&
-                                                     token(1)->keyword == KEYWORD_LET));
+        bool if_let = tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_LET;
+
         if (if_let) {
-                bool neg = tok()->type == TOKEN_BANG;
-                if (neg)
-                        next();
                 consume_keyword(KEYWORD_LET);
                 s->type = STATEMENT_IF_LET;
-                s->if_let.neg = neg;
                 s->if_let.pattern = parse_definition_lvalue(LV_LET);
+                s->if_let.def = true;
+IfLet:
+                s->if_let.neg = neg;
+
                 consume(TOKEN_EQ);
+
                 s->if_let.e = parse_expr(-1);
+
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_AND) {
                         next();
                         s->if_let.cond = parse_expr(0);
                 } else {
                         s->if_let.cond = NULL;
                 }
+
                 s->if_let.then = parse_block();
+
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
                         next();
                         s->if_let.otherwise = parse_statement(-1);
@@ -2566,8 +2581,19 @@ parse_if_statement(void)
                 return s;
         }
 
+        SAVE_NE(true);
+        struct expression *e = parse_expr(0);
+        LOAD_NE();
+
+        if (tok()->type == TOKEN_EQ) {
+                s->type = STATEMENT_IF_LET;
+                s->if_let.pattern = e;
+                s->if_let.def = false;
+                goto IfLet;
+        }
+
         s->type = STATEMENT_CONDITIONAL;
-        s->conditional.cond = parse_expr(0);
+        s->conditional.cond = e;
         s->conditional.then_branch = parse_block();
 
         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_ELSE) {
