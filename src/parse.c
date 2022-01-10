@@ -1380,38 +1380,50 @@ prefix_implicit_method(void)
                 maybe = true;
         }
 
-        expect(TOKEN_IDENTIFIER);
-
         struct expression *e = mkexpr();
-        e->type = EXPRESSION_METHOD_CALL;
-        e->sc = NULL;
-        e->maybe = maybe;
-        e->object = o;
-        e->method_name = tok()->identifier;
-        vec_init(e->method_args);
-        vec_init(e->method_kwargs);
-        vec_init(e->method_kws);
 
-        next();
+        if (tok()->type == '.') {
+                next();
+                expect(TOKEN_IDENTIFIER);
 
-        if (tok()->type == '(') {
+                e->type = EXPRESSION_MEMBER_ACCESS;
+                e->member_name = tok()->identifier;
+                e->object = o;
+
+                next();
+        } else {
+                expect(TOKEN_IDENTIFIER);
+
+                e->type = EXPRESSION_METHOD_CALL;
+                e->sc = NULL;
+                e->maybe = maybe;
+                e->object = o;
+                e->method_name = tok()->identifier;
+                vec_init(e->method_args);
+                vec_init(e->method_kwargs);
+                vec_init(e->method_kws);
+
                 next();
 
-                setctx(LEX_PREFIX);
-
-                if (tok()->type == ')') {
+                if (tok()->type == '(') {
                         next();
-                        return e;
-                } else {
-                        vec_push(e->method_args, parse_expr(0));
-                }
 
-                while (tok()->type == ',') {
-                        next();
-                        vec_push(e->method_args, parse_expr(0));
-                }
+                        setctx(LEX_PREFIX);
 
-                consume(')');
+                        if (tok()->type == ')') {
+                                next();
+                                return e;
+                        } else {
+                                vec_push(e->method_args, parse_expr(0));
+                        }
+
+                        while (tok()->type == ',') {
+                                next();
+                                vec_push(e->method_args, parse_expr(0));
+                        }
+
+                        consume(')');
+                }
         }
 
         struct expression *f = mkfunc();
