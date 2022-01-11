@@ -43,4 +43,5 @@ for [i, j] in gun {
 while grid = step(grid) {
   print(grid.map(&join(' ')).join('\n'))
   print('---')
+  usleep(1000 * 600)
 }

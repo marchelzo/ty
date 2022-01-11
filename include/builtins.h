@@ -431,6 +431,8 @@
 {.module = "ffi", .name = "dlopen", .value = BUILTIN(cffi_dlopen)},
 {.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},
 
+#include "ioctl_constants.h"
+
 #undef INT
 #undef FLOAT
 #undef BUILTIN
