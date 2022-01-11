@@ -421,6 +421,7 @@
 {.module = "ffi", .name = "double", .value = POINTER(&ffi_type_double)},
 {.module = "ffi", .name = "ptr", .value = POINTER(&ffi_type_pointer)},
 {.module = "ffi", .name = "new", .value = BUILTIN(cffi_new)},
+{.module = "ffi", .name = "free", .value = BUILTIN(cffi_free)},
 {.module = "ffi", .name = "addr", .value = BUILTIN(cffi_addr)},
 {.module = "ffi", .name = "load", .value = BUILTIN(cffi_load)},
 {.module = "ffi", .name = "store", .value = BUILTIN(cffi_store)},

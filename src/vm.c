@@ -19,6 +19,7 @@
 
 #include <sys/types.h>
 #include <sys/epoll.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netdb.h>

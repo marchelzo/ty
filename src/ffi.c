@@ -44,7 +44,14 @@ store(ffi_type const *t, void *p, struct value const *v)
                 *(double *)p = v->real;
                 break;
         case FFI_TYPE_POINTER:
-                *(void **)p = v->ptr;
+                switch (v->type) {
+                case VALUE_PTR:
+                        *(void **)p = v->ptr;
+                        break;
+                case VALUE_STRING:
+                        *(void **)p = (void *)v->string;
+                        break;
+                }
                 break;
         }
 }
@@ -124,6 +131,22 @@ cffi_addr(int argc)
         *p = v.ptr;
 
         return PTR(p);
+}
+
+struct value
+cffi_free(int argc)
+{
+        if (argc != 1) {
+                vm_panic("ffi.free() expects exactly 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("ffi.free() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        free(ARG(0).ptr);
+
+        return NIL;
 }
 
 struct value

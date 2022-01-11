@@ -12,6 +12,9 @@ struct value
 cffi_new(int argc);
 
 struct value
+cffi_free(int argc);
+
+struct value
 cffi_addr(int argc);
 
 struct value
