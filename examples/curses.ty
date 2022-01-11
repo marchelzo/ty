@@ -1,0 +1,84 @@
+import ffi as c
+
+if not let $curses = c.dlopen('libncurses.so.5') {
+	throw 'Failed to load curses'
+}
+
+class CursesFunction {
+	init(name, rt, *ats) {
+		self.name = name
+		self.rt = rt
+		self.ats = ats
+		self.cif = c.cif(rt, *ats)
+		self.fp = c.dlsym(name, curses)
+	}
+
+	call(*args) {
+		c.call(self.cif, self.fp, *args)
+	}
+}
+
+let funcs = {}
+
+function def(name, rt, *ats) {
+	funcs[name] = CursesFunction(name, rt, *ats)
+}
+
+def('initscr', c.ptr)
+def('endwin', c.int)
+def('mvaddnstr', c.int, c.int, c.int, c.ptr, c.int)
+def('refresh', c.int)
+def('getch', c.int)
+def('curs_set', c.int, c.int)
+def('getmaxx', c.int, c.ptr)
+def('getmaxy', c.int, c.ptr)
+
+let stdscr = nil
+
+let s = c.new(c.ptr)
+let n = c.new(c.int)
+
+let x = c.new(c.int)
+let y = c.new(c.int)
+
+function initscr() { stdscr = c.addr(funcs['initscr'].call()) }
+function endwin() { funcs['endwin'].call() }
+function getch() { funcs['getch'].call() }
+function refresh() { funcs['refresh'].call() }
+
+function getmaxyx() {
+	let xMax = funcs['getmaxx'].call(stdscr)
+	let yMax = funcs['getmaxy'].call(stdscr)
+	return (yMax, xMax)
+}
+
+function curs_set(v) {
+	c.store(c.int, x, v)
+	funcs['curs_set'].call(x)
+}
+
+function mvaddstr(i, j, msg) {
+	c.store(c.int, x, j)
+	c.store(c.int, y, i)
+	c.store(c.ptr, s, msg)
+	c.store(c.int, n, msg.size())
+
+	funcs['mvaddnstr'].call(y, x, s, n)
+}
+
+function hello() {
+	initscr()
+
+	let (h, w) = getmaxyx()
+
+	mvaddstr(h/3, w/3, 'Hello, world!')
+	curs_set(0)
+
+	refresh()
+
+	getch()
+
+	endwin()
+}
+
+hello()
