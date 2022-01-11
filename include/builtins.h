@@ -1,7 +1,6 @@
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
-#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
-#define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
+#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
 
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
 { .module = NULL,     .name = "slurp",             .value = BUILTIN(builtin_slurp)                         },
@@ -401,6 +400,36 @@
 { .module = "os",      .name = "DT_LNK",                  .value = INT(DT_LNK)                               },
 { .module = "os",      .name = "DT_REG",                  .value = INT(DT_REG)                               },
 { .module = "os",      .name = "DT_UNKNOWN",              .value = INT(DT_UNKNOWN)                           },
+
+{.module = "ffi", .name = "char", .value = POINTER(&ffi_type_schar)},
+{.module = "ffi", .name = "short", .value = POINTER(&ffi_type_sshort)},
+{.module = "ffi", .name = "int", .value = POINTER(&ffi_type_sint)},
+{.module = "ffi", .name = "long", .value = POINTER(&ffi_type_slong)},
+{.module = "ffi", .name = "uchar", .value = POINTER(&ffi_type_uchar)},
+{.module = "ffi", .name = "ushort", .value = POINTER(&ffi_type_ushort)},
+{.module = "ffi", .name = "uint", .value = POINTER(&ffi_type_uint)},
+{.module = "ffi", .name = "ulong", .value = POINTER(&ffi_type_ulong)},
+{.module = "ffi", .name = "u8", .value = POINTER(&ffi_type_uint8)},
+{.module = "ffi", .name = "u16", .value = POINTER(&ffi_type_uint16)},
+{.module = "ffi", .name = "u32", .value = POINTER(&ffi_type_uint32)},
+{.module = "ffi", .name = "u64", .value = POINTER(&ffi_type_uint64)},
+{.module = "ffi", .name = "i8", .value = POINTER(&ffi_type_sint8)},
+{.module = "ffi", .name = "i16", .value = POINTER(&ffi_type_sint16)},
+{.module = "ffi", .name = "i32", .value = POINTER(&ffi_type_sint32)},
+{.module = "ffi", .name = "i64", .value = POINTER(&ffi_type_sint64)},
+{.module = "ffi", .name = "float", .value = POINTER(&ffi_type_float)},
+{.module = "ffi", .name = "double", .value = POINTER(&ffi_type_double)},
+{.module = "ffi", .name = "ptr", .value = POINTER(&ffi_type_pointer)},
+{.module = "ffi", .name = "new", .value = BUILTIN(cffi_new)},
+{.module = "ffi", .name = "addr", .value = BUILTIN(cffi_addr)},
+{.module = "ffi", .name = "load", .value = BUILTIN(cffi_load)},
+{.module = "ffi", .name = "store", .value = BUILTIN(cffi_store)},
+{.module = "ffi", .name = "call", .value = BUILTIN(cffi_call)},
+{.module = "ffi", .name = "cif", .value = BUILTIN(cffi_cif)},
+{.module = "ffi", .name = "struct", .value = BUILTIN(cffi_struct)},
+{.module = "ffi", .name = "dlsym", .value = BUILTIN(cffi_dlsym)},
+{.module = "ffi", .name = "dlopen", .value = BUILTIN(cffi_dlopen)},
+{.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},
 
 #undef INT
 #undef FLOAT

@@ -15,6 +15,8 @@ struct value;
 
 #define V_ALIGN (_Alignof (struct value))
 
+#define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
+
 #define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                              .tags = 0 })
 #define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                              .tags = 0 })
 #define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                              .tags = 0 })

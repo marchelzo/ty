@@ -16,6 +16,7 @@ LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
 LDFLAGS += -lcrypto
+LDFLAGS += -lffi
 LDFLAGS += $(shell pcre-config --libs)
 LDFLAGS += $(shell pkg-config --libs gumbo)
 LDFLAGS += $(shell pkg-config --libs libcurl)

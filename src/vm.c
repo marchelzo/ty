@@ -27,6 +27,7 @@
 #include <netdb.h>
 #include <netinet/ip.h>
 
+#include "cffi.h"
 #include "vm.h"
 #include "util.h"
 #include "gc.h"

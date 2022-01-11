@@ -1801,7 +1801,7 @@ builtin_os_recvfrom(int argc)
         if (flags.type != VALUE_INTEGER)
                 vm_panic("the flags argument to os::recvfrom() must be an integer");
 
-		NOGC(buffer.blob);
+        NOGC(buffer.blob);
 
         vec_reserve(*buffer.blob, size.integer);
 
@@ -1812,7 +1812,7 @@ builtin_os_recvfrom(int argc)
         if (r < 0) {
                 OKGC(buffer.blob);
                 return NIL;
-		}
+        }
 
         buffer.blob->count = r;
 
@@ -2131,7 +2131,7 @@ builtin_os_signal(int argc)
                         vm_del_sigfn(num.integer);
                         act.sa_handler = SIG_DFL;
                 } else if (CALLABLE(f)) {
-						act.sa_flags = SA_SIGINFO;
+                        act.sa_flags = SA_SIGINFO;
                         act.sa_handler = vm_do_signal;
                 } else {
                         vm_panic("the second argument to os::signal() must be callable");
@@ -2338,7 +2338,7 @@ builtin_os_fcntl(int argc)
 #endif
         case F_SETFD:
         case F_SETFL:
-		case F_SETSIG:
+        case F_SETSIG:
                 if (arg.type != VALUE_INTEGER)
                         vm_panic("expected the third argument to be an integer in call to os::fcntl()");
                 return INTEGER(fcntl(fd.integer, cmd.integer, (int) arg.integer));

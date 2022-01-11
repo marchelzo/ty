@@ -1586,7 +1586,7 @@ infix_function_call(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         vec_push(e->args, arg);
-				} else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
                         next();
                         next();
@@ -1605,7 +1605,7 @@ infix_function_call(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         vec_push(e->args, arg);
-				} else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
                         next();
                         next();
@@ -2344,14 +2344,14 @@ parse_definition_lvalue(int context)
         struct expression *e;
         int save = TokenIndex;
 
-		SAVE_NI(true);
-		SAVE_NE(true);
+        SAVE_NI(true);
+        SAVE_NE(true);
         e = parse_expr(1);
         EStart = e->start;
         EEnd = e->end;
         e = definition_lvalue(e);
         LOAD_NE();
-		LOAD_NI();
+        LOAD_NI();
 
         if (context == LV_LET && tok()->type == ',') {
                 struct expression *l = mkexpr();
