@@ -399,13 +399,13 @@ class Int {
         self * n
     }
 
-	div(n) {
-		self / int(n)
-	}
+    div(n) {
+        self / int(n)
+    }
 
-	mod(n) {
-		self % int(n)
-	}
+    mod(n) {
+        self % int(n)
+    }
 
     in?(r: Range) {
         r ? self
@@ -479,8 +479,8 @@ class Blob : Iterable {
 
     __iter__() {
         for x in self {
-			yield x
-		}
+            yield x
+        }
     }
 }
 
