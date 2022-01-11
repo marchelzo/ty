@@ -51,6 +51,8 @@ store(ffi_type const *t, void *p, struct value const *v)
                 case VALUE_STRING:
                         *(void **)p = (void *)v->string;
                         break;
+				case VALUE_BLOB:
+						*(void **)p = (void *)v->blob->items;
                 }
                 break;
         }

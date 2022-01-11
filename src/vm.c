@@ -962,7 +962,12 @@ Throw:
                         str = ip;
                         n = strlen(str);
                         ip += n + 1;
-                        if (n > 0) {
+						if (top()->type == VALUE_PTR) {
+							char *s = value_show(top());
+							pop();
+							push(STRING_NOGC(s, strlen(s)));
+							break;
+						} else if (n > 0) {
                                 v = pop();
                                 push(STRING_NOGC(str, n));
                                 push(v);
