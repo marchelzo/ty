@@ -187,7 +187,7 @@ class Array : Iterable {
     }
 
     str() {
-        self.map(str).sum()
+        @map(str).sum()
     }
 
     list() {
@@ -197,7 +197,7 @@ class Array : Iterable {
     mean(f = id) {
         match self {
             [] => nil,
-            _  => self.map(f |> float).sum() / self.len()
+            _  => @map(f |> float).sum() / @len()
         }
     }
 
@@ -205,7 +205,7 @@ class Array : Iterable {
         match self {
             []                => nil,
             xs : xs.sorted?() => xs[#xs / 2],
-            xs                => self.sort()[#self / 2]
+            xs                => @sort()[#self / 2]
         }
     }
 
@@ -270,7 +270,7 @@ class Dict : Iterable {
     }
 
     __iter__() {
-        return self.keys().zip(self.values()).__iter__()
+        return @keys().zip(@values()).__iter__()
     }
 }
 
@@ -294,35 +294,35 @@ class String : Iterable {
     }
 
     reverse() {
-        return self.chars().reverse!().sum() ?? ''
+        return @chars().reverse!().sum() ?? ''
     }
 
     num?() {
-        return self.match?(/^\d+(?:\.\d+)?$/)
+        return @match?(/^\d+(?:\.\d+)?$/)
     }
 
     lower?() {
-        return self == self.lower()
+        return self == @lower()
     }
 
     upper?() {
-        return self == self.upper()
+        return self == @upper()
     }
 
     searchr(pattern) {
-        for let off = self.len() - 1; off >= 0; --off {
-            if let $i = self.search(pattern, off) {
+        for let off = @len() - 1; off >= 0; --off {
+            if let $i = @search(pattern, off) {
                 return i
             }
         }
     }
 
     strip() {
-        return self.comb(/^\s+|\s+$/)
+        return @comb(/^\s+|\s+$/)
     }
 
     __iter__() {
-        for c in self.chars() {
+        for c in @chars() {
             yield c
         }
     }
@@ -330,8 +330,8 @@ class String : Iterable {
     __fmt__(s) {
         match int(s) {
             nil       => self,
-            n : n > 0 => self.padRight(n),
-            n : n < 0 => self.padLeft(-n)
+            n : n > 0 => @padRight(n),
+            n : n < 0 => @padLeft(-n)
         }
     }
 }
@@ -470,8 +470,8 @@ class Blob : Iterable {
     }
 
     searchr(s) {
-        for let off = self.size() - 1; off >= 0; --off {
-            if let $i = self.search(off, s) {
+        for let off = @size() - 1; off >= 0; --off {
+            if let $i = @search(off, s) {
                 return i
             }
         }
@@ -521,127 +521,127 @@ class Tag {
 
 class Iterable {
     map(f) {
-        return self.__iter__().map(f)
+        @__iter__().map(f)
     }
 
     filter(f) {
-        return self.__iter__().filter(f)
+        @__iter__().filter(f)
     }
 
     reverse() {
-        return self.__iter__().reverse()
+        @__iter__().reverse()
     }
 
     list() {
-        return self.__iter__().list()
+        @__iter__().list()
     }
 
     uniq(f) {
-        return self.__iter__().uniq(f)
+        @__iter__().uniq(f)
     }
 
     take(n) {
-        return self.__iter__().take(n)
+        @__iter__().take(n)
     }
 
     drop(n) {
-        return self.__iter__().drop(n)
+        @__iter__().drop(n)
     }
 
     set() {
-        return self.__iter__().set()
+        @__iter__().set()
     }
 
     str() {
-        return self.__iter__().str()
+        @__iter__().str()
     }
 
     join(s) {
-        return self.__iter__().join(s)
+        @__iter__().join(s)
     }
 
     unlines() {
-        return self.__iter__().unlines()
+        @__iter__().unlines()
     }
 
     tally(f) {
-        return self.__iter__().tally(f)
+        @__iter__().tally(f)
     }
 
     min(k) {
-        return self.__iter__().min(k)
+        @__iter__().min(k)
     }
 
     max(k) {
-        return self.__iter__().max(k)
+        @__iter__().max(k)
     }
 
     count(x) {
-        return self.__iter__().count(x)
+        @__iter__().count(x)
     }
 
     intersperse(x) {
-        return self.__iter__().intersperse(x)
+        @__iter__().intersperse(x)
     }
 
     groupsOf(n, keepShort) {
-        return self.__iter__().groupsOf(n, keepShort)
+        @__iter__().groupsOf(n, keepShort)
     }
 
     pad(n, x) {
-        return self.__iter__().pad(n, x)
+        @__iter__().pad(n, x)
     }
 
     zip(*its) {
-        return self.__iter__().zip(*its)
+        @__iter__().zip(*its)
     }
 
     mean() {
-        return self.__iter__().mean()
+        @__iter__().mean()
     }
 
     median() {
-        return self.__iter__().median()
+        @__iter__().median()
     }
 
     sum() {
-        return self.__iter__().sum()
+        @__iter__().sum()
     }
 
     fold(a, b) {
-        return self.__iter__().fold(a, b)
+        @__iter__().fold(a, b)
     }
 
     group(f) {
-        return self.__iter__().group(f)
+        @__iter__().group(f)
     }
 
     chain(A, B) {
-        return A.__iter__().chain(B)
+        A.__iter__().chain(B)
     }
 
     cycle() {
-        return self.list().cycle()
+        @list().cycle()
     }
 
     repeat(n) {
-        return self.__iter__().repeat(n)
+        @__iter__().repeat(n)
     }
 
     all?(pred) {
-        return self.__iter__().all?(pred)
+        @__iter__().all?(pred)
     }
 
     interleave(xs) {
-        return self.__iter__().interleave(xs)
+        @__iter__().interleave(xs)
     }
 
     __len__() {
-        return self.__iter__().__len__()
+        @__iter__().__len__()
     }
 
     __subscript__(i) {
-        return self.__iter__().__subscript__(i)
+        @__iter__().__subscript__(i)
     }
 }
 
@@ -661,14 +661,14 @@ class Iter : Iterable {
     fold(x, f) {
         if f == nil {
             f = x
-            if x = self.__next__() == None {
+            if x = @__next__() == None {
                 return nil
             }
         }
 
         Some(x) = x
 
-        while let Some(y) = self.__next__() {
+        while let Some(y) = @__next__() {
             x = f(x, y)
         }
 
@@ -728,14 +728,14 @@ class Iter : Iterable {
     }
 
     group(f = id) {
-        if not let Some(x) = self.__next__() {
+        if not let Some(x) = @__next__() {
             return Generator(_ -> None)
         }
 
         let g = [x]
 
         return Generator(function () {
-            while let Some(x) = self.__next__() {
+            while let Some(x) = @__next__() {
                 if f(x) == f(g[-1]) {
                     g.push(x)
                 } else {
@@ -757,7 +757,7 @@ class Iter : Iterable {
 
     groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
         return Generator(function () {
-            match self.take(n).list() {
+            match @take(n).list() {
                 xs: #xs == n             => Some(xs),
                 xs: #xs > 0 && keepShort => Some(xs),
                 _ => None
@@ -766,14 +766,14 @@ class Iter : Iterable {
     }
 
     join(sep: String) {
-        if not let Some(str ~> $s) = self.__next__() {
+        if not let Some(str ~> $s) = @__next__() {
             return ''
         }
 
         let b = blob()
         b.push(s)
 
-        while let Some(s) = self.__next__() {
+        while let Some(s) = @__next__() {
             b.push(sep)
             b.push(str(s))
         }
@@ -782,7 +782,7 @@ class Iter : Iterable {
     }
 
     unlines() {
-        return self.join("\n")
+        return @join("\n")
     }
 
     count(x) {
@@ -821,7 +821,7 @@ class Iter : Iterable {
 
     take(n) {
         for _ in ..n {
-            if let Some(x) = self.__next__() {
+            if let Some(x) = @__next__() {
                 yield x
             } else {
                 break
@@ -830,7 +830,7 @@ class Iter : Iterable {
     }
 
     drop(n) {
-        for _ in ..n { self.__next__() }
+        for _ in ..n { @__next__() }
         return self
     }
 
@@ -855,14 +855,14 @@ class Iter : Iterable {
     }
 
     max(k = id) {
-        if not let Some(x) = self.__next__() {
+        if not let Some(x) = @__next__() {
             return nil
         }
 
         let m = x
         let mKey = k(m)
 
-        while let Some(x) = self.__next__() {
+        while let Some(x) = @__next__() {
             let key = k(x)
             if key > mKey {
                 m, mKey = x, key
@@ -873,14 +873,14 @@ class Iter : Iterable {
     }
 
     min(k = id) {
-        if not let Some(x) = self.__next__() {
+        if not let Some(x) = @__next__() {
             return nil
         }
 
         let m = x
         let mKey = k(m)
 
-        while let Some(x) = self.__next__() {
+        while let Some(x) = @__next__() {
             let key = k(x)
             if key < mKey {
                 m, mKey = x, key
@@ -920,7 +920,7 @@ class Iter : Iterable {
     }
 
     cycle() {
-        return self.list().cycle()
+        return @list().cycle()
     }
 
     repeat(n) {
@@ -946,15 +946,15 @@ class Iter : Iterable {
     }
 
     sum() {
-        return self.list().sum()
+        return @list().sum()
     }
 
     mean() {
-        return self.list().mean()
+        return @list().mean()
     }
 
     median() {
-        return self.list().median()
+        return @list().median()
     }
 
     all?(pred) {
@@ -967,10 +967,10 @@ class Iter : Iterable {
 
     __subscript__(i) {
         for _ in ..(i - 1) {
-            if self.__next__() == None { return nil }
+            if @__next__() == None { return nil }
         }
 
-        if let Some(x) = self.__next__() {
+        if let Some(x) = @__next__() {
             return x
         }
     }
@@ -980,15 +980,15 @@ class Iter : Iterable {
 
 class ReverseIter : Iter {
     init(I) {
-        self.xs = []
+        @xs = []
         while let Some(x) = I.__next__() {
-            self.xs.push(x)
+            @xs.push(x)
         }
     }
 
     __next__() {
-        if self.xs {
-            Some(self.xs.pop())
+        if @xs {
+            Some(@xs.pop())
         } else {
             None
         }
@@ -997,24 +997,24 @@ class ReverseIter : Iter {
 
 class Range : Iterable {
     init(a, b) {
-        self.a = a
-        self.b = b
+        @a = a
+        @b = b
     }
 
     low() {
-        return min(self.a, self.b)
+        return min(@a, @b)
     }
 
     high() {
-        return max(self.a, self.b) - 1
+        return max(@a, @b) - 1
     }
 
     __len__() {
-        return self.high() - self.low() + 1
+        return @high() - @low() + 1
     }
 
     __str__() {
-        return "({self.a} .. {self.b})"
+        return "({@a} .. {@b})"
     }
 
     contains?(k) {
@@ -1022,7 +1022,7 @@ class Range : Iterable {
     }
 
     __match__(x) {
-        (x :: (Int | Float)) && (x >= self.low() && x <= self.high())
+        (x :: (Int | Float)) && (x >= @low() && x <= @high())
     }
 
     has?(k) {
@@ -1034,7 +1034,7 @@ class Range : Iterable {
     }
 
     __iter__() {
-        let a, b = self.a, self.b
+        let a, b = @a, @b
         return if a < b {
             a.upto(b - 1)
         } else {
@@ -1045,11 +1045,11 @@ class Range : Iterable {
 
 class InclusiveRange : Range {
     __str__() {
-        return "({self.a} ... {self.b})"
+        return "({@a} ... {@b})"
     }
 
     __iter__() {
-        let a, b = self.a, self.b
+        let a, b = @a, @b
 
         if a < b {
             a.upto(b)
@@ -1059,7 +1059,7 @@ class InclusiveRange : Range {
     }
 
     high() {
-        max(self.a, self.b)
+        max(@a, @b)
     }
 }
 

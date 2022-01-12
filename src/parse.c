@@ -811,6 +811,20 @@ opfunc(void)
 }
 
 static struct expression *
+prefix_at(void)
+{
+        next();
+
+        unconsume('.');
+
+        unconsume(TOKEN_IDENTIFIER);
+        tok()->identifier = "self";
+        tok()->module = NULL;
+
+		return prefix_identifier();
+}
+
+static struct expression *
 prefix_star(void)
 {
         struct expression *e = mkexpr();
@@ -1549,7 +1563,7 @@ prefix_dict(void)
         return e;
 }
 
-PREFIX_OPERATOR(at,     AT,       9)
+//PREFIX_OPERATOR(at,     AT,       9)
 PREFIX_OPERATOR(minus,  MINUS,    9)
 PREFIX_OPERATOR(bang,   BANG,     10)
 PREFIX_OPERATOR(is_nil, QUESTION, 10)
