@@ -1,69 +1,75 @@
 export Heap
 
 class Heap {
-     init() {
-          self.keys = [];
-          self.values = [];
-          self.n = 0;
-     }
+    init() {
+        self.keys = [];
+        self.values = [];
+        self.n = 0;
+    }
 
-     swap(i, j) {
-          [self.keys[i], self.keys[j]] = [self.keys[j], self.keys[i]];
-          [self.values[i], self.values[j]] = [self.values[j], self.values[i]];
-     }
+    swap(i, j) {
+        [self.keys[i], self.keys[j]] = [self.keys[j], self.keys[i]];
+        [self.values[i], self.values[j]] = [self.values[j], self.values[i]];
+    }
 
-     push(key, value) {
-          self.keys.push(key);
-          self.values.push(value);
-          
-          let i = self.values.len() - 1;
-          let p = (i - 1) / 2;
-          while p >= 0 && self.keys[i] < self.keys[p] {
-               self.swap(i, p);
-               i = p;
-               p = (p - 1) / 2;
-          }
-     }
+    push(key, value) {
+        self.keys.push(key);
+        self.values.push(value);
 
-     pop() {
-          if self.values.len() == 0 {
-               return nil;
-		  }
+        let i = self.values.len() - 1;
+        let p = (i - 1) / 2;
+        while p >= 0 && self.keys[i] < self.keys[p] {
+            self.swap(i, p);
+            i = p;
+            p = (p - 1) / 2;
+        }
+    }
 
-          let result = self.values[0];
-		  let priority = self.keys[0];
+    pop() {
+        if self.values.len() == 0 {
+            return nil;
+        }
 
-          self.keys[0] = self.keys[-1];
-          self.values[0] = self.values[-1];
+        let result = self.values[0];
+        let priority = self.keys[0];
 
-          self.keys.pop();
-          self.values.pop();
+        self.keys[0] = self.keys[-1];
+        self.values[0] = self.values[-1];
 
-          let i = 0;
-          let left = 1;
-          let right = 2;
+        self.keys.pop();
+        self.values.pop();
 
-          while left < self.values.len() {
-               let c = i;
-               if self.keys[left] < self.keys[c] {
-                    c = left;
-			   }
-               if right < self.values.len() && self.keys[right] < self.keys[c] {
-                    c = right;
-			   }
-               if c == i {
-                    break;
-			   }
-               self.swap(i, c);
-               i = c;
-               left = 2 * i + 1;
-               right = left + 1;
-          }
+        let i = 0;
+        let left = 1;
+        let right = 2;
 
-          return result, priority;
-     }
+        while left < self.values.len() {
+            let c = i;
+            if self.keys[left] < self.keys[c] {
+                c = left;
+            }
+            if right < self.values.len() && self.keys[right] < self.keys[c] {
+                c = right;
+            }
+            if c == i {
+                break;
+            }
+            self.swap(i, c);
+            i = c;
+            left = 2 * i + 1;
+            right = left + 1;
+        }
 
-     size() {
-          return self.values.len();
-     }
+        return result, priority;
+    }
+
+    size() {
+        return self.values.len();
+    }
+
+    __iter__() {
+        for k, i in @keys {
+            yield (k, @values[i])
+        }
+    }
 }

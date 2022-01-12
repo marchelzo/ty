@@ -2247,16 +2247,15 @@ emit_while(struct statement const *s, bool want_result)
                         emit_int(0);
                         emit_instr(INSTR_RESTORE_STACK_POS);
                 } else {
+                        emit_instr(INSTR_SAVE_STACK_POS);
                         emit_list(p->e);
                         emit_instr(INSTR_FIX_EXTRA);
-                        emit_instr(INSTR_SAVE_STACK_POS);
                         emit_try_match(p->target);
                         emit_instr(INSTR_RESTORE_STACK_POS);
-                        emit_instr(INSTR_CLEAR_EXTRA);
                 }
         }
 
-        emit_statement(s->While.block, want_result);
+        emit_statement(s->While.block, false);
 
         JUMP(start);
 
@@ -2317,12 +2316,11 @@ emit_if(struct statement const *s, bool want_result)
                         emit_int(0);
                         emit_instr(INSTR_RESTORE_STACK_POS);
                 } else {
+                        emit_instr(INSTR_SAVE_STACK_POS);
                         emit_list(p->e);
                         emit_instr(INSTR_FIX_EXTRA);
-                        emit_instr(INSTR_SAVE_STACK_POS);
                         emit_try_match(p->target);
                         emit_instr(INSTR_RESTORE_STACK_POS);
-                        emit_instr(INSTR_CLEAR_EXTRA);
                 }
         }
 
