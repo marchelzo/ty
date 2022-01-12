@@ -1,0 +1,106 @@
+export options, opt, flag
+
+function opt(short, long, pre = true, post = true, convert = id) {
+    return Object(
+        short: short,
+        long: long,
+        pre: pre,
+        post: post,
+        convert: convert,
+        type: 'o'
+    )
+}
+
+function flag(short, long) {
+    return Object(
+        short: short,
+        long: long,
+        type: 'f'
+    )
+}
+
+function options(*opts) {
+    return function (argv) {
+        let result = {}
+        let i = 0
+
+        function next() {
+            if i == #argv {
+                throw "Expected argument after {argv[i - 1]}"
+            }
+            return argv[i++]
+        }
+
+        while i < #argv {
+            let arg = next()
+            match arg {
+                '--' => {
+                    break
+                },
+
+                /^--([^=]+)$/ => {
+                    if let $opt = opts.filter(o -> o.type == 'f').find(&.long |> (== _1)) {
+                        result << opt.long
+                        result << opt.short
+                    } else {
+                        throw "Unrecognized flag: {_0}"
+                    }
+                },
+                /^--([^=]+)=(.+)/ => {
+                    if let $opt = opts.filter(o -> o.type == 'o').find(&.long |> (== _1)) {
+                        if !(_2 :: opt.pre) {
+                            throw "Invalid value for {_1}: {_2}"
+                        }
+                        let value = opt.convert(_2)
+                        if !(value :: opt.post) {
+                            throw "Invalid value for {_1}: {_2}"
+                        }
+                        result[opt.short] = result[opt.long] = value
+                    } else {
+                        throw "Unrecognized option: {_1}"
+                    }
+                },
+                /^-(.+)/ => {
+                    if not let $opt = opts.find(&.short |> (== _1[0])) {
+                        throw "Unrecognized option: {_0}"
+                    }
+
+                    if opt.type == 'o' {
+                        let s = if #_1 == 1 {
+                            next()
+                        } else {
+                            _1.slice(1)
+                        }
+
+                        if !(s :: opt.pre) {
+                            throw "Invalid value for {opt.long ?? _1[0]}: {s}"
+                        }
+
+                        let value = opt.convert(s)
+
+                        if !(value :: opt.post) {
+                            throw "Invalid value for {opt.long ?? _1[0]}: {s}"
+                        }
+
+                        result[opt.short] = result[opt.long] = value
+                    } else {
+                        for c in _1 {
+                            if let $opt = opts.filter(&.type |> (== 'f')).find(&.short |> (== c)) {
+                                result << opt.short
+                                result << opt.long
+                            } else {
+                                throw "Unrecognized flag: {c}"
+                            }
+                        }
+                    }
+                },
+
+                _ => {
+                    break
+                }
+            }
+        }
+
+        return result
+    }
+}
