@@ -211,7 +211,7 @@ class FCGIApp {
     }
 
     waitRequest() {
-        if !let [$fd, addr] = os.accept(self.socket) {
+        if not let [$fd, addr] = os.accept(self.socket) {
             return nil;
         }
 
