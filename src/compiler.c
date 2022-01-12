@@ -582,6 +582,51 @@ symbolize_methods(struct scope *scope, struct expression **ms, int n)
 }
 
 static void
+add_captures(struct expression *pattern, struct scope *scope)
+{
+        /*
+         * /(\w+) = (\d+)/ => $0, $1, $2
+         */
+        struct regex const *re = pattern->regex;
+
+        int n;
+        pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT, &n);
+
+        int n_named;
+        pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT, &n_named);
+
+        char const *names;
+        pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE, &names);
+
+        pattern->match_symbol = addsymbol(scope, "_0");
+
+        for (int i = 1; i <= n; ++i) {
+                char const *nt = names;
+                for (int j = 0; j < n_named; ++j) {
+                        int capture_index = (nt[0] << 8) + nt[1];
+                        nt += 2;
+
+                        if (capture_index == i) {
+                                /*
+                                 * Don't think clone is necessary here...
+                                 */
+                                addsymbol(scope, nt);
+                                goto NextCapture;
+                        }
+                }
+
+                /*
+                 * This is not a named capture group
+                 */
+                char id[16];
+                sprintf(id, "_%d", i);
+                addsymbol(scope, sclone(id));
+        NextCapture:
+                ;
+        }
+}
+
+static void
 try_symbolize_application(struct scope *scope, struct expression *e)
 {
         if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
@@ -835,46 +880,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (int i = 0; i < e->patterns.count; ++i) {
                         subscope = scope_new(scope, false);
                         if (e->patterns.items[i]->type == EXPRESSION_REGEX) {
-                                /*
-                                 * /(\w+) = (\d+)/ => $0, $1, $2
-                                 */
-                                struct regex const *re = e->patterns.items[i]->regex;
-
-                                int n;
-                                pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_CAPTURECOUNT, &n);
-
-                                int n_named;
-                                pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT, &n_named);
-
-                                char const *names;
-                                pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE, &names);
-
-                                e->patterns.items[i]->match_symbol = addsymbol(subscope, "_0");
-
-                                for (int i = 1; i <= n; ++i) {
-                                        char const *nt = names;
-                                        for (int j = 0; j < n_named; ++j) {
-                                                int capture_index = (nt[0] << 8) + nt[1];
-                                                nt += 2;
-
-                                                if (capture_index == i) {
-                                                        /*
-                                                         * Don't think clone is necessary here...
-                                                         */
-                                                        addsymbol(subscope, nt);
-                                                        goto NextCapture;
-                                                }
-                                        }
-
-                                        /*
-                                         * This is not a named capture group
-                                         */
-                                        char id[16];
-                                        sprintf(id, "_%d", i);
-                                        addsymbol(subscope, sclone(id));
-                                NextCapture:
-                                        ;
-                                }
+                                add_captures(e->patterns.items[i], subscope);
                         }
                         symbolize_pattern(subscope, e->patterns.items[i], true);
                         symbolize_expression(subscope, e->thens.items[i]);
@@ -1153,6 +1159,9 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
                         subscope = scope_new(scope, false);
+                        if (s->match.patterns.items[i]->type == EXPRESSION_REGEX) {
+                                add_captures(s->match.patterns.items[i], subscope);
+                        }
                         symbolize_pattern(subscope, s->match.patterns.items[i], true);
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }
