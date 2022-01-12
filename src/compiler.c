@@ -539,10 +539,9 @@ is_loop(struct statement const *s)
 {
         switch (s->type) {
         case STATEMENT_FOR_LOOP:
-        case STATEMENT_WHILE_LOOP:
-        case STATEMENT_WHILE_LET:
         case STATEMENT_EACH_LOOP:
         case STATEMENT_WHILE_MATCH:
+        case STATEMENT_WHILE:
                 return true;
         default:
                 return false;
@@ -926,11 +925,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_POSTFIX_DEC:
                 symbolize_expression(scope, e->operand);
                 break;
-        case EXPRESSION_CONDITIONAL:
-                symbolize_expression(scope, e->cond);
-                symbolize_expression(scope, e->then);
-                symbolize_expression(scope, e->otherwise);
-                break;
         case EXPRESSION_STATEMENT:
                 symbolize_statement(scope, e->statement);
                 break;
@@ -1166,15 +1160,15 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }
                 break;
-        case STATEMENT_WHILE_LET:
-                symbolize_expression(scope, s->while_let.e);
+        case STATEMENT_WHILE:
                 subscope = scope_new(scope, false);
-                symbolize_pattern(subscope, s->while_let.pattern, s->while_let.def);
-                symbolize_expression(subscope, s->while_let.cond);
-                symbolize_statement(subscope, s->while_let.block);
+                for (int i = 0; i < s->While.parts.count; ++i) {
+                        struct condpart *p = s->While.parts.items[i];
+                        symbolize_expression(subscope, p->e);
+                        symbolize_pattern(subscope, p->target, p->def);
+                }
+                symbolize_statement(subscope, s->While.block);
                 break;
-                // if not let Some(x) = f() and let Ok(y) = g() and y > 12 {
-                // }
         case STATEMENT_IF:
                 subscope = scope_new(scope, false);
                 if (s->iff.neg) {
@@ -1194,21 +1188,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_statement(subscope, s->iff.then);
                 }
                 break;
-        case STATEMENT_IF_LET:
-                symbolize_expression(scope, s->if_let.e);
-                subscope = scope_new(scope, false);
-                if (s->if_let.neg) {
-                        symbolize_statement(subscope, s->if_let.then);
-                        symbolize_pattern(scope, s->if_let.pattern, s->if_let.def);
-                        symbolize_expression(subscope, s->if_let.cond);
-                        symbolize_statement(subscope, s->if_let.otherwise);
-                } else {
-                        symbolize_statement(subscope, s->if_let.otherwise);
-                        symbolize_pattern(subscope, s->if_let.pattern, s->if_let.def);
-                        symbolize_expression(subscope, s->if_let.cond);
-                        symbolize_statement(subscope, s->if_let.then);
-                }
-                break;
         case STATEMENT_FOR_LOOP:
                 scope = scope_new(scope, false);
                 symbolize_statement(scope, s->for_loop.init);
@@ -1223,16 +1202,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_statement(subscope, s->each.body);
                 symbolize_expression(subscope, s->each.cond);
                 symbolize_expression(subscope, s->each.stop);
-                break;
-        case STATEMENT_WHILE_LOOP:
-                symbolize_expression(scope, s->while_loop.cond);
-                scope = scope_new(scope, false);
-                symbolize_statement(scope, s->while_loop.body);
-                break;
-        case STATEMENT_CONDITIONAL:
-                symbolize_expression(scope, s->conditional.cond);
-                symbolize_statement(scope, s->conditional.then_branch);
-                symbolize_statement(scope, s->conditional.else_branch);
                 break;
         case STATEMENT_RETURN:
                 if (state.ftype == FT_GEN) {
@@ -1631,49 +1600,6 @@ emit_function(struct expression const *e, int class)
         }
 }
 
-static bool
-emit_conditional_statement(struct statement const *s, bool want_result)
-{
-        bool returns = false;
-
-        emit_expression(s->conditional.cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t then_branch);
-
-        if (s->conditional.else_branch != NULL) {
-                returns |= emit_statement(s->conditional.else_branch, want_result);
-        } else if (want_result) {
-                emit_instr(INSTR_NIL);
-        }
-
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
-
-        PATCH_JUMP(then_branch);
-
-        returns &= emit_statement(s->conditional.then_branch, want_result);
-
-        PATCH_JUMP(end);
-
-        return returns;
-}
-
-static void
-emit_conditional_expression(struct expression const *e)
-{
-        emit_expression(e->cond);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t false_branch);
-
-        emit_expression(e->then);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
-
-        PATCH_JUMP(false_branch);
-
-        emit_expression(e->otherwise);
-
-        PATCH_JUMP(end);
-}
-
 static void
 emit_and(struct expression const *left, struct expression const *right)
 {
@@ -1873,47 +1799,6 @@ emit_try(struct statement const *s)
         emit_instr(INSTR_POP_TRY);
 
         return returns;
-}
-
-static void
-emit_while_loop(struct statement const *s, bool want_result)
-{
-        offset_vector cont_save = state.continues;
-        offset_vector brk_save = state.breaks;
-
-        bool each_loop_save = state.each_loop;
-        state.each_loop = false;
-
-        bool loop_wr_save = state.loop_want_result;
-        state.loop_want_result = want_result;
-
-        int loop_save = state.loop;
-        state.loop = loop_save;
-
-        vec_init(state.continues);
-        vec_init(state.breaks);
-
-        size_t begin = state.code.count;
-
-        emit_expression(s->while_loop.cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t end);
-
-        emit_statement(s->while_loop.body, false);
-
-        JUMP(begin);
-
-        PATCH_JUMP(end);
-
-        patch_loop_jumps(begin, state.code.count);
-
-        if (want_result)
-                emit_instr(INSTR_NIL);
-
-        state.continues = cont_save;
-        state.breaks = brk_save;
-        state.each_loop = each_loop_save;
-        state.loop_want_result = loop_wr_save;
-        state.loop = loop_save;
 }
 
 static void
@@ -2326,12 +2211,17 @@ emit_while_match(struct statement const *s, bool want_result)
         state.loop = loop_save;
 }
 
-static void
-emit_while_let(struct statement const *s, bool want_result)
+static bool
+emit_while(struct statement const *s, bool want_result)
 {
-        offset_vector brk_save = state.breaks;
-        offset_vector cont_save = state.continues;
         offset_vector successes_save = state.match_successes;
+        vec_init(state.match_successes);
+
+        offset_vector fails_save = state.match_fails;
+        vec_init(state.match_fails);
+
+        offset_vector cont_save = state.continues;
+        offset_vector brk_save = state.breaks;
 
         bool each_loop_save = state.each_loop;
         state.each_loop = false;
@@ -2340,44 +2230,55 @@ emit_while_let(struct statement const *s, bool want_result)
         state.loop_want_result = want_result;
 
         int loop_save = state.loop;
-        state.loop = ++t;
+        state.loop = loop_save;
 
-        vec_init(state.breaks);
         vec_init(state.continues);
-        vec_init(state.match_successes);
+        vec_init(state.breaks);
 
-        size_t begin = state.code.count;
+        size_t start = state.code.count;
 
-        emit_list(s->while_let.e);
-        emit_instr(INSTR_FIX_EXTRA);
+        for (int i = 0; i < s->While.parts.count; ++i) {
+                struct condpart *p = s->While.parts.items[i];
+                if (p->target == NULL) {
+                        emit_instr(INSTR_SAVE_STACK_POS);
+                        emit_expression(p->e);
+                        emit_instr(INSTR_JUMP_IF_NOT);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
+                        emit_instr(INSTR_RESTORE_STACK_POS);
+                } else {
+                        emit_list(p->e);
+                        emit_instr(INSTR_FIX_EXTRA);
+                        emit_instr(INSTR_SAVE_STACK_POS);
+                        emit_try_match(p->target);
+                        emit_instr(INSTR_RESTORE_STACK_POS);
+                        emit_instr(INSTR_CLEAR_EXTRA);
+                }
+        }
 
-        emit_case(s->while_let.pattern, s->while_let.cond, s->while_let.block, false);
+        emit_statement(s->While.block, want_result);
 
-        /*
-         * We failed to match, so we jump out.
-         */
-        emit_instr(INSTR_CLEAR_EXTRA);
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
-        patch_jumps_to(&state.match_successes, state.code.count);
+        JUMP(start);
 
-        /*
-         * We matched, so we iterate again.
-         */
-        JUMP(begin);
+        patch_jumps_to(&state.match_fails, state.code.count);
+        emit_instr(INSTR_RESTORE_STACK_POS);
 
-        PATCH_JUMP(finished);
-
-        patch_loop_jumps(begin, state.code.count);
-
-        if (want_result)
+        if (want_result) {
                 emit_instr(INSTR_NIL);
+        }
 
-        state.match_successes = successes_save;
-        state.breaks = brk_save;
+        patch_loop_jumps(start, state.code.count);
+
         state.continues = cont_save;
+        state.breaks = brk_save;
         state.each_loop = each_loop_save;
         state.loop_want_result = loop_wr_save;
         state.loop = loop_save;
+
+        state.match_successes = successes_save;
+        state.match_fails = fails_save;
+
+        return false;
 }
 
 static bool
@@ -2434,6 +2335,9 @@ emit_if(struct statement const *s, bool want_result)
         if (s->iff.otherwise != NULL) {
                 returns &= emit_statement(s->iff.otherwise, want_result);
         } else {
+                if (want_result) {
+                        emit_instr(INSTR_NIL);
+                }
                 returns = false;
         }
 
@@ -2441,37 +2345,6 @@ emit_if(struct statement const *s, bool want_result)
 
         state.match_successes = successes_save;
         state.match_fails = fails_save;
-
-        return returns;
-}
-
-static bool
-emit_if_let(struct statement const *s, bool want_result)
-{
-        offset_vector successes_save = state.match_successes;
-        vec_init(state.match_successes);
-
-        emit_list(s->if_let.e);
-        emit_instr(INSTR_FIX_EXTRA);
-
-        bool returns;
-
-        if (!s->if_let.neg) {
-                returns = emit_case(s->if_let.pattern, s->if_let.cond, s->if_let.then, want_result);
-                emit_instr(INSTR_CLEAR_EXTRA);
-                if (s->if_let.otherwise != NULL || (returns = false)) {
-                        returns &= emit_statement(s->if_let.otherwise, want_result);
-                } else if (want_result) {
-                        emit_instr(INSTR_NIL);
-                }
-        } else {
-                returns = emit_case(s->if_let.pattern, s->if_let.cond, s->if_let.otherwise, want_result);
-                emit_instr(INSTR_CLEAR_EXTRA);
-                returns &= emit_statement(s->if_let.then, want_result);
-        }
-
-        patch_jumps_to(&state.match_successes, state.code.count);
-        state.match_successes = successes_save;
 
         return returns;
 }
@@ -3427,9 +3300,6 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_FUNCTION:
                 emit_function(e, -1);
                 break;
-        case EXPRESSION_CONDITIONAL:
-                emit_conditional_expression(e);
-                break;
         case EXPRESSION_PLUS:
                 emit_expression(e->left);
                 emit_expression(e->right);
@@ -3601,10 +3471,6 @@ emit_statement(struct statement const *s, bool want_result)
                 returns |= emit_match_statement(s, want_result);
                 want_result = false;
                 break;
-        case STATEMENT_CONDITIONAL:
-                returns |= emit_conditional_statement(s, want_result);
-                want_result = false;
-                break;
         case STATEMENT_FOR_LOOP:
                 emit_for_loop(s, want_result);
                 want_result = false;
@@ -3613,24 +3479,16 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_for_each2(s, want_result);
                 want_result = false;
                 break;
-        case STATEMENT_WHILE_LOOP:
-                emit_while_loop(s, want_result);
-                want_result = false;
-                break;
         case STATEMENT_WHILE_MATCH:
                 emit_while_match(s, want_result);
                 want_result = false;
                 break;
-        case STATEMENT_WHILE_LET:
-                emit_while_let(s, want_result);
+        case STATEMENT_WHILE:
+                emit_while(s, want_result);
                 want_result = false;
                 break;
         case STATEMENT_IF:
                 returns |= emit_if(s, want_result);
-                want_result = false;
-                break;
-        case STATEMENT_IF_LET:
-                returns |= emit_if_let(s, want_result);
                 want_result = false;
                 break;
         case STATEMENT_EXPRESSION:

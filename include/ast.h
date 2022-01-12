@@ -35,12 +35,10 @@ struct statement {
                 STATEMENT_FUNCTION_DEFINITION,
                 STATEMENT_TAG_DEFINITION,
                 STATEMENT_CLASS_DEFINITION,
-                STATEMENT_WHILE_LOOP,
+                STATEMENT_WHILE,
                 STATEMENT_WHILE_MATCH,
-                STATEMENT_WHILE_LET,
                 STATEMENT_IF_LET,
                 STATEMENT_MATCH,
-                STATEMENT_CONDITIONAL,
                 STATEMENT_IF,
                 STATEMENT_RETURN,
                 STATEMENT_RETURN_GENERATOR,
@@ -89,16 +87,6 @@ struct statement {
                         int_vector check;
                 } each;
                 struct {
-                        struct expression *cond;
-                        struct statement *body;
-                        int_vector check;
-                } while_loop;
-                struct {
-                        struct expression *cond;
-                        struct statement *then_branch;
-                        struct statement *else_branch;
-                } conditional;
-                struct {
                         struct statement *s;
                         vec(struct expression *) patterns;
                         vec(struct statement *) handlers;
@@ -112,29 +100,15 @@ struct statement {
                         int_vector check;
                 } match;
                 struct {
-                        struct expression *e;
-                        struct expression *pattern;
-                        struct expression *cond;
+                        vec(struct condpart *) parts;
                         struct statement *block;
-                        int_vector check;
-                        bool def;
-                } while_let;
+                } While;
                 struct {
                         vec(struct condpart *) parts;
                         struct statement *then;
                         struct statement *otherwise;
                         bool neg;
                 } iff;
-                struct {
-                        vec(struct condpart *) parts;
-                        struct expression *e;
-                        struct expression *pattern;
-                        struct expression *cond;
-                        struct statement *then;
-                        struct statement *otherwise;
-                        bool neg;
-                        bool def;
-                } if_let;
                 struct {
                         struct expression *target;
                         struct expression *value;
