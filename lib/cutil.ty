@@ -1,0 +1,15 @@
+import ffi as c
+
+export wrap
+
+function wrap(lib, name, rType, *aTypes) {
+	let fp = lib && c.dlsym(name, lib) || c.dlsym(name)
+	let interface = c.cif(rType, *aTypes)
+	let argStorage = [c.new(t) for t in aTypes]
+	return function (*args) {
+		for arg, i in args {
+			c.store(aTypes[i], argStorage[i], arg)
+		}
+		c.call(interface, fp, *argStorage)
+	}
+}
