@@ -310,7 +310,7 @@ class String : Iterable {
     }
 
     searchr(pattern) {
-        for (let off = self.len() - 1; off >= 0; --off) {
+        for let off = self.len() - 1; off >= 0; --off {
             if let $i = self.search(pattern, off) {
                 return i
             }
@@ -470,7 +470,7 @@ class Blob : Iterable {
     }
 
     searchr(s) {
-        for (let off = self.size() - 1; off >= 0; --off) {
+        for let off = self.size() - 1; off >= 0; --off {
             if let $i = self.search(off, s) {
                 return i
             }

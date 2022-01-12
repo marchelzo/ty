@@ -115,9 +115,9 @@ static bool NoIn = false;
 // Maybe try to use this instead, might be cleaner.
 /*
 static enum {
-	PC_NORMAL,
-	PC_LVALUE,
-	PC_MATCH_PATTERN
+        PC_NORMAL,
+        PC_LVALUE,
+        PC_MATCH_PATTERN
 } ParseContext = PC_NORMAL;
 
 #define SAVE_PC(e) int PCSave = ParseContext; ParseContext = (e);
@@ -2431,7 +2431,7 @@ parse_for_loop(void)
          * First try to parse this as a for-each loop. If that fails, assume it's
          * a C-style for loop.
          */
-        if (tok()->type != '(') {
+        if (tok()->type != ';' && (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_LET)) {
                 s->type = STATEMENT_EACH_LOOP;
                 s->each.target = parse_target_list();
                 consume_keyword(KEYWORD_IN);
@@ -2452,23 +2452,28 @@ parse_for_loop(void)
                 return s;
         }
 
-        consume('(');
+        if (tok()->type == ';') {
+                next();
+                s->for_loop.init = NULL;
+        } else {
+                s->for_loop.init = parse_statement(-1);
+        }
 
-        s->for_loop.init = parse_statement(-1);
-
-        if (tok()->type == ';')
+        if (tok()->type == ';') {
                 s->for_loop.cond = NULL;
-        else
+        } else {
                 s->for_loop.cond = parse_expr(0);
+        }
 
         consume(';');
 
-        if (tok()->type == ')')
+        if (tok()->type == ')') {
                 s->for_loop.next = NULL;
-        else
+        } else {
                 s->for_loop.next = parse_expr(0);
+        }
 
-        consume(')');
+        expect('{');
 
         s->for_loop.body = parse_statement(-1);
 
