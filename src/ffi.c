@@ -51,8 +51,12 @@ store(ffi_type const *t, void *p, struct value const *v)
                 case VALUE_STRING:
                         *(void **)p = (void *)v->string;
                         break;
-				case VALUE_BLOB:
-						*(void **)p = (void *)v->blob->items;
+                case VALUE_NIL:
+                        *(void **)p = NULL;
+                        break;
+                case VALUE_BLOB:
+                        *(void **)p = (void *)v->blob->items;
+                        break;
                 }
                 break;
         }
@@ -61,6 +65,8 @@ store(ffi_type const *t, void *p, struct value const *v)
 static struct value
 load(ffi_type const *t, void const *p)
 {
+        void * const *vp;
+
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int const *)p);
         case FFI_TYPE_SINT8:  return INTEGER(*(int8_t const *)p);
@@ -72,7 +78,9 @@ load(ffi_type const *t, void const *p)
         case FFI_TYPE_UINT32: return INTEGER(*(uint32_t const *)p);
         case FFI_TYPE_UINT64: return INTEGER(*(uint64_t const *)p);
 
-        case FFI_TYPE_POINTER: return PTR(*(void * const *)p);
+        case FFI_TYPE_POINTER:
+                vp = p;
+                return (*vp == NULL) ? NIL : PTR(*vp);
 
         case FFI_TYPE_FLOAT:  return REAL(*(float const *)p);
         case FFI_TYPE_DOUBLE: return REAL(*(double const *)p);
@@ -289,6 +297,22 @@ cffi_dlopen(int argc)
         void *p = dlopen(b, RTLD_NOW);
 
         return (p == NULL) ? NIL : PTR(p);
+}
+
+struct value
+cffi_str(int argc)
+{
+        if (argc != 1) {
+                vm_panic("ffi.str() expects 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("the argument to ffi.str() must be a pointer");
+        }
+
+        int n = strlen(ARG(0).ptr);
+
+        return STRING_NOGC(ARG(0).ptr, n);
 }
 
 struct value

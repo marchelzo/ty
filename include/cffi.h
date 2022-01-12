@@ -38,4 +38,7 @@ cffi_struct(int argc);
 struct value
 cffi_store(int argc);
 
+struct value
+cffi_str(int argc);
+
 #endif
