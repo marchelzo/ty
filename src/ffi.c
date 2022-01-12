@@ -63,9 +63,12 @@ store(ffi_type const *t, void *p, struct value const *v)
 }
 
 static struct value
-load(ffi_type const *t, void const *p)
+load(ffi_type *t, void const *p)
 {
         void * const *vp;
+        struct value *tuple;
+        struct value v;
+        int n;
 
         switch (t->type) {
         case FFI_TYPE_INT:    return INTEGER(*(int const *)p);
@@ -84,6 +87,25 @@ load(ffi_type const *t, void const *p)
 
         case FFI_TYPE_FLOAT:  return REAL(*(float const *)p);
         case FFI_TYPE_DOUBLE: return REAL(*(double const *)p);
+
+        case FFI_TYPE_STRUCT:
+                for (n = 0; t->elements[n] != NULL; ++n) {
+                        ;
+                }
+
+                v = value_tuple(n);
+                NOGC(v.items);
+
+                size_t offsets[64];
+                ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
+
+                for (int i = 0; i < n; ++i) {
+                        v.items[i] = load(t->elements[i], (char *)p + offsets[i]);
+                }
+
+                OKGC(v.items);
+
+                return v;
         }
 
         return NIL;
@@ -177,6 +199,8 @@ cffi_new(int argc)
         if (argc == 2) {
                 struct value v = ARG(1);
                 store(t, p.ptr, &v);
+        } else {
+                memset(p.ptr, 0, t->size);
         }
 
         return p;
