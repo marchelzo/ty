@@ -564,6 +564,10 @@ class Iterable {
         @__iter__().unlines()
     }
 
+    unwords() {
+        @__iter__().unwords()
+    }
+
     tally(f) {
         @__iter__().tally(f)
     }
@@ -783,6 +787,10 @@ class Iter : Iterable {
 
     unlines() {
         return @join("\n")
+    }
+
+    unwords() {
+        return @join(' ')
     }
 
     count(x) {
