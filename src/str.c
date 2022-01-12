@@ -665,16 +665,20 @@ string_replace(struct value *string, int argc)
                 int out[3];
 
                 while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
-
-                        vec_push_n(chars, s + start, out[0] - start);
-
-                        vec_push_n(chars, r, replacement.bytes);
-
-                        start = out[1];
+                        if (out[1] == start) {
+                                vec_push_n(chars, r, replacement.bytes);
+                                vec_push(chars, s[start]);
+                                start = out[1] + 1;
+                        } else {
+                                vec_push_n(chars, s + start, out[0] - start);
+                                vec_push_n(chars, r, replacement.bytes);
+                                start = out[1];
+                        }
                 }
 
-                vec_push_n(chars, s + start, len - start);
-
+                if (start < len) {
+                        vec_push_n(chars, s + start, len - start);
+                }
         } else if (CALLABLE(replacement)) {
                 pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
