@@ -1,19 +1,12 @@
 import ffi as c
+import cutil
 
 if not let $curses = c.dlopen('libncurses.so.6') {
 	die('Failed to load curses')
 }
 
-function wrap(name, rType, *aTypes) {
-	let fp = c.dlsym(name, curses)
-	let interface = c.cif(rType, *aTypes)
-	let argStorage = [c.new(t) for t in aTypes]
-	return function (*args) {
-		for arg, i in args {
-			c.store(aTypes[i], argStorage[i], arg)
-		}
-		c.call(interface, fp, *argStorage)
-	}
+function wrap(*args) {
+	cutil.wrap(curses, *args)
 }
 
 let initscr = wrap('initscr', c.ptr)
@@ -24,6 +17,13 @@ let endwin = wrap('endwin', c.int)
 let getmaxx = wrap('getmaxx', c.int, c.ptr)
 let getmaxy = wrap('getmaxy', c.int, c.ptr)
 let getch = wrap('getch', c.int)
+let start_color = wrap('start_color', c.void)
+let init_pair = wrap('init_pair', c.int, c.short, c.short, c.short)
+let init_color = wrap('init_color', c.int, c.short, c.short, c.short, c.short)
+let has_colors = wrap('has_colors', c.int)
+let color_content = wrap('color_content', c.int, c.short, c.ptr, c.ptr, c.ptr)
+let color_set = wrap('color_set', c.int, c.short, c.ptr)
+let pair_content = wrap('pair_content', c.int, c.short, c.ptr, c.ptr)
 
 function mvaddstr(y, x, s) {
 	mvaddnstr(y, x, s, s.size())
@@ -38,8 +38,25 @@ function getmaxyx(s) {
 let screen = initscr()
 let (h, w) = getmaxyx(screen)
 
+let r = c.new(c.short)
+let g = c.new(c.short)
+let b = c.new(c.short)
+
+start_color()
+
+color_content(1, r, g, b)
+
+init_color(4, 850, 0, 700)
+init_color(5, 0, 0, 0)
+
+init_pair(3, 4, 5)
+
+color_set(3, nil)
+
 curs_set(0)
 mvaddstr(h/3, w/3, 'Hello, world!')
+mvaddstr(h/3+2, w/3, str(has_colors()))
+mvaddstr(h/3+4, w/3, "({c.load(c.short, r)}, {c.load(c.short, g)}, {c.load(c.short, b)})")
 
 refresh()
 

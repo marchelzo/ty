@@ -156,6 +156,9 @@ static struct statement *
 parse_if_statement(void);
 
 static struct statement *
+parse_if(void);
+
+static struct statement *
 parse_while_loop(void);
 
 static struct statement *
@@ -475,6 +478,12 @@ error(char const *fmt, ...)
         LOG("Parse Error: %s", ERR);
 End:
         longjmp(jb, 1);
+}
+
+inline static bool
+have_keyword(int kw)
+{
+        return tok()->type == TOKEN_KEYWORD && tok()->keyword == kw;
 }
 
 static bool
@@ -821,7 +830,7 @@ prefix_at(void)
         tok()->identifier = "self";
         tok()->module = NULL;
 
-		return prefix_identifier();
+        return prefix_identifier();
 }
 
 static struct expression *
@@ -850,7 +859,7 @@ prefix_if(void)
         struct expression *e = mkexpr();
 
         e->type = EXPRESSION_STATEMENT;
-        e->statement = parse_if_statement();
+        e->statement = parse_if();
 
         e->end = e->statement->end;
 
@@ -1951,7 +1960,7 @@ infix_kw_in(struct expression *left)
         struct expression *e = mkexpr();
         e->left = left;
         e->start = left->start;
-        
+
         if (tok()->keyword == KEYWORD_NOT) {
                 next();
                 e->type = EXPRESSION_NOT_IN;
@@ -2154,8 +2163,8 @@ Keyword:
 
         switch (tok()->keyword) {
         //case KEYWORD_IF: return infix_conditional;
-        case KEYWORD_AND: return infix_kw_and;
-        case KEYWORD_OR:  return infix_kw_or;
+        //case KEYWORD_AND: return infix_kw_and;
+        //case KEYWORD_OR:  return infix_kw_or;
         case KEYWORD_NOT:
         case KEYWORD_IN:  return infix_kw_in;
         default:          return NULL;
@@ -2494,6 +2503,38 @@ parse_for_loop(void)
         return s;
 }
 
+static struct condpart *
+parse_condpart(void)
+{
+        struct condpart *p = gc_alloc(sizeof *p);
+        p->e = NULL;
+        p->target = NULL;
+        p->def = false;
+
+        if (have_keyword(KEYWORD_LET)) {
+                next();
+                p->def = true;
+                p->target = parse_definition_lvalue(LV_LET);
+                consume(TOKEN_EQ);
+                p->e = parse_expr(-1);
+                return p;
+        }
+
+        SAVE_NE(true);
+        struct expression *e = parse_expr(0);
+        LOAD_NE();
+
+        if (tok()->type == TOKEN_EQ) {
+                next();
+                p->target = e;
+                p->e = parse_expr(-1);
+        } else {
+                p->e = e;
+        }
+
+        return p;
+}
+
 static struct statement *
 parse_while_loop(void)
 {
@@ -2551,6 +2592,43 @@ WhileLet:
                 s->while_loop.body = parse_block();
                 return s;
         }
+}
+
+static struct statement *
+parse_if(void)
+{
+        consume_keyword(KEYWORD_IF);
+
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_IF;
+        s->iff.neg = false;
+
+        vec_init(s->iff.parts);
+
+        if (have_keyword(KEYWORD_NOT)) {
+                next();
+                s->iff.neg = true;
+        }
+
+        vec_push(s->iff.parts, parse_condpart());
+
+        if (!s->iff.neg) {
+                while (have_keyword(KEYWORD_AND)) {
+                        next();
+                        vec_push(s->iff.parts, parse_condpart());
+                }
+        }
+
+        s->iff.then = parse_block();
+
+        if (have_keyword(KEYWORD_ELSE)) {
+                next();
+                s->iff.otherwise = parse_statement(-1);
+        } else {
+                s->iff.otherwise = NULL;
+        }
+
+        return s;
 }
 
 static struct statement *
@@ -3141,7 +3219,7 @@ Keyword:
         case KEYWORD_TAG:      return parse_class_definition();
         case KEYWORD_FOR:      return parse_for_loop();
         case KEYWORD_WHILE:    return parse_while_loop();
-        case KEYWORD_IF:       return parse_if_statement();
+        case KEYWORD_IF:       return parse_if();
         case KEYWORD_FUNCTION: return parse_function_definition();
         case KEYWORD_OPERATOR: return parse_operator_directive();
         case KEYWORD_MATCH:    return parse_match_statement();

@@ -21,6 +21,12 @@ struct class_definition {
         vec(struct expression *) methods;
 };
 
+struct condpart {
+	bool def;
+	struct expression *e;
+	struct expression *target;
+};
+
 struct statement {
         enum {
                 STATEMENT_FOR_LOOP,
@@ -35,6 +41,7 @@ struct statement {
                 STATEMENT_IF_LET,
                 STATEMENT_MATCH,
                 STATEMENT_CONDITIONAL,
+                STATEMENT_IF,
                 STATEMENT_RETURN,
                 STATEMENT_RETURN_GENERATOR,
                 STATEMENT_NEXT,
@@ -113,6 +120,13 @@ struct statement {
                         bool def;
                 } while_let;
                 struct {
+                        vec(struct condpart *) parts;
+                        struct statement *then;
+                        struct statement *otherwise;
+                        bool neg;
+                } iff;
+                struct {
+                        vec(struct condpart *) parts;
                         struct expression *e;
                         struct expression *pattern;
                         struct expression *cond;
