@@ -450,7 +450,7 @@ vm_exec(char *code)
 
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
-        char const *method;
+        char const *method, *member;
 
         struct value (*func)(struct value *, int);
 
@@ -460,6 +460,7 @@ vm_exec(char *code)
 #endif
 
         for (;;) {
+        NextInstruction:
                 switch ((unsigned char)*ip++) {
                 CASE(NOP)
                         continue;
@@ -623,7 +624,7 @@ vm_exec(char *code)
                                 int count = top()->count - i;
                                 struct value *rest = gc_alloc_object(sizeof (struct value[count]), GC_TUPLE);
                                 memcpy(rest, top()->items + i, count * sizeof (struct value));
-                                *poptarget() = TUPLE(rest, count);
+                                *poptarget() = TUPLE(rest, NULL, count);
                         }
                         break;
                 CASE(THROW_IF_NIL)
@@ -829,10 +830,34 @@ Throw:
                 CASE(TRY_INDEX_TUPLE)
                         READVALUE(i);
                         READVALUE(n);
-                        if (top()->type != VALUE_TUPLE || top()->count <= i)
+                        if (top()->type != VALUE_TUPLE || top()->count <= i) {
                                 ip += n;
-                        else
+                        } else {
                                 push(top()->items[i]);
+                        }
+                        break;
+                CASE(TRY_TUPLE_MEMBER)
+                        str = ip;
+                        ip += strlen(str) + 1;
+                        READVALUE(n);
+
+                        printf("Looking for '%s'\n", str);
+
+                        if (top()->type != VALUE_TUPLE || top()->names == NULL) {
+                                ip += n;
+                                break;
+                        }
+
+                        for (int i = 0; i < top()->count; ++i) {
+                                if (top()->names[i] != NULL && strcmp(top()->names[i], str) == 0) {
+                                        printf("Found it: %s\n", value_show(top()->items + i));
+                                        push(top()->items[i]);
+                                        goto NextInstruction;
+                                }
+                        }
+
+                        ip += n;
+
                         break;
                 CASE(TRY_TAG_POP)
                         READVALUE(tag);
@@ -909,7 +934,7 @@ Throw:
                         n = stack.count - *vec_pop(sp_stack);
 
                         if (n == 0) {
-                                push(TUPLE(NULL, 0));
+                                push(TUPLE(NULL, NULL, 0));
                                 break;
                         }
 
@@ -923,8 +948,25 @@ Throw:
 
                         NOGC(vp);
 
+                        v = TUPLE(vp, NULL, n);
+
+                        for (int i = 0; i < n; ++i, ip += strlen(ip) + 1) {
+                                if (ip[0] == 0) {
+                                        continue;
+                                }
+
+                                if (v.names == NULL) {
+                                        v.names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+                                        for (int i = 0; i < n; ++i) {
+                                                v.names[i] = NULL;
+                                        }
+                                }
+
+                                v.names[i] = ip;
+                        }
+
                         stack.count -= n;
-                        push(TUPLE(vp, n));
+                        push(v);
 
                         OKGC(vp);
 
@@ -1232,6 +1274,24 @@ Throw:
                         }
                         push(top()->items[n]);
                         break;
+                CASE(PUSH_TUPLE_MEMBER)
+                        member = ip;
+                        ip += strlen(member) + 1;
+
+                        v = peek();
+
+                        if (v.type != VALUE_TUPLE || v.names == NULL) {
+                                goto BadTupleMember;
+                        }
+
+                        for (int i = 0; i < v.count; ++i) {
+                                if (v.names[i] != NULL && strcmp(v.names[i], member) == 0) {
+                                        push(v.items[i]);
+                                        goto NextInstruction;
+                                }
+                        }
+
+                        goto BadTupleMember;
                 CASE(PUSH_ALL)
                         v = pop();
                         gc_push(&v);
@@ -1299,7 +1359,7 @@ Throw:
 
                         b = ip[-1] == INSTR_TRY_MEMBER_ACCESS;
 
-                        char const *member = ip;
+                        member = ip;
                         ip += strlen(ip) + 1;
 
                         READVALUE(h);
@@ -1325,6 +1385,26 @@ Throw:
                         case VALUE_NIL:
                                 push(NIL);
                                 break;
+                        case VALUE_TUPLE:
+                                if (v.names == NULL) {
+                                        goto BadTupleMember;
+                                }
+                                for (int i = 0; i < v.count; ++i) {
+                                        if (v.names[i] != NULL && strcmp(v.names[i], member) == 0) {
+                                                push(v.items[i]);
+                                                goto NextInstruction;
+                                        }
+                                }
+                        BadTupleMember:
+                                vm_panic(
+                                        "attmpt to access non-existent field %s'%s'%s of %s%s%s",
+                                        TERM(34),
+                                        member,
+                                        TERM(39),
+                                        TERM(97),
+                                        value_show(&v),
+                                        TERM(39)
+                                );
                         case VALUE_DICT:
                                 func = get_dict_method(member);
                                 if (func == NULL) {
@@ -1412,10 +1492,19 @@ ClassLookup:
                                         push(METHOD(member, vp, this));
                                         break;
                                 }
-                                if (b)
+                                if (b) {
                                         push(NIL);
-                                else
-                                        vm_panic("attempt to access non-existent member '%s' of %s", member, value_show(&v));
+                                } else {
+                                        vm_panic(
+                                                "attempt to access non-existent member %s'%s'%s of %s%s%s",
+                                                TERM(34),
+                                                member,
+                                                TERM(39),
+                                                TERM(97),
+                                                value_show(&v),
+                                                TERM(39)
+                                        );
+                                }
                                 break;
                         case VALUE_TAG:
                                 vp = tags_lookup_method(v.tag, member, h);
@@ -1466,11 +1555,13 @@ ObjectSubscript:
                                         push(ARRAY(a));
                                         OKGC(a);
                                 } else if (subscript.type == VALUE_INTEGER) {
-                                        if (subscript.integer < 0)
+                                        if (subscript.integer < 0) {
                                                 subscript.integer += container.array->count;
-                                        if (subscript.integer < 0 || subscript.integer >= container.array->count)
-OutOfRange:
+                                        }
+                                        if (subscript.integer < 0 || subscript.integer >= container.array->count) {
+                        OutOfRange:
                                                 vm_panic("array index out of range in subscript expression");
+                                        }
                                         push(container.array->items[subscript.integer]);
                                 } else {
                                         vm_panic("non-integer array index used in subscript expression");

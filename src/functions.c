@@ -2980,7 +2980,7 @@ builtin_type(int argc)
 
                 OKGC(types);
 
-                return TUPLE(types, n);
+                return TUPLE(types, NULL, n);
         }
 
         switch (v.type) {

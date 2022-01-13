@@ -670,7 +670,8 @@ prefix_identifier(void)
 
         consume(TOKEN_IDENTIFIER);
 
-        if (NoEquals && tok()->type == ':') {
+        // TODO: maybe get rid of this
+        if (false && NoEquals && tok()->type == ':') {
                 SAVE_NE(true);
                 next();
                 e->constraint = parse_expr(0);
@@ -895,7 +896,7 @@ next_pattern(void)
         struct expression *p = parse_expr(0);
         p->end = End;
 
-        if (p->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
+        if (false && p->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
                 next();
                 p->constraint = parse_expr(0);
                 p->constraint->end = End;
@@ -1015,6 +1016,7 @@ prefix_parenthesis(void)
                 e->type = EXPRESSION_TUPLE;
                 e->only_identifiers = true;
                 vec_init(e->es);
+                vec_init(e->names);
                 return e;
         }
 
@@ -1042,27 +1044,62 @@ prefix_parenthesis(void)
                 return e;
         }
 
+        // (:a, ...)
+        if (tok()->type == ':' && token(1)->type == TOKEN_IDENTIFIER) {
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->identifier = token(2)->identifier;
+                tok()->module = NULL;
+        }
+
         e = parse_expr(0);
 
-        if (tok()->type == ',') {
+        if (tok()->type == ',' || tok()->type == ':') {
                 struct expression *list = mkexpr();
                 list->start = start;
                 list->only_identifiers = true;
 
                 /*
                  * It _must_ be an identifier list.
+                 *
+                 * ^ idk what i meant by this
                  */
                 if (e->type != EXPRESSION_IDENTIFIER && e->type != EXPRESSION_MATCH_REST) {
                         list->only_identifiers = false;
                 }
 
                 list->type = EXPRESSION_TUPLE;
+                vec_init(list->names);
                 vec_init(list->es);
-                vec_push(list->es, e);
+
+                if (e->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
+                        next();
+                        vec_push(list->names, e->identifier);
+                        e = parse_expr(0);
+
+                } else {
+                        vec_push(list->names, NULL);
+                }
+
                 e->end = End;
+                vec_push(list->es, e);
 
                 while (tok()->type == ',') {
                         next();
+
+                        if (tok()->type == ':' && token(1)->type == TOKEN_IDENTIFIER) {
+                                unconsume(TOKEN_IDENTIFIER);
+                                tok()->identifier = token(2)->identifier;
+                                tok()->module = NULL;
+                        }
+
+                        if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                                vec_push(list->names, tok()->identifier);
+                                next();
+                                next();
+                        } else {
+                                vec_push(list->names, NULL);
+                        }
+
                         struct expression *e = parse_expr(0);
                         e->end = tok()->end;
                         if (e->type == EXPRESSION_MATCH_REST) {

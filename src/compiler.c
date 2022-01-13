@@ -789,8 +789,10 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
                 break;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
-                for (int i = 0; i < e->es.count; ++i)
+                for (int i = 0; i < e->es.count; ++i) {
                         symbolize_pattern(scope, e->es.items[i], def);
+                        printf("name %d: %s\n", i, e->names.items[i]);
+                }
                 break;
         case EXPRESSION_VIEW_PATTERN:
                 symbolize_expression(scope, e->left);
@@ -809,6 +811,10 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         Tag:
                 symbolize_expression(scope, e);
                 e->type = EXPRESSION_MUST_EQUAL;
+                break;
+        case EXPRESSION_CHECK_MATCH:
+                symbolize_pattern(scope, e->left, def);
+                symbolize_expression(scope, e->right);
                 break;
         default:
                 symbolize_expression(scope, e);
@@ -1181,8 +1187,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_statement(subscope, s->iff.otherwise);
                         for (int i = 0; i < s->iff.parts.count; ++i) {
                                 struct condpart *p = s->iff.parts.items[i];
-                                symbolize_pattern(subscope, p->target, p->def);
                                 symbolize_expression(subscope, p->e);
+                                symbolize_pattern(subscope, p->target, p->def);
 
                         }
                         symbolize_statement(subscope, s->iff.then);
@@ -1880,6 +1886,14 @@ emit_try_match(struct expression const *pattern)
                         emit_int(0);
                 }
                 break;
+        case EXPRESSION_CHECK_MATCH:
+                emit_try_match(pattern->left);
+                emit_instr(INSTR_DUP);
+                emit_constraint(pattern->right);
+                emit_instr(INSTR_JUMP_IF_NOT);
+                vec_push(state.match_fails, state.code.count);
+                emit_int(0);
+                break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_tgt(pattern->symbol, state.fscope, true);
                 emit_instr(INSTR_TRY_ASSIGN_NON_NIL);
@@ -2008,14 +2022,19 @@ emit_try_match(struct expression const *pattern)
 
                                 if (i + 1 != pattern->es.count)
                                         fail("the *<id> tuple-matching pattern must be the last pattern in the tuple");
+                        } else if (pattern->names.items[i] != NULL) {
+                                emit_instr(INSTR_TRY_TUPLE_MEMBER);
+                                emit_string(pattern->names.items[i]);
+                                vec_push(state.match_fails, state.code.count);
+                                emit_int(0);
+                                emit_try_match(pattern->es.items[i]);
+                                emit_instr(INSTR_POP);
                         } else {
                                 emit_instr(INSTR_TRY_INDEX_TUPLE);
                                 emit_int(i);
                                 vec_push(state.match_fails, state.code.count);
                                 emit_int(0);
-
                                 emit_try_match(pattern->es.items[i]);
-
                                 emit_instr(INSTR_POP);
                         }
                 }
@@ -3020,6 +3039,11 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                                 emit_instr(INSTR_JUMP);
                                 emit_int(1);
                                 emit_instr(INSTR_BAD_MATCH);
+                        } else if (target->names.items[i] != NULL) {
+                                emit_instr(INSTR_PUSH_TUPLE_MEMBER);
+                                emit_string(target->names.items[i]);
+                                emit_assignment2(target->es.items[i], maybe, def);
+                                emit_instr(INSTR_POP);
                         } else {
                                 emit_instr(INSTR_PUSH_TUPLE_ELEM);
                                 emit_int(i);
@@ -3434,6 +3458,13 @@ emit_expr(struct expression const *e, bool need_loc)
                         emit_expression(e->es.items[i]);
                 }
                 emit_instr(INSTR_TUPLE);
+                for (int i = 0; i < e->names.count; ++i) {
+                        if (e->names.items[i] != NULL) {
+                                emit_string(e->names.items[i]);
+                        } else {
+                                vec_push(state.code, 0);
+                        }
+                }
                 break;
         default:
                 fail("expression unexpected in this context");

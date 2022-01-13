@@ -303,8 +303,14 @@ show_tuple(struct value const *v)
                 len += n;
 
         for (size_t i = 0; i < v->count; ++i) {
-                char *val = value_show(&v->items[i]);
                 add(i == 0 ? "" : ", ");
+
+                if (v->names != NULL && v->names[i] != NULL) {
+                        add(v->names[i]);
+                        add(": ");
+                }
+
+                char *val = value_show(&v->items[i]);
                 add(val);
                 gc_free(val);
         }
@@ -705,6 +711,10 @@ mark_tuple(struct value const *v)
 
         MARK(v->items);
 
+        if (v->names != NULL) {
+                MARK(v->names);
+        }
+
         for (int i = 0; i < v->count; ++i) {
                 value_mark(&v->items[i]);
         }
@@ -793,7 +803,15 @@ struct value
 value_tuple(int n)
 {
         struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
-        return TUPLE(items, n);
+        return TUPLE(items, NULL, n);
+}
+
+struct value
+value_named_tuple(int n)
+{
+        struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+        char **names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+        return TUPLE(items, names, n);
 }
 
 struct array *

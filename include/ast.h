@@ -222,6 +222,7 @@ struct expression {
                         struct symbol *ltmp;
                         bool only_identifiers;
                         vec(struct expression *) es;
+                        vec(char const *) names;
                 };
                 struct {
                         struct expression *cond;
