@@ -1,9 +1,9 @@
 import ffi as c
 
-export wrap
+export wrap, memcpy, strlen, memcmp, strcmp
 
 function wrap(lib, name, rType, *aTypes) {
-	let fp = lib && c.dlsym(name, lib) || c.dlsym(name)
+	let fp = c.dlsym(name, lib)
 	let interface = c.cif(rType, *aTypes)
 	let argStorage = [c.new(t) for t in aTypes]
 	return function (*args) {
@@ -13,3 +13,8 @@ function wrap(lib, name, rType, *aTypes) {
 		c.call(interface, fp, *argStorage)
 	}
 }
+
+let memcpy = wrap(nil, 'memcpy', c.ptr, c.ptr, c.ptr, c.u64)
+let strlen = wrap(nil, 'strlen', c.u64, c.ptr)
+let memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
+let strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)

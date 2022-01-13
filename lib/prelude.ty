@@ -203,9 +203,9 @@ class Array : Iterable {
 
     median() {
         match self {
-            []                => nil,
-            xs : xs.sorted?() => xs[#xs / 2],
-            xs                => @sort()[#self / 2]
+            []                 => nil,
+            xs :: xs.sorted?() => xs[#xs / 2],
+            xs                 => @sort()[#self / 2]
         }
     }
 
@@ -329,9 +329,9 @@ class String : Iterable {
 
     __fmt__(s) {
         match int(s) {
-            nil       => self,
-            n : n > 0 => @padRight(n),
-            n : n < 0 => @padLeft(-n)
+            nil        => self,
+            n :: n > 0 => @padRight(n),
+            n :: n < 0 => @padLeft(-n)
         }
     }
 }
@@ -346,7 +346,14 @@ class Int {
     .|.(b)  { bit.OR(self, b)         }
     <<(b)   { bit.shiftLeft(self, b)  }
     >>(b)   { bit.shiftRight(self, b) }
-    **(b)   { math.pow(self, b)       }
+
+    **(b) {
+        if b :: Int {
+            int(math.pow(self, b))
+        } else {
+            math.pow(self, b)
+        }
+    }
 
     upto(b: Int) {
         while self <= b {
@@ -592,6 +599,10 @@ class Iterable {
         @__iter__().groupsOf(n, keepShort)
     }
 
+    classify(f = id) {
+        @__iter__().classify(f)
+    }
+
     pad(n, x) {
         @__iter__().pad(n, x)
     }
@@ -733,7 +744,7 @@ class Iter : Iterable {
 
     group(f = id) {
         if not let Some(x) = @__next__() {
-            return Generator(_ -> None)
+            return [].__iter__()
         }
 
         let g = [x]
@@ -759,11 +770,21 @@ class Iter : Iterable {
         })
     }
 
+    classify(f = id) {
+        let d = {*: []}
+
+        for x in self {
+            d[f(x)].push(x)
+        }
+
+        return d
+    }
+
     groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
         return Generator(function () {
             match @take(n).list() {
-                xs: #xs == n             => Some(xs),
-                xs: #xs > 0 && keepShort => Some(xs),
+                xs :: #xs == n             => Some(xs),
+                xs :: #xs > 0 && keepShort => Some(xs),
                 _ => None
             }
         })
