@@ -67,6 +67,9 @@ struct value
 builtin_float(int argc);
 
 struct value
+builtin_isnan(int argc);
+
+struct value
 builtin_str(int argc);
 
 struct value
@@ -392,6 +395,18 @@ struct value
 builtin_stdio_fread(int argc);
 
 struct value
+builtin_stdio_read_signed(int argc);
+
+struct value
+builtin_stdio_read_unsigned(int argc);
+
+struct value
+builtin_stdio_read_float(int argc);
+
+struct value
+builtin_stdio_read_double(int argc);
+
+struct value
 builtin_stdio_puts(int argc);
 
 struct value
@@ -414,6 +429,9 @@ builtin_stdio_clearerr(int argc);
 
 struct value
 builtin_stdio_fseek(int argc);
+
+struct value
+builtin_stdio_ftell(int argc);
 
 struct value
 builtin_stdio_setvbuf(int argc);

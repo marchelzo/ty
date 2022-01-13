@@ -27,6 +27,9 @@ struct value
 cffi_load(int argc);
 
 struct value
+cffi_load_n(int argc);
+
+struct value
 cffi_call(int argc);
 
 struct value

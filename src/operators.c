@@ -31,6 +31,14 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 return vm_eval_function(f, left, right, NULL);
         }
 
+		if (left->type == VALUE_PTR) {
+			if (right->type != VALUE_INTEGER) {
+				vm_panic("attempt to add non-integer to pointer: %s", value_show(right));
+			}
+
+			return PTR((char *)left->ptr + right->integer);
+		}
+
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
                 return REAL(left->real + right->integer);
 

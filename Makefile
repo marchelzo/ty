@@ -33,7 +33,7 @@ ifndef LOG
 endif
 
 ifdef RELEASE
-        CFLAGS += -Ofast
+        CFLAGS += -O3
         CFLAGS += -march=native
         CFLAGS += -pipe
         CFLAGS += -DTY_RELEASE

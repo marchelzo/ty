@@ -393,7 +393,7 @@ builtin_float(int argc)
 
         switch (v.type) {
         case VALUE_NIL:     return NIL;
-        case VALUE_INTEGER: return REAL((float)v.integer);
+        case VALUE_INTEGER: return REAL((double)v.integer);
         case VALUE_REAL:    return v;
         case VALUE_STRING:;
                 char buf[128];
@@ -404,15 +404,27 @@ builtin_float(int argc)
                 buf[n] = '\0';
 
                 errno = 0;
-                float f = strtof(buf, &end);
+                double x = strtod(buf, &end);
 
                 if (errno != 0 || *end != '\0')
                         return NIL;
 
-                return REAL(f);
+                return REAL(x);
         }
 
         vm_panic("invalid type passed to float()");
+}
+
+struct value
+builtin_isnan(int argc)
+{
+        ASSERT_ARGC("nan?()", 1);
+
+        if (ARG(0).type != VALUE_REAL) {
+                vm_panic("nan?() expects a float but got: %s", value_show(&ARG(0)));
+        }
+
+        return BOOLEAN(isnan(ARG(0).real));
 }
 
 struct value
@@ -618,81 +630,81 @@ builtin_max(int argc)
 struct value
 builtin_exp(int argc)
 {
-        ASSERT_ARGC("math::exp()", 1);
+        ASSERT_ARGC("math.exp()", 1);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math::exp() must be a float");
+                vm_panic("the argument to math.exp() must be a float");
 
-        return REAL(expf(x.real));
+        return REAL(exp(x.real));
 }
 
 struct value
 builtin_log(int argc)
 {
-        ASSERT_ARGC("math::log()", 1);
+        ASSERT_ARGC("math.log()", 1);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math::log() must be a float");
+                vm_panic("the argument to math.log() must be a float");
 
-        return REAL(logf(x.real));
+        return REAL(log(x.real));
 }
 
 struct value
 builtin_log2(int argc)
 {
-        ASSERT_ARGC("math::log2()", 1);
+        ASSERT_ARGC("math.log2()", 1);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math::log2() must be a float");
+                vm_panic("the argument to math.log2() must be a float");
 
-        return REAL(log2f(x.real));
+        return REAL(log2(x.real));
 }
 
 struct value
 builtin_pow(int argc)
 {
-        ASSERT_ARGC("math::pow()", 2);
+        ASSERT_ARGC("math.pow()", 2);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the first argument to math::pow() must be a float");
+                vm_panic("the first argument to math.pow() must be a float");
 
         struct value y = ARG(1);
         if (y.type == VALUE_INTEGER)
                 y = REAL(y.integer);
         if (y.type != VALUE_REAL)
-                vm_panic("the second argument to math::pow() must be a float");
+                vm_panic("the second argument to math.pow() must be a float");
 
-        return REAL(powf(x.real, y.real));
+        return REAL(pow(x.real, y.real));
 }
 
 struct value
 builtin_atan2(int argc)
 {
-        ASSERT_ARGC("math::atan2()", 2);
+        ASSERT_ARGC("math.atan2()", 2);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the first argument to math::atan2() must be a float");
+                vm_panic("the first argument to math.atan2() must be a float");
 
         struct value y = ARG(1);
         if (y.type == VALUE_INTEGER)
                 y = REAL(y.integer);
         if (y.type != VALUE_REAL)
-                vm_panic("the second argument to math::atan2() must be a float");
+                vm_panic("the second argument to math.atan2() must be a float");
 
         return REAL(atan2(x.real, y.real));
 }
@@ -701,13 +713,13 @@ builtin_atan2(int argc)
         struct value                                    \
         builtin_ ## func (int argc)           \
         {                                               \
-                ASSERT_ARGC("math::" #func "()", 1);    \
+                ASSERT_ARGC("math." #func "()", 1);    \
                                                         \
                 struct value x = ARG(0);        \
                 if (x.type == VALUE_INTEGER)            \
                         x = REAL(x.integer);            \
                 if (x.type != VALUE_REAL)               \
-                        vm_panic("the argument to math::" #func "() must be a float"); \
+                        vm_panic("the argument to math." #func "() must be a float"); \
                                                         \
                 return REAL(func ## f (x.real));        \
         }
@@ -722,43 +734,43 @@ MATH_WRAP(atan)
 struct value
 builtin_sqrt(int argc)
 {
-        ASSERT_ARGC("math::sqrt()", 1);
+        ASSERT_ARGC("math.sqrt()", 1);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math::sqrt() must be a float");
+                vm_panic("the argument to math.sqrt() must be a float");
 
-        return REAL(sqrtf(x.real));
+        return REAL(sqrt(x.real));
 }
 
 struct value
 builtin_cbrt(int argc)
 {
-        ASSERT_ARGC("math::cbrt()", 1);
+        ASSERT_ARGC("math.cbrt()", 1);
 
         struct value x = ARG(0);
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math::cbrt() must be a float");
+                vm_panic("the argument to math.cbrt() must be a float");
 
-        return REAL(cbrtf(x.real));
+        return REAL(cbrt(x.real));
 }
 
 struct value
 builtin_bit_and(int argc)
 {
-        ASSERT_ARGC("bit::and()", 2);
+        ASSERT_ARGC("bit.and()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit::and() must be an integer");
+                vm_panic("the first argument to bit.and() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit::and() must be an integer");
+                vm_panic("the second argument to bit.and() must be an integer");
 
         return INTEGER(a.integer & b.integer);
 }
@@ -766,15 +778,15 @@ builtin_bit_and(int argc)
 struct value
 builtin_bit_or(int argc)
 {
-        ASSERT_ARGC("bit::or()", 2);
+        ASSERT_ARGC("bit.or()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit::or() must be an integer");
+                vm_panic("the first argument to bit.or() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit::or() must be an integer");
+                vm_panic("the second argument to bit.or() must be an integer");
 
         return INTEGER(a.integer | b.integer);
 }
@@ -782,15 +794,15 @@ builtin_bit_or(int argc)
 struct value
 builtin_bit_xor(int argc)
 {
-        ASSERT_ARGC("bit::xor()", 2);
+        ASSERT_ARGC("bit.xor()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit::xor() must be an integer");
+                vm_panic("the first argument to bit.xor() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit::xor() must be an integer");
+                vm_panic("the second argument to bit.xor() must be an integer");
 
         return INTEGER(a.integer ^ b.integer);
 }
@@ -798,15 +810,15 @@ builtin_bit_xor(int argc)
 struct value
 builtin_bit_shift_left(int argc)
 {
-        ASSERT_ARGC("bit::shiftLeft()", 2);
+        ASSERT_ARGC("bit.shiftLeft()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit::shiftLeft() must be an integer");
+                vm_panic("the first argument to bit.shiftLeft() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit::shiftLeft() must be an integer");
+                vm_panic("the second argument to bit.shiftLeft() must be an integer");
 
         return INTEGER(a.integer << b.integer);
 }
@@ -814,15 +826,15 @@ builtin_bit_shift_left(int argc)
 struct value
 builtin_bit_shift_right(int argc)
 {
-        ASSERT_ARGC("bit::shiftRight()", 2);
+        ASSERT_ARGC("bit.shiftRight()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit::shiftRight() must be an integer");
+                vm_panic("the first argument to bit.shiftRight() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit::shiftRight() must be an integer");
+                vm_panic("the second argument to bit.shiftRight() must be an integer");
 
         return INTEGER(a.integer >> b.integer);
 }
@@ -830,11 +842,11 @@ builtin_bit_shift_right(int argc)
 struct value
 builtin_bit_complement(int argc)
 {
-        ASSERT_ARGC("bit::complement()", 1);
+        ASSERT_ARGC("bit.complement()", 1);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit::complement() must be an integer");
+                vm_panic("the first argument to bit.complement() must be an integer");
 
         return INTEGER(~a.integer);
 }
@@ -896,11 +908,11 @@ builtin_getenv(int argc)
 struct value
 builtin_json_parse(int argc)
 {
-        ASSERT_ARGC("json::parse()", 1);
+        ASSERT_ARGC("json.parse()", 1);
 
         struct value json = ARG(0);
         if (json.type != VALUE_STRING)
-                vm_panic("non-string passed to json::parse()");
+                vm_panic("non-string passed to json.parse()");
 
         return json_parse(json.string, json.bytes);
 }
@@ -908,7 +920,7 @@ builtin_json_parse(int argc)
 struct value
 builtin_json_encode(int argc)
 {
-        ASSERT_ARGC("json::parse()", 1);
+        ASSERT_ARGC("json.parse()", 1);
         return json_encode(&ARG(0));
 }
 
@@ -935,11 +947,11 @@ builtin_md5(int argc)
 struct value
 builtin_os_umask(int argc)
 {
-        ASSERT_ARGC("os::umask()", 1);
+        ASSERT_ARGC("os.umask()", 1);
 
         struct value mask = ARG(0);
         if (mask.type != VALUE_INTEGER) {
-                vm_panic("the argument to os::umask() must be an integer");
+                vm_panic("the argument to os.umask() must be an integer");
         }
 
         return INTEGER(umask(mask.integer));
@@ -948,11 +960,11 @@ builtin_os_umask(int argc)
 struct value
 builtin_os_open(int argc)
 {
-        ASSERT_ARGC_2("os::open()", 2, 3);
+        ASSERT_ARGC_2("os.open()", 2, 3);
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
-                vm_panic("the path passed to os::open() must be a string");
+                vm_panic("the path passed to os.open() must be a string");
 
         static vec(char) pathbuf;
         pathbuf.count = 0;
@@ -963,12 +975,12 @@ builtin_os_open(int argc)
 
         struct value flags_array = ARG(1);
         if (flags_array.type != VALUE_ARRAY)
-                vm_panic("the second argument to os::open() must be an array");
+                vm_panic("the second argument to os.open() must be an array");
 
         for (int i = 0; i < flags_array.array->count; ++i) {
                 struct value flag = flags_array.array->items[i];
                 if (flag.type != VALUE_INTEGER)
-                        vm_panic("non-integer passed as flag to os::open()");
+                        vm_panic("non-integer passed as flag to os.open()");
                 flags |= (unsigned) flag.integer;
         }
 
@@ -976,9 +988,9 @@ builtin_os_open(int argc)
 
         if (flags & O_CREAT) {
                 if (argc != 3)
-                        vm_panic("os::open() called with O_CREAT but no third argument");
+                        vm_panic("os.open() called with O_CREAT but no third argument");
                 if (ARG(2).type != VALUE_INTEGER)
-                        vm_panic("the third argument to os::open() must be an integer");
+                        vm_panic("the third argument to os.open() must be an integer");
                 fd = open(pathbuf.items, flags, (mode_t) ARG(2).integer);
         } else {
                 fd = open(pathbuf.items, flags);
@@ -991,12 +1003,12 @@ builtin_os_open(int argc)
 struct value
 builtin_os_close(int argc)
 {
-        ASSERT_ARGC("os::close()", 1);
+        ASSERT_ARGC("os.close()", 1);
 
         struct value file = ARG(0);
 
         if (file.type != VALUE_INTEGER)
-                vm_panic("the argument to os::close() must be an integer");
+                vm_panic("the argument to os.close() must be an integer");
 
         return INTEGER(close(file.integer));
 }
@@ -1007,13 +1019,13 @@ builtin_os_mktemp(int argc)
         char template[PATH_MAX + 1] = "tmp";
 
         if (argc > 2) {
-                vm_panic("os::mktemp() expects 0, 1, or 2 arguments but got %d", argc);
+                vm_panic("os.mktemp() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
         if (argc >= 1 && ARG(0).type != VALUE_NIL) {
                 struct value s = ARG(0);
                 if (s.type != VALUE_STRING)
-                        vm_panic("the first argument to os::mktemp() must be a string");
+                        vm_panic("the first argument to os.mktemp() must be a string");
                 /* -7 to make room for the XXXXXX suffix and NUL byte */
                 memcpy(template, s.string, min(s.bytes, sizeof template - 7));
         }
@@ -1024,7 +1036,7 @@ builtin_os_mktemp(int argc)
         if (argc == 2) {
                 struct value f = ARG(1);
                 if (f.type != VALUE_INTEGER)
-                        vm_panic("the second argument to os::mktemp() must be an integer");
+                        vm_panic("the second argument to os.mktemp() must be an integer");
                 flags = f.integer;
         }
 
@@ -1034,7 +1046,7 @@ builtin_os_mktemp(int argc)
 struct value
 builtin_os_opendir(int argc)
 {
-        ASSERT_ARGC("os::opendir()", 1);
+        ASSERT_ARGC("os.opendir()", 1);
 
         struct value path = ARG(0);
         DIR *d;
@@ -1050,7 +1062,7 @@ builtin_os_opendir(int argc)
         } else if (path.type == VALUE_INTEGER) {
                 d = fdopendir(path.integer);
         } else {
-                vm_panic("the argument to os::opendir() must be a path or a file descriptor");
+                vm_panic("the argument to os.opendir() must be a path or a file descriptor");
         }
 
         if (d == NULL)
@@ -1062,12 +1074,12 @@ builtin_os_opendir(int argc)
 struct value
 builtin_os_readdir(int argc)
 {
-        ASSERT_ARGC("os::readdir()", 1);
+        ASSERT_ARGC("os.readdir()", 1);
 
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os::readdir() must be a pointer");
+                vm_panic("the argument to os.readdir() must be a pointer");
 
         struct dirent *entry = readdir(d.ptr);
         if (entry == NULL)
@@ -1089,12 +1101,12 @@ builtin_os_readdir(int argc)
 struct value
 builtin_os_rewinddir(int argc)
 {
-        ASSERT_ARGC("os::rewinddir()", 1);
+        ASSERT_ARGC("os.rewinddir()", 1);
 
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os::rewinddir() must be a pointer");
+                vm_panic("the argument to os.rewinddir() must be a pointer");
 
         rewinddir(d.ptr);
 
@@ -1104,16 +1116,16 @@ builtin_os_rewinddir(int argc)
 struct value
 builtin_os_seekdir(int argc)
 {
-        ASSERT_ARGC("os::seekdir()", 2);
+        ASSERT_ARGC("os.seekdir()", 2);
 
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the first argument to os::seekdir() must be a pointer");
+                vm_panic("the first argument to os.seekdir() must be a pointer");
 
         struct value off = ARG(1);
         if (off.type != VALUE_INTEGER)
-                vm_panic("the second argument to os::seekdir() must be an integer");
+                vm_panic("the second argument to os.seekdir() must be an integer");
 
         seekdir(d.ptr, off.integer);
 
@@ -1123,12 +1135,12 @@ builtin_os_seekdir(int argc)
 struct value
 builtin_os_telldir(int argc)
 {
-        ASSERT_ARGC("os::telldir()", 1);
+        ASSERT_ARGC("os.telldir()", 1);
 
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os::telldir() must be a pointer");
+                vm_panic("the argument to os.telldir() must be a pointer");
 
         return INTEGER(telldir(d.ptr));
 }
@@ -1136,12 +1148,12 @@ builtin_os_telldir(int argc)
 struct value
 builtin_os_closedir(int argc)
 {
-        ASSERT_ARGC("os::closedir()", 1);
+        ASSERT_ARGC("os.closedir()", 1);
 
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os::closedir() must be a pointer");
+                vm_panic("the argument to os.closedir() must be a pointer");
 
         return INTEGER(closedir(d.ptr));
 }
@@ -1149,7 +1161,7 @@ builtin_os_closedir(int argc)
 struct value
 builtin_os_getcwd(int argc)
 {
-        ASSERT_ARGC("os::getcwd()", 0);
+        ASSERT_ARGC("os.getcwd()", 0);
 
         if (getcwd(buffer, sizeof buffer) == NULL)
                 return NIL;
@@ -1160,12 +1172,12 @@ builtin_os_getcwd(int argc)
 struct value
 builtin_os_unlink(int argc)
 {
-        ASSERT_ARGC("os::unlink()", 1);
+        ASSERT_ARGC("os.unlink()", 1);
 
         struct value path = ARG(0);
 
         if (path.type != VALUE_STRING)
-                vm_panic("the argument to os::unlink() must be a string");
+                vm_panic("the argument to os.unlink() must be a string");
 
         if (path.bytes >= sizeof buffer) {
                 errno = ENOENT;
@@ -1181,7 +1193,7 @@ builtin_os_unlink(int argc)
 struct value
 builtin_os_chdir(int argc)
 {
-        ASSERT_ARGC("os::chdir()", 1);
+        ASSERT_ARGC("os.chdir()", 1);
 
         struct value dir = ARG(0);
 
@@ -1198,7 +1210,7 @@ builtin_os_chdir(int argc)
         } else if (dir.type == VALUE_INTEGER) {
                 return INTEGER(fchdir(dir.integer));
         } else {
-                vm_panic("the argument to os::chdir() must be a path or a file descriptor");
+                vm_panic("the argument to os.chdir() must be a path or a file descriptor");
         }
 
 
@@ -1207,7 +1219,7 @@ builtin_os_chdir(int argc)
 struct value
 builtin_os_read(int argc)
 {
-        ASSERT_ARGC_2("os::read()", 2, 3);
+        ASSERT_ARGC_2("os.read()", 2, 3);
 
         struct value file = ARG(0);
 
@@ -1223,16 +1235,16 @@ builtin_os_read(int argc)
         }
 
         if (file.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::read() must be an integer");
+                vm_panic("the first argument to os.read() must be an integer");
 
         if (blob.type != VALUE_BLOB)
-                vm_panic("the second argument to os::read() must be a blob");
+                vm_panic("the second argument to os.read() must be a blob");
 
         if (n.type != VALUE_INTEGER)
-                vm_panic("the third argument to os::read() must be an integer");
+                vm_panic("the third argument to os.read() must be an integer");
 
         if (n.integer < 0)
-                vm_panic("the third argument to os::read() must be non-negative");
+                vm_panic("the third argument to os.read() must be non-negative");
 
         vec_reserve(*blob.blob, blob.blob->count + n.integer);
 
@@ -1252,13 +1264,13 @@ builtin_os_read(int argc)
 struct value
 builtin_os_write(int argc)
 {
-        ASSERT_ARGC("os::write()", 2);
+        ASSERT_ARGC("os.write()", 2);
 
         struct value file = ARG(0);
         struct value data = ARG(1);
 
         if (file.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::write() must be an integer");
+                vm_panic("the first argument to os.write() must be an integer");
 
         ssize_t n;
 
@@ -1273,7 +1285,7 @@ builtin_os_write(int argc)
                 n = write(file.integer, &((unsigned char){data.integer}), 1);
                 break;
         default:
-                vm_panic("invalid argument to os::write()");
+                vm_panic("invalid argument to os.write()");
         }
 
         return INTEGER(n);
@@ -1282,18 +1294,18 @@ builtin_os_write(int argc)
 struct value
 builtin_os_spawn(int argc)
 {
-        ASSERT_ARGC("os::spawn()", 1);
+        ASSERT_ARGC("os.spawn()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os::spawn() must be an array");
+                vm_panic("the argument to os.spawn() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os::spawn()");
+                vm_panic("empty array passed to os.spawn()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os::spawn()");
+                        vm_panic("non-string in array passed to os.spawn()");
 
         int in[2];
         int out[2];
@@ -1404,14 +1416,14 @@ builtin_os_spawn(int argc)
 struct value
 builtin_os_fork(int argc)
 {
-        ASSERT_ARGC("os::fork()", 0);
+        ASSERT_ARGC("os.fork()", 0);
         return INTEGER(fork());
 }
 
 struct value
 builtin_os_pipe(int argc)
 {
-        ASSERT_ARGC("os::pipe()", 0);
+        ASSERT_ARGC("os.pipe()", 0);
 
         int p[2];
 
@@ -1429,13 +1441,13 @@ builtin_os_pipe(int argc)
 struct value
 builtin_os_dup2(int argc)
 {
-        ASSERT_ARGC("os::dup2()", 2);
+        ASSERT_ARGC("os.dup2()", 2);
 
         struct value old = ARG(0);
         struct value new = ARG(1);
 
         if (old.type != VALUE_INTEGER || new.type != VALUE_INTEGER)
-                vm_panic("the arguments to os::dup2() must be integers");
+                vm_panic("the arguments to os.dup2() must be integers");
 
         return INTEGER(dup2(old.integer, new.integer));
 }
@@ -1443,14 +1455,14 @@ builtin_os_dup2(int argc)
 struct value
 builtin_os_socket(int argc)
 {
-        ASSERT_ARGC("os::socket()", 3);
+        ASSERT_ARGC("os.socket()", 3);
 
         struct value domain = ARG(0);
         struct value type = ARG(1);
         struct value protocol = ARG(2);
 
         if (domain.type != VALUE_INTEGER || type.type != VALUE_INTEGER || protocol.type != VALUE_INTEGER)
-                vm_panic("the arguments to os::socket() must be integers");
+                vm_panic("the arguments to os.socket() must be integers");
 
         return INTEGER(socket(domain.integer, type.integer, protocol.integer));
 }
@@ -1482,7 +1494,7 @@ builtin_os_setsockopt(int argc)
         } else {
                 o = 1;
         }
-        
+
         return INTEGER(setsockopt(sock.integer, level.integer, option.integer, &o, sizeof o));
 }
 
@@ -1516,13 +1528,13 @@ builtin_os_getsockopt(int argc)
 struct value
 builtin_os_shutdown(int argc)
 {
-        ASSERT_ARGC("os::shutdown()", 2);
+        ASSERT_ARGC("os.shutdown()", 2);
 
         struct value fd = ARG(0);
         struct value how = ARG(1);
 
         if (fd.type != VALUE_INTEGER || how.type != VALUE_INTEGER)
-                vm_panic("the arguments to os::shutdown() must be integers");
+                vm_panic("the arguments to os.shutdown() must be integers");
 
         return INTEGER(shutdown(fd.integer, how.integer));
 }
@@ -1530,13 +1542,13 @@ builtin_os_shutdown(int argc)
 struct value
 builtin_os_listen(int argc)
 {
-        ASSERT_ARGC("os::listen()", 2);
+        ASSERT_ARGC("os.listen()", 2);
 
         struct value sockfd = ARG(0);
         struct value backlog = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
-                vm_panic("the arguments to os::listen() must be integers");
+                vm_panic("the arguments to os.listen() must be integers");
 
         return INTEGER(listen(sockfd.integer, backlog.integer));
 }
@@ -1544,20 +1556,20 @@ builtin_os_listen(int argc)
 struct value
 builtin_os_connect(int argc)
 {
-        ASSERT_ARGC("os::connect()", 2);
+        ASSERT_ARGC("os.connect()", 2);
 
         struct value sockfd = ARG(0);
         struct value addr = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::connect() must be an integer");
+                vm_panic("the first argument to os.connect() must be an integer");
 
         if (addr.type != VALUE_DICT)
-                vm_panic("the second argument to os::connect() must be a dict");
+                vm_panic("the second argument to os.connect() must be a dict");
 
         struct value *v = dict_get_member(addr.dict, "family");
         if (v == NULL || v->type != VALUE_INTEGER)
-                vm_panic("missing or invalid address family in dict passed to os::connect()");
+                vm_panic("missing or invalid address family in dict passed to os.connect()");
 
         struct sockaddr_un un_addr;
         struct sockaddr_in in_addr;
@@ -1572,7 +1584,7 @@ builtin_os_connect(int argc)
                         un_addr.sun_family = AF_UNIX;
                         v = dict_get_member(addr.dict, "path");
                         if (v == NULL || v->type != VALUE_STRING)
-                                vm_panic("missing or invalid path in dict passed to os::connect()");
+                                vm_panic("missing or invalid path in dict passed to os.connect()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(connect(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
                 case AF_INET:
@@ -1580,37 +1592,37 @@ builtin_os_connect(int argc)
                         in_addr.sin_family = AF_INET;
                         v = dict_get_member(addr.dict, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid address in dict passed to os::connect()");
+                                vm_panic("missing or invalid address in dict passed to os.connect()");
                         ia.s_addr = htonl(v->integer);
                         in_addr.sin_addr = ia;
                         v = dict_get_member(addr.dict, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid port in dict passed to os::connect()");
+                                vm_panic("missing or invalid port in dict passed to os.connect()");
                         unsigned short p = htons(v->integer);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
                         return INTEGER(connect(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
                 default:
-                        vm_panic("invalid arguments to os::connect()");
+                        vm_panic("invalid arguments to os.connect()");
         }
 }
 
 struct value
 builtin_os_bind(int argc)
 {
-        ASSERT_ARGC("os::bind()", 2);
+        ASSERT_ARGC("os.bind()", 2);
 
         struct value sockfd = ARG(0);
         struct value addr = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::bind() must be an integer");
+                vm_panic("the first argument to os.bind() must be an integer");
 
         if (addr.type != VALUE_DICT)
-                vm_panic("the second argument to os::bind() must be a dict");
+                vm_panic("the second argument to os.bind() must be a dict");
 
         struct value *v = dict_get_member(addr.dict, "family");
         if (v == NULL || v->type != VALUE_INTEGER)
-                vm_panic("missing or invalid address family in dict passed to os::bind()");
+                vm_panic("missing or invalid address family in dict passed to os.bind()");
 
         struct sockaddr_un un_addr;
         struct sockaddr_in in_addr;
@@ -1625,7 +1637,7 @@ builtin_os_bind(int argc)
                         un_addr.sun_family = AF_UNIX;
                         v = dict_get_member(addr.dict, "path");
                         if (v == NULL || v->type != VALUE_STRING)
-                                vm_panic("missing or invalid path in dict passed to os::bind()");
+                                vm_panic("missing or invalid path in dict passed to os.bind()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
                 case AF_INET:
@@ -1633,49 +1645,49 @@ builtin_os_bind(int argc)
                         in_addr.sin_family = AF_INET;
                         v = dict_get_member(addr.dict, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid address in dict passed to os::bind()");
+                                vm_panic("missing or invalid address in dict passed to os.bind()");
                         ia.s_addr = htonl(v->integer);
                         in_addr.sin_addr = ia;
                         v = dict_get_member(addr.dict, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid port in dict passed to os::bind()");
+                                vm_panic("missing or invalid port in dict passed to os.bind()");
                         unsigned short p = htons(v->integer);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
                 default:
-                        vm_panic("invalid arguments to os::bind()");
+                        vm_panic("invalid arguments to os.bind()");
         }
 }
 
 struct value
 builtin_os_getaddrinfo(int argc)
 {
-        ASSERT_ARGC_2("os::getaddrinfo()", 5, 6);
+        ASSERT_ARGC_2("os.getaddrinfo()", 5, 6);
 
         struct value host = ARG(0);
         if (host.type != VALUE_STRING)
-                vm_panic("the first argument to os::getaddrinfo() must be a string");
+                vm_panic("the first argument to os.getaddrinfo() must be a string");
 
         struct value port = ARG(1);
         if (port.type != VALUE_STRING)
-                vm_panic("the second argument to os::getaddrinfo() must be a string");
+                vm_panic("the second argument to os.getaddrinfo() must be a string");
 
         struct value family = ARG(2);
         if (family.type != VALUE_INTEGER)
-                vm_panic("the third argument to os::getaddrinfo() must be an integer");
+                vm_panic("the third argument to os.getaddrinfo() must be an integer");
 
         struct value type = ARG(3);
         if (type.type != VALUE_INTEGER)
-                vm_panic("the fourth argument to os::getaddrinfo() must be an integer");
+                vm_panic("the fourth argument to os.getaddrinfo() must be an integer");
 
         struct value protocol = ARG(4);
         if (protocol.type != VALUE_INTEGER)
-                vm_panic("the fifth argument to os::getaddrinfo() must be an integer");
+                vm_panic("the fifth argument to os.getaddrinfo() must be an integer");
 
         int flags = 0;
         if (argc == 6) {
                 if (ARG(5).type != VALUE_INTEGER)
-                        vm_panic("the sixth argument to os::getaddrinfo() must be an integer");
+                        vm_panic("the sixth argument to os.getaddrinfo() must be an integer");
                 flags = ARG(5).integer;
         }
 
@@ -1743,12 +1755,12 @@ builtin_os_getaddrinfo(int argc)
 struct value
 builtin_os_accept(int argc)
 {
-        ASSERT_ARGC("os::accept()", 1);
+        ASSERT_ARGC("os.accept()", 1);
 
         struct value sockfd = ARG(0);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the argument to os::accept() must be an integer");
+                vm_panic("the argument to os.accept() must be an integer");
 
         struct sockaddr a;
         socklen_t n = sizeof a;
@@ -1772,11 +1784,11 @@ builtin_os_accept(int argc)
 struct value
 builtin_os_recvfrom(int argc)
 {
-        ASSERT_ARGC_2("os::recvfrom()", 3, 4);
+        ASSERT_ARGC_2("os.recvfrom()", 3, 4);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::recvfrom() must be an integer");
+                vm_panic("the first argument to os.recvfrom() must be an integer");
 
         struct value buffer;
         struct value size;
@@ -1793,13 +1805,13 @@ builtin_os_recvfrom(int argc)
         }
 
         if (buffer.type != VALUE_BLOB)
-                vm_panic("the buffer argument to os::recvfrom() must be a blob");
+                vm_panic("the buffer argument to os.recvfrom() must be a blob");
 
         if (size.type != VALUE_INTEGER || size.integer < 0)
-                vm_panic("the size argument to os::recvfrom() must be a non-negative integer");
+                vm_panic("the size argument to os.recvfrom() must be a non-negative integer");
 
         if (flags.type != VALUE_INTEGER)
-                vm_panic("the flags argument to os::recvfrom() must be an integer");
+                vm_panic("the flags argument to os.recvfrom() must be an integer");
 
         NOGC(buffer.blob);
 
@@ -1836,23 +1848,23 @@ builtin_os_recvfrom(int argc)
 struct value
 builtin_os_sendto(int argc)
 {
-        ASSERT_ARGC_2("os::sendto()", 3, 4);
+        ASSERT_ARGC_2("os.sendto()", 3, 4);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::sendto() must be an integer (fd)");
+                vm_panic("the first argument to os.sendto() must be an integer (fd)");
 
         struct value buffer = ARG(1);
         if (buffer.type != VALUE_BLOB)
-                vm_panic("the second argument to os::sendto() must be a blob");
+                vm_panic("the second argument to os.sendto() must be a blob");
 
         struct value flags = ARG(2);
         if (flags.type != VALUE_INTEGER)
-                vm_panic("the third argument to os::sendto() must be an integer (flags)");
+                vm_panic("the third argument to os.sendto() must be an integer (flags)");
 
         struct value addr = ARG(3);
         if (addr.type != VALUE_BLOB)
-                vm_panic("the fourth argument to os::sendto() must be a blob (sockaddr)");
+                vm_panic("the fourth argument to os.sendto() must be a blob (sockaddr)");
 
         ssize_t r = sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count);
 
@@ -1862,16 +1874,16 @@ builtin_os_sendto(int argc)
 struct value
 builtin_os_poll(int argc)
 {
-        ASSERT_ARGC("os::poll()", 2);
+        ASSERT_ARGC("os.poll()", 2);
 
         struct value fds = ARG(0);
         struct value timeout = ARG(1);
 
         if (fds.type != VALUE_ARRAY)
-                vm_panic("the first argument to os::poll() must be an array");
+                vm_panic("the first argument to os.poll() must be an array");
 
         if (timeout.type != VALUE_INTEGER)
-                vm_panic("the second argument to os::poll() must be an integer");
+                vm_panic("the second argument to os.poll() must be an integer");
 
         static vec(struct pollfd) pfds;
         pfds.count = 0;
@@ -1881,10 +1893,10 @@ builtin_os_poll(int argc)
         struct value *v;
         for (int i = 0; i < fds.array->count; ++i) {
                 if (fds.array->items[i].type != VALUE_DICT)
-                        vm_panic("non-dict in fds array passed to os::poll()");
+                        vm_panic("non-dict in fds array passed to os.poll()");
                 v = dict_get_member(fds.array->items[i].dict, "fd");
                 if (v == NULL || v->type != VALUE_INTEGER)
-                        vm_panic("all dicts in the fds array passed to os::poll() must have an integer value under the key 'fd'");
+                        vm_panic("all dicts in the fds array passed to os.poll() must have an integer value under the key 'fd'");
                 pfds.items[i].fd = v->integer;
                 v = dict_get_member(fds.array->items[i].dict, "events");
                 if (v != NULL && v->type == VALUE_INTEGER)
@@ -1985,7 +1997,7 @@ builtin_os_epoll_wait(int argc)
 struct value
 builtin_os_waitpid(int argc)
 {
-        ASSERT_ARGC_2("os::waitpid()", 1, 2);
+        ASSERT_ARGC_2("os.waitpid()", 1, 2);
 
         struct value pid = ARG(0);
 
@@ -1999,7 +2011,7 @@ builtin_os_waitpid(int argc)
 
         if (pid.type != VALUE_INTEGER) {
 Bad:
-                vm_panic("both arguments to os::waitpid() must be integers");
+                vm_panic("both arguments to os.waitpid() must be integers");
         }
 
         int status;
@@ -2015,11 +2027,11 @@ Bad:
         struct value \
         builtin_os_ ## name(int argc) \
         { \
-                ASSERT_ARGC("os::" #name, 1); \
+                ASSERT_ARGC("os." #name, 1); \
         \
                 struct value status = ARG(0); \
                 if (status.type != VALUE_INTEGER) \
-                        vm_panic("the argument to os::" #name "() must be an integer"); \
+                        vm_panic("the argument to os." #name "() must be an integer"); \
         \
                 int s = status.integer; \
         \
@@ -2043,7 +2055,7 @@ WAITMACRO(WCOREDUMP)
         struct value \
         builtin_os_ ## name (int argc) \
         { \
-                ASSERT_ARGC("os::" #name, 0); \
+                ASSERT_ARGC("os." #name, 0); \
                 return INTEGER(name()); \
         }
 
@@ -2051,10 +2063,10 @@ WAITMACRO(WCOREDUMP)
         struct value \
         builtin_os_ ## name (int argc) \
         { \
-                ASSERT_ARGC("os::" #name, 1); \
+                ASSERT_ARGC("os." #name, 1); \
                 struct value id = ARG(0); \
                 if (id.type != VALUE_INTEGER) \
-                        vm_panic("the argument to os::" #name "() must be an integer"); \
+                        vm_panic("the argument to os." #name "() must be an integer"); \
                 return INTEGER(name(id.integer)); \
         }
 
@@ -2072,11 +2084,11 @@ SETID(setegid)
 noreturn struct value
 builtin_os_exit(int argc)
 {
-        ASSERT_ARGC("os::exit()", 1);
+        ASSERT_ARGC("os.exit()", 1);
 
         struct value status = ARG(0);
         if (status.type != VALUE_INTEGER)
-                vm_panic("the argument to os::exit() must be an integer");
+                vm_panic("the argument to os.exit() must be an integer");
 
         exit(status.integer);
 }
@@ -2084,18 +2096,18 @@ builtin_os_exit(int argc)
 struct value
 builtin_os_exec(int argc)
 {
-        ASSERT_ARGC("os::exec()", 1);
+        ASSERT_ARGC("os.exec()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os::exec() must be an array");
+                vm_panic("the argument to os.exec() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os::exec()");
+                vm_panic("empty array passed to os.exec()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os::exec()");
+                        vm_panic("non-string in array passed to os.exec()");
 
         vec(char *) argv;
         vec_init(argv);
@@ -2115,12 +2127,12 @@ builtin_os_exec(int argc)
 struct value
 builtin_os_signal(int argc)
 {
-        ASSERT_ARGC_2("os::signal()", 1, 2);
+        ASSERT_ARGC_2("os.signal()", 1, 2);
 
         struct value num = ARG(0);
 
         if (num.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::signal() must be an integer");
+                vm_panic("the first argument to os.signal() must be an integer");
 
         if (argc == 2) {
                 struct value f = ARG(1);
@@ -2134,7 +2146,7 @@ builtin_os_signal(int argc)
                         act.sa_flags = SA_SIGINFO;
                         act.sa_handler = vm_do_signal;
                 } else {
-                        vm_panic("the second argument to os::signal() must be callable");
+                        vm_panic("the second argument to os.signal() must be callable");
                 }
 
                 int r = sigaction(num.integer, &act, NULL);
@@ -2151,13 +2163,13 @@ builtin_os_signal(int argc)
 struct value
 builtin_os_kill(int argc)
 {
-        ASSERT_ARGC("os::kill()", 2);
+        ASSERT_ARGC("os.kill()", 2);
 
         struct value pid = ARG(0);
         struct value sig = ARG(1);
 
         if (pid.type != VALUE_INTEGER || sig.type != VALUE_INTEGER)
-                vm_panic("both arguments to os::kill() must be integers");
+                vm_panic("both arguments to os.kill() must be integers");
 
         return INTEGER(kill(pid.integer, sig.integer));
 }
@@ -2171,11 +2183,11 @@ builtin_os_connect2(int argc)
         host.count = 0;
         port.count = 0;
 
-        ASSERT_ARGC("os::connect()", 2);
+        ASSERT_ARGC("os.connect()", 2);
 
         struct value h = ARG(0);
         if (h.type != VALUE_STRING)
-                vm_panic("the first argument to os::connect() must be a string");
+                vm_panic("the first argument to os.connect() must be a string");
 
         vec_push_n(host, h.string, h.bytes);
         vec_push(host, '\0');
@@ -2191,7 +2203,7 @@ builtin_os_connect2(int argc)
                 snprintf(port.items, 16, "%d", (int) p.integer);
                 break;
         default:
-                vm_panic("the second argument to os::connect() must be a string or an int");
+                vm_panic("the second argument to os.connect() must be a string or an int");
         }
 
         struct addrinfo hints, *result;
@@ -2217,14 +2229,14 @@ builtin_os_connect2(int argc)
 struct value
 builtin_os_usleep(int argc)
 {
-        ASSERT_ARGC("os::usleep()", 1);
+        ASSERT_ARGC("os.usleep()", 1);
 
         struct value duration = ARG(0);
         if (duration.type != VALUE_INTEGER)
-                vm_panic("the argument to os::usleep() must be an integer");
+                vm_panic("the argument to os.usleep() must be an integer");
 
         if (duration.integer < 0)
-                vm_panic("negative argument passed to os::usleep()");
+                vm_panic("negative argument passed to os.usleep()");
 
         return INTEGER(usleep(duration.integer));
 }
@@ -2232,11 +2244,11 @@ builtin_os_usleep(int argc)
 struct value
 builtin_os_listdir(int argc)
 {
-        ASSERT_ARGC("os::listdir()", 1);
+        ASSERT_ARGC("os.listdir()", 1);
 
         struct value dir = ARG(0);
         if (dir.type != VALUE_STRING)
-                vm_panic("the argument to os::listdir() must be a string");
+                vm_panic("the argument to os.listdir() must be a string");
 
         static vec(char) dirbuf;
         dirbuf.count = 0;
@@ -2264,13 +2276,13 @@ builtin_os_listdir(int argc)
 struct value
 builtin_os_stat(int argc)
 {
-        ASSERT_ARGC("os::stat()", 1);
+        ASSERT_ARGC("os.stat()", 1);
 
         struct stat s;
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
-                vm_panic("the argument to os::stat() must be a string");
+                vm_panic("the argument to os.stat() must be a string");
 
        static vec(char) pb;
        pb.count = 0;
@@ -2317,15 +2329,15 @@ builtin_os_stat(int argc)
 struct value
 builtin_os_fcntl(int argc)
 {
-        ASSERT_ARGC_2("os::fcntl()", 2, 3);
+        ASSERT_ARGC_2("os.fcntl()", 2, 3);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os::fcntl() must be an integer");
+                vm_panic("the first argument to os.fcntl() must be an integer");
 
         struct value cmd = ARG(1);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the second argument to os::fcntl() must be an integer");
+                vm_panic("the second argument to os.fcntl() must be an integer");
 
         if (argc == 2)
                 return INTEGER(fcntl(fd.integer, cmd.integer));
@@ -2340,24 +2352,24 @@ builtin_os_fcntl(int argc)
         case F_SETFL:
         case F_SETSIG:
                 if (arg.type != VALUE_INTEGER)
-                        vm_panic("expected the third argument to be an integer in call to os::fcntl()");
+                        vm_panic("expected the third argument to be an integer in call to os.fcntl()");
                 return INTEGER(fcntl(fd.integer, cmd.integer, (int) arg.integer));
         }
 
-        vm_panic("os::fcntl() functionality not implemented yet");
+        vm_panic("os.fcntl() functionality not implemented yet");
 }
 
 struct value
 builtin_errno_get(int argc)
 {
-        ASSERT_ARGC("errno::get()", 0);
+        ASSERT_ARGC("errno.get()", 0);
         return INTEGER(errno);
 }
 
 struct value
 builtin_errno_str(int argc)
 {
-        ASSERT_ARGC_2("errno::str()", 0, 1);
+        ASSERT_ARGC_2("errno.str()", 0, 1);
 
         int e;
 
@@ -2365,7 +2377,7 @@ builtin_errno_str(int argc)
                 e = errno;
         } else {
                 if (ARG(0).type != VALUE_INTEGER)
-                        vm_panic("the argument to errno::str() must be an integer");
+                        vm_panic("the argument to errno.str() must be an integer");
                 e = ARG(0).integer;
         }
 
@@ -2377,13 +2389,13 @@ builtin_errno_str(int argc)
 struct value
 builtin_time_utime(int argc)
 {
-        ASSERT_ARGC_2("time::utime()", 0, 1);
+        ASSERT_ARGC_2("time.utime()", 0, 1);
 
         clockid_t clk;
         if (argc == 1) {
                 struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER)
-                        vm_panic("the argument to time::utime() must be an integer");
+                        vm_panic("the argument to time.utime() must be an integer");
                 clk = v.integer;
         } else {
                 clk = CLOCK_REALTIME;
@@ -2398,14 +2410,14 @@ builtin_time_utime(int argc)
 struct value
 builtin_time_localtime(int argc)
 {
-        ASSERT_ARGC_2("time::localtime()", 0, 1);
+        ASSERT_ARGC_2("time.localtime()", 0, 1);
 
         time_t t;
 
         if (argc == 1) {
                 struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER) {
-                        vm_panic("the argument to time::localtime() must be an integer");
+                        vm_panic("the argument to time.localtime() must be an integer");
                 }
                 t = v.integer;
         } else {
@@ -2435,13 +2447,13 @@ builtin_time_localtime(int argc)
 struct value
 builtin_time_strftime(int argc)
 {
-        ASSERT_ARGC_2("time::strftime()", 1, 2);
+        ASSERT_ARGC_2("time.strftime()", 1, 2);
 
         struct tm t = {0};
 
         struct value fmt = ARG(0);
         if (fmt.type != VALUE_STRING) {
-                vm_panic("the first argument to time::strftime() must be a string");
+                vm_panic("the first argument to time.strftime() must be a string");
         }
 
         if (argc == 2) {
@@ -2472,7 +2484,7 @@ builtin_time_strftime(int argc)
                                 t.tm_isdst = vp->boolean;
 
                 } else {
-                        vm_panic("the second argument to time::strftime() must be an integer or object");
+                        vm_panic("the second argument to time.strftime() must be an integer or object");
                 }
         } else {
                 time_t sec = time(NULL);
@@ -2500,13 +2512,13 @@ struct value
 builtin_time_strptime(int argc)
 {
 
-        ASSERT_ARGC("time::strptime()", 2);
+        ASSERT_ARGC("time.strptime()", 2);
 
         struct value s = ARG(0);
         struct value fmt = ARG(1);
 
         if (s.type != VALUE_STRING || fmt.type != VALUE_STRING) {
-                vm_panic("both arguments to time::strptime() must be strings");
+                vm_panic("both arguments to time.strptime() must be strings");
         }
 
         vec(char) sb;
@@ -2547,7 +2559,7 @@ builtin_time_strptime(int argc)
 struct value
 builtin_time_time(int argc)
 {
-        ASSERT_ARGC_2("time::time()", 0, 1);
+        ASSERT_ARGC_2("time.time()", 0, 1);
 
         if (argc == 0) {
                 return INTEGER(time(NULL));
@@ -2557,7 +2569,7 @@ builtin_time_time(int argc)
         struct value v = ARG(0);
 
         if (v.type != VALUE_OBJECT) {
-                vm_panic("the argument to time::time() must be an object");
+                vm_panic("the argument to time.time() must be an object");
         }
 
         struct value *vp;
@@ -2588,19 +2600,19 @@ builtin_time_time(int argc)
 struct value
 builtin_stdio_fdopen(int argc)
 {
-        ASSERT_ARGC_2("stdio::fdopen()", 1, 2);
+        ASSERT_ARGC_2("stdio.fdopen()", 1, 2);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to stdio::fdopen() must be an integer");
+                vm_panic("the first argument to stdio.fdopen() must be an integer");
 
         char mode[16] = "a+";
         if (argc == 2) {
                 struct value m = ARG(1);
                 if (m.type != VALUE_STRING)
-                        vm_panic("the second argument to stdio::fdopen() must be a string");
+                        vm_panic("the second argument to stdio.fdopen() must be a string");
                 if (m.bytes >= sizeof mode)
-                        vm_panic("invalid mode string %s passed to stdio::fdopen()", value_show(&m));
+                        vm_panic("invalid mode string %s passed to stdio.fdopen()", value_show(&m));
                 memcpy(mode, m.string, m.bytes);
                 mode[m.bytes] = '\0';
         }
@@ -2615,7 +2627,7 @@ builtin_stdio_fdopen(int argc)
 struct value
 builtin_stdio_fgets(int argc)
 {
-        ASSERT_ARGC("stdio::fgets()", 1);
+        ASSERT_ARGC("stdio.fgets()", 1);
 
         vec(char) line;
         vec_init(line);
@@ -2649,6 +2661,111 @@ builtin_stdio_fgets(int argc)
 }
 
 struct value
+builtin_stdio_read_signed(int argc)
+{
+        ASSERT_ARGC_2("stdio.readSigned()", 1, 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.readSigned() must be a pointer");
+
+        FILE *fp = f.ptr;
+
+        int size;
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("expected intger as second argument to stdio.readSigned() but got: %s", value_show(&ARG(1)));
+                }
+                size = ARG(1).integer;
+        } else {
+                size = sizeof size;
+        }
+
+        char b[sizeof (intmax_t)];
+        int n = min(sizeof b, size);
+
+        if (fread(b, n, 1, fp) != 1) {
+                return NIL;
+        }
+
+        switch (size) {
+        case (sizeof (char)):      return INTEGER(*(char *)b);
+        case (sizeof (short)):     return INTEGER(*(short *)b);
+        case (sizeof (int)):       return INTEGER(*(int *)b);
+        case (sizeof (long long)): return INTEGER(*(long long *)b);
+        default: return NIL;
+        }
+}
+
+struct value
+builtin_stdio_read_unsigned(int argc)
+{
+        ASSERT_ARGC_2("stdio.readUnsigned()", 1, 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.readUnsigned() must be a pointer");
+
+        FILE *fp = f.ptr;
+
+        int size;
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("expected intger as second argument to stdio.readUnsigned() but got: %s", value_show(&ARG(1)));
+                }
+                size = ARG(1).integer;
+        } else {
+                size = sizeof size;
+        }
+
+        uintmax_t k = 0;
+
+        if (fread_unlocked(&k, min(size, sizeof k), 1, fp) != 1) {
+                return NIL;
+        } else {
+                return INTEGER(k);
+        }
+}
+
+struct value
+builtin_stdio_read_double(int argc)
+{
+        ASSERT_ARGC("stdio.readDouble()", 1);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.readDouble() must be a pointer");
+
+        double x;
+        FILE *fp = f.ptr;
+
+        if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
+                return REAL(x);
+        } else {
+                return NIL;
+        }
+}
+
+struct value
+builtin_stdio_read_float(int argc)
+{
+        ASSERT_ARGC("stdio.readFloat()", 1);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.readFloat() must be a pointer");
+
+        float x;
+        FILE *fp = f.ptr;
+
+        if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
+                return REAL(x);
+        } else {
+                return NIL;
+        }
+}
+
+struct value
 builtin_stdio_fread(int argc)
 {
         ASSERT_ARGC_2("stdio.fread()", 2, 3);
@@ -2674,6 +2791,8 @@ builtin_stdio_fread(int argc)
                 b = value_blob_new();
         }
 
+        NOGC(b);
+
         FILE *fp = f.ptr;
         intmax_t bytes = 0;
 
@@ -2682,6 +2801,8 @@ builtin_stdio_fread(int argc)
                 vec_push(*b, c);
                 bytes += 1;
         }
+
+        OKGC(b);
 
         if (argc == 3) {
                 return INTEGER(bytes);
@@ -2746,7 +2867,7 @@ builtin_stdio_fwrite(int argc)
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::fwrite() must be a pointer");
+                vm_panic("the argument to stdio.fwrite() must be a pointer");
 
         struct value s = ARG(1);
 
@@ -2758,18 +2879,18 @@ builtin_stdio_fwrite(int argc)
         case VALUE_INTEGER:
                 return INTEGER(fputc_unlocked((unsigned char)s.integer, f.ptr));
         default:
-                vm_panic("invalid type for second argument passed to stdio::fwrite()");
+                vm_panic("invalid type for second argument passed to stdio.fwrite()");
         }
 }
 
 struct value
 builtin_stdio_puts(int argc)
 {
-        ASSERT_ARGC("stdio::puts()", 2);
+        ASSERT_ARGC("stdio.puts()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::puts() must be a pointer");
+                vm_panic("the argument to stdio.puts() must be a pointer");
 
         struct value s = ARG(1);
 
@@ -2788,7 +2909,7 @@ builtin_stdio_puts(int argc)
                         return NIL;
                 break;
         default:
-                vm_panic("the second argument to stdio::puts() must be a string or a blob");
+                vm_panic("the second argument to stdio.puts() must be a string or a blob");
         }
 
         if (fputc_unlocked('\n', f.ptr) == EOF)
@@ -2800,11 +2921,11 @@ builtin_stdio_puts(int argc)
 struct value
 builtin_stdio_fflush(int argc)
 {
-        ASSERT_ARGC("stdio::fflush()", 1);
+        ASSERT_ARGC("stdio.fflush()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::fflush() must be a pointer");
+                vm_panic("the argument to stdio.fflush() must be a pointer");
 
         if (fflush(f.ptr) == EOF)
                 return NIL;
@@ -2815,11 +2936,11 @@ builtin_stdio_fflush(int argc)
 struct value
 builtin_stdio_fclose(int argc)
 {
-        ASSERT_ARGC("stdio::fclose()", 1);
+        ASSERT_ARGC("stdio.fclose()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::fclose() must be a pointer");
+                vm_panic("the argument to stdio.fclose() must be a pointer");
 
         if (fclose(f.ptr) == EOF)
                 return NIL;
@@ -2830,11 +2951,11 @@ builtin_stdio_fclose(int argc)
 struct value
 builtin_stdio_clearerr(int argc)
 {
-        ASSERT_ARGC("stdio::clearerr()", 1);
+        ASSERT_ARGC("stdio.clearerr()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::clearerr() must be a pointer");
+                vm_panic("the argument to stdio.clearerr() must be a pointer");
 
         clearerr(f.ptr);
 
@@ -2844,36 +2965,47 @@ builtin_stdio_clearerr(int argc)
 struct value
 builtin_stdio_setvbuf(int argc)
 {
-        ASSERT_ARGC("stdio::setvbuf()", 2);
+        ASSERT_ARGC("stdio.setvbuf()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio::setvbuf() must be a pointer");
+                vm_panic("the first argument to stdio.setvbuf() must be a pointer");
 
         struct value mode = ARG(1);
         if (mode.type != VALUE_INTEGER)
-                vm_panic("the second argument to stdio::setvbuf() must be an integer");
+                vm_panic("the second argument to stdio.setvbuf() must be an integer");
 
         return INTEGER(setvbuf(f.ptr, NULL, mode.integer, 0));
 }
 
+struct value
+builtin_stdio_ftell(int argc)
+{
+        ASSERT_ARGC("stdio.ftell()", 1);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.ftell() must be a pointer");
+
+        return INTEGER(ftell(f.ptr));
+}
 
 struct value
 builtin_stdio_fseek(int argc)
 {
-        ASSERT_ARGC("stdio::fseek()", 3);
+        ASSERT_ARGC("stdio.fseek()", 3);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio::fseek() must be a pointer");
+                vm_panic("the first argument to stdio.fseek() must be a pointer");
 
         struct value off = ARG(1);
         if (off.type != VALUE_INTEGER)
-                vm_panic("the second argument to stdio::fseek() must be an integer");
+                vm_panic("the second argument to stdio.fseek() must be an integer");
 
-        struct value whence = ARG(1);
+        struct value whence = ARG(2);
         if (whence.type != VALUE_INTEGER)
-                vm_panic("the third argument to stdio::fseek() must be an integer");
+                vm_panic("the third argument to stdio.fseek() must be an integer");
 
         return INTEGER(fseek(f.ptr, off.integer, whence.integer));
 }

@@ -5,6 +5,7 @@
 #include "alloc.h"
 #include "util.h"
 #include "vm.h"
+#include "cffi.h"
 
 static void
 store(ffi_type const *t, void *p, struct value const *v)
@@ -254,7 +255,7 @@ cffi_member(int argc)
                 vm_panic("invalid third argument to ffi.member(): %s", value_show(&i));
         }
 
-        
+
         size_t offsets[64];
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
@@ -264,8 +265,32 @@ cffi_member(int argc)
 struct value
 cffi_load(int argc)
 {
+        if (argc == 3) {
+                return cffi_load_n(argc);
+        }
+
         ffi_type *t = ARG(0).ptr;
         return load(t, ARG(1).ptr);
+}
+
+struct value
+cffi_load_n(int argc)
+{
+        ffi_type *t = ARG(0).ptr;
+        char *p = ARG(1).ptr;
+        size_t n = ARG(2).integer;
+
+        struct array *a = value_array_new();
+
+        NOGC(a);
+
+        for (int i = 0; i < n; ++i) {
+            value_array_push(a, load(t, p + (i * t->size)));
+        }
+
+        OKGC(a);
+
+        return ARRAY(a);
 }
 
 struct value
@@ -273,7 +298,7 @@ cffi_store(int argc)
 {
         ffi_type *t = ARG(0).ptr;
         void *p = ARG(1).ptr;
-        struct value v = ARG(2); 
+        struct value v = ARG(2);
 
         store(t, p, &v);
 

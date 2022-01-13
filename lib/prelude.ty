@@ -453,19 +453,23 @@ class Float {
     }
 
     negate() {
-        return -self
+        -self
     }
 
     sub(n) {
-        return self - n
+        self - n
     }
 
     add(n) {
-        return self + n
+        self + n
     }
 
     mul(n) {
-        return self * n
+        self * n
+    }
+
+    nan?() {
+        math.nan?(self)
     }
 }
 

@@ -282,6 +282,24 @@ blob_reserve(struct value *blob, int argc)
 }
 
 static struct value
+blob_ptr(struct value *blob, int argc)
+{
+	if (argc == 0) {
+		return PTR(blob->blob->items);
+	}
+
+	if (argc == 1) {
+		if (ARG(0).type != VALUE_INTEGER) {
+			vm_panic("blob.ptr() expects an integer but got %s", value_show(&ARG(0)));
+		}
+
+		return PTR(blob->blob->items + ARG(0).integer);
+	}
+
+	vm_panic("blob.ptr() expects 0 or 1 arguments but got %d", argc);
+}
+
+static struct value
 blob_hex(struct value *blob, int argc)
 {
         if (argc != 0)
@@ -385,6 +403,7 @@ DEFINE_METHOD_TABLE(
         { .name = "fill",     .func = blob_fill      },
         { .name = "get",      .func = blob_get       },
         { .name = "hex",      .func = blob_hex       },
+        { .name = "ptr",      .func = blob_ptr       },
         { .name = "push",     .func = blob_push      },
         { .name = "reserve",  .func = blob_reserve   },
         { .name = "search",   .func = blob_search    },

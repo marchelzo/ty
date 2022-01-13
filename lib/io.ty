@@ -2,21 +2,24 @@ import os
 import errno
 import stdio
 
-export open, stdin, stdout, stderr, FBF, LBF, NBF
+export open, stdin, stdout, stderr, FBF, LBF, NBF, SEEK_SET, SEEK_CUR
 
-let FBF = stdio._IOFBF;
-let LBF = stdio._IOLBF;
-let NBF = stdio._IONBF;
-let BufferingMethod = FBF | LBF | NBF;
+let FBF = stdio._IOFBF
+let LBF = stdio._IOLBF
+let NBF = stdio._IONBF
+let BufferingMethod = FBF | LBF | NBF
+
+let SEEK_SET = stdio.SEEK_SET
+let SEEK_CUR = stdio.SEEK_CUR
 
 class Stream : Iter {
     init(fd: Int, mode: ?String = 'a+', buffering: ?BufferingMethod) {
-        self.fd = fd;
+        @fd = fd
 
         if let $f = stdio.fdopen(fd, mode) {
-            self.f = f;
+            @f = f
         } else {
-            throw Err(errno.get());
+            throw Err(errno.get())
         }
 
         if buffering != nil {
@@ -34,17 +37,25 @@ class Stream : Iter {
         }
     }
 
+    tell() {
+        stdio.ftell(@f)
+    }
+
+    seek(*args) {
+        stdio.fseek(@f, *args)
+    }
+
     nextLine() {
         if let $line = stdio.fgets(self.f) {
-            return line;
+            return line
         } else if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
-                stdio.clearerr(self.f);
+            stdio.clearerr(self.f)
         }
     }
 
     rewind() {
         if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
-            throw Err(errno.get());
+            throw Err(errno.get())
         }
     }
 
@@ -60,6 +71,22 @@ class Stream : Iter {
             _ :: Blob | String => stdio.fwrite(self.f, s),
             _                  => stdio.fwrite(self.f, str(s))
         }
+    }
+
+    nextFloat() {
+        stdio.readFloat(@f)
+    }
+
+    nextDouble() {
+        stdio.readDouble(@f)
+    }
+
+    nextUnsigned(*args) {
+        stdio.readUnsigned(@f, *args)
+    }
+
+    nextSigned(*args) {
+        stdio.readUnsigned(@f, *args)
     }
 
     print(s = '') {
@@ -80,7 +107,7 @@ class Stream : Iter {
         while stdio.fread(@f, bs, b) > 0 {
             ;
         }
-        
+
         return b
     }
 
