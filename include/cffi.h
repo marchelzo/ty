@@ -12,6 +12,9 @@ struct value
 cffi_new(int argc);
 
 struct value
+cffi_alloc(int argc);
+
+struct value
 cffi_free(int argc);
 
 struct value
@@ -34,6 +37,9 @@ cffi_dlopen(int argc);
 
 struct value
 cffi_struct(int argc);
+
+struct value
+cffi_blob(int argc);
 
 struct value
 cffi_store(int argc);

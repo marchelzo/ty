@@ -1,0 +1,95 @@
+import ffi as c
+import cutil
+
+export hash, verify
+
+let lib = c.dlopen('libsodium.so')
+
+function wrap(*args) {
+  cutil.wrap(lib, *args)
+}
+
+let sodium_init = wrap('sodium_init', c.int)
+
+let crypto_pwhash_saltbytes = wrap('crypto_pwhash_saltbytes', c.u64)
+let crypto_pwhash_strbytes = wrap('crypto_pwhash_strbytes', c.u64)
+
+let crypto_pwhash_opslimit_min = wrap('crypto_pwhash_opslimit_min', c.u64)
+let crypto_pwhash_opslimit_max = wrap('crypto_pwhash_opslimit_max', c.u64)
+let crypto_pwhash_opslimit_interactive = wrap('crypto_pwhash_opslimit_interactive', c.u64)
+
+let crypto_pwhash_memlimit_min = wrap('crypto_pwhash_memlimit_min', c.u64)
+let crypto_pwhash_memlimit_max = wrap('crypto_pwhash_memlimit_max', c.u64)
+let crypto_pwhash_memlimit_interactive = wrap('crypto_pwhash_memlimit_interactive', c.u64)
+
+let crypto_pwhash_alg_default = wrap('crypto_pwhash_alg_default', c.int)
+
+let crypto_pwhash = wrap(
+  'crypto_pwhash',
+  c.int,
+  c.ptr, c.u64,
+  c.ptr, c.u64,
+  c.ptr,
+  c.u64,
+  c.u64,
+  c.int
+)
+
+let crypto_pwhash_str = wrap(
+  'crypto_pwhash_str',
+  c.int,
+  c.ptr,
+  c.ptr, c.u64,
+  c.u64,
+  c.u64
+)
+
+let crypto_pwhash_str_verify = wrap(
+  'crypto_pwhash_str_verify',
+  c.int,
+  c.ptr,
+  c.ptr, c.u64
+)
+
+let crypto_pwhash_str_needs_rehash = wrap(
+  'crypto_pwhash_str_needs_rehash',
+  c.int,
+  c.ptr,
+  c.u64,
+  c.u64
+)
+
+sodium_init()
+
+let salt_bytes = crypto_pwhash_saltbytes()
+let str_bytes = crypto_pwhash_strbytes()
+
+let min_ops = crypto_pwhash_opslimit_min()
+let max_ops = crypto_pwhash_opslimit_max()
+let interactive_ops = crypto_pwhash_opslimit_interactive()
+
+let min_mem = crypto_pwhash_memlimit_min()
+let max_mem = crypto_pwhash_memlimit_max()
+let interactive_mem = crypto_pwhash_memlimit_interactive()
+
+let default_alg = crypto_pwhash_alg_default()
+
+let buf = c.alloc(str_bytes)
+
+function hash(pass: String) {
+  let r = crypto_pwhash_str(
+    buf,
+    pass, pass.size(),
+    interactive_ops,
+    interactive_mem
+  )
+
+  match r {
+    -1 => nil,
+     0 => Blob(c.str(buf)).str()
+  }
+}
+
+function verify(hash: String, pass: String) {
+  crypto_pwhash_str_verify(hash, pass, pass.size()) == 0
+}

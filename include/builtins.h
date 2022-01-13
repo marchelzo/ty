@@ -422,6 +422,7 @@
 {.module = "ffi", .name = "ptr", .value = POINTER(&ffi_type_pointer)},
 {.module = "ffi", .name = "void", .value = POINTER(&ffi_type_void)},
 {.module = "ffi", .name = "new", .value = BUILTIN(cffi_new)},
+{.module = "ffi", .name = "alloc", .value = BUILTIN(cffi_alloc)},
 {.module = "ffi", .name = "free", .value = BUILTIN(cffi_free)},
 {.module = "ffi", .name = "addr", .value = BUILTIN(cffi_addr)},
 {.module = "ffi", .name = "load", .value = BUILTIN(cffi_load)},
@@ -433,6 +434,7 @@
 {.module = "ffi", .name = "dlopen", .value = BUILTIN(cffi_dlopen)},
 {.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},
 {.module = "ffi", .name = "str", .value = BUILTIN(cffi_str)},
+{.module = "ffi", .name = "blob", .value = BUILTIN(cffi_blob)},
 
 #include "ioctl_constants.h"
 

@@ -182,6 +182,25 @@ cffi_free(int argc)
 }
 
 struct value
+cffi_alloc(int argc)
+{
+        if (argc != 1) {
+                vm_panic("ffi.alloc() expects 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("ffi.alloc() expects an integer but got: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(0).integer <= 0)
+                return NIL;
+
+        void *p = malloc(ARG(0).integer);
+
+        return (p == NULL) ? NIL : PTR(p);
+}
+
+struct value
 cffi_new(int argc)
 {
         if (argc != 1 && argc != 2) {
@@ -324,6 +343,32 @@ cffi_dlopen(int argc)
 }
 
 struct value
+cffi_blob(int argc)
+{
+        if (argc != 2) {
+                vm_panic("ffi.blob() expects 2 arguments but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("the first argument to ffi.blob() must be a pointer, instead got: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("the second argument to ffi.blob() must be an integer, instead got: %s", value_show(&ARG(1)));
+        }
+
+        // TODO: should be a 'frozen' blob or something
+        // cant realloc() this pointer and don't know
+        // how long it's valid -- risky
+        struct blob *b = gc_alloc(sizeof *b);
+        b->items = ARG(0).ptr;
+        b->count = ARG(1).integer;
+        b->capacity = b->count;
+
+        return BLOB(b);
+}
+
+struct value
 cffi_str(int argc)
 {
         if (argc != 1) {
@@ -357,7 +402,7 @@ cffi_dlsym(int argc)
         b[n] = '\0';
 
         void *handle;
-        if (argc == 2) {
+        if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 if (ARG(1).type != VALUE_PTR) {
                         vm_panic("the second argument to ffi.dlsym() must be a pointer, instead got: %s", value_show(&ARG(1)));
                 }
