@@ -3,9 +3,13 @@ import ffi as c
 export wrap, memcpy, strlen, memcmp, strcmp
 
 function wrap(lib, name, rType, *aTypes) {
-	let fp = c.dlsym(name, lib)
+	if not let $fp = c.dlsym(name, lib) {
+		throw Err("Failed to load symbol '{name}'")
+	}
+
 	let interface = c.cif(rType, *aTypes)
 	let argStorage = [c.new(t) for t in aTypes]
+
 	return function (*args) {
 		for arg, i in args {
 			c.store(aTypes[i], argStorage[i], arg)
