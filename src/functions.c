@@ -2622,7 +2622,7 @@ builtin_stdio_fgets(int argc)
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::fgets() must be a pointer");
+                vm_panic("the argument to stdio.fgets() must be a pointer");
 
         FILE *fp = f.ptr;
 
@@ -2651,44 +2651,59 @@ builtin_stdio_fgets(int argc)
 struct value
 builtin_stdio_fread(int argc)
 {
-        ASSERT_ARGC("stdio::fread()", 2);
+        ASSERT_ARGC_2("stdio.fread()", 2, 3);
 
         vec(char) line;
         vec_init(line);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio::fread() must be a pointer");
+                vm_panic("the first argument to stdio.fread() must be a pointer");
 
         struct value n = ARG(1);
         if (n.type != VALUE_INTEGER || n.integer < 0)
-                vm_panic("the second argument to stdio::fread() must be a non-negative integer");
+                vm_panic("the second argument to stdio.fread() must be a non-negative integer");
+
+        struct blob *b;
+        if (argc == 3) {
+                if (ARG(2).type != VALUE_BLOB) {
+                        vm_panic("stdio.fread() expects a blob as the third argument but got: %s", value_show(&ARG(2)));
+                }
+                b = ARG(2).blob;
+        } else {
+                b = value_blob_new();
+        }
 
         FILE *fp = f.ptr;
-        struct blob *b = value_blob_new();
+        intmax_t bytes = 0;
 
         int c;
         while (b->count < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
                 vec_push(*b, c);
+                bytes += 1;
         }
 
-        if (b->count == 0 && n.integer > 0 && c == EOF)
-                return NIL;
+        if (argc == 3) {
+                return INTEGER(bytes);
+        } else {
+                if (b->count == 0 && n.integer > 0 && c == EOF)
+                        return NIL;
 
-        return BLOB(b);
+                return BLOB(b);
+        }
 }
 
 struct value
 builtin_stdio_slurp(int argc)
 {
-        ASSERT_ARGC("stdio::slurp()", 1);
+        ASSERT_ARGC("stdio.slurp()", 1);
 
         vec(char) b;
         vec_init(b);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::slurp() must be a pointer");
+                vm_panic("the argument to stdio.slurp() must be a pointer");
 
         FILE *fp = f.ptr;
 
@@ -2710,11 +2725,11 @@ builtin_stdio_slurp(int argc)
 struct value
 builtin_stdio_fgetc(int argc)
 {
-        ASSERT_ARGC("stdio::fgetc()", 1);
+        ASSERT_ARGC("stdio.fgetc()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio::fgetc() must be a pointer");
+                vm_panic("the argument to stdio.fgetc() must be a pointer");
 
         int c = fgetc_unlocked(f.ptr);
 
@@ -2727,7 +2742,7 @@ builtin_stdio_fgetc(int argc)
 struct value
 builtin_stdio_fwrite(int argc)
 {
-        ASSERT_ARGC("stdio::fwrite()", 2);
+        ASSERT_ARGC("stdio.fwrite()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
