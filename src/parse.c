@@ -2963,6 +2963,7 @@ parse_class_definition(void)
 
         struct statement *s = mkstmt();
         s->type = tag ? STATEMENT_TAG_DEFINITION : STATEMENT_CLASS_DEFINITION;
+        s->tag.pub = false;
         s->tag.name = tok()->identifier;
         vec_init(s->tag.methods);
 

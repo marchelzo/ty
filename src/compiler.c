@@ -867,6 +867,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_MODULE_ACCESS:
                 e->symbol = getsymbol(get_import_scope(e->object->identifier), e->member_name, &e->local);
                 e->type = EXPRESSION_IDENTIFIER;
+                e->identifier = e->symbol->identifier;
                 break;
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
