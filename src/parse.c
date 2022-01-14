@@ -183,6 +183,9 @@ static struct expression *
 prefix_parenthesis(void);
 
 static struct expression *
+prefix_dict(void);
+
+static struct expression *
 prefix_implicit_lambda(void);
 
 inline static struct token *
@@ -890,6 +893,42 @@ prefix_for(void)
 }
 
 static struct expression *
+prefix_record(void)
+{
+        struct location start = tok()->start;
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_TUPLE;
+        vec_init(e->es);
+        vec_init(e->names);
+
+        consume('{');
+
+        while (tok()->type != '}') {
+                expect(TOKEN_IDENTIFIER);
+                vec_push(e->names, tok()->identifier);
+
+                if (token(1)->type == ':') {
+                        next();
+                        next();
+                } else if (token(1)->type != ',' && token(1)->type != '}') {
+                        // Force a parse error
+                        next();
+                        expect(':');
+                }
+
+                vec_push(e->es, parse_expr(0));
+
+                if (tok()->type == ',') {
+                        next();
+                }
+        }
+
+        consume('}');
+
+        return e;
+}
+
+static struct expression *
 next_pattern(void)
 {
         SAVE_NE(true);
@@ -1512,18 +1551,9 @@ prefix_implicit_method(void)
 static struct expression *
 prefix_implicit_lambda(void)
 {
-        consume('{');
+        consume(TOKEN_PERCENT);
 
-        unconsume(TOKEN_ARROW);
-        unconsume(')');
-        unconsume('(');
-
-        struct expression *f = parse_expr(0);
-        f->type = EXPRESSION_IMPLICIT_FUNCTION;
-
-        consume('}');
-
-        return f;
+        return prefix_dict();
 }
 
 static struct expression *
@@ -1787,7 +1817,9 @@ static struct expression *
 infix_member_access(struct expression *left)
 {
         struct expression *e = mkexpr();
+
         e->start = tok()->start;
+        e->maybe = tok()->type == TOKEN_DOT_MAYBE;
 
         next();
 
@@ -1807,8 +1839,6 @@ infix_member_access(struct expression *left)
         }
 
         e->object = left;
-
-        e->maybe = tok()->type == TOKEN_DOT_MAYBE;
 
         expect(TOKEN_IDENTIFIER);
 
@@ -2107,7 +2137,7 @@ get_prefix_parser(void)
 
         case '(':                  return prefix_parenthesis;
         case '[':                  return prefix_array;
-        case '{':                  return prefix_dict;
+        case '{':                  return prefix_record;
 
         case '$':                  return prefix_dollar;
         case '`':                  return prefix_tick;

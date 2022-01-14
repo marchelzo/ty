@@ -556,6 +556,7 @@ lexnum(void)
 {
         char *end;
         errno = 0;
+        int base;
         intmax_t integer = strtoull(SRC, &end, 0);
 
         int n = end - SRC;
@@ -590,10 +591,16 @@ lexnum(void)
 
                 num = mkreal(real);
         } else if (C(n) == 'r') {
-                errno = 0;
-                integer = strtoull(end + 1, &end, integer);
-                if (errno != 0) {
-                        error("what are you doing step bro?");
+                if (integer < INT_MIN ||
+                    integer > INT_MAX ||
+                    ((integer = strtoull(end + 1, &end, (base = integer)), errno != 0))) {
+                        error(
+                                "invalid base %s%.*s%s used in integer literal",
+                                TERM(36),
+                                n,
+                                SRC,
+                                TERM(39)
+                        );
                 }
                 while (SRC != end) nextchar();
                 num = mkinteger(integer);

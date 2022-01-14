@@ -246,18 +246,18 @@ class Array : Iterable {
 class Dict : Iterable {
     init(ks, vs) {
         if ks && vs {
-            return { k: v for [k, v] in ks.zip(vs) }
+            return %{ k: v for [k, v] in ks.zip(vs) }
         } else {
-            return {}
+            return %{}
         }
     }
 
     map(f) {
-        return { k: f(v) for k, v in self }
+        return %{ k: f(v) for k, v in self }
     }
 
     kmap(f, combine) {
-        let new = {}
+        let new = %{}
         for k, v in self {
             let key = f(k)
             if new.has?(key) {
@@ -705,7 +705,7 @@ class Iter : Iterable {
     }
 
     uniq(f: Function = id) {
-        let seen = {}
+        let seen = %{}
         for x in self {
             let y = f(x)
             if y not in seen {
@@ -775,7 +775,7 @@ class Iter : Iterable {
     }
 
     classify(f = id) {
-        let d = {*: []}
+        let d = %{*: []}
 
         for x in self {
             d[f(x)].push(x)
@@ -868,7 +868,7 @@ class Iter : Iterable {
     }
 
     set() {
-        return { x for x in self }
+        return %{ x for x in self }
     }
 
     str() {
@@ -882,7 +882,7 @@ class Iter : Iterable {
     }
 
     tally(f = id) {
-        let d = {*:0}
+        let d = %{*:0}
         for x in self { d[f(x)] += 1 }
         return d
     }

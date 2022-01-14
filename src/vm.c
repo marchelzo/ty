@@ -1396,6 +1396,11 @@ Throw:
                                         }
                                 }
                         BadTupleMember:
+                                if (b) {
+                                        // (1, 2).?z
+                                        push(NIL);
+                                        break;
+                                }
                                 vm_panic(
                                         "attmpt to access non-existent field %s'%s'%s of %s%s%s",
                                         TERM(34),

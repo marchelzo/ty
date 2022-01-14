@@ -220,7 +220,17 @@ function ReadPNG(path: String, fmt=SPNG_FMT_PNG) {
 	c.free(sizePtr)
 	spng_ctx_free(ctx)
 
-	return (w: w, h: h, size: size, buffer: buffer, colorType: colorType, bitDepth: bitDepth, compression: compression, filter: filter, interlace: interlace)
+	return {
+		width: w,
+		height: h,
+	 	size,
+	 	buffer,
+	 	colorType,
+	 	bitDepth,
+	 	compression,
+	 	filter,
+		interlace
+	}
 }
 
 function WritePNG(
@@ -251,18 +261,20 @@ function WritePNG(
 
 	print(spng_set_ihdr(ctx, hdr))
 
-	spng_encode_image(ctx, buffer, size, fmt, 0)
+	spng_encode_image(ctx, buffer, size, fmt, SPNG_ENCODE_FINALIZE)
 }
 
-let png = ReadPNG('out.png')
+let png = ReadPNG('out.png', fmt: SPNG_FMT_RGB8)
 
 let src = c.blob(png.buffer, png.size)
 let out = blob()
 
-for c in src {
-	out.push(min(c + 30, 255))
-	out.push(c)
-	out.push(min(c + 44, 255))
+for c, i in src {
+	out.push(match i % 3 {
+		0 => min(c + 80, 255),
+		1 => c,
+		2 => min(c + 44, 255)
+	})
 }
 
 print(match png.colorType {
@@ -275,4 +287,4 @@ print(png)
 
 print('=== DONE READING ====')
 
-print(WritePNG('out2.png', out, png.w, png.h, png.size * 3, colorType: SPNG_COLOR_TYPE_TRUECOLOR))
+print(WritePNG('out2.png', out, png.width, png.height, png.size, colorType: SPNG_COLOR_TYPE_TRUECOLOR))
