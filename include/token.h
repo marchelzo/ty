@@ -106,6 +106,7 @@ struct token {
                         KEYWORD_YIELD,
                         KEYWORD_NEXT,
                         KEYWORD_GENERATOR,
+                        KEYWORD_PUB,
                 } keyword;
                 struct regex const *regex;
                 struct {

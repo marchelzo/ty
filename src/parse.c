@@ -269,6 +269,7 @@ mkdef(struct expression *lvalue, char *name)
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_DEFINITION;
+        s->pub = false;
         s->target = lvalue;
         s->value = value;
 
@@ -2691,6 +2692,7 @@ parse_function_definition(void)
 
         s->target = target;
         s->value = f;
+        s->pub = false;
 
         return s;
 }
@@ -2764,9 +2766,9 @@ parse_return_statement(void)
 static struct statement *
 parse_let_definition(void)
 {
-
         struct statement *s = mkstmt();
         s->type = STATEMENT_DEFINITION;
+        s->pub = false;
 
         consume_keyword(KEYWORD_LET);
 
@@ -3222,10 +3224,36 @@ parse(char const *source, char const *file)
         }
 
         while (tok()->type != TOKEN_END) {
+                bool pub = have_keyword(KEYWORD_PUB);
+
+                if (pub) {
+                        next();
+                        if (!have_keyword(KEYWORD_FUNCTION) &&
+                            !have_keyword(KEYWORD_CLASS) &&
+                            !have_keyword(KEYWORD_TAG)) {
+
+                                unconsume(TOKEN_KEYWORD);
+                                tok()->keyword = KEYWORD_LET;
+                        }
+                }
+
                 struct statement *s = parse_statement(-1);
                 if (s != NULL) {
                         s->end = End;
                         vec_push(program, s);
+                }
+
+                if (pub) switch (s->type) {
+                case STATEMENT_DEFINITION:
+                case STATEMENT_FUNCTION_DEFINITION:
+                        s->pub = true;
+                        break;
+                case STATEMENT_TAG_DEFINITION:
+                case STATEMENT_CLASS_DEFINITION:
+                        s->class.pub = true;
+                        break;
+                default:
+                        error("This shouldn't happen.");
                 }
         }
 

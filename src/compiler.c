@@ -125,7 +125,7 @@ struct state {
         int loop;
 
         import_vector imports;
-        vec(char *) exports;
+        vec(char const *) exports;
 
         struct scope *global;
 
@@ -426,6 +426,10 @@ addsymbol(struct scope *scope, char const *name)
 
         struct symbol *s = scope_add(scope, name);
 
+		if (scope->function == global && isupper(name[0])) {
+			vec_push(state.exports, name);
+		}
+
         LOG("adding symbol: %s -> %d\n", name, s->symbol);
 
         return s;
@@ -663,7 +667,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
 }
 
 static void
-symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
+symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool pub)
 {
         state.start = target->start;
         state.end = target->end;
@@ -678,6 +682,9 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                         target->symbol = addsymbol(scope, target->identifier);
                         target->local = true;
                         symbolize_expression(scope, target->constraint);
+                        if (pub) {
+                                vec_push(state.exports, target->identifier);
+                        }
                 } else {
                         if (target->constraint != NULL) {
                                 fail(
@@ -706,10 +713,10 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                 break;
         case EXPRESSION_VIEW_PATTERN:
                 symbolize_expression(scope, target->left);
-                symbolize_lvalue(scope, target->right, decl);
+                symbolize_lvalue(scope, target->right, decl, pub);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                symbolize_lvalue(scope, target->tagged, decl);
+                symbolize_lvalue(scope, target->tagged, decl, pub);
                 target->symbol = getsymbol(
                         ((target->module == NULL || *target->module == '\0') ? state.global : get_import_scope(target->module)),
                         target->identifier,
@@ -718,7 +725,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < target->elements.count; ++i)
-                        symbolize_lvalue(scope, target->elements.items[i], decl);
+                        symbolize_lvalue(scope, target->elements.items[i], decl, pub);
                 target->atmp = tmpsymbol(scope);
                 break;
         case EXPRESSION_DICT:
@@ -729,7 +736,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                 }
                 for (int i = 0; i < target->keys.count; ++i) {
                         symbolize_expression(scope, target->keys.items[i]);
-                        symbolize_lvalue(scope, target->values.items[i], decl);
+                        symbolize_lvalue(scope, target->values.items[i], decl, pub);
                 }
                 target->dtmp = tmpsymbol(scope);
                 break;
@@ -744,7 +751,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl)
                 target->ltmp = tmpsymbol(scope);
         case EXPRESSION_LIST:
                 for (int i = 0; i < target->es.count; ++i) {
-                        symbolize_lvalue(scope, target->es.items[i], decl);
+                        symbolize_lvalue(scope, target->es.items[i], decl, pub);
                 }
                 break;
         }
@@ -962,7 +969,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_DIV_EQ:
         case EXPRESSION_MINUS_EQ:
                 symbolize_expression(scope, e->value);
-                symbolize_lvalue(scope, e->target, false);
+                symbolize_lvalue(scope, e->target, false, false);
                 break;
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
@@ -1043,7 +1050,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_ARRAY_COMPR:
                 symbolize_expression(scope, e->compr.iter);
                 subscope = scope_new(scope, false);
-                symbolize_lvalue(subscope, e->compr.pattern, true);
+                symbolize_lvalue(subscope, e->compr.pattern, true, false);
                 symbolize_expression(subscope, e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         symbolize_expression(subscope, e->elements.items[i]);
@@ -1059,7 +1066,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_DICT_COMPR:
                 symbolize_expression(scope, e->dcompr.iter);
                 subscope = scope_new(scope, false);
-                symbolize_lvalue(subscope, e->dcompr.pattern, true);
+                symbolize_lvalue(subscope, e->dcompr.pattern, true, false);
                 symbolize_expression(subscope, e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(subscope, e->keys.items[i]);
@@ -1121,7 +1128,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         if (!is_tag(s->tag.super))
                                 fail("attempt to extend non-tag");
                 }
-                sym = scope_add(state.global, s->tag.name);
+                sym = addsymbol(state.global, s->tag.name);
                 sym->cnst = true;
                 sym->tag = tags_new(s->tag.name);
                 s->tag.symbol = sym->tag;
@@ -1204,7 +1211,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_EACH_LOOP:
                 symbolize_expression(scope, s->each.array);
                 subscope = scope_new(scope, false);
-                symbolize_lvalue(subscope, s->each.target, true);
+                symbolize_lvalue(subscope, s->each.target, true, false);
                 symbolize_statement(subscope, s->each.body);
                 symbolize_expression(subscope, s->each.cond);
                 symbolize_expression(subscope, s->each.stop);
@@ -1226,11 +1233,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 } else {
                         symbolize_expression(scope, s->value);
                 }
-                symbolize_lvalue(scope, s->target, true);
+                symbolize_lvalue(scope, s->target, true, s->pub);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
                 if (scope != state.global) {
-                        symbolize_lvalue(scope, s->target, true);
+                        symbolize_lvalue(scope, s->target, true, s->pub);
                 }
                 symbolize_expression(scope, s->value);
                 break;
@@ -3672,7 +3679,7 @@ compile(char const *source)
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
-                        symbolize_lvalue(state.global, p[i]->target, true);
+                        symbolize_lvalue(state.global, p[i]->target, true, p[i]->pub);
                         /*
                          * TODO: figure out why this was ever here
                          *
@@ -3689,10 +3696,14 @@ compile(char const *source)
                                         TERM(39)
                                 );
                         }
-                        struct symbol *sym = scope_add(state.global, p[i]->class.name);
+                        struct symbol *sym = addsymbol(state.global, p[i]->class.name);
                         sym->class = class_new(p[i]->class.name);
                         sym->cnst = true;
                         p[i]->class.symbol = sym->class;
+
+                        if (p[i]->class.pub) {
+                                vec_push(state.exports, p[i]->class.name);
+                        }
                 }
         }
 

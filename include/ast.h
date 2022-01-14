@@ -16,6 +16,7 @@ struct expression;
 
 struct class_definition {
         int symbol;
+        bool pub;
         char *name;
         struct expression *super;
         vec(struct expression *) methods;
@@ -112,6 +113,7 @@ struct statement {
                 struct {
                         struct expression *target;
                         struct expression *value;
+                        bool pub;
                 };
         };
 };

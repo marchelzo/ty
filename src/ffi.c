@@ -229,8 +229,8 @@ cffi_new(int argc)
 struct value
 cffi_member(int argc)
 {
-        if (argc != 3) {
-                vm_panic("ffi.member() expects 3 arguments but got %d", argc);
+        if (argc != 3 && argc != 4) {
+                vm_panic("ffi.member() expects 3 or 4 arguments but got %d", argc);
         }
 
         struct value t = ARG(0);
@@ -255,11 +255,15 @@ cffi_member(int argc)
                 vm_panic("invalid third argument to ffi.member(): %s", value_show(&i));
         }
 
-
         size_t offsets[64];
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
-        return load(type->elements[i.integer], (char const *)p.ptr + offsets[i.integer]);
+        if (argc == 3) {
+                return load(type->elements[i.integer], (char const *)p.ptr + offsets[i.integer]);
+        } else {
+                store(type->elements[i.integer], (char *)p.ptr + offsets[i.integer], &ARG(3));
+                return NIL;
+        }
 }
 
 struct value
