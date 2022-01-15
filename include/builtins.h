@@ -428,6 +428,7 @@
 {.module = "ffi", .name = "ptr", .value = POINTER(&ffi_type_pointer)},
 {.module = "ffi", .name = "void", .value = POINTER(&ffi_type_void)},
 {.module = "ffi", .name = "new", .value = BUILTIN(cffi_new)},
+{.module = "ffi", .name = "size", .value = BUILTIN(cffi_size)},
 {.module = "ffi", .name = "alloc", .value = BUILTIN(cffi_alloc)},
 {.module = "ffi", .name = "free", .value = BUILTIN(cffi_free)},
 {.module = "ffi", .name = "addr", .value = BUILTIN(cffi_addr)},

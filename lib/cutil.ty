@@ -1,6 +1,6 @@
 import ffi as c
 
-export wrap, memcpy, strlen, memcmp, strcmp
+export iter, wrap, memcpy, strlen, memcmp, strcmp
 
 function wrap(lib, name, rType, *aTypes) {
 	if not let $fp = c.dlsym(name, lib) {
@@ -15,6 +15,13 @@ function wrap(lib, name, rType, *aTypes) {
 			c.store(aTypes[i], argStorage[i], arg)
 		}
 		c.call(interface, fp, *argStorage)
+	}
+}
+
+function iter(type, p, n) {
+	let size = c.size(type)
+	for i in ..n {
+		yield c.load(type, p + i*size)
 	}
 }
 

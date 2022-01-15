@@ -265,27 +265,29 @@ function WritePNG(
 	spng_encode_image(ctx, buffer, size, fmt, SPNG_ENCODE_FINALIZE)
 }
 
-let png = ReadPNG('out.png', fmt: SPNG_FMT_RGB8)
+function t() {
+	let png = ReadPNG('out.png', fmt: SPNG_FMT_RGB8)
 
-let src = c.blob(png.buffer, png.size)
-let out = blob()
+	let src = c.blob(png.buffer, png.size)
+	let out = blob()
 
-for c, i in src {
-	out.push(match i % 3 {
-		0 => min(c + 80, 255),
-		1 => c,
-		2 => min(c + 44, 255)
+	for c, i in src {
+		out.push(match i % 3 {
+			0 => min(c + 80, 255),
+			1 => c,
+			2 => min(c + 44, 255)
+		})
+	}
+
+	print(match png.colorType {
+		::SPNG_COLOR_TYPE_GRAYSCALE         => 'Greyscale',
+		::SPNG_COLOR_TYPE_TRUECOLOR         => 'True color',
+		::SPNG_COLOR_TYPE_TRUECOLOR_ALPHA   => 'True color with alpha'
 	})
+
+	print(png)
+
+	print('=== DONE READING ====')
+
+	print(WritePNG('out2.png', out, png.width, png.height, png.size, colorType: SPNG_COLOR_TYPE_TRUECOLOR))
 }
-
-print(match png.colorType {
-    ::SPNG_COLOR_TYPE_GRAYSCALE         => 'Greyscale',
-    ::SPNG_COLOR_TYPE_TRUECOLOR         => 'True color',
-    ::SPNG_COLOR_TYPE_TRUECOLOR_ALPHA   => 'True color with alpha'
-})
-
-print(png)
-
-print('=== DONE READING ====')
-
-print(WritePNG('out2.png', out, png.width, png.height, png.size, colorType: SPNG_COLOR_TYPE_TRUECOLOR))

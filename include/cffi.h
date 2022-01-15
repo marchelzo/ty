@@ -12,6 +12,9 @@ struct value
 cffi_new(int argc);
 
 struct value
+cffi_size(int argc);
+
+struct value
 cffi_alloc(int argc);
 
 struct value

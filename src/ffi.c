@@ -202,6 +202,20 @@ cffi_alloc(int argc)
 }
 
 struct value
+cffi_size(int argc)
+{
+        if (argc != 1) {
+                vm_panic("ffi.size() expects 1 or 2 arguments but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("the argument to ffi.size() must be a pointer");
+        }
+
+		return INTEGER(((ffi_type *)ARG(0).ptr)->size);
+}
+
+struct value
 cffi_new(int argc)
 {
         if (argc != 1 && argc != 2) {
