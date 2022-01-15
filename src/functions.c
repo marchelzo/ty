@@ -971,29 +971,20 @@ builtin_os_open(int argc)
         vec_push_n(pathbuf, path.string, path.bytes);
         vec_push(pathbuf, '\0');
 
-        unsigned flags = 0;
-
-        struct value flags_array = ARG(1);
-        if (flags_array.type != VALUE_ARRAY)
-                vm_panic("the second argument to os.open() must be an array");
-
-        for (int i = 0; i < flags_array.array->count; ++i) {
-                struct value flag = flags_array.array->items[i];
-                if (flag.type != VALUE_INTEGER)
-                        vm_panic("non-integer passed as flag to os.open()");
-                flags |= (unsigned) flag.integer;
-        }
+        struct value flags = ARG(1);
+        if (flags.type != VALUE_INTEGER)
+                vm_panic("the second argument to os.open() must be an integer (flags)");
 
         int fd;
 
-        if (flags & O_CREAT) {
+        if (flags.integer & O_CREAT) {
                 if (argc != 3)
                         vm_panic("os.open() called with O_CREAT but no third argument");
                 if (ARG(2).type != VALUE_INTEGER)
                         vm_panic("the third argument to os.open() must be an integer");
-                fd = open(pathbuf.items, flags, (mode_t) ARG(2).integer);
+                fd = open(pathbuf.items, flags.integer, (mode_t) ARG(2).integer);
         } else {
-                fd = open(pathbuf.items, flags);
+                fd = open(pathbuf.items, flags.integer);
         }
 
 

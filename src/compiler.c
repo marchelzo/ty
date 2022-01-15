@@ -1756,7 +1756,7 @@ emit_return(struct statement const *s)
 }
 
 static bool
-emit_try(struct statement const *s)
+emit_try(struct statement const *s, bool want_result)
 {
         emit_instr(INSTR_TRY);
 
@@ -1775,7 +1775,7 @@ emit_try(struct statement const *s)
         bool finally_save = state.finally;
         state.finally = false;
 
-        bool returns = emit_statement(s->try.s, false);
+        bool returns = emit_statement(s->try.s, want_result);
 
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
@@ -1785,7 +1785,7 @@ emit_try(struct statement const *s)
         PATCH_JUMP(catch_offset);
 
         for (int i = 0; i < s->try.patterns.count; ++i)
-                returns &= emit_case(s->try.patterns.items[i], NULL, s->try.handlers.items[i], false);
+                returns &= emit_case(s->try.patterns.items[i], NULL, s->try.handlers.items[i], want_result);
 
         emit_instr(INSTR_FINALLY);
         emit_instr(INSTR_THROW);
@@ -3570,7 +3570,8 @@ emit_statement(struct statement const *s, bool want_result)
 
                 break;
         case STATEMENT_TRY:
-                returns |= emit_try(s);
+                returns |= emit_try(s, want_result);
+                want_result = false;
                 break;
         case STATEMENT_THROW:
                 if (state.finally) {

@@ -2,6 +2,7 @@ import ffi as c
 import cutil
 import stdio
 import os
+import errno
 
 pub SPNG_VERSION_MAJOR = 0
 pub SPNG_VERSION_MINOR = 7
@@ -188,8 +189,8 @@ let spng_decode_image = w('spng_decode_image', c.int, c.ptr, c.ptr, c.u64, c.int
 let spng_encode_image = w('spng_encode_image', c.int, c.ptr, c.ptr, c.u64, c.int, c.int)
 
 function ReadPNG(path: String, fmt=SPNG_FMT_PNG) {
-	if not let $f = stdio.fdopen(os.open('out.png', [os.O_RDONLY]), 'r') {
-		return nil
+	if not let $f = stdio.fdopen(os.open('out.png', os.O_RDONLY), 'r') {
+		throw Err(errno.get())
 	}
 
 	let ctx = spng_ctx_new(0)
@@ -243,8 +244,8 @@ function WritePNG(
 	bitDepth=8,
 	raw=false
 ) {
-	if not let $f = stdio.fdopen(os.open(path, [os.O_RDWR, os.O_CREAT], 0644), 'w+') {
-		return nil
+	if not let $f = stdio.fdopen(os.open(path, os.O_RDWR .|. os.O_CREAT, 0644), 'w+') {
+		throw Err(errno.get())
 	}
 
 	let ctx = spng_ctx_new(SPNG_CTX_ENCODER)

@@ -159,6 +159,9 @@ static struct statement *
 parse_while(void);
 
 static struct statement *
+parse_try(void);
+
+static struct statement *
 parse_for_loop(void);
 
 static struct statement *
@@ -856,37 +859,12 @@ prefix_star(void)
 }
 
 static struct expression *
-prefix_if(void)
+prefix_statement(void)
 {
         struct expression *e = mkexpr();
 
         e->type = EXPRESSION_STATEMENT;
-        e->statement = parse_if();
-
-        e->end = e->statement->end;
-
-        return e;
-}
-
-static struct expression *
-prefix_while(void)
-{
-        struct expression *e = mkexpr();
-
-        e->type = EXPRESSION_STATEMENT;
-        e->statement = parse_while();
-        e->end = e->statement->end;
-
-        return e;
-}
-
-static struct expression *
-prefix_for(void)
-{
-        struct expression *e = mkexpr();
-
-        e->type = EXPRESSION_STATEMENT;
-        e->statement = parse_for_loop();
+        e->statement = parse_statement(-1);
         e->end = e->statement->end;
 
         return e;
@@ -2170,10 +2148,15 @@ Keyword:
         case KEYWORD_FALSE:     return prefix_false;
         case KEYWORD_SELF:      return prefix_self;
         case KEYWORD_NIL:       return prefix_nil;
-        case KEYWORD_IF:        return prefix_if;
-        case KEYWORD_FOR:       return prefix_for;
-        case KEYWORD_WHILE:     return prefix_while;
         case KEYWORD_YIELD:     return prefix_yield;
+
+        case KEYWORD_IF:
+        case KEYWORD_FOR:
+        case KEYWORD_WHILE:
+        case KEYWORD_TRY:
+        case KEYWORD_THROW:
+                return prefix_statement;
+
         default:                return NULL;
         }
 }

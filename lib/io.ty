@@ -131,13 +131,13 @@ function open(path: String | Int, mode: String = 'a+', buffering) {
     }
 
     let flags = match mode {
-        'r'  => [os.O_RDONLY],
-        'w'  => [os.O_WRONLY, os.O_CREAT, os.O_TRUNC],
-        'wx' => [os.O_WRONLY, os.O_CREAT],
-        'a'  => [os.O_WRONLY, os.O_CREAT, os.O_APPEND],
-        'r+' => [os.O_RDWR],
-        'w+' => [os.O_RDWR, os.O_CREAT, os.O_TRUNC],
-        'a+' => [os.O_RDWR, os.O_CREAT, os.O_APPEND],
+        'r'  => os.O_RDONLY,
+        'w'  => os.O_WRONLY .|. os.O_CREAT .|. os.O_TRUNC,
+        'wx' => os.O_WRONLY .|. os.O_CREAT,
+        'a'  => os.O_WRONLY .|. os.O_CREAT .|. os.O_APPEND,
+        'r+' => os.O_RDWR,
+        'w+' => os.O_RDWR .|. os.O_CREAT .|. os.O_TRUNC,
+        'a+' => os.O_RDWR .|. os.O_CREAT .|. os.O_APPEND,
         _    => nil
     };
 
@@ -145,16 +145,14 @@ function open(path: String | Int, mode: String = 'a+', buffering) {
         throw Err(errno.EINVAL)
     }
 
-    let creat = flags.contains?(os.O_CREAT)
-
-    let fd = if creat {
+    let fd = if flags .&. os.O_CREAT {
         os.open(path, flags, 0666)
     } else {
         os.open(path, flags)
     }
 
     match fd {
-        -1 => nil,
+        -1  => throw Err(errno.get()),
         _   => Stream(fd, mode, buffering)
     }
 }
