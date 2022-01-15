@@ -707,7 +707,11 @@ value_array_mark(struct array *a)
 inline static void
 mark_tuple(struct value const *v)
 {
-        if (MARKED(v->items)) return;
+        if (!MARKED(v->items)) {
+                for (int i = 0; i < v->count; ++i) {
+                        value_mark(&v->items[i]);
+                }
+        }
 
         MARK(v->items);
 
@@ -715,9 +719,6 @@ mark_tuple(struct value const *v)
                 MARK(v->names);
         }
 
-        for (int i = 0; i < v->count; ++i) {
-                value_mark(&v->items[i]);
-        }
 }
 
 inline static void
@@ -803,6 +804,11 @@ struct value
 value_tuple(int n)
 {
         struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+
+        for (int i = 0; i < n; ++i) {
+                items[i] = NIL;
+        }
+
         return TUPLE(items, NULL, n);
 }
 
@@ -811,6 +817,12 @@ value_named_tuple(int n)
 {
         struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
         char **names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+
+        for (int i = 0; i < n; ++i) {
+                items[i] = NIL;
+                names[i] = NULL;
+        }
+
         return TUPLE(items, names, n);
 }
 

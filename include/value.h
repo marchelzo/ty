@@ -267,6 +267,9 @@ value_blob_new(void);
 struct value
 value_tuple(int n);
 
+struct value
+value_named_tuple(int n);
+
 void
 _value_mark(struct value const *v);
 

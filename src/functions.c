@@ -1430,12 +1430,12 @@ builtin_os_pipe(int argc)
         if (pipe(p) == -1)
                 return NIL;
 
-        struct array *fds = value_array_new();
+        struct value fds = value_tuple(2);
 
-        value_array_push(fds, INTEGER(p[0]));
-        value_array_push(fds, INTEGER(p[1]));
+        fds.items[0] = INTEGER(p[0]);
+        fds.items[1] = INTEGER(p[1]);
 
-        return ARRAY(fds);
+        return fds;
 }
 
 struct value
@@ -1714,24 +1714,31 @@ builtin_os_getaddrinfo(int argc)
         int r = getaddrinfo(node.items, service.items, &hints, &res);
         if (r == 0) {
                 for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
-                        struct value d = DICT(dict_new());
-                        NOGC(d.dict);
-                        value_array_push(results.array, d);
-                        OKGC(d.dict);
-                        dict_put_member(d.dict, "family", INTEGER(it->ai_family));
-                        dict_put_member(d.dict, "type", INTEGER(it->ai_socktype));
-                        dict_put_member(d.dict, "protocol", INTEGER(it->ai_protocol));
+                        struct value entry = value_named_tuple(5);
+                        NOGC(entry.items);
+                        NOGC(entry.names);
+
+                        value_array_push(results.array, entry);
+
+                        OKGC(entry.items);
+                        OKGC(entry.names);
+
+                        entry.names[0] = "family";
+                        entry.names[1] = "type";
+                        entry.names[2] = "protocol";
+                        entry.names[3] = "address";
+                        entry.names[4] = "canonname";
+
+                        entry.items[0] = INTEGER(it->ai_family);
+                        entry.items[1] = INTEGER(it->ai_socktype);
+                        entry.items[2] = INTEGER(it->ai_protocol);
+
                         struct blob *b = value_blob_new();
-                        NOGC(b);
-                        dict_put_member(d.dict, "address", BLOB(b));
+                        entry.items[3] = BLOB(b);
                         vec_push_n(*b, (char *)it->ai_addr, it->ai_addrlen);
-                        OKGC(b);
+
                         if (it->ai_canonname != NULL) {
-                                dict_put_member(
-                                        d.dict,
-                                        "canonname",
-                                        STRING_CLONE(it->ai_canonname, strlen(it->ai_canonname))
-                                );
+                                entry.items[4] = STRING_CLONE(it->ai_canonname, strlen(it->ai_canonname));
                         }
                 }
 
@@ -1772,13 +1779,15 @@ builtin_os_accept(int argc)
         struct blob *b = value_blob_new();
         vec_push_n(*b, (char *)&a, n);
 
-        struct array *result = value_array_new();
-        NOGC(result);
+        struct value result = value_named_tuple(2);
 
-        value_array_push(result, INTEGER(r));
-        value_array_push(result, BLOB(b));
+        result.items[0] = INTEGER(r);
+        result.items[1] = BLOB(b);
 
-        return ARRAY(result);
+        result.names[0] = "fd";
+        result.names[1] = "addr";
+
+        return result;
 }
 
 struct value
@@ -1828,21 +1837,19 @@ builtin_os_recvfrom(int argc)
 
         buffer.blob->count = r;
 
-        struct array *result = value_array_new();
-        NOGC(result);
-        value_array_push(result, buffer);
-
         struct blob *b = value_blob_new();
         NOGC(b);
         vec_push_n(*b, &addr, min(addr_size, sizeof addr));
 
-        value_array_push(result, BLOB(b));
+        struct value result = value_tuple(2);
+
+        result.items[0] = buffer;
+        result.items[1] = BLOB(b);
 
         OKGC(b);
-        OKGC(result);
         OKGC(buffer.blob);
 
-        return ARRAY(result);
+        return result;
 }
 
 struct value
@@ -1981,12 +1988,12 @@ builtin_os_epoll_wait(int argc)
         gc_push(&ARRAY(result));
 
         for (int i = 0; i < n; ++i) {
-                struct array *ev = value_array_new();
-                NOGC(ev);
-                value_array_push(ev, INTEGER(events[i].data.fd));
-                value_array_push(ev, INTEGER(events[i].events));
-                value_array_push(result, ARRAY(ev));
-                OKGC(ev);
+                struct value ev = value_tuple(2);
+                NOGC(ev.items);
+                ev.items[0] = INTEGER(events[i].data.fd);
+                ev.items[1] = INTEGER(events[i].events);
+                value_array_push(result, ev);
+                OKGC(ev.items);
         }
 
         gc_pop();
