@@ -798,7 +798,6 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_pattern(scope, e->es.items[i], def);
-                        printf("name %d: %s\n", i, e->names.items[i]);
                 }
                 break;
         case EXPRESSION_VIEW_PATTERN:

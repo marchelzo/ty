@@ -1065,12 +1065,11 @@ array_enumerate(struct value *array, int argc)
                 vm_panic("the enumerate method on arrays expects no arguments but got %d", argc);
 
         int n = array->array->count;
+
         for (int i = 0; i < n; ++i) {
-                struct value entry = ARRAY(value_array_new());
-                NOGC(entry.array);
-                value_array_push(entry.array, INTEGER(i));
-                value_array_push(entry.array, array->array->items[i]);
-                OKGC(entry.array);
+                struct value entry = value_tuple(2);
+                entry.items[0] = INTEGER(i);
+                entry.items[1] = array->array->items[i];
                 array->array->items[i] =  entry;
         }
 
