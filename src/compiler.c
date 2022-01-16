@@ -441,8 +441,18 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         /*
          * _ can never be used as anything but an lvalue.
          */
-        if (strcmp(name, "_") == 0)
-                fail("the special identifier '_' can only be used as an lvalue");
+        if (strcmp(name, "_") == 0) {
+                fail(
+                        "the special identifier %s'_'%s can only be used as an lvalue",
+                        TERM(38),
+                        TERM(39)
+                );
+        }
+
+        // Allow -> it + 1 instead of -> _1 + 1
+        if (strcmp(name, "it") == 0 && state.implicit_fscope != NULL) {
+                name = "_1";
+        }
 
         /*
          * let f = -> function () { let _2 = 4; return _1 + _2; };
@@ -1148,7 +1158,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 break;
         case STATEMENT_TRY:
         {
-                symbolize_statement(scope_new(scope, false), s->try.s);
+                symbolize_statement(scope, s->try.s);
 
                 for (int i = 0; i < s->try.patterns.count; ++i) {
                         struct scope *catch = scope_new(scope, false);
@@ -1183,12 +1193,15 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_statement(subscope, s->While.block);
                 break;
         case STATEMENT_IF:
+                // if not let Ok(x) = f() or not [y] = bar() {
                 subscope = scope_new(scope, false);
                 if (s->iff.neg) {
-                        struct condpart *p = s->iff.parts.items[0];
-                        symbolize_statement(subscope, s->iff.then);
-                        symbolize_pattern(scope, p->target, p->def);
-                        symbolize_expression(subscope, p->e);
+                        symbolize_statement(scope, s->iff.then);
+                        for (int i = 0; i < s->iff.parts.count; ++i) {
+                                struct condpart *p = s->iff.parts.items[i];
+                                symbolize_pattern(scope, p->target, p->def);
+                                symbolize_expression(subscope, p->e);
+                        }
                         symbolize_statement(subscope, s->iff.otherwise);
                 } else {
                         symbolize_statement(subscope, s->iff.otherwise);
@@ -2304,6 +2317,54 @@ emit_while(struct statement const *s, bool want_result)
         state.match_fails = fails_save;
 
         return false;
+}
+
+static bool
+emit_if_not(struct statement const *s, bool want_result)
+{
+        offset_vector successes_save = state.match_successes;
+        vec_init(state.match_successes);
+
+        offset_vector fails_save = state.match_fails;
+        vec_init(state.match_fails);
+
+        for (int i = 0; i < s->iff.parts.count; ++i) {
+                struct condpart *p = s->iff.parts.items[i];
+                if (p->target == NULL) {
+                        emit_instr(INSTR_SAVE_STACK_POS);
+                        emit_expression(p->e);
+                        emit_instr(INSTR_JUMP_IF);
+                        vec_push(state.match_fails, state.code.count);
+                        emit_int(0);
+                        emit_instr(INSTR_RESTORE_STACK_POS);
+                } else {
+                        emit_instr(INSTR_SAVE_STACK_POS);
+                        emit_list(p->e);
+                        emit_instr(INSTR_FIX_EXTRA);
+                        emit_try_match(p->target);
+                        emit_instr(INSTR_RESTORE_STACK_POS);
+                }
+        }
+
+        bool returns = false;
+
+        if (s->iff.otherwise != NULL) {
+                returns |= emit_statement(s->iff.otherwise, want_result);
+        }
+
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t done);
+
+        patch_jumps_to(&state.match_fails, state.code.count);
+        emit_instr(INSTR_RESTORE_STACK_POS);
+
+        returns &= emit_statement(s->iff.then, want_result);
+
+        PATCH_JUMP(done);
+
+        state.match_successes = successes_save;
+        state.match_fails = fails_save;
+
+        return returns;
 }
 
 static bool
@@ -3524,7 +3585,7 @@ emit_statement(struct statement const *s, bool want_result)
                 want_result = false;
                 break;
         case STATEMENT_IF:
-                returns |= emit_if(s, want_result);
+                returns |= (s->iff.neg ? emit_if_not(s, want_result) : emit_if(s, want_result));
                 want_result = false;
                 break;
         case STATEMENT_EXPRESSION:

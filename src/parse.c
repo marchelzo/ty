@@ -112,6 +112,11 @@ static int depth;
 static bool NoEquals = false;
 static bool NoIn = false;
 
+static struct expression WildCard = {
+        .type = EXPRESSION_IDENTIFIER,
+        .identifier = "_"
+};
+
 // Maybe try to use this instead, might be cleaner.
 /*
 static enum {
@@ -490,6 +495,13 @@ have_keyword(int kw)
         return tok()->type == TOKEN_KEYWORD && tok()->keyword == kw;
 }
 
+inline static bool
+have_keywords(int kw1, int kw2)
+{
+        return tok()->type == TOKEN_KEYWORD && tok()->keyword == kw1 &&
+               token(1)->type == TOKEN_KEYWORD && token(1)->keyword == kw2;
+}
+
 static bool
 have_not_in(void)
 {
@@ -643,6 +655,10 @@ prefix_hash(void)
 static struct expression *
 prefix_dollar(void)
 {
+        if (token(1)->type == '{') {
+                return prefix_implicit_lambda();
+        }
+
         struct expression *e = mkexpr();
 
         consume('$');
@@ -843,15 +859,20 @@ prefix_star(void)
 {
         struct expression *e = mkexpr();
         e->type = EXPRESSION_MATCH_REST;
+        e->module = NULL;
 
         consume(TOKEN_STAR);
-        expect(TOKEN_IDENTIFIER);
 
-        e->identifier = tok()->identifier;
-        if (tok()->module != NULL)
-                error("unexpected module qualifier in lvalue");
+        if (tok()->type == TOKEN_IDENTIFIER) {
+                e->identifier = tok()->identifier;
 
-        consume(TOKEN_IDENTIFIER);
+                if (tok()->module != NULL)
+                        error("unexpected module qualifier in lvalue");
+
+                next();
+        } else {
+                e->identifier = "_";
+        }
 
         e->end = End;
 
@@ -1529,9 +1550,21 @@ prefix_implicit_method(void)
 static struct expression *
 prefix_implicit_lambda(void)
 {
-        consume(TOKEN_PERCENT);
+        consume('$');
+        consume('{');
 
-        return prefix_dict();
+        struct expression *e = parse_expr(0);
+
+        consume('}');
+
+
+        struct expression *f = mkfunc();
+        f->type = EXPRESSION_IMPLICIT_FUNCTION;
+        f->body = mkstmt();
+        f->body->type = STATEMENT_EXPRESSION;
+        f->body->expression = e;
+
+        return f;
 }
 
 static struct expression *
@@ -1553,6 +1586,7 @@ prefix_dict(void)
         e->type = EXPRESSION_DICT;
         e->dflt = NULL;
 
+        consume(TOKEN_PERCENT);
         consume('{');
 
         vec_init(e->keys);
@@ -2110,7 +2144,7 @@ get_prefix_parser(void)
         case TOKEN_KEYWORD:        goto Keyword;
 
         case '&':                  return prefix_implicit_method;
-        case TOKEN_PERCENT:        return prefix_implicit_lambda;
+        case TOKEN_PERCENT:        return prefix_dict;
         case '#':                  return prefix_hash;
 
         case '(':                  return prefix_parenthesis;
@@ -2583,6 +2617,43 @@ parse_condpart(void)
         return p;
 }
 
+static condpart_vector
+parse_condparts(bool neg)
+{
+        condpart_vector parts;
+        vec_init(parts);
+
+        vec_push(parts, parse_condpart());
+
+        while ((!neg && have_keyword(KEYWORD_AND)) ||
+               (neg && have_keyword(KEYWORD_OR))) {
+
+                next();
+
+                bool not = have_keyword(KEYWORD_NOT);
+                if (not) {
+                        next();
+                }
+
+                struct condpart *part = parse_condpart();
+
+                if (part->target != NULL && neg != not) {
+                        error("illegal condition used as controlling expression of if statement");
+                }
+
+                if (not && part->target == NULL) {
+                        struct expression *not = mkexpr();
+                        not->type = EXPRESSION_PREFIX_BANG;
+                        not->operand = part->e;
+                        part->e = not;
+                }
+
+                vec_push(parts, part);
+        }
+
+        return parts;
+}
+
 static struct statement *
 parse_while(void)
 {
@@ -2621,23 +2692,13 @@ parse_if(void)
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_IF;
-        s->iff.neg = false;
+        s->iff.neg = have_keyword(KEYWORD_NOT);
 
-        vec_init(s->iff.parts);
-
-        if (have_keyword(KEYWORD_NOT)) {
+        if (s->iff.neg) {
                 next();
-                s->iff.neg = true;
         }
 
-        vec_push(s->iff.parts, parse_condpart());
-
-        if (!s->iff.neg) {
-                while (have_keyword(KEYWORD_AND)) {
-                        next();
-                        vec_push(s->iff.parts, parse_condpart());
-                }
-        }
+        s->iff.parts = parse_condparts(s->iff.neg);
 
         s->iff.then = parse_block();
 
@@ -2785,19 +2846,17 @@ parse_let_definition(void)
 
         consume_keyword(KEYWORD_LET);
 
-        struct expression *target = parse_definition_lvalue(LV_LET);
-        if (target == NULL)
+        s->target = parse_definition_lvalue(LV_LET);
+        if (s->target == NULL) {
                 error("failed to parse lvalue in 'let' definition");
+        }
 
         consume(TOKEN_EQ);
 
-        struct expression *value = parse_expr(-1);
+        s->value = parse_expr(-1);
 
         if (tok()->type == ';')
                 next();
-
-        s->target = target;
-        s->value = value;
 
         return s;
 }
@@ -3039,12 +3098,39 @@ parse_try(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_TRY;
 
-        s->try.s = parse_statement(-1);
-
         vec_init(s->try.patterns);
         vec_init(s->try.handlers);
 
-        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_CATCH) {
+        if (tok()->type != '{') {
+                s->try.s = mkstmt();
+                s->try.s->type = STATEMENT_IF;
+                s->try.s->iff.neg = true;
+                s->try.s->iff.parts = parse_condparts(false);
+
+                struct statement *otherwise;
+
+                if (have_keywords(KEYWORD_OR, KEYWORD_ELSE)) {
+                        skip(2);
+                        otherwise = parse_statement(-1);
+                } else {
+                        otherwise = mkstmt();
+                        otherwise->type = STATEMENT_NULL;
+                }
+
+                s->try.s->iff.then = otherwise;
+                s->try.s->iff.otherwise = NULL;
+
+                vec_push(s->try.patterns, &WildCard);
+                vec_push(s->try.handlers, otherwise);
+
+                s->try.finally = NULL;
+
+                return s;
+        }
+
+        s->try.s = parse_statement(-1);
+
+        while (have_keyword(KEYWORD_CATCH)) {
                 next();
                 vec_push(s->try.patterns, parse_expr(0));
                 vec_push(s->try.handlers, parse_statement(-1));

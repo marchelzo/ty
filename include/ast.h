@@ -28,6 +28,8 @@ struct condpart {
 	struct expression *target;
 };
 
+typedef vec(struct condpart *) condpart_vector;
+
 struct statement {
         enum {
                 STATEMENT_FOR_LOOP,
@@ -101,11 +103,11 @@ struct statement {
                         int_vector check;
                 } match;
                 struct {
-                        vec(struct condpart *) parts;
+                        condpart_vector parts;
                         struct statement *block;
                 } While;
                 struct {
-                        vec(struct condpart *) parts;
+                        condpart_vector parts;
                         struct statement *then;
                         struct statement *otherwise;
                         bool neg;
