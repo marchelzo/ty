@@ -11,13 +11,13 @@ static struct value
 dbopen(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::open expects exactly 1 argument");
+                vm_panic("sqlite3.open() expects exactly 1 argument");
         }
 
         struct value file = ARG(0);
 
         if (file.type != VALUE_STRING) {
-                vm_panic("the argument to sqlite3::open must be a string");
+                vm_panic("the argument to sqlite3.open() must be a string");
         }
 
         vec(char) s;
@@ -41,13 +41,13 @@ static struct value
 dbclose(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::open expects exactly 1 argument");
+                vm_panic("sqlite3.open() expects exactly 1 argument");
         }
 
         struct value db = ARG(0);
 
         if (db.type != VALUE_PTR) {
-                vm_panic("the argument to sqlite3::prepare must be a pointer");
+                vm_panic("the argument to sqlite3.open() must be a pointer");
         }
 
         return INTEGER(sqlite3_close(db.ptr));
@@ -57,19 +57,19 @@ static struct value
 prepare(int argc)
 {
         if (argc != 2) {
-                vm_panic("sqlite3::prepare expects exactly 2 arguments");
+                vm_panic("sqlite3.prepare() expects exactly 2 arguments");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::prepare must be a pointer");
+                vm_panic("the first argument to sqlite3.prepare() must be a pointer");
         }
 
         struct value sql = ARG(1);
 
         if (sql.type != VALUE_STRING) {
-                vm_panic("the second argument to sqlite3::prepare must be a string");
+                vm_panic("the second argument to sqlite3.prepare() must be a string");
         }
 
         sqlite3 *db = ptr.ptr;
@@ -89,13 +89,13 @@ static struct value
 step(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::step expects exactly 1 argument");
+                vm_panic("sqlite3.step() expects exactly 1 argument");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::step must be a pointer");
+                vm_panic("the first argument to sqlite3.step() must be a pointer");
         }
 
         sqlite3_stmt *stmt = ptr.ptr;
@@ -107,13 +107,13 @@ static struct value
 column_count(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::columnCount expects exactly 1 argument");
+                vm_panic("sqlite3.columnCount() expects exactly 1 argument");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::columnCount must be a pointer");
+                vm_panic("the first argument to sqlite3.columnCount() must be a pointer");
         }
 
         sqlite3_stmt *stmt = ptr.ptr;
@@ -125,19 +125,19 @@ static struct value
 get_column(int argc)
 {
         if (argc != 2) {
-                vm_panic("sqlite3::column expects exactly 2 arguments");
+                vm_panic("sqlite3.column() expects exactly 2 arguments");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::column must be a pointer");
+                vm_panic("the first argument to sqlite3.column() must be a pointer");
         }
 
         struct value index = ARG(1);
 
         if (index.type != VALUE_INTEGER) {
-                vm_panic("the second argument to sqlite3::column must be an integer");
+                vm_panic("the second argument to sqlite3.column() must be an integer");
         }
 
         int i = index.integer;
@@ -172,13 +172,13 @@ static struct value
 fetch(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::fetch expects exactly 1 argument");
+                vm_panic("sqlite3.fetch() expects exactly 1 argument");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::fetch must be a pointer");
+                vm_panic("the first argument to sqlite3.fetch() must be a pointer");
         }
 
         sqlite3_stmt *stmt = ptr.ptr;
@@ -225,13 +225,13 @@ static struct value
 fetch_dict(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::fetch expects exactly 1 argument");
+                vm_panic("sqlite3.fetch() expects exactly 1 argument");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::fetch must be a pointer");
+                vm_panic("the first argument to sqlite3.fetch() must be a pointer");
         }
 
         sqlite3_stmt *stmt = ptr.ptr;
@@ -280,13 +280,13 @@ static struct value
 finalize(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::finalize expects exactly 1 argument");
+                vm_panic("sqlite3.finalize() expects exactly 1 argument");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::finalize must be a pointer");
+                vm_panic("the first argument to sqlite3.finalize() must be a pointer");
         }
 
         sqlite3_stmt *stmt = ptr.ptr;
@@ -299,13 +299,13 @@ static struct value
 reset(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::reset expects exactly 1 argument");
+                vm_panic("sqlite3.reset() expects exactly 1 argument");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::reset must be a pointer");
+                vm_panic("the first argument to sqlite3.reset() must be a pointer");
         }
 
         sqlite3_stmt *stmt = ptr.ptr;
@@ -317,13 +317,13 @@ static struct value
 bind(int argc)
 {
         if (argc != 3) {
-                vm_panic("sqlite3::bind expects exactly 3 arguments");
+                vm_panic("sqlite3.bind() expects exactly 3 arguments");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::bind must be a pointer");
+                vm_panic("the first argument to sqlite3.bind() must be a pointer");
         }
 
         int i;
@@ -339,7 +339,7 @@ bind(int argc)
         } else if (index.type == VALUE_INTEGER) {
                 i = index.integer;
         } else {
-                vm_panic("the second argument to sqlite3::bind must be an integer or string");
+                vm_panic("the second argument to sqlite3.bind() must be an integer or string");
         }
 
         struct value v = ARG(2);
@@ -373,19 +373,19 @@ static struct value
 column_name(int argc)
 {
         if (argc != 2) {
-                vm_panic("sqlite3::columnName expects exactly 2 arguments");
+                vm_panic("sqlite3.columnName() expects exactly 2 arguments");
         }
 
         struct value ptr = ARG(0);
 
         if (ptr.type != VALUE_PTR) {
-                vm_panic("the first argument to sqlite3::bind must be a pointer");
+                vm_panic("the first argument to sqlite3.bind() must be a pointer");
         }
 
         struct value index = ARG(1);
 
         if (index.type != VALUE_INTEGER) {
-                vm_panic("the second argument to sqlite3::bind must be a integer");
+                vm_panic("the second argument to sqlite3.bind() must be a integer");
         }
 
         char const *s = sqlite3_column_name(ptr.ptr, index.integer);
@@ -400,13 +400,13 @@ static struct value
 error_code(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::error expects exactly 1 argument");
+                vm_panic("sqlite3.error() expects exactly 1 argument");
         }
 
         struct value v = ARG(0);
 
         if (v.type != VALUE_PTR) {
-                vm_panic("the argument to sqlite3::error must be a pointer");
+                vm_panic("the argument to sqlite3.error() must be a pointer");
         }
 
         return INTEGER(error);
@@ -416,7 +416,7 @@ static struct value
 error_msg(int argc)
 {
         if (argc != 1) {
-                vm_panic("sqlite3::errorMessage expects exactly 1 argument");
+                vm_panic("sqlite3.errorMessage() expects exactly 1 argument");
         }
 
         struct value v = ARG(0);
@@ -428,7 +428,7 @@ error_msg(int argc)
         } else if (v.type == VALUE_INTEGER) {
                 s = sqlite3_errstr(v.integer);
         } else {
-                vm_panic("the argument to sqlite3::errorMessage must be a pointer or an integer");
+                vm_panic("the argument to sqlite3.errorMessage() must be a pointer or an integer");
         }
 
         return STRING_CLONE(s, strlen(s));
