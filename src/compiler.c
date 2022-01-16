@@ -2350,6 +2350,8 @@ emit_if_not(struct statement const *s, bool want_result)
 
         if (s->iff.otherwise != NULL) {
                 returns |= emit_statement(s->iff.otherwise, want_result);
+        } else if (want_result) {
+                emit_instr(INSTR_NIL);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t done);

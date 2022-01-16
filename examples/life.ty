@@ -1,7 +1,7 @@
 import os (usleep)
 
-let H = 43
-let W = 88
+let H = 39
+let W = 70
 
 let directions = ([*-1...1] * [*-1...1]).remove([0, 0])
 
@@ -17,9 +17,10 @@ function next(grid, i, j) {
   ].count('.')
 
   match (grid[i][j], neighbors) {
-    ('.', n: n in 2...3) => '.',
-    (' ', n: n == 3)     => '.',
-    _                    => ' '
+    ('.', 2) => '.',
+    ('.', 3) => '.',
+    (' ', 3) => '.',
+    _        => ' '
   }
 }
 
@@ -42,6 +43,4 @@ for [i, j] in gun {
 
 while grid = step(grid) {
   print(grid.map(&join(' ')).join('\n'))
-  print('---')
-  //usleep(1000 * 600)
 }
