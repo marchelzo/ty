@@ -293,6 +293,11 @@ class String : Iterable {
         }
     }
 
+    center(n, c = ' ') {
+        let d = max(0, n - #self)
+        self.padLeft(n - d/2, c).padRight(n, c)
+    }
+
     reverse() {
         return @chars().reverse!().sum() ?? ''
     }
