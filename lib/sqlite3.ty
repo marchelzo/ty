@@ -95,7 +95,7 @@ class SQLite3 {
     }
 
     query(sql, *ps) {
-        if !let $s  = prepare(self.db, sql) {
+        if not let $s  = prepare(self.db, sql) {
             throw Err(error(self.db))
         }
 
