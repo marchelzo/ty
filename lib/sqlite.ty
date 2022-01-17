@@ -1,8 +1,14 @@
 import sqlite3c (..)
 
-export SQLite3
+export SQLite
 
-class SQLite3RowIter : Iter {
+tag SQLiteError {
+    str() {
+        errorMessage(self)
+    }
+}
+
+class SQLiteRowIter : Iter {
     init(s) {
         self.s = s
     }
@@ -12,7 +18,7 @@ class SQLite3RowIter : Iter {
     }
 }
 
-class SQLite3Statement : Iterable {
+class SQLiteStatement : Iterable {
     init(p) {
         self.p = p
     }
@@ -24,7 +30,7 @@ class SQLite3Statement : Iterable {
             self.p = nil
             return r
         } else {
-            throw Err(SQLITE_MISUSE)
+            throw SQLiteError(SQLITE_MISUSE)
         }
     }
 
@@ -33,7 +39,7 @@ class SQLite3Statement : Iterable {
             self.status = step(self.p)
             return self.status
         } else {
-            throw Err(SQLITE_MISUSE)
+            throw SQLiteError(SQLITE_MISUSE)
         }
     }
 
@@ -45,7 +51,7 @@ class SQLite3Statement : Iterable {
                 return nil
             }
         } else {
-            throw Err(SQLITE_MISUSE)
+            throw SQLiteError(SQLITE_MISUSE)
         }
     }
 
@@ -67,23 +73,23 @@ class SQLite3Statement : Iterable {
 
     rows() {
         if !self.p {
-            throw Err(SQLITE_MISUSE)
+            throw SQLiteError(SQLITE_MISUSE)
         }
         reset(self.p)
-        return SQLite3RowIter(self)
+        return SQLiteRowIter(self)
     }
 
     __iter__() {
-        return self.rows()
+        self.rows()
     }
 }
 
-class SQLite3 {
+class SQLite {
     init(path) {
         if let $db = open(path) {
-            self.db = db
+            @db = db
         } else {
-            throw Err(error())
+            throw SQLiteError(error())
         }
     }
 
@@ -96,16 +102,16 @@ class SQLite3 {
 
     query(sql, *ps) {
         if not let $s  = prepare(self.db, sql) {
-            throw Err(error(self.db))
+            throw SQLiteError(error(self.db))
         }
 
         for p, i in ps {
             match bind(s, i + 1, p) {
                 SQLITE_OK => { },
-                e         => throw Err(e)
+                e         => throw SQLiteError(e)
             }
         }
 
-        return SQLite3Statement(s)
+        return SQLiteStatement(s)
     }
 }
