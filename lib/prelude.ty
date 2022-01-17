@@ -790,13 +790,11 @@ class Iter : Iterable {
     }
 
     groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
-        return Generator(function () {
-            match @take(n).list() {
-                xs :: #xs == n             => Some(xs),
-                xs :: #xs > 0 && keepShort => Some(xs),
-                _ => None
+        while let xs = @take(n).list() and #xs > 0 {
+            if #xs == n || keepShort {
+                yield xs
             }
-        })
+        }
     }
 
     join(sep: String) {
@@ -830,10 +828,8 @@ class Iter : Iterable {
             for y in self {
                 if x(y) { n += 1 }
             }
-        } else {
-            for y in self {
-                if x == y { n += 1 }
-            }
+        } else for y in self {
+            if x == y { n += 1 }
         }
 
         return n
