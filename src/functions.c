@@ -24,6 +24,7 @@
 #include <openssl/md5.h>
 #include <utf8proc.h>
 #include <sys/epoll.h>
+#include <pthread.h>
 
 #include "tags.h"
 #include "value.h"
@@ -1402,6 +1403,63 @@ builtin_os_spawn(int argc)
 
                 return OBJECT(result, 0);
         }
+}
+
+static void *
+threadstart(void *ctx)
+{
+        struct value *call = ctx;
+
+        int argc = 0;
+
+        while (call[argc + 1].type != VALUE_NONE) {
+                vm_push(&call[++argc]);
+        }
+
+        vm_call(call, argc);
+
+        return NULL;
+}
+
+struct value
+builtin_os_join(int argc)
+{
+        if (argc != 1) {
+                vm_panic("os.join() expects one argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("non-pointer passed to os.join(): %s", value_show(&ARG(0)));
+        }
+
+        pthread_join(*(pthread_t *)ARG(0).ptr, NULL);
+
+        return NIL;
+}
+
+struct value
+builtin_os_thread(int argc)
+{
+        if (argc == 0) {
+                vm_panic("os.thread() expects at least one argument");
+        }
+
+        if (ARG(0).type != VALUE_FUNCTION) {
+                vm_panic("non-function passed to os.thread(): %s", value_show(&ARG(0)));
+        }
+
+        pthread_t *p = gc_alloc(sizeof *p);
+        struct value *ctx = gc_alloc(sizeof (struct value[argc + 1]));
+
+        for (int i = 0; i < argc; ++i) {
+                ctx[i] = ARG(i);
+        }
+
+        ctx[argc] = NONE;
+
+        pthread_create(p, NULL, threadstart, ctx);
+
+        return PTR(p);
 }
 
 struct value

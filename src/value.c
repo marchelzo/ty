@@ -189,7 +189,7 @@ value_hash(struct value const *val)
 char *
 show_dict(struct value const *d)
 {
-        static vec(struct dict *) show_dicts;
+        static _Thread_local vec(struct dict *) show_dicts;
 
         for (int i = 0; i < show_dicts.count; ++i)
                 if (show_dicts.items[i] == d->dict)
@@ -238,7 +238,7 @@ show_dict(struct value const *d)
 char *
 show_array(struct value const *a)
 {
-        static vec(struct array *) show_arrays;
+        static _Thread_local vec(struct array *) show_arrays;
 
         for (int i = 0; i < show_arrays.count; ++i)
                 if (show_arrays.items[i] == a->array)
@@ -279,7 +279,7 @@ show_array(struct value const *a)
 char *
 show_tuple(struct value const *v)
 {
-        static vec(struct value *) show_tuples;
+        static _Thread_local vec(struct value *) show_tuples;
 
         for (int i = 0; i < show_tuples.count; ++i)
                 if (show_tuples.items[i] == v->items)
@@ -605,7 +605,7 @@ value_apply_callable(struct value *f, struct value *v)
                 if (v->type != VALUE_STRING)
                         vm_panic("regex applied as predicate to non-string");
 
-                static int ovec[30];
+                static _Thread_local int ovec[30];
                 char const *s = v->string;
                 int len = v->bytes;
                 int rc;

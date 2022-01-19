@@ -186,6 +186,10 @@
 { .module = "os",     .name = "F_GETNOSIGPIPE",    .value = INT(F_GETNOSIGPIPE)                            },
 #endif
 #endif
+
+{ .module = "thread", .name = "create",            .value = BUILTIN(builtin_os_thread)                     },
+{ .module = "thread", .name = "join",              .value = BUILTIN(builtin_os_join)                       },
+
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },
 { .module = "stdio",  .name = "fread",             .value = BUILTIN(builtin_stdio_fread)                   },
@@ -260,8 +264,10 @@
 { .module = "time",   .name = "CLOCK_MONOTONIC_RAW",    .value = INT(CLOCK_MONOTONIC_RAW)                            },
 #endif
 { .module = "ptr",    .name = "null",              .value = POINTER(NULL)                                  },
+
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
+
 { .module = "gumbo",  .name = "parse",             .value = BUILTIN(html_parse)                            },
 { .module = "gumbo",  .name = "NODE_DOCUMENT",     .value = INT(0)                                         },
 { .module = "gumbo",  .name = "NODE_ELEMENT",      .value = INT(1)                                         },

@@ -238,6 +238,12 @@ struct value
 builtin_os_fork(int argc);
 
 struct value
+builtin_os_thread(int argc);
+
+struct value
+builtin_os_join(int argc);
+
+struct value
 builtin_os_pipe(int argc);
 
 struct value

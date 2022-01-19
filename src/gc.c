@@ -7,14 +7,14 @@
 #include "vm.h"
 #include "log.h"
 
-AllocList allocs;
+_Thread_local AllocList allocs;
 
-size_t MemoryUsed = 0;
-size_t MemoryLimit = GC_INITIAL_LIMIT;
+_Thread_local size_t MemoryUsed = 0;
+_Thread_local size_t MemoryLimit = GC_INITIAL_LIMIT;
 
-static vec(struct value const *) RootSet;
+static _Thread_local vec(struct value const *) RootSet;
 
-bool GC_ENABLED = true;
+_Thread_local bool GC_ENABLED = true;
 
 inline static void
 collect(struct alloc *a)

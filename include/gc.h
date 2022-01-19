@@ -23,11 +23,11 @@
 
 typedef vec(struct alloc *) AllocList;
 
-extern AllocList allocs;
-extern bool GC_ENABLED;
+extern _Thread_local AllocList allocs;
+extern _Thread_local bool GC_ENABLED;
 
-extern size_t MemoryUsed;
-extern size_t MemoryLimit;
+extern _Thread_local size_t MemoryUsed;
+extern _Thread_local size_t MemoryLimit;
 
 struct alloc {
         union {
