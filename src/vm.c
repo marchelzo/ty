@@ -63,11 +63,15 @@
 
 #define inline __attribute__((always_inline)) inline
 
+#define MatchError \
+        push(TAG(tags_lookup("MatchError"))); \
+        goto Throw;
+
 static char halt = INSTR_HALT;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
-static jmp_buf jb;
+static _Thread_local jmp_buf jb;
 
 struct try {
         jmp_buf jb;
@@ -113,14 +117,14 @@ typedef struct ctx {
         char *ip;
 } Context;
 
-static vec(struct sigfn) sigfns;
-static vec(struct value) stack;
-static vec(char *) calls;
-static vec(Frame) frames;
-static vec(size_t) sp_stack;
-static vec(struct target) targets;
-static vec(struct try) try_stack;
-static char *ip;
+static _Thread_local vec(struct sigfn) sigfns;
+static _Thread_local vec(struct value) stack;
+static _Thread_local vec(char *) calls;
+static _Thread_local vec(Frame) frames;
+static _Thread_local vec(size_t) sp_stack;
+static _Thread_local vec(struct target) targets;
+static _Thread_local vec(struct try) try_stack;
+static _Thread_local char *ip;
 
 static char const *filename;
 
@@ -575,8 +579,12 @@ vm_exec(char *code)
                                         vm_panic("non-integer array index used in subscript assignment");
                                 if (subscript.integer < 0)
                                         subscript.integer += container.array->count;
-                                if (subscript.integer < 0 || subscript.integer >= container.array->count)
+                                if (subscript.integer < 0 || subscript.integer >= container.array->count) {
+                                        // Not sure which is the best behavior here
+                                        push(TAG(tags_lookup("IndexError")));
+                                        goto Throw;
                                         vm_panic("array index out of range in subscript expression");
+                                }
                                 pushtarget(&container.array->items[subscript.integer], container.array);
                         } else if (container.type == VALUE_DICT) {
                                 pushtarget(dict_put_key_if_not_exists(container.dict, subscript), container.dict);
@@ -629,23 +637,20 @@ vm_exec(char *code)
                         break;
                 CASE(THROW_IF_NIL)
                         if (top()->type == VALUE_NIL) {
-                                push(TAG(tags_lookup("MatchError")));
-                                goto Throw;
+                                MatchError;
                         }
                         break;
                 CASE(UNTAG_OR_DIE)
                         READVALUE(tag);
                         if (!tags_same(tags_first(top()->tags), tag)) {
-                                push(TAG(tags_lookup("MatchError")));
-                                goto Throw;
+                                MatchError;
                         } else {
                                 top()->tags = tags_pop(top()->tags);
                                 top()->type &= ~VALUE_TAGGED;
                         }
                         break;
                 CASE(BAD_MATCH)
-                        push(TAG(tags_lookup("MatchError")));
-                        goto Throw;
+                        MatchError;
                 CASE(BAD_CALL)
                         v = pop();
                         str = ip;
@@ -749,7 +754,7 @@ Throw:
                         t.gc = gc_root_set_count();
                         t.cs = calls.count;
                         t.ts = targets.count;
-                        t.ctxs = targets.count;
+                        t.ctxs = frames.count;
                         t.executing = false;
                         vec_push(try_stack, t);
                         break;
@@ -913,18 +918,20 @@ Throw:
                         v = ARRAY(value_array_new());
                         n = stack.count - *vec_pop(sp_stack);
 
-                        NOGC(v.array);
+                        if (n > 0) {
+                                NOGC(v.array);
 
-                        vec_reserve(*v.array, n);
+                                vec_reserve(*v.array, n);
 
-                        memcpy(
-                                v.array->items,
-                                stack.items + stack.count - n,
-                                sizeof (struct value [n])
-                        );
-                        v.array->count = n;
+                                memcpy(
+                                        v.array->items,
+                                        stack.items + stack.count - n,
+                                        sizeof (struct value [n])
+                                );
+                                v.array->count = n;
 
-                        stack.count -= n;
+                                stack.count -= n;
+                        }
 
                         push(v);
                         OKGC(v.array);
@@ -1004,12 +1011,12 @@ Throw:
                         str = ip;
                         n = strlen(str);
                         ip += n + 1;
-						if (top()->type == VALUE_PTR) {
-							char *s = value_show(top());
-							pop();
-							push(STRING_NOGC(s, strlen(s)));
-							break;
-						} else if (n > 0) {
+                        if (top()->type == VALUE_PTR) {
+                            char *s = value_show(top());
+                            pop();
+                            push(STRING_NOGC(s, strlen(s)));
+                            break;
+                        } else if (n > 0) {
                                 v = pop();
                                 push(STRING_NOGC(str, n));
                                 push(v);
@@ -1257,9 +1264,11 @@ Throw:
                 CASE(PUSH_ARRAY_ELEM)
                         READVALUE(n);
                         if (top()->type != VALUE_ARRAY) {
+                                MatchError;
                                 vm_panic("attempt to destructure non-array as array in assignment");
                         }
                         if (n >= top()->array->count) {
+                                MatchError;
                                 vm_panic("elment index out of range in destructuring assignment");
                         }
                         push(top()->array->items[n]);
@@ -1565,6 +1574,8 @@ ObjectSubscript:
                                         }
                                         if (subscript.integer < 0 || subscript.integer >= container.array->count) {
                         OutOfRange:
+                                                push(TAG(tags_lookup("IndexError")));
+                                                goto Throw;
                                                 vm_panic("array index out of range in subscript expression");
                                         }
                                         push(container.array->items[subscript.integer]);
@@ -1574,10 +1585,14 @@ ObjectSubscript:
                                 break;
                         case VALUE_TUPLE:
                                 if (subscript.type == VALUE_INTEGER) {
-                                        if (subscript.integer < 0)
+                                        if (subscript.integer < 0) {
                                                 subscript.integer += container.count;
-                                        if (subscript.integer < 0 || subscript.integer >= container.count)
+                                        }
+                                        if (subscript.integer < 0 || subscript.integer >= container.count) {
+                                                push(TAG(tags_lookup("IndexError")));
+                                                goto Throw;
                                                 vm_panic("list index out of range in subscript expression");
+                                        }
                                         push(container.items[subscript.integer]);
                                 } else {
                                         vm_panic("non-integer array index used in subscript expression");

@@ -176,6 +176,9 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 static bool
 emit_case(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
 
+static bool
+emit_catch(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
+
 static struct scope *
 get_import_scope(char const *);
 
@@ -1790,6 +1793,8 @@ emit_try(struct statement const *s, bool want_result)
 
         bool returns = emit_statement(s->try.s, want_result);
 
+        emit_instr(INSTR_POP_TRY);
+
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
         offset_vector successes_save = state.match_successes;
@@ -1797,8 +1802,9 @@ emit_try(struct statement const *s, bool want_result)
 
         PATCH_JUMP(catch_offset);
 
-        for (int i = 0; i < s->try.patterns.count; ++i)
-                returns &= emit_case(s->try.patterns.items[i], NULL, s->try.handlers.items[i], want_result);
+        for (int i = 0; i < s->try.patterns.count; ++i) {
+                returns &= emit_catch(s->try.patterns.items[i], NULL, s->try.handlers.items[i], want_result);
+        }
 
         emit_instr(INSTR_FINALLY);
         emit_instr(INSTR_THROW);
@@ -1821,8 +1827,6 @@ emit_try(struct statement const *s, bool want_result)
         } else {
                 returns = false;
         }
-
-        emit_instr(INSTR_POP_TRY);
 
         return returns;
 }
@@ -2094,6 +2098,47 @@ emit_try_match(struct expression const *pattern)
 
         if (pattern->type > EXPRESSION_KEEP_LOC || need_loc)
                 add_location(pattern, start, state.code.count);
+}
+
+static bool
+emit_catch(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result)
+{
+        offset_vector fails_save = state.match_fails;
+        vec_init(state.match_fails);
+
+        emit_instr(INSTR_SAVE_STACK_POS);
+        emit_try_match(pattern);
+
+        if (cond != NULL) {
+                emit_expression(cond);
+                emit_instr(INSTR_JUMP_IF_NOT);
+                vec_push(state.match_fails, state.code.count);
+                emit_int(0);
+        }
+
+        emit_instr(INSTR_RESTORE_STACK_POS);
+        emit_instr(INSTR_CLEAR_EXTRA);
+
+        bool returns = false;
+
+        emit_instr(INSTR_POP_TRY);
+
+        if (s != NULL) {
+                returns = emit_statement(s, want_result);
+        } else if (want_result) {
+                emit_instr(INSTR_NIL);
+        }
+
+        emit_instr(INSTR_JUMP);
+        vec_push(state.match_successes, state.code.count);
+        emit_int(0);
+
+        patch_jumps_to(&state.match_fails, state.code.count);
+        emit_instr(INSTR_RESTORE_STACK_POS);
+
+        state.match_fails = fails_save;
+
+        return returns;
 }
 
 static bool
