@@ -771,7 +771,7 @@ string_match(struct value *string, int argc)
         if (pattern.type != VALUE_REGEX)
                 vm_panic("non-regex passed to the match method on string");
 
-        static int ovec[30];
+        int ovec[30];
         int len = string->bytes;
         int rc;
 
@@ -825,7 +825,7 @@ string_matches(struct value *string, int argc)
         struct value result = ARRAY(value_array_new());
         gc_push(&result);
 
-        static int ovec[30];
+        int ovec[30];
         char const *s = string->string;
         int len = string->bytes;
         int offset = 0;

@@ -165,7 +165,7 @@ builtin_read(int argc)
 {
         ASSERT_ARGC("readLine()", 0);
 
-        static vec(char) input;
+        static _Thread_local vec(char) input;
         input.count = 0;
 
         int c;
@@ -855,8 +855,8 @@ builtin_bit_complement(int argc)
 struct value
 builtin_setenv(int argc)
 {
-        static vec(char) varbuf;
-        static vec(char) valbuf;
+        static _Thread_local vec(char) varbuf;
+        static _Thread_local vec(char) valbuf;
 
         ASSERT_ARGC("setenv()", 2);
 
@@ -967,7 +967,7 @@ builtin_os_open(int argc)
         if (path.type != VALUE_STRING)
                 vm_panic("the path passed to os.open() must be a string");
 
-        static vec(char) pathbuf;
+        static _Thread_local vec(char) pathbuf;
         pathbuf.count = 0;
         vec_push_n(pathbuf, path.string, path.bytes);
         vec_push(pathbuf, '\0');
@@ -1941,7 +1941,7 @@ builtin_os_poll(int argc)
         if (timeout.type != VALUE_INTEGER)
                 vm_panic("the second argument to os.poll() must be an integer");
 
-        static vec(struct pollfd) pfds;
+        static _Thread_local vec(struct pollfd) pfds;
         pfds.count = 0;
 
         vec_reserve(pfds, fds.array->count);
@@ -2233,8 +2233,8 @@ builtin_os_kill(int argc)
 struct value
 builtin_os_connect2(int argc)
 {
-        static vec(char) host;
-        static vec(char) port;
+        static _Thread_local vec(char) host;
+        static _Thread_local vec(char) port;
 
         host.count = 0;
         port.count = 0;
@@ -2306,7 +2306,7 @@ builtin_os_listdir(int argc)
         if (dir.type != VALUE_STRING)
                 vm_panic("the argument to os.listdir() must be a string");
 
-        static vec(char) dirbuf;
+        static _Thread_local vec(char) dirbuf;
         dirbuf.count = 0;
         vec_push_n(dirbuf, dir.string, dir.bytes);
         vec_push(dirbuf, '\0');
@@ -2340,7 +2340,7 @@ builtin_os_stat(int argc)
         if (path.type != VALUE_STRING)
                 vm_panic("the argument to os.stat() must be a string");
 
-       static vec(char) pb;
+       static _Thread_local vec(char) pb;
        pb.count = 0;
        vec_push_n(pb, path.string, path.bytes);
        vec_push(pb, '\0');
@@ -3281,7 +3281,7 @@ builtin_member(int argc)
 
                 return *v;
         } else {
-                static struct table NameTable;
+                static _Thread_local struct table NameTable;
 
                 struct value *np = table_look(&NameTable, buffer);
 
