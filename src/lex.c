@@ -73,7 +73,7 @@ error(char const *fmt, ...)
                 --prefix;
 
         int before = state.loc.s - prefix;
-        int after = strcspn(state.loc.s + 1, "\n");
+        int after = (state.loc.s[0] == '\0') ? 0 : strcspn(state.loc.s + 1, "\n");
 
         n += snprintf(
                 ERR + n,
