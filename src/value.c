@@ -826,6 +826,22 @@ value_named_tuple(int n)
         return TUPLE(items, names, n);
 }
 
+struct value *
+tuple_get(struct value *tuple, char const *name)
+{
+        if (tuple->names == NULL) {
+                return NULL;
+        }
+
+        for (int i = 0; i < tuple->count; ++i) {
+                if (tuple->names[i] != NULL && strcmp(tuple->names[i], name) == 0) {
+                        return &tuple->items[i];
+                }
+        }
+
+        return NULL;
+}
+
 struct array *
 value_array_clone(struct array const *a)
 {

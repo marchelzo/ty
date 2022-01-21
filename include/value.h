@@ -270,6 +270,9 @@ value_tuple(int n);
 struct value
 value_named_tuple(int n);
 
+struct value *
+tuple_get(struct value *tuple, char const *name);
+
 void
 _value_mark(struct value const *v);
 
