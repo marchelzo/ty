@@ -109,7 +109,8 @@ struct value;
 
 #define ARG(i) (*vm_get(argc - 1 - (i)))
 
-#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
+//#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
+#define value_mark _value_mark
 
 struct array {
         struct value *items;

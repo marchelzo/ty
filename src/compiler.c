@@ -855,6 +855,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         int ftype = state.ftype;
         struct scope *implicit_fscope = state.implicit_fscope;
         struct expression *implicit_func = state.implicit_func;
+        char *name;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -877,9 +878,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
                 break;
         case EXPRESSION_MODULE_ACCESS:
-                e->symbol = getsymbol(get_import_scope(e->object->identifier), e->member_name, &e->local);
+                name = e->object->identifier;
+                e->symbol = getsymbol(get_import_scope(name), e->member_name, &e->local);
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = e->symbol->identifier;
+                e->module = name;
                 break;
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
@@ -1964,7 +1967,8 @@ emit_try_match(struct expression const *pattern)
                         }
                 }
 
-                if (pattern->elements.count == 0 || pattern->elements.items[pattern->elements.count - 1]->type != EXPRESSION_MATCH_REST) {
+                if (pattern->elements.count == 0 ||
+                    pattern->elements.items[pattern->elements.count - 1]->type != EXPRESSION_MATCH_REST) {
                         emit_instr(INSTR_ENSURE_LEN);
                         emit_int(pattern->elements.count);
                         vec_push(state.match_fails, state.code.count);

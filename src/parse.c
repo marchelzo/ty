@@ -637,6 +637,10 @@ prefix_special_string(void)
         CtxCheckpoint = cp;
         memcpy(&tokens, &ts, sizeof ts);
 
+        // Force lexer reset
+        setctx(LEX_PREFIX);
+        setctx(LEX_INFIX);
+
         return e;
 }
 

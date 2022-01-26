@@ -12,6 +12,7 @@
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
 #define resize(ptr, n) ((ptr) = gc_resize((ptr), (n)))
+#define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked((ptr), (n)))
 
 #define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
 #define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
@@ -63,6 +64,30 @@ enum {
 void
 gc(void);
 
+inline static void *
+gc_resize_unchecked(void *p, size_t n) {
+        struct alloc *a;
+
+        if (p != NULL) {
+                a = ALLOC_OF(p);
+                MemoryUsed -= a->size;
+        } else {
+                a = NULL;
+        }
+
+        MemoryUsed += n;
+
+        a = realloc(a, sizeof *a + n);
+        if (a == NULL) {
+                panic("Out of memory!");
+        }
+
+        a->size = n;
+
+        return a->data;
+}
+
+
 inline static void
 CheckUsed(void)
 {
@@ -74,7 +99,6 @@ CheckUsed(void)
                         LOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
                 }
         }
-
 }
 
 inline static void *
@@ -113,7 +137,7 @@ gc_alloc_object(size_t n, char type)
         a->type = type;
         a->size = n;
 
-        vec_push(allocs, a);
+        vec_push_unchecked(allocs, a);
 
         return a->data;
 }

@@ -16,6 +16,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <dirent.h>
+#include <pthread.h>
 
 #include <sys/types.h>
 #include <sys/epoll.h>
@@ -50,6 +51,7 @@
 #include "html.h"
 #include "curl.h"
 #include "sqlite.h"
+#include "queue.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -72,6 +74,14 @@ static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
 static _Thread_local jmp_buf jb;
+
+typedef struct {
+        int argc;
+        struct value *argv;
+        struct value (*f)(int);
+} BuiltinCall;
+
+static vec(BuiltinCall) builtin_calls;
 
 struct try {
         jmp_buf jb;
@@ -111,24 +121,39 @@ typedef vec(Frame) FrameStack;
 typedef vec(char *) CallStack;
 typedef vec(size_t) SPStack;
 typedef vec(struct target) TargetStack;
-
-typedef struct ctx {
-        ValueStack vs;
-        char *ip;
-} Context;
+typedef vec(struct try) TryStack;
 
 static _Thread_local vec(struct sigfn) sigfns;
-static _Thread_local vec(struct value) stack;
-static _Thread_local vec(char *) calls;
-static _Thread_local vec(Frame) frames;
-static _Thread_local vec(size_t) sp_stack;
-static _Thread_local vec(struct target) targets;
-static _Thread_local vec(struct try) try_stack;
+static _Thread_local ValueStack stack;
+static _Thread_local CallStack calls;
+static _Thread_local FrameStack frames;
+static _Thread_local SPStack sp_stack;
+static _Thread_local TargetStack targets;
+static _Thread_local TryStack try_stack;
 static _Thread_local char *ip;
+
+typedef struct {
+        ValueStack stack;
+        CallStack calls;
+        FrameStack frames;
+        SPStack sp_stack;
+        TargetStack targets;
+        TryStack try_stack;
+        char *ip;
+        bool waiting;
+} TyThread;
+
+static vec(TyThread) Threads;
+static int ThreadIndex;
 
 static char const *filename;
 
 static char const *Error;
+
+pthread_t BuiltinRunner;
+
+MessageQueue q1;
+MessageQueue q2;
 
 static struct {
         char const *module;
@@ -229,8 +254,8 @@ peek(void)
 inline static void
 push(struct value v)
 {
+        vec_push_unchecked(stack, v);
         LOG("PUSH: %s", value_show(&v));
-        vec_push(stack, v);
         print_stack(10);
 }
 
@@ -463,7 +488,9 @@ vm_exec(char *code)
         char const *fname;
 #endif
 
+
         for (;;) {
+        for (int N = 0; N < 512; ++N) {
         NextInstruction:
                 switch ((unsigned char)*ip++) {
                 CASE(NOP)
@@ -616,11 +643,11 @@ vm_exec(char *code)
                                 LOG("cannot do rest: top is not an array");
                                 ip += n;
                         } else {
-                                //TODO: fix this
-                                //vec_push_n(*vars[s]->value.array, top()->array->items + i, top()->array->count - i);
                                 struct array *rest = value_array_new();
+                                NOGC(rest);
                                 vec_push_n(*rest, top()->array->items + i, top()->array->count - i);
                                 *poptarget() = ARRAY(rest);
+                                OKGC(rest);
                         }
                         break;
                 CASE(TUPLE_REST)
@@ -918,8 +945,9 @@ Throw:
                         v = ARRAY(value_array_new());
                         n = stack.count - *vec_pop(sp_stack);
 
+                        NOGC(v.array);
+
                         if (n > 0) {
-                                NOGC(v.array);
 
                                 vec_reserve(*v.array, n);
 
@@ -928,6 +956,7 @@ Throw:
                                         stack.items + stack.count - n,
                                         sizeof (struct value [n])
                                 );
+
                                 v.array->count = n;
 
                                 stack.count -= n;
@@ -2186,8 +2215,8 @@ BadContainer:
                         if (func != NULL) {
                                 value.type &= ~VALUE_TAGGED;
                                 value.tags = 0;
-                                pop();
                                 gc_push(&value);
+                                pop();
                                 v = func(&value, n);
                                 stack.count -= n;
                                 push(v);
@@ -2243,6 +2272,67 @@ BadContainer:
                         return;
                 }
         }
+
+        while (q1.n != 0) {
+                ;
+        }
+
+        TyThread *current = &Threads.items[ThreadIndex];
+
+        for (int i = 1; i < Threads.count; ++i) {
+                int j = (i + ThreadIndex) % Threads.count;
+
+                TyThread *t = &Threads.items[j];
+
+                if (!t->waiting) {
+                        current->stack = stack;
+                        current->calls = calls;
+                        current->frames = frames;
+                        current->targets = targets;
+                        current->try_stack = try_stack;
+                        current->sp_stack = sp_stack;
+                        current->ip = ip;
+
+                        stack = t->stack;
+                        calls = t->calls;
+                        frames = t->frames;
+                        targets = t->targets;
+                        try_stack = t->try_stack;
+                        sp_stack = t->sp_stack;
+                        ip = t->ip;
+                }
+        }
+
+        }
+}
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+static struct value *builtin_argv;
+
+void *
+run_builtin_thread(void *ctx)
+{
+        struct value v;
+
+        for (;;) {
+                while (q2.n == 0) {
+                        ;
+                }
+
+                Message *msg = queue_take(&q2);
+
+                switch (msg->type) {
+                case TYMSG_CALL:
+                        v = msg->f->builtin_function(msg->n);
+                        msg->type = TYMSG_RESULT;
+                        msg->v = v;
+                        queue_add(&q1, msg);
+                        break;
+                }
+        }
+
+        return NULL;
 }
 
 char const *
@@ -2283,6 +2373,14 @@ vm_init(int ac, char **av)
                 Error = ERR;
                 return false;
         }
+
+        queue_init(&q1);
+        queue_init(&q2);
+
+//        int e;
+//        if (e = pthread_create(&BuiltinRunner, NULL, run_builtin_thread, NULL), e != 0) {
+//                vm_panic("Failed to create thread: %s", strerror(e));
+//        }
 
         vm_exec(prelude);
 
@@ -2478,9 +2576,47 @@ vm_pop(void)
 struct value *
 vm_get(int i)
 {
+        //return builtin_argv - i;
         return top() - i;
 }
 
+struct value
+vm_call2(struct value const *f, int argc)
+{
+        struct value v;
+        Message *msg = gc_alloc(sizeof *msg);
+
+        msg->args = gc_alloc(sizeof *msg->args * argc);
+        msg->f = gc_alloc(sizeof *msg->f);
+        *msg->f = *f;
+
+        for (int i = 0; i < argc; ++i) {
+                msg->args[i] = top()[i - argc + 1];
+        }
+
+        queue_add(&q1, msg);
+
+        for (;;) {
+                while (q2.n == 0) {
+                        ;
+                }
+
+                msg = queue_take(&q2);
+
+                switch (msg->type) {
+                case TYMSG_RESULT:
+                        v = msg->v;
+                        gc_free(msg);
+                        return v;
+                case TYMSG_CALL:
+                        v = msg->f->builtin_function(msg->n);
+                        msg->type = TYMSG_RESULT;
+                        msg->v = v;
+                        queue_add(&q1, msg);
+                        break;
+                }
+        }
+}
 
 struct value
 vm_call(struct value const *f, int argc)

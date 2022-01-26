@@ -482,7 +482,7 @@ value_compare(void const *_v1, void const *_v2)
         if (v1->type != v2->type && v1->type != VALUE_OBJECT)
                 vm_panic("attempt to compare values of different types");
 
-        switch (v1->type) {
+        switch (v1->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER: return (v1->integer < v2->integer) ? -1 : (v1->integer != v2->integer);
         case VALUE_REAL:    return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
         case VALUE_STRING:;
@@ -768,7 +768,7 @@ value_string_alloc(int n)
 void
 _value_mark(struct value const *v)
 {
-        switch (v->type) {
+        switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:          MARK(v->this); value_mark(v->this);                break;
         case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);                break;
         case VALUE_ARRAY:           value_array_mark(v->array);                        break;
