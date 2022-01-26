@@ -446,6 +446,10 @@ class Int {
     negative?() {
         self < 0
     }
+
+	clamp(*args) {
+		Float.clamp.bind(self)(*args)
+	}
 }
 
 class Float {
@@ -476,6 +480,24 @@ class Float {
     nan?() {
         math.nan?(self)
     }
+
+	clamp(*args) {
+		match args {
+			[low, high] => {
+				return if self < low {
+					low
+				} else if self > high {
+					high
+				} else {
+					self
+				}
+			},
+
+			[range] => {
+				self.clamp(range.low(), range.high())
+			}
+		}
+	}
 }
 
 class Blob : Iterable {
