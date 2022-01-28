@@ -429,9 +429,9 @@ addsymbol(struct scope *scope, char const *name)
 
         struct symbol *s = scope_add(scope, name);
 
-		if (scope->function == global && isupper(name[0])) {
-			vec_push(state.exports, name);
-		}
+        if (scope->function == global && isupper(name[0])) {
+            vec_push(state.exports, name);
+        }
 
         LOG("adding symbol: %s -> %d\n", name, s->symbol);
 

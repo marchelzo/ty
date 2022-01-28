@@ -75,7 +75,7 @@ class FCGIRecord {
 
     getParams() {
         let b = self.content;
-        let ps = {};
+        let ps = %{};
 
         while b.size() != 0 {
             let nameLength = getLength(b);
@@ -127,7 +127,7 @@ function decode(s) {
 function urlDecode(s) {
     let components = s.split('&');
     let pairs = [c.split('=').map(decode) for c in components];
-    return {k: v for [k, v] in pairs};
+    return %{k: v for [k, v] in pairs};
 }
 
 class FCGIRequest {
@@ -198,7 +198,7 @@ class FCGIRequest {
             let [_, delim] = self.body.match!(/^(.*)\r\n/);
             let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})");
             let fields = self.body.matches(pattern);
-            return { k: v for [_, k, v] in fields };
+            return %{ k: v for [_, k, v] in fields };
         } else {
             return urlDecode(self.body);
         }
@@ -211,14 +211,14 @@ class FCGIApp {
     }
 
     waitRequest() {
-        if not let [$fd, addr] = os.accept(self.socket) {
+        if not let ($fd, addr) = os.accept(self.socket) {
             return nil;
         }
 
         let stream = io.open(fd);
 
         let body = blob();
-        let params = {};
+        let params = %{};
 
         while let $r = FCGIRecord.read(stream) {
             match r.type {
