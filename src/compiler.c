@@ -2983,7 +2983,9 @@ emit_for_each2(struct statement const *s, bool want_result)
                 PATCH_JUMP(cond_fail);
         emit_instr(INSTR_RESTORE_STACK_POS);
 
-        JUMP(start);
+        // Element doesn't match the for loop pattern
+        add_location(s->each.target, state.code.count, state.code.count + 1);
+        emit_instr(INSTR_BAD_MATCH);
 
         PATCH_JUMP(match);
         emit_instr(INSTR_RESTORE_STACK_POS);

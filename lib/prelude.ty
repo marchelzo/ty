@@ -383,9 +383,9 @@ class Int {
     }
 
     downto(b: Int) {
-        Generator(function () {
-            if self >= b { self-- }
-        })
+        while self >= b {
+            yield self--
+        }
     }
 
     count(k: Int = 1) {
