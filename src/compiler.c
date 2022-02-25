@@ -535,6 +535,8 @@ freshstate(void)
         s.each_loop = false;
         s.loop_want_result = false;
 
+        s.finally = false;
+
         s.ftype = FT_NONE;
 
         s.try = 0;
@@ -2256,7 +2258,7 @@ emit_while_match(struct statement const *s, bool want_result)
         state.loop_want_result = want_result;
 
         int loop_save = state.loop;
-        state.loop = loop_save;
+        state.loop = ++t;
 
         vec_init(state.breaks);
         vec_init(state.continues);
@@ -2318,7 +2320,7 @@ emit_while(struct statement const *s, bool want_result)
         state.loop_want_result = want_result;
 
         int loop_save = state.loop;
-        state.loop = loop_save;
+        state.loop = ++t;
 
         vec_init(state.continues);
         vec_init(state.breaks);
@@ -3698,6 +3700,10 @@ emit_statement(struct statement const *s, bool want_result)
                 returns |= emit_return(s);
                 break;
         case STATEMENT_BREAK:
+                if (state.loop == 0) {
+                        fail("invalid break statement (not inside a loop)");
+                }
+
                 if (state.try > state.loop) {
                         emit_instr(INSTR_FINALLY);
                 }
@@ -3720,6 +3726,8 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_int(0);
                 break;
         case STATEMENT_CONTINUE:
+                if (state.loop == 0)
+                        fail("invalid continue statement (not inside a loop)");
                 if (state.try > state.loop)
                         emit_instr(INSTR_FINALLY);
                 emit_instr(INSTR_JUMP);
