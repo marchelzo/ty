@@ -1,0 +1,195 @@
+import ffi as c
+import cutil (wrap)
+import os (exit)
+
+let SDL2 = c.dlopen('libSDL2-2.0.so.0')
+
+let SDL_Init = wrap(SDL2, 'SDL_Init', c.int, c.int)
+let SDL_CreateWindow = wrap(SDL2, 'SDL_CreateWindow', c.ptr, c.ptr, c.int, c.int, c.int, c.int, c.int)
+let SDL_GetError = wrap(SDL2, 'SDL_GetError', c.ptr, c.int)
+let SDL_Delay = wrap(SDL2, 'SDL_Delay', c.void, c.u32)
+let SDL_GetWindowSurface = wrap(SDL2, 'SDL_GetWindowSurface', c.ptr, c.ptr)
+let SDL_Rect = c.struct(c.int, c.int, c.int, c.int)
+let SDL_MapRGB = wrap(SDL2, 'SDL_MapRGB', c.u32, c.ptr, c.u8, c.u8, c.u8)
+let SDL_FillRect = wrap(SDL2, 'SDL_FillRect', c.int, c.ptr, c.ptr, c.u32)
+let SDL_UpdateWindowSurface = wrap(SDL2, 'SDL_UpdateWindowSurface', c.int, c.ptr)
+
+let SDL_version = c.struct(c.u8, c.u8, c.u8)
+let SDL_GetVersion = wrap(SDL2, 'SDL_GetVersion', c.void, c.ptr)
+
+let SDL_WaitEvent = wrap(SDL2, 'SDL_WaitEvent', c.int, c.ptr)
+
+let SDL_Scancode = c.int
+let SDL_Keycode = c.int
+
+let SDL_GetKeyName = wrap(SDL2, 'SDL_GetKeyName', c.ptr, SDL_Keycode)
+
+let SDL_QUIT                    = 0x100
+let SDL_APP_TERMINATING         = 0x100 + 1
+let SDL_APP_LOWMEMORY           = 0x100 + 2
+let SDL_APP_WILLENTERBACKGROUND = 0x100 + 3
+let SDL_APP_DIDENTERBACKGROUND  = 0x100 + 4
+let SDL_APP_WILLENTERBACKGROUND = 0x100 + 5
+let SDL_APP_DIDENTERBACKGROUND  = 0x100 + 6
+let SDL_LOCALECHANGED           = 0x100 + 7
+
+let SDL_DISPLAYEVENT = 0x150
+
+let SDL_WINDOWEVENT = 0x200
+let SDL_SYSWMEVENT  = 0x200 + 1
+
+let SDL_KEYDOWN       = 0x300
+let SDL_KEYUP         = 0x300 + 1
+let SDL_TEXTEDITING   = 0x300 + 2
+let SDL_TEXTINPUT     = 0x300 + 3
+let SDL_KEYMAPCHANGED = 0x300 + 4
+
+let SDL_MOUSEMOTION     = 0x400
+let SDL_MOUSEBUTTONDOWN = 0x400 + 1
+let SDL_MOUSEBUTTONUP   = 0x400 + 2
+let SDL_MOUSEWHEEL      = 0x400 + 3
+
+let SDL_CLIPBOARDUPDATE = 0x900
+
+let SDL_DROPFILE     = 0x1000
+let SDL_DROPTEXT     = 0x1000 + 1
+let SDL_DROPBEGIN    = 0x1000 + 2
+let SDL_DROPCOMPLETE = 0x1000 + 3
+
+let SDL_PRESSED = 1
+let SDL_RELEASED = 0
+
+let SDL_MouseMotionEvent = c.struct(
+  c.u32, // 0: type
+  c.u32, // 1: timestamp
+  c.u32, // 2: window id
+  c.u32, // 3: which
+  c.u32, // 4: state
+  c.i32, // 5: x
+  c.i32, // 6: y
+  c.i32, // 7: xrel
+  c.i32  // 8: yrel
+)
+
+let SDL_MouseButtonEvent = c.struct(
+  c.u32, // 0: type
+  c.u32, // 1: timestamp
+  c.u32, // 2: window id
+  c.u32, // 3: which
+  c.u8,  // 4: button
+  c.u8,  // 5: state
+  c.u8,  // 6: clicks
+  c.u8,  // 7: padding
+  c.i32, // 8: x
+  c.i32  // 9: y
+)
+
+let SDL_Keysym = c.struct(
+  SDL_Scancode,
+  SDL_Keycode,
+  c.u16,
+  c.u32
+)
+
+let SDL_KeyboardEvent = c.struct(
+  c.u32,
+  c.u32,
+  c.u32,
+  c.u8,
+  c.u8,
+  SDL_Keysym,
+  c.u64,
+  c.u64
+)
+
+let SDL_Surface = c.struct(
+  c.u32,
+  c.ptr,
+  c.int,
+  c.int,
+  c.ptr,
+  c.ptr,
+  c.int,
+  c.ptr,
+  SDL_Rect,
+  c.ptr,
+  c.int
+)
+
+let puts = wrap(nil, 'puts', c.int, c.ptr)
+
+if SDL_Init(0x20) < 0 {
+  puts(SDL_GetError())
+  exit(1)
+}
+
+if not let $window = SDL_CreateWindow('Based Window', 0, 0, 500, 500, 4)  {
+  puts(SDL_GetError())
+  exit(1)
+}
+
+let surface = SDL_GetWindowSurface(window)
+
+if surface == nil {
+  print("Error: {c.str(SDL_GetError())}")
+  exit(1)
+}
+
+let format = c.member(SDL_Surface, surface, 1)
+let color = SDL_MapRGB(format, 0xFF, 0xFF, 0xFF)
+
+SDL_FillRect(surface, nil, color)
+SDL_UpdateWindowSurface(window)
+
+SDL_Delay(1000)
+
+let version = c.new(SDL_version)
+SDL_GetVersion(version)
+
+print(
+  c.member(SDL_version, version, 0),
+  c.member(SDL_version, version, 1),
+  c.member(SDL_version, version, 2)
+)
+
+let ev = c.new(SDL_KeyboardEvent)
+
+while SDL_WaitEvent(ev) == 1 {
+  let type = c.member(SDL_KeyboardEvent, ev, 0)
+
+  match type {
+    ::SDL_KEYDOWN => {
+      let keysym = c.member(SDL_KeyboardEvent, ev, 5)
+
+      let s = c.str(SDL_GetKeyName(keysym.1))
+
+      print(keysym)
+      print("{s} was pressed!")
+
+      if keysym.0 == 20 {
+        break
+      }
+    },
+
+    ::SDL_KEYUP => {
+      let keysym = c.member(SDL_KeyboardEvent, ev, 5)
+
+      let s = c.str(SDL_GetKeyName(keysym.1))
+
+      print(keysym)
+      print("{s} was released!")
+    },
+
+    ::SDL_MOUSEMOTION => {
+      let mouseMotion = c.load(SDL_MouseMotionEvent, ev)
+      print("Cursor is at: ({mouseMotion.5}, {mouseMotion.6})")
+    },
+
+    ::SDL_MOUSEBUTTONDOWN => {
+      let mouseEvent = c.load(SDL_MouseButtonEvent, ev)
+      print("Mouse button {mouseEvent.4} {['released', 'pressed'][mouseEvent.5]} ({mouseEvent.6})")
+    },
+
+    _ => { }
+  }
+}

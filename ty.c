@@ -109,7 +109,7 @@ clone(char const *s)
 char *
 completion_generator(char const *text, int state)
 {
-        return completions[state];
+        return completions[state] ? clone(completions[state]) : NULL;
 }
 
 static char **
