@@ -8,8 +8,10 @@
 #include "cffi.h"
 
 static void
-store(ffi_type const *t, void *p, struct value const *v)
+store(ffi_type *t, void *p, struct value const *v)
 {
+        size_t offsets[64];
+
         switch (t->type) {
         case FFI_TYPE_INT:
                 *(int *)p = v->integer;
@@ -60,6 +62,12 @@ store(ffi_type const *t, void *p, struct value const *v)
                         break;
                 }
                 break;
+        case FFI_TYPE_STRUCT:
+                ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
+
+                for (int i = 0; i < v->count; ++i) {
+                        store(t->elements[i], (char *)p + offsets[i], &v->items[i]);
+                }
         }
 }
 

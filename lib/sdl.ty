@@ -5,6 +5,7 @@ import os (exit)
 let SDL2 = c.dlopen('libSDL2-2.0.so.0')
 
 let SDL_Init = wrap(SDL2, 'SDL_Init', c.int, c.int)
+let SDL_Quit = wrap(SDL2, 'SDL_Quit', c.void)
 let SDL_CreateWindow = wrap(SDL2, 'SDL_CreateWindow', c.ptr, c.ptr, c.int, c.int, c.int, c.int, c.int)
 let SDL_GetError = wrap(SDL2, 'SDL_GetError', c.ptr, c.int)
 let SDL_Delay = wrap(SDL2, 'SDL_Delay', c.void, c.u32)
@@ -13,11 +14,15 @@ let SDL_Rect = c.struct(c.int, c.int, c.int, c.int)
 let SDL_MapRGB = wrap(SDL2, 'SDL_MapRGB', c.u32, c.ptr, c.u8, c.u8, c.u8)
 let SDL_FillRect = wrap(SDL2, 'SDL_FillRect', c.int, c.ptr, c.ptr, c.u32)
 let SDL_UpdateWindowSurface = wrap(SDL2, 'SDL_UpdateWindowSurface', c.int, c.ptr)
+let SDL_GetTicks = wrap(SDL2, 'SDL_GetTicks', c.u32)
 
 let SDL_version = c.struct(c.u8, c.u8, c.u8)
 let SDL_GetVersion = wrap(SDL2, 'SDL_GetVersion', c.void, c.ptr)
 
 let SDL_WaitEvent = wrap(SDL2, 'SDL_WaitEvent', c.int, c.ptr)
+let SDL_PollEvent = wrap(SDL2, 'SDL_PollEvent', c.int, c.ptr)
+
+let SDL_GetKeyboardState = wrap(SDL2, 'SDL_GetKeyboardState', c.ptr, c.ptr)
 
 let SDL_Scancode = c.int
 let SDL_Keycode = c.int
@@ -58,6 +63,374 @@ let SDL_DROPCOMPLETE = 0x1000 + 3
 
 let SDL_PRESSED = 1
 let SDL_RELEASED = 0
+
+
+
+let SDL_SCANCODE_UNKNOWN = 0
+
+/**
+ *  \name Usage page 0x07
+ *
+ *  These values are from usage page 0x07 (USB keyboard page).
+ */
+/* @{ */
+
+let SDL_SCANCODE_A = 4
+let SDL_SCANCODE_B = 5
+let SDL_SCANCODE_C = 6
+let SDL_SCANCODE_D = 7
+let SDL_SCANCODE_E = 8
+let SDL_SCANCODE_F = 9
+let SDL_SCANCODE_G = 10
+let SDL_SCANCODE_H = 11
+let SDL_SCANCODE_I = 12
+let SDL_SCANCODE_J = 13
+let SDL_SCANCODE_K = 14
+let SDL_SCANCODE_L = 15
+let SDL_SCANCODE_M = 16
+let SDL_SCANCODE_N = 17
+let SDL_SCANCODE_O = 18
+let SDL_SCANCODE_P = 19
+let SDL_SCANCODE_Q = 20
+let SDL_SCANCODE_R = 21
+let SDL_SCANCODE_S = 22
+let SDL_SCANCODE_T = 23
+let SDL_SCANCODE_U = 24
+let SDL_SCANCODE_V = 25
+let SDL_SCANCODE_W = 26
+let SDL_SCANCODE_X = 27
+let SDL_SCANCODE_Y = 28
+let SDL_SCANCODE_Z = 29
+
+let SDL_SCANCODE_1 = 30
+let SDL_SCANCODE_2 = 31
+let SDL_SCANCODE_3 = 32
+let SDL_SCANCODE_4 = 33
+let SDL_SCANCODE_5 = 34
+let SDL_SCANCODE_6 = 35
+let SDL_SCANCODE_7 = 36
+let SDL_SCANCODE_8 = 37
+let SDL_SCANCODE_9 = 38
+let SDL_SCANCODE_0 = 39
+
+let SDL_SCANCODE_RETURN = 40
+let SDL_SCANCODE_ESCAPE = 41
+let SDL_SCANCODE_BACKSPACE = 42
+let SDL_SCANCODE_TAB = 43
+let SDL_SCANCODE_SPACE = 44
+
+let SDL_SCANCODE_MINUS = 45
+let SDL_SCANCODE_EQUALS = 46
+let SDL_SCANCODE_LEFTBRACKET = 47
+let SDL_SCANCODE_RIGHTBRACKET = 48
+let SDL_SCANCODE_BACKSLASH = 49 /**< Located at the lower left of the return
+                              *   key on ISO keyboards and at the right end
+                              *   of the QWERTY row on ANSI keyboards.
+                              *   Produces REVERSE SOLIDUS (backslash) and
+                              *   VERTICAL LINE in a US layout, REVERSE
+                              *   SOLIDUS and VERTICAL LINE in a UK Mac
+                              *   layout, NUMBER SIGN and TILDE in a UK
+                              *   Windows layout, DOLLAR SIGN and POUND SIGN
+                              *   in a Swiss German layout, NUMBER SIGN and
+                              *   APOSTROPHE in a German layout, GRAVE
+                              *   ACCENT and POUND SIGN in a French Mac
+                              *   layout, and ASTERISK and MICRO SIGN in a
+                              *   French Windows layout.
+                              */
+let SDL_SCANCODE_NONUSHASH = 50 /**< ISO USB keyboards actually use this code
+                              *   instead of 49 for the same key, but all
+                              *   OSes I've seen treat the two codes
+                              *   identically. So, as an implementor, unless
+                              *   your keyboard generates both of those
+                              *   codes and your OS treats them differently
+                              *   you should generate SDL_SCANCODE_BACKSLASH
+                              *   instead of this code. As a user, you
+                              *   should not rely on this code because SDL
+                              *   will never generate it with most (all?)
+                              *   keyboards.
+                              */
+let SDL_SCANCODE_SEMICOLON = 51
+let SDL_SCANCODE_APOSTROPHE = 52
+let SDL_SCANCODE_GRAVE = 53 /**< Located in the top left corner (on both ANSI
+                          *   and ISO keyboards). Produces GRAVE ACCENT and
+                          *   TILDE in a US Windows layout and in US and UK
+                          *   Mac layouts on ANSI keyboards, GRAVE ACCENT
+                          *   and NOT SIGN in a UK Windows layout, SECTION
+                          *   SIGN and PLUS-MINUS SIGN in US and UK Mac
+                          *   layouts on ISO keyboards, SECTION SIGN and
+                          *   DEGREE SIGN in a Swiss German layout (Mac:
+                          *   only on ISO keyboards), CIRCUMFLEX ACCENT and
+                          *   DEGREE SIGN in a German layout (Mac: only on
+                          *   ISO keyboards), SUPERSCRIPT TWO and TILDE in a
+                          *   French Windows layout, COMMERCIAL AT and
+                          *   NUMBER SIGN in a French Mac layout on ISO
+                          *   keyboards, and LESS-THAN SIGN and GREATER-THAN
+                          *   SIGN in a Swiss German, German, or French Mac
+                          *   layout on ANSI keyboards.
+                          */
+let SDL_SCANCODE_COMMA = 54
+let SDL_SCANCODE_PERIOD = 55
+let SDL_SCANCODE_SLASH = 56
+
+let SDL_SCANCODE_CAPSLOCK = 57
+
+let SDL_SCANCODE_F1 = 58
+let SDL_SCANCODE_F2 = 59
+let SDL_SCANCODE_F3 = 60
+let SDL_SCANCODE_F4 = 61
+let SDL_SCANCODE_F5 = 62
+let SDL_SCANCODE_F6 = 63
+let SDL_SCANCODE_F7 = 64
+let SDL_SCANCODE_F8 = 65
+let SDL_SCANCODE_F9 = 66
+let SDL_SCANCODE_F10 = 67
+let SDL_SCANCODE_F11 = 68
+let SDL_SCANCODE_F12 = 69
+
+let SDL_SCANCODE_PRINTSCREEN = 70
+let SDL_SCANCODE_SCROLLLOCK = 71
+let SDL_SCANCODE_PAUSE = 72
+let SDL_SCANCODE_INSERT = 73 /**< insert on PC, help on some Mac keyboards (but
+                               does send code 73 not 117) */
+let SDL_SCANCODE_HOME = 74
+let SDL_SCANCODE_PAGEUP = 75
+let SDL_SCANCODE_DELETE = 76
+let SDL_SCANCODE_END = 77
+let SDL_SCANCODE_PAGEDOWN = 78
+let SDL_SCANCODE_RIGHT = 79
+let SDL_SCANCODE_LEFT = 80
+let SDL_SCANCODE_DOWN = 81
+let SDL_SCANCODE_UP = 82
+
+let SDL_SCANCODE_NUMLOCKCLEAR = 83 /**< num lock on PC, clear on Mac keyboards
+                                 */
+let SDL_SCANCODE_KP_DIVIDE = 84
+let SDL_SCANCODE_KP_MULTIPLY = 85
+let SDL_SCANCODE_KP_MINUS = 86
+let SDL_SCANCODE_KP_PLUS = 87
+let SDL_SCANCODE_KP_ENTER = 88
+let SDL_SCANCODE_KP_1 = 89
+let SDL_SCANCODE_KP_2 = 90
+let SDL_SCANCODE_KP_3 = 91
+let SDL_SCANCODE_KP_4 = 92
+let SDL_SCANCODE_KP_5 = 93
+let SDL_SCANCODE_KP_6 = 94
+let SDL_SCANCODE_KP_7 = 95
+let SDL_SCANCODE_KP_8 = 96
+let SDL_SCANCODE_KP_9 = 97
+let SDL_SCANCODE_KP_0 = 98
+let SDL_SCANCODE_KP_PERIOD = 99
+
+let SDL_SCANCODE_NONUSBACKSLASH = 100 /**< This is the additional key that ISO
+                                    *   keyboards have over ANSI ones
+                                    *   located between left shift and Y.
+                                    *   Produces GRAVE ACCENT and TILDE in a
+                                    *   US or UK Mac layout, REVERSE SOLIDUS
+                                    *   (backslash) and VERTICAL LINE in a
+                                    *   US or UK Windows layout, and
+                                    *   LESS-THAN SIGN and GREATER-THAN SIGN
+                                    *   in a Swiss German, German, or French
+                                    *   layout. */
+let SDL_SCANCODE_APPLICATION = 101 /**< windows contextual menu, compose */
+let SDL_SCANCODE_POWER = 102 /**< The USB document says this is a status flag
+                           *   not a physical key - but some Mac keyboards
+                           *   do have a power key. */
+let SDL_SCANCODE_KP_EQUALS = 103
+let SDL_SCANCODE_F13 = 104
+let SDL_SCANCODE_F14 = 105
+let SDL_SCANCODE_F15 = 106
+let SDL_SCANCODE_F16 = 107
+let SDL_SCANCODE_F17 = 108
+let SDL_SCANCODE_F18 = 109
+let SDL_SCANCODE_F19 = 110
+let SDL_SCANCODE_F20 = 111
+let SDL_SCANCODE_F21 = 112
+let SDL_SCANCODE_F22 = 113
+let SDL_SCANCODE_F23 = 114
+let SDL_SCANCODE_F24 = 115
+let SDL_SCANCODE_EXECUTE = 116
+let SDL_SCANCODE_HELP = 117
+let SDL_SCANCODE_MENU = 118
+let SDL_SCANCODE_SELECT = 119
+let SDL_SCANCODE_STOP = 120
+let SDL_SCANCODE_AGAIN = 121   /**< redo */
+let SDL_SCANCODE_UNDO = 122
+let SDL_SCANCODE_CUT = 123
+let SDL_SCANCODE_COPY = 124
+let SDL_SCANCODE_PASTE = 125
+let SDL_SCANCODE_FIND = 126
+let SDL_SCANCODE_MUTE = 127
+let SDL_SCANCODE_VOLUMEUP = 128
+let SDL_SCANCODE_VOLUMEDOWN = 129
+/* not sure whether there's a reason to enable these */
+/*     SDL_SCANCODE_LOCKINGCAPSLOCK = 130  */
+/*     SDL_SCANCODE_LOCKINGNUMLOCK = 131 */
+/*     SDL_SCANCODE_LOCKINGSCROLLLOCK = 132 */
+let SDL_SCANCODE_KP_COMMA = 133
+let SDL_SCANCODE_KP_EQUALSAS400 = 134
+
+let SDL_SCANCODE_INTERNATIONAL1 = 135 /**< used on Asian keyboards, see
+                                        footnotes in USB doc */
+let SDL_SCANCODE_INTERNATIONAL2 = 136
+let SDL_SCANCODE_INTERNATIONAL3 = 137 /**< Yen */
+let SDL_SCANCODE_INTERNATIONAL4 = 138
+let SDL_SCANCODE_INTERNATIONAL5 = 139
+let SDL_SCANCODE_INTERNATIONAL6 = 140
+let SDL_SCANCODE_INTERNATIONAL7 = 141
+let SDL_SCANCODE_INTERNATIONAL8 = 142
+let SDL_SCANCODE_INTERNATIONAL9 = 143
+let SDL_SCANCODE_LANG1 = 144 /**< Hangul/English toggle */
+let SDL_SCANCODE_LANG2 = 145 /**< Hanja conversion */
+let SDL_SCANCODE_LANG3 = 146 /**< Katakana */
+let SDL_SCANCODE_LANG4 = 147 /**< Hiragana */
+let SDL_SCANCODE_LANG5 = 148 /**< Zenkaku/Hankaku */
+let SDL_SCANCODE_LANG6 = 149 /**< reserved */
+let SDL_SCANCODE_LANG7 = 150 /**< reserved */
+let SDL_SCANCODE_LANG8 = 151 /**< reserved */
+let SDL_SCANCODE_LANG9 = 152 /**< reserved */
+
+let SDL_SCANCODE_ALTERASE = 153 /**< Erase-Eaze */
+let SDL_SCANCODE_SYSREQ = 154
+let SDL_SCANCODE_CANCEL = 155
+let SDL_SCANCODE_CLEAR = 156
+let SDL_SCANCODE_PRIOR = 157
+let SDL_SCANCODE_RETURN2 = 158
+let SDL_SCANCODE_SEPARATOR = 159
+let SDL_SCANCODE_OUT = 160
+let SDL_SCANCODE_OPER = 161
+let SDL_SCANCODE_CLEARAGAIN = 162
+let SDL_SCANCODE_CRSEL = 163
+let SDL_SCANCODE_EXSEL = 164
+
+let SDL_SCANCODE_KP_00 = 176
+let SDL_SCANCODE_KP_000 = 177
+let SDL_SCANCODE_THOUSANDSSEPARATOR = 178
+let SDL_SCANCODE_DECIMALSEPARATOR = 179
+let SDL_SCANCODE_CURRENCYUNIT = 180
+let SDL_SCANCODE_CURRENCYSUBUNIT = 181
+let SDL_SCANCODE_KP_LEFTPAREN = 182
+let SDL_SCANCODE_KP_RIGHTPAREN = 183
+let SDL_SCANCODE_KP_LEFTBRACE = 184
+let SDL_SCANCODE_KP_RIGHTBRACE = 185
+let SDL_SCANCODE_KP_TAB = 186
+let SDL_SCANCODE_KP_BACKSPACE = 187
+let SDL_SCANCODE_KP_A = 188
+let SDL_SCANCODE_KP_B = 189
+let SDL_SCANCODE_KP_C = 190
+let SDL_SCANCODE_KP_D = 191
+let SDL_SCANCODE_KP_E = 192
+let SDL_SCANCODE_KP_F = 193
+let SDL_SCANCODE_KP_XOR = 194
+let SDL_SCANCODE_KP_POWER = 195
+let SDL_SCANCODE_KP_PERCENT = 196
+let SDL_SCANCODE_KP_LESS = 197
+let SDL_SCANCODE_KP_GREATER = 198
+let SDL_SCANCODE_KP_AMPERSAND = 199
+let SDL_SCANCODE_KP_DBLAMPERSAND = 200
+let SDL_SCANCODE_KP_VERTICALBAR = 201
+let SDL_SCANCODE_KP_DBLVERTICALBAR = 202
+let SDL_SCANCODE_KP_COLON = 203
+let SDL_SCANCODE_KP_HASH = 204
+let SDL_SCANCODE_KP_SPACE = 205
+let SDL_SCANCODE_KP_AT = 206
+let SDL_SCANCODE_KP_EXCLAM = 207
+let SDL_SCANCODE_KP_MEMSTORE = 208
+let SDL_SCANCODE_KP_MEMRECALL = 209
+let SDL_SCANCODE_KP_MEMCLEAR = 210
+let SDL_SCANCODE_KP_MEMADD = 211
+let SDL_SCANCODE_KP_MEMSUBTRACT = 212
+let SDL_SCANCODE_KP_MEMMULTIPLY = 213
+let SDL_SCANCODE_KP_MEMDIVIDE = 214
+let SDL_SCANCODE_KP_PLUSMINUS = 215
+let SDL_SCANCODE_KP_CLEAR = 216
+let SDL_SCANCODE_KP_CLEARENTRY = 217
+let SDL_SCANCODE_KP_BINARY = 218
+let SDL_SCANCODE_KP_OCTAL = 219
+let SDL_SCANCODE_KP_DECIMAL = 220
+let SDL_SCANCODE_KP_HEXADECIMAL = 221
+
+let SDL_SCANCODE_LCTRL = 224
+let SDL_SCANCODE_LSHIFT = 225
+let SDL_SCANCODE_LALT = 226 /**< alt, option */
+let SDL_SCANCODE_LGUI = 227 /**< windows, command (apple), meta */
+let SDL_SCANCODE_RCTRL = 228
+let SDL_SCANCODE_RSHIFT = 229
+let SDL_SCANCODE_RALT = 230 /**< alt gr, option */
+let SDL_SCANCODE_RGUI = 231 /**< windows, command (apple), meta */
+
+let SDL_SCANCODE_MODE = 257    /**< I'm not sure if this is really not covered
+                             *   by any of the above, but since there's a
+                             *   special KMOD_MODE for it I'm adding it here
+                             */
+
+/* @} *//* Usage page 0x07 */
+
+/**
+ *  \name Usage page 0x0C
+ *
+ *  These values are mapped from usage page 0x0C (USB consumer page).
+ */
+/* @{ */
+
+let SDL_SCANCODE_AUDIONEXT = 258
+let SDL_SCANCODE_AUDIOPREV = 259
+let SDL_SCANCODE_AUDIOSTOP = 260
+let SDL_SCANCODE_AUDIOPLAY = 261
+let SDL_SCANCODE_AUDIOMUTE = 262
+let SDL_SCANCODE_MEDIASELECT = 263
+let SDL_SCANCODE_WWW = 264
+let SDL_SCANCODE_MAIL = 265
+let SDL_SCANCODE_CALCULATOR = 266
+let SDL_SCANCODE_COMPUTER = 267
+let SDL_SCANCODE_AC_SEARCH = 268
+let SDL_SCANCODE_AC_HOME = 269
+let SDL_SCANCODE_AC_BACK = 270
+let SDL_SCANCODE_AC_FORWARD = 271
+let SDL_SCANCODE_AC_STOP = 272
+let SDL_SCANCODE_AC_REFRESH = 273
+let SDL_SCANCODE_AC_BOOKMARKS = 274
+
+/* @} *//* Usage page 0x0C */
+
+/**
+ *  \name Walther keys
+ *
+ *  These are values that Christian Walther added (for mac keyboard?).
+ */
+/* @{ */
+
+let SDL_SCANCODE_BRIGHTNESSDOWN = 275
+let SDL_SCANCODE_BRIGHTNESSUP = 276
+let SDL_SCANCODE_DISPLAYSWITCH = 277 /**< display mirroring/dual display
+                                       switch, video mode switch */
+let SDL_SCANCODE_KBDILLUMTOGGLE = 278
+let SDL_SCANCODE_KBDILLUMDOWN = 279
+let SDL_SCANCODE_KBDILLUMUP = 280
+let SDL_SCANCODE_EJECT = 281
+let SDL_SCANCODE_SLEEP = 282
+
+let SDL_SCANCODE_APP1 = 283
+let SDL_SCANCODE_APP2 = 284
+
+/* @} *//* Walther keys */
+
+/**
+ *  \name Usage page 0x0C (additional media keys)
+ *
+ *  These values are mapped from usage page 0x0C (USB consumer page).
+ */
+/* @{ */
+
+let SDL_SCANCODE_AUDIOREWIND = 285
+let SDL_SCANCODE_AUDIOFASTFORWARD = 286
+
+/* @} *//* Usage page 0x0C (additional media keys) */
+
+/* Add any other keys here. */
+
+let SDL_NUM_SCANCODES = 512 /**< not a key, just marks the number of scancodes
+                             for array bounds */
+
 
 let SDL_MouseMotionEvent = c.struct(
   c.u32, // 0: type
@@ -136,12 +509,15 @@ if surface == nil {
 }
 
 let format = c.member(SDL_Surface, surface, 1)
-let color = SDL_MapRGB(format, 0xFF, 0xFF, 0xFF)
+let white = SDL_MapRGB(format, 0xFF, 0xFF, 0xFF)
+let red = SDL_MapRGB(format, 0xFF, 0x22, 0x22)
 
-SDL_FillRect(surface, nil, color)
+let rect = c.new(SDL_Rect)
+c.store(SDL_Rect, rect, (x: 40, y: 40, 50, 50))
+
+SDL_FillRect(surface, nil, white)
+SDL_FillRect(surface, rect, red)
 SDL_UpdateWindowSurface(window)
-
-SDL_Delay(1000)
 
 let version = c.new(SDL_version)
 SDL_GetVersion(version)
@@ -152,44 +528,86 @@ print(
   c.member(SDL_version, version, 2)
 )
 
-let ev = c.new(SDL_KeyboardEvent)
+let ev = c.alloc(512)
+let running = true
 
-while SDL_WaitEvent(ev) == 1 {
-  let type = c.member(SDL_KeyboardEvent, ev, 0)
+let timeStep = 1000 / 30
+let nextFrame = SDL_GetTicks()
 
-  match type {
-    ::SDL_KEYDOWN => {
-      let keysym = c.member(SDL_KeyboardEvent, ev, 5)
+while running {
+  while SDL_PollEvent(ev) == 1 {
+    let type = c.member(SDL_KeyboardEvent, ev, 0)
 
-      let s = c.str(SDL_GetKeyName(keysym.1))
+    match type {
+      ::SDL_KEYDOWN => {
+        let keysym = c.member(SDL_KeyboardEvent, ev, 5)
 
-      print(keysym)
-      print("{s} was pressed!")
+        let s = c.str(SDL_GetKeyName(keysym.1))
 
-      if keysym.0 == 20 {
-        break
-      }
-    },
+        print(keysym)
+        print("{s} was pressed!")
 
-    ::SDL_KEYUP => {
-      let keysym = c.member(SDL_KeyboardEvent, ev, 5)
+        if keysym.0 == 20 {
+          running = false
+        }
 
-      let s = c.str(SDL_GetKeyName(keysym.1))
+      },
 
-      print(keysym)
-      print("{s} was released!")
-    },
+      ::SDL_KEYUP => {
+        let keysym = c.member(SDL_KeyboardEvent, ev, 5)
 
-    ::SDL_MOUSEMOTION => {
-      let mouseMotion = c.load(SDL_MouseMotionEvent, ev)
-      print("Cursor is at: ({mouseMotion.5}, {mouseMotion.6})")
-    },
+        let s = c.str(SDL_GetKeyName(keysym.1))
 
-    ::SDL_MOUSEBUTTONDOWN => {
-      let mouseEvent = c.load(SDL_MouseButtonEvent, ev)
-      print("Mouse button {mouseEvent.4} {['released', 'pressed'][mouseEvent.5]} ({mouseEvent.6})")
-    },
+        print(keysym)
+        print("{s} was released!")
+      },
 
-    _ => { }
+      ::SDL_MOUSEMOTION => {
+        let mouseMotion = c.load(SDL_MouseMotionEvent, ev)
+        print("Cursor is at: ({mouseMotion.5}, {mouseMotion.6})")
+      },
+
+      ::SDL_MOUSEBUTTONDOWN => {
+        let mouseEvent = c.load(SDL_MouseButtonEvent, ev)
+        print("Mouse button {mouseEvent.4} {['released', 'pressed'][mouseEvent.5]} ({mouseEvent.6})")
+        print("Ticks: {SDL_GetTicks()}")
+      },
+
+      _ => { }
+    }
   }
+
+  let x = c.member(SDL_Rect, rect, 0)
+  let y = c.member(SDL_Rect, rect, 1)
+
+  let kb = SDL_GetKeyboardState(nil)
+
+  if c.load(c.u8, kb + SDL_SCANCODE_RIGHT) > 0 {
+    x += 4
+  } else if c.load(c.u8, kb + SDL_SCANCODE_LEFT) > 0 {
+    x -= 4
+  }
+
+  if c.load(c.u8, kb + SDL_SCANCODE_UP) > 0 {
+    y -= 4
+  } else if c.load(c.u8, kb + SDL_SCANCODE_DOWN) > 0 {
+    y += 4
+  }
+
+  c.member(SDL_Rect, rect, 0, x)
+  c.member(SDL_Rect, rect, 1, y)
+
+  let now = SDL_GetTicks()
+
+  if now < nextFrame {
+    SDL_Delay(nextFrame - now)
+  }
+
+  SDL_FillRect(surface, nil, white)
+  SDL_FillRect(surface, rect, red)
+  SDL_UpdateWindowSurface(window)
+
+  nextFrame += timeStep
 }
+
+SDL_Quit()
