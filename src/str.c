@@ -400,8 +400,8 @@ End:
 static struct value
 string_split(struct value *string, int argc)
 {
-        if (argc != 1)
-                vm_panic("the split method on strings expects 1 argument but got %d", argc);
+        if (argc != 1 && argc != 2)
+                vm_panic("String.split() expects 1 or 2 arguments but got %d", argc);
 
         char const *s = string->string;
         int len = string->bytes;
@@ -428,8 +428,16 @@ string_split(struct value *string, int argc)
                 return ARRAY(parts);
         }
 
-        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
-                vm_panic("invalid argument to the split method on string");
+        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING) {
+                vm_panic(
+                        "String.split() expects an Int, String, or Regex but got: %s",
+                        value_show(&pattern)
+                );
+        }
+
+        if (argc == 2 & ARG(1).type != VALUE_INTEGER) {
+                vm_panic("the second argument to String.split() must be an Int");
+        }
 
         struct value result = ARRAY(value_array_new());
         NOGC(result.array);
@@ -443,12 +451,16 @@ string_split(struct value *string, int argc)
 
                 int i = 0;
                 while (i < len) {
-
                         struct value str = STRING_VIEW(*string, i, 0);
 
-                        while (i < len && !is_prefix(s + i, len - i, p, n)) {
-                                ++str.bytes;
-                                ++i;
+                        if (argc == 2 && result.array->count == ARG(1).integer) {
+                                str.bytes = len - i;
+                                i = len;
+                        } else {
+                                while (i < len && !is_prefix(s + i, len - i, p, n)) {
+                                        ++str.bytes;
+                                        ++i;
+                                }
                         }
 
                         value_array_push(result.array, str);
@@ -465,7 +477,8 @@ string_split(struct value *string, int argc)
                 int out[3];
 
                 while (start < len) {
-                        if (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) != 1) {
+                        if ((argc == 2 && result.array->count == ARG(1).integer) ||
+                            pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) != 1) {
                                 out[0] = len;
                                 out[1] = len + 1;
                         }
