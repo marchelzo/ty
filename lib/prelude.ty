@@ -539,14 +539,18 @@ class Bool {
 }
 
 class Regex {
-    init(x) { return regex(x) }
+    init(x) { regex(x) }
 
-    ~=(s) { return s.match!(self) }
+    ~=(s) { s.match!(self) }
 
-    ?(s) { return s.match?(self) }
+    ?(s) { s.match?(self) }
+
+    test(s) { s.match?(self) }
+
+    exec(s) { s.match!(self) }
 
     __match__(s) {
-        return (s :: String) && s.match?(self)
+        (s :: String) && s.match?(self)
     }
 }
 
