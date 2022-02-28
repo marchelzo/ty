@@ -326,6 +326,14 @@ class String : Iterable {
         return @comb(/^\s+|\s+$/)
     }
 
+    stripRight() {
+        @comb(/\s+$/)
+    }
+
+    stripLeft() {
+        @comb(/^\s+/)
+    }
+
     __iter__() {
         for c in @chars() {
             yield c
