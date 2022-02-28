@@ -3202,7 +3202,9 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 {
         if (target->type == EXPRESSION_LIST) {
                 emit_list(e);
-                for (int i = target->es.count - 1; i >= 0; --i) {
+                emit_instr(INSTR_FIX_TO);
+                emit_int(target->es.count);
+                for (int i = 0; i < target->es.count; ++i) {
                         emit_assignment2(target->es.items[i], maybe, def);
                         emit_instr(INSTR_POP);
                 }
