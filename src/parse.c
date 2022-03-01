@@ -3299,8 +3299,10 @@ parse(char const *source, char const *file)
         vec_init(program);
 
         depth = 0;
-
         filename = file;
+
+        table_release(&modules);
+        table_init(&modules);
 
         TokenIndex = 0;
         vec_init(tokens);
