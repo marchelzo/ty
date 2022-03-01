@@ -3715,12 +3715,14 @@ emit_statement(struct statement const *s, bool want_result)
                         emit_instr(INSTR_POP);
                 }
 
-                want_result = state.loop_want_result;
+                want_result = false;
+
                 if (s->expression != NULL) {
                         emit_expression(s->expression);
-                        if (!want_result)
+                        if (!state.loop_want_result)
                                 emit_instr(INSTR_POP);
-                        want_result = false;
+                } else if (state.loop_want_result) {
+                        emit_instr(INSTR_NIL);
                 }
 
                 emit_instr(INSTR_JUMP);
