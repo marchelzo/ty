@@ -3292,6 +3292,12 @@ parse_error(void)
         return ERR;
 }
 
+struct table *
+parse_module_table(void)
+{
+        return &modules;
+}
+
 struct statement **
 parse(char const *source, char const *file)
 {
@@ -3300,9 +3306,6 @@ parse(char const *source, char const *file)
 
         depth = 0;
         filename = file;
-
-        table_release(&modules);
-        table_init(&modules);
 
         TokenIndex = 0;
         vec_init(tokens);

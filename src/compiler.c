@@ -3937,7 +3937,12 @@ import_module(struct statement const *s)
         state = freshstate();
         state.filename = name;
 
+        struct table modules_save = *parse_module_table();
+        table_init(parse_module_table());
+
         compile(source);
+
+        *parse_module_table() = modules_save;
 
         module_scope = state.global;
 
