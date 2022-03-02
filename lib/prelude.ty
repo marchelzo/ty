@@ -2,6 +2,7 @@ import bit
 import math
 
 tag MatchError;
+tag IndexError;
 
 tag None {
      map()     { None }

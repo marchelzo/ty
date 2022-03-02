@@ -29,3 +29,12 @@ let memcpy = wrap(nil, 'memcpy', c.ptr, c.ptr, c.ptr, c.u64)
 let strlen = wrap(nil, 'strlen', c.u64, c.ptr)
 let memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
 let strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)
+
+pub function cstr(s) {
+	let p = c.alloc(s.size() + 1)
+
+	memcpy(p, s, s.size())
+	c.store(c.char, p + s.size(), 0)
+
+	return p
+}
