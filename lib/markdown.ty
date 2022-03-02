@@ -132,15 +132,15 @@ class MarkdownNode {
   }
 
   childrenHtml() {
-    let s = ''
-
-    for child in @children() {
-      s += child.html()
-    }
-
     @children().map(&html).sum() ?? ''
+  }
 
-    return s
+  codeTag() {
+    if let $lang = @infoString() {
+      "<code class=\"language-{lang}\">"
+    } else {
+      "<code>"
+    }
   }
 
   html() {
@@ -153,7 +153,7 @@ class MarkdownNode {
       NodeType.Image     => "<img src=\"{@url()}\">",
       NodeType.Document  => "<html><body>{@childrenHtml()}</body></html>",
       NodeType.Code      => "<code>{@text()}</code>",
-      NodeType.CodeBlock => "<pre><code class=\"language-{@infoString()}\">{@text()}</code></pre>",
+      NodeType.CodeBlock => "<pre>{@codeTag()}{@text()}</code></pre>",
       NodeType.Paragraph => "<p>{@childrenHtml()}</p>",
       NodeType.List      => "<ul>{@childrenHtml()}</ul>",
       NodeType.Item      => "<li>{@childrenHtml()}</li>"
@@ -168,5 +168,4 @@ pub function parse(s) {
 }
 
 let doc = parse(slurp('test.md'))
-
 print(doc.html())
