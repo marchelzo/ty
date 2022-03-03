@@ -64,8 +64,10 @@ struct value;
 #define CLASS_TAG       12
 #define CLASS_PRIMITIVE 13
 
-#define TAG_NONE 2
-#define TAG_SOME 3
+#define TAG_MATCH_ERR 1
+#define TAG_INDEX_ERR 2
+#define TAG_NONE      3
+#define TAG_SOME      4
 
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \

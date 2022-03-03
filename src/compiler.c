@@ -2989,12 +2989,6 @@ emit_for_each2(struct statement const *s, bool want_result)
                 emit_instr(INSTR_POP);
         }
 
-        size_t cond_fail = 0;
-        if (s->each.cond != NULL) {
-                emit_expression(s->each.cond);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, cond_fail);
-        }
-
         size_t should_stop = 0;
         if (s->each.stop != NULL) {
                 emit_expression(s->each.stop);
@@ -3005,10 +2999,8 @@ emit_for_each2(struct statement const *s, bool want_result)
 
         patch_jumps_to(&state.match_fails, state.code.count);
 
+        // FIXME: are these useless?
         emit_instr(INSTR_RESTORE_STACK_POS);
-
-        if (s->each.cond != NULL)
-                PATCH_JUMP(cond_fail);
         emit_instr(INSTR_RESTORE_STACK_POS);
 
         // Element doesn't match the for loop pattern
@@ -3016,7 +3008,13 @@ emit_for_each2(struct statement const *s, bool want_result)
         emit_instr(INSTR_BAD_MATCH);
 
         PATCH_JUMP(match);
+
         emit_instr(INSTR_RESTORE_STACK_POS);
+
+        if (s->each.cond != NULL) {
+                emit_expression(s->each.cond);
+                JUMP_IF_NOT(start);
+        }
 
         emit_statement(s->each.body, false);
 
