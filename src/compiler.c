@@ -1124,6 +1124,9 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 vec_push_n(state.exports, s->exports.items, s->exports.count);
                 break;
         case STATEMENT_DEFER:
+                if (state.func == NULL) {
+                        fail("invalid defer statement (not inside of a function)");
+                }
                 state.func->has_defer = true;
         case STATEMENT_EXPRESSION:
         case STATEMENT_BREAK:

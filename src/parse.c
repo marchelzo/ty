@@ -2879,7 +2879,8 @@ parse_defer_statement(void)
 
         consume_keyword(KEYWORD_DEFER);
 
-        s->expression = parse_expr(0);
+        s->expression = mkfunc();
+        s->expression->body = parse_statement(-1);
 
         if (tok()->type == ';')
                 next();
