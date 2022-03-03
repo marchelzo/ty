@@ -1105,6 +1105,15 @@ string_pad_right(struct value *string, int argc)
         return STRING(result, bytes);
 }
 
+static struct value
+string_cstr(struct value *string, int argc)
+{
+        if (argc != 0)
+                vm_panic("String.cstr() expects 0 arguments but got %d", argc);
+
+        return STRING_CLONE_NUL(string->string, string->bytes);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "byte",      .func = string_byte      },
         { .name = "bytes",     .func = string_bytes     },
@@ -1113,6 +1122,7 @@ DEFINE_METHOD_TABLE(
         { .name = "comb",      .func = string_comb      },
         { .name = "contains?", .func = string_contains  },
         { .name = "count",     .func = string_count     },
+        { .name = "cstr",      .func = string_cstr      },
         { .name = "len",       .func = string_length    },
         { .name = "lines",     .func = string_lines     },
         { .name = "lower",     .func = string_lower     },

@@ -253,6 +253,9 @@ value_string_alloc(int n);
 char *
 value_string_clone(char const *s, int n);
 
+char *
+value_string_clone_nul(char const *src, int n);
+
 struct array *
 value_array_new(void);
 
@@ -307,6 +310,21 @@ inline static struct value
 STRING_CLONE(char const *s, int n)
 {
         char *clone = value_string_clone(s, n);
+
+        return (struct value) {
+                .type = VALUE_STRING,
+                .tags = 0,
+                .string = clone,
+                .bytes = n,
+                .gcstr = clone,
+        };
+}
+
+inline static struct value
+STRING_CLONE_NUL(char const *s, int n)
+{
+        char *clone = value_string_clone_nul(s, n);
+
         return (struct value) {
                 .type = VALUE_STRING,
                 .tags = 0,

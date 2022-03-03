@@ -46,30 +46,27 @@ let inotify_event = c.struct(
 let c_inotify_init = wrap(nil, 'inotify_init', c.int)
 let c_inotify_add_watch = wrap(nil, 'inotify_add_watch', c.int, c.int, c.ptr, c.u32)
 
-pub function inotify_init() {
+pub function init() {
   return io.open(c_inotify_init(), 'r')
 }
 
-pub function inotify_add(inot, path, mask) {
-  let path = cstr(path)
-  print(c.str(path))
-  let r = c_inotify_add_watch(inot.fd, path, mask)
-  c.free(path)
-  return r
+pub function add(inot, path, mask) {
+  return c_inotify_add_watch(inot.fd, path.cstr(), mask)
 }
 
-pub function inotify_read(inot) {
+pub function wait(inot) {
   let b = inot.next(c.size(inotify_event))
   let size = c.member(inotify_event, b.ptr(), 3)
 
   let name = if size > 0 {
-    inot.next(size).str()
+    let buf = inot.next(size)
+    buf.str(0, buf.search(0))
   }
 
   return (
     wd: c.member(inotify_event, b.ptr(), 0),
     mask: c.member(inotify_event, b.ptr(), 1),
-    cookie: c.member(inotify_event, b.ptr(), 2)
+    cookie: c.member(inotify_event, b.ptr(), 2),
     name: name,
     size: size
   )

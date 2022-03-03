@@ -752,6 +752,17 @@ mark_function(struct value const *v)
 }
 
 char *
+value_string_clone_nul(char const *src, int n)
+{
+        char *s = gc_alloc_object(n + 1, GC_STRING);
+
+        memcpy(s, src, n);
+        s[n] = '\0';
+
+        return s;
+}
+
+char *
 value_string_clone(char const *src, int n)
 {
         char *s = gc_alloc_object(n, GC_STRING);
