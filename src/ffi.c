@@ -63,10 +63,14 @@ store(ffi_type *t, void *p, struct value const *v)
                 }
                 break;
         case FFI_TYPE_STRUCT:
-                ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
+                if (v->type == VALUE_TUPLE) {
+                        ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
 
-                for (int i = 0; i < v->count; ++i) {
-                        store(t->elements[i], (char *)p + offsets[i], &v->items[i]);
+                        for (int i = 0; i < v->count; ++i) {
+                                store(t->elements[i], (char *)p + offsets[i], &v->items[i]);
+                        }
+                } else if (v->type == VALUE_PTR) {
+                        memcpy(p, v->ptr, t->size);
                 }
         }
 }
