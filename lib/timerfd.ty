@@ -14,7 +14,7 @@ let itimerspec = c.struct(
   timespec  // value
 )
 
-let timerfd_create = wrap(nil, 'timerfd_create', c.int, c.int, c.int)
+pub timerfd_create = wrap(nil, 'timerfd_create', c.int, c.int, c.int)
 
 let c_timerfd_settime = wrap(nil, 'timerfd_settime', c.int, c.int, c.int, c.ptr, c.ptr)
 let c_timerfd_gettime = wrap(nil, 'timerfd_gettime', c.int, c.int, c.ptr)
@@ -22,28 +22,14 @@ let c_timerfd_gettime = wrap(nil, 'timerfd_gettime', c.int, c.int, c.ptr)
 let tspec = c.new(timespec)
 let ispec = c.new(itimerspec)
 
-function timerfd_settime(fd, flags, value, interval) {
+pub function timerfd_settime(fd, flags, value, interval) {
   c.member(timespec, tspec, 0, value.?sec ?? 0)
   c.member(timespec, tspec, 1, value.?nsec ?? 0)
-  print("Setting value: " + str(c.load(timespec, tspec)))
   c.member(itimerspec, ispec, 1, tspec)
 
   c.member(timespec, tspec, 0, interval.?sec ?? 0)
   c.member(timespec, tspec, 1, interval.?nsec ?? 0)
-  print("Setting interval: " + str(c.load(timespec, tspec)))
   c.member(itimerspec, ispec, 0, tspec)
 
-  print(c.load(itimerspec, ispec))
-
   return c_timerfd_settime(fd, flags, ispec, nil)
-}
-
-let fd = timerfd_create(time.CLOCK_REALTIME, 0)
-print(fd)
-print(timerfd_settime(fd, 0, (sec: 4), (sec: 1)))
-
-let f = io.open(fd, 'r')
-
-while let n = f.nextUnsigned(8) {
-  print("Read: {n}")
 }
