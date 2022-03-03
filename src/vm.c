@@ -130,6 +130,7 @@ static _Thread_local FrameStack frames;
 static _Thread_local SPStack sp_stack;
 static _Thread_local TargetStack targets;
 static _Thread_local TryStack try_stack;
+static _Thread_local ValueStack defer_stack;
 static _Thread_local char *ip;
 
 typedef struct {
@@ -786,6 +787,19 @@ Throw:
                         vec_push(try_stack, t);
                         break;
                 }
+                CASE(PUSH_DEFER_GROUP)
+                        vec_push(defer_stack, ARRAY(value_array_new()));
+                        break;
+                CASE(DEFER)
+                        v = pop();
+                        value_array_push(vec_last(defer_stack)->array, v);
+                        break;
+                CASE(CLEANUP)
+                        v = *vec_pop(defer_stack);
+                        for (int i = 0; i < v.array->count; ++i) {
+                                vm_call(&v.array->items[i], 0);
+                        }
+                        break;
                 CASE(ENSURE_LEN)
                         READVALUE(n);
                         b = top()->array->count == n;
@@ -2713,6 +2727,9 @@ vm_mark(void)
 
         for (int i = 0; i < stack.count; ++i)
                 value_mark(&stack.items[i]);
+
+        for (int i = 0; i < defer_stack.count; ++i)
+                value_mark(&defer_stack.items[i]);
 
         for (int i = 0; i < targets.count; ++i)
                 value_mark(targets.items[i].t);

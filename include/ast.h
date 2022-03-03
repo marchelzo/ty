@@ -30,6 +30,8 @@ struct condpart {
 
 typedef vec(struct condpart *) condpart_vector;
 
+enum { FT_NONE, FT_FUNC, FT_GEN };
+
 struct statement {
         enum {
                 STATEMENT_FOR_LOOP,
@@ -47,9 +49,12 @@ struct statement {
                 STATEMENT_RETURN_GENERATOR,
                 STATEMENT_NEXT,
                 STATEMENT_CONTINUE,
+                STATEMENT_BREAK,
                 STATEMENT_THROW,
                 STATEMENT_TRY,
-                STATEMENT_BREAK,
+                STATEMENT_DEFER,
+                STATEMENT_CLEANUP,
+                STATEMENT_TRY_CLEAN,
                 STATEMENT_BLOCK,
                 STATEMENT_HALT,
                 STATEMENT_NULL,
@@ -278,6 +283,8 @@ struct expression {
                         bool is_method;
                         bool rest;
                         bool has_kwargs;
+                        bool has_defer;
+                        unsigned char ftype;
                 };
                 struct {
                         struct expression *function;

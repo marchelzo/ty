@@ -241,8 +241,12 @@ mkfunc(void)
         f->type = EXPRESSION_FUNCTION;
         f->rest = false;
         f->has_kwargs = false;
+        f->has_defer = false;
+        f->ftype = FT_NONE;
         f->name = NULL;
         f->body = NULL;
+        f->has_defer = false;
+        f->ftype = FT_NONE;
 
         vec_init(f->params);
         vec_init(f->dflts);
@@ -1956,6 +1960,8 @@ infix_arrow_function(struct expression *left)
         e->type = EXPRESSION_FUNCTION;
         e->rest = false;
         e->has_kwargs = false;
+        e->has_defer = false;
+        e->ftype = FT_NONE;
         e->name = NULL;
         vec_init(e->params);
         vec_init(e->dflts);
@@ -2866,20 +2872,17 @@ parse_let_definition(void)
 }
 
 static struct statement *
-parse_next_statement(void)
+parse_defer_statement(void)
 {
         struct statement *s = mkstmt();
-        s->type = STATEMENT_NEXT;
+        s->type = STATEMENT_DEFER;
 
-        consume_keyword(KEYWORD_NEXT);
+        consume_keyword(KEYWORD_DEFER);
 
-        if (tok()->type != ';') {
-                s->expression = parse_expr(0);
-        } else {
-                s->expression = NULL;
-        }
+        s->expression = parse_expr(0);
 
-        consume(';');
+        if (tok()->type == ';')
+                next();
 
         return s;
 }
@@ -3264,7 +3267,7 @@ Keyword:
         case KEYWORD_OPERATOR: return parse_operator_directive();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
-        case KEYWORD_NEXT:     return parse_next_statement();
+        case KEYWORD_DEFER:    return parse_defer_statement();
         case KEYWORD_LET:      return parse_let_definition();
         case KEYWORD_BREAK:    return parse_break_statement();
         case KEYWORD_CONTINUE: return parse_continue_statement();

@@ -123,6 +123,10 @@ enum instruction {
         INSTR_POP_TRY,
         INSTR_FINALLY,
 
+        INSTR_PUSH_DEFER_GROUP,
+        INSTR_DEFER,
+        INSTR_CLEANUP,
+
         INSTR_TAG_PUSH,
         INSTR_DEFINE_TAG,
         INSTR_DEFINE_CLASS,

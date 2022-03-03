@@ -41,6 +41,7 @@ static struct {
         { "catch",     KEYWORD_CATCH     },
         { "finally",   KEYWORD_FINALLY   },
         { "throw",     KEYWORD_THROW     },
+        { "defer",     KEYWORD_DEFER     },
         { "operator",  KEYWORD_OPERATOR  },
         { "yield",     KEYWORD_YIELD     },
         { "Next",      KEYWORD_NEXT      },

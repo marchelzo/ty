@@ -114,11 +114,11 @@ struct state {
         struct scope *implicit_fscope;
         struct expression *implicit_func;
 
+        struct expression *func;
+
         int function_depth;
         bool each_loop;
         bool loop_want_result;
-
-        enum { FT_NONE, FT_FUNC, FT_GEN } ftype;
 
         int finally;
         int try;
@@ -528,16 +528,15 @@ freshstate(void)
         s.global = scope_new(global, false);
         s.fscope = NULL;
 
-        s.implicit_fscope = NULL;
+        s.func = NULL;
         s.implicit_func = NULL;
+        s.implicit_fscope = NULL;
 
         s.function_depth = 0;
         s.each_loop = false;
         s.loop_want_result = false;
 
         s.finally = false;
-
-        s.ftype = FT_NONE;
 
         s.try = 0;
         s.loop = 0;
@@ -854,9 +853,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
         struct scope *subscope;
 
-        int ftype = state.ftype;
-        struct scope *implicit_fscope = state.implicit_fscope;
+        struct expression *func = state.func;
         struct expression *implicit_func = state.implicit_func;
+        struct scope *implicit_fscope = state.implicit_fscope;
         char *name;
 
         switch (e->type) {
@@ -992,7 +991,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
         case EXPRESSION_FUNCTION:
-                state.ftype = FT_NONE;
+                state.func = e;
 
                 if (e->name != NULL) {
                         scope = scope_new(scope, false);
@@ -1042,23 +1041,23 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 e->bound_symbols.items = scope->owned.items;
                 e->bound_symbols.count = scope->owned.count;
 
-                if (state.ftype == FT_GEN) {
+                if (e->ftype == FT_GEN) {
                         e->type = EXPRESSION_GENERATOR;
                 }
 
-                state.ftype = ftype;
+                state.func = func;
                 state.implicit_fscope = implicit_fscope;
                 state.implicit_func = implicit_func;
 
                 break;
         case EXPRESSION_YIELD:
-                if (state.ftype == FT_FUNC) {
+                if (state.func->ftype == FT_FUNC) {
                         fail("yield expression cannot appear outside of generator context");
                 }
                 for (int i = 0; i < e->es.count; ++i) {
                     symbolize_expression(scope, e->es.items[i]);
                 }
-                state.ftype = FT_GEN;
+                state.func->ftype = FT_GEN;
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i) {
@@ -1124,6 +1123,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_EXPORT:
                 vec_push_n(state.exports, s->exports.items, s->exports.count);
                 break;
+        case STATEMENT_DEFER:
+                state.func->has_defer = true;
         case STATEMENT_EXPRESSION:
         case STATEMENT_BREAK:
         case STATEMENT_NEXT:
@@ -1238,13 +1239,13 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(subscope, s->each.stop);
                 break;
         case STATEMENT_RETURN:
-                if (state.ftype == FT_GEN) {
+                if (state.func->ftype == FT_GEN) {
                         fail("return statement cannot appear in generator context");
                 }
                 for (int i = 0; i < s->returns.count; ++i) {
                     symbolize_expression(scope, s->returns.items[i]);
                 }
-                state.ftype = FT_FUNC;
+                state.func->ftype = FT_FUNC;
                 break;
         case STATEMENT_DEFINITION:
                 if (s->value->type == EXPRESSION_LIST) {
@@ -1579,16 +1580,37 @@ emit_function(struct expression const *e, int class)
                 PATCH_JUMP(good);
         }
 
+        struct statement *body = e->body;
+        struct statement try;
+        struct statement cleanup;
+
+        if (e->has_defer) {
+                try.type = STATEMENT_TRY_CLEAN;
+                try.start = body->start;
+                try.end = body->end;
+                try.try.s = body;
+                vec_init(try.try.patterns);
+                vec_init(try.try.handlers);
+
+                cleanup.type = STATEMENT_CLEANUP;
+                cleanup.start = body->start;
+                cleanup.end = body->end;
+
+                try.try.finally = &cleanup;
+
+                body = &try;
+        }
+
         if (e->type == EXPRESSION_GENERATOR) {
                 emit_instr(INSTR_MAKE_GENERATOR);
-                emit_statement(e->body, false);
+                emit_statement(body, false);
                 size_t end = state.code.count;
                 emit_instr(INSTR_TAG);
                 emit_int(TAG_NONE);
                 emit_instr(INSTR_YIELD);
                 emit_instr(INSTR_POP);
                 JUMP(end);
-        } else if (false && !emit_statement(e->body, false)) {
+        } else if (false && !emit_statement(body, false)) {
                 /*
                  * Add an implicit 'return nil;' if the function
                  * doesn't explicitly return in its body.
@@ -1601,7 +1623,7 @@ emit_function(struct expression const *e, int class)
                 vec_init(empty.returns);
                 emit_statement(&empty, false);
         } else {
-                emit_statement(e->body, true);
+                emit_statement(body, true);
                 emit_instr(INSTR_RETURN);
         }
 
@@ -1795,6 +1817,10 @@ emit_try(struct statement const *s, bool want_result)
 
         bool finally_save = state.finally;
         state.finally = false;
+
+        if (s->type == STATEMENT_TRY_CLEAN) {
+                emit_instr(INSTR_PUSH_DEFER_GROUP);
+        }
 
         bool returns = emit_statement(s->try.s, want_result);
 
@@ -3687,6 +3713,11 @@ emit_statement(struct statement const *s, bool want_result)
                         emit_string(s->class.methods.items[i - 1]->name);
 
                 break;
+        case STATEMENT_CLEANUP:
+                want_result = false;
+                emit_instr(INSTR_CLEANUP);
+                break;
+        case STATEMENT_TRY_CLEAN:
         case STATEMENT_TRY:
                 returns |= emit_try(s, want_result);
                 want_result = false;
@@ -3737,6 +3768,10 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_instr(INSTR_JUMP);
                 vec_push(state.continues, state.code.count);
                 emit_int(0);
+                break;
+        case STATEMENT_DEFER:
+                emit_expression(s->expression);
+                emit_instr(INSTR_DEFER);
                 break;
         case STATEMENT_NEXT:
                 emit_expression(s->expression);
