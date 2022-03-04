@@ -11,6 +11,8 @@ table_init(struct table *t)
                 vec_init(t->buckets[i].names);
                 vec_init(t->buckets[i].values);
         }
+
+        t->finalizer = NIL;
 }
 
 struct value *

@@ -3251,7 +3251,7 @@ builtin_members(int argc)
 struct value
 builtin_member(int argc)
 {
-        ASSERT_ARGC_2("member", 2, 3);
+        ASSERT_ARGC_2("member()", 2, 3);
 
         struct value o = ARG(0);
         struct value name = ARG(1);
@@ -3293,4 +3293,22 @@ builtin_member(int argc)
 
                 return NIL;
         }
+}
+
+struct value
+builtin_finalizer(int argc)
+{
+        ASSERT_ARGC("setFinalizer()", 2);
+
+        if (ARG(0).type != VALUE_OBJECT) {
+                vm_panic("the first argument to addFinalizer() must be an object");
+        }
+
+        if (!CALLABLE(ARG(1))) {
+                vm_panic("the second argument to addFinalizer() must be callable");
+        }
+
+        ARG(0).object->finalizer = ARG(1);
+
+        return NIL;
 }

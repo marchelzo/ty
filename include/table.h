@@ -16,6 +16,7 @@ struct bucket {
 
 struct table {
         struct bucket buckets[TABLE_SIZE];
+        struct value finalizer;
 };
 
 void

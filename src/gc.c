@@ -20,13 +20,20 @@ inline static void
 collect(struct alloc *a)
 {
         void *p = a->data;
+        struct value *finalizer;
 
         switch (a->type) {
         case GC_ARRAY:     gc_free(((struct array *)p)->items);    break;
         case GC_BLOB:      gc_free(((struct blob *)p)->items);     break;
         case GC_DICT:      dict_free(p);                           break;
-        case GC_OBJECT:    table_release(p);                       break;
         case GC_GENERATOR: gc_free(((Generator *)p)->frame.items); break;
+        case GC_OBJECT:
+                finalizer = &((struct table *)p)->finalizer;
+                if (finalizer->type != VALUE_NIL) {
+                        vm_call(finalizer, 0);
+                }
+                table_release(p);
+                break;
         }
 }
 
@@ -45,6 +52,12 @@ gc(void)
 
         for (int i = 0; i < RootSet.count; ++i)
                 value_mark(RootSet.items[i]);
+
+        for (int i = 0; i < allocs.count; ++i) {
+                if (allocs.items[i]->mark == GC_NONE && allocs.items[i]->type == GC_OBJECT) {
+                        value_mark(&((struct table *)allocs.items[i]->data)->finalizer);
+                }
+        }
 
         int n = 0;
         for (int i = 0; i < allocs.count; ++i) {

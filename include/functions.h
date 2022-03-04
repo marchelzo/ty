@@ -61,6 +61,9 @@ struct value
 builtin_member(int argc);
 
 struct value
+builtin_finalizer(int argc);
+
+struct value
 builtin_int(int argc);
 
 struct value

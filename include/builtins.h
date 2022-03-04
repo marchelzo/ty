@@ -26,6 +26,7 @@
 { .module = NULL,     .name = "member",            .value = BUILTIN(builtin_member)                        },
 { .module = NULL,     .name = "object",            .value = BUILTIN(builtin_object)                        },
 { .module = NULL,     .name = "bindMethod",        .value = BUILTIN(builtin_bind)                          },
+{ .module = NULL,     .name = "setFinalizer",      .value = BUILTIN(builtin_finalizer)                     },
 { .module = NULL,     .name = "apply",             .value = BUILTIN(builtin_apply)                         },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
