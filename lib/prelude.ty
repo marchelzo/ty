@@ -66,6 +66,14 @@ class Object {
         members(self)
     }
 
+	member(*args) {
+		member(self, *args)
+	}
+
+	setFinalizer(*args) {
+		setFinalizer(self, *args)
+	}
+
     |(other) {
         c -> (c :: self) || (c :: other)
     }
