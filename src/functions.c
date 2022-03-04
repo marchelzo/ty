@@ -3301,11 +3301,11 @@ builtin_finalizer(int argc)
         ASSERT_ARGC("setFinalizer()", 2);
 
         if (ARG(0).type != VALUE_OBJECT) {
-                vm_panic("the first argument to addFinalizer() must be an object");
+                vm_panic("the first argument to setFinalizer() must be an object");
         }
 
         if (!CALLABLE(ARG(1))) {
-                vm_panic("the second argument to addFinalizer() must be callable");
+                vm_panic("the second argument to setFinalizer() must be callable");
         }
 
         ARG(0).object->finalizer = ARG(1);
