@@ -731,6 +731,9 @@ MATH_WRAP(tan)
 MATH_WRAP(acos)
 MATH_WRAP(asin)
 MATH_WRAP(atan)
+MATH_WRAP(tanh)
+MATH_WRAP(sinh)
+MATH_WRAP(cosh)
 
 struct value
 builtin_sqrt(int argc)

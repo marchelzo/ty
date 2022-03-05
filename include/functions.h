@@ -118,6 +118,15 @@ struct value
 builtin_log(int argc);
 
 struct value
+builtin_sinh(int argc);
+
+struct value
+builtin_cosh(int argc);
+
+struct value
+builtin_tanh(int argc);
+
+struct value
 builtin_atan2(int argc);
 
 struct value
