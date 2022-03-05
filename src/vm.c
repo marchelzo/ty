@@ -587,16 +587,25 @@ vm_exec(char *code)
                         break;
                 CASE(TARGET_MEMBER)
                         v = pop();
-                        if (v.type != VALUE_OBJECT)
-                                vm_panic("assignment to member of non-object");
-                        str = ip;
+                        member = ip;
                         ip += strlen(ip) + 1;
                         READVALUE(h);
-                        vp = table_lookup(v.object, str, h);
-                        if (vp != NULL)
-                                pushtarget(vp, v.object);
-                        else
-                                pushtarget(table_add(v.object, str, h, NIL), v.object);
+                        if (v.type == VALUE_OBJECT) {
+                                vp = table_lookup(v.object, member, h);
+                                if (vp != NULL) {
+                                        pushtarget(vp, v.object);
+                                } else {
+                                        pushtarget(table_add(v.object, member, h, NIL), v.object);
+                                }
+                        } else if (v.type == VALUE_TUPLE) {
+                                vp = tuple_get(&v, member);
+                                if (vp == NULL) {
+                                        goto BadTupleMember;
+                                }
+                                pushtarget(vp, v.items);
+                        } else {
+                                vm_panic("assignment to member of non-object");
+                        }
                         break;
                 CASE(TARGET_SUBSCRIPT)
                         subscript = top()[0];
@@ -1438,21 +1447,17 @@ Throw:
                                 push(NIL);
                                 break;
                         case VALUE_TUPLE:
-                                if (v.names == NULL) {
-                                        goto BadTupleMember;
+                                vp = tuple_get(&v, member);
+                                if (vp != NULL) {
+                                        push(*vp);
+                                        goto NextInstruction;
                                 }
-                                for (int i = 0; i < v.count; ++i) {
-                                        if (v.names[i] != NULL && strcmp(v.names[i], member) == 0) {
-                                                push(v.items[i]);
-                                                goto NextInstruction;
-                                        }
-                                }
-                        BadTupleMember:
                                 if (b) {
                                         // (1, 2).?z
                                         push(NIL);
-                                        break;
+                                        goto NextInstruction;
                                 }
+                        BadTupleMember:
                                 vm_panic(
                                         "attmpt to access non-existent field %s'%s'%s of %s%s%s",
                                         TERM(34),
