@@ -194,6 +194,7 @@
 { .module = "thread", .name = "create",            .value = BUILTIN(builtin_thread_create)                 },
 { .module = "thread", .name = "join",              .value = BUILTIN(builtin_thread_join)                   },
 { .module = "thread", .name = "mutex",             .value = BUILTIN(builtin_thread_mutex)                  },
+{ .module = "thread", .name = "destroyMutex",      .value = BUILTIN(builtin_thread_mutex_destroy)          },
 { .module = "thread", .name = "lock",              .value = BUILTIN(builtin_thread_lock)                   },
 { .module = "thread", .name = "unlock",            .value = BUILTIN(builtin_thread_unlock)                 },
 

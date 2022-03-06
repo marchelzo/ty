@@ -1449,6 +1449,18 @@ builtin_thread_mutex(int argc)
 }
 
 struct value
+builtin_thread_mutex_destroy(int argc)
+{
+        ASSERT_ARGC("thread.destroyMutex()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.destroyMutex() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_mutex_destroy(ARG(0).ptr));
+}
+
+struct value
 builtin_thread_lock(int argc)
 {
         ASSERT_ARGC("thread.lock()", 1);

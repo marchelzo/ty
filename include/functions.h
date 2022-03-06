@@ -256,6 +256,9 @@ struct value
 builtin_thread_mutex(int argc);
 
 struct value
+builtin_thread_mutex_destroy(int argc);
+
+struct value
 builtin_thread_join(int argc);
 
 struct value
