@@ -5,11 +5,14 @@
 #include <stdarg.h>
 #include <stdnoreturn.h>
 
+#include <pthread.h>
 #include <signal.h>
 
 #include "value.h"
 
 struct variable;
+
+extern pthread_t MainThread;
 
 enum instruction {
         INSTR_NOP,

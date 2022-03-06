@@ -152,6 +152,7 @@ static char const *filename;
 static char const *Error;
 
 pthread_t BuiltinRunner;
+pthread_t MainThread;
 
 MessageQueue q1;
 MessageQueue q2;
@@ -2366,6 +2367,8 @@ vm_init(int ac, char **av)
         vec_init(stack);
         vec_init(calls);
         vec_init(targets);
+
+        MainThread = pthread_self();
 
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
