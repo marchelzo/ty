@@ -197,6 +197,7 @@
 { .module = "thread", .name = "destroyMutex",      .value = BUILTIN(builtin_thread_mutex_destroy)          },
 { .module = "thread", .name = "lock",              .value = BUILTIN(builtin_thread_lock)                   },
 { .module = "thread", .name = "unlock",            .value = BUILTIN(builtin_thread_unlock)                 },
+{ .module = "thread", .name = "tryLock",           .value = BUILTIN(builtin_thread_trylock)                },
 
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },

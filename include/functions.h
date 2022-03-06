@@ -268,6 +268,9 @@ struct value
 builtin_thread_unlock(int argc);
 
 struct value
+builtin_thread_trylock(int argc);
+
+struct value
 builtin_os_pipe(int argc);
 
 struct value

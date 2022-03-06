@@ -1473,6 +1473,18 @@ builtin_thread_lock(int argc)
 }
 
 struct value
+builtin_thread_trylock(int argc)
+{
+        ASSERT_ARGC("thread.tryLock()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.tryLock() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_mutex_trylock(ARG(0).ptr));
+}
+
+struct value
 builtin_thread_unlock(int argc)
 {
         ASSERT_ARGC("thread.unlock()", 1);
