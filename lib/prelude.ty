@@ -143,7 +143,7 @@ class Function : Iter {
     }
 
     |>(f) {
-        x -> f(self(x))
+        (*xs) -> f(self(*xs))
     }
 
     __next__() {

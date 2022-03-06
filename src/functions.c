@@ -1503,8 +1503,8 @@ builtin_thread_create(int argc)
                 vm_panic("thread.create() expects at least one argument");
         }
 
-        if (ARG(0).type != VALUE_FUNCTION) {
-                vm_panic("non-function passed to thread.create(): %s", value_show(&ARG(0)));
+        if (!CALLABLE(ARG(0))) {
+                vm_panic("non-callable value passed to thread.create(): %s", value_show(&ARG(0)));
         }
 
         pthread_t p;
