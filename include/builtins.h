@@ -191,8 +191,11 @@
 #endif
 #endif
 
-{ .module = "thread", .name = "create",            .value = BUILTIN(builtin_os_thread)                     },
-{ .module = "thread", .name = "join",              .value = BUILTIN(builtin_os_join)                       },
+{ .module = "thread", .name = "create",            .value = BUILTIN(builtin_thread_create)                 },
+{ .module = "thread", .name = "join",              .value = BUILTIN(builtin_thread_join)                   },
+{ .module = "thread", .name = "mutex",             .value = BUILTIN(builtin_thread_mutex)                  },
+{ .module = "thread", .name = "lock",              .value = BUILTIN(builtin_thread_lock)                   },
+{ .module = "thread", .name = "unlock",            .value = BUILTIN(builtin_thread_unlock)                 },
 
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },

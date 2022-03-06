@@ -37,7 +37,7 @@
 #include "object.h"
 #include "class.h"
 
-static char buffer[1024 * 1024 * 4];
+static _Thread_local char buffer[1024 * 1024 * 4];
 
 #define ASSERT_ARGC(func, ac) \
         if (argc != (ac)) { \
@@ -1425,33 +1425,65 @@ threadstart(void *ctx)
 }
 
 struct value
-builtin_os_join(int argc)
+builtin_thread_join(int argc)
 {
         if (argc != 1) {
-                vm_panic("os.join() expects one argument but got %d", argc);
+                vm_panic("thread.join() expects one argument but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("non-pointer passed to os.join(): %s", value_show(&ARG(0)));
+                vm_panic("non-pointer passed to thread.join(): %s", value_show(&ARG(0)));
         }
 
-        pthread_join(*(pthread_t *)ARG(0).ptr, NULL);
+        pthread_join((pthread_t)ARG(0).ptr, NULL);
 
         return NIL;
 }
 
 struct value
-builtin_os_thread(int argc)
+builtin_thread_mutex(int argc)
+{
+        pthread_mutex_t *p = gc_alloc(sizeof *p);
+        pthread_mutex_init(p, NULL);
+        return PTR(p);
+}
+
+struct value
+builtin_thread_lock(int argc)
+{
+        ASSERT_ARGC("thread.lock()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.lock() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_mutex_lock(ARG(0).ptr));
+}
+
+struct value
+builtin_thread_unlock(int argc)
+{
+        ASSERT_ARGC("thread.unlock()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.unlock() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_mutex_unlock(ARG(0).ptr));
+}
+
+struct value
+builtin_thread_create(int argc)
 {
         if (argc == 0) {
-                vm_panic("os.thread() expects at least one argument");
+                vm_panic("thread.create() expects at least one argument");
         }
 
         if (ARG(0).type != VALUE_FUNCTION) {
-                vm_panic("non-function passed to os.thread(): %s", value_show(&ARG(0)));
+                vm_panic("non-function passed to thread.create(): %s", value_show(&ARG(0)));
         }
 
-        pthread_t *p = gc_alloc(sizeof *p);
+        pthread_t p;
         struct value *ctx = gc_alloc(sizeof (struct value[argc + 1]));
 
         for (int i = 0; i < argc; ++i) {
@@ -1460,9 +1492,9 @@ builtin_os_thread(int argc)
 
         ctx[argc] = NONE;
 
-        pthread_create(p, NULL, threadstart, ctx);
+        pthread_create(&p, NULL, threadstart, ctx);
 
-        return PTR(p);
+        return PTR((void *)p);
 }
 
 struct value

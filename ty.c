@@ -99,7 +99,7 @@ repl(void)
 }
 
 static char *
-clone(char const *s)
+strclone(char const *s)
 {
         char *new = malloc(strlen(s) + 1);
         strcpy(new, s);
@@ -109,7 +109,7 @@ clone(char const *s)
 char *
 completion_generator(char const *text, int state)
 {
-        return completions[state] ? clone(completions[state]) : NULL;
+        return completions[state] ? strclone(completions[state]) : NULL;
 }
 
 static char **

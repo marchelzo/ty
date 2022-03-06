@@ -250,10 +250,19 @@ struct value
 builtin_os_fork(int argc);
 
 struct value
-builtin_os_thread(int argc);
+builtin_thread_create(int argc);
 
 struct value
-builtin_os_join(int argc);
+builtin_thread_mutex(int argc);
+
+struct value
+builtin_thread_join(int argc);
+
+struct value
+builtin_thread_lock(int argc);
+
+struct value
+builtin_thread_unlock(int argc);
 
 struct value
 builtin_os_pipe(int argc);
