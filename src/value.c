@@ -791,6 +791,7 @@ _value_mark(struct value const *v)
         case VALUE_OBJECT:          object_mark(v->object);                            break;
         case VALUE_REF:             value_mark(v->ptr);                                break;
         case VALUE_BLOB:            MARK(v->blob);                                     break;
+        case VALUE_PTR:             if (v->gcptr != NULL) MARK(v->gcptr);              break;
         default:                                                                       break;
         }
 }

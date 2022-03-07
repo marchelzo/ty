@@ -26,7 +26,8 @@ struct value;
 #define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                               .tags = 0 })
 #define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                               .tags = 0 })
 #define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                            .tags = 0 })
-#define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),                               .tags = 0 })
+#define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,               .tags = 0 })
+#define GCPTR(p, gcp)            ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),              .tags = 0 })
 #define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                               .tags = 0 })
 #define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                               .tags = 0 })
 #define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,              .tags = 0 })
@@ -168,7 +169,10 @@ struct value {
                 struct dict *dict;
                 struct value (*builtin_function)(int);
                 struct blob *blob;
-                void *ptr;
+                struct {
+                        void *ptr;
+                        void *gcptr;
+                };
                 struct {
                         intmax_t integer;
                         char const *constant;

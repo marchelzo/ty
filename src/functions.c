@@ -1408,22 +1408,6 @@ builtin_os_spawn(int argc)
         }
 }
 
-static void *
-threadstart(void *ctx)
-{
-        struct value *call = ctx;
-
-        int argc = 0;
-
-        while (call[argc + 1].type != VALUE_NONE) {
-                vm_push(&call[++argc]);
-        }
-
-        vm_call(call, argc);
-
-        return NULL;
-}
-
 struct value
 builtin_thread_join(int argc)
 {
@@ -1443,9 +1427,83 @@ builtin_thread_join(int argc)
 struct value
 builtin_thread_mutex(int argc)
 {
-        pthread_mutex_t *p = gc_alloc(sizeof *p);
+        pthread_mutex_t *p = gc_alloc_object(sizeof *p, GC_ANY);
         pthread_mutex_init(p, NULL);
-        return PTR(p);
+        return GCPTR(p, p);
+}
+
+struct value
+builtin_thread_cond(int argc)
+{
+        pthread_cond_t *p = gc_alloc_object(sizeof *p, GC_ANY);
+        pthread_cond_init(p, NULL);
+        return GCPTR(p, p);
+}
+
+struct value
+builtin_thread_cond_wait(int argc)
+{
+        ASSERT_ARGC_2("thread.waitCond()", 2, 3);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.waitCond() expects a pointer as its first argument but got: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_PTR) {
+                vm_panic("thread.waitCond() expects a pointer as its second argument but got: %s", value_show(&ARG(1)));
+        }
+
+        if (argc == 2) {
+                return INTEGER(pthread_cond_wait(ARG(0).ptr, ARG(1).ptr));
+        }
+
+        if (ARG(2).type != VALUE_INTEGER) {
+                vm_panic("thread.waitCond() expects an integer as its third argument but got: %s", value_show(&ARG(2)));
+        }
+
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+
+        ts.tv_sec += ARG(2).integer / 1000000;
+        ts.tv_nsec += (ARG(2).integer % 1000000) * 1000;
+
+        return INTEGER(pthread_cond_timedwait(ARG(0).ptr, ARG(1).ptr, &ts));
+}
+
+struct value
+builtin_thread_cond_signal(int argc)
+{
+        ASSERT_ARGC("thread.signalCond()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.signalCond() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_cond_signal(ARG(0).ptr));
+}
+
+struct value
+builtin_thread_cond_broadcast(int argc)
+{
+        ASSERT_ARGC("thread.broadcastCond()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.broadcastCond() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_cond_broadcast(ARG(0).ptr));
+}
+
+struct value
+builtin_thread_cond_destroy(int argc)
+{
+        ASSERT_ARGC("thread.destroyCond()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.destroyCond() expects a pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_cond_destroy(ARG(0).ptr));
 }
 
 struct value
@@ -1516,7 +1574,7 @@ builtin_thread_create(int argc)
 
         ctx[argc] = NONE;
 
-        pthread_create(&p, NULL, threadstart, ctx);
+        pthread_create(&p, NULL, vm_run_thread, ctx);
 
         return PTR((void *)p);
 }

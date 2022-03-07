@@ -190,6 +190,9 @@ vm_panic(char const *fmt, ...);
 void
 vm_mark(void);
 
+void *
+vm_run_thread(void *);
+
 void
 vm_set_sigfn(int, struct value const *);
 

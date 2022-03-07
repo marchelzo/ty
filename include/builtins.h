@@ -198,6 +198,11 @@
 { .module = "thread", .name = "lock",              .value = BUILTIN(builtin_thread_lock)                   },
 { .module = "thread", .name = "unlock",            .value = BUILTIN(builtin_thread_unlock)                 },
 { .module = "thread", .name = "tryLock",           .value = BUILTIN(builtin_thread_trylock)                },
+{ .module = "thread", .name = "cond",              .value = BUILTIN(builtin_thread_cond)                   },
+{ .module = "thread", .name = "destroyCond",       .value = BUILTIN(builtin_thread_cond_destroy)           },
+{ .module = "thread", .name = "waitCond",          .value = BUILTIN(builtin_thread_cond_wait)              },
+{ .module = "thread", .name = "signalCond",        .value = BUILTIN(builtin_thread_cond_signal)            },
+{ .module = "thread", .name = "broadcastCond",     .value = BUILTIN(builtin_thread_cond_broadcast)         },
 
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },

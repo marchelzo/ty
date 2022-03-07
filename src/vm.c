@@ -409,6 +409,27 @@ call_co(struct value *v, int n)
         ip = v->gen->ip;
 }
 
+void *
+vm_run_thread(void *ctx)
+{
+        struct value *call = ctx;
+
+        int argc = 0;
+
+        while (call[argc + 1].type != VALUE_NONE) {
+                vm_push(&call[++argc]);
+        }
+
+        if (setjmp(jb) != 0) {
+                // TODO: do something useful here
+        } else {
+                vm_call(call, argc);
+        }
+
+        return NULL;
+}
+
+
 void
 vm_del_sigfn(int sig)
 {
@@ -2598,7 +2619,6 @@ vm_pop(void)
 struct value *
 vm_get(int i)
 {
-        //return builtin_argv - i;
         return top() - i;
 }
 

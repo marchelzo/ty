@@ -271,6 +271,21 @@ struct value
 builtin_thread_trylock(int argc);
 
 struct value
+builtin_thread_cond(int argc);
+
+struct value
+builtin_thread_cond_destroy(int argc);
+
+struct value
+builtin_thread_cond_broadcast(int argc);
+
+struct value
+builtin_thread_cond_signal(int argc);
+
+struct value
+builtin_thread_cond_wait(int argc);
+
+struct value
 builtin_os_pipe(int argc);
 
 struct value
