@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <setjmp.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <stdnoreturn.h>
 
@@ -69,6 +70,9 @@
         push(TAG(tags_lookup("MatchError"))); \
         goto Throw;
 
+#define TID ((unsigned long long)pthread_self())
+#define GCLOG LOG
+
 static char halt = INSTR_HALT;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
@@ -122,8 +126,9 @@ typedef vec(char *) CallStack;
 typedef vec(size_t) SPStack;
 typedef vec(struct target) TargetStack;
 typedef vec(struct try) TryStack;
+typedef vec(struct sigfn) SigfnStack;
 
-static _Thread_local vec(struct sigfn) sigfns;
+static _Thread_local SigfnStack sigfns;
 static _Thread_local ValueStack stack;
 static _Thread_local CallStack calls;
 static _Thread_local FrameStack frames;
@@ -144,6 +149,17 @@ typedef struct {
         bool waiting;
 } TyThread;
 
+typedef struct {
+        ValueStack *stack;
+        FrameStack *frames;
+        TargetStack *targets;
+        ValueStack *defer_stack;
+        SigfnStack *sigfns;
+        void *root_set;
+        AllocList *allocs;
+        size_t *MemoryUsed;
+} ThreadStorage;
+
 static vec(TyThread) Threads;
 static int ThreadIndex;
 
@@ -156,6 +172,182 @@ pthread_t MainThread;
 
 MessageQueue q1;
 MessageQueue q2;
+
+static vec(pthread_t) ThreadList;
+static vec(pthread_mutex_t *) ThreadLocks;
+static vec(pthread_cond_t *) ThreadConds;
+static vec(ThreadStorage) ThreadStorages;
+static vec(bool) ThreadStates;
+
+static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
+_Thread_local pthread_mutex_t *MyLock;
+static _Thread_local pthread_cond_t *MyCond;
+static _Thread_local ThreadStorage MyStorage;
+static _Atomic bool WantGC;
+
+static pthread_cond_t GCNext = PTHREAD_COND_INITIALIZER;
+
+static pthread_barrier_t GCBarrierStart;
+static pthread_barrier_t GCBarrierMark;
+static pthread_barrier_t GCBarrierSweep;
+static pthread_barrier_t GCBarrierDone;
+
+void
+MarkStorage(ThreadStorage const *storage);
+
+static void
+LockThreads(int *threads, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                pthread_mutex_lock(ThreadLocks.items[threads[i]]);
+        }
+}
+
+static void
+UnlockThreads(int *threads, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                pthread_mutex_unlock(ThreadLocks.items[threads[i]]);
+        }
+}
+
+void
+SetState(bool blocking)
+{
+        for (int i = 0; i < ThreadList.count; ++i) {
+                if (pthread_equal(pthread_self(), ThreadList.items[i])) {
+                        ThreadStates.items[i] = blocking;
+                }
+        }
+}
+
+static void WaitGC()
+{
+        GCLOG("Waiting for GC on thread %llu", TID);
+
+        SetState(false);
+        pthread_cond_wait(&GCNext, MyLock);
+
+        GCLOG("Waiting to mark: %llu", TID);
+        pthread_barrier_wait(&GCBarrierStart);
+        GCLOG("Marking: %llu", TID);
+        MarkStorage(&MyStorage);
+
+        GCLOG("Waiting to sweep: %llu", TID);
+        pthread_barrier_wait(&GCBarrierMark);
+        GCLOG("Sweeping: %llu", TID);
+        GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
+
+        GCLOG("Waiting to continue execution: %llu", TID);
+        pthread_barrier_wait(&GCBarrierSweep);
+        GCLOG("Continuing execution: %llu", TID);
+}
+
+static void CheckGC()
+{
+        if (atomic_load(&WantGC)) {
+                WaitGC();
+        }
+}
+
+void DoGC()
+{
+        GCLOG("Trying to do GC on thread %llu", (long long unsigned)pthread_self());
+
+        if (pthread_mutex_trylock(&GCLock) != 0) {
+                GCLOG("Couldn't take GC lock: calling CheckGC() on thread %llu", TID);
+                return;
+        }
+
+        pthread_mutex_lock(&ThreadsLock);
+
+        GCLOG("Took threads lock on thread %llu", TID);
+
+        static int *blockedThreads;
+        static int *runningThreads;
+
+        if (blockedThreads == NULL) {
+                blockedThreads = malloc(4096 * sizeof *blockedThreads);
+                runningThreads = malloc(4096 * sizeof *runningThreads);
+                if (blockedThreads == NULL) abort();
+        }
+
+        int nBlocked = 0;
+        int nRunning = 0;
+
+        pthread_t me = pthread_self();
+
+        for (int i = 0; i < ThreadList.count; ++i) {
+                if (pthread_equal(me, ThreadList.items[i])) {
+                        continue;
+                }
+                pthread_mutex_lock(ThreadLocks.items[i]);
+                if (ThreadStates.items[i]) {
+                        GCLOG("Thread %llu is blocked", (long long unsigned)ThreadList.items[i]);
+                        blockedThreads[nBlocked++] = i;
+                } else {
+                        GCLOG("Thread %llu is running", (long long unsigned)ThreadList.items[i]);
+                        runningThreads[nRunning++] = i;
+                }
+        }
+
+        GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
+
+        GCLOG("Storing true in WantGC on thread %llu", TID);
+        atomic_store(&WantGC, true);
+
+        pthread_barrier_init(&GCBarrierStart, NULL, nRunning + 1);
+        pthread_barrier_init(&GCBarrierMark, NULL, nRunning + 1);
+        pthread_barrier_init(&GCBarrierSweep, NULL, nRunning + 1);
+        pthread_barrier_init(&GCBarrierDone, NULL, nRunning + 1);
+
+        pthread_cond_broadcast(&GCNext);
+
+        UnlockThreads(runningThreads, nRunning);
+
+        pthread_barrier_wait(&GCBarrierStart);
+
+        for (int i = 0; i < nBlocked; ++i) {
+                // mark
+                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)ThreadList.items[blockedThreads[i]], TID);
+                MarkStorage(&ThreadStorages.items[blockedThreads[i]]);
+        }
+
+        GCLOG("Marking own storage on thread %llu", TID);
+        MarkStorage(&MyStorage);
+
+        for (int i = 0; i < Globals.count; ++i) {
+                value_mark(&Globals.items[i]);
+        }
+
+        pthread_barrier_wait(&GCBarrierMark);
+
+        for (int i = 0; i < nBlocked; ++i) {
+                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)ThreadList.items[blockedThreads[i]], TID);
+                GCSweep(
+                        ThreadStorages.items[blockedThreads[i]].allocs,
+                        ThreadStorages.items[blockedThreads[i]].MemoryUsed
+                );
+        }
+
+        GCLOG("Sweeping own storage on thread %llu", TID);
+        GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
+
+        GCLOG("Storing false in WantGC on thread %llu", TID);
+        atomic_store(&WantGC, false);
+
+        pthread_barrier_wait(&GCBarrierSweep);
+
+        UnlockThreads(blockedThreads, nBlocked);
+
+        GCLOG("Unlocking ThreadsLock and GCLock on thread %llu", TID);
+
+        pthread_mutex_unlock(&ThreadsLock);
+        pthread_mutex_unlock(&GCLock);
+
+        GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
+}
 
 static struct {
         char const *module;
@@ -409,12 +601,100 @@ call_co(struct value *v, int n)
         ip = v->gen->ip;
 }
 
+void
+TakeLock(void)
+{
+        pthread_mutex_lock(MyLock);
+}
+
+void
+ReleaseLock(bool blocked)
+{
+        SetState(blocked);
+        pthread_mutex_unlock(MyLock);
+}
+
+void
+NewThread(pthread_t *thread, struct value *ctx)
+{
+        pthread_create(thread, NULL, vm_run_thread, ctx);
+}
+
+static void
+AddThread(void)
+{
+        GCLOG("AddThread(): %llu: taking lock", (long long unsigned)pthread_self());
+
+        pthread_mutex_lock(&ThreadsLock);
+
+        GCLOG("AddThread(): %llu: took lock", (long long unsigned)pthread_self());
+
+        GC_ENABLED = false;
+
+        vec_push(ThreadList, pthread_self());
+
+        MyLock = malloc(sizeof *MyLock);
+        pthread_mutex_init(MyLock, NULL);
+        pthread_mutex_lock(MyLock);
+        vec_push(ThreadLocks, MyLock);
+
+        MyCond = malloc(sizeof *MyCond);
+        pthread_cond_init(MyCond, NULL);
+        vec_push(ThreadConds, MyCond);
+
+        MyStorage = (ThreadStorage) {
+                .stack = &stack,
+                .frames = &frames,
+                .defer_stack = &defer_stack,
+                .sigfns = &sigfns,
+                .targets = &targets,
+                .root_set = GCRootSet(),
+                .allocs = &allocs,
+                .MemoryUsed = &MemoryUsed
+        };
+
+        vec_push(ThreadStorages, MyStorage);
+
+        vec_push(ThreadStates, false);
+
+        GC_ENABLED = true;
+
+        pthread_mutex_unlock(&ThreadsLock);
+
+        GCLOG("AddThread(): %llu: finished", (long long unsigned)pthread_self());
+}
+
+static void
+CleanupThread(void *ctx)
+{
+        GCLOG("Cleaning up thread: %llu", (long long unsigned)pthread_self());
+        pthread_mutex_lock(&ThreadsLock);
+
+        for (int i = 0; i < ThreadList.count; ++i) {
+                if (pthread_equal(ThreadList.items[i], pthread_self())) {
+                        pthread_mutex_destroy(ThreadLocks.items[i]);
+                        ThreadList.items[i] = *vec_pop(ThreadList);
+                        ThreadLocks.items[i] = *vec_pop(ThreadLocks);
+                        ThreadStorages.items[i] = *vec_pop(ThreadStorages);
+                        ThreadStates.items[i] = *vec_pop(ThreadStates);
+                }
+        }
+
+        pthread_mutex_unlock(&ThreadsLock);
+}
+
 void *
 vm_run_thread(void *ctx)
 {
         struct value *call = ctx;
 
         int argc = 0;
+
+        GCLOG("New thread: %llu", (long long unsigned)pthread_self());
+
+        AddThread();
+
+        pthread_cleanup_push(CleanupThread, NULL);
 
         while (call[argc + 1].type != VALUE_NONE) {
                 vm_push(&call[++argc]);
@@ -425,6 +705,8 @@ vm_run_thread(void *ctx)
         } else {
                 vm_call(call, argc);
         }
+
+        pthread_cleanup_pop(1);
 
         return NULL;
 }
@@ -513,7 +795,8 @@ vm_exec(char *code)
 
 
         for (;;) {
-        for (int N = 0; N < 512; ++N) {
+        CheckGC();
+        for (int N = 0; N < 1; ++N) {
         NextInstruction:
                 switch ((unsigned char)*ip++) {
                 CASE(NOP)
@@ -918,8 +1201,6 @@ Throw:
                         ip += strlen(str) + 1;
                         READVALUE(n);
 
-                        printf("Looking for '%s'\n", str);
-
                         if (top()->type != VALUE_TUPLE || top()->names == NULL) {
                                 ip += n;
                                 break;
@@ -927,7 +1208,6 @@ Throw:
 
                         for (int i = 0; i < top()->count; ++i) {
                                 if (top()->names[i] != NULL && strcmp(top()->names[i], str) == 0) {
-                                        printf("Found it: %s\n", value_show(top()->items + i));
                                         push(top()->items[i]);
                                         goto NextInstruction;
                                 }
@@ -2385,11 +2665,15 @@ vm_error(void)
 bool
 vm_init(int ac, char **av)
 {
+        GC_ENABLED = false;
+
         vec_init(stack);
         vec_init(calls);
         vec_init(targets);
 
         MainThread = pthread_self();
+
+        atomic_init(&WantGC, false);
 
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
@@ -2419,6 +2703,10 @@ vm_init(int ac, char **av)
 
         queue_init(&q1);
         queue_init(&q2);
+
+        AddThread();
+
+        GC_ENABLED = true;
 
 //        int e;
 //        if (e = pthread_create(&BuiltinRunner, NULL, run_builtin_thread, NULL), e != 0) {
@@ -2744,6 +3032,42 @@ vm_eval_function(struct value const *f, ...)
                 return r;
         default:
                 abort();
+        }
+}
+
+void
+MarkStorage(ThreadStorage const *storage)
+{
+        vec(struct value const *) *root_set = storage->root_set;
+
+        for (int i = 0; i < root_set->count; ++i) {
+                value_mark(root_set->items[i]);
+        }
+
+        for (int i = 0; i < storage->stack->count; ++i) {
+                value_mark(&storage->stack->items[i]);
+        }
+
+        for (int i = 0; i < storage->defer_stack->count; ++i) {
+                value_mark(&storage->defer_stack->items[i]);
+        }
+
+        for (int i = 0; i < storage->targets->count; ++i) {
+                value_mark(storage->targets->items[i].t);
+        }
+
+        for (int i = 0; i < storage->sigfns->count; ++i) {
+                value_mark(&storage->sigfns->items[i].f);
+        }
+
+        for (int i = 0; i < storage->frames->count; ++i) {
+                value_mark(&storage->frames->items[i].f);
+        }
+
+        for (int i = 0; i < storage->allocs->count; ++i) {
+                if (storage->allocs->items[i]->mark == GC_NONE && storage->allocs->items[i]->type == GC_OBJECT) {
+                        value_mark(&((struct table *)storage->allocs->items[i]->data)->finalizer);
+                }
         }
 }
 

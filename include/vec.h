@@ -7,7 +7,6 @@ gc_resize(void *p, size_t n);
 #include "gc.h"
 #include "alloc.h"
 
-
 #define vec(T) \
         struct { \
                 T *items; \

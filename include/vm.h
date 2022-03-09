@@ -190,8 +190,14 @@ vm_panic(char const *fmt, ...);
 void
 vm_mark(void);
 
+void
+DoGC(void);
+
 void *
 vm_run_thread(void *);
+
+void
+NewThread(pthread_t *thread, struct value *ctx);
 
 void
 vm_set_sigfn(int, struct value const *);
@@ -228,5 +234,13 @@ vm_eval_function(struct value const *f, ...);
 
 void
 vm_load_c_module(char const *name, void *p);
+
+extern _Thread_local pthread_mutex_t *MyLock;
+
+void
+TakeLock(void);
+
+void
+ReleaseLock(bool blocked);
 
 #endif

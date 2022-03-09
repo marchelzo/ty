@@ -38,6 +38,39 @@ collect(struct alloc *a)
 }
 
 void
+GCMark(void)
+{
+        vm_mark();
+
+        for (int i = 0; i < RootSet.count; ++i)
+                value_mark(RootSet.items[i]);
+
+        for (int i = 0; i < allocs.count; ++i) {
+                if (allocs.items[i]->mark == GC_NONE && allocs.items[i]->type == GC_OBJECT) {
+                        value_mark(&((struct table *)allocs.items[i]->data)->finalizer);
+                }
+        }
+}
+
+void
+GCSweep(AllocList *allocs, size_t *used)
+{
+        int n = 0;
+        for (int i = 0; i < allocs->count; ++i) {
+                if (allocs->items[i]->mark == GC_NONE && atomic_load(&allocs->items[i]->hard) == 0) {
+                        *used -= min(allocs->items[i]->size, *used);
+                        collect(allocs->items[i]);
+                        free(allocs->items[i]);
+                } else {
+                        allocs->items[i]->mark &= ~GC_MARK;
+                        allocs->items[n++] = allocs->items[i];
+                }
+        }
+
+        allocs->count = n;
+}
+
+void
 gc(void)
 {
         if (!GC_ENABLED) {
@@ -47,6 +80,12 @@ gc(void)
         LOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
 
         GC_ENABLED = false;
+
+        DoGC();
+
+        GC_ENABLED = true;
+
+        return;
 
         vm_mark();
 
@@ -122,4 +161,9 @@ size_t
 gc_root_set_count(void)
 {
         return RootSet.count;
+}
+
+void *GCRootSet(void)
+{
+        return &RootSet;
 }

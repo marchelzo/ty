@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 #include "vec.h"
 #include "log.h"
@@ -17,8 +18,12 @@
 #define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
 #define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
 #define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
+
 #define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
 #define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
+
+#define NOGC(v)   atomic_fetch_add(&(ALLOC_OF(v))->hard, 1)
+#define OKGC(v)   atomic_fetch_sub(&(ALLOC_OF(v))->hard, 1)
 
 #define GC_INITIAL_LIMIT (1ULL << 18)
 
@@ -35,6 +40,7 @@ struct alloc {
                 struct {
                         char type;
                         char mark;
+                        _Atomic uint16_t hard;
                         uint32_t size;
                 };
                 void const * restrict padding;
@@ -95,6 +101,9 @@ CheckUsed(void)
                 gc();
                 LOG("gc() returned: %zu MB still in use", MemoryUsed / 1000000);
                 while ((MemoryUsed << 1) > MemoryLimit) {
+                        if (MemoryLimit == 0) {
+                                MemoryLimit = GC_INITIAL_LIMIT;
+                        }
                         MemoryLimit <<= 1;
                         LOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
                 }
@@ -115,6 +124,7 @@ gc_alloc(size_t n)
         a->size = n;
         a->mark = GC_HARD;
         a->type = GC_ANY;
+        atomic_init(&a->hard, 0);
 
         return a->data;
 }
@@ -136,6 +146,7 @@ gc_alloc_object(size_t n, char type)
         a->mark = GC_NONE;
         a->type = type;
         a->size = n;
+        atomic_init(&a->hard, 0);
 
         vec_push_unchecked(allocs, a);
 
@@ -170,7 +181,11 @@ gc_free(void *p)
 {
         if (p != NULL) {
                 struct alloc *a = ALLOC_OF(p);
-                MemoryUsed -= a->size;
+                if (a->size >= MemoryUsed) {
+                        MemoryUsed = 0;
+                } else {
+                        MemoryUsed -= a->size;
+                }
                 free(a);
         }
 }
@@ -181,7 +196,11 @@ gc_resize(void *p, size_t n) {
 
         if (p != NULL) {
                 a = ALLOC_OF(p);
-                MemoryUsed -= a->size;
+                if (a->size >= MemoryUsed) {
+                        MemoryUsed = 0;
+                } else {
+                        MemoryUsed -= a->size;
+                }
         } else {
                 a = NULL;
         }
@@ -219,5 +238,10 @@ gc_enable(void)
 {
         GC_ENABLED = true;
 }
+
+void GCMark(void);
+void GCSweep(AllocList *allocs, size_t *used);
+
+void *GCRootSet(void);
 
 #endif

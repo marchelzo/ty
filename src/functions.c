@@ -132,9 +132,13 @@ builtin_slurp(int argc)
                 vec(char) s = {0};
                 int r;
 
+                ReleaseLock(true);
+
                 while (!feof(f) && (r = fread(buffer, 1, sizeof buffer, f)) > 0) {
                         vec_push_n(s, buffer, r);
                 }
+
+                TakeLock();
 
                 struct value str = STRING_CLONE(s.items, s.count);
                 vec_empty(s);
@@ -168,9 +172,13 @@ builtin_read(int argc)
         static _Thread_local vec(char) input;
         input.count = 0;
 
+        ReleaseLock(true);
+
         int c;
         while (c = getchar(), c != EOF && c != '\n')
                 vec_push(input, c);
+
+        TakeLock();
 
         if (input.count == 0 && c != '\n')
                 return NIL;
@@ -1243,7 +1251,9 @@ builtin_os_read(int argc)
 
         vec_reserve(*blob.blob, blob.blob->count + n.integer);
 
+        ReleaseLock(true);
         ssize_t nr = read(file.integer, blob.blob->items + blob.blob->count, n.integer);
+        TakeLock();
 
         if (nr != -1)
                 blob.blob->count += nr;
@@ -1269,6 +1279,8 @@ builtin_os_write(int argc)
 
         ssize_t n;
 
+        ReleaseLock(true);
+
         switch (data.type) {
         case VALUE_BLOB:
                 n = write(file.integer, (void *)data.blob->items, data.blob->count);
@@ -1282,6 +1294,8 @@ builtin_os_write(int argc)
         default:
                 vm_panic("invalid argument to os.write()");
         }
+
+        TakeLock();
 
         return INTEGER(n);
 }
@@ -1453,21 +1467,29 @@ builtin_thread_cond_wait(int argc)
                 vm_panic("thread.waitCond() expects a pointer as its second argument but got: %s", value_show(&ARG(1)));
         }
 
+        int r;
+
+        ReleaseLock(true);
+
         if (argc == 2) {
-                return INTEGER(pthread_cond_wait(ARG(0).ptr, ARG(1).ptr));
+                r = pthread_cond_wait(ARG(0).ptr, ARG(1).ptr);
+        } else {
+                if (ARG(2).type != VALUE_INTEGER) {
+                        vm_panic("thread.waitCond() expects an integer as its third argument but got: %s", value_show(&ARG(2)));
+                }
+
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+
+                ts.tv_sec += ARG(2).integer / 1000000;
+                ts.tv_nsec += (ARG(2).integer % 1000000) * 1000;
+
+                r = pthread_cond_timedwait(ARG(0).ptr, ARG(1).ptr, &ts);
         }
 
-        if (ARG(2).type != VALUE_INTEGER) {
-                vm_panic("thread.waitCond() expects an integer as its third argument but got: %s", value_show(&ARG(2)));
-        }
+        TakeLock();
 
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
-
-        ts.tv_sec += ARG(2).integer / 1000000;
-        ts.tv_nsec += (ARG(2).integer % 1000000) * 1000;
-
-        return INTEGER(pthread_cond_timedwait(ARG(0).ptr, ARG(1).ptr, &ts));
+        return INTEGER(r);
 }
 
 struct value
@@ -1527,7 +1549,11 @@ builtin_thread_lock(int argc)
                 vm_panic("thread.lock() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_mutex_lock(ARG(0).ptr));
+        ReleaseLock(true);
+        int r = pthread_mutex_lock(ARG(0).ptr);
+        TakeLock();
+
+        return INTEGER(r);
 }
 
 struct value
@@ -1574,7 +1600,7 @@ builtin_thread_create(int argc)
 
         ctx[argc] = NONE;
 
-        pthread_create(&p, NULL, vm_run_thread, ctx);
+        NewThread(&p, ctx);
 
         return PTR((void *)p);
 }
@@ -1995,7 +2021,9 @@ builtin_os_recvfrom(int argc)
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
+        ReleaseLock(true);
         ssize_t r = recvfrom(fd.integer, buffer.blob->items, size.integer, flags.integer, (void *)&addr, &addr_size);
+        TakeLock();
         if (r < 0) {
                 OKGC(buffer.blob);
                 return NIL;
@@ -2039,7 +2067,9 @@ builtin_os_sendto(int argc)
         if (addr.type != VALUE_BLOB)
                 vm_panic("the fourth argument to os.sendto() must be a blob (sockaddr)");
 
+        ReleaseLock(true);
         ssize_t r = sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count);
+        TakeLock();
 
         return r < 0 ? NIL : INTEGER(r);
 }
@@ -2080,7 +2110,10 @@ builtin_os_poll(int argc)
 
         pfds.count = fds.array->count;
 
+        ReleaseLock(true);
         int ret = poll(pfds.items, pfds.count, timeout.integer);
+        TakeLock();
+
         if (ret <= 0)
                 return INTEGER(ret);
 
@@ -2144,7 +2177,10 @@ builtin_os_epoll_wait(int argc)
                 vm_panic("the second argument to os.epoll_wait() must be an integer (timeout in ms)");
 
         struct epoll_event events[16];
+
+        ReleaseLock(true);
         int n = epoll_wait(efd.integer, events, 16, timeout.integer);
+        TakeLock();
 
         if (n == -1)
                 return NIL;
@@ -2857,9 +2893,12 @@ builtin_stdio_read_signed(int argc)
         char b[sizeof (intmax_t)];
         int n = min(sizeof b, size);
 
+        ReleaseLock(true);
         if (fread(b, n, 1, fp) != 1) {
+                TakeLock();
                 return NIL;
         }
+        TakeLock();
 
         switch (size) {
         case (sizeof (char)):      return INTEGER(*(char *)b);
@@ -2912,9 +2951,13 @@ builtin_stdio_read_double(int argc)
         double x;
         FILE *fp = f.ptr;
 
+        ReleaseLock(true);
+
         if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
+                TakeLock();
                 return REAL(x);
         } else {
+                TakeLock();
                 return NIL;
         }
 }
@@ -2931,9 +2974,13 @@ builtin_stdio_read_float(int argc)
         float x;
         FILE *fp = f.ptr;
 
+        ReleaseLock(true);
+
         if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
+                TakeLock();
                 return REAL(x);
         } else {
+                TakeLock();
                 return NIL;
         }
 }
@@ -2968,12 +3015,14 @@ builtin_stdio_fread(int argc)
 
         FILE *fp = f.ptr;
         intmax_t bytes = 0;
-
         int c;
+
+        ReleaseLock(true);
         while (b->count < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
                 vec_push(*b, c);
                 bytes += 1;
         }
+        TakeLock();
 
         OKGC(b);
 
@@ -3000,11 +3049,13 @@ builtin_stdio_slurp(int argc)
                 vm_panic("the argument to stdio.slurp() must be a pointer");
 
         FILE *fp = f.ptr;
-
         int c;
+
+        ReleaseLock(true);
         while ((c = fgetc_unlocked(fp)) != EOF) {
                 vec_push(b, c);
         }
+        TakeLock();
 
         if (c == EOF && b.count == 0)
                 return NIL;
@@ -3025,7 +3076,9 @@ builtin_stdio_fgetc(int argc)
         if (f.type != VALUE_PTR)
                 vm_panic("the argument to stdio.fgetc() must be a pointer");
 
+        ReleaseLock(true);
         int c = fgetc_unlocked(f.ptr);
+        TakeLock();
 
         if (c == EOF)
                 return NIL;
