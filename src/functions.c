@@ -1433,7 +1433,9 @@ builtin_thread_join(int argc)
                 vm_panic("non-pointer passed to thread.join(): %s", value_show(&ARG(0)));
         }
 
+        ReleaseLock(true);
         pthread_join((pthread_t)ARG(0).ptr, NULL);
+        TakeLock();
 
         return NIL;
 }
@@ -1964,7 +1966,9 @@ builtin_os_accept(int argc)
         struct sockaddr a;
         socklen_t n = sizeof a;
 
+        ReleaseLock(true);
         int r = accept(sockfd.integer, &a, &n);
+        TakeLock();
         if (r == -1)
                 return NIL;
 
