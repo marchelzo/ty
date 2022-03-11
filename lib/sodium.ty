@@ -77,16 +77,14 @@ let default_alg = crypto_pwhash_alg_default()
 let buf = c.alloc(str_bytes)
 
 function hash(pass: String) {
-  let r = crypto_pwhash_str(
+  match crypto_pwhash_str(
     buf,
     pass, pass.size(),
     interactive_ops,
     interactive_mem
-  )
-
-  match r {
+  ) {
     -1 => nil,
-     0 => Blob(c.str(buf)).str()
+     0 => c.str(buf, str_bytes)
   }
 }
 

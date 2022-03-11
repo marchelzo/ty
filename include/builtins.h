@@ -462,6 +462,8 @@
 {.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},
 {.module = "ffi", .name = "str", .value = BUILTIN(cffi_str)},
 {.module = "ffi", .name = "blob", .value = BUILTIN(cffi_blob)},
+{.module = "ffi", .name = "clone", .value = BUILTIN(cffi_clone)},
+{.module = "ffi", .name = "as_str", .value = BUILTIN(cffi_as_str)},
 
 #include "ioctl_constants.h"
 

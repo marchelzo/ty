@@ -18,6 +18,12 @@ struct value
 cffi_alloc(int argc);
 
 struct value
+cffi_clone(int argc);
+
+struct value
+cffi_as_str(int argc);
+
+struct value
 cffi_free(int argc);
 
 struct value

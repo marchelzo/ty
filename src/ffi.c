@@ -424,17 +424,68 @@ cffi_blob(int argc)
 }
 
 struct value
+cffi_clone(int argc)
+{
+        if (argc != 2) {
+                vm_panic("ffi.clone() expects 2 arguments but got %d", argc);
+        }
+
+        void *p;
+        store(&ffi_type_pointer, &p, &ARG(0));
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("the second argument to ffi.clone() must be an integer");
+        }
+
+        size_t n = ARG(1).integer;
+        void *clone = gc_alloc_object(n, GC_NONE);
+
+        memcpy(clone, p, n);
+
+
+        return PTR(clone);
+}
+
+struct value
 cffi_str(int argc)
 {
-        if (argc != 1) {
-                vm_panic("ffi.str() expects 1 argument but got %d", argc);
+        if (argc != 2) {
+                vm_panic("ffi.str() expects 2 arguments but got %d", argc);
+        }
+
+        void *p;
+        store(&ffi_type_pointer, &p, &ARG(0));
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("the second argument to ffi.str() must be an integer");
+        }
+
+        size_t n = ARG(1).integer;
+        char *gcstr = value_string_clone(p, n);
+
+        return STRING(gcstr, n);
+}
+
+struct value
+cffi_as_str(int argc)
+{
+        if (argc != 1 && argc != 2) {
+                vm_panic("ffi.as_str() expects 1 or 2 arguments but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("the argument to ffi.str() must be a pointer");
+                vm_panic("the first argument to ffi.as_str() must be a pointer");
         }
 
-        int n = strlen(ARG(0).ptr);
+        size_t n;
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("the second argument to ffi.as_str() must be an integer");
+                }
+                n = ARG(1).integer;
+        } else {
+                n = strlen(ARG(0).ptr);
+        }
 
         return STRING_NOGC(ARG(0).ptr, n);
 }
