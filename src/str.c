@@ -1114,6 +1114,15 @@ string_cstr(struct value *string, int argc)
         return STRING_CLONE_NUL(string->string, string->bytes);
 }
 
+static struct value
+string_ptr(struct value *string, int argc)
+{
+        if (argc != 0)
+                vm_panic("String.ptr() expects 0 arguments but got %d", argc);
+
+        return PTR((void *)string->string);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "byte",      .func = string_byte      },
         { .name = "bytes",     .func = string_bytes     },
@@ -1131,6 +1140,7 @@ DEFINE_METHOD_TABLE(
         { .name = "matches",   .func = string_matches   },
         { .name = "padLeft",   .func = string_pad_left  },
         { .name = "padRight",  .func = string_pad_right },
+        { .name = "ptr",       .func = string_ptr       },
         { .name = "replace",   .func = string_replace   },
         { .name = "search",    .func = string_search    },
         { .name = "size",      .func = string_size      },
