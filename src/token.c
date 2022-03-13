@@ -42,6 +42,7 @@ static struct {
         { "finally",   KEYWORD_FINALLY   },
         { "throw",     KEYWORD_THROW     },
         { "defer",     KEYWORD_DEFER     },
+        { "with",      KEYWORD_WITH      },
         { "operator",  KEYWORD_OPERATOR  },
         { "yield",     KEYWORD_YIELD     },
         { "Next",      KEYWORD_NEXT      },

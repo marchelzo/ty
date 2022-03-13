@@ -1050,6 +1050,19 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 state.implicit_func = implicit_func;
 
                 break;
+        case EXPRESSION_WITH:
+                subscope = scope_new(scope, false);
+                symbolize_statement(subscope, e->with.let);
+                for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                        for (struct symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
+                                // Make sure it's not a tmpsymbol() symbol
+                                if (!isdigit(sym->identifier[0])) {
+                                        vec_push(e->with.block->statements.items[1]->try.finally->drop, sym);
+                                }
+                        }
+                }
+                symbolize_statement(subscope, e->with.block->statements.items[1]);
+                break;
         case EXPRESSION_YIELD:
                 if (state.func->ftype == FT_FUNC) {
                         fail("yield expression cannot appear outside of generator context");
@@ -1736,6 +1749,12 @@ emit_throw(struct statement const *s)
         add_location(&((struct expression){ .start = s->start, .end = s->end }), start, state.code.count);
 
         return true;
+}
+
+static void
+emit_with(struct expression const *e)
+{
+        emit_statement(e->with.block, true);
 }
 
 static void
@@ -3414,6 +3433,9 @@ emit_expr(struct expression const *e, bool need_loc)
                         emit_string(e->method_kws.items[i - 1]);
                 }
                 break;
+        case EXPRESSION_WITH:
+                emit_with(e);
+                break;
         case EXPRESSION_YIELD:
                 emit_yield(e);
                 break;
@@ -3769,6 +3791,17 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_instr(INSTR_JUMP);
                 vec_push(state.continues, state.code.count);
                 emit_int(0);
+                break;
+        case STATEMENT_DROP:
+                for (int i = 0; i < s->drop.count; ++i) {
+                        emit_load(s->drop.items[i], state.fscope);
+                        emit_instr(INSTR_TRY_CALL_METHOD);
+                        emit_int(0);
+                        emit_string("__drop__");
+                        emit_ulong(strhash("__drop__"));
+                        emit_int(0);
+                        emit_instr(INSTR_POP);
+                }
                 break;
         case STATEMENT_DEFER:
                 emit_expression(s->expression);

@@ -55,6 +55,7 @@ struct statement {
                 STATEMENT_DEFER,
                 STATEMENT_CLEANUP,
                 STATEMENT_TRY_CLEAN,
+                STATEMENT_DROP,
                 STATEMENT_BLOCK,
                 STATEMENT_HALT,
                 STATEMENT_NULL,
@@ -70,6 +71,7 @@ struct statement {
                 vec(struct statement *) statements;
                 vec(struct expression *) returns;
                 vec(char *) exports;
+                vec(struct symbol *) drop;
                 struct {
                         char *module;
                         char *as;
@@ -156,6 +158,7 @@ struct expression {
 
                 EXPRESSION_KEEP_LOC,
 
+                EXPRESSION_WITH,
                 EXPRESSION_YIELD,
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_SPREAD,
@@ -227,6 +230,10 @@ struct expression {
                                 struct expression *cond;
                         } compr;
                 };
+                struct {
+                        struct statement *let;
+                        struct statement *block;
+                } with;
                 struct {
                         struct symbol *ltmp;
                         bool only_identifiers;

@@ -982,6 +982,38 @@ parse_pattern(void)
 }
 
 static struct expression *
+prefix_with(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_WITH;
+
+        tok()->keyword = KEYWORD_LET;
+
+        e->with.let = parse_let_definition();
+
+        struct statement *try = mkstmt();
+        try->type = STATEMENT_TRY;
+        vec_init(try->try.patterns);
+        vec_init(try->try.handlers);
+        try->try.s = parse_statement(0);
+
+        try->try.finally = mkstmt();
+        try->try.finally->type = STATEMENT_DROP;
+        vec_init(try->try.finally->drop);
+
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_BLOCK;
+        vec_init(s->statements);
+        vec_push(s->statements, e->with.let);
+        vec_push(s->statements, try);
+        e->with.block = s;
+
+        e->end = End;
+
+        return e;
+}
+
+static struct expression *
 prefix_yield(void)
 {
         struct expression *e = mkexpr();
@@ -2193,6 +2225,7 @@ Keyword:
         case KEYWORD_SELF:      return prefix_self;
         case KEYWORD_NIL:       return prefix_nil;
         case KEYWORD_YIELD:     return prefix_yield;
+        case KEYWORD_WITH:      return prefix_with;
 
         case KEYWORD_IF:
         case KEYWORD_FOR:
