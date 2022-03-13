@@ -37,6 +37,10 @@ class Stream : Iter {
         }
     }
 
+    __drop__() {
+        self.close()
+    }
+
     tell() {
         stdio.ftell(@f)
     }
