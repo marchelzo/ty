@@ -1149,6 +1149,10 @@ class Mutex {
         self.setFinalizer(@destroy)
     }
 
+	inner() {
+		@mtx
+	}
+
     lock() {
         thread.lock(@mtx)
         return MutexLock(mtx: @mtx)
@@ -1167,6 +1171,29 @@ class MutexLock {
     __drop__() {
         thread.unlock(@mtx)
     }
+}
+
+class CondVar {
+	init() {
+		@var = thread.cond()
+		self.setFinalizer(@destroy)
+	}
+
+	destroy() {
+		thread.destroyCond(@var)
+	}
+
+	wait(mtx, *timeout) {
+		thread.waitCond(@var, mtx.inner(), *timeout)
+	}
+
+	signal() {
+		thread.signalCond(@var)
+	}
+
+	broadcast() {
+		thread.broadcastCond(@var)
+	}
 }
 
 class Thread {
