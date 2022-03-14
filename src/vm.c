@@ -18,6 +18,7 @@
 #include <signal.h>
 #include <dirent.h>
 #include <pthread.h>
+#include <semaphore.h>
 
 #include <sys/types.h>
 #include <sys/epoll.h>
@@ -117,6 +118,11 @@ typedef struct Frame {
         struct value f;
         char const *ip;
 } Frame;
+
+typedef struct {
+        sem_t *created;
+        struct value *ctx;
+} NewThreadCtx;
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
 
@@ -615,9 +621,29 @@ ReleaseLock(bool blocked)
 }
 
 void
-NewThread(pthread_t *thread, struct value *ctx)
+NewThread(pthread_t *thread, struct value *call)
 {
-        pthread_create(thread, NULL, vm_run_thread, ctx);
+        ReleaseLock(true);
+
+        static _Thread_local sem_t created;
+        static bool init = false;
+
+        NewThreadCtx ctx = {
+                .ctx = call,
+                .created = &created
+        };
+
+        if (!init++) {
+                sem_init(&created, 0, 0);
+        }
+
+        pthread_create(thread, NULL, vm_run_thread, &ctx);
+
+        sem_wait(&created);
+        sem_destroy(&created);
+
+        TakeLock();
+
 }
 
 static void
@@ -684,9 +710,10 @@ CleanupThread(void *ctx)
 }
 
 void *
-vm_run_thread(void *ctx)
+vm_run_thread(void *p)
 {
-        struct value *call = ctx;
+        NewThreadCtx *ctx = p;
+        struct value *call = ctx->ctx;
 
         int argc = 0;
 
@@ -699,6 +726,8 @@ vm_run_thread(void *ctx)
         while (call[argc + 1].type != VALUE_NONE) {
                 vm_push(&call[++argc]);
         }
+
+        sem_post(ctx->created);
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here

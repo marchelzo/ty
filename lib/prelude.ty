@@ -1,5 +1,6 @@
 import bit
 import math
+import thread
 
 tag MatchError;
 tag IndexError;
@@ -1141,6 +1142,32 @@ class InclusiveRange : Range {
 }
 
 function id(x) { x }
+
+class MutexLock {
+    __drop__() {
+        thread.unlock(@mtx)
+    }
+}
+
+class Mutex {
+    init() {
+        @mtx = thread.mutex()
+        self.setFinalizer(@destroy)
+    }
+
+    lock() {
+        thread.lock(@mtx)
+        return MutexLock(mtx: @mtx)
+    }
+
+    unlock() {
+        thread.unlock(@mtx)
+    }
+
+    destroy() {
+        thread.destroyMutex(@mtx)
+    }
+}
 
 operator ?    5  left
 operator **   10 right
