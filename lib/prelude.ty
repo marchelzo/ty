@@ -1143,12 +1143,6 @@ class InclusiveRange : Range {
 
 function id(x) { x }
 
-class MutexLock {
-    __drop__() {
-        thread.unlock(@mtx)
-    }
-}
-
 class Mutex {
     init() {
         @mtx = thread.mutex()
@@ -1167,6 +1161,22 @@ class Mutex {
     destroy() {
         thread.destroyMutex(@mtx)
     }
+}
+
+class MutexLock {
+    __drop__() {
+        thread.unlock(@mtx)
+    }
+}
+
+class Thread {
+	init(*args) {
+		@id = thread.create(*args)
+	}
+
+	join() {
+		thread.join(@id)
+	}
 }
 
 operator ?    5  left
