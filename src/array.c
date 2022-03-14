@@ -1161,7 +1161,30 @@ static struct value
 array_bsearch(struct value *array, int argc)
 {
         if (argc != 1)
-                vm_panic("the bsearch method on array expects 1 argumenet but got %d", argc);
+                vm_panic("the bsearch? method on array expects 1 argument but got %d", argc);
+
+        struct value v = ARG(0);
+
+        int i = 0,
+			lo = 0,
+            hi = array->array->count - 1;
+
+        while (lo <= hi) {
+                int m = (lo + hi) / 2;
+                int c = value_compare(&v, &array->array->items[m]);
+                if      (c < 0) { hi = m - 1; i = m;  }
+                else if (c > 0) { lo = m + 1; i = lo; }
+                else            { return INTEGER(m);  }
+        }
+
+        return INTEGER(i);
+}
+
+static struct value
+array_bsearch_strict(struct value *array, int argc)
+{
+        if (argc != 1)
+                vm_panic("the bsearch method on array expects 1 argument but got %d", argc);
 
         struct value v = ARG(0);
 
@@ -1843,7 +1866,8 @@ DEFINE_NO_MUT(next_permutation);
 DEFINE_METHOD_TABLE(
         { .name = "all?",              .func = array_all                     },
         { .name = "any?",              .func = array_any                     },
-        { .name = "bsearch",           .func = array_bsearch                 },
+        { .name = "bsearch",           .func = array_bsearch_strict          },
+        { .name = "bsearch?",          .func = array_bsearch                 },
         { .name = "clone",             .func = array_clone                   },
         { .name = "consumeWhile",      .func = array_consume_while           },
         { .name = "contains?",         .func = array_contains                },
