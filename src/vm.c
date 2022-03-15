@@ -626,7 +626,7 @@ NewThread(pthread_t *thread, struct value *call)
         ReleaseLock(true);
 
         static _Thread_local sem_t created;
-        static bool init = false;
+        static _Thread_local bool init = false;
 
         NewThreadCtx ctx = {
                 .ctx = call,
