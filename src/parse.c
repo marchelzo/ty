@@ -1532,6 +1532,7 @@ prefix_implicit_method(void)
         }
 
         struct expression *e = mkexpr();
+        e->maybe = false;
 
         if (tok()->type == '.') {
                 next();

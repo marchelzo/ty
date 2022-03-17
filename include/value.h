@@ -127,7 +127,16 @@ struct blob {
         size_t capacity;
 };
 
+struct target {
+        struct value *t;
+        void *gc;
+};
+
+typedef struct target Target;
+
 typedef vec(struct value) ValueVector;
+typedef vec(Target) TargetStack;
+typedef vec(size_t) SPStack;
 
 typedef struct generator Generator;
 
@@ -216,11 +225,9 @@ struct value {
 struct generator {
         char *ip;
         struct value f;
-        struct {
-                struct value *items;
-                uint16_t count;
-                uint16_t capacity;
-        } frame;
+        ValueVector frame;
+        SPStack sps;
+        TargetStack targets;
 };
 
 struct dict {

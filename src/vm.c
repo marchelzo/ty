@@ -31,12 +31,12 @@
 #include <netdb.h>
 #include <netinet/ip.h>
 
+#include "value.h"
 #include "cffi.h"
 #include "vm.h"
 #include "util.h"
 #include "gc.h"
 #include "dict.h"
-#include "value.h"
 #include "alloc.h"
 #include "compiler.h"
 #include "test.h"
@@ -74,6 +74,8 @@
 #define TID ((unsigned long long)pthread_self())
 #define GCLOG LOG
 
+#define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
+
 static char halt = INSTR_HALT;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
@@ -101,11 +103,6 @@ struct try {
         bool executing;
 };
 
-struct target {
-        struct value *t;
-        void *gc;
-};
-
 static vec(struct value) Globals;
 
 struct sigfn {
@@ -129,8 +126,6 @@ typedef struct {
 typedef vec(struct value) ValueStack;
 typedef vec(Frame) FrameStack;
 typedef vec(char *) CallStack;
-typedef vec(size_t) SPStack;
-typedef vec(struct target) TargetStack;
 typedef vec(struct try) TryStack;
 typedef vec(struct sigfn) SigfnStack;
 
@@ -594,6 +589,14 @@ call_co(struct value *v, int n)
                         stack.count -= n;
                 }
         }
+
+        TargetStack ts = v->gen->targets;
+        v->gen->targets = targets;
+        targets = ts;
+
+        SPStack sps = v->gen->sps;
+        v->gen->sps = sp_stack;
+        sp_stack = sps;
 
         push(*v);
 
@@ -1417,6 +1420,8 @@ Throw:
                         v.gen = stack.items[n - 1].gen;
                         v.gen->ip = ip;
                         v.gen->frame.count = 0;
+                        SWAP(SPStack, v.gen->sps, sp_stack);
+                        SWAP(TargetStack, v.gen->targets, targets);
                         vec_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
                         stack.items[n - 1] = peek();
                         stack.count = n;
@@ -1433,6 +1438,8 @@ Throw:
                         n = stack.count - vec_last(frames)->fp;
                         vec_init(v.gen->frame);
                         vec_push_n(v.gen->frame, stack.items + stack.count - n, n);
+                        vec_init(v.gen->sps);
+                        vec_init(v.gen->targets);
                         push(v);
                         OKGC(v.gen);
                         goto Return;

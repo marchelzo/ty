@@ -1,0 +1,25 @@
+import os (..)
+
+// this is a comment
+
+function f(cmd) {
+	let d = opendir('.')
+
+	while let &.d_name ~> $f = readdir(d) {
+		if (yield f) && fork() == 0 {
+			print("Doing {f}")
+			exec(['sh', '-c', "{cmd} '{f}'"])
+		}
+	}
+}
+
+let worker = f('grep -n let')
+let file = worker()
+
+while Some(file) = worker(file.match?(/\.ty$/)) {
+	print(file)
+}
+
+while waitpid(-1) != -1 {
+	;
+}
