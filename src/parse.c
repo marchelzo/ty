@@ -982,6 +982,21 @@ parse_pattern(void)
 }
 
 static struct expression *
+parse_block_expr(void)
+{
+        expect('{');
+
+        struct statement *s = parse_statement(0);
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_STATEMENT;
+        e->statement = s;
+        e->start = s->start;
+        e->end = s->end;
+
+        return e;
+}
+
+static struct expression *
 prefix_with(void)
 {
         struct expression *e = mkexpr();
@@ -1052,7 +1067,11 @@ prefix_match(void)
         vec_push(e->patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
-        vec_push(e->thens, parse_expr(0));
+        if (tok()->type == '{') {
+                vec_push(e->thens, parse_block_expr());
+        } else {
+                vec_push(e->thens, parse_expr(0));
+        }
 
         while (tok()->type == ',') {
                 next();
@@ -1064,7 +1083,11 @@ prefix_match(void)
 
                 vec_push(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
-                vec_push(e->thens, parse_expr(0));
+                if (tok()->type == '{') {
+                        vec_push(e->thens, parse_block_expr());
+                } else {
+                        vec_push(e->thens, parse_expr(0));
+                }
         }
 
         consume('}');
@@ -2031,7 +2054,7 @@ infix_arrow_function(struct expression *left)
                 vec_push(e->constraints, NULL);
         }
 
-        struct statement *ret = mkret(parse_expr(0));
+        struct statement *ret = mkret((tok()->type == '{') ? parse_block_expr() : parse_expr(0));
 
         if (body->statements.count == 0) {
                 gc_free(body);
