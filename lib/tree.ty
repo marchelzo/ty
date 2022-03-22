@@ -1,357 +1,374 @@
 export Tree, set
 
 class NodeIter {
-    init(self, nodes) {
-        self.nodes = nodes;
+    init(nodes) {
+        @nodes = nodes
     }
 
-    __next__(self, i) {
-        if (i < self.nodes.len())
-            return self.nodes[i].k, self.nodes[i].v;
-        else
-            return nil;
+    __next__(i) {
+        if i < self.nodes.len() {
+            return Some((self.nodes[i].k, self.nodes[i].v))
+        } else {
+            None
+        }
     }
 }
 
 class Node {
-    init(self, k, v) {
-        self.k = k;
-        self.v = v;
-        self.l = nil;
-        self.r = nil;
-        self.p = nil;
-        self.c = 0;
-        self.seen = false;
+    init(k, v) {
+        @k = k
+        @v = v
+        @l = nil
+        @r = nil
+        @p = nil
+        @c = 0
+        @seen = false
     }
 }
 
 class Tree {
-    init(T) {
-        T.null = Node();
-        T.root = T.null;
-        T.root.l = T.root.r = T.root.p = T.null;
+    init() {
+        self.null = Node()
+        self.root = self.null
+        self.root.l = self.root.r = self.root.p = self.null
     }
 
-    leftRotate(T, x) {
-        let y = x.r;
-        x.r = y.l;
-        if (y.l != T.null)
-            y.l.p = x;
-        y.p = x.p;
-        if (x.p == T.null)
-            T.root = y;
-        else if (x == x.p.l)
-            x.p.l = y;
-        else
-            x.p.r = y;
-        y.l = x;
-        x.p = y;
-    }
-
-    empty?(T) {
-        return T.root == T.null;
-    }
-
-    size(T) {
-        return T.treeCount(T.root);
-    }
-
-    treeCount(T, x) {
-        if (x == T.null)
-            return 0;
-        return 1 + T.treeCount(x.l) + T.treeCount(x.r);
-    }
-
-    rightRotate(T, x) {
-        let y = x.l;
-        x.l = y.r;
-        if (y.r != T.null)
-            y.r.p = x;
-        y.p = x.p;
-        if (x.p == T.null)
-            T.root = y;
-        else if (x == x.p.r)
-            x.p.r = y;
-        else
-            x.p.l = y;
-        y.r = x;
-        x.p = y;
-    }
-
-    put(T, k, v) {
-        let y = T.null;
-        let x = T.root;
-        let z = Node(k, v);
-        z.l = z.r = T.null;
-        while (x != T.null) {
-            y = x;
-            match k <=> x.k {
-                -1 => { x = x.l; },
-                 0 => { x.v = v; return v; },
-                 1 => { x = x.r; }
-            }
+    leftRotate(x) {
+        let y = x.r
+        x.r = y.l
+        if y.l != self.null {
+            y.l.p = x
         }
-        z.p = y;
-        if (y == T.null)
-            T.root = z;
-        else if (k < y.k)
-            y.l = z;
-        else
-            y.r = z;
-        z.c = 1;
-        T.ifixup(z);
-        return v;
-    }
-
-    ifixup(T, z) {
-        while (z.p.c) {
-            if (z.p == z.p.p.l) {
-                let y = z.p.p.r;
-                if (y.c) {
-                    z.p.c = 0;
-                    y.c = 0;
-                    z.p.p.c = 1;
-                    z = z.p.p;
-                } else {
-                    if (z == z.p.r) {
-                        z = z.p;
-                        T.leftRotate(z);
-                    }
-                    z.p.c = 0;
-                    z.p.p.c = 1;
-                    T.rightRotate(z.p.p);
-                }
-            } else {
-                let y = z.p.p.l;
-                if (y.c) {
-                    z.p.c = 0;
-                    y.c = 0;
-                    z.p.p.c = 1;
-                    z = z.p.p;
-                } else {
-                    if (z == z.p.l) {
-                        z = z.p;
-                        T.rightRotate(z);
-                    }
-                    z.p.c = 0;
-                    z.p.p.c = 1;
-                    T.leftRotate(z.p.p);
-                }
-            }
-        }
-        T.root.c = 0;
-    }
-
-    transplant(T, u, v) {
-        if (u.p == T.null)
-            T.root = v;
-        else if (u == u.p.l)
-            u.p.l = v;
-        else
-            u.p.r = v;
-        v.p = u.p;
-    }
-
-    get(T, k) {
-        let x = T.findNode(k);
-        if (x != T.null)
-            return x.v;
-        return nil;
-    }
-
-    delete(T, k) {
-        let x = T.findNode(k);
-        if (x != T.null)
-            T.deleteNode(x);
-    }
-
-    findNode(T, k) {
-        let x = T.root;
-        while (x != T.null) match k <=> x.k {
-            -1 => { x = x.l; },
-             0 => { break; },
-             1 => { x = x.r; }
-        }
-        return x;
-    }
-
-    deleteNode(T, z) {
-        let y = z;
-        let yoc = y.c;
-        let x = nil;
-        if (z.l == T.null) {
-            x = z.r;
-            T.transplant(z, z.r);
-        } else if (z.r == T.null) {
-            x = z.l;
-            T.transplant(z, z.l);
+        y.p = x.p
+        if x.p == self.null {
+            self.root = y
+        } else if x == x.p.l {
+            x.p.l = y
         } else {
-            y = T.treeMin(z.r);
-            yoc = y.c;
-            x = y.r;
-            if (y.p == z) {
-                x.p = y;
-            } else {
-                T.transplant(y, y.r);
-                y.r = z.r;
-                y.r.p = y;
-            }
-            T.transplant(z, y);
-            y.l = z.l;
-            y.l.p = y;
-            y.c = z.c;
+            x.p.r = y
         }
-        if (yoc == 0)
-            T.dfixup(x);
+        y.l = x
+        x.p = y
     }
 
-    dfixup(T, x) {
-        while (x != T.root && x.c == 0) {
-            if (x == x.p.l) {
-                let w = x.p.r;
-                if (w.c) {
-                    w.c = 0;
-                    x.p.c = 1;
-                    T.leftRotate(x.p);
-                    w = x.p.r;
-                }
-                if (w.l.c == 0 && w.r.c == 0) {
-                    w.c = 1;
-                    x = x.p;
-                } else {
-                    if (w.r.c == 0) {
-                        w.l.c = 0;
-                        w.c = 1;
-                        T.rightRotate(w);
-                        w = x.p.r;
-                    }
-                    w.c = x.p.c;
-                    x.p.c = 0;
-                    w.r.c = 0;
-                    T.leftRotate(x.p);
-                    x = T.root;
-                }
-            } else {
-                let w = x.p.l;
-                if (w.c) {
-                    w.c = 0;
-                    x.p.c = 1;
-                    T.rightRotate(x.p);
-                    w = x.p.l;
-                }
-                if (w.r.c == 0 && w.l.c == 0) {
-                    w.c = 1;
-                    x = x.p;
-                } else {
-                    if (w.l.c == 0) {
-                        w.r.c = 0;
-                        w.c = 1;
-                        T.leftRotate(w);
-                        w = x.p.l;
-                    }
-                    w.c = x.p.c;
-                    x.p.c = 0;
-                    w.l.c = 0;
-                    T.rightRotate(x.p);
-                    x = T.root;
-                }
+    empty?() {
+        return self.root == self.null
+    }
+
+    size() {
+        return self.treeCount(self.root)
+    }
+
+    treeCount(x) {
+        if x == self.null {
+            return 0
+        }
+        return 1 + self.treeCount(x.l) + self.treeCount(x.r)
+    }
+
+    rightRotate(x) {
+        let y = x.l
+        x.l = y.r
+        if y.r != self.null {
+            y.r.p = x
+        }
+        y.p = x.p
+        if x.p == self.null {
+            self.root = y
+        } else if x == x.p.r {
+            x.p.r = y
+        } else {
+            x.p.l = y
+        }
+        y.r = x
+        x.p = y
+    }
+
+    put(k, v) {
+        let y = self.null
+        let x = self.root
+        let z = Node(k, v)
+        z.l = z.r = self.null
+        while x != self.null {
+            y = x
+            match k <=> x.k {
+                -1 => { x = x.l },
+                 0 => { x.v = v; return v },
+                 1 => { x = x.r }
             }
         }
-        x.c = 0;
+        z.p = y
+        if y == self.null {
+            self.root = z
+        } else if k < y.k {
+            y.l = z
+        } else {
+            y.r = z
+        }
+        z.c = 1
+        self.ifixup(z)
+        return v
     }
 
-    treeMin(T, x) {
-        while (x.l != T.null)
-            x = x.l;
-        return x;
+    ifixup(z) {
+        while z.p.c {
+            if z.p == z.p.p.l {
+                let y = z.p.p.r
+                if y.c {
+                    z.p.c = 0
+                    y.c = 0
+                    z.p.p.c = 1
+                    z = z.p.p
+                } else {
+                    if z == z.p.r {
+                        z = z.p
+                        self.leftRotate(z)
+                    }
+                    z.p.c = 0
+                    z.p.p.c = 1
+                    self.rightRotate(z.p.p)
+                }
+            } else {
+                let y = z.p.p.l
+                if y.c {
+                    z.p.c = 0
+                    y.c = 0
+                    z.p.p.c = 1
+                    z = z.p.p
+                } else {
+                    if z == z.p.l {
+                        z = z.p
+                        self.rightRotate(z)
+                    }
+                    z.p.c = 0
+                    z.p.p.c = 1
+                    self.leftRotate(z.p.p)
+                }
+            }
+        }
+        self.root.c = 0
     }
 
-    treeMax(T, x) {
-        while (x.r != T.null)
-            x = x.r;
-        return x;
+    transplant(u, v) {
+        if u.p == self.null {
+            self.root = v
+        } else if u == u.p.l {
+            u.p.l = v
+        } else {
+            u.p.r = v
+        }
+        v.p = u.p
     }
 
-    min(T) {
-        let x = T.treeMin(T.root);
-        return x.k, x.v;
+    get(k) {
+        let x = self.findNode(k)
+        if x != self.null {
+            return x.v
+        }
     }
 
-    max(T) {
-        let x = T.treeMax(T.root);
-        return x.k, x.v;
+    delete(k) {
+        let x = self.findNode(k)
+        if x != self.null {
+            self.deleteNode(x)
+        }
     }
 
-    has?(T, k) {
-        return T.findNode(k) != T.null;
+    findNode(k) {
+        let x = self.root
+        while x != self.null {
+            match k <=> x.k {
+                -1 => { x = x.l },
+                 0 => { break },
+                 1 => { x = x.r }
+            }
+        }
+        return x
     }
 
-    __iter__(T) {
-        let s = [T.root];
-        let nodes = [];
+    deleteNode(z) {
+        let y = z
+        let yoc = y.c
+        let x = nil
+        if z.l == self.null {
+            x = z.r
+            self.transplant(z, z.r)
+        } else if z.r == self.null {
+            x = z.l
+            self.transplant(z, z.l)
+        } else {
+            y = self.treeMin(z.r)
+            yoc = y.c
+            x = y.r
+            if y.p == z {
+                x.p = y
+            } else {
+                self.transplant(y, y.r)
+                y.r = z.r
+                y.r.p = y
+            }
+            self.transplant(z, y)
+            y.l = z.l
+            y.l.p = y
+            y.c = z.c
+        }
+        if yoc == 0 {
+            self.dfixup(x)
+        }
+    }
+
+    dfixup(x) {
+        while x != self.root && x.c == 0 {
+            if x == x.p.l {
+                let w = x.p.r
+                if w.c {
+                    w.c = 0
+                    x.p.c = 1
+                    self.leftRotate(x.p)
+                    w = x.p.r
+                }
+                if w.l.c == 0 && w.r.c == 0 {
+                    w.c = 1
+                    x = x.p
+                } else {
+                    if w.r.c == 0 {
+                        w.l.c = 0
+                        w.c = 1
+                        self.rightRotate(w)
+                        w = x.p.r
+                    }
+                    w.c = x.p.c
+                    x.p.c = 0
+                    w.r.c = 0
+                    self.leftRotate(x.p)
+                    x = self.root
+                }
+            } else {
+                let w = x.p.l
+                if w.c {
+                    w.c = 0
+                    x.p.c = 1
+                    self.rightRotate(x.p)
+                    w = x.p.l
+                }
+                if w.r.c == 0 && w.l.c == 0 {
+                    w.c = 1
+                    x = x.p
+                } else {
+                    if w.l.c == 0 {
+                        w.r.c = 0
+                        w.c = 1
+                        self.leftRotate(w)
+                        w = x.p.l
+                    }
+                    w.c = x.p.c
+                    x.p.c = 0
+                    w.l.c = 0
+                    self.rightRotate(x.p)
+                    x = self.root
+                }
+            }
+        }
+        x.c = 0
+    }
+
+    treeMin(x) {
+        while x.l != self.null {
+            x = x.l
+        }
+        return x
+    }
+
+    treeMax(x) {
+        while x.r != self.null {
+            x = x.r
+        }
+        return x
+    }
+
+    min() {
+        let x = self.treeMin(self.root)
+        return x.k, x.v
+    }
+
+    max() {
+        let x = self.treeMax(self.root)
+        return x.k, x.v
+    }
+
+    has?(k) {
+        return self.findNode(k) != self.null
+    }
+
+    __iter__() {
+        let s = [self.root]
+        let nodes = []
         while (s) {
-            let x = s.pop();
-            if (x == T.null) continue;
-            if (x.seen) {
-                nodes.push(x);
+            let x = s.pop()
+            if x == self.null { continue }
+            if x.seen {
+                nodes.push(x)
             } else {
-                s.push(x.r);
-                s.push(x);
-                s.push(x.l);
-                x.seen = true;
+                s.push(x.r)
+                s.push(x)
+                s.push(x.l)
+                x.seen = true
             }
         }
-        for node in nodes { node.seen = false; }
-        return NodeIter(nodes);
+        for node in nodes { node.seen = false }
+        return NodeIter(nodes)
     }
 
     -(a, b) {
-        let t = Tree();
+        let t = Tree()
         for k, v in a {
-            if (!b.has?(k))
-                t.put(k, v);
+            if !b.has?(k) {
+                t.put(k, v)
+            }
         }
-        return t;
+        return t
     }
 
     &(a, b) {
-        let t = Tree();
+        let t = Tree()
         for k, v in a {
-            if (b.has?(k))
-                t.put(k, v);
+            if b.has?(k) {
+                t.put(k, v)
+            }
         }
-        return t;
+        return t
     }
 
     +(a, b) {
-        let t = Tree();
-        for k, v in b { t.put(k, v); }
-        for k, v in a { t.put(k, v); }
-        return t;
+        let t = Tree()
+        for k, v in b { t.put(k, v) }
+        for k, v in a { t.put(k, v) }
+        return t
     }
 
     union(ts) {
-        let t = Tree();
+        let t = Tree()
         for t in ts {
-            for k, v in t { t.put(k, v); }
+            for k, v in t { t.put(k, v) }
         }
-        return t;
+        return t
     }
 
     intersect(ts) {
-        let t = Tree();
+        let t = Tree()
         if let [z, *zs] = ts {
             for k, v in z {
-                if (zs.all?(|#.has?(k)|))
-                    t.put(k, v);
+                if zs.all?(&has?(k)) {
+                    t.put(k, v)
+                }
             }
         }
-        return t;
+        return t
     }
 }
 
 function set(xs) {
-    let t = Tree();
-    if (xs) for x in xs { t.put(x); }
-    return t;
+    let t = Tree()
+    for x in xs ?? [] { t.put(x) }
+    return t
 }
