@@ -904,6 +904,7 @@ prefix_record(void)
 {
         struct location start = tok()->start;
         struct expression *e = mkexpr();
+        e->only_identifiers = false;
         e->type = EXPRESSION_TUPLE;
         vec_init(e->es);
         vec_init(e->names);
@@ -1218,7 +1219,20 @@ prefix_parenthesis(void)
         } else {
                 e->start = start;
                 consume(')');
-                return e;
+
+                if (e->type == EXPRESSION_TUPLE) {
+                        struct expression *list = mkexpr();
+                        list->start = start;
+                        list->only_identifiers = false;
+                        list->type = EXPRESSION_TUPLE;
+                        vec_init(list->names);
+                        vec_init(list->es);
+                        vec_push(list->names, NULL);
+                        vec_push(list->es, e);
+                        return list;
+                } else {
+                        return e;
+                }
         }
 }
 
@@ -2023,7 +2037,7 @@ infix_arrow_function(struct expression *left)
         vec_init(e->dflts);
         vec_init(e->constraints);
 
-        if (left->type != EXPRESSION_TUPLE) {
+        if (left->type != EXPRESSION_TUPLE || !left->only_identifiers) {
                 struct expression *l = mkexpr();
                 l->type = EXPRESSION_LIST;
                 vec_init(l->es);
