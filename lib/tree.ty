@@ -303,7 +303,8 @@ class Tree {
     __iter__() {
         let s = [self.root]
         let nodes = []
-        while (s) {
+
+        while s {
             let x = s.pop()
             if x == self.null { continue }
             if x.seen {
@@ -315,8 +316,62 @@ class Tree {
                 x.seen = true
             }
         }
+
         for node in nodes { node.seen = false }
+
         return NodeIter(nodes)
+    }
+
+	nextNode(x) {
+        if x.r != self.null {
+            return self.treeMin(x.r)
+        }
+
+        while x != x.p.l {
+            x = x.p
+        }
+
+        return x.p
+	}
+
+	prevNode(x) {
+        if x.l != self.null {
+            return self.treeMax(x.l)
+        }
+
+        while x != x.p.r {
+            x = x.p
+        }
+
+        return x.p
+	}
+
+    prev(k) {
+        let x = self.findNode(k)
+
+        if x == self.null {
+            return nil
+        }
+
+        let x = self.prevNode(x)
+
+        if x != self.null {
+            return x.k
+        }
+    }
+
+    next(k) {
+        let x = self.findNode(k)
+
+        if x == self.null {
+            return nil
+        }
+
+        let x = self.nextNode(x)
+
+        if x != self.null {
+            return x.k
+        }
     }
 
     -(a, b) {
