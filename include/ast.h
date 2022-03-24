@@ -275,7 +275,7 @@ struct expression {
                 struct {
                         struct expression *subject;
                         vec(struct expression *) patterns;
-                        vec(struct expression *) thens;
+                        vec(struct statement *) thens;
                 };
                 struct {
                         char *name;

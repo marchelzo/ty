@@ -904,6 +904,7 @@ prefix_record(void)
 {
         struct location start = tok()->start;
         struct expression *e = mkexpr();
+        e->only_identifiers = false;
         e->type = EXPRESSION_TUPLE;
         vec_init(e->es);
         vec_init(e->names);
@@ -982,6 +983,21 @@ parse_pattern(void)
 }
 
 static struct expression *
+parse_block_expr(void)
+{
+        expect('{');
+
+        struct statement *s = parse_statement(0);
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_STATEMENT;
+        e->statement = s;
+        e->start = s->start;
+        e->end = s->end;
+
+        return e;
+}
+
+static struct expression *
 prefix_with(void)
 {
         struct expression *e = mkexpr();
@@ -1052,7 +1068,11 @@ prefix_match(void)
         vec_push(e->patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
-        vec_push(e->thens, parse_expr(0));
+        if (tok()->type == '{') {
+                vec_push(e->thens, parse_block_expr());
+        } else {
+                vec_push(e->thens, parse_expr(0));
+        }
 
         while (tok()->type == ',') {
                 next();
@@ -1064,7 +1084,11 @@ prefix_match(void)
 
                 vec_push(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
-                vec_push(e->thens, parse_expr(0));
+                if (tok()->type == '{') {
+                        vec_push(e->thens, parse_block_expr());
+                } else {
+                        vec_push(e->thens, parse_expr(0));
+                }
         }
 
         consume('}');
@@ -1195,7 +1219,20 @@ prefix_parenthesis(void)
         } else {
                 e->start = start;
                 consume(')');
-                return e;
+
+                if (e->type == EXPRESSION_TUPLE) {
+                        struct expression *list = mkexpr();
+                        list->start = start;
+                        list->only_identifiers = false;
+                        list->type = EXPRESSION_TUPLE;
+                        vec_init(list->names);
+                        vec_init(list->es);
+                        vec_push(list->names, NULL);
+                        vec_push(list->es, e);
+                        return list;
+                } else {
+                        return e;
+                }
         }
 }
 
@@ -2000,7 +2037,7 @@ infix_arrow_function(struct expression *left)
         vec_init(e->dflts);
         vec_init(e->constraints);
 
-        if (left->type != EXPRESSION_TUPLE) {
+        if (left->type != EXPRESSION_TUPLE || !left->only_identifiers) {
                 struct expression *l = mkexpr();
                 l->type = EXPRESSION_LIST;
                 vec_init(l->es);
@@ -2031,7 +2068,7 @@ infix_arrow_function(struct expression *left)
                 vec_push(e->constraints, NULL);
         }
 
-        struct statement *ret = mkret(parse_expr(0));
+        struct statement *ret = mkret((tok()->type == '{') ? parse_block_expr() : parse_expr(0));
 
         if (body->statements.count == 0) {
                 gc_free(body);
