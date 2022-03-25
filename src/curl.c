@@ -8,7 +8,7 @@
 #include "object.h"
 #include "util.h"
 
-static vec(char) Buffer;
+static _Thread_local vec(char) Buffer;
 
 static size_t
 write_function(char *ptr, size_t size, size_t nmemb, void *data)
@@ -183,6 +183,35 @@ builtin_curl_slist_free(int argc)
 }
 
 struct value
+builtin_curl_getinfo(int argc)
+{
+        if (argc < 2) {
+                vm_panic("curl::getinfo() expects at least 2 arguments but got %d", argc);
+        }
+
+        struct value curl = ARG(0);
+        if (curl.type != VALUE_PTR) {
+                vm_panic("the first argument to curl::getinfo() must be a pointer");
+        }
+
+        struct value opt = ARG(1);
+        if (opt.type != VALUE_INTEGER) {
+                vm_panic("the second argument to curl::getinfo() must be an integer");
+        }
+
+        struct value s;
+        char buffer[1024];
+
+        long rc;
+
+        switch (opt.integer) {
+        case CURLINFO_RESPONSE_CODE:
+                curl_easy_getinfo(curl.ptr, CURLINFO_RESPONSE_CODE, &rc);
+                return INTEGER(rc);
+        }
+}
+
+struct value
 builtin_curl_setopt(int argc)
 {
         if (argc < 2) {
@@ -237,9 +266,18 @@ builtin_curl_setopt(int argc)
                 }
                 curl_easy_setopt(curl.ptr, CURLOPT_HTTPHEADER, s.ptr);
                 break;
+        case CURLOPT_FOLLOWLOCATION:
+                s = ARG(2);
+                if (s.type != VALUE_BOOLEAN) {
+                        vm_panic("the value of CURLOPT_FOLLOWLOCATION must be a boolean");
+                }
+                curl_easy_setopt(curl.ptr, CURLOPT_FOLLOWLOCATION, (long)s.boolean);
+                break;
         default:
                 vm_panic("invalid option passed to curl::setopt(): %d", opt.integer);
         }
+
+        return NIL;
 }
 
 struct value

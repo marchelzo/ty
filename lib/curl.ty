@@ -5,27 +5,32 @@ export CURL
 
 class CURL {
     init(url) {
-        self.handle = init();
-        self.url = url;
-        self.headers = {};
-        setopt(self.handle, CURLOPT_URL, url);
+        self.handle = init()
+        self.url = url
+        self.headers = %{}
+        setopt(self.handle, CURLOPT_URL, url)
+        setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
     }
 
     post(data) {
-        let mime = mime::init(self.handle);
+        let mime = mime::init(self.handle)
         for k, v in data {
-            let part = mime::add(mime);
-            mime::name(part, k);
-            mime::data(part, v);
+            let part = mime::add(mime)
+            mime::name(part, k)
+            mime::data(part, v)
         }
-        setopt(self.handle, CURLOPT_MIMEPOST, mime);
+        setopt(self.handle, CURLOPT_MIMEPOST, mime)
     }
 
     header(k: String, v) {
-        self.headers[k] = str(v);
+        self.headers[k] = str(v)
     }
 
     perform() {
-        return perform(self.handle);
+        return perform(self.handle)
+    }
+
+    responseCode() {
+        getinfo(self.handle, CURLINFO_RESPONSE_CODE)
     }
 }

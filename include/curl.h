@@ -14,6 +14,9 @@ struct value
 builtin_curl_setopt(int argc);
 
 struct value
+builtin_curl_getinfo(int argc);
+
+struct value
 builtin_curl_mime(int argc);
 
 struct value
