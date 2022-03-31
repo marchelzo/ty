@@ -579,6 +579,12 @@ class Generator : Iter {
 class Tag {
 }
 
+class Tuple {
+    __str___() {
+        str(self)
+    }
+}
+
 class Iterable {
     map(f) {
         @__iter__().map(f)

@@ -63,7 +63,8 @@ struct value;
 #define CLASS_REGEX     10
 #define CLASS_GENERATOR 11
 #define CLASS_TAG       12
-#define CLASS_PRIMITIVE 13
+#define CLASS_TUPLE     13
+#define CLASS_PRIMITIVE 14
 
 #define TAG_MATCH_ERR 1
 #define TAG_INDEX_ERR 2

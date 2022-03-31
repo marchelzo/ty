@@ -2549,6 +2549,9 @@ BadContainer:
                         case VALUE_GENERATOR:
                                 vp = class_lookup_method(CLASS_GENERATOR, method, h);
                                 break;
+                        case VALUE_TUPLE:
+                                vp = class_lookup_method(CLASS_TUPLE, method, h);
+                                break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_immediate(CLASS_CLASS, method, h);
                                 if (vp == NULL) {
