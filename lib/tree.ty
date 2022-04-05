@@ -297,7 +297,11 @@ class Tree {
     }
 
     has?(k) {
-        return self.findNode(k) != self.null
+        self.findNode(k) != self.null
+    }
+
+    contains?(k) {
+        self.findNode(k) != self.null
     }
 
     __iter__() {
@@ -322,7 +326,7 @@ class Tree {
         return NodeIter(nodes)
     }
 
-	nextNode(x) {
+    nextNode(x) {
         if x.r != self.null {
             return self.treeMin(x.r)
         }
@@ -332,9 +336,9 @@ class Tree {
         }
 
         return x.p
-	}
+    }
 
-	prevNode(x) {
+    prevNode(x) {
         if x.l != self.null {
             return self.treeMax(x.l)
         }
@@ -344,7 +348,7 @@ class Tree {
         }
 
         return x.p
-	}
+    }
 
     prev(k) {
         let x = self.findNode(k)
