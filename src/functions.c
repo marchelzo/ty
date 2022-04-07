@@ -3091,6 +3091,29 @@ builtin_stdio_fgetc(int argc)
 }
 
 struct value
+builtin_stdio_fputc(int argc)
+{
+        ASSERT_ARGC("stdio.fputc()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.fputc() must be a pointer");
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("the second argument to stdio.fputc() must be an integer");
+        }
+
+        ReleaseLock(true);
+        int c = fputc_unlocked((int)ARG(1).integer, f.ptr);
+        TakeLock();
+
+        if (c == EOF)
+                return NIL;
+        else
+                return INTEGER(c);
+}
+
+struct value
 builtin_stdio_fwrite(int argc)
 {
         ASSERT_ARGC("stdio.fwrite()", 2);

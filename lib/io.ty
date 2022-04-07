@@ -77,6 +77,10 @@ class Stream : Iter {
         }
     }
 
+	putc(c) {
+		stdio.fputc(@f, c)
+	}
+
     nextFloat() {
         stdio.readFloat(@f)
     }

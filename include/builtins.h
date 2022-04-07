@@ -215,6 +215,7 @@
 { .module = "stdio",  .name = "puts",              .value = BUILTIN(builtin_stdio_puts)                    },
 { .module = "stdio",  .name = "fwrite",            .value = BUILTIN(builtin_stdio_fwrite)                  },
 { .module = "stdio",  .name = "fgetc",             .value = BUILTIN(builtin_stdio_fgetc)                   },
+{ .module = "stdio",  .name = "fputc",             .value = BUILTIN(builtin_stdio_fputc)                   },
 { .module = "stdio",  .name = "fflush",            .value = BUILTIN(builtin_stdio_fflush)                  },
 { .module = "stdio",  .name = "fclose",            .value = BUILTIN(builtin_stdio_fclose)                  },
 { .module = "stdio",  .name = "clearerr",          .value = BUILTIN(builtin_stdio_clearerr)                },
