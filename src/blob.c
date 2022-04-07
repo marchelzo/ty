@@ -265,6 +265,41 @@ blob_str(struct value *blob, int argc)
 }
 
 static struct value
+blob_str_unsafe(struct value *blob, int argc)
+{
+        int start;
+        int n;
+
+        if (argc > 0 && ARG(0).type != VALUE_INTEGER)
+                vm_panic("the first argument to blob.str() must be an integer");
+
+        if (argc > 1 && ARG(1).type != VALUE_INTEGER)
+                vm_panic("the second argument to blob.str() must be an integer");
+
+        switch (argc) {
+        case 0:
+                start = 0;
+                n = blob->blob->count;
+                break;
+        case 1:
+                start = ARG(0).integer;
+                n = blob->blob->count - start;
+                break;
+        case 2:
+                start = ARG(0).integer;
+                n = ARG(1).integer;
+                break;
+        default:
+                vm_panic("blob.str() expects 0, 1, or 2 arguments but got %d", argc);
+        }
+
+        if (start < 0 || n < 0 || (n + start) > blob->blob->count)
+                vm_panic("invalid arguments to blob.str()");
+
+        return STRING_CLONE((char const *)blob->blob->items + start, n);
+}
+
+static struct value
 blob_reserve(struct value *blob, int argc)
 {
         if (argc != 1)
@@ -284,19 +319,19 @@ blob_reserve(struct value *blob, int argc)
 static struct value
 blob_ptr(struct value *blob, int argc)
 {
-	if (argc == 0) {
-		return PTR(blob->blob->items);
-	}
+        if (argc == 0) {
+                return PTR(blob->blob->items);
+        }
 
-	if (argc == 1) {
-		if (ARG(0).type != VALUE_INTEGER) {
-			vm_panic("blob.ptr() expects an integer but got %s", value_show(&ARG(0)));
-		}
+        if (argc == 1) {
+                if (ARG(0).type != VALUE_INTEGER) {
+                        vm_panic("blob.ptr() expects an integer but got %s", value_show(&ARG(0)));
+                }
 
-		return PTR(blob->blob->items + ARG(0).integer);
-	}
+                return PTR(blob->blob->items + ARG(0).integer);
+        }
 
-	vm_panic("blob.ptr() expects 0 or 1 arguments but got %d", argc);
+        vm_panic("blob.ptr() expects 0 or 1 arguments but got %d", argc);
 }
 
 static struct value
@@ -399,20 +434,21 @@ blob_splice(struct value *blob, int argc)
 }
 
 DEFINE_METHOD_TABLE(
-        { .name = "clear",    .func = blob_clear     },
-        { .name = "fill",     .func = blob_fill      },
-        { .name = "get",      .func = blob_get       },
-        { .name = "hex",      .func = blob_hex       },
-        { .name = "ptr",      .func = blob_ptr       },
-        { .name = "push",     .func = blob_push      },
-        { .name = "reserve",  .func = blob_reserve   },
-        { .name = "search",   .func = blob_search    },
-        { .name = "set",      .func = blob_set       },
-        { .name = "shrink",   .func = blob_shrink    },
-        { .name = "size",     .func = blob_size      },
-        { .name = "slice",    .func = blob_slice     },
-        { .name = "splice",   .func = blob_splice    },
-        { .name = "str",      .func = blob_str       },
+        { .name = "clear",    .func = blob_clear        },
+        { .name = "fill",     .func = blob_fill         },
+        { .name = "get",      .func = blob_get          },
+        { .name = "hex",      .func = blob_hex          },
+        { .name = "ptr",      .func = blob_ptr          },
+        { .name = "push",     .func = blob_push         },
+        { .name = "reserve",  .func = blob_reserve      },
+        { .name = "search",   .func = blob_search       },
+        { .name = "set",      .func = blob_set          },
+        { .name = "shrink",   .func = blob_shrink       },
+        { .name = "size",     .func = blob_size         },
+        { .name = "slice",    .func = blob_slice        },
+        { .name = "splice",   .func = blob_splice       },
+        { .name = "str",      .func = blob_str          },
+        { .name = "str!",     .func = blob_str_unsafe   },
 );
 
 DEFINE_METHOD_LOOKUP(blob)
