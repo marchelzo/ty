@@ -2564,6 +2564,7 @@ builtin_os_fcntl(int argc)
         case F_SETFD:
         case F_SETFL:
         case F_SETSIG:
+        case F_SETOWN:
                 if (arg.type != VALUE_INTEGER)
                         vm_panic("expected the third argument to be an integer in call to os.fcntl()");
                 return INTEGER(fcntl(fd.integer, cmd.integer, (int) arg.integer));

@@ -791,10 +791,10 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
                         switch (sig) {
                         case SIGIO:
                                 push(INTEGER(info->si_fd));
-                                call(&sigfns.items[i].f, NULL, 1, 0, true);
+                                vm_call(&sigfns.items[i].f, 1);
                                 break;
                         default:
-                                call(&sigfns.items[i].f, NULL, 0, 0, true);
+                                vm_call(&sigfns.items[i].f, 0);
                         }
                         return;
                 }
