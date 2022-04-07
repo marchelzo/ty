@@ -353,6 +353,30 @@ encode(struct value const *v, str *out)
                 else
                         vec_push(*out, '}');
                 break;
+        case VALUE_TUPLE:
+                vec_push(*out, '{');
+                for (int i = 0; i < v->count; ++i) {
+                        vec_push(*out, '"');
+                        if (v->names != NULL && v->names[i] != NULL) {
+                                vec_push_n(*out, v->names[i], strlen(v->names[i]));
+                        } else {
+                                char b[32];
+                                snprintf(b, sizeof b - 1, "%d", i);
+                                vec_push_n(*out, b, strlen(b));
+                        }
+                        vec_push(*out, '"');
+                        vec_push(*out, ':');
+                        if (!encode(&v->items[i], out)) {
+                                return false;
+                        }
+                        vec_push(*out, ',');
+                }
+                if (*vec_last(*out) == ',') {
+                        *vec_last(*out) = '}';
+                } else {
+                        vec_push(*out, '}');
+                }
+                break;
         case VALUE_BLOB:
                 vec_push(*out, '"');
                 for (int i = 0; i < v->blob->count; ++i) {
