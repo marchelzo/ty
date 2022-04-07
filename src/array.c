@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #include "value.h"
 #include "dict.h"
@@ -1166,7 +1167,7 @@ array_bsearch(struct value *array, int argc)
         struct value v = ARG(0);
 
         int i = 0,
-			lo = 0,
+            lo = 0,
             hi = array->array->count - 1;
 
         while (lo <= hi) {
@@ -1446,24 +1447,41 @@ array_searchr(struct value *array, int argc)
 static struct value
 array_flat(struct value *array, int argc)
 {
-        if (argc != 0) {
-                vm_panic("array.flat() expects no arguments but got %d", argc);
+        if (argc != 0 && argc != 1) {
+                vm_panic("array.flat() expects 0 or 1 arguments but got %d", argc);
         }
 
         struct array *r = value_array_new();
+
         vec(struct value *) stack = {0};
+        vec(int) dstack = {0};
+
+        int maxdepth;
+
+        if (argc == 1) {
+                if (ARG(0).type != VALUE_INTEGER) {
+                        vm_panic("the argument to array.flat() must be an integer");
+                }
+                maxdepth = ARG(0).integer;
+        } else {
+                maxdepth = INT_MAX;
+        }
 
         NOGC(r);
 
         for (int i = 0; i < array->array->count; ++i) {
                 vec_push(stack, &array->array->items[i]);
+                vec_push(dstack, 1);
                 while (stack.count > 0) {
                         struct value *v = *vec_pop(stack);
-                        if (v->type != VALUE_ARRAY) {
+                        int d = *vec_pop(dstack);
+                        if (v->type != VALUE_ARRAY || d > maxdepth) {
                                 value_array_push(r, *v);
                         } else {
-                                for (int i = v->array->count - 1; i >= 0; --i)
+                                for (int i = v->array->count - 1; i >= 0; --i) {
                                         vec_push(stack, &v->array->items[i]);
+                                        vec_push(dstack, d + 1);
+                                }
                         }
                 }
         }
