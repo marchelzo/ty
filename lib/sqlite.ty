@@ -21,6 +21,7 @@ class SQLiteRowIter : Iter {
 class SQLiteStatement : Iterable {
     init(p) {
         self.p = p
+        self.setFinalizer(@finalize)
     }
 
     exec() {
@@ -79,6 +80,10 @@ class SQLiteStatement : Iterable {
         return SQLiteRowIter(self)
     }
 
+    __drop__() {
+        self.finalize()
+    }
+
     __iter__() {
         self.rows()
     }
@@ -113,5 +118,9 @@ class SQLite {
         }
 
         return SQLiteStatement(s)
+    }
+
+    errorMessage() {
+        errorMessage(@db)
     }
 }
