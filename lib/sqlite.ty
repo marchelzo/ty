@@ -120,6 +120,10 @@ class SQLite {
         return SQLiteStatement(s)
     }
 
+	exec(sql, *ps) {
+		self.query(sql, *ps).exec()
+	}
+
     errorMessage() {
         errorMessage(@db)
     }
