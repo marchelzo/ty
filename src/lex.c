@@ -110,7 +110,7 @@ mktoken(int type)
                 .type = type,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -123,7 +123,7 @@ mkid(char *id, char *module)
                 .module = module,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -135,7 +135,7 @@ mkstring(char *string)
                 .string = string,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -178,7 +178,7 @@ mkregex(char const *pat, int flags)
                 .regex = r,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -190,7 +190,7 @@ mkreal(float real)
                 .real = real,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -202,7 +202,7 @@ mkinteger(intmax_t k)
                 .integer = k,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -214,7 +214,7 @@ mkkw(int kw)
                 .keyword = kw,
                 .start = Start,
                 .end = state.loc,
-		.ctx = state.ctx
+                .ctx = state.ctx
         };
 }
 
@@ -463,6 +463,18 @@ Start:
                                 nextchar();
                                 vec_push(str, '\t');
                                 continue;
+                        case 'x':
+                                {
+                                        unsigned b;
+                                        nextchar();
+                                        if (isxdigit(C(0)) && isxdigit(C(1))) {
+                                                sscanf(SRC, "%2x", &b);
+                                        }
+                                        nextchar();
+                                        nextchar();
+                                        vec_push(str, b);
+                                        continue;
+                                }
                         }
                 default:
                            vec_push(str, nextchar());
