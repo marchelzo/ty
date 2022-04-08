@@ -1758,10 +1758,10 @@ builtin_os_connect(int argc)
         if (sockfd.type != VALUE_INTEGER)
                 vm_panic("the first argument to os.connect() must be an integer");
 
-        if (addr.type != VALUE_DICT)
-                vm_panic("the second argument to os.connect() must be a dict");
+        if (addr.type != VALUE_TUPLE)
+                vm_panic("the second argument to os.connect() must be a tuple");
 
-        struct value *v = dict_get_member(addr.dict, "family");
+        struct value *v = tuple_get(&addr, "family");
         if (v == NULL || v->type != VALUE_INTEGER)
                 vm_panic("missing or invalid address family in dict passed to os.connect()");
 
@@ -1769,14 +1769,14 @@ builtin_os_connect(int argc)
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
-        struct value *sockaddr = dict_get_member(addr.dict, "address");
+        struct value *sockaddr = tuple_get(&addr, "address");
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
                 return INTEGER(connect(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
         } else switch (v->integer) {
                 case AF_UNIX:
                         memset(&un_addr, 0, sizeof un_addr);
                         un_addr.sun_family = AF_UNIX;
-                        v = dict_get_member(addr.dict, "path");
+                        v = tuple_get(&addr, "path");
                         if (v == NULL || v->type != VALUE_STRING)
                                 vm_panic("missing or invalid path in dict passed to os.connect()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
@@ -1784,12 +1784,12 @@ builtin_os_connect(int argc)
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
                         in_addr.sin_family = AF_INET;
-                        v = dict_get_member(addr.dict, "address");
+                        v = tuple_get(&addr, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
                                 vm_panic("missing or invalid address in dict passed to os.connect()");
                         ia.s_addr = htonl(v->integer);
                         in_addr.sin_addr = ia;
-                        v = dict_get_member(addr.dict, "port");
+                        v = tuple_get(&addr, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
                                 vm_panic("missing or invalid port in dict passed to os.connect()");
                         unsigned short p = htons(v->integer);
