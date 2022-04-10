@@ -291,6 +291,9 @@ value_named_tuple(char const *first, ...);
 struct value *
 tuple_get(struct value *tuple, char const *name);
 
+int
+tuple_get_completions(struct value const *v, char const *prefix, char **out, int max);
+
 void
 _value_mark(struct value const *v);
 

@@ -167,6 +167,9 @@ complete(char const *s, int start, int end)
                         n += blob_get_completions(s, completions, MAX_COMPLETIONS);
                         n += class_get_completions(CLASS_BLOB, s, completions, MAX_COMPLETIONS - n);
                         break;
+                case VALUE_TUPLE:
+                        n += tuple_get_completions(v, s, completions, MAX_COMPLETIONS);
+                        break;
                 }
         }
 

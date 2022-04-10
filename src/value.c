@@ -909,3 +909,18 @@ value_array_extend(struct array *a, struct array const *other)
 
         a->count = n;
 }
+
+int
+tuple_get_completions(struct value const *v, char const *prefix, char **out, int max)
+{
+        int n = 0;
+        int prefix_len = strlen(prefix);
+
+        for (int i = 0; i < v->count; ++i) {
+                if (n < max && v->names != NULL && strncmp(v->names[i], prefix, prefix_len) == 0) {
+                        out[n++] = sclone_malloc(v->names[i]);
+                }
+        }
+
+        return n;
+}
