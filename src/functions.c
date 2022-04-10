@@ -1845,7 +1845,7 @@ builtin_os_bind(int argc)
                         un_addr.sun_family = AF_UNIX;
                         v = tuple_get(&addr, "path");
                         if (v == NULL || v->type != VALUE_STRING)
-                                vm_panic("missing or invalid path in dict passed to os.bind()");
+                                vm_panic("missing or invalid path in tuple passed to os.bind()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
                 case AF_INET:
@@ -1853,12 +1853,12 @@ builtin_os_bind(int argc)
                         in_addr.sin_family = AF_INET;
                         v = tuple_get(&addr, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid address in dict passed to os.bind()");
+                                vm_panic("missing or invalid address in tuple passed to os.bind()");
                         ia.s_addr = htonl(v->integer);
                         in_addr.sin_addr = ia;
                         v = tuple_get(&addr, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid port in dict passed to os.bind()");
+                                vm_panic("missing or invalid port in tuple passed to os.bind()");
                         unsigned short p = htons(v->integer);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
@@ -1928,7 +1928,7 @@ builtin_os_getaddrinfo(int argc)
                                 "family",    INTEGER(it->ai_family),
                                 "type",      INTEGER(it->ai_socktype),
                                 "protocol",  INTEGER(it->ai_protocol),
-                                "address",   b,
+                                "address",   BLOB(b),
                                 "canonname", NIL,
                                 NULL
                         );
@@ -2107,13 +2107,13 @@ builtin_os_poll(int argc)
 
         struct value *v;
         for (int i = 0; i < fds.array->count; ++i) {
-                if (fds.array->items[i].type != VALUE_DICT)
-                        vm_panic("non-dict in fds array passed to os.poll()");
-                v = dict_get_member(fds.array->items[i].dict, "fd");
+                if (fds.array->items[i].type != VALUE_TUPLE)
+                        vm_panic("non-tuple in fds array passed to os.poll()");
+                v = tuple_get(&fds.array->items[i], "fd");
                 if (v == NULL || v->type != VALUE_INTEGER)
-                        vm_panic("all dicts in the fds array passed to os.poll() must have an integer value under the key 'fd'");
+                        vm_panic("all tuples in the fds array passed to os.poll() must have an integer value under the key 'fd'");
                 pfds.items[i].fd = v->integer;
-                v = dict_get_member(fds.array->items[i].dict, "events");
+                v = tuple_get(&fds.array->items[i], "events");
                 if (v != NULL && v->type == VALUE_INTEGER)
                         pfds.items[i].events = v->integer;
                 else
@@ -2129,8 +2129,14 @@ builtin_os_poll(int argc)
         if (ret <= 0)
                 return INTEGER(ret);
 
-        for (int i = 0; i < fds.array->count; ++i)
-                dict_put_member(fds.array->items[i].dict, "revents", INTEGER(pfds.items[i].revents));
+        for (int i = 0; i < fds.array->count; ++i) {
+                fds.array->items[i] = value_named_tuple(
+                        "fd",      *tuple_get(&fds.array->items[i], "fd"),
+                        "events",  *tuple_get(&fds.array->items[i], "events"),
+                        "revents", INTEGER(pfds.items[i].revents),
+                        NULL
+                );
+        }
 
         return INTEGER(ret);
 }

@@ -734,6 +734,7 @@ vm_run_thread(void *p)
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
+                fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
         } else {
                 vm_call(call, argc);
         }

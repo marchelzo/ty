@@ -15,7 +15,7 @@
 
 #define P_ALIGN (_Alignof (uintptr_t))
 
-extern char ERR[ERR_SIZE];
+extern _Thread_local char ERR[ERR_SIZE];
 
 extern pcre_jit_stack *JITStack;
 enum {

@@ -14,7 +14,7 @@
 #include "util.h"
 #include "vec.h"
 
-char ERR[ERR_SIZE];
+_Thread_local char ERR[ERR_SIZE];
 
 uintmax_t
 umax(uintmax_t a, uintmax_t b)
