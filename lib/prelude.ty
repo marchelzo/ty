@@ -67,13 +67,13 @@ class Object {
         members(self)
     }
 
-	member(*args) {
-		member(self, *args)
-	}
+    member(*args) {
+        member(self, *args)
+    }
 
-	setFinalizer(*args) {
-		setFinalizer(self, *args)
-	}
+    setFinalizer(*args) {
+        setFinalizer(self, *args)
+    }
 
     |(other) {
         c -> (c :: self) || (c :: other)
@@ -81,6 +81,10 @@ class Object {
 
     &(other) {
         c -> (c :: self) && (c :: other)
+    }
+
+    !::(x) {
+        !(self :: x)
     }
 
     :>(other) {
@@ -465,9 +469,9 @@ class Int {
         self < 0
     }
 
-	clamp(*args) {
-		Float.clamp.bind(self)(*args)
-	}
+    clamp(*args) {
+        Float.clamp.bind(self)(*args)
+    }
 }
 
 class Float {
@@ -499,23 +503,23 @@ class Float {
         math.nan?(self)
     }
 
-	clamp(*args) {
-		match args {
-			[low, high] => {
-				return if self < low {
-					low
-				} else if self > high {
-					high
-				} else {
-					self
-				}
-			},
+    clamp(*args) {
+        match args {
+            [low, high] => {
+                return if self < low {
+                    low
+                } else if self > high {
+                    high
+                } else {
+                    self
+                }
+            },
 
-			[range] => {
-				self.clamp(range.low(), range.high())
-			}
-		}
-	}
+            [range] => {
+                self.clamp(range.low(), range.high())
+            }
+        }
+    }
 }
 
 class Blob : Iterable {
@@ -1155,9 +1159,9 @@ class Mutex {
         self.setFinalizer(@destroy)
     }
 
-	inner() {
-		@mtx
-	}
+    inner() {
+        @mtx
+    }
 
     lock() {
         thread.lock(@mtx)
@@ -1180,36 +1184,36 @@ class MutexLock {
 }
 
 class CondVar {
-	init() {
-		@var = thread.cond()
-		self.setFinalizer(@destroy)
-	}
+    init() {
+        @var = thread.cond()
+        self.setFinalizer(@destroy)
+    }
 
-	destroy() {
-		thread.destroyCond(@var)
-	}
+    destroy() {
+        thread.destroyCond(@var)
+    }
 
-	wait(mtx, *timeout) {
-		thread.waitCond(@var, mtx.inner(), *timeout)
-	}
+    wait(mtx, *timeout) {
+        thread.waitCond(@var, mtx.inner(), *timeout)
+    }
 
-	signal() {
-		thread.signalCond(@var)
-	}
+    signal() {
+        thread.signalCond(@var)
+    }
 
-	broadcast() {
-		thread.broadcastCond(@var)
-	}
+    broadcast() {
+        thread.broadcastCond(@var)
+    }
 }
 
 class Thread {
-	init(*args) {
-		@id = thread.create(*args)
-	}
+    init(*args) {
+        @id = thread.create(*args)
+    }
 
-	join() {
-		thread.join(@id)
-	}
+    join() {
+        thread.join(@id)
+    }
 }
 
 operator ?    5  left
@@ -1218,3 +1222,4 @@ operator <<   7  left
 operator >>   7  left
 operator ^    5  left
 operator :>   5  left
+operator !::  3  left

@@ -2853,6 +2853,16 @@ builtin_stdio_fdopen(int argc)
 }
 
 struct value
+builtin_stdio_tmpfile(int argc)
+{
+        ASSERT_ARGC("stdio.tmpfile()", 0);
+        
+        FILE *f = tmpfile();
+
+        return (f == NULL) ? NIL : PTR(f);
+}
+
+struct value
 builtin_stdio_fgets(int argc)
 {
         ASSERT_ARGC("stdio.fgets()", 1);

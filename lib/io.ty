@@ -13,27 +13,32 @@ let SEEK_SET = stdio.SEEK_SET
 let SEEK_CUR = stdio.SEEK_CUR
 
 class Stream : Iter {
-    init(fd: Int, mode: ?String = 'a+', buffering: ?BufferingMethod) {
-        @fd = fd
+    init(fd, mode: ?String = 'a+', buffering: ?BufferingMethod) {
+        if fd :: Int {
+            @fd = fd
 
-        if let $f = stdio.fdopen(fd, mode) {
-            @f = f
+            if let $f = stdio.fdopen(fd, mode) {
+                @f = f
+            } else {
+                throw Err(errno.get())
+            }
+
+            if buffering != nil {
+                stdio.setvbuf(self.f, buffering);
+            }
         } else {
-            throw Err(errno.get())
-        }
-
-        if buffering != nil {
-            stdio.setvbuf(self.f, buffering);
+            // fd is actually a file pointer
+            @f = fd
         }
     }
 
     close() {
         if self.f != nil {
-            let r = stdio.fclose(self.f);
-            self.f = nil;
-            return r;
+            let r = stdio.fclose(self.f)
+            self.f = nil
+            return r
         } else {
-            throw Err(errno.EBADF);
+            throw Err(errno.EBADF)
         }
     }
 
@@ -77,9 +82,9 @@ class Stream : Iter {
         }
     }
 
-	putc(c) {
-		stdio.fputc(@f, c)
-	}
+    putc(c) {
+        stdio.fputc(@f, c)
+    }
 
     nextFloat() {
         stdio.readFloat(@f)
@@ -162,5 +167,13 @@ function open(path: String | Int, mode: String = 'a+', buffering) {
     match fd {
         -1  => throw Err(errno.get()),
         _   => Stream(fd, mode, buffering)
+    }
+}
+
+pub function tmpfile() {
+    if not let $f = stdio.tmpfile() {
+        throw Err(errno.get())
+    } else {
+        Stream(f)
     }
 }
