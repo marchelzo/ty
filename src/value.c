@@ -825,17 +825,36 @@ value_tuple(int n)
 }
 
 struct value
-value_named_tuple(int n)
+value_named_tuple(char const *first, ...)
 {
-        struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
-        char **names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+        va_list ap;
+        va_start(ap, first);
 
-        for (int i = 0; i < n; ++i) {
-                items[i] = NIL;
-                names[i] = NULL;
+        int n = 0;
+
+        do {
+                va_arg(ap, struct value);
+                n += 1;
+        } while (va_arg(ap, char const *) != NULL);
+
+        va_end(ap);
+
+        struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+        char const **names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+
+        va_start(ap, first);
+
+        names[0] = first;
+        items[0] = va_arg(ap, struct value);
+
+        for (int i = 1; i < n; ++i) {
+                names[i] = va_arg(ap, char *);
+                items[i] = va_arg(ap, struct value);
         }
 
-        return TUPLE(items, names, n);
+        va_end(ap);
+
+        return TUPLE(items, (char **)names, n);
 }
 
 struct value *

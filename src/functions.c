@@ -1922,7 +1922,17 @@ builtin_os_getaddrinfo(int argc)
         int r = getaddrinfo(node.items, service.items, &hints, &res);
         if (r == 0) {
                 for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
-                        struct value entry = value_named_tuple(5);
+                        struct blob *b = value_blob_new();
+
+                        struct value entry = value_named_tuple(
+                                "family",    INTEGER(it->ai_family),
+                                "type",      INTEGER(it->ai_socktype),
+                                "protocol",  INTEGER(it->ai_protocol),
+                                "address",   b,
+                                "canonname", NIL,
+                                NULL
+                        );
+
                         NOGC(entry.items);
                         NOGC(entry.names);
 
@@ -1931,18 +1941,6 @@ builtin_os_getaddrinfo(int argc)
                         OKGC(entry.items);
                         OKGC(entry.names);
 
-                        entry.names[0] = "family";
-                        entry.names[1] = "type";
-                        entry.names[2] = "protocol";
-                        entry.names[3] = "address";
-                        entry.names[4] = "canonname";
-
-                        entry.items[0] = INTEGER(it->ai_family);
-                        entry.items[1] = INTEGER(it->ai_socktype);
-                        entry.items[2] = INTEGER(it->ai_protocol);
-
-                        struct blob *b = value_blob_new();
-                        entry.items[3] = BLOB(b);
                         vec_push_n(*b, (char *)it->ai_addr, it->ai_addrlen);
 
                         if (it->ai_canonname != NULL) {
@@ -1989,15 +1987,11 @@ builtin_os_accept(int argc)
         struct blob *b = value_blob_new();
         vec_push_n(*b, (char *)&a, n);
 
-        struct value result = value_named_tuple(2);
-
-        result.items[0] = INTEGER(r);
-        result.items[1] = BLOB(b);
-
-        result.names[0] = "fd";
-        result.names[1] = "addr";
-
-        return result;
+        return value_named_tuple(
+                "fd",   INTEGER(r),
+                "addr", BLOB(b),
+                NULL
+        );
 }
 
 struct value
@@ -2500,6 +2494,16 @@ builtin_os_listdir(int argc)
         return ARRAY(files);
 }
 
+static struct value
+timespec_tuple(struct timespec const *ts)
+{
+        return value_named_tuple(
+                "tv_sec",  INTEGER(ts->tv_sec),
+                "tv_nsec", INTEGER(ts->tv_nsec),
+                NULL
+        );
+}
+
 struct value
 builtin_os_stat(int argc)
 {
@@ -2511,45 +2515,31 @@ builtin_os_stat(int argc)
         if (path.type != VALUE_STRING)
                 vm_panic("the argument to os.stat() must be a string");
 
-       static _Thread_local vec(char) pb;
-       pb.count = 0;
-       vec_push_n(pb, path.string, path.bytes);
-       vec_push(pb, '\0');
+        static _Thread_local vec(char) pb;
+        pb.count = 0;
+        vec_push_n(pb, path.string, path.bytes);
+        vec_push(pb, '\0');
 
-       int r = stat(pb.items, &s);
-       if (r != 0)
+        int r = stat(pb.items, &s);
+        if (r != 0)
                return NIL;
 
-       struct table *t = object_new();
-       table_put(t, "st_dev", INTEGER(s.st_dev));
-       table_put(t, "st_ino", INTEGER(s.st_ino));
-       table_put(t, "st_mode", INTEGER(s.st_mode));
-       table_put(t, "st_nlink", INTEGER(s.st_nlink));
-       table_put(t, "st_uid", INTEGER(s.st_uid));
-       table_put(t, "st_gid", INTEGER(s.st_gid));
-       table_put(t, "st_rdev", INTEGER(s.st_rdev));
-       table_put(t, "st_size", INTEGER(s.st_size));
-       table_put(t, "st_blocks", INTEGER(s.st_blocks));
-       table_put(t, "st_blksize", INTEGER(s.st_blksize));
-
-       struct table *atim = object_new();
-       struct table *mtim = object_new();
-       struct table *ctim = object_new();
-
-       table_put(atim, "tv_sec", INTEGER(s.st_atim.tv_sec));
-       table_put(atim, "tv_nsec", INTEGER(s.st_atim.tv_nsec));
-
-       table_put(mtim, "tv_sec", INTEGER(s.st_mtim.tv_sec));
-       table_put(mtim, "tv_nsec", INTEGER(s.st_mtim.tv_nsec));
-
-       table_put(ctim, "tv_sec", INTEGER(s.st_ctim.tv_sec));
-       table_put(ctim, "tv_nsec", INTEGER(s.st_ctim.tv_nsec));
-
-       table_put(t, "st_atim", OBJECT(atim, 0));
-       table_put(t, "st_mtim", OBJECT(mtim, 0));
-       table_put(t, "st_ctim", OBJECT(ctim, 0));
-
-       return OBJECT(t, 0);
+        return value_named_tuple(
+                "st_dev", INTEGER(s.st_dev),
+                "st_ino", INTEGER(s.st_ino),
+                "st_mode", INTEGER(s.st_mode),
+                "st_nlink", INTEGER(s.st_nlink),
+                "st_uid", INTEGER(s.st_uid),
+                "st_gid", INTEGER(s.st_gid),
+                "st_rdev", INTEGER(s.st_rdev),
+                "st_size", INTEGER(s.st_size),
+                "st_blocks", INTEGER(s.st_blocks),
+                "st_blksize", INTEGER(s.st_blksize),
+                "st_atim", timespec_tuple(&s.st_atim),
+                "st_mtim", timespec_tuple(&s.st_mtim),
+                "st_ctim", timespec_tuple(&s.st_ctim),
+                NULL
+        );
 
 }
 
@@ -2655,21 +2645,18 @@ builtin_time_localtime(int argc)
         struct tm r = {0};
         localtime_r(&t, &r);
 
-        struct table *o = object_new();
-
-        NOGC(o);
-        table_put(o, "sec", INTEGER(r.tm_sec));
-        table_put(o, "min", INTEGER(r.tm_min));
-        table_put(o, "hour", INTEGER(r.tm_hour));
-        table_put(o, "mday", INTEGER(r.tm_mday));
-        table_put(o, "mon", INTEGER(r.tm_mon));
-        table_put(o, "year", INTEGER(r.tm_year));
-        table_put(o, "wday", INTEGER(r.tm_wday));
-        table_put(o, "yday", INTEGER(r.tm_yday));
-        table_put(o, "isdst", BOOLEAN(r.tm_isdst));
-        OKGC(o);
-
-        return OBJECT(o, 0);
+        return value_named_tuple(
+                "sec",   INTEGER(r.tm_sec),
+                "min",   INTEGER(r.tm_min),
+                "hour",  INTEGER(r.tm_hour),
+                "mday",  INTEGER(r.tm_mday),
+                "mon",   INTEGER(r.tm_mon),
+                "year",  INTEGER(r.tm_year),
+                "wday",  INTEGER(r.tm_wday),
+                "yday",  INTEGER(r.tm_yday),
+                "isdst", BOOLEAN(r.tm_isdst),
+                NULL
+        );
 }
 
 struct value
@@ -2689,30 +2676,29 @@ builtin_time_strftime(int argc)
                 if (v.type == VALUE_INTEGER) {
                         time_t sec = v.integer;
                         localtime_r(&sec, &t);
-                } else if (v.type == VALUE_OBJECT) {
+                } else if (v.type == VALUE_TUPLE) {
                         struct value *vp;
-                        struct table *o = v.object;
-                        if ((vp = table_look(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "sec")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_sec = vp->integer;
-                        if ((vp = table_look(o, "min")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "min")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_min = vp->integer;
-                        if ((vp = table_look(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "hour")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_hour = vp->integer;
-                        if ((vp = table_look(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "mday")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_mday = vp->integer;
-                        if ((vp = table_look(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "mon")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_mon = vp->integer;
-                        if ((vp = table_look(o, "year")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "year")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_year = vp->integer;
-                        if ((vp = table_look(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "wday")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_wday = vp->integer;
-                        if ((vp = table_look(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
+                        if ((vp = tuple_get(&v, "yday")) != NULL && vp->type == VALUE_INTEGER)
                                 t.tm_yday = vp->integer;
-                        if ((vp = table_look(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
+                        if ((vp = tuple_get(&v, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
                                 t.tm_isdst = vp->boolean;
 
                 } else {
-                        vm_panic("the second argument to time.strftime() must be an integer or object");
+                        vm_panic("the second argument to time.strftime() must be an integer or named tuple");
                 }
         } else {
                 time_t sec = time(NULL);
@@ -2767,21 +2753,18 @@ builtin_time_strptime(int argc)
         vec_empty(sb);
         vec_empty(fb);
 
-        struct table *o = object_new();
-
-        NOGC(o);
-        table_put(o, "sec", INTEGER(r.tm_sec));
-        table_put(o, "min", INTEGER(r.tm_min));
-        table_put(o, "hour", INTEGER(r.tm_hour));
-        table_put(o, "mday", INTEGER(r.tm_mday));
-        table_put(o, "mon", INTEGER(r.tm_mon));
-        table_put(o, "year", INTEGER(r.tm_year));
-        table_put(o, "wday", INTEGER(r.tm_wday));
-        table_put(o, "yday", INTEGER(r.tm_yday));
-        table_put(o, "isdst", BOOLEAN(r.tm_isdst));
-        OKGC(o);
-
-        return OBJECT(o, 0);
+        return value_named_tuple(
+                "sec",   INTEGER(r.tm_sec),
+                "min",   INTEGER(r.tm_min),
+                "hour",  INTEGER(r.tm_hour),
+                "mday",  INTEGER(r.tm_mday),
+                "mon",   INTEGER(r.tm_mon),
+                "year",  INTEGER(r.tm_year),
+                "wday",  INTEGER(r.tm_wday),
+                "yday",  INTEGER(r.tm_yday),
+                "isdst", BOOLEAN(r.tm_isdst),
+                NULL
+        );
 }
 
 struct value
@@ -2796,33 +2779,44 @@ builtin_time_time(int argc)
         struct tm t = {0};
         struct value v = ARG(0);
 
-        if (v.type != VALUE_OBJECT) {
-                vm_panic("the argument to time.time() must be an object");
+        if (v.type != VALUE_TUPLE) {
+                vm_panic("the argument to time.time() must be a named tuple");
         }
 
         struct value *vp;
-        struct table *o = v.object;
 
-        if ((vp = table_look(o, "sec")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "sec")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_sec = vp->integer;
-        if ((vp = table_look(o, "min")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "min")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_min = vp->integer;
-        if ((vp = table_look(o, "hour")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "hour")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_hour = vp->integer;
-        if ((vp = table_look(o, "mday")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "mday")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_mday = vp->integer;
-        if ((vp = table_look(o, "mon")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "mon")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_mon = vp->integer;
-        if ((vp = table_look(o, "year")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "year")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_year = vp->integer;
-        if ((vp = table_look(o, "wday")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "wday")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_wday = vp->integer;
-        if ((vp = table_look(o, "yday")) != NULL && vp->type == VALUE_INTEGER)
+        if ((vp = tuple_get(&v, "yday")) != NULL && vp->type == VALUE_INTEGER)
                 t.tm_yday = vp->integer;
-        if ((vp = table_look(o, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
+        if ((vp = tuple_get(&v, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
                 t.tm_isdst = vp->boolean;
 
         return INTEGER(mktime(&t));
+}
+
+struct value
+builtin_stdio_fileno(int argc)
+{
+        ASSERT_ARGC("stdio.fileno()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("the argument to stdio.fileno() must be a pointer");
+        }
+
+        return INTEGER(fileno(ARG(0).ptr));
 }
 
 struct value

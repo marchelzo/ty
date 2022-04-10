@@ -286,7 +286,7 @@ struct value
 value_tuple(int n);
 
 struct value
-value_named_tuple(int n);
+value_named_tuple(char const *first, ...);
 
 struct value *
 tuple_get(struct value *tuple, char const *name);

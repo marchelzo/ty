@@ -437,6 +437,9 @@ struct value
 builtin_stdio_fdopen(int argc);
 
 struct value
+builtin_stdio_fileno(int argc);
+
+struct value
 builtin_stdio_tmpfile(int argc);
 
 struct value

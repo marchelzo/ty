@@ -205,6 +205,7 @@
 { .module = "thread", .name = "broadcastCond",     .value = BUILTIN(builtin_thread_cond_broadcast)         },
 
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
+{ .module = "stdio",  .name = "fileno",            .value = BUILTIN(builtin_stdio_fileno)                  },
 { .module = "stdio",  .name = "tmpfile",           .value = BUILTIN(builtin_stdio_tmpfile)                 },
 { .module = "stdio",  .name = "fgets",             .value = BUILTIN(builtin_stdio_fgets)                   },
 { .module = "stdio",  .name = "fread",             .value = BUILTIN(builtin_stdio_fread)                   },
