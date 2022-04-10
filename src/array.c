@@ -740,8 +740,8 @@ array_consume_while(struct value *array, int argc)
 static struct value
 array_groups_of(struct value *array, int argc)
 {
-        if (argc != 1)
-                vm_panic("array.groupsOf() expects 1 argument but got %d", argc);
+        if (argc != 1 && argc != 2)
+                vm_panic("array.groupsOf() expects 1 or 2 arguments but got %d", argc);
 
         struct value size = ARG(0);
         if (size.type != VALUE_INTEGER)
@@ -749,6 +749,15 @@ array_groups_of(struct value *array, int argc)
 
         if (size.integer <= 0)
                 vm_panic("the argument to array.groupsOf() must be positive");
+
+        bool keep_short = true;
+
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_BOOLEAN) {
+                        vm_panic("the second argument to array.groupsOf() must be a boolean");
+                }
+                keep_short = ARG(1).boolean;
+        }
 
         int n = 0;
         int i = 0;
@@ -761,7 +770,7 @@ array_groups_of(struct value *array, int argc)
                 i += size.integer;
         }
 
-        if (i != array->array->count) {
+        if (keep_short && i != array->array->count) {
                 struct array *last = value_array_new();
                 NOGC(last);
                 vec_push_n(*last, array->array->items + i, array->array->count - i);

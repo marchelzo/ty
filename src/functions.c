@@ -3047,7 +3047,7 @@ builtin_stdio_fread(int argc)
         int c;
 
         ReleaseLock(true);
-        while (b->count < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
+        while (bytes < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
                 vec_push(*b, c);
                 bytes += 1;
         }
