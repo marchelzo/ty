@@ -1019,7 +1019,7 @@ builtin_os_close(int argc)
 struct value
 builtin_os_mktemp(int argc)
 {
-        char template[PATH_MAX + 1] = "tmp";
+        char template[PATH_MAX + 1] = {0};
 
         if (argc > 2) {
                 vm_panic("os.mktemp() expects 0, 1, or 2 arguments but got %d", argc);
@@ -1029,21 +1029,35 @@ builtin_os_mktemp(int argc)
                 struct value s = ARG(0);
                 if (s.type != VALUE_STRING)
                         vm_panic("the first argument to os.mktemp() must be a string");
-                /* -7 to make room for the XXXXXX suffix and NUL byte */
-                memcpy(template, s.string, min(s.bytes, sizeof template - 7));
+                /* -8 to make room for the .XXXXXX suffix and NUL byte */
+                memcpy(template, s.string, min(s.bytes, sizeof template - 8));
+        } else {
+                strcpy(template, "tmp");
         }
 
-        strcat(template, "XXXXXX");
+        strcat(template, ".XXXXXX");
 
-        int flags = 0;
+        int fd;
+
         if (argc == 2) {
-                struct value f = ARG(1);
-                if (f.type != VALUE_INTEGER)
+                struct value flags = ARG(1);
+                if (flags.type != VALUE_INTEGER)
                         vm_panic("the second argument to os.mktemp() must be an integer");
-                flags = f.integer;
+                fd = mkostemp(template, flags.integer);
+        } else {
+                fd = mkstemp(template);
         }
 
-        return INTEGER(mkostemp(template, flags));
+        if (fd == -1) {
+                return NIL;
+        }
+
+        struct value pair = value_tuple(2);
+
+        pair.items[0] = INTEGER(fd);
+        pair.items[1] = STRING_CLONE(template, strlen(template));
+
+        return pair;
 }
 
 struct value
