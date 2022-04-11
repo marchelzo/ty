@@ -592,10 +592,11 @@ builtin_regex(int argc)
 
         pcre_assign_jit_stack(extra, NULL, JITStack);
 
-        struct regex *r = gc_alloc(sizeof *r);
+        struct regex *r = gc_alloc_object(sizeof *r, GC_REGEX);
         r->pcre = re;
         r->extra = extra;
         r->pattern = sclone(buffer);
+        r->gc = true;
 
         return REGEX(r);
 }

@@ -14,6 +14,7 @@ struct regex {
         pcre *pcre;
         pcre_extra *extra;
         char const *pattern;
+        bool gc;
 };
 
 struct token {

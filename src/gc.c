@@ -6,6 +6,7 @@
 #include "object.h"
 #include "vm.h"
 #include "log.h"
+#include "token.h"
 
 _Thread_local AllocList allocs;
 
@@ -20,7 +21,9 @@ inline static void
 collect(struct alloc *a)
 {
         void *p = a->data;
+
         struct value *finalizer;
+        struct regex *re;
 
         switch (a->type) {
         case GC_ARRAY:     gc_free(((struct array *)p)->items);    break;
@@ -33,6 +36,12 @@ collect(struct alloc *a)
                         vm_call(finalizer, 0);
                 }
                 table_release(p);
+                break;
+        case GC_REGEX:
+                re = p;
+                pcre_free_study(re->extra);
+                pcre_free(re->pcre);
+                gc_free((char *)re->pattern);
                 break;
         }
 }

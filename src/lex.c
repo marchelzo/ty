@@ -172,6 +172,7 @@ mkregex(char const *pat, int flags)
         r->pattern = pat;
         r->pcre = re;
         r->extra = extra;
+        r->gc = false;
 
         return (struct token) {
                 .type = TOKEN_REGEX,

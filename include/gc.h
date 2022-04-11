@@ -58,6 +58,7 @@ enum {
         GC_VALUE,
         GC_ENV,
         GC_GENERATOR,
+        GC_REGEX,
         GC_ANY
 };
 
