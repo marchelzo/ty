@@ -178,11 +178,12 @@ static vec(pthread_t) ThreadList;
 static vec(pthread_mutex_t *) ThreadLocks;
 static vec(pthread_cond_t *) ThreadConds;
 static vec(ThreadStorage) ThreadStorages;
-static vec(bool) ThreadStates;
+static vec(_Atomic bool *) ThreadStates;
 
 static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
 _Thread_local pthread_mutex_t *MyLock;
+static _Thread_local _Atomic bool *MyState;
 static _Thread_local pthread_cond_t *MyCond;
 static _Thread_local ThreadStorage MyStorage;
 static _Atomic bool WantGC;
@@ -213,14 +214,10 @@ UnlockThreads(int *threads, int n)
         }
 }
 
-void
+inline static void
 SetState(bool blocking)
 {
-        for (int i = 0; i < ThreadList.count; ++i) {
-                if (pthread_equal(pthread_self(), ThreadList.items[i])) {
-                        ThreadStates.items[i] = blocking;
-                }
-        }
+        atomic_store(MyState, blocking);
 }
 
 static void WaitGC()
@@ -284,7 +281,7 @@ void DoGC()
                         continue;
                 }
                 pthread_mutex_lock(ThreadLocks.items[i]);
-                if (ThreadStates.items[i]) {
+                if (atomic_load(ThreadStates.items[i])) {
                         GCLOG("Thread %llu is blocked", (long long unsigned)ThreadList.items[i]);
                         blockedThreads[nBlocked++] = i;
                 } else {
@@ -684,7 +681,10 @@ AddThread(void)
 
         vec_push(ThreadStorages, MyStorage);
 
-        vec_push(ThreadStates, false);
+        MyState = malloc(sizeof *MyState);
+        *MyState = false;
+
+        vec_push(ThreadStates, MyState);
 
         GC_ENABLED = true;
 
@@ -701,13 +701,15 @@ CleanupThread(void *ctx)
 
         for (int i = 0; i < ThreadList.count; ++i) {
                 if (pthread_equal(ThreadList.items[i], pthread_self())) {
-                        pthread_mutex_destroy(ThreadLocks.items[i]);
                         ThreadList.items[i] = *vec_pop(ThreadList);
                         ThreadLocks.items[i] = *vec_pop(ThreadLocks);
                         ThreadStorages.items[i] = *vec_pop(ThreadStorages);
                         ThreadStates.items[i] = *vec_pop(ThreadStates);
                 }
         }
+
+        pthread_mutex_unlock(MyLock);
+        pthread_mutex_destroy(MyLock);
 
         pthread_mutex_unlock(&ThreadsLock);
 }
