@@ -1330,7 +1330,7 @@ builtin_os_write(int argc)
 struct value
 builtin_os_spawn(int argc)
 {
-        ASSERT_ARGC("os.spawn()", 1);
+        ASSERT_ARGC_2("os.spawn()", 1, 2);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
@@ -1342,6 +1342,20 @@ builtin_os_spawn(int argc)
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
                         vm_panic("non-string in array passed to os.spawn()");
+
+        bool detached = false;
+
+        if (argc == 2 && ARG(1).type != VALUE_NIL) {
+                if (ARG(1).type != VALUE_TUPLE) {
+                        vm_panic("the second argument to os.spawn() must be a tuple");
+                }
+
+                struct value *opt_detached = tuple_get(&ARG(1), "detached");
+
+                if (opt_detached != NULL && opt_detached->type == VALUE_BOOLEAN) {
+                        detached = opt_detached->boolean;
+                }
+        }
 
         int in[2];
         int out[2];
@@ -1401,6 +1415,10 @@ builtin_os_spawn(int argc)
                 }
 
                 fcntl(exc[1], F_SETFD, FD_CLOEXEC);
+
+                if (detached) {
+                        setpgid(0, 0);
+                }
 
                 vec(char *) args;
                 vec_init(args);
