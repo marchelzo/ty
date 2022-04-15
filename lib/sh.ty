@@ -1,8 +1,10 @@
 import os
+import time (utime)
+import errno (ETIMEDOUT)
 
 export ls, sh, expand
 
-function sh(c, input) {
+function sh(c, input, timeoutMs, signal = os.SIGKILL) {
     if not let $p = os::spawn(['bash', '-c', c]) {
 	      return nil;
     }
@@ -15,8 +17,27 @@ function sh(c, input) {
 
     os::close(p.stdin);
 
-    while os::read(p.stdout, out, 4096) > 0 {
-        ;
+    let start = utime()
+
+    while true {
+        let pfds = [(fd: p.stdout, events: os.POLLIN)]
+
+        if os.poll(pfds, timeoutMs ?? -1) != 1 {
+            os.kill(p.pid, signal)
+            return nil
+        }
+
+        if timeoutMs != nil {
+            let now = utime()
+            timeoutMs -= (now - start)
+            start = now
+        }
+
+        if pfds[0].revents .&. os.POLLIN {
+            os.read(p.stdout, out, 4096)
+        } else {
+            break
+        }
     }
 
     os::close(p.stdout);

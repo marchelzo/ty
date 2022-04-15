@@ -1438,14 +1438,13 @@ builtin_os_spawn(int argc)
 
                 close(exc[0]);
 
-                struct table *result = object_new();
-
-                table_put(result, "stdin",  INTEGER(in[1]));
-                table_put(result, "stdout", INTEGER(out[0]));
-                table_put(result, "stderr", INTEGER(err[0]));
-                table_put(result, "pid",    INTEGER(pid));
-
-                return OBJECT(result, 0);
+                return value_named_tuple(
+                        "stdin",   INTEGER(in[1]),
+                        "stdout",  INTEGER(out[0]),
+                        "stderr",  INTEGER(err[0]),
+                        "pid",     INTEGER(pid),
+                        NULL
+                );
         }
 }
 

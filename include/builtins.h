@@ -237,6 +237,7 @@
 { .module = "errno",  .name = "EAGAIN",            .value = INT(EAGAIN)                                    },
 { .module = "errno",  .name = "EBADF",             .value = INT(EBADF)                                     },
 { .module = "errno",  .name = "ENOTSOCK",          .value = INT(ENOTSOCK)                                  },
+{ .module = "errno",  .name = "ETIMEDOUT",         .value = INT(ETIMEDOUT)                                 },
 { .module = "errno",  .name = "ECHILD",            .value = INT(ECHILD)                                    },
 { .module = "errno",  .name = "EDQUOT",            .value = INT(EDQUOT)                                    },
 { .module = "errno",  .name = "EEXIST",            .value = INT(EEXIST)                                    },
