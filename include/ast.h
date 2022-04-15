@@ -162,6 +162,7 @@ struct expression {
                 EXPRESSION_YIELD,
                 EXPRESSION_TAG_APPLICATION,
                 EXPRESSION_SPREAD,
+                EXPRESSION_SPLAT,
                 EXPRESSION_MUST_EQUAL,
                 EXPRESSION_REGEX,
                 EXPRESSION_SPECIAL_STRING,

@@ -1103,6 +1103,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
                 break;
         case EXPRESSION_SPREAD:
+        case EXPRESSION_SPLAT:
                 symbolize_expression(scope, e->value);
                 break;
         case EXPRESSION_MATCH_REST:
@@ -3372,6 +3373,9 @@ emit_expr(struct expression const *e, bool need_loc)
                 break;
         case EXPRESSION_SELF:
                 emit_instr(INSTR_NIL);
+                break;
+        case EXPRESSION_SPLAT:
+                emit_expression(e->value);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
                 emit_expression(e->object);

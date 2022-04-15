@@ -2369,7 +2369,34 @@ BadContainer:
                                 container = DICT(dict_new());
                                 NOGC(container.dict);
                                 for (int i = 0; i < nkw; ++i) {
-                                        dict_put_member(container.dict, ip, pop());
+                                        if (ip[0] == '*') {
+                                                if (top()->type == VALUE_DICT) {
+                                                        dict_update(&container, 1);
+                                                        pop();
+                                                } else if (top()->type == VALUE_TUPLE && top()->names != NULL) {
+                                                        for (int i = 0; i < top()->count; ++i) {
+                                                                if (top()->names[i] != NULL) {
+                                                                        dict_put_member(
+                                                                                container.dict,
+                                                                                top()->names[i],
+                                                                                top()->items[i]
+                                                                        );
+                                                                }
+                                                        }
+                                                        pop();
+                                                } else {
+                                                        vm_panic(
+                                                                "Attempt to splat invalid value in function call: %s%s%s%s%s",
+                                                                TERM(34),
+                                                                TERM(1),
+                                                                value_show(top()),
+                                                                TERM(22),
+                                                                TERM(39)
+                                                        );
+                                                }
+                                        } else {
+                                                dict_put_member(container.dict, ip, pop());
+                                        }
                                         ip += strlen(ip) + 1;
                                 }
                                 push(container);

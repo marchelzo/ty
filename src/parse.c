@@ -856,6 +856,8 @@ prefix_at(void)
         return prefix_identifier();
 }
 
+
+
 static struct expression *
 prefix_star(void)
 {
@@ -1754,10 +1756,20 @@ infix_function_call(struct expression *left)
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *arg = mkexpr();
-                        arg->type = EXPRESSION_SPREAD;
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                arg->type = EXPRESSION_SPLAT;
+                        } else {
+                                arg->type = EXPRESSION_SPREAD;
+                        }
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
-                        vec_push(e->args, arg);
+                        if (arg->type == EXPRESSION_SPLAT) {
+                                vec_push(e->kwargs, arg);
+                                vec_push(e->kws, "*");
+                        } else {
+                                vec_push(e->args, arg);
+                        }
         } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
                         next();
@@ -1773,10 +1785,20 @@ infix_function_call(struct expression *left)
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *arg = mkexpr();
-                        arg->type = EXPRESSION_SPREAD;
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                arg->type = EXPRESSION_SPLAT;
+                        } else {
+                                arg->type = EXPRESSION_SPREAD;
+                        }
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
-                        vec_push(e->args, arg);
+                        if (arg->type == EXPRESSION_SPLAT) {
+                                vec_push(e->kwargs, arg);
+                                vec_push(e->kws, "*");
+                        } else {
+                                vec_push(e->args, arg);
+                        }
         } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
                         next();
@@ -1960,10 +1982,20 @@ infix_member_access(struct expression *left)
         } else if (tok()->type == TOKEN_STAR) {
                 next();
                 struct expression *arg = mkexpr();
-                arg->type = EXPRESSION_SPREAD;
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        arg->type = EXPRESSION_SPLAT;
+                } else {
+                        arg->type = EXPRESSION_SPREAD;
+                }
                 arg->value = parse_expr(0);
                 arg->start = arg->value->start;
-                vec_push(e->method_args, arg);
+                if (arg->type == EXPRESSION_SPLAT) {
+                        vec_push(e->method_kwargs, arg);
+                        vec_push(e->method_kws, "*");
+                } else {
+                        vec_push(e->method_args, arg);
+                }
         } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                 vec_push(e->method_kws, tok()->identifier);
                 next();
@@ -1978,10 +2010,20 @@ infix_member_access(struct expression *left)
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *arg = mkexpr();
-                        arg->type = EXPRESSION_SPREAD;
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                arg->type = EXPRESSION_SPLAT;
+                        } else {
+                                arg->type = EXPRESSION_SPREAD;
+                        }
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
-                        vec_push(e->method_args, arg);
+                        if (arg->type == EXPRESSION_SPLAT) {
+                                vec_push(e->method_kwargs, arg);
+                                vec_push(e->method_kws, "*");
+                        } else {
+                                vec_push(e->method_args, arg);
+                        }
                 } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->method_kws, tok()->identifier);
                         next();
