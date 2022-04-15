@@ -1782,6 +1782,7 @@ infix_function_call(struct expression *left)
 
         while (tok()->type == ',') {
                 next();
+                setctx(LEX_PREFIX);
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *arg = mkexpr();
@@ -1799,7 +1800,7 @@ infix_function_call(struct expression *left)
                         } else {
                                 vec_push(e->args, arg);
                         }
-        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
                         next();
                         next();
@@ -2007,6 +2008,7 @@ infix_member_access(struct expression *left)
 
         while (tok()->type == ',') {
                 next();
+                setctx(LEX_PREFIX);
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *arg = mkexpr();
