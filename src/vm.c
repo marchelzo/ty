@@ -519,7 +519,6 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 NOGC(extra);
 
                 for (int i = irest; i < argc; ++i) {
-                        if (i == ikwargs) continue;
                         value_array_push(extra, stack.items[fp + i]);
                         stack.items[fp + i] = NIL;
                 }
