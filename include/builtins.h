@@ -19,6 +19,7 @@
 { .module = NULL,     .name = "str",               .value = BUILTIN(builtin_str)                           },
 { .module = NULL,     .name = "bool",              .value = BUILTIN(builtin_bool)                          },
 { .module = NULL,     .name = "regex",             .value = BUILTIN(builtin_regex)                         },
+{ .module = NULL,     .name = "tuple",             .value = BUILTIN(builtin_tuple)                         },
 { .module = NULL,     .name = "blob",              .value = BUILTIN(builtin_blob)                          },
 { .module = NULL,     .name = "type",              .value = BUILTIN(builtin_type)                          },
 { .module = NULL,     .name = "subclass?",         .value = BUILTIN(builtin_subclass)                      },

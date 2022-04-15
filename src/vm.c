@@ -489,8 +489,8 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 {
         int bound = f->info[3];
         int np = f->info[4];
-        bool rest = f->info[5] & 2;
-        bool has_kwargs = f->info[5] & 1;
+        int irest = ((int16_t *)(f->info + 5))[0];
+        int ikwargs = ((int16_t *)(f->info + 5))[1];
         int class = f->info[6];
         char *code = code_of(f);
         int argc = n;
@@ -514,21 +514,22 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
          * If the function was declared with the form f(..., *extra) then we
          * create an array and add any extra arguments to it.
          */
-        if (rest) {
+        if (irest != -1) {
                 struct array *extra = value_array_new();
                 NOGC(extra);
 
-                for (int i = np - 1 - has_kwargs; i < argc; ++i) {
+                for (int i = irest; i < argc; ++i) {
+                        if (i == ikwargs) continue;
                         value_array_push(extra, stack.items[fp + i]);
                         stack.items[fp + i] = NIL;
                 }
 
-                stack.items[fp + np - 1 - has_kwargs] = ARRAY(extra);
+                stack.items[fp + irest] = ARRAY(extra);
                 OKGC(extra);
         }
 
-        if (has_kwargs) {
-                stack.items[fp + np - 1] = (nkw > 0) ? kwargs : DICT(dict_new());
+        if (ikwargs != -1) {
+                stack.items[fp + ikwargs] = (nkw > 0) ? kwargs : DICT(dict_new());
         }
 
         /*
@@ -554,6 +555,9 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 char const *name = (char const *)(f->info + 7);
                 for (int i = 0; i < np; ++i) {
                         name += strlen(name) + 1;
+                        if (i == irest || i == ikwargs) {
+                                continue;
+                        }
                         struct value *arg = dict_get_member(kwargs.dict, name);
                         if (arg != NULL) {
                                 *local(i) = *arg;
@@ -2343,12 +2347,13 @@ BadContainer:
                         break;
                 CASE(CALL)
                         v = pop();
-                        READVALUE(n);
-                        if (n == -1) {
-                                n = stack.count - *vec_pop(sp_stack);
-                        }
 
+                        READVALUE(n);
                         READVALUE(nkw);
+
+                        if (n == -1) {
+                                n = stack.count - *vec_pop(sp_stack) - nkw;
+                        }
 
                         if (tco) {
                                 vec_pop(frames);
@@ -2464,9 +2469,6 @@ BadContainer:
                         b = ip[-1] == INSTR_TRY_CALL_METHOD;
 
                         READVALUE(n);
-                        if (n == -1) {
-                                n = stack.count - *vec_pop(sp_stack) - 1;
-                        }
 
                         method = ip;
                         ip += strlen(ip) + 1;
@@ -2474,6 +2476,10 @@ BadContainer:
                         READVALUE(h);
 
                         READVALUE(nkw);
+
+                        if (n == -1) {
+                                n = stack.count - *vec_pop(sp_stack) - nkw - 1;
+                        }
 
                 CallMethod:
                         LOG("METHOD = %s, n = %d", method, n);

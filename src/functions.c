@@ -565,6 +565,18 @@ builtin_array(int argc)
 }
 
 struct value
+builtin_tuple(int argc)
+{
+        struct value tuple = value_tuple(argc);
+        
+        for (int i = 0; i < argc; ++i) {
+                tuple.items[i] = ARG(i);
+        }
+
+        return tuple;
+}
+
+struct value
 builtin_regex(int argc)
 {
         ASSERT_ARGC("regex()", 1);

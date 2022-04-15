@@ -1011,17 +1011,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
 
                 vec_init(e->param_symbols);
+
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(scope, e->dflts.items[i]);
                         vec_push(e->param_symbols, addsymbol(scope, e->params.items[i]));
-                }
-
-                if (e->rest) {
-                        vec_push(e->param_symbols, addsymbol(scope, e->params.items[e->params.count]));
-                }
-
-                if (e->has_kwargs) {
-                        vec_push(e->param_symbols, addsymbol(scope, e->params.items[e->params.count + e->rest]));
                 }
 
                 /*
@@ -1320,6 +1313,15 @@ emit_int(int k)
 }
 
 inline static void
+emit_int16(int16_t k)
+{
+        LOG("emitting int16_t: %d", (int)k);
+        char const *s = (char *) &k;
+        for (int i = 0; i < sizeof (int16_t); ++i)
+                vec_push(state.code, s[i]);
+}
+
+inline static void
 emit_ulong(unsigned long k)
 {
         LOG("emitting ulong: %lu", k);
@@ -1533,7 +1535,12 @@ emit_function(struct expression const *e, int class)
         emit_int(ncaps);
         emit_int(bound);
         emit_int(e->param_symbols.count);
-        emit_int((e->rest << 1) + e->has_kwargs);
+        emit_int16(e->rest);
+        emit_int16(e->ikwargs);
+
+        for (int i = 0; i < sizeof (int) - 2 * sizeof (int16_t); ++i) {
+                vec_push(state.code, 0x00);
+        }
 
         emit_int(class);
 

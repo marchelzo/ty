@@ -239,8 +239,8 @@ mkfunc(void)
         struct expression *f = mkexpr();
 
         f->type = EXPRESSION_FUNCTION;
-        f->rest = false;
-        f->has_kwargs = false;
+        f->rest = -1;
+        f->ikwargs = -1;
         f->has_defer = false;
         f->ftype = FT_NONE;
         f->name = NULL;
@@ -748,11 +748,11 @@ prefix_function(void)
 
                 if (tok()->type == TOKEN_STAR) {
                         next();
-                        e->rest = true;
+                        e->rest = e->params.count;
                         special = true;
                 } else if (tok()->type == TOKEN_PERCENT) {
                         next();
-                        e->has_kwargs = true;
+                        e->ikwargs = e->params.count;
                         special = true;
                 }
 
@@ -776,16 +776,10 @@ prefix_function(void)
                         vec_push(e->dflts, NULL);
                 }
 
-                if (false && special) {
-                        e->params.count -= 1;
-                        e->rest = 1;
-                        expect(')');
-                } else if (tok()->type == ',') {
+                if (tok()->type == ',') {
                         next();
                 }
         }
-
-        e->params.count -= (e->rest + e->has_kwargs);
 
         NoEquals = ne;
 
@@ -2028,8 +2022,8 @@ infix_arrow_function(struct expression *left)
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_FUNCTION;
-        e->rest = false;
-        e->has_kwargs = false;
+        e->rest = -1;
+        e->ikwargs = -1;
         e->has_defer = false;
         e->ftype = FT_NONE;
         e->name = NULL;
@@ -2057,8 +2051,7 @@ infix_arrow_function(struct expression *left)
                         vec_push(e->params, p->identifier);
                 } else if (p->type == EXPRESSION_MATCH_REST) {
                         vec_push(e->params, p->identifier);
-                        e->params.count -= 1;
-                        e->rest = true;
+                        e->rest = i;
                 } else {
                         char *name = gensym();
                         vec_push(e->params, name);

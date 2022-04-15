@@ -95,6 +95,10 @@ class Object {
         x -> self(other(x))
     }
 
+    |>(f) {
+        (*xs) -> f(self(*xs))
+    }
+
     __match__(other) {
         self == other
     }
@@ -145,10 +149,6 @@ class Function : Iter {
 
     __match__(x) {
         self(x)
-    }
-
-    |>(f) {
-        (*xs) -> f(self(*xs))
     }
 
     __next__() {
@@ -670,8 +670,8 @@ class Iterable {
         @__iter__().pad(n, x)
     }
 
-    zip(*its) {
-        @__iter__().zip(*its)
+    zip(*its, longest) {
+        @__iter__().zip(*its, longest: longest)
     }
 
     mean() {
@@ -774,23 +774,30 @@ class Iter : Iterable {
         }
     }
 
-    zip(*its) {
+    zipWith(f, *its, longest) {
         its.map!(&__iter__)
         its.insert(0, self)
-        let stop = false
-        while !stop {
+
+        while true {
             let group = []
+
             for it in its {
-                if not let Some(x) = it.__next__() {
-                    stop = true
-                    break
-                }
-                group.push(x)
+                group.push(it.__next__())
             }
-            if !stop {
-                yield group.tuple()
+
+            if group.all?(Some) || (group.any?(Some) && longest) {
+                yield f(*group.map!(x -> match x {
+                    None    => nil,
+                    Some(x) => x
+                }))
+            } else {
+                break
             }
         }
+    }
+
+    zip(*its, longest = false) {
+        self.zipWith(tuple, *its, longest: longest)
     }
 
     pad(n, x) {

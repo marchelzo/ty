@@ -148,6 +148,7 @@ enum {
         VALUE_BUILTIN_METHOD   ,
         VALUE_CLASS            ,
         VALUE_GENERATOR        ,
+        VALUE_TAG              ,
         VALUE_REGEX            , // CALLABLE here and above
         VALUE_INTEGER          ,
         VALUE_REAL             ,
@@ -156,7 +157,6 @@ enum {
         VALUE_ARRAY            ,
         VALUE_DICT             ,
         VALUE_OBJECT           ,
-        VALUE_TAG              ,
         VALUE_STRING           ,
         VALUE_BLOB             ,
         VALUE_SENTINEL         ,

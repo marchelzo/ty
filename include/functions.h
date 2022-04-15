@@ -85,6 +85,9 @@ struct value
 builtin_array(int argc);
 
 struct value
+builtin_tuple(int argc);
+
+struct value
 builtin_dict(int argc);
 
 struct value

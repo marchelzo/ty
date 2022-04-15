@@ -288,9 +288,9 @@ struct expression {
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;
                         bool is_method;
-                        bool rest;
-                        bool has_kwargs;
                         bool has_defer;
+                        int ikwargs;
+                        int rest;
                         unsigned char ftype;
                 };
                 struct {
