@@ -68,6 +68,17 @@ builtin_print(int argc, struct value *kwargs)
                 );
         }
 
+        struct value *end = NAMED("end");
+
+        if (end != NULL && end->type != VALUE_STRING) {
+                vm_panic(
+                        "print(): %s%send%s must be a string",
+                        TERM(93),
+                        TERM(1),
+                        TERM(0)
+                );
+        }
+
         for (int i = 0; i < argc; ++i) {
                 struct value *v = &ARG(i);
                 if (i > 0) {
@@ -87,7 +98,11 @@ builtin_print(int argc, struct value *kwargs)
         }
 
 
-        putchar('\n');
+        if (end != NULL) {
+                fwrite(end->string, 1, end->bytes, stdout);
+        } else {
+                putchar('\n');
+        }
 
         return NIL;
 }
@@ -210,10 +225,11 @@ builtin_rand(int argc, struct value *kwargs)
 
         ASSERT_ARGC_3("rand()", 0, 1, 2);
 
-        if (argc == 0)
-                return REAL(drand48());
-
         long z = random();
+
+        if (argc == 0) {
+                return REAL(z / (double)((1UL << 31) - 1));
+        }
 
         if (argc == 1 && ARG(0).type == VALUE_ARRAY) {
                 int n = ARG(0).array->count;

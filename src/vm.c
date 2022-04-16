@@ -2766,8 +2766,7 @@ vm_init(int ac, char **av)
 
         curl_global_init(CURL_GLOBAL_ALL);
 
-        srand48(time(NULL));
-        srandom(lrand48());
+        srandom(time(NULL));
 
         compiler_init();
 
