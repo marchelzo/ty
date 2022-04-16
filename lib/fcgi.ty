@@ -144,17 +144,40 @@ class FCGIRequest {
     sendResponse(status, body) {
         let size = body.size();
         let response = blob();
-        response.push(FCGI_VERSION_1);
-        response.push(FCGI_STDOUT);
-        response.push(0);
-        response.push(1);
-        response.push(size >> 8);
-        response.push(0xFF .&. size);
-        response.push(0);
-        response.push(0);
-        response.push(body);
-        os.write(self.socket, response);
-        response.clear();
+
+        let offset = 0
+
+        while size > 0xFFFF {
+            response.push(FCGI_VERSION_1);
+            response.push(FCGI_STDOUT);
+            response.push(0);
+            response.push(1);
+            response.push(0xFF);
+            response.push(0xFF);
+            response.push(0);
+            response.push(0);
+            response.push(body.slice(offset, 0xFFFF));
+            os.write(self.socket, response);
+            response.clear();
+
+            size -= 0xFFFF
+            offset += 0xFFFF
+        }
+
+
+        if size > 0 {
+            response.push(FCGI_VERSION_1);
+            response.push(FCGI_STDOUT);
+            response.push(0);
+            response.push(1);
+            response.push(size >> 8);
+            response.push(0xFF .&. size);
+            response.push(0);
+            response.push(0);
+            response.push(body.slice(offset));
+            os.write(self.socket, response);
+            response.clear();
+        }
 
         response.push(FCGI_VERSION_1);
         response.push(FCGI_STDOUT);
