@@ -176,7 +176,6 @@ MessageQueue q2;
 
 static vec(pthread_t) ThreadList;
 static vec(pthread_mutex_t *) ThreadLocks;
-static vec(pthread_cond_t *) ThreadConds;
 static vec(ThreadStorage) ThreadStorages;
 static vec(_Atomic bool *) ThreadStates;
 
@@ -184,7 +183,6 @@ static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
 _Thread_local pthread_mutex_t *MyLock;
 static _Thread_local _Atomic bool *MyState;
-static _Thread_local pthread_cond_t *MyCond;
 static _Thread_local ThreadStorage MyStorage;
 static _Atomic bool WantGC;
 
@@ -667,10 +665,6 @@ AddThread(void)
         pthread_mutex_lock(MyLock);
         vec_push(ThreadLocks, MyLock);
 
-        MyCond = malloc(sizeof *MyCond);
-        pthread_cond_init(MyCond, NULL);
-        vec_push(ThreadConds, MyCond);
-
         MyStorage = (ThreadStorage) {
                 .stack = &stack,
                 .frames = &frames,
@@ -713,6 +707,8 @@ CleanupThread(void *ctx)
 
         pthread_mutex_unlock(MyLock);
         pthread_mutex_destroy(MyLock);
+
+        free(MyLock);
 
         pthread_mutex_unlock(&ThreadsLock);
 }

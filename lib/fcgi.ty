@@ -131,10 +131,10 @@ function urlDecode(s) {
 }
 
 class FCGIRequest {
-    init(fd, body, ps) {
-        self.socket = fd;
-        self.body = body;
-        self.params = ps;
+    init(stream, body, ps) {
+        @stream = stream
+        self.body = body
+        self.params = ps
     }
 
     sendHTML(html) {
@@ -157,7 +157,7 @@ class FCGIRequest {
             response.push(0);
             response.push(0);
             response.push(body.slice(offset, 0xFFFF));
-            os.write(self.socket, response);
+            @stream.write(response)
             response.clear();
 
             size -= 0xFFFF
@@ -175,7 +175,7 @@ class FCGIRequest {
             response.push(0);
             response.push(0);
             response.push(body.slice(offset));
-            os.write(self.socket, response);
+            @stream.write(response)
             response.clear();
         }
 
@@ -187,7 +187,7 @@ class FCGIRequest {
         response.push(0);
         response.push(0);
         response.push(0);
-        os.write(self.socket, response);
+        @stream.write(response)
         response.clear();
 
         response.push(FCGI_VERSION_1);
@@ -207,9 +207,9 @@ class FCGIRequest {
         response.push(0);
         response.push(0);
 
-        os.write(self.socket, response);
+        @stream.write(response)
 
-        os.close(self.socket);
+        @stream.close()
     }
 
     queryParams() {
@@ -238,10 +238,10 @@ class FCGIApp {
             return nil;
         }
 
-        let stream = io.open(fd);
+        let stream = io.open(fd, 'r+')
 
-        let body = blob();
-        let params = %{};
+        let body = blob()
+        let params = %{}
 
         while let $r = FCGIRecord.read(stream) {
             match r.type {
@@ -266,7 +266,7 @@ class FCGIApp {
             }
         }
 
-        return FCGIRequest(fd, body.str(), params);
+        return FCGIRequest(stream, body.str(), params);
     }
 
     requests() {
