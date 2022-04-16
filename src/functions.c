@@ -55,7 +55,7 @@ static _Thread_local char buffer[1024 * 1024 * 4];
         }
 
 struct value
-builtin_print(int argc)
+builtin_print(int argc, struct value *kwargs)
 {
         struct value *sep = NAMED("sep");
 
@@ -93,7 +93,7 @@ builtin_print(int argc)
 }
 
 struct value
-builtin_slurp(int argc)
+builtin_slurp(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("slurp()", 0, 1);
 
@@ -170,7 +170,7 @@ builtin_slurp(int argc)
 }
 
 struct value
-builtin_die(int argc)
+builtin_die(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("die()", 1);
 
@@ -182,7 +182,7 @@ builtin_die(int argc)
 }
 
 struct value
-builtin_read(int argc)
+builtin_read(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("readLine()", 0);
 
@@ -204,7 +204,7 @@ builtin_read(int argc)
 }
 
 struct value
-builtin_rand(int argc)
+builtin_rand(int argc, struct value *kwargs)
 {
         long low, high;
 
@@ -237,7 +237,7 @@ builtin_rand(int argc)
 }
 
 struct value
-builtin_abs(int argc)
+builtin_abs(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("abs()", 1);
 
@@ -252,7 +252,7 @@ builtin_abs(int argc)
 }
 
 struct value
-builtin_gcd(int argc)
+builtin_gcd(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("gcd()", 2);
 
@@ -279,7 +279,7 @@ builtin_gcd(int argc)
 }
 
 struct value
-builtin_lcm(int argc)
+builtin_lcm(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("lcm()", 2);
 
@@ -306,7 +306,7 @@ builtin_lcm(int argc)
 }
 
 struct value
-builtin_round(int argc)
+builtin_round(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("round()", 1);
 
@@ -321,7 +321,7 @@ builtin_round(int argc)
 }
 
 struct value
-builtin_iround(int argc)
+builtin_iround(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("iround()", 1);
 
@@ -336,7 +336,7 @@ builtin_iround(int argc)
 }
 
 struct value
-builtin_ceil(int argc)
+builtin_ceil(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ceil()", 1);
 
@@ -351,7 +351,7 @@ builtin_ceil(int argc)
 }
 
 struct value
-builtin_floor(int argc)
+builtin_floor(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("floor()", 1);
 
@@ -366,7 +366,7 @@ builtin_floor(int argc)
 }
 
 struct value
-builtin_chr(int argc)
+builtin_chr(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("chr()", 1);
 
@@ -385,7 +385,7 @@ builtin_chr(int argc)
 }
 
 struct value
-builtin_ord(int argc)
+builtin_ord(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ord()", 1);
 
@@ -404,14 +404,14 @@ builtin_ord(int argc)
 }
 
 struct value
-builtin_hash(int argc)
+builtin_hash(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("hash()", 1);
         return INTEGER(value_hash(&ARG(0)));
 }
 
 struct value
-builtin_float(int argc)
+builtin_float(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("float()", 1);
 
@@ -442,7 +442,7 @@ builtin_float(int argc)
 }
 
 struct value
-builtin_isnan(int argc)
+builtin_isnan(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("nan?()", 1);
 
@@ -454,14 +454,14 @@ builtin_isnan(int argc)
 }
 
 struct value
-builtin_blob(int argc)
+builtin_blob(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("blob()", 0);
         return BLOB(value_blob_new());
 }
 
 struct value
-builtin_int(int argc)
+builtin_int(int argc, struct value *kwargs)
 {
         struct value v = INTEGER(0), a, s, b;
         int base;
@@ -542,7 +542,7 @@ TooBig:
 }
 
 struct value
-builtin_str(int argc)
+builtin_str(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("str()", 0, 1);
 
@@ -561,28 +561,28 @@ builtin_str(int argc)
 }
 
 struct value
-builtin_bool(int argc)
+builtin_bool(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bool()", 1);
         return BOOLEAN(value_truthy(&ARG(0)));
 }
 
 struct value
-builtin_dict(int argc)
+builtin_dict(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("dict()", 0);
         return DICT(dict_new());
 }
 
 struct value
-builtin_array(int argc)
+builtin_array(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("array()", 0);
         return ARRAY(value_array_new());
 }
 
 struct value
-builtin_tuple(int argc)
+builtin_tuple(int argc, struct value *kwargs)
 {
         struct value tuple = value_tuple(argc);
         
@@ -594,7 +594,7 @@ builtin_tuple(int argc)
 }
 
 struct value
-builtin_regex(int argc)
+builtin_regex(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("regex()", 1);
 
@@ -631,7 +631,7 @@ builtin_regex(int argc)
 }
 
 struct value
-builtin_min(int argc)
+builtin_min(int argc, struct value *kwargs)
 {
         if (argc < 2)
                 vm_panic("min() expects 2 or more arguments, but got %d", argc);
@@ -649,7 +649,7 @@ builtin_min(int argc)
 }
 
 struct value
-builtin_max(int argc)
+builtin_max(int argc, struct value *kwargs)
 {
         if (argc < 2)
                 vm_panic("max() expects 2 or more arguments, but got %d", argc);
@@ -667,7 +667,7 @@ builtin_max(int argc)
 }
 
 struct value
-builtin_exp(int argc)
+builtin_exp(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.exp()", 1);
 
@@ -681,7 +681,7 @@ builtin_exp(int argc)
 }
 
 struct value
-builtin_log(int argc)
+builtin_log(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.log()", 1);
 
@@ -695,7 +695,7 @@ builtin_log(int argc)
 }
 
 struct value
-builtin_log2(int argc)
+builtin_log2(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.log2()", 1);
 
@@ -709,7 +709,7 @@ builtin_log2(int argc)
 }
 
 struct value
-builtin_pow(int argc)
+builtin_pow(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.pow()", 2);
 
@@ -729,7 +729,7 @@ builtin_pow(int argc)
 }
 
 struct value
-builtin_atan2(int argc)
+builtin_atan2(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.atan2()", 2);
 
@@ -750,7 +750,7 @@ builtin_atan2(int argc)
 
 #define MATH_WRAP(func)                                 \
         struct value                                    \
-        builtin_ ## func (int argc)           \
+        builtin_ ## func (int argc, struct value *kwargs)           \
         {                                               \
                 ASSERT_ARGC("math." #func "()", 1);    \
                                                         \
@@ -774,7 +774,7 @@ MATH_WRAP(sinh)
 MATH_WRAP(cosh)
 
 struct value
-builtin_sqrt(int argc)
+builtin_sqrt(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.sqrt()", 1);
 
@@ -788,7 +788,7 @@ builtin_sqrt(int argc)
 }
 
 struct value
-builtin_cbrt(int argc)
+builtin_cbrt(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.cbrt()", 1);
 
@@ -802,7 +802,7 @@ builtin_cbrt(int argc)
 }
 
 struct value
-builtin_bit_and(int argc)
+builtin_bit_and(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bit.and()", 2);
 
@@ -818,7 +818,7 @@ builtin_bit_and(int argc)
 }
 
 struct value
-builtin_bit_or(int argc)
+builtin_bit_or(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bit.or()", 2);
 
@@ -834,7 +834,7 @@ builtin_bit_or(int argc)
 }
 
 struct value
-builtin_bit_xor(int argc)
+builtin_bit_xor(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bit.xor()", 2);
 
@@ -850,7 +850,7 @@ builtin_bit_xor(int argc)
 }
 
 struct value
-builtin_bit_shift_left(int argc)
+builtin_bit_shift_left(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bit.shiftLeft()", 2);
 
@@ -866,7 +866,7 @@ builtin_bit_shift_left(int argc)
 }
 
 struct value
-builtin_bit_shift_right(int argc)
+builtin_bit_shift_right(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bit.shiftRight()", 2);
 
@@ -882,7 +882,7 @@ builtin_bit_shift_right(int argc)
 }
 
 struct value
-builtin_bit_complement(int argc)
+builtin_bit_complement(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bit.complement()", 1);
 
@@ -894,7 +894,7 @@ builtin_bit_complement(int argc)
 }
 
 struct value
-builtin_setenv(int argc)
+builtin_setenv(int argc, struct value *kwargs)
 {
         static _Thread_local vec(char) varbuf;
         static _Thread_local vec(char) valbuf;
@@ -922,7 +922,7 @@ builtin_setenv(int argc)
 }
 
 struct value
-builtin_getenv(int argc)
+builtin_getenv(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("getenv()", 1);
 
@@ -948,7 +948,7 @@ builtin_getenv(int argc)
 }
 
 struct value
-builtin_json_parse(int argc)
+builtin_json_parse(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("json.parse()", 1);
 
@@ -960,14 +960,14 @@ builtin_json_parse(int argc)
 }
 
 struct value
-builtin_json_encode(int argc)
+builtin_json_encode(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("json.parse()", 1);
         return json_encode(&ARG(0));
 }
 
 struct value
-builtin_md5(int argc)
+builtin_md5(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("md5", 1);
 
@@ -987,7 +987,7 @@ builtin_md5(int argc)
 }
 
 struct value
-builtin_os_umask(int argc)
+builtin_os_umask(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.umask()", 1);
 
@@ -1000,7 +1000,7 @@ builtin_os_umask(int argc)
 }
 
 struct value
-builtin_os_open(int argc)
+builtin_os_open(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.open()", 2, 3);
 
@@ -1034,7 +1034,7 @@ builtin_os_open(int argc)
 }
 
 struct value
-builtin_os_close(int argc)
+builtin_os_close(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.close()", 1);
 
@@ -1047,7 +1047,7 @@ builtin_os_close(int argc)
 }
 
 struct value
-builtin_os_mktemp(int argc)
+builtin_os_mktemp(int argc, struct value *kwargs)
 {
         char template[PATH_MAX + 1] = {0};
 
@@ -1091,7 +1091,7 @@ builtin_os_mktemp(int argc)
 }
 
 struct value
-builtin_os_opendir(int argc)
+builtin_os_opendir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.opendir()", 1);
 
@@ -1119,7 +1119,7 @@ builtin_os_opendir(int argc)
 }
 
 struct value
-builtin_os_readdir(int argc)
+builtin_os_readdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.readdir()", 1);
 
@@ -1146,7 +1146,7 @@ builtin_os_readdir(int argc)
 }
 
 struct value
-builtin_os_rewinddir(int argc)
+builtin_os_rewinddir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.rewinddir()", 1);
 
@@ -1161,7 +1161,7 @@ builtin_os_rewinddir(int argc)
 }
 
 struct value
-builtin_os_seekdir(int argc)
+builtin_os_seekdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.seekdir()", 2);
 
@@ -1180,7 +1180,7 @@ builtin_os_seekdir(int argc)
 }
 
 struct value
-builtin_os_telldir(int argc)
+builtin_os_telldir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.telldir()", 1);
 
@@ -1193,7 +1193,7 @@ builtin_os_telldir(int argc)
 }
 
 struct value
-builtin_os_closedir(int argc)
+builtin_os_closedir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.closedir()", 1);
 
@@ -1206,7 +1206,7 @@ builtin_os_closedir(int argc)
 }
 
 struct value
-builtin_os_getcwd(int argc)
+builtin_os_getcwd(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.getcwd()", 0);
 
@@ -1217,7 +1217,7 @@ builtin_os_getcwd(int argc)
 }
 
 struct value
-builtin_os_unlink(int argc)
+builtin_os_unlink(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.unlink()", 1);
 
@@ -1238,7 +1238,7 @@ builtin_os_unlink(int argc)
 }
 
 struct value
-builtin_os_chdir(int argc)
+builtin_os_chdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.chdir()", 1);
 
@@ -1264,7 +1264,7 @@ builtin_os_chdir(int argc)
 }
 
 struct value
-builtin_os_read(int argc)
+builtin_os_read(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.read()", 2, 3);
 
@@ -1311,7 +1311,7 @@ builtin_os_read(int argc)
 }
 
 struct value
-builtin_os_write(int argc)
+builtin_os_write(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.write()", 2);
 
@@ -1345,7 +1345,7 @@ builtin_os_write(int argc)
 }
 
 struct value
-builtin_os_spawn(int argc)
+builtin_os_spawn(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.spawn()", 1);
 
@@ -1481,7 +1481,7 @@ builtin_os_spawn(int argc)
 }
 
 struct value
-builtin_thread_join(int argc)
+builtin_thread_join(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("thread.join() expects one argument but got %d", argc);
@@ -1499,7 +1499,7 @@ builtin_thread_join(int argc)
 }
 
 struct value
-builtin_thread_mutex(int argc)
+builtin_thread_mutex(int argc, struct value *kwargs)
 {
         pthread_mutex_t *p = gc_alloc_object(sizeof *p, GC_ANY);
         pthread_mutex_init(p, NULL);
@@ -1507,7 +1507,7 @@ builtin_thread_mutex(int argc)
 }
 
 struct value
-builtin_thread_cond(int argc)
+builtin_thread_cond(int argc, struct value *kwargs)
 {
         pthread_cond_t *p = gc_alloc_object(sizeof *p, GC_ANY);
         pthread_cond_init(p, NULL);
@@ -1515,7 +1515,7 @@ builtin_thread_cond(int argc)
 }
 
 struct value
-builtin_thread_cond_wait(int argc)
+builtin_thread_cond_wait(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("thread.waitCond()", 2, 3);
 
@@ -1553,7 +1553,7 @@ builtin_thread_cond_wait(int argc)
 }
 
 struct value
-builtin_thread_cond_signal(int argc)
+builtin_thread_cond_signal(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.signalCond()", 1);
 
@@ -1565,7 +1565,7 @@ builtin_thread_cond_signal(int argc)
 }
 
 struct value
-builtin_thread_cond_broadcast(int argc)
+builtin_thread_cond_broadcast(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.broadcastCond()", 1);
 
@@ -1577,7 +1577,7 @@ builtin_thread_cond_broadcast(int argc)
 }
 
 struct value
-builtin_thread_cond_destroy(int argc)
+builtin_thread_cond_destroy(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.destroyCond()", 1);
 
@@ -1589,7 +1589,7 @@ builtin_thread_cond_destroy(int argc)
 }
 
 struct value
-builtin_thread_mutex_destroy(int argc)
+builtin_thread_mutex_destroy(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.destroyMutex()", 1);
 
@@ -1601,7 +1601,7 @@ builtin_thread_mutex_destroy(int argc)
 }
 
 struct value
-builtin_thread_lock(int argc)
+builtin_thread_lock(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.lock()", 1);
 
@@ -1617,7 +1617,7 @@ builtin_thread_lock(int argc)
 }
 
 struct value
-builtin_thread_trylock(int argc)
+builtin_thread_trylock(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.tryLock()", 1);
 
@@ -1629,7 +1629,7 @@ builtin_thread_trylock(int argc)
 }
 
 struct value
-builtin_thread_unlock(int argc)
+builtin_thread_unlock(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.unlock()", 1);
 
@@ -1641,7 +1641,7 @@ builtin_thread_unlock(int argc)
 }
 
 struct value
-builtin_thread_create(int argc)
+builtin_thread_create(int argc, struct value *kwargs)
 {
         if (argc == 0) {
                 vm_panic("thread.create() expects at least one argument");
@@ -1666,14 +1666,14 @@ builtin_thread_create(int argc)
 }
 
 struct value
-builtin_os_fork(int argc)
+builtin_os_fork(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.fork()", 0);
         return INTEGER(fork());
 }
 
 struct value
-builtin_os_pipe(int argc)
+builtin_os_pipe(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.pipe()", 0);
 
@@ -1691,7 +1691,7 @@ builtin_os_pipe(int argc)
 }
 
 struct value
-builtin_os_dup2(int argc)
+builtin_os_dup2(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.dup2()", 2);
 
@@ -1705,7 +1705,7 @@ builtin_os_dup2(int argc)
 }
 
 struct value
-builtin_os_socket(int argc)
+builtin_os_socket(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.socket()", 3);
 
@@ -1720,7 +1720,7 @@ builtin_os_socket(int argc)
 }
 
 struct value
-builtin_os_setsockopt(int argc)
+builtin_os_setsockopt(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.setsockopt()", 3, 4);
 
@@ -1751,7 +1751,7 @@ builtin_os_setsockopt(int argc)
 }
 
 struct value
-builtin_os_getsockopt(int argc)
+builtin_os_getsockopt(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.getsockopt()", 3);
 
@@ -1778,7 +1778,7 @@ builtin_os_getsockopt(int argc)
 }
 
 struct value
-builtin_os_shutdown(int argc)
+builtin_os_shutdown(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.shutdown()", 2);
 
@@ -1792,7 +1792,7 @@ builtin_os_shutdown(int argc)
 }
 
 struct value
-builtin_os_listen(int argc)
+builtin_os_listen(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.listen()", 2);
 
@@ -1806,7 +1806,7 @@ builtin_os_listen(int argc)
 }
 
 struct value
-builtin_os_connect(int argc)
+builtin_os_connect(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.connect()", 2);
 
@@ -1859,7 +1859,7 @@ builtin_os_connect(int argc)
 }
 
 struct value
-builtin_os_bind(int argc)
+builtin_os_bind(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.bind()", 2);
 
@@ -1912,7 +1912,7 @@ builtin_os_bind(int argc)
 }
 
 struct value
-builtin_os_getaddrinfo(int argc)
+builtin_os_getaddrinfo(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.getaddrinfo()", 5, 6);
 
@@ -2010,7 +2010,7 @@ builtin_os_getaddrinfo(int argc)
 }
 
 struct value
-builtin_os_accept(int argc)
+builtin_os_accept(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.accept()", 1);
 
@@ -2039,7 +2039,7 @@ builtin_os_accept(int argc)
 }
 
 struct value
-builtin_os_recvfrom(int argc)
+builtin_os_recvfrom(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.recvfrom()", 3, 4);
 
@@ -2103,7 +2103,7 @@ builtin_os_recvfrom(int argc)
 }
 
 struct value
-builtin_os_sendto(int argc)
+builtin_os_sendto(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.sendto()", 3, 4);
 
@@ -2131,7 +2131,7 @@ builtin_os_sendto(int argc)
 }
 
 struct value
-builtin_os_poll(int argc)
+builtin_os_poll(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.poll()", 2);
 
@@ -2186,7 +2186,7 @@ builtin_os_poll(int argc)
 }
 
 struct value
-builtin_os_epoll_create(int argc)
+builtin_os_epoll_create(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.epoll_create()", 1);
 
@@ -2198,7 +2198,7 @@ builtin_os_epoll_create(int argc)
 }
 
 struct value
-builtin_os_epoll_ctl(int argc)
+builtin_os_epoll_ctl(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.epoll_ctl()", 4);
 
@@ -2226,7 +2226,7 @@ builtin_os_epoll_ctl(int argc)
 }
 
 struct value
-builtin_os_epoll_wait(int argc)
+builtin_os_epoll_wait(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.epoll_wait()", 2);
 
@@ -2266,7 +2266,7 @@ builtin_os_epoll_wait(int argc)
 }
 
 struct value
-builtin_os_waitpid(int argc)
+builtin_os_waitpid(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.waitpid()", 1, 2);
 
@@ -2296,7 +2296,7 @@ Bad:
 
 #define WAITMACRO(name) \
         struct value \
-        builtin_os_ ## name(int argc) \
+        builtin_os_ ## name(int argc, struct value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 1); \
         \
@@ -2324,7 +2324,7 @@ WAITMACRO(WCOREDUMP)
 
 #define GETID(name) \
         struct value \
-        builtin_os_ ## name (int argc) \
+        builtin_os_ ## name (int argc, struct value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 0); \
                 return INTEGER(name()); \
@@ -2332,7 +2332,7 @@ WAITMACRO(WCOREDUMP)
 
 #define SETID(name) \
         struct value \
-        builtin_os_ ## name (int argc) \
+        builtin_os_ ## name (int argc, struct value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 1); \
                 struct value id = ARG(0); \
@@ -2353,7 +2353,7 @@ SETID(setgid)
 SETID(setegid)
 
 noreturn struct value
-builtin_os_exit(int argc)
+builtin_os_exit(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.exit()", 1);
 
@@ -2365,7 +2365,7 @@ builtin_os_exit(int argc)
 }
 
 struct value
-builtin_os_exec(int argc)
+builtin_os_exec(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.exec()", 1);
 
@@ -2396,7 +2396,7 @@ builtin_os_exec(int argc)
 }
 
 struct value
-builtin_os_signal(int argc)
+builtin_os_signal(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.signal()", 1, 2);
 
@@ -2432,7 +2432,7 @@ builtin_os_signal(int argc)
 }
 
 struct value
-builtin_os_kill(int argc)
+builtin_os_kill(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.kill()", 2);
 
@@ -2446,7 +2446,7 @@ builtin_os_kill(int argc)
 }
 
 struct value
-builtin_os_connect2(int argc)
+builtin_os_connect2(int argc, struct value *kwargs)
 {
         static _Thread_local vec(char) host;
         static _Thread_local vec(char) port;
@@ -2498,7 +2498,7 @@ builtin_os_connect2(int argc)
 }
 
 struct value
-builtin_os_usleep(int argc)
+builtin_os_usleep(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.usleep()", 1);
 
@@ -2513,7 +2513,7 @@ builtin_os_usleep(int argc)
 }
 
 struct value
-builtin_os_listdir(int argc)
+builtin_os_listdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.listdir()", 1);
 
@@ -2555,7 +2555,7 @@ timespec_tuple(struct timespec const *ts)
 }
 
 struct value
-builtin_os_stat(int argc)
+builtin_os_stat(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.stat()", 1);
 
@@ -2594,7 +2594,7 @@ builtin_os_stat(int argc)
 }
 
 struct value
-builtin_os_fcntl(int argc)
+builtin_os_fcntl(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.fcntl()", 2, 3);
 
@@ -2628,14 +2628,14 @@ builtin_os_fcntl(int argc)
 }
 
 struct value
-builtin_errno_get(int argc)
+builtin_errno_get(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("errno.get()", 0);
         return INTEGER(errno);
 }
 
 struct value
-builtin_errno_str(int argc)
+builtin_errno_str(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("errno.str()", 0, 1);
 
@@ -2655,7 +2655,7 @@ builtin_errno_str(int argc)
 }
 
 struct value
-builtin_time_utime(int argc)
+builtin_time_utime(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("time.utime()", 0, 1);
 
@@ -2676,7 +2676,7 @@ builtin_time_utime(int argc)
 }
 
 struct value
-builtin_time_localtime(int argc)
+builtin_time_localtime(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("time.localtime()", 0, 1);
 
@@ -2710,7 +2710,7 @@ builtin_time_localtime(int argc)
 }
 
 struct value
-builtin_time_strftime(int argc)
+builtin_time_strftime(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("time.strftime()", 1, 2);
 
@@ -2773,7 +2773,7 @@ builtin_time_strftime(int argc)
 }
 
 struct value
-builtin_time_strptime(int argc)
+builtin_time_strptime(int argc, struct value *kwargs)
 {
 
         ASSERT_ARGC("time.strptime()", 2);
@@ -2818,7 +2818,7 @@ builtin_time_strptime(int argc)
 }
 
 struct value
-builtin_time_time(int argc)
+builtin_time_time(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("time.time()", 0, 1);
 
@@ -2858,7 +2858,7 @@ builtin_time_time(int argc)
 }
 
 struct value
-builtin_stdio_fileno(int argc)
+builtin_stdio_fileno(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fileno()", 1);
 
@@ -2870,7 +2870,7 @@ builtin_stdio_fileno(int argc)
 }
 
 struct value
-builtin_stdio_fdopen(int argc)
+builtin_stdio_fdopen(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("stdio.fdopen()", 1, 2);
 
@@ -2897,7 +2897,7 @@ builtin_stdio_fdopen(int argc)
 }
 
 struct value
-builtin_stdio_tmpfile(int argc)
+builtin_stdio_tmpfile(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.tmpfile()", 0);
         
@@ -2907,7 +2907,7 @@ builtin_stdio_tmpfile(int argc)
 }
 
 struct value
-builtin_stdio_fgets(int argc)
+builtin_stdio_fgets(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fgets()", 1);
 
@@ -2943,7 +2943,7 @@ builtin_stdio_fgets(int argc)
 }
 
 struct value
-builtin_stdio_read_signed(int argc)
+builtin_stdio_read_signed(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("stdio.readSigned()", 1, 2);
 
@@ -2983,7 +2983,7 @@ builtin_stdio_read_signed(int argc)
 }
 
 struct value
-builtin_stdio_read_unsigned(int argc)
+builtin_stdio_read_unsigned(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("stdio.readUnsigned()", 1, 2);
 
@@ -3013,7 +3013,7 @@ builtin_stdio_read_unsigned(int argc)
 }
 
 struct value
-builtin_stdio_read_double(int argc)
+builtin_stdio_read_double(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.readDouble()", 1);
 
@@ -3036,7 +3036,7 @@ builtin_stdio_read_double(int argc)
 }
 
 struct value
-builtin_stdio_read_float(int argc)
+builtin_stdio_read_float(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.readFloat()", 1);
 
@@ -3059,7 +3059,7 @@ builtin_stdio_read_float(int argc)
 }
 
 struct value
-builtin_stdio_fread(int argc)
+builtin_stdio_fread(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("stdio.fread()", 2, 3);
 
@@ -3110,7 +3110,7 @@ builtin_stdio_fread(int argc)
 }
 
 struct value
-builtin_stdio_slurp(int argc)
+builtin_stdio_slurp(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.slurp()", 1);
 
@@ -3141,7 +3141,7 @@ builtin_stdio_slurp(int argc)
 }
 
 struct value
-builtin_stdio_fgetc(int argc)
+builtin_stdio_fgetc(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fgetc()", 1);
 
@@ -3160,7 +3160,7 @@ builtin_stdio_fgetc(int argc)
 }
 
 struct value
-builtin_stdio_fputc(int argc)
+builtin_stdio_fputc(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fputc()", 2);
 
@@ -3183,7 +3183,7 @@ builtin_stdio_fputc(int argc)
 }
 
 struct value
-builtin_stdio_fwrite(int argc)
+builtin_stdio_fwrite(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fwrite()", 2);
 
@@ -3206,7 +3206,7 @@ builtin_stdio_fwrite(int argc)
 }
 
 struct value
-builtin_stdio_puts(int argc)
+builtin_stdio_puts(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.puts()", 2);
 
@@ -3241,7 +3241,7 @@ builtin_stdio_puts(int argc)
 }
 
 struct value
-builtin_stdio_fflush(int argc)
+builtin_stdio_fflush(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fflush()", 1);
 
@@ -3256,7 +3256,7 @@ builtin_stdio_fflush(int argc)
 }
 
 struct value
-builtin_stdio_fclose(int argc)
+builtin_stdio_fclose(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fclose()", 1);
 
@@ -3271,7 +3271,7 @@ builtin_stdio_fclose(int argc)
 }
 
 struct value
-builtin_stdio_clearerr(int argc)
+builtin_stdio_clearerr(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.clearerr()", 1);
 
@@ -3285,7 +3285,7 @@ builtin_stdio_clearerr(int argc)
 }
 
 struct value
-builtin_stdio_setvbuf(int argc)
+builtin_stdio_setvbuf(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.setvbuf()", 2);
 
@@ -3301,7 +3301,7 @@ builtin_stdio_setvbuf(int argc)
 }
 
 struct value
-builtin_stdio_ftell(int argc)
+builtin_stdio_ftell(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.ftell()", 1);
 
@@ -3313,7 +3313,7 @@ builtin_stdio_ftell(int argc)
 }
 
 struct value
-builtin_stdio_fseek(int argc)
+builtin_stdio_fseek(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fseek()", 3);
 
@@ -3333,7 +3333,7 @@ builtin_stdio_fseek(int argc)
 }
 
 struct value
-builtin_object(int argc)
+builtin_object(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("object()", 1);
 
@@ -3345,7 +3345,7 @@ builtin_object(int argc)
 }
 
 struct value
-builtin_bind(int argc)
+builtin_bind(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("bind()", 2);
 
@@ -3373,7 +3373,7 @@ builtin_bind(int argc)
 }
 
 struct value
-builtin_define_method(int argc)
+builtin_define_method(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("defineMethod()", 3);
 
@@ -3401,7 +3401,7 @@ builtin_define_method(int argc)
 }
 
 struct value
-builtin_apply(int argc)
+builtin_apply(int argc, struct value *kwargs)
 {
         if (argc < 2) {
                 vm_panic("apply() expects at least 2 arguments but got %d", argc);
@@ -3424,7 +3424,7 @@ builtin_apply(int argc)
 }
 
 struct value
-builtin_type(int argc)
+builtin_type(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("type()", 1);
 
@@ -3443,7 +3443,7 @@ builtin_type(int argc)
 
                 for (int i = 0; i < n; ++i) {
                         vm_push(&v.items[i]);
-                        types[i] = builtin_type(1);
+                        types[i] = builtin_type(1, NULL);
                         vm_pop();
                 }
 
@@ -3473,7 +3473,7 @@ builtin_type(int argc)
 }
 
 struct value
-builtin_subclass(int argc)
+builtin_subclass(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("subclass?()", 2);
 
@@ -3488,7 +3488,7 @@ builtin_subclass(int argc)
 }
 
 struct value
-builtin_members(int argc)
+builtin_members(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("members", 1);
 
@@ -3515,7 +3515,7 @@ builtin_members(int argc)
 }
 
 struct value
-builtin_member(int argc)
+builtin_member(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("member()", 2, 3);
 
@@ -3562,7 +3562,7 @@ builtin_member(int argc)
 }
 
 struct value
-builtin_finalizer(int argc)
+builtin_finalizer(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("setFinalizer()", 2);
 

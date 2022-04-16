@@ -3,7 +3,7 @@
 
 #include "value.h"
 
-struct value (*get_blob_method(char const *))(struct value *, int);
+struct value (*get_blob_method(char const *))(struct value *, int, struct value *);
 
 int
 blob_get_completions(char const *prefix, char **out, int max);

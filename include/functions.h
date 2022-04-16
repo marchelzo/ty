@@ -4,496 +4,496 @@
 #include "value.h"
 
 struct value
-builtin_print(int argc);
+builtin_print(int argc, struct value *kwargs);
 
 struct value
-builtin_slurp(int argc);
+builtin_slurp(int argc, struct value *kwargs);
 
 struct value
-builtin_die(int argc);
+builtin_die(int argc, struct value *kwargs);
 
 struct value
-builtin_rand(int argc);
+builtin_rand(int argc, struct value *kwargs);
 
 struct value
-builtin_abs(int argc);
+builtin_abs(int argc, struct value *kwargs);
 
 struct value
-builtin_round(int argc);
+builtin_round(int argc, struct value *kwargs);
 
 struct value
-builtin_iround(int argc);
+builtin_iround(int argc, struct value *kwargs);
 
 struct value
-builtin_ceil(int argc);
+builtin_ceil(int argc, struct value *kwargs);
 
 struct value
-builtin_floor(int argc);
+builtin_floor(int argc, struct value *kwargs);
 
 struct value
-builtin_gcd(int argc);
+builtin_gcd(int argc, struct value *kwargs);
 
 struct value
-builtin_lcm(int argc);
+builtin_lcm(int argc, struct value *kwargs);
 
 struct value
-builtin_hash(int argc);
+builtin_hash(int argc, struct value *kwargs);
 
 struct value
-builtin_object(int argc);
+builtin_object(int argc, struct value *kwargs);
 
 struct value
-builtin_bind(int argc);
+builtin_bind(int argc, struct value *kwargs);
 
 struct value
-builtin_apply(int argc);
+builtin_apply(int argc, struct value *kwargs);
 
 struct value
-builtin_type(int argc);
+builtin_type(int argc, struct value *kwargs);
 
 struct value
-builtin_subclass(int argc);
+builtin_subclass(int argc, struct value *kwargs);
 
 struct value
-builtin_members(int argc);
+builtin_members(int argc, struct value *kwargs);
 
 struct value
-builtin_member(int argc);
+builtin_member(int argc, struct value *kwargs);
 
 struct value
-builtin_finalizer(int argc);
+builtin_finalizer(int argc, struct value *kwargs);
 
 struct value
-builtin_int(int argc);
+builtin_int(int argc, struct value *kwargs);
 
 struct value
-builtin_float(int argc);
+builtin_float(int argc, struct value *kwargs);
 
 struct value
-builtin_isnan(int argc);
+builtin_isnan(int argc, struct value *kwargs);
 
 struct value
-builtin_str(int argc);
+builtin_str(int argc, struct value *kwargs);
 
 struct value
-builtin_bool(int argc);
+builtin_bool(int argc, struct value *kwargs);
 
 struct value
-builtin_regex(int argc);
+builtin_regex(int argc, struct value *kwargs);
 
 struct value
-builtin_array(int argc);
+builtin_array(int argc, struct value *kwargs);
 
 struct value
-builtin_tuple(int argc);
+builtin_tuple(int argc, struct value *kwargs);
 
 struct value
-builtin_dict(int argc);
+builtin_dict(int argc, struct value *kwargs);
 
 struct value
-builtin_blob(int argc);
+builtin_blob(int argc, struct value *kwargs);
 
 struct value
-builtin_max(int argc);
+builtin_max(int argc, struct value *kwargs);
 
 struct value
-builtin_min(int argc);
+builtin_min(int argc, struct value *kwargs);
 
 struct value
-builtin_read(int argc);
+builtin_read(int argc, struct value *kwargs);
 
 struct value
-builtin_log2(int argc);
+builtin_log2(int argc, struct value *kwargs);
 
 struct value
-builtin_pow(int argc);
+builtin_pow(int argc, struct value *kwargs);
 
 struct value
-builtin_cbrt(int argc);
+builtin_cbrt(int argc, struct value *kwargs);
 
 struct value
-builtin_sqrt(int argc);
+builtin_sqrt(int argc, struct value *kwargs);
 
 struct value
-builtin_exp(int argc);
+builtin_exp(int argc, struct value *kwargs);
 
 struct value
-builtin_log(int argc);
+builtin_log(int argc, struct value *kwargs);
 
 struct value
-builtin_sinh(int argc);
+builtin_sinh(int argc, struct value *kwargs);
 
 struct value
-builtin_cosh(int argc);
+builtin_cosh(int argc, struct value *kwargs);
 
 struct value
-builtin_tanh(int argc);
+builtin_tanh(int argc, struct value *kwargs);
 
 struct value
-builtin_atan2(int argc);
+builtin_atan2(int argc, struct value *kwargs);
 
 struct value
-builtin_atan(int argc);
+builtin_atan(int argc, struct value *kwargs);
 
 struct value
-builtin_asin(int argc);
+builtin_asin(int argc, struct value *kwargs);
 
 struct value
-builtin_acos(int argc);
+builtin_acos(int argc, struct value *kwargs);
 
 struct value
-builtin_tan(int argc);
+builtin_tan(int argc, struct value *kwargs);
 
 struct value
-builtin_sin(int argc);
+builtin_sin(int argc, struct value *kwargs);
 
 struct value
-builtin_cos(int argc);
+builtin_cos(int argc, struct value *kwargs);
 
 struct value
-builtin_bit_and(int argc);
+builtin_bit_and(int argc, struct value *kwargs);
 
 struct value
-builtin_bit_or(int argc);
+builtin_bit_or(int argc, struct value *kwargs);
 
 struct value
-builtin_bit_xor(int argc);
+builtin_bit_xor(int argc, struct value *kwargs);
 
 struct value
-builtin_bit_shift_left(int argc);
+builtin_bit_shift_left(int argc, struct value *kwargs);
 
 struct value
-builtin_bit_shift_right(int argc);
+builtin_bit_shift_right(int argc, struct value *kwargs);
 
 struct value
-builtin_bit_complement(int argc);
+builtin_bit_complement(int argc, struct value *kwargs);
 
 struct value
-builtin_getenv(int argc);
+builtin_getenv(int argc, struct value *kwargs);
 
 struct value
-builtin_setenv(int argc);
+builtin_setenv(int argc, struct value *kwargs);
 
 struct value
-builtin_json_parse(int argc);
+builtin_json_parse(int argc, struct value *kwargs);
 
 struct value
-builtin_json_encode(int argc);
+builtin_json_encode(int argc, struct value *kwargs);
 
 struct value
-builtin_md5(int argc);
+builtin_md5(int argc, struct value *kwargs);
 
 struct value
-builtin_ord(int argc);
+builtin_ord(int argc, struct value *kwargs);
 
 struct value
-builtin_chr(int argc);
+builtin_chr(int argc, struct value *kwargs);
 
 struct value
-builtin_os_open(int argc);
+builtin_os_open(int argc, struct value *kwargs);
 
 struct value
-builtin_os_umask(int argc);
+builtin_os_umask(int argc, struct value *kwargs);
 
 struct value
-builtin_os_close(int argc);
+builtin_os_close(int argc, struct value *kwargs);
 
 struct value
-builtin_os_mktemp(int argc);
+builtin_os_mktemp(int argc, struct value *kwargs);
 
 struct value
-builtin_os_opendir(int argc);
+builtin_os_opendir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_readdir(int argc);
+builtin_os_readdir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_telldir(int argc);
+builtin_os_telldir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_seekdir(int argc);
+builtin_os_seekdir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_rewinddir(int argc);
+builtin_os_rewinddir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_closedir(int argc);
+builtin_os_closedir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getcwd(int argc);
+builtin_os_getcwd(int argc, struct value *kwargs);
 
 struct value
-builtin_os_chdir(int argc);
+builtin_os_chdir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_unlink(int argc);
+builtin_os_unlink(int argc, struct value *kwargs);
 
 struct value
-builtin_os_read(int argc);
+builtin_os_read(int argc, struct value *kwargs);
 
 struct value
-builtin_os_write(int argc);
+builtin_os_write(int argc, struct value *kwargs);
 
 struct value
-builtin_os_listdir(int argc);
+builtin_os_listdir(int argc, struct value *kwargs);
 
 struct value
-builtin_os_usleep(int argc);
+builtin_os_usleep(int argc, struct value *kwargs);
 
 struct value
-builtin_os_fcntl(int argc);
+builtin_os_fcntl(int argc, struct value *kwargs);
 
 struct value
-builtin_os_spawn(int argc);
+builtin_os_spawn(int argc, struct value *kwargs);
 
 struct value
-builtin_os_stat(int argc);
+builtin_os_stat(int argc, struct value *kwargs);
 
 struct value
-builtin_os_fork(int argc);
+builtin_os_fork(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_create(int argc);
+builtin_thread_create(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_mutex(int argc);
+builtin_thread_mutex(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_mutex_destroy(int argc);
+builtin_thread_mutex_destroy(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_join(int argc);
+builtin_thread_join(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_lock(int argc);
+builtin_thread_lock(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_unlock(int argc);
+builtin_thread_unlock(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_trylock(int argc);
+builtin_thread_trylock(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_cond(int argc);
+builtin_thread_cond(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_cond_destroy(int argc);
+builtin_thread_cond_destroy(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_cond_broadcast(int argc);
+builtin_thread_cond_broadcast(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_cond_signal(int argc);
+builtin_thread_cond_signal(int argc, struct value *kwargs);
 
 struct value
-builtin_thread_cond_wait(int argc);
+builtin_thread_cond_wait(int argc, struct value *kwargs);
 
 struct value
-builtin_os_pipe(int argc);
+builtin_os_pipe(int argc, struct value *kwargs);
 
 struct value
-builtin_os_dup2(int argc);
+builtin_os_dup2(int argc, struct value *kwargs);
 
 struct value
-builtin_os_poll(int argc);
+builtin_os_poll(int argc, struct value *kwargs);
 
 struct value
-builtin_os_epoll_create(int argc);
+builtin_os_epoll_create(int argc, struct value *kwargs);
 
 struct value
-builtin_os_epoll_ctl(int argc);
+builtin_os_epoll_ctl(int argc, struct value *kwargs);
 
 struct value
-builtin_os_epoll_wait(int argc);
+builtin_os_epoll_wait(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getaddrinfo(int argc);
+builtin_os_getaddrinfo(int argc, struct value *kwargs);
 
 struct value
-builtin_os_bind(int argc);
+builtin_os_bind(int argc, struct value *kwargs);
 
 struct value
-builtin_os_socket(int argc);
+builtin_os_socket(int argc, struct value *kwargs);
 
 struct value
-builtin_os_setsockopt(int argc);
+builtin_os_setsockopt(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getsockopt(int argc);
+builtin_os_getsockopt(int argc, struct value *kwargs);
 
 struct value
-builtin_os_listen(int argc);
+builtin_os_listen(int argc, struct value *kwargs);
 
 struct value
-builtin_os_accept(int argc);
+builtin_os_accept(int argc, struct value *kwargs);
 
 struct value
-builtin_os_connect(int argc);
+builtin_os_connect(int argc, struct value *kwargs);
 
 struct value
-builtin_os_recvfrom(int argc);
+builtin_os_recvfrom(int argc, struct value *kwargs);
 
 struct value
-builtin_os_sendto(int argc);
+builtin_os_sendto(int argc, struct value *kwargs);
 
 struct value
-builtin_os_shutdown(int argc);
+builtin_os_shutdown(int argc, struct value *kwargs);
 
 struct value
-builtin_os_waitpid(int argc);
+builtin_os_waitpid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_WIFEXITED(int argc);
+builtin_os_WIFEXITED(int argc, struct value *kwargs);
 
 struct value
-builtin_os_WIFSIGNALED(int argc);
+builtin_os_WIFSIGNALED(int argc, struct value *kwargs);
 
 #ifdef WIFCONTINUED
 struct value
-builtin_os_WIFCONTINUED(int argc);
+builtin_os_WIFCONTINUED(int argc, struct value *kwargs);
 #endif
 
 struct value
-builtin_os_WIFSTOPPED(int argc);
+builtin_os_WIFSTOPPED(int argc, struct value *kwargs);
 
 #ifdef WCOREDUMP
 struct value
-builtin_os_WCOREDUMP(int argc);
+builtin_os_WCOREDUMP(int argc, struct value *kwargs);
 #endif
 
 struct value
-builtin_os_WEXITSTATUS(int argc);
+builtin_os_WEXITSTATUS(int argc, struct value *kwargs);
 
 struct value
-builtin_os_WTERMSIG(int argc);
+builtin_os_WTERMSIG(int argc, struct value *kwargs);
 
 struct value
-builtin_os_WSTOPSIG(int argc);
+builtin_os_WSTOPSIG(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getpid(int argc);
+builtin_os_getpid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getppid(int argc);
+builtin_os_getppid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getuid(int argc);
+builtin_os_getuid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_geteuid(int argc);
+builtin_os_geteuid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getgid(int argc);
+builtin_os_getgid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_getegid(int argc);
+builtin_os_getegid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_setuid(int argc);
+builtin_os_setuid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_seteuid(int argc);
+builtin_os_seteuid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_setgid(int argc);
+builtin_os_setgid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_setegid(int argc);
+builtin_os_setegid(int argc, struct value *kwargs);
 
 struct value
-builtin_os_kill(int argc);
+builtin_os_kill(int argc, struct value *kwargs);
 
 struct value
-builtin_os_signal(int argc);
+builtin_os_signal(int argc, struct value *kwargs);
 
 struct value
-builtin_os_exit(int argc);
+builtin_os_exit(int argc, struct value *kwargs);
 
 struct value
-builtin_os_utime(int argc);
+builtin_os_utime(int argc, struct value *kwargs);
 
 struct value
-builtin_os_exec(int argc);
+builtin_os_exec(int argc, struct value *kwargs);
 
 struct value
-builtin_errno_get(int argc);
+builtin_errno_get(int argc, struct value *kwargs);
 
 struct value
-builtin_errno_str(int argc);
+builtin_errno_str(int argc, struct value *kwargs);
 
 struct value
-builtin_time_time(int argc);
+builtin_time_time(int argc, struct value *kwargs);
 
 struct value
-builtin_time_utime(int argc);
+builtin_time_utime(int argc, struct value *kwargs);
 
 struct value
-builtin_time_localtime(int argc);
+builtin_time_localtime(int argc, struct value *kwargs);
 
 struct value
-builtin_time_strftime(int argc);
+builtin_time_strftime(int argc, struct value *kwargs);
 
 struct value
-builtin_time_strptime(int argc);
+builtin_time_strptime(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fdopen(int argc);
+builtin_stdio_fdopen(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fileno(int argc);
+builtin_stdio_fileno(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_tmpfile(int argc);
+builtin_stdio_tmpfile(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fgets(int argc);
+builtin_stdio_fgets(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fread(int argc);
+builtin_stdio_fread(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_read_signed(int argc);
+builtin_stdio_read_signed(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_read_unsigned(int argc);
+builtin_stdio_read_unsigned(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_read_float(int argc);
+builtin_stdio_read_float(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_read_double(int argc);
+builtin_stdio_read_double(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_puts(int argc);
+builtin_stdio_puts(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fwrite(int argc);
+builtin_stdio_fwrite(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fgetc(int argc);
+builtin_stdio_fgetc(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fputc(int argc);
+builtin_stdio_fputc(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_slurp(int argc);
+builtin_stdio_slurp(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fflush(int argc);
+builtin_stdio_fflush(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fclose(int argc);
+builtin_stdio_fclose(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_clearerr(int argc);
+builtin_stdio_clearerr(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_fseek(int argc);
+builtin_stdio_fseek(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_ftell(int argc);
+builtin_stdio_ftell(int argc, struct value *kwargs);
 
 struct value
-builtin_stdio_setvbuf(int argc);
+builtin_stdio_setvbuf(int argc, struct value *kwargs);
 
 #endif

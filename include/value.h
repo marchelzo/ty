@@ -74,12 +74,12 @@ struct value;
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
                 char const *name; \
-                struct value (*func)(struct value *, int); \
+                struct value (*func)(struct value *, int, struct value *); \
         } funcs[] = { __VA_ARGS__ }; \
         static size_t const nfuncs = sizeof funcs / sizeof funcs[0]
 
 #define DEFINE_METHOD_LOOKUP(type) \
-        struct value (*get_ ## type ## _method(char const *name))(struct value *, int) \
+        struct value (*get_ ## type ## _method(char const *name))(struct value *, int, struct value *) \
         { \
                 int lo = 0, \
                     hi = nfuncs - 1; \
@@ -111,8 +111,8 @@ struct value;
                 return n; \
         }
 
-#define ARG(i) (*vm_get(argc - (i)))
-#define NAMED(s) (vm_get(0)->type == VALUE_DICT ? (dict_get_member(vm_get(0)->dict, (s))) : NULL)
+#define ARG(i) (*vm_get(argc - 1 - (i)))
+#define NAMED(s) ((kwargs != NULL) ? dict_get_member(kwargs->dict, (s)) : NULL)
 
 //#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 #define value_mark _value_mark
@@ -178,7 +178,7 @@ struct value {
                 bool boolean;
                 struct array *array;
                 struct dict *dict;
-                struct value (*builtin_function)(int);
+                struct value (*builtin_function)(int, struct value *);
                 struct blob *blob;
                 struct {
                         void *ptr;
@@ -196,7 +196,7 @@ struct value {
                         struct value *this;
                         union {
                                 struct value *method;
-                                struct value (*builtin_method)(struct value *, int);
+                                struct value (*builtin_method)(struct value *, int, struct value *);
                         };
                         char const *name;
                 };

@@ -70,7 +70,7 @@ Next:
 }
 
 static struct value
-string_length(struct value *string, int argc)
+string_length(struct value *string, int argc, struct value *kwargs)
 {
         char const *s = string->string;
         int size = string->bytes;
@@ -103,7 +103,7 @@ string_length(struct value *string, int argc)
 }
 
 static struct value
-string_chars(struct value *string, int argc)
+string_chars(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("str.chars() expects no arguments but got %d", argc);
@@ -143,7 +143,7 @@ string_chars(struct value *string, int argc)
 }
 
 static struct value
-string_size(struct value *string, int argc)
+string_size(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("str.size() expects no arguments but got %d", argc);
@@ -152,7 +152,7 @@ string_size(struct value *string, int argc)
 }
 
 static struct value
-string_slice(struct value *string, int argc)
+string_slice(struct value *string, int argc, struct value *kwargs)
 {
         if (argc == 0 || argc > 2)
                 vm_panic("str.slice() expects 1 or 2 arguments but got %d", argc);
@@ -196,7 +196,7 @@ string_slice(struct value *string, int argc)
 }
 
 static struct value
-string_search(struct value *string, int argc)
+string_search(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("str.search() expects 1 or 2 arguments but got %d", argc);
@@ -260,7 +260,7 @@ string_search(struct value *string, int argc)
 }
 
 static struct value
-string_contains(struct value *string, int argc)
+string_contains(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("str.contains?() expects 1 or 2 arguments but got %d", argc);
@@ -304,7 +304,7 @@ string_contains(struct value *string, int argc)
 }
 
 static struct value
-string_words(struct value *string, int argc)
+string_words(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the words method on strings expects no arguments but got %d", argc);
@@ -358,7 +358,7 @@ End:
 }
 
 static struct value
-string_lines(struct value *string, int argc)
+string_lines(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the lines method on strings expects no arguments but got %d", argc);
@@ -398,7 +398,7 @@ End:
 }
 
 static struct value
-string_split(struct value *string, int argc)
+string_split(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("String.split() expects 1 or 2 arguments but got %d", argc);
@@ -503,7 +503,7 @@ End:
 }
 
 static struct value
-string_count(struct value *string, int argc)
+string_count(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("the count method on strings expects exactly 1 argument");
@@ -555,7 +555,7 @@ string_count(struct value *string, int argc)
 
 /* copy + paste of replace, can fix later */
 static struct value
-string_comb(struct value *string, int argc)
+string_comb(struct value *string, int argc, struct value *kwargs)
 {
         vec(char) chars;
         size_t const header = offsetof(struct alloc, data);
@@ -623,7 +623,7 @@ string_comb(struct value *string, int argc)
 }
 
 static struct value
-string_replace(struct value *string, int argc)
+string_replace(struct value *string, int argc, struct value *kwargs)
 {
         vec(char) chars;
         size_t const header = offsetof(struct alloc, data);
@@ -647,7 +647,7 @@ string_replace(struct value *string, int argc)
         if (pattern.type == VALUE_STRING) {
 
                 vm_push(&replacement);
-                replacement = builtin_str(1);
+                replacement = builtin_str(1, NULL);
                 vm_pop();
 
                 if (replacement.type != VALUE_STRING)
@@ -718,7 +718,7 @@ string_replace(struct value *string, int argc)
 
                         struct value repstr = vm_eval_function(&replacement, &match, NULL);
                         vm_push(&repstr);
-                        repstr = builtin_str(1);
+                        repstr = builtin_str(1, NULL);
                         vm_pop();
                         if (repstr.type != VALUE_STRING)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
@@ -743,7 +743,7 @@ string_replace(struct value *string, int argc)
 }
 
 static struct value
-string_is_match(struct value *string, int argc)
+string_is_match(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the match? method on strings expects 1 argument but got %d", argc);
@@ -774,7 +774,7 @@ string_is_match(struct value *string, int argc)
 }
 
 static struct value
-string_match(struct value *string, int argc)
+string_match(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the match method on strings expects 1 argument but got %d", argc);
@@ -825,7 +825,7 @@ string_match(struct value *string, int argc)
 }
 
 static struct value
-string_matches(struct value *string, int argc)
+string_matches(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the matches method on strings expects 1 argument but got %d", argc);
@@ -885,7 +885,7 @@ string_matches(struct value *string, int argc)
 }
 
 static struct value
-string_byte(struct value *string, int argc)
+string_byte(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("str.byte() expects 1 argument but got %d", argc);
@@ -905,7 +905,7 @@ string_byte(struct value *string, int argc)
 }
 
 static struct value
-string_char(struct value *string, int argc)
+string_char(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the char method on strings expects 1 argument but got %d", argc);
@@ -916,7 +916,7 @@ string_char(struct value *string, int argc)
                 vm_panic("non-integer passed to the char method on string");
 
         if (i.integer < 0)
-                i.integer += string_length(string, 0).integer;
+                i.integer += string_length(string, 0, NULL).integer;
 
         int cp;
         int j = i.integer;
@@ -935,7 +935,7 @@ string_char(struct value *string, int argc)
 }
 
 static struct value
-string_bytes(struct value *string, int argc)
+string_bytes(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("str.bytes() expects no arguments but got %d", argc);
@@ -953,7 +953,7 @@ string_bytes(struct value *string, int argc)
 }
 
 static struct value
-string_lower(struct value *string, int argc)
+string_lower(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("str.lower() expects no arguments but got %d", argc);
@@ -978,7 +978,7 @@ string_lower(struct value *string, int argc)
 }
 
 static struct value
-string_upper(struct value *string, int argc)
+string_upper(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("str.upper() expects no arguments but got %d", argc);
@@ -1003,7 +1003,7 @@ string_upper(struct value *string, int argc)
 }
 
 static struct value
-string_pad_left(struct value *string, int argc)
+string_pad_left(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("str.padLeft() expects 1 or 2 arguments but got %d", argc);
@@ -1056,7 +1056,7 @@ string_pad_left(struct value *string, int argc)
 }
 
 static struct value
-string_pad_right(struct value *string, int argc)
+string_pad_right(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("str.padRight() expects 1 or 2 arguments but got %d", argc);
@@ -1106,7 +1106,7 @@ string_pad_right(struct value *string, int argc)
 }
 
 static struct value
-string_cstr(struct value *string, int argc)
+string_cstr(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("String.cstr() expects 0 arguments but got %d", argc);
@@ -1115,7 +1115,7 @@ string_cstr(struct value *string, int argc)
 }
 
 static struct value
-string_ptr(struct value *string, int argc)
+string_ptr(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("String.ptr() expects 0 arguments but got %d", argc);

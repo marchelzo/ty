@@ -3,7 +3,7 @@
 
 #include "value.h"
 
-struct value (*get_string_method(char const *))(struct value *, int);
+struct value (*get_string_method(char const *))(struct value *, int, struct value *);
 
 int
 string_get_completions(char const *prefix, char **out, int max);

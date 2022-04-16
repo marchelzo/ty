@@ -824,7 +824,7 @@ vm_exec(char *code)
         char *str;
         char const *method, *member;
 
-        struct value (*func)(struct value *, int);
+        struct value (*func)(struct value *, int, struct value *);
 
 #ifdef TY_LOG_VERBOSE
         struct location loc;
@@ -1992,13 +1992,13 @@ ObjectSubscript:
                                 break;
                         case VALUE_STRING:
                                 push(subscript);
-                                v = get_string_method("char")(&container, 1);
+                                v = get_string_method("char")(&container, 1, NULL);
                                 pop();
                                 push(v);
                                 break;
                         case VALUE_BLOB:
                                 push(subscript);
-                                v = get_blob_method("get")(&container, 1);
+                                v = get_blob_method("get")(&container, 1, NULL);
                                 pop();
                                 push(v);
                                 break;
@@ -2057,7 +2057,7 @@ BadContainer:
                         case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
                         case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
                         case VALUE_STRING:
-                                push(get_string_method("len")(&v, 0));
+                                push(get_string_method("len")(&v, 0, NULL));
                                 break;
                         case VALUE_OBJECT:
                                 push(v);
@@ -2222,7 +2222,7 @@ BadContainer:
                         } else if (vp->type == VALUE_DICT) {
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to add non-dict to dict");
-                                dict_update(vp, 1);
+                                dict_update(vp, 1, NULL);
                                 pop();
                         } else {
                                 v = pop();
@@ -2247,7 +2247,7 @@ BadContainer:
                         if (vp->type == VALUE_DICT) {
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to subtract non-dict from dict");
-                                dict_subtract(vp, 1);
+                                dict_subtract(vp, 1, NULL);
                                 pop();
                         } else {
                                 v = pop();
@@ -2370,7 +2370,7 @@ BadContainer:
                                 for (int i = 0; i < nkw; ++i) {
                                         if (ip[0] == '*') {
                                                 if (top()->type == VALUE_DICT) {
-                                                        dict_update(&container, 1);
+                                                        dict_update(&container, 1, NULL);
                                                         pop();
                                                 } else if (top()->type == VALUE_TUPLE && top()->names != NULL) {
                                                         for (int i = 0; i < top()->count; ++i) {
@@ -2400,6 +2400,8 @@ BadContainer:
                                 }
                                 push(container);
                                 OKGC(container.dict);
+                        } else {
+                                container = NIL;
                         }
 
                 Call:
@@ -2411,11 +2413,15 @@ BadContainer:
                                 call(&v, NULL, n, nkw, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
-                                if (nkw == 0) {
-                                        push(NIL);
+                                if (nkw > 0) {
+                                        container = pop();
+                                        gc_push(&container);
+                                        v = v.builtin_function(n, &container);
+                                        gc_pop();
+                                } else {
+                                        v = v.builtin_function(n, NULL);
                                 }
-                                v = v.builtin_function(n);
-                                stack.count -= n + 1;
+                                stack.count -= n;
                                 push(v);
                                 break;
                         case VALUE_GENERATOR:
@@ -2466,16 +2472,20 @@ BadContainer:
                                 if (value.type != VALUE_STRING)
                                         vm_panic("attempt to apply a regex to a non-string: %s", value_show(&value));
                                 push(v);
-                                v = get_string_method("match!")(&value, 1);
+                                v = get_string_method("match!")(&value, 1, NULL);
                                 pop();
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
-                                if (nkw == 0) {
-                                        push(NIL);
+                                if (nkw > 0) {
+                                        container = pop();
+                                        gc_push(&container);
+                                        v = v.builtin_method(v.this, n, &container);
+                                        gc_pop();
+                                } else {
+                                        v = v.builtin_method(v.this, n, NULL);
                                 }
-                                v = v.builtin_method(v.this, n);
-                                stack.count -= n + 1;
+                                stack.count -= n;
                                 push(v);
                                 break;
                         case VALUE_NIL:
@@ -2600,20 +2610,21 @@ BadContainer:
                                 }
                                 break;
                         case VALUE_NIL:
-                                stack.count -= (n + 1);
+                                stack.count -= (n + 1 + nkw);
                                 push(NIL);
                                 continue;
                         }
 
                         if (func != NULL) {
+                                pop();
                                 value.type &= ~VALUE_TAGGED;
                                 value.tags = 0;
-                                gc_push(&value);
-                                pop();
-                                v = func(&value, n);
-                                stack.count -= n;
-                                push(v);
-                                gc_pop();
+                                v = BUILTIN_METHOD(method, func, &value);
+                                if (nkw > 0) {
+                                        goto CallKwArgs;
+                                } else {
+                                        goto Call;
+                                }
                         } else if (vp != NULL) {
                                 pop();
                                 if (self != NULL) {
@@ -2627,7 +2638,7 @@ BadContainer:
                                         goto Call;
                                 }
                         } else if (b) {
-                                stack.count -= (n + 1);
+                                stack.count -= (n + 1 + nkw);
                                 push(NIL);
                         } else {
                                 vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
@@ -2717,7 +2728,7 @@ run_builtin_thread(void *ctx)
 
                 switch (msg->type) {
                 case TYMSG_CALL:
-                        v = msg->f->builtin_function(msg->n);
+                        v = msg->f->builtin_function(msg->n, NULL);
                         msg->type = TYMSG_RESULT;
                         msg->v = v;
                         queue_add(&q1, msg);
@@ -3011,7 +3022,7 @@ vm_call2(struct value const *f, int argc)
                         gc_free(msg);
                         return v;
                 case TYMSG_CALL:
-                        v = msg->f->builtin_function(msg->n);
+                        v = msg->f->builtin_function(msg->n, NULL);
                         msg->type = TYMSG_RESULT;
                         msg->v = v;
                         queue_add(&q1, msg);
@@ -3033,11 +3044,11 @@ vm_call(struct value const *f, int argc)
                 call(f->method, f->this, argc, 0, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
-                r = f->builtin_function(argc);
+                r = f->builtin_function(argc, NULL);
                 stack.count -= argc;
                 return r;
         case VALUE_BUILTIN_METHOD:
-                r = f->builtin_method(f->this, argc);
+                r = f->builtin_method(f->this, argc, NULL);
                 stack.count -= argc;
                 return r;
         case VALUE_TAG:
@@ -3095,11 +3106,11 @@ vm_eval_function(struct value const *f, ...)
                 call(f->method, f->this, argc, 0, true);
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
-                r = f->builtin_function(argc);
+                r = f->builtin_function(argc, NULL);
                 stack.count -= argc;
                 return r;
         case VALUE_BUILTIN_METHOD:
-                r = f->builtin_method(f->this, argc);
+                r = f->builtin_method(f->this, argc, NULL);
                 stack.count -= argc;
                 return r;
         default:

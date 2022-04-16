@@ -7,7 +7,7 @@
 #include "util.h"
 
 static struct value
-blob_clear(struct value *blob, int argc)
+blob_clear(struct value *blob, int argc, struct value *kwargs)
 {
         int start;
         int n;
@@ -49,7 +49,7 @@ blob_clear(struct value *blob, int argc)
 }
 
 static struct value
-blob_search(struct value *blob, int argc)
+blob_search(struct value *blob, int argc, struct value *kwargs)
 {
 
         struct value start;
@@ -101,7 +101,7 @@ blob_search(struct value *blob, int argc)
 }
 
 static struct value
-blob_shrink(struct value *blob, int argc)
+blob_shrink(struct value *blob, int argc, struct value *kwargs)
 {
         resize(blob->blob->items, blob->blob->count);
         blob->blob->capacity = blob->blob->count;
@@ -109,7 +109,7 @@ blob_shrink(struct value *blob, int argc)
 }
 
 static struct value
-blob_push(struct value *blob, int argc)
+blob_push(struct value *blob, int argc, struct value *kwargs)
 {
         size_t index = blob->blob->count;
         struct value arg;
@@ -148,13 +148,13 @@ blob_push(struct value *blob, int argc)
 }
 
 static struct value
-blob_size(struct value *blob, int argc)
+blob_size(struct value *blob, int argc, struct value *kwargs)
 {
         return INTEGER(blob->blob->count);
 }
 
 static struct value
-blob_get(struct value *blob, int argc)
+blob_get(struct value *blob, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("blob.get() expects 1 argument but got %d", argc);
@@ -171,7 +171,7 @@ blob_get(struct value *blob, int argc)
 }
 
 static struct value
-blob_fill(struct value *blob, int argc)
+blob_fill(struct value *blob, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("blob.fill() expects no arguments but got %d", argc);
@@ -186,7 +186,7 @@ blob_fill(struct value *blob, int argc)
 }
 
 static struct value
-blob_set(struct value *blob, int argc)
+blob_set(struct value *blob, int argc, struct value *kwargs)
 {
         if (argc != 2)
                 vm_panic("blob.set() expects 2 arguments but got %d", argc);
@@ -209,7 +209,7 @@ blob_set(struct value *blob, int argc)
 }
 
 static struct value
-blob_str(struct value *blob, int argc)
+blob_str(struct value *blob, int argc, struct value *kwargs)
 {
         int start;
         int n;
@@ -265,7 +265,7 @@ blob_str(struct value *blob, int argc)
 }
 
 static struct value
-blob_str_unsafe(struct value *blob, int argc)
+blob_str_unsafe(struct value *blob, int argc, struct value *kwargs)
 {
         int start;
         int n;
@@ -300,7 +300,7 @@ blob_str_unsafe(struct value *blob, int argc)
 }
 
 static struct value
-blob_reserve(struct value *blob, int argc)
+blob_reserve(struct value *blob, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("blob.reserve() expects 1 argument but got %d", argc);
@@ -317,7 +317,7 @@ blob_reserve(struct value *blob, int argc)
 }
 
 static struct value
-blob_ptr(struct value *blob, int argc)
+blob_ptr(struct value *blob, int argc, struct value *kwargs)
 {
         if (argc == 0) {
                 return PTR(blob->blob->items);
@@ -335,7 +335,7 @@ blob_ptr(struct value *blob, int argc)
 }
 
 static struct value
-blob_hex(struct value *blob, int argc)
+blob_hex(struct value *blob, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("blob.hex() expects no arguments but got %d", argc);
@@ -355,7 +355,7 @@ blob_hex(struct value *blob, int argc)
 }
 
 static struct value
-blob_slice(struct value *blob, int argc)
+blob_slice(struct value *blob, int argc, struct value *kwargs)
 {
         int start = 0;
         int n = blob->blob->count;
@@ -393,7 +393,7 @@ blob_slice(struct value *blob, int argc)
 }
 
 static struct value
-blob_splice(struct value *blob, int argc)
+blob_splice(struct value *blob, int argc, struct value *kwargs)
 {
         int start = 0;
         int n = blob->blob->count;

@@ -11,16 +11,16 @@
 #include "vm.h"
 
 static struct value
-array_drop_mut(struct value *array, int argc);
+array_drop_mut(struct value *array, int argc, struct value *kwargs);
 
 static struct value
-array_drop(struct value *array, int argc);
+array_drop(struct value *array, int argc, struct value *kwargs);
 
 static struct value
-array_min_by(struct value *array, int argc);
+array_min_by(struct value *array, int argc, struct value *kwargs);
 
 static struct value
-array_max_by(struct value *array, int argc);
+array_max_by(struct value *array, int argc, struct value *kwargs);
 
 static struct value *comparison_fn;
 
@@ -72,7 +72,7 @@ shrink(struct value *array)
 }
 
 static struct value
-array_push(struct value *array, int argc)
+array_push(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the push method on arrays expects 1 argument but got %d", argc);
@@ -83,7 +83,7 @@ array_push(struct value *array, int argc)
 }
 
 static struct value
-array_insert(struct value *array, int argc)
+array_insert(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 2)
                 vm_panic("the insert method on arrays expects 2 arguments but got %d", argc);
@@ -110,7 +110,7 @@ array_insert(struct value *array, int argc)
 }
 
 static struct value
-array_pop(struct value *array, int argc)
+array_pop(struct value *array, int argc, struct value *kwargs)
 {
         struct value result;
 
@@ -138,7 +138,7 @@ array_pop(struct value *array, int argc)
 }
 
 static struct value
-array_swap(struct value *array, int argc)
+array_swap(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 2)
                 vm_panic("array.swap() expects 2 arguments but got %d", argc);
@@ -168,7 +168,7 @@ array_swap(struct value *array, int argc)
 }
 
 static struct value
-array_slice_mut(struct value *array, int argc)
+array_slice_mut(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("array.slice!() expects 1 or 2 arguments but got %d", argc);
@@ -219,7 +219,7 @@ array_slice_mut(struct value *array, int argc)
 }
 
 static struct value
-array_zip(struct value *array, int argc)
+array_zip(struct value *array, int argc, struct value *kwargs)
 {
         if (argc == 0 || (argc == 1 && ARG(0).type != VALUE_ARRAY)) {
                 vm_panic("array.zip() expects at least one array argument");
@@ -265,7 +265,7 @@ array_zip(struct value *array, int argc)
 }
 
 static struct value
-array_window(struct value *array, int argc)
+array_window(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("array.window() expects 1 or 2 arguments but got %d", argc);
@@ -308,7 +308,7 @@ array_window(struct value *array, int argc)
 }
 
 static struct value
-array_slice(struct value *array, int argc)
+array_slice(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("array.slice() expects 1 or 2 arguments but got %d", argc);
@@ -353,7 +353,7 @@ array_slice(struct value *array, int argc)
 }
 
 static struct value
-array_sort(struct value *array, int argc)
+array_sort(struct value *array, int argc, struct value *kwargs)
 {
         int i;
         int n;
@@ -390,7 +390,7 @@ array_sort(struct value *array, int argc)
 }
 
 static struct value
-array_next_permutation(struct value *array, int argc)
+array_next_permutation(struct value *array, int argc, struct value *kwargs)
 {
 #define CMP(i, j) value_compare(&array->array->items[i], &array->array->items[j])
         if (argc != 0)
@@ -408,7 +408,7 @@ array_next_permutation(struct value *array, int argc)
                         array->array->items[j] = t;
 
                         vm_push(&INTEGER(i));
-                        array_sort(array, 1);
+                        array_sort(array, 1, kwargs);
                         vm_pop();
 
                         return *array;
@@ -420,7 +420,7 @@ array_next_permutation(struct value *array, int argc)
 }
 
 static struct value
-array_take_while_mut(struct value *array, int argc)
+array_take_while_mut(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.takeWhile!() expects 1 argument but got %d", argc);
@@ -445,7 +445,7 @@ array_take_while_mut(struct value *array, int argc)
 }
 
 static struct value
-array_take_while(struct value *array, int argc)
+array_take_while(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.takeWhile!() expects 1 argument but got %d", argc);
@@ -473,7 +473,7 @@ array_take_while(struct value *array, int argc)
 }
 
 static struct value
-array_drop_while_mut(struct value *array, int argc)
+array_drop_while_mut(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.dropWhile!() expects 1 argument but got %d", argc);
@@ -498,7 +498,7 @@ array_drop_while_mut(struct value *array, int argc)
 }
 
 static struct value
-array_drop_while(struct value *array, int argc)
+array_drop_while(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.dropWhile() expects 1 argument but got %d", argc);
@@ -527,7 +527,7 @@ array_drop_while(struct value *array, int argc)
 }
 
 static struct value
-array_uniq(struct value *array, int argc)
+array_uniq(struct value *array, int argc, struct value *kwargs)
 {
         struct value *f = NULL;
 
@@ -560,7 +560,7 @@ array_uniq(struct value *array, int argc)
 }
 
 static struct value
-array_take_mut(struct value *array, int argc)
+array_take_mut(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.take!() expects 1 argument but got %d", argc);
@@ -577,7 +577,7 @@ array_take_mut(struct value *array, int argc)
 }
 
 static struct value
-array_take(struct value *array, int argc)
+array_take(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.take() expects 1 argument but got %d", argc);
@@ -602,7 +602,7 @@ array_take(struct value *array, int argc)
 }
 
 static struct value
-array_drop_mut(struct value *array, int argc)
+array_drop_mut(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.drop!() expects 1 argument but got %d", argc);
@@ -622,7 +622,7 @@ array_drop_mut(struct value *array, int argc)
 }
 
 static struct value
-array_drop(struct value *array, int argc)
+array_drop(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.drop() expects 1 argument but got %d", argc);
@@ -648,7 +648,7 @@ array_drop(struct value *array, int argc)
 }
 
 static struct value
-array_sum(struct value *array, int argc)
+array_sum(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the sum method on arrays expects no arguments but got %d", argc);
@@ -672,7 +672,7 @@ array_sum(struct value *array, int argc)
 }
 
 static struct value
-array_join(struct value *array, int argc)
+array_join(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.join() expects 1 argument but got %d", argc);
@@ -685,7 +685,7 @@ array_join(struct value *array, int argc)
                 vm_panic("the argument to array.join() must be a string");
 
         vm_push(&array->array->items[0]);
-        struct value sum = builtin_str(1);
+        struct value sum = builtin_str(1, NULL);
         vm_pop();
         struct value v = NIL;
 
@@ -694,7 +694,7 @@ array_join(struct value *array, int argc)
 
         for (int i = 1; i < array->array->count; ++i) {
                 vm_push(&array->array->items[i]);
-                v = builtin_str(1);
+                v = builtin_str(1, NULL);
                 vm_pop();
                 sum = binary_operator_addition(&sum, &sep);
                 sum = binary_operator_addition(&sum, &v);
@@ -707,7 +707,7 @@ array_join(struct value *array, int argc)
 }
 
 static struct value
-array_consume_while(struct value *array, int argc)
+array_consume_while(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 2)
                 vm_panic("array.consumeWhile() expects 2 arguments but got %d", argc);
@@ -738,7 +738,7 @@ array_consume_while(struct value *array, int argc)
 }
 
 static struct value
-array_groups_of(struct value *array, int argc)
+array_groups_of(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("array.groupsOf() expects 1 or 2 arguments but got %d", argc);
@@ -785,7 +785,7 @@ array_groups_of(struct value *array, int argc)
 }
 
 static struct value
-array_group_by(struct value *array, int argc)
+array_group_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.groupBy() expects 1 argument but got %d", argc);
@@ -829,10 +829,10 @@ array_group_by(struct value *array, int argc)
 }
 
 static struct value
-array_group(struct value *array, int argc)
+array_group(struct value *array, int argc, struct value *kwargs)
 {
         if (argc == 1)
-                return array_group_by(array, argc);
+                return array_group_by(array, argc, kwargs);
 
         if (argc != 0)
                 vm_panic("array.group() expects 0 or 1 arguments but got %d", argc);
@@ -855,7 +855,7 @@ array_group(struct value *array, int argc)
 }
 
 static struct value
-array_intersperse(struct value *array, int argc)
+array_intersperse(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the intersperse method on arrays expects 1 argument but got %d", argc);
@@ -882,10 +882,10 @@ array_intersperse(struct value *array, int argc)
 }
 
 static struct value
-array_min(struct value *array, int argc)
+array_min(struct value *array, int argc, struct value *kwargs)
 {
         if (argc == 1)
-                return array_min_by(array, argc);
+                return array_min_by(array, argc, kwargs);
 
         if (argc != 0)
                 vm_panic("the min method on arrays expects no arguments but got %d", argc);
@@ -906,7 +906,7 @@ array_min(struct value *array, int argc)
 }
 
 static struct value
-array_min_by(struct value *array, int argc)
+array_min_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the minBy method on arrays expects 1 argument but got %d", argc);
@@ -953,10 +953,10 @@ array_min_by(struct value *array, int argc)
 }
 
 static struct value
-array_max(struct value *array, int argc)
+array_max(struct value *array, int argc, struct value *kwargs)
 {
         if (argc == 1)
-                return array_max_by(array, argc);
+                return array_max_by(array, argc, kwargs);
 
         if (argc != 0)
                 vm_panic("the max method on arrays expects no arguments but got %d", argc);
@@ -977,7 +977,7 @@ array_max(struct value *array, int argc)
 }
 
 static struct value
-array_max_by(struct value *array, int argc)
+array_max_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the maxBy method on arrays expects 1 argument but got %d", argc);
@@ -1024,7 +1024,7 @@ array_max_by(struct value *array, int argc)
 }
 
 static struct value
-array_length(struct value *array, int argc)
+array_length(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("array.len() expects no arguments but got %d", argc);
@@ -1033,7 +1033,7 @@ array_length(struct value *array, int argc)
 }
 
 static struct value
-array_shuffle(struct value *array, int argc)
+array_shuffle(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the shuffle! method on arrays expects no arguments but got %d", argc);
@@ -1051,7 +1051,7 @@ array_shuffle(struct value *array, int argc)
 }
 
 static struct value
-array_map(struct value *array, int argc)
+array_map(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the map method on arrays expects 1 argument but got %d", argc);
@@ -1069,7 +1069,7 @@ array_map(struct value *array, int argc)
 }
 
 static struct value
-array_enumerate(struct value *array, int argc)
+array_enumerate(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the enumerate method on arrays expects no arguments but got %d", argc);
@@ -1087,7 +1087,7 @@ array_enumerate(struct value *array, int argc)
 }
 
 static struct value
-array_remove(struct value *array, int argc)
+array_remove(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the remove method on arrays expects 1 argument but got %d", argc);
@@ -1107,7 +1107,7 @@ array_remove(struct value *array, int argc)
 }
 
 static struct value
-array_filter(struct value *array, int argc)
+array_filter(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the filter method on arrays expects 1 argument but got %d", argc);
@@ -1130,7 +1130,7 @@ array_filter(struct value *array, int argc)
 }
 
 static struct value
-array_find(struct value *array, int argc)
+array_find(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the find method on arrays expects 1 argument but got %d", argc);
@@ -1149,7 +1149,7 @@ array_find(struct value *array, int argc)
 }
 
 static struct value
-array_findr(struct value *array, int argc)
+array_findr(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the findr method on arrays expects 1 argument but got %d", argc);
@@ -1168,7 +1168,7 @@ array_findr(struct value *array, int argc)
 }
 
 static struct value
-array_bsearch(struct value *array, int argc)
+array_bsearch(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the bsearch? method on array expects 1 argument but got %d", argc);
@@ -1191,7 +1191,7 @@ array_bsearch(struct value *array, int argc)
 }
 
 static struct value
-array_bsearch_strict(struct value *array, int argc)
+array_bsearch_strict(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the bsearch method on array expects 1 argument but got %d", argc);
@@ -1213,7 +1213,7 @@ array_bsearch_strict(struct value *array, int argc)
 }
 
 static struct value
-array_search_by(struct value *array, int argc)
+array_search_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the searchBy method on arrays expects 1 argument but got %d", argc);
@@ -1232,7 +1232,7 @@ array_search_by(struct value *array, int argc)
 }
 
 static struct value
-array_searchr_by(struct value *array, int argc)
+array_searchr_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the searchrBy method on arrays expects 1 argument but got %d", argc);
@@ -1251,7 +1251,7 @@ array_searchr_by(struct value *array, int argc)
 }
 
 static struct value
-array_set(struct value *array, int argc)
+array_set(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("array.set() expects 0 arguments but got %d", argc);
@@ -1268,7 +1268,7 @@ array_set(struct value *array, int argc)
 }
 
 static struct value
-array_partition(struct value *array, int argc)
+array_partition(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the partition method on arrays expects 1 argument but got %d", argc);
@@ -1312,7 +1312,7 @@ array_partition(struct value *array, int argc)
 }
 
 static struct value
-array_partition_no_mut(struct value *array, int argc)
+array_partition_no_mut(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the partition method on arrays expects 1 argument but got %d", argc);
@@ -1352,7 +1352,7 @@ array_partition_no_mut(struct value *array, int argc)
 }
 
 static struct value
-array_contains(struct value *array, int argc)
+array_contains(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.contains?() expects 1 argument but got %d", argc);
@@ -1368,7 +1368,7 @@ array_contains(struct value *array, int argc)
 }
 
 static struct value
-array_tuple(struct value *array, int argc)
+array_tuple(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0) {
                 vm_panic("array.tuple() expects 0 arguments but got %d", argc);
@@ -1383,7 +1383,7 @@ array_tuple(struct value *array, int argc)
 }
 
 static struct value
-array_tally(struct value *array, int argc)
+array_tally(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0 && argc != 1)
                 vm_panic("array.tally() expects 0 or 1 argument(s) but got %d", argc);
@@ -1422,7 +1422,7 @@ array_tally(struct value *array, int argc)
 }
 
 static struct value
-array_search(struct value *array, int argc)
+array_search(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.search() expects 1 argument but got %d", argc);
@@ -1438,7 +1438,7 @@ array_search(struct value *array, int argc)
 }
 
 static struct value
-array_searchr(struct value *array, int argc)
+array_searchr(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("array.searchr() expects 1 argument but got %d", argc);
@@ -1454,7 +1454,7 @@ array_searchr(struct value *array, int argc)
 }
 
 static struct value
-array_flat(struct value *array, int argc)
+array_flat(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0 && argc != 1) {
                 vm_panic("array.flat() expects 0 or 1 arguments but got %d", argc);
@@ -1503,7 +1503,7 @@ array_flat(struct value *array, int argc)
 }
 
 static struct value
-array_each(struct value *array, int argc)
+array_each(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("the each method on arrays expects 1 or 2 arguments but got %d", argc);
@@ -1539,7 +1539,7 @@ array_each(struct value *array, int argc)
 }
 
 static struct value
-array_all(struct value *array, int argc)
+array_all(struct value *array, int argc, struct value *kwargs)
 {
         int n = array->array->count;
 
@@ -1566,7 +1566,7 @@ array_all(struct value *array, int argc)
 }
 
 static struct value
-array_any(struct value *array, int argc)
+array_any(struct value *array, int argc, struct value *kwargs)
 {
         int n = array->array->count;
 
@@ -1591,7 +1591,7 @@ array_any(struct value *array, int argc)
 }
 
 static struct value
-array_count(struct value *array, int argc)
+array_count(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the count method on arrays expects 1 argument but got %d", argc);
@@ -1608,7 +1608,7 @@ array_count(struct value *array, int argc)
 }
 
 static struct value
-array_count_by(struct value *array, int argc)
+array_count_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the count method on arrays expects 1 argument but got %d", argc);
@@ -1628,7 +1628,7 @@ array_count_by(struct value *array, int argc)
 }
 
 static struct value
-array_fold_left(struct value *array, int argc)
+array_fold_left(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("the foldLeft method on arrays expects 1 or 2 arguments but got %d", argc);
@@ -1664,7 +1664,7 @@ array_fold_left(struct value *array, int argc)
 
 /* TODO: fix this */
 static struct value
-array_fold_right(struct value *array, int argc)
+array_fold_right(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("the foldRight method on arrays expects 1 or 2 arguments but got %d", argc);
@@ -1698,7 +1698,7 @@ array_fold_right(struct value *array, int argc)
 }
 
 static struct value
-array_scan_left(struct value *array, int argc)
+array_scan_left(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("the scanLeft method on arrays expects 1 or 2 arguments but got %d", argc);
@@ -1731,7 +1731,7 @@ array_scan_left(struct value *array, int argc)
 }
 
 static struct value
-array_scan_right(struct value *array, int argc)
+array_scan_right(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 vm_panic("the scanRight method on arrays expects 1 or 2 arguments but got %d", argc);
@@ -1763,7 +1763,7 @@ array_scan_right(struct value *array, int argc)
 }
 
 static struct value
-array_reverse(struct value *array, int argc)
+array_reverse(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the reverse method on arrays expects no arguments but got %d", argc);
@@ -1785,7 +1785,7 @@ array_reverse(struct value *array, int argc)
 }
 
 static struct value
-array_rotate(struct value *array, int argc)
+array_rotate(struct value *array, int argc, struct value *kwargs)
 {
         int d = 1;
         int n = array->array->count;
@@ -1825,7 +1825,7 @@ array_rotate(struct value *array, int argc)
 }
 
 static struct value
-array_sort_by(struct value *array, int argc)
+array_sort_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("the sortBy method on arrays expects 1 argument but got %d", argc);
@@ -1848,7 +1848,7 @@ array_sort_by(struct value *array, int argc)
 }
 
 static struct value
-array_clone(struct value *array, int argc)
+array_clone(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("the clone method on arrays expects no arguments but got %d", argc);
@@ -1861,11 +1861,11 @@ array_clone(struct value *array, int argc)
 
 #define DEFINE_NO_MUT(name) \
         static struct value \
-        array_ ## name ## _no_mut(struct value *array, int argc) \
+        array_ ## name ## _no_mut(struct value *array, int argc, struct value *kwargs) \
         { \
-                struct value clone = array_clone(array, 0); \
+                struct value clone = array_clone(array, 0, NULL); \
                 gc_push(&clone); \
-                struct value result = array_ ## name(&clone, argc); \
+                struct value result = array_ ## name(&clone, argc, kwargs); \
                 gc_pop(); \
                 return result; \
         }

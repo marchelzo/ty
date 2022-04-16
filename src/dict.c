@@ -234,7 +234,7 @@ dict_free(struct dict *d)
 }
 
 static struct value
-dict_default(struct value *d, int argc)
+dict_default(struct value *d, int argc, struct value *kwargs)
 {
         if (argc == 0) {
                 if (d->dict->dflt.type == VALUE_NONE) {
@@ -256,7 +256,7 @@ dict_default(struct value *d, int argc)
 }
 
 static struct value
-dict_contains(struct value *d, int argc)
+dict_contains(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("dict.contains() expects 1 argument but got %d", argc);
@@ -269,7 +269,7 @@ dict_contains(struct value *d, int argc)
 }
 
 static struct value
-dict_keys(struct value *d, int argc)
+dict_keys(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("dict.keys() expects 0 arguments but got %d", argc);
@@ -288,7 +288,7 @@ dict_keys(struct value *d, int argc)
 }
 
 static struct value
-dict_values(struct value *d, int argc)
+dict_values(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("dict.values() expects 0 arguments but got %d", argc);
@@ -307,7 +307,7 @@ dict_values(struct value *d, int argc)
 }
 
 struct value
-dict_clone(struct value *d, int argc)
+dict_clone(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("dict.clone() expects 0 arguments but got %d", argc);
@@ -352,7 +352,7 @@ dict_same_keys(struct dict const *d, struct dict const *u)
 }
 
 struct value
-dict_intersect(struct value *d, int argc)
+dict_intersect(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 vm_panic("dict.intersect() expects 1 or 2 arguments but got %d", argc);
@@ -417,14 +417,14 @@ dict_intersect(struct value *d, int argc)
 }
 
 struct value
-dict_intersect_copy(struct value *d, int argc)
+dict_intersect_copy(struct value *d, int argc, struct value *kwargs)
 {
-        struct value copy = dict_clone(d, 0);
-        return dict_intersect(&copy, argc);
+        struct value copy = dict_clone(d, 0, NULL);
+        return dict_intersect(&copy, argc, kwargs);
 }
 
 struct value
-dict_update(struct value *d, int argc)
+dict_update(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 vm_panic("dict.update() expects 1 or 2 arguments but got %d", argc);
@@ -462,7 +462,7 @@ dict_update(struct value *d, int argc)
 }
 
 struct value
-dict_subtract(struct value *d, int argc)
+dict_subtract(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 vm_panic("dict.subtract() expects 1 or 2 arguments but got %d", argc);
@@ -519,7 +519,7 @@ dict_subtract(struct value *d, int argc)
 }
 
 static struct value
-dict_put(struct value *d, int argc)
+dict_put(struct value *d, int argc, struct value *kwargs)
 {
         if (argc == 0)
                 vm_panic("dict.put() expects at least 1 argument but got 0");
@@ -532,7 +532,7 @@ dict_put(struct value *d, int argc)
 }
 
 static struct value
-dict_remove(struct value *d, int argc)
+dict_remove(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 1)
                 vm_panic("dict.remove() expects 1 argument but got %d", argc);
@@ -558,7 +558,7 @@ dict_remove(struct value *d, int argc)
 }
 
 static struct value
-dict_len(struct value *d, int argc)
+dict_len(struct value *d, int argc, struct value *kwargs)
 {
         if (argc != 0)
                 vm_panic("dict.len() expects 0 arguments but got %d", argc);
