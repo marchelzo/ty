@@ -29,7 +29,7 @@ function sh(c, input, timeoutMs, signal = os.SIGKILL) {
 
         if timeoutMs != nil {
             let now = utime()
-            timeoutMs -= (now - start)
+            timeoutMs -= (now - start) / 1000
             start = now
         }
 
