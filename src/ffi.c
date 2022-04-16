@@ -125,7 +125,7 @@ load(ffi_type *t, void const *p)
 }
 
 struct value
-cffi_cif(int argc)
+cffi_cif(int argc, struct value *kwargs)
 {
         ffi_type *rt;
         vec(ffi_type *) ats = {0};
@@ -160,7 +160,7 @@ Bad:
 }
 
 struct value
-cffi_addr(int argc)
+cffi_addr(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("ffi.addr() expects 1 argument but got %d", argc);
@@ -179,7 +179,7 @@ cffi_addr(int argc)
 }
 
 struct value
-cffi_free(int argc)
+cffi_free(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("ffi.free() expects exactly 1 argument but got %d", argc);
@@ -195,7 +195,7 @@ cffi_free(int argc)
 }
 
 struct value
-cffi_alloc(int argc)
+cffi_alloc(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("ffi.alloc() expects 1 argument but got %d", argc);
@@ -214,7 +214,7 @@ cffi_alloc(int argc)
 }
 
 struct value
-cffi_size(int argc)
+cffi_size(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("ffi.size() expects 1 or 2 arguments but got %d", argc);
@@ -228,7 +228,7 @@ cffi_size(int argc)
 }
 
 struct value
-cffi_new(int argc)
+cffi_new(int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 vm_panic("ffi.new() expects 1 or 2 arguments but got %d", argc);
@@ -253,7 +253,7 @@ cffi_new(int argc)
 }
 
 struct value
-cffi_member(int argc)
+cffi_member(int argc, struct value *kwargs)
 {
         if (argc != 3 && argc != 4) {
                 vm_panic("ffi.member() expects 3 or 4 arguments but got %d", argc);
@@ -293,10 +293,10 @@ cffi_member(int argc)
 }
 
 struct value
-cffi_load(int argc)
+cffi_load(int argc, struct value *kwargs)
 {
         if (argc == 3) {
-                return cffi_load_n(argc);
+                return cffi_load_n(argc, kwargs);
         }
 
         ffi_type *t = ARG(0).ptr;
@@ -304,7 +304,7 @@ cffi_load(int argc)
 }
 
 struct value
-cffi_load_n(int argc)
+cffi_load_n(int argc, struct value *kwargs)
 {
         ffi_type *t = ARG(0).ptr;
         char *p = ARG(1).ptr;
@@ -324,7 +324,7 @@ cffi_load_n(int argc)
 }
 
 struct value
-cffi_store(int argc)
+cffi_store(int argc, struct value *kwargs)
 {
         ffi_type *t = ARG(0).ptr;
         void *p = ARG(1).ptr;
@@ -336,7 +336,7 @@ cffi_store(int argc)
 }
 
 struct value
-cffi_call(int argc)
+cffi_call(int argc, struct value *kwargs)
 {
         if (argc < 2) {
                 vm_panic("ffi.call() expects at least 2 arguments (cif, function)");
@@ -376,7 +376,7 @@ cffi_call(int argc)
 }
 
 struct value
-cffi_dlopen(int argc)
+cffi_dlopen(int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 vm_panic("ffi.dlopen() expects 1 or 2 arguments but got %d", argc);
@@ -398,7 +398,7 @@ cffi_dlopen(int argc)
 }
 
 struct value
-cffi_blob(int argc)
+cffi_blob(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("ffi.blob() expects 2 arguments but got %d", argc);
@@ -424,7 +424,7 @@ cffi_blob(int argc)
 }
 
 struct value
-cffi_clone(int argc)
+cffi_clone(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("ffi.clone() expects 2 arguments but got %d", argc);
@@ -447,7 +447,7 @@ cffi_clone(int argc)
 }
 
 struct value
-cffi_str(int argc)
+cffi_str(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("ffi.str() expects 2 arguments but got %d", argc);
@@ -467,7 +467,7 @@ cffi_str(int argc)
 }
 
 struct value
-cffi_as_str(int argc)
+cffi_as_str(int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 vm_panic("ffi.as_str() expects 1 or 2 arguments but got %d", argc);
@@ -491,7 +491,7 @@ cffi_as_str(int argc)
 }
 
 struct value
-cffi_dlsym(int argc)
+cffi_dlsym(int argc, struct value *kwargs)
 {
         if (argc == 0 || argc > 2) {
                 vm_panic("ffi.dlsym() expects 1 or 2 arguments but got %d", argc);
@@ -523,7 +523,7 @@ cffi_dlsym(int argc)
 }
 
 struct value
-cffi_struct(int argc)
+cffi_struct(int argc, struct value *kwargs)
 {
         if (argc == 0) {
                 vm_panic("ffi.struct() expects at least 1 argument");

@@ -21,7 +21,7 @@ write_function(char *ptr, size_t size, size_t nmemb, void *data)
 }
 
 struct value
-builtin_curl_init(int argc)
+builtin_curl_init(int argc, struct value *kwargs)
 {
         if (argc != 0) {
                 vm_panic("curl::init() expects no arguments but got %d", argc);
@@ -41,7 +41,7 @@ builtin_curl_init(int argc)
 }
 
 struct value
-builtin_curl_mime(int argc)
+builtin_curl_mime(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("curl::mime::init() expects 1 argument but got %d", argc);
@@ -61,7 +61,7 @@ builtin_curl_mime(int argc)
 }
 
 struct value
-builtin_curl_mime_add(int argc)
+builtin_curl_mime_add(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("curl::mime::add() expects 1 argument but got %d", argc);
@@ -81,7 +81,7 @@ builtin_curl_mime_add(int argc)
 }
 
 struct value
-builtin_curl_mime_data(int argc)
+builtin_curl_mime_data(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("curl::mime::data() expects 2 arguments but got %d", argc);
@@ -108,7 +108,7 @@ builtin_curl_mime_data(int argc)
 }
 
 struct value
-builtin_curl_mime_name(int argc)
+builtin_curl_mime_name(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("curl::mime::name() expects 2 arguments but got %d", argc);
@@ -141,7 +141,7 @@ builtin_curl_mime_name(int argc)
 }
 
 struct value
-builtin_curl_slist_append(int argc)
+builtin_curl_slist_append(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("curl::slist::append() expects 2 arguments but got %d", argc);
@@ -166,7 +166,7 @@ builtin_curl_slist_append(int argc)
 }
 
 struct value
-builtin_curl_slist_free(int argc)
+builtin_curl_slist_free(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("curl::slist::free() expects 1 argument but got %d", argc);
@@ -183,7 +183,7 @@ builtin_curl_slist_free(int argc)
 }
 
 struct value
-builtin_curl_getinfo(int argc)
+builtin_curl_getinfo(int argc, struct value *kwargs)
 {
         if (argc < 2) {
                 vm_panic("curl::getinfo() expects at least 2 arguments but got %d", argc);
@@ -212,7 +212,7 @@ builtin_curl_getinfo(int argc)
 }
 
 struct value
-builtin_curl_setopt(int argc)
+builtin_curl_setopt(int argc, struct value *kwargs)
 {
         if (argc < 2) {
                 vm_panic("curl::setopt() expects at least 2 arguments but got %d", argc);
@@ -281,7 +281,7 @@ builtin_curl_setopt(int argc)
 }
 
 struct value
-builtin_curl_perform(int argc)
+builtin_curl_perform(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("curl::perform() expects 1 argument but got %d", argc);
@@ -312,7 +312,7 @@ builtin_curl_perform(int argc)
 }
 
 struct value
-builtin_curl_strerror(int argc)
+builtin_curl_strerror(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("curl::strerror() expects 1 argument but got %d", argc);

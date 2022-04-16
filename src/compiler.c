@@ -577,8 +577,8 @@ inline static struct expression *
 to_module_access(struct scope const *scope, struct expression const *e)
 {
         static vec(char) mod = {0};
+        mod.count = 0;
 
-        vec_init(mod);
         vec_push(mod, '\0');
 
         char const *name = (e->type == EXPRESSION_MEMBER_ACCESS) ? e->member_name : e->method_name;

@@ -3289,12 +3289,8 @@ parse_import(void)
         char *id = tok()->identifier;
         next();
 
-        int modlen = (mod == NULL) ? 0 : strlen(mod);
-        int idlen = strlen(id);
-
         static vec(char) module;
-
-        vec_init(module);
+        module.count = 0;
 
         if (mod != NULL) {
                 vec_push_n(module, mod, strlen(mod));

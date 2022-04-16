@@ -6,57 +6,57 @@
 #include "value.h"
 
 struct value
-cffi_cif(int argc);
+cffi_cif(int argc, struct value *kwargs);
 
 struct value
-cffi_new(int argc);
+cffi_new(int argc, struct value *kwargs);
 
 struct value
-cffi_size(int argc);
+cffi_size(int argc, struct value *kwargs);
 
 struct value
-cffi_alloc(int argc);
+cffi_alloc(int argc, struct value *kwargs);
 
 struct value
-cffi_clone(int argc);
+cffi_clone(int argc, struct value *kwargs);
 
 struct value
-cffi_as_str(int argc);
+cffi_as_str(int argc, struct value *kwargs);
 
 struct value
-cffi_free(int argc);
+cffi_free(int argc, struct value *kwargs);
 
 struct value
-cffi_addr(int argc);
+cffi_addr(int argc, struct value *kwargs);
 
 struct value
-cffi_member(int argc);
+cffi_member(int argc, struct value *kwargs);
 
 struct value
-cffi_load(int argc);
+cffi_load(int argc, struct value *kwargs);
 
 struct value
-cffi_load_n(int argc);
+cffi_load_n(int argc, struct value *kwargs);
 
 struct value
-cffi_call(int argc);
+cffi_call(int argc, struct value *kwargs);
 
 struct value
-cffi_dlsym(int argc);
+cffi_dlsym(int argc, struct value *kwargs);
 
 struct value
-cffi_dlopen(int argc);
+cffi_dlopen(int argc, struct value *kwargs);
 
 struct value
-cffi_struct(int argc);
+cffi_struct(int argc, struct value *kwargs);
 
 struct value
-cffi_blob(int argc);
+cffi_blob(int argc, struct value *kwargs);
 
 struct value
-cffi_store(int argc);
+cffi_store(int argc, struct value *kwargs);
 
 struct value
-cffi_str(int argc);
+cffi_str(int argc, struct value *kwargs);
 
 #endif

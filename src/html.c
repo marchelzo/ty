@@ -125,7 +125,7 @@ convert(GumboOutput const *out)
 }
 
 struct value
-html_parse(int argc)
+html_parse(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("gumbo::parse() expects 1 argument but got %d", argc);

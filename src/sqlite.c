@@ -8,7 +8,7 @@
 static int error;
 
 static struct value
-dbopen(int argc)
+dbopen(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.open() expects exactly 1 argument");
@@ -38,7 +38,7 @@ dbopen(int argc)
 }
 
 static struct value
-dbclose(int argc)
+dbclose(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.open() expects exactly 1 argument");
@@ -54,7 +54,7 @@ dbclose(int argc)
 }
 
 static struct value
-prepare(int argc)
+prepare(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("sqlite3.prepare() expects exactly 2 arguments");
@@ -86,7 +86,7 @@ prepare(int argc)
 }
 
 static struct value
-step(int argc)
+step(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.step() expects exactly 1 argument");
@@ -104,7 +104,7 @@ step(int argc)
 }
 
 static struct value
-column_count(int argc)
+column_count(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.columnCount() expects exactly 1 argument");
@@ -122,7 +122,7 @@ column_count(int argc)
 }
 
 static struct value
-get_column(int argc)
+get_column(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("sqlite3.column() expects exactly 2 arguments");
@@ -169,7 +169,7 @@ get_column(int argc)
 }
 
 static struct value
-fetch(int argc)
+fetch(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.fetch() expects exactly 1 argument");
@@ -222,7 +222,7 @@ fetch(int argc)
 }
 
 static struct value
-fetch_dict(int argc)
+fetch_dict(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.fetch() expects exactly 1 argument");
@@ -277,7 +277,7 @@ fetch_dict(int argc)
 }
 
 static struct value
-finalize(int argc)
+finalize(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.finalize() expects exactly 1 argument");
@@ -296,7 +296,7 @@ finalize(int argc)
 }
 
 static struct value
-reset(int argc)
+reset(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.reset() expects exactly 1 argument");
@@ -314,7 +314,7 @@ reset(int argc)
 }
 
 static struct value
-bind(int argc)
+bind(int argc, struct value *kwargs)
 {
         if (argc != 3) {
                 vm_panic("sqlite3.bind() expects exactly 3 arguments");
@@ -370,7 +370,7 @@ bind(int argc)
 }
 
 static struct value
-column_name(int argc)
+column_name(int argc, struct value *kwargs)
 {
         if (argc != 2) {
                 vm_panic("sqlite3.columnName() expects exactly 2 arguments");
@@ -397,7 +397,7 @@ column_name(int argc)
 }
 
 static struct value
-error_code(int argc)
+error_code(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.error() expects exactly 1 argument");
@@ -413,7 +413,7 @@ error_code(int argc)
 }
 
 static struct value
-error_msg(int argc)
+error_msg(int argc, struct value *kwargs)
 {
         if (argc != 1) {
                 vm_panic("sqlite3.errorMessage() expects exactly 1 argument");
