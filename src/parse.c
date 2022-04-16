@@ -3292,14 +3292,28 @@ parse_import(void)
         int modlen = (mod == NULL) ? 0 : strlen(mod);
         int idlen = strlen(id);
 
-        char *module = gc_alloc(modlen + idlen + 2);
+        static vec(char) module;
+
+        vec_init(module);
+
         if (mod != NULL) {
-                sprintf(module, "%s/%s", mod, id);
-        } else {
-                strcpy(module, id);
+                vec_push_n(module, mod, strlen(mod));
+                vec_push(module, '/');
         }
 
-        s->import.module = module;
+        vec_push_n(module, id, strlen(id));
+
+        while (tok()->type == '.') {
+                next();
+                expect(TOKEN_IDENTIFIER);
+                vec_push(module, '/');
+                vec_push_n(module, tok()->identifier, strlen(tok()->identifier));
+                next();
+        }
+
+        vec_push(module, '\0');
+
+        s->import.module = sclone(module.items);
 
         if (tok()->type == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "as") == 0) {
                 next();
@@ -3307,7 +3321,7 @@ parse_import(void)
                 s->import.as = tok()->identifier;
                 next();
         } else {
-                s->import.as = module;
+                s->import.as = s->import.module;
         }
 
         s->start = tok()->start;

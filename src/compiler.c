@@ -476,8 +476,15 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         }
 
         struct symbol *s = scope_lookup(scope, name);
-        if (s == NULL)
-                fail("reference to undefined variable: %s", name);
+        if (s == NULL) {
+                fail(
+                        "reference to undefined variable: %s%s%s%s",
+                        TERM(1),
+                        TERM(93),
+                        name,
+                        TERM(0)
+                );
+        }
 
         if (s->scope->external && !s->public)
                 fail("reference to non-public external variable '%s'", name);
