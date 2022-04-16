@@ -29,6 +29,8 @@ struct condpart {
 };
 
 typedef vec(struct condpart *) condpart_vector;
+typedef vec(struct expression *) expression_vector;
+typedef vec(char *) name_vector;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
 
@@ -69,7 +71,7 @@ struct statement {
                 struct expression *expression;
                 struct expression *throw;
                 vec(struct statement *) statements;
-                vec(struct expression *) returns;
+                expression_vector returns;
                 vec(char *) exports;
                 vec(struct symbol *) drop;
                 struct {
@@ -98,14 +100,14 @@ struct statement {
                 } each;
                 struct {
                         struct statement *s;
-                        vec(struct expression *) patterns;
+                        expression_vector patterns;
                         vec(struct statement *) handlers;
                         struct statement *finally;
                 } try;
                 struct {
                         struct expression *e;
-                        vec(struct expression *) patterns;
-                        vec(struct expression *) conds;
+                        expression_vector patterns;
+                        expression_vector conds;
                         vec(struct statement *) statements;
                         int_vector check;
                 } match;
@@ -168,7 +170,6 @@ struct expression {
                 EXPRESSION_SPECIAL_STRING,
                 EXPRESSION_FUNCTION_CALL,
                 EXPRESSION_MEMBER_ACCESS,
-                EXPRESSION_MODULE_ACCESS,
                 EXPRESSION_SUBSCRIPT,
                 EXPRESSION_METHOD_CALL,
                 EXPRESSION_USER_OP,
@@ -224,7 +225,7 @@ struct expression {
                 struct expression *operand;
                 struct {
                         struct symbol *atmp;
-                        vec(struct expression *) elements;
+                        expression_vector elements;
                         struct {
                                 struct expression *pattern;
                                 struct expression *iter;
@@ -238,7 +239,7 @@ struct expression {
                 struct {
                         struct symbol *ltmp;
                         bool only_identifiers;
-                        vec(struct expression *) es;
+                        expression_vector es;
                         vec(char const *) names;
                 };
                 struct {
@@ -253,7 +254,7 @@ struct expression {
                 struct {
                         vec(char *) strings;
                         vec(char *) fmts;
-                        vec(struct expression *) expressions;
+                        expression_vector expressions;
                 };
                 struct {
                         bool local;
@@ -275,7 +276,7 @@ struct expression {
                 };
                 struct {
                         struct expression *subject;
-                        vec(struct expression *) patterns;
+                        expression_vector patterns;
                         vec(struct statement *) thens;
                 };
                 struct {
@@ -283,8 +284,8 @@ struct expression {
                         struct symbol *function_symbol;
                         struct scope *scope;
                         vec(char *) params;
-                        vec(struct expression *) dflts;
-                        vec(struct expression *) constraints;
+                        expression_vector dflts;
+                        expression_vector constraints;
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;
@@ -296,14 +297,14 @@ struct expression {
                 };
                 struct {
                         struct expression *function;
-                        vec(struct expression *) args;
-                        vec(struct expression *) kwargs;
-                        vec(char *) kws;
+                        expression_vector args;
+                        expression_vector kwargs;
+                        name_vector kws;
                 };
                 struct {
                         struct symbol *dtmp;
-                        vec(struct expression *) keys;
-                        vec(struct expression *) values;
+                        expression_vector keys;
+                        expression_vector values;
                         struct {
                                 struct expression *pattern;
                                 struct expression *iter;
@@ -321,9 +322,9 @@ struct expression {
                                 char *member_name;
                                 struct {
                                         char const *method_name;
-                                        vec(struct expression *) method_args;
-                                        vec(struct expression *) method_kwargs;
-                                        vec(char *) method_kws;
+                                        expression_vector method_args;
+                                        expression_vector method_kwargs;
+                                        name_vector method_kws;
                                 };
                         };
                         bool maybe;

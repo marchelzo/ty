@@ -8,9 +8,6 @@
 char const *
 parse_error(void);
 
-struct table *
-parse_module_table(void);
-
 struct statement **
 parse(char const *source, char const *file);
 

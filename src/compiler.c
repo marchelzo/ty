@@ -566,6 +566,15 @@ is_loop(struct statement const *s)
         }
 }
 
+inline static bool
+is_module_access(struct scope const *scope, struct expression const *e)
+{
+        return e->object->type == EXPRESSION_IDENTIFIER
+            && e->object->module == NULL
+            && scope_lookup(scope, e->object->identifier) == NULL
+            && get_import_scope(e->object->identifier) != NULL;
+}
+
 static struct scope *
 get_import_scope(char const *name)
 {
@@ -714,6 +723,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                         target->symbol = getsymbol(scope, target->identifier, &target->local);
 
                         if (target->symbol->cnst) {
+                        ConstAssignment:
                                 fail(
                                         "assignment to const variable %s%s%s%s%s",
                                         TERM(34),
@@ -759,7 +769,12 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 symbolize_expression(scope, target->subscript);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                symbolize_expression(scope, target->object);
+                if (is_module_access(scope, target)) {
+                        target->identifier = target->member_name;
+                        goto ConstAssignment;
+                } else {
+                        symbolize_expression(scope, target->object);
+                }
                 break;
         case EXPRESSION_TUPLE:
                 target->ltmp = tmpsymbol(scope);
@@ -878,13 +893,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         );
                 }
                 break;
-        case EXPRESSION_MODULE_ACCESS:
-                name = e->object->identifier;
-                e->symbol = getsymbol(get_import_scope(name), e->member_name, &e->local);
-                e->type = EXPRESSION_IDENTIFIER;
-                e->identifier = e->symbol->identifier;
-                e->module = name;
-                break;
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
                         symbolize_expression(scope, e->expressions.items[i]);
@@ -970,14 +978,46 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->subscript);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                symbolize_expression(scope, e->object);
+                if (is_module_access(scope, e)) {
+                        name = e->object->identifier;
+                        e->symbol = getsymbol(get_import_scope(name), e->member_name, &e->local);
+                        e->type = EXPRESSION_IDENTIFIER;
+                        e->identifier = (char *)e->symbol->identifier;
+                        e->module = name;
+                        e->constraint = NULL;
+                } else {
+                        symbolize_expression(scope, e->object);
+                }
                 break;
         case EXPRESSION_METHOD_CALL:
-                symbolize_expression(scope, e->object);
-                for (size_t i = 0;  i < e->method_args.count; ++i)
-                        symbolize_expression(scope, e->method_args.items[i]);
-                for (size_t i = 0; i < e->method_kwargs.count; ++i)
-                        symbolize_expression(scope, e->method_kwargs.items[i]);
+                if (is_module_access(scope, e)) {
+                        struct expression fc = *e;
+
+                        fc.type = EXPRESSION_FUNCTION_CALL;
+                        fc.args = e->method_args;
+                        fc.kwargs = e->method_kwargs;
+                        fc.kws = e->method_kws;
+
+                        fc.function = gc_alloc(sizeof *fc.function);
+
+                        name = e->object->identifier;
+                        e->symbol = getsymbol(get_import_scope(name), e->member_name, &e->local);
+                        e->type = EXPRESSION_IDENTIFIER;
+                        e->identifier = (char *)e->symbol->identifier;
+                        e->module = name;
+                        e->constraint = NULL;
+
+                        *fc.function = *e;
+                        *e = fc;
+
+                        symbolize_expression(scope, e);
+                } else {
+                        symbolize_expression(scope, e->object);
+                        for (size_t i = 0;  i < e->method_args.count; ++i)
+                                symbolize_expression(scope, e->method_args.items[i]);
+                        for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                                symbolize_expression(scope, e->method_kwargs.items[i]);
+                }
                 break;
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
@@ -4017,12 +4057,7 @@ import_module(struct statement const *s)
         state = freshstate();
         state.filename = name;
 
-        struct table modules_save = *parse_module_table();
-        table_init(parse_module_table());
-
         compile(source);
-
-        *parse_module_table() = modules_save;
 
         module_scope = state.global;
 

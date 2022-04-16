@@ -95,8 +95,6 @@ static jmp_buf jb;
 static struct table uops;
 static struct table uopcs;
 
-static struct table modules;
-
 static LexState CtxCheckpoint;
 static vec(struct token) tokens;
 
@@ -1949,15 +1947,6 @@ infix_member_access(struct expression *left)
 
         expect(TOKEN_IDENTIFIER);
 
-        if (!e->maybe && left->type == EXPRESSION_IDENTIFIER &&
-            table_look(&modules, left->identifier) != NULL) {
-                e->type = EXPRESSION_MODULE_ACCESS;
-                e->member_name = tok()->identifier;
-                next();
-                e->end = End;
-                return e;
-        }
-
         if (token(1)->type != '(') {
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->member_name = tok()->identifier;
@@ -3321,8 +3310,6 @@ parse_import(void)
                 s->import.as = module;
         }
 
-        table_put(&modules, s->import.as, NIL);
-
         s->start = tok()->start;
 
         vec_init(s->import.identifiers);
@@ -3402,12 +3389,6 @@ char const *
 parse_error(void)
 {
         return ERR;
-}
-
-struct table *
-parse_module_table(void)
-{
-        return &modules;
 }
 
 struct statement **
