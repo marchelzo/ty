@@ -566,13 +566,56 @@ is_loop(struct statement const *s)
         }
 }
 
-inline static bool
-is_module_access(struct scope const *scope, struct expression const *e)
+inline static struct expression *
+to_module_access(struct scope const *scope, struct expression const *e)
 {
-        return e->object->type == EXPRESSION_IDENTIFIER
-            && e->object->module == NULL
-            && scope_lookup(scope, e->object->identifier) == NULL
-            && get_import_scope(e->object->identifier) != NULL;
+        static vec(char) mod = {0};
+
+        vec_init(mod);
+        vec_push(mod, '\0');
+
+        char const *name = (e->type == EXPRESSION_MEMBER_ACCESS) ? e->member_name : e->method_name;
+        struct location start = e->start;
+        struct location end = e->end;
+
+        e = e->object;
+
+        while (e->type == EXPRESSION_MEMBER_ACCESS) {
+                vec_insert_n(mod, e->member_name, strlen(e->member_name), 0);
+                vec_insert(mod, '/', 0);
+                e = e->object;
+        }
+
+        if (e->type != EXPRESSION_IDENTIFIER || e->module != NULL) {
+                goto Fail;
+        }
+
+        if (scope_lookup(scope, e->identifier) != NULL) {
+                goto Fail;
+        }
+
+        struct expression *id = gc_alloc(sizeof *id);
+
+        id->start = start;
+        id->end = end;
+        id->identifier = (char *)name;
+        id->type = EXPRESSION_IDENTIFIER;
+        id->constraint = NULL;
+        id->tagged = NULL;
+
+        vec_insert_n(mod, e->identifier, strlen(e->identifier), 0);
+
+        struct scope *mod_scope = get_import_scope(mod.items);
+
+        if (mod_scope != NULL) {
+                id->module = sclone(mod.items);
+                id->symbol = getsymbol(mod_scope, name, &id->local);
+                return id;
+        } else {
+        Fail:
+                gc_free(id);
+                return NULL;
+        }
 }
 
 static struct scope *
@@ -695,6 +738,8 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         state.start = target->start;
         state.end = target->end;
 
+        struct expression *mod_access;
+
         try_symbolize_application(scope, target);
 
         switch (target->type) {
@@ -769,8 +814,10 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 symbolize_expression(scope, target->subscript);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                if (is_module_access(scope, target)) {
-                        target->identifier = target->member_name;
+                mod_access = to_module_access(scope, target);
+                if (mod_access != NULL) {
+                        *target = *mod_access;
+                        gc_free(mod_access);
                         goto ConstAssignment;
                 } else {
                         symbolize_expression(scope, target->object);
@@ -871,7 +918,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         struct expression *func = state.func;
         struct expression *implicit_func = state.implicit_func;
         struct scope *implicit_fscope = state.implicit_fscope;
-        char *name;
+        struct expression *mod_access;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -978,19 +1025,17 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->subscript);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                if (is_module_access(scope, e)) {
-                        name = e->object->identifier;
-                        e->symbol = getsymbol(get_import_scope(name), e->member_name, &e->local);
-                        e->type = EXPRESSION_IDENTIFIER;
-                        e->identifier = (char *)e->symbol->identifier;
-                        e->module = name;
-                        e->constraint = NULL;
+                mod_access = to_module_access(scope, e);
+                if (mod_access != NULL) {
+                        *e = *mod_access;
+                        gc_free(mod_access);
                 } else {
                         symbolize_expression(scope, e->object);
                 }
                 break;
         case EXPRESSION_METHOD_CALL:
-                if (is_module_access(scope, e)) {
+                mod_access = to_module_access(scope, e);
+                if (mod_access != NULL) {
                         struct expression fc = *e;
 
                         fc.type = EXPRESSION_FUNCTION_CALL;
@@ -998,16 +1043,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         fc.kwargs = e->method_kwargs;
                         fc.kws = e->method_kws;
 
-                        fc.function = gc_alloc(sizeof *fc.function);
+                        fc.function = mod_access;
 
-                        name = e->object->identifier;
-                        e->symbol = getsymbol(get_import_scope(name), e->member_name, &e->local);
-                        e->type = EXPRESSION_IDENTIFIER;
-                        e->identifier = (char *)e->symbol->identifier;
-                        e->module = name;
-                        e->constraint = NULL;
-
-                        *fc.function = *e;
                         *e = fc;
 
                         symbolize_expression(scope, e);

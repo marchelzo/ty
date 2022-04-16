@@ -85,7 +85,7 @@ class MarkdownNode {
 
   text() {
     if let $p = cmark_node_get_literal(@node) {
-      c.str(p)
+      c.as_str(p)
     } else if let $c = cmark_node_first_child(@node) and c == cmark_node_last_child(@node) {
       MarkdownNode(c).text()
     }
@@ -105,7 +105,7 @@ class MarkdownNode {
 
   infoString() {
     if let p = cmark_node_get_fence_info(@node) {
-      c.str(p)
+      c.as_str(p)
     }
   }
 
@@ -115,13 +115,13 @@ class MarkdownNode {
 
   url() {
     if let $p = cmark_node_get_url(@node) {
-      c.str(p)
+      c.as_str(p)
     }
   }
 
   title() {
     if let $p = cmark_node_get_title(@node) {
-      c.str(p)
+      c.as_str(p)
     }
   }
 
