@@ -3767,6 +3767,8 @@ emit_statement(struct statement const *s, bool want_result)
                 for (int i = 0; !returns && i < s->statements.count; ++i) {
                         bool wr = want_result && (i + 1 == s->statements.count);
                         returns |= emit_statement(s->statements.items[i], wr);
+                }
+                if (s->statements.count > 0) {
                         want_result = false;
                 }
                 break;

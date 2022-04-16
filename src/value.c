@@ -436,7 +436,7 @@ value_show(struct value const *v)
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
         case VALUE_OBJECT:;
-#ifdef TY_RELEASE
+#ifdef TY_NO_LOG
                 struct value *fp = class_method(v->class, "__str__");
 #else
                 struct value *fp = NULL;
