@@ -594,11 +594,11 @@ to_module_access(struct scope const *scope, struct expression const *e)
         }
 
         if (e->type != EXPRESSION_IDENTIFIER || e->module != NULL) {
-                goto Fail;
+                return NULL;
         }
 
         if (scope_lookup(scope, e->identifier) != NULL) {
-                goto Fail;
+                return NULL;
         }
 
         struct expression *id = gc_alloc(sizeof *id);
@@ -619,7 +619,6 @@ to_module_access(struct scope const *scope, struct expression const *e)
                 id->symbol = getsymbol(mod_scope, name, &id->local);
                 return id;
         } else {
-        Fail:
                 gc_free(id);
                 return NULL;
         }
