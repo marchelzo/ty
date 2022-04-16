@@ -3767,8 +3767,8 @@ emit_statement(struct statement const *s, bool want_result)
                 for (int i = 0; !returns && i < s->statements.count; ++i) {
                         bool wr = want_result && (i + 1 == s->statements.count);
                         returns |= emit_statement(s->statements.items[i], wr);
+                        want_result = false;
                 }
-                want_result = false;
                 break;
         case STATEMENT_MATCH:
                 returns |= emit_match_statement(s, want_result);
