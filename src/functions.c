@@ -57,9 +57,26 @@ static _Thread_local char buffer[1024 * 1024 * 4];
 struct value
 builtin_print(int argc)
 {
+        struct value *sep = NAMED("sep");
+
+        if (sep != NULL && sep->type != VALUE_STRING) {
+                vm_panic(
+                        "print(): %s%ssep%s must be a string",
+                        TERM(93),
+                        TERM(1),
+                        TERM(0)
+                );
+        }
+
         for (int i = 0; i < argc; ++i) {
                 struct value *v = &ARG(i);
-                if (i > 0) fputs(", ", stdout);
+                if (i > 0) {
+                        if (sep != NULL) {
+                                fwrite(sep->string, 1, sep->bytes, stdout);
+                        } else {
+                                fputs(", ", stdout);
+                        }
+                }
                 if (v->type == VALUE_STRING) {
                         fwrite(v->string, 1, v->bytes, stdout);
                 } else {
@@ -1330,7 +1347,7 @@ builtin_os_write(int argc)
 struct value
 builtin_os_spawn(int argc)
 {
-        ASSERT_ARGC_2("os.spawn()", 1, 2);
+        ASSERT_ARGC("os.spawn()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
@@ -1343,18 +1360,15 @@ builtin_os_spawn(int argc)
                 if (cmd.array->items[i].type != VALUE_STRING)
                         vm_panic("non-string in array passed to os.spawn()");
 
-        bool detached = false;
+        struct value *detached = NAMED("detached");
 
-        if (argc == 2 && ARG(1).type != VALUE_NIL) {
-                if (ARG(1).type != VALUE_TUPLE) {
-                        vm_panic("the second argument to os.spawn() must be a tuple");
-                }
-
-                struct value *opt_detached = tuple_get(&ARG(1), "detached");
-
-                if (opt_detached != NULL && opt_detached->type == VALUE_BOOLEAN) {
-                        detached = opt_detached->boolean;
-                }
+        if (detached != NULL && detached->type != VALUE_BOOLEAN) {
+                vm_panic(
+                        "os.spawn(): %s%sdetached%s must be a boolean",
+                        TERM(93),
+                        TERM(1),
+                        TERM(0)
+                );
         }
 
         int in[2];
@@ -1416,7 +1430,7 @@ builtin_os_spawn(int argc)
 
                 fcntl(exc[1], F_SETFD, FD_CLOEXEC);
 
-                if (detached) {
+                if (detached && detached->boolean) {
                         setpgid(0, 0);
                 }
 

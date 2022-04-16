@@ -2411,12 +2411,11 @@ BadContainer:
                                 call(&v, NULL, n, nkw, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
-                                if (nkw > 0) {
-                                        pop();
-                                        nkw = 0;
+                                if (nkw == 0) {
+                                        push(NIL);
                                 }
                                 v = v.builtin_function(n);
-                                stack.count -= n;
+                                stack.count -= n + 1;
                                 push(v);
                                 break;
                         case VALUE_GENERATOR:
@@ -2472,12 +2471,11 @@ BadContainer:
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
-                                if (nkw > 0) {
-                                        pop();
-                                        nkw = 0;
+                                if (nkw == 0) {
+                                        push(NIL);
                                 }
                                 v = v.builtin_method(v.this, n);
-                                stack.count -= n;
+                                stack.count -= n + 1;
                                 push(v);
                                 break;
                         case VALUE_NIL:

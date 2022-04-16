@@ -631,7 +631,13 @@ get_import_scope(char const *name)
                 if (strcmp(name, state.imports.items[i].name) == 0)
                         return state.imports.items[i].scope;
 
-        fail("reference to undefined module: %s", name);
+        fail(
+                "reference to undefined module: %s%s%s%s",
+                TERM(93),
+                TERM(1),
+                name,
+                TERM(0)
+        );
 }
 
 static void

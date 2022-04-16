@@ -111,7 +111,8 @@ struct value;
                 return n; \
         }
 
-#define ARG(i) (*vm_get(argc - 1 - (i)))
+#define ARG(i) (*vm_get(argc - (i)))
+#define NAMED(s) (vm_get(0)->type == VALUE_DICT ? (dict_get_member(vm_get(0)->dict, (s))) : NULL)
 
 //#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 #define value_mark _value_mark
