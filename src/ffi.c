@@ -224,7 +224,7 @@ cffi_size(int argc, struct value *kwargs)
                 vm_panic("the argument to ffi.size() must be a pointer");
         }
 
-		return INTEGER(((ffi_type *)ARG(0).ptr)->size);
+        return INTEGER(((ffi_type *)ARG(0).ptr)->size);
 }
 
 struct value

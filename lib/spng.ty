@@ -189,105 +189,105 @@ let spng_decode_image = w('spng_decode_image', c.int, c.ptr, c.ptr, c.u64, c.int
 let spng_encode_image = w('spng_encode_image', c.int, c.ptr, c.ptr, c.u64, c.int, c.int)
 
 function ReadPNG(path: String, fmt=SPNG_FMT_PNG) {
-	if not let $f = stdio.fdopen(os.open('out.png', os.O_RDONLY), 'r') {
-		throw Err(errno.get())
-	}
+    if not let $f = stdio.fdopen(os.open('out.png', os.O_RDONLY), 'r') {
+        throw Err(errno.get())
+    }
 
-	let ctx = spng_ctx_new(0)
-	spng_set_png_file(ctx, f)
+    let ctx = spng_ctx_new(0)
+    spng_set_png_file(ctx, f)
 
-	let hdr = c.new(spng_ihdr)
-	spng_get_ihdr(ctx, hdr)
+    let hdr = c.new(spng_ihdr)
+    spng_get_ihdr(ctx, hdr)
 
-	print('fmt', fmt)
+    print('fmt', fmt)
 
-	let w = c.member(spng_ihdr, hdr, 0)
-	let h = c.member(spng_ihdr, hdr, 1)
-	let bitDepth = c.member(spng_ihdr, hdr, 2)
-	let colorType = c.member(spng_ihdr, hdr, 3)
-	let compression = c.member(spng_ihdr, hdr, 4)
-	let filter = c.member(spng_ihdr, hdr, 5)
-	let interlace = c.member(spng_ihdr, hdr, 6)
+    let w = c.member(spng_ihdr, hdr, 0)
+    let h = c.member(spng_ihdr, hdr, 1)
+    let bitDepth = c.member(spng_ihdr, hdr, 2)
+    let colorType = c.member(spng_ihdr, hdr, 3)
+    let compression = c.member(spng_ihdr, hdr, 4)
+    let filter = c.member(spng_ihdr, hdr, 5)
+    let interlace = c.member(spng_ihdr, hdr, 6)
 
-	let sizePtr = c.new(c.u64)
+    let sizePtr = c.new(c.u64)
 
-	spng_decoded_image_size(ctx, fmt, sizePtr)
-	let size = c.load(c.u64, sizePtr)
-	let buffer = c.alloc(size)
+    spng_decoded_image_size(ctx, fmt, sizePtr)
+    let size = c.load(c.u64, sizePtr)
+    let buffer = c.alloc(size)
 
-	spng_decode_image(ctx, buffer, size, fmt, 0)
+    spng_decode_image(ctx, buffer, size, fmt, 0)
 
-	c.free(hdr)
-	c.free(sizePtr)
-	spng_ctx_free(ctx)
+    c.free(hdr)
+    c.free(sizePtr)
+    spng_ctx_free(ctx)
 
-	return {
-		width: w,
-		height: h,
-	 	size,
-	 	buffer,
-	 	colorType,
-	 	bitDepth,
-	 	compression,
-	 	filter,
-		interlace
-	}
+    return {
+        width: w,
+        height: h,
+         size,
+         buffer,
+         colorType,
+         bitDepth,
+         compression,
+         filter,
+        interlace
+    }
 }
 
 function WritePNG(
-	path,
-	buffer,
-	w,
-	h,
-	size,
-	colorType=SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
-	bitDepth=8,
-	raw=false
+    path,
+    buffer,
+    w,
+    h,
+    size,
+    colorType=SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
+    bitDepth=8,
+    raw=false
 ) {
-	if not let $f = stdio.fdopen(os.open(path, os.O_RDWR .|. os.O_CREAT, 0644), 'w+') {
-		throw Err(errno.get())
-	}
+    if not let $f = stdio.fdopen(os.open(path, os.O_RDWR .|. os.O_CREAT, 0644), 'w+') {
+        throw Err(errno.get())
+    }
 
-	let ctx = spng_ctx_new(SPNG_CTX_ENCODER)
+    let ctx = spng_ctx_new(SPNG_CTX_ENCODER)
 
-	print(spng_set_png_file(ctx, f))
+    print(spng_set_png_file(ctx, f))
 
-	let hdr = c.new(spng_ihdr)
-	c.member(spng_ihdr, hdr, 0, w)
-	c.member(spng_ihdr, hdr, 1, h)
-	c.member(spng_ihdr, hdr, 2, bitDepth)
-	c.member(spng_ihdr, hdr, 3, colorType)
+    let hdr = c.new(spng_ihdr)
+    c.member(spng_ihdr, hdr, 0, w)
+    c.member(spng_ihdr, hdr, 1, h)
+    c.member(spng_ihdr, hdr, 2, bitDepth)
+    c.member(spng_ihdr, hdr, 3, colorType)
 
-	let fmt = if raw { SPNG_FMT_RAW } else { SPNG_FMT_PNG }
+    let fmt = if raw { SPNG_FMT_RAW } else { SPNG_FMT_PNG }
 
-	print(spng_set_ihdr(ctx, hdr))
+    print(spng_set_ihdr(ctx, hdr))
 
-	spng_encode_image(ctx, buffer, size, fmt, SPNG_ENCODE_FINALIZE)
+    spng_encode_image(ctx, buffer, size, fmt, SPNG_ENCODE_FINALIZE)
 }
 
 function t() {
-	let png = ReadPNG('out.png', fmt: SPNG_FMT_RGB8)
+    let png = ReadPNG('out.png', fmt: SPNG_FMT_RGB8)
 
-	let src = c.blob(png.buffer, png.size)
-	let out = blob()
+    let src = c.blob(png.buffer, png.size)
+    let out = blob()
 
-	for c, i in src {
-		out.push(match i % 3 {
-			0 => min(c + 80, 255),
-			1 => c,
-			2 => min(c + 44, 255)
-		})
-	}
+    for c, i in src {
+        out.push(match i % 3 {
+            0 => min(c + 80, 255),
+            1 => c,
+            2 => min(c + 44, 255)
+        })
+    }
 
-	print(match png.colorType {
-		::SPNG_COLOR_TYPE_GRAYSCALE         => 'Greyscale',
-		::SPNG_COLOR_TYPE_TRUECOLOR         => 'True color',
-		::SPNG_COLOR_TYPE_TRUECOLOR_ALPHA   => 'True color with alpha'
-	})
+    print(match png.colorType {
+        ::SPNG_COLOR_TYPE_GRAYSCALE         => 'Greyscale',
+        ::SPNG_COLOR_TYPE_TRUECOLOR         => 'True color',
+        ::SPNG_COLOR_TYPE_TRUECOLOR_ALPHA   => 'True color with alpha'
+    })
 
-	print(png)
+    print(png)
 
-	print('=== DONE READING ====')
+    print('=== DONE READING ====')
 
-	print(WritePNG('out2.png', out, png.width, png.height, png.size, colorType: SPNG_COLOR_TYPE_TRUECOLOR))
+    print(WritePNG('out2.png', out, png.width, png.height, png.size, colorType: SPNG_COLOR_TYPE_TRUECOLOR))
 }

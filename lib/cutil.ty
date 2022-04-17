@@ -1,40 +1,41 @@
 import ffi as c
 
-export iter, wrap, memcpy, strlen, memcmp, strcmp
+export iter, wrap, memcpy, strlen, memcmp, strcmp, memset
 
 function wrap(lib, name, rType, *aTypes) {
-	if not let $fp = c.dlsym(name, lib) {
-		throw Err("Failed to load symbol '{name}'")
-	}
+    if not let $fp = c.dlsym(name, lib) {
+        throw Err("Failed to load symbol '{name}'")
+    }
 
-	let interface = c.cif(rType, *aTypes)
-	let argStorage = [c.new(t) for t in aTypes]
+    let interface = c.cif(rType, *aTypes)
+    let argStorage = [c.new(t) for t in aTypes]
 
-	return function (*args) {
-		for arg, i in args {
-			c.store(aTypes[i], argStorage[i], arg)
-		}
-		c.call(interface, fp, *argStorage)
-	}
+    return function (*args) {
+        for arg, i in args {
+            c.store(aTypes[i], argStorage[i], arg)
+        }
+        c.call(interface, fp, *argStorage)
+    }
 }
 
 function iter(type, p, n) {
-	let size = c.size(type)
-	for i in ..n {
-		yield c.load(type, p + i*size)
-	}
+    let size = c.size(type)
+    for i in ..n {
+        yield c.load(type, p + i*size)
+    }
 }
 
 let memcpy = wrap(nil, 'memcpy', c.ptr, c.ptr, c.ptr, c.u64)
 let strlen = wrap(nil, 'strlen', c.u64, c.ptr)
 let memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
 let strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)
+let memset = wrap(nil, 'memset', c.void, c.ptr, c.int, c.u64)
 
 pub function cstr(s) {
-	let p = c.alloc(s.size() + 1)
+    let p = c.alloc(s.size() + 1)
 
-	memcpy(p, s, s.size())
-	c.store(c.char, p + s.size(), 0)
+    memcpy(p, s, s.size())
+    c.store(c.char, p + s.size(), 0)
 
-	return p
+    return p
 }
