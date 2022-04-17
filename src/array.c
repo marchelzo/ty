@@ -1302,6 +1302,7 @@ array_partition(struct value *array, int argc, struct value *kwargs)
         yes->capacity = array->array->capacity;
 
         vec_init(*array->array);
+
         value_array_push(array->array, ARRAY(yes));
         value_array_push(array->array, ARRAY(no));
 
@@ -1309,6 +1310,51 @@ array_partition(struct value *array, int argc, struct value *kwargs)
         OKGC(no);
 
         return *array;
+}
+
+static struct value
+array_split_at(struct value *array, int argc, struct value *kargs)
+{
+        if (argc != 1) {
+                vm_panic("array.split()  expects 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic(
+                        "array.split() expected integer but got %s%s%s%s",
+                        TERM(96),
+                        TERM(1),
+                        value_show(&ARG(0)),
+                        TERM(0)
+                );
+        }
+
+        int i = ARG(0).integer;
+
+        if (i < 0)
+                i += array->array->count;
+
+        if (i < 0 || i > array->array->count) {
+                vm_panic("array.split(): index %s%d%s out of range", TERM(96), i, TERM(0));
+        }
+
+        struct array *front = value_array_new();
+        NOGC(front);
+
+        struct array *back = value_array_new();
+        NOGC(back);
+
+        vec_push_n(*front, array->array->items, i);
+        vec_push_n(*back, array->array->items + i, array->array->count - i);
+
+        struct value pair = value_tuple(2);
+        pair.items[0] = ARRAY(front);
+        pair.items[1] = ARRAY(back);
+
+        OKGC(front);
+        OKGC(back);
+
+        return pair;
 }
 
 static struct value
@@ -1961,6 +2007,7 @@ DEFINE_METHOD_TABLE(
         { .name = "sort!",             .func = array_sort                    },
         { .name = "sortBy",            .func = array_sort_by_no_mut          },
         { .name = "sortBy!",           .func = array_sort_by                 },
+        { .name = "split",             .func = array_split_at                },
         { .name = "sum",               .func = array_sum                     },
         { .name = "swap",              .func = array_swap                    },
         { .name = "take",              .func = array_take                    },
