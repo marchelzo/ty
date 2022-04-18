@@ -14,11 +14,13 @@
 #define KW_DELIM(c) (strchr(" \n}],", c) != NULL)
 #define FAIL longjmp(jb, 1)
 
-static jmp_buf jb;
-static char const *json;
-static int len;
+static _Thread_local jmp_buf jb;
+static _Thread_local char const *json;
+static _Thread_local int len;
 
 typedef vec(char) str;
+
+static _Thread_local vec(void const *) Visiting;
 
 inline static char
 peek(void)
@@ -262,6 +264,29 @@ value(void)
         }
 }
 
+inline static bool
+visiting(void const *p)
+{
+        for (int i = 0; i < Visiting.count; ++i) {
+                if (Visiting.items[i] == p) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+inline static bool
+try_visit(void const *p)
+{
+        if (visiting(p)) {
+                return false;
+        } else {
+                vec_push(Visiting, p);
+                return true;
+        }
+}
+
 static bool
 encode(struct value const *v, str *out)
 {
@@ -307,12 +332,15 @@ encode(struct value const *v, str *out)
                 break;
         case VALUE_ARRAY:
                 vec_push(*out, '[');
+                if (!try_visit(v->array))
+                        return false;
                 for (int i = 0; i < v->array->count; ++i) {
                         if (!encode(&v->array->items[i], out))
                                 return false;
                         if (i + 1 < v->array->count)
                                 vec_push(*out, ',');
                 }
+                vec_pop(Visiting);
                 vec_push(*out, ']');
                 break;
         case VALUE_DICT:
@@ -321,6 +349,8 @@ encode(struct value const *v, str *out)
                 for (int i = 0; i < v->dict->size; ++i)
                         if (v->dict->keys[i].type == VALUE_STRING)
                                 last = i;
+                if (!try_visit(v->dict))
+                        return false;
                 for (int i = 0; i < v->dict->size; ++i) {
                         if (v->dict->keys[i].type != VALUE_STRING)
                                 continue;
@@ -332,10 +362,13 @@ encode(struct value const *v, str *out)
                         if (i != last)
                                 vec_push(*out, ',');
                 }
+                vec_pop(Visiting);
                 vec_push(*out, '}');
                 break;
         case VALUE_OBJECT:
                 vec_push(*out, '{');
+                if (!try_visit(v->object))
+                        return false;
                 for (int i = 0; i < TABLE_SIZE; ++i) {
                         for (int j = 0; j < v->object->buckets[i].names.count; ++j) {
                                 vec_push(*out, '"');
@@ -348,6 +381,7 @@ encode(struct value const *v, str *out)
                                 vec_push(*out, ',');
                         }
                 }
+                vec_pop(Visiting);
                 if (*vec_last(*out) == ',')
                         *vec_last(*out) = '}';
                 else
@@ -355,6 +389,8 @@ encode(struct value const *v, str *out)
                 break;
         case VALUE_TUPLE:
                 vec_push(*out, '{');
+                if (!try_visit(v->items))
+                        return false;
                 for (int i = 0; i < v->count; ++i) {
                         vec_push(*out, '"');
                         if (v->names != NULL && v->names[i] != NULL) {
@@ -371,6 +407,7 @@ encode(struct value const *v, str *out)
                         }
                         vec_push(*out, ',');
                 }
+                vec_pop(Visiting);
                 if (*vec_last(*out) == ',') {
                         *vec_last(*out) = '}';
                 } else {
@@ -428,6 +465,8 @@ json_encode(struct value const *v)
         vec_init(s);
 
         struct value r = NIL;
+
+        Visiting.count = 0;
 
         if (encode(v, &s)) {
                 r = STRING_CLONE(s.items, s.count);
