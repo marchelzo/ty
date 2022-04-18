@@ -1008,7 +1008,7 @@ vm_exec(char *code)
                                 int count = top()->count - i;
                                 struct value *rest = gc_alloc_object(sizeof (struct value[count]), GC_TUPLE);
                                 memcpy(rest, top()->items + i, count * sizeof (struct value));
-                                *poptarget() = TUPLE(rest, NULL, count);
+                                *poptarget() = TUPLE(rest, NULL, count, false);
                         }
                         break;
                 CASE(THROW_IF_NIL)
@@ -1329,7 +1329,7 @@ Throw:
                         n = stack.count - *vec_pop(sp_stack);
 
                         if (n == 0) {
-                                push(TUPLE(NULL, NULL, 0));
+                                push(TUPLE(NULL, NULL, 0, false));
                                 break;
                         }
 
@@ -1343,7 +1343,7 @@ Throw:
 
                         NOGC(vp);
 
-                        v = TUPLE(vp, NULL, n);
+                        v = TUPLE(vp, NULL, n, false);
 
                         for (int i = 0; i < n; ++i, ip += strlen(ip) + 1) {
                                 if (ip[0] == 0) {

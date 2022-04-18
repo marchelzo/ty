@@ -600,10 +600,42 @@ builtin_array(int argc, struct value *kwargs)
 struct value
 builtin_tuple(int argc, struct value *kwargs)
 {
-        struct value tuple = value_tuple(argc);
+        int named = 0;
+        vec(char) names = {0};
+        struct dict *d = (kwargs != NULL) ? kwargs->dict : NULL;
+
+        if (d != NULL) for (int i = 0; i < d->size; ++i) {
+                if (d->keys[i].type != 0) {
+                        named += 1;
+                        vec_push_n(names, d->keys[i].string, d->keys[i].bytes);
+                        vec_push(names, '\0');
+                }
+        }
+
+        struct value tuple = value_tuple(argc + named);
+
+        if (named > 0) {
+                tuple.names = gc_alloc_object((argc + named) * sizeof (char *), GC_ANY);
+        } else {
+                tuple.gc_names = true;
+        }
         
         for (int i = 0; i < argc; ++i) {
                 tuple.items[i] = ARG(i);
+                if (tuple.names != NULL) {
+                        tuple.names[i] = NULL;
+                }
+        }
+
+        char *name = names.items;
+
+        if (d != NULL) for (int i = 0, n = argc; i < d->size; ++i) {
+                if (d->keys[i].type != 0) {
+                        tuple.items[n] = d->values[i];
+                        tuple.names[n] = name;
+                        name += strlen(name) + 1;
+                        n += 1;
+                }
         }
 
         return tuple;
@@ -3465,7 +3497,7 @@ builtin_type(int argc, struct value *kwargs)
 
                 OKGC(types);
 
-                return TUPLE(types, NULL, n);
+                return TUPLE(types, NULL, n, false);
         }
 
         switch (v.type) {

@@ -584,6 +584,10 @@ class Tag {
 }
 
 class Tuple {
+	init(*args, %kwargs) {
+		tuple(*args, **kwargs)
+	}
+
     __str___() {
         str(self)
     }

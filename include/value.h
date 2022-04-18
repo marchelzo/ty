@@ -17,25 +17,25 @@ struct value;
 
 #define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
 
-#define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                               .tags = 0 })
-#define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                               .tags = 0 })
-#define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                               .tags = 0 })
-#define ARRAY(a)                 ((struct value){ .type = VALUE_ARRAY,          .array          = (a),                               .tags = 0 })
-#define TUPLE(vs, ns, n)         ((struct value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n), .names = (ns), .tags = 0 })
-#define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                               .tags = 0 })
-#define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                               .tags = 0 })
-#define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                               .tags = 0 })
-#define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                            .tags = 0 })
-#define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,               .tags = 0 })
-#define GCPTR(p, gcp)            ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),              .tags = 0 })
-#define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                               .tags = 0 })
-#define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                               .tags = 0 })
-#define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,              .tags = 0 })
-#define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),               .tags = 0 })
-#define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t), .name = (n),  .tags = 0 })
-#define GENERATOR(g)             ((struct value){ .type = VALUE_GENERATOR,      .gen            = (g),                               .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t), .name = (n),  .tags = 0 })
-#define NIL                      ((struct value){ .type = VALUE_NIL,                                                                 .tags = 0 })
+#define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                                                  .tags = 0 })
+#define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                                                  .tags = 0 })
+#define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                                  .tags = 0 })
+#define ARRAY(a)                 ((struct value){ .type = VALUE_ARRAY,          .array          = (a),                                                  .tags = 0 })
+#define TUPLE(vs, ns, n, gc)     ((struct value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n), .names = (ns), .gc_names = (gc),  .tags = 0 })
+#define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                                                  .tags = 0 })
+#define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                                                  .tags = 0 })
+#define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                                                  .tags = 0 })
+#define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                                               .tags = 0 })
+#define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                                  .tags = 0 })
+#define GCPTR(p, gcp)            ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                                 .tags = 0 })
+#define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                                                  .tags = 0 })
+#define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                                                  .tags = 0 })
+#define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                 .tags = 0 })
+#define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                  .tags = 0 })
+#define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t), .name = (n),                     .tags = 0 })
+#define GENERATOR(g)             ((struct value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                  .tags = 0 })
+#define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t), .name = (n),                     .tags = 0 })
+#define NIL                      ((struct value){ .type = VALUE_NIL,                                                                                    .tags = 0 })
 
 /* Special kind of value, only used as an iteration counter in for-each loops */
 #define INDEX(ix, o, n)          ((struct value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),     .tags = 0 })
@@ -214,6 +214,7 @@ struct value {
                         struct value *items;
                         char **names;
                         int count;
+                        bool gc_names;
                 };
                 struct regex *regex;
                 struct {

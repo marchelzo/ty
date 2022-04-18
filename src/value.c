@@ -717,8 +717,15 @@ mark_tuple(struct value const *v)
 
         if (v->names != NULL) {
                 MARK(v->names);
+                if (v->gc_names) {
+                        for (int i = 0; i < v->count; ++i) {
+                                if (v->names[i] != NULL) {
+                                        MARK(v->names[0]);
+                                        break;
+                                }
+                        }
+                }
         }
-
 }
 
 inline static void
@@ -822,7 +829,7 @@ value_tuple(int n)
                 items[i] = NIL;
         }
 
-        return TUPLE(items, NULL, n);
+        return TUPLE(items, NULL, n, false);
 }
 
 struct value
@@ -855,7 +862,7 @@ value_named_tuple(char const *first, ...)
 
         va_end(ap);
 
-        return TUPLE(items, (char **)names, n);
+        return TUPLE(items, (char **)names, n, false);
 }
 
 struct value *
