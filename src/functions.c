@@ -1361,7 +1361,7 @@ builtin_os_read(int argc, struct value *kwargs)
 struct value
 builtin_os_write(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("os.write()", 2);
+        ASSERT_ARGC_2("os.write()", 2, 3);
 
         struct value file = ARG(0);
         struct value data = ARG(1);
@@ -1382,6 +1382,12 @@ builtin_os_write(int argc, struct value *kwargs)
                 break;
         case VALUE_INTEGER:
                 n = write(file.integer, &((unsigned char){data.integer}), 1);
+                break;
+        case VALUE_PTR:
+                if (argc != 3 || ARG(2).type != VALUE_INTEGER) {
+                        vm_panic("os.write(): expected integer as third argument");
+                }
+                n = write(file.integer, data.ptr, ARG(2).integer);
                 break;
         default:
                 vm_panic("invalid argument to os.write()");
