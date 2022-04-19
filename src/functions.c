@@ -39,6 +39,8 @@
 
 static _Thread_local char buffer[1024 * 1024 * 4];
 
+static _Thread_local vec(char) B;
+
 #define ASSERT_ARGC(func, ac) \
         if (argc != (ac)) { \
                 vm_panic(func " expects " #ac " argument(s) but got %d", argc); \
@@ -1030,6 +1032,182 @@ builtin_md5(int argc, struct value *kwargs)
 
         struct blob *b = value_blob_new();
         vec_push_n(*b, digest, sizeof digest);
+
+        return BLOB(b);
+}
+
+static bool
+b64dec(char const *s, size_t n)
+{
+        static unsigned char table[256] = {
+                ['A'] =  0, ['B'] =  1, ['C'] =  2, ['D'] =  3, ['E'] =  4, ['F'] =  5,
+                ['G'] =  6, ['H'] =  7, ['I'] =  8, ['J'] =  9, ['K'] = 10, ['L'] = 11,
+                ['M'] = 12, ['N'] = 13, ['O'] = 14, ['P'] = 15, ['Q'] = 16, ['R'] = 17,
+                ['S'] = 18, ['T'] = 19, ['U'] = 20, ['V'] = 21, ['W'] = 22, ['X'] = 23,
+                ['Y'] = 24, ['Z'] = 25,
+
+                ['a'] =  0 + 26, ['b'] =  1 + 26, ['c'] =  2 + 26, ['d'] =  3 + 26, ['e'] =  4 + 26, ['f'] =  5 + 26,
+                ['g'] =  6 + 26, ['h'] =  7 + 26, ['i'] =  8 + 26, ['j'] =  9 + 26, ['k'] = 10 + 26, ['l'] = 11 + 26,
+                ['m'] = 12 + 26, ['n'] = 13 + 26, ['o'] = 14 + 26, ['p'] = 15 + 26, ['q'] = 16 + 26, ['r'] = 17 + 26,
+                ['s'] = 18 + 26, ['t'] = 19 + 26, ['u'] = 20 + 26, ['v'] = 21 + 26, ['w'] = 22 + 26, ['x'] = 23 + 26,
+                ['y'] = 24 + 26, ['z'] = 25 + 26,
+
+                ['0'] = 0 + 26 + 26, ['1'] = 1 + 26 + 26, ['2'] = 2 + 26 + 26, ['3'] = 3 + 26 + 26, ['4'] = 4 + 26 + 26,
+                ['5'] = 5 + 26 + 26, ['6'] = 6 + 26 + 26, ['7'] = 7 + 26 + 26, ['8'] = 8 + 26 + 26, ['9'] = 9 + 26 + 26,
+
+                ['+'] = 0 + 26 + 26 + 10, ['/'] = 1 + 26 + 26 + 10
+        };
+
+        B.count = 0;
+
+        while (n > 0 && s[n - 1] == '=') {
+                n -= 1;
+        }
+
+        for (size_t i = 0; i < n; ++i) {
+                if (s[i] != 'A' && table[s[i]] == 0) {
+                        return false;
+                }
+        }
+
+        lldiv_t d = lldiv(n, 4);
+        unsigned char g[4];
+
+        unsigned char s1, s2, s3, s4;
+
+        for (size_t i = 0; i < d.quot; ++i) {
+                memcpy(g, s + 4*i, 4);
+                s1 = table[g[0]];
+                s2 = table[g[1]];
+                s3 = table[g[2]];
+                s4 = table[g[3]];
+                vec_push(B, (s1 << 2) | (s2 >> 4));
+                vec_push(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                vec_push(B, ((s3 & 0x03) << 6) | s4);
+        }
+
+        memset(g, 0, sizeof g);
+        memcpy(g, s + 4*d.quot, d.rem);
+
+        switch (d.rem) {
+        case 3:
+                s1 = table[g[0]];
+                s2 = table[g[1]];
+                s3 = table[g[2]];
+                vec_push(B, (s1 << 2) | (s2 >> 4));
+                vec_push(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                break;
+        case 2:
+                s1 = table[g[0]];
+                s2 = table[g[1]];
+                vec_push(B, (s1 << 2) | (s2 >> 4));
+                break;
+        case 1:
+                s1 = table[g[0]];
+                vec_push(B, s1 << 2);
+                break;
+        }
+
+        return true;
+}
+
+static void
+b64enc(char const *s, size_t n)
+{
+        B.count = 0;
+
+        lldiv_t d = lldiv(n, 3);
+        unsigned char g[3];
+
+        static char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                              "abcdefghijklmnopqrstuvwxyz"
+                              "0123456789"
+                              "+/";
+
+        for (size_t i = 0; i < d.quot; ++i) {
+                memcpy(g, s + 3*i, 3);
+                vec_push(B, table[g[0] >> 2]);
+                vec_push(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                vec_push(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                vec_push(B, table[g[2] & 0x3F]);
+        }
+
+        memset(g, 0, sizeof g);
+        memcpy(g, s + 3*d.quot, d.rem);
+
+        switch (d.rem) {
+        case 2:
+                vec_push(B, table[g[0] >> 2]);
+                vec_push(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                vec_push(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                vec_push(B, '=');
+                break;
+        case 1:
+                vec_push(B, table[g[0] >> 2]);
+                vec_push(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                vec_push(B, '=');
+                vec_push(B, '=');
+                break;
+        }
+}
+
+struct value
+builtin_base64_encode(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("base64.encode()", 1, 2);
+
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("base64.encode(): the second argument must be an integer");
+                }
+
+                size_t n = ARG(1).integer;
+
+                switch (ARG(0).type) {
+                case VALUE_PTR:
+                        b64enc(ARG(0).ptr, n);
+                        break;
+                default:
+                        goto Bad;
+                }
+        } else {
+                switch (ARG(0).type) {
+                case VALUE_STRING:
+                        b64enc(ARG(0).string, ARG(0).bytes);
+                        break;
+                case VALUE_BLOB:
+                        b64enc((char *)ARG(0).blob->items, ARG(0).blob->count);
+                        break;
+                default:
+                        goto Bad;
+                }
+        }
+
+        return STRING_CLONE(B.items, B.count);
+
+Bad:
+        vm_panic("base64.encode(): invalid argument(s)");
+
+}
+
+struct value
+builtin_base64_decode(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("base64.decode()", 1);
+
+        if (ARG(0).type != VALUE_STRING) {
+                vm_panic("base64.decode(): argument must be a string");
+        }
+
+        if (!b64dec(ARG(0).string, ARG(0).bytes)) {
+                return NIL;
+        }
+
+        struct blob *b = value_blob_new();
+
+        NOGC(b);
+        vec_push_n(*b, B.items, B.count);
+        OKGC(b);
 
         return BLOB(b);
 }

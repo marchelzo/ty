@@ -184,6 +184,12 @@ struct value
 builtin_md5(int argc, struct value *kwargs);
 
 struct value
+builtin_base64_encode(int argc, struct value *kwargs);
+
+struct value
+builtin_base64_decode(int argc, struct value *kwargs);
+
+struct value
 builtin_ord(int argc, struct value *kwargs);
 
 struct value

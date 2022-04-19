@@ -1,0 +1,14 @@
+import base64
+import cutil (memcmp)
+
+for _ in ..100 {
+	let len = rand(1, 5000)
+	let b = Blob(*[rand(256) for _ in ..len])
+
+	let encoded = base64.encode(b)
+	let decoded = base64.decode(encoded)
+
+	if b.size() != decoded.size() || memcmp(b, decoded, b.size()) != 0 {
+		print("Failed: {encoded}")
+	}
+}
