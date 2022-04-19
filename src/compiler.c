@@ -4349,28 +4349,26 @@ compiler_get_completions(char const *mod, char const *prefix, char **out, int ma
 {
         int n = 0;
 
-        for (int i = 0; i < modules.count; ++i) {
-
-        }
-
         if (mod == NULL) {
                 n += scope_get_completions(state.global, prefix, out + n, max - n);
                 n += scope_get_completions(global, prefix, out + n, max - n);
                 return n;
         }
 
-        for (int i = 0; i < modules.count; ++i) {
-                if (module_match(modules.items[i].path, mod)) {
-                        return n + scope_get_completions(modules.items[i].scope, prefix, out + n, max - n);
+        for (int i = 0; i < state.imports.count; ++i) {
+                if (module_match(state.imports.items[i].name, mod)) {
+                        return n + scope_get_completions(state.imports.items[i].scope, prefix, out + n, max - n);
                 }
         }
+
+        return 0;
 }
 
 bool
 compiler_has_module(char const *name)
 {
-        for (int i = 0; i < modules.count; ++i) {
-                if (module_match(modules.items[i].path, name)) {
+        for (int i = 0; i < state.imports.count; ++i) {
+                if (module_match(state.imports.items[i].name, name)) {
                         return true;
                 }
         }
