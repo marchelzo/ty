@@ -449,21 +449,24 @@ cffi_clone(int argc, struct value *kwargs)
 struct value
 cffi_str(int argc, struct value *kwargs)
 {
-        if (argc != 2) {
-                vm_panic("ffi.str() expects 2 arguments but got %d", argc);
+        if (argc != 1 && argc != 2) {
+                vm_panic("ffi.str() expects 1 or 2 arguments but got %d", argc);
         }
 
         void *p;
         store(&ffi_type_pointer, &p, &ARG(0));
 
-        if (ARG(1).type != VALUE_INTEGER) {
-                vm_panic("the second argument to ffi.str() must be an integer");
+        size_t n;
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("the second argument to ffi.str() must be an integer");
+                }
+                n = ARG(1).integer;
+        } else {
+                n = strlen(p);
         }
 
-        size_t n = ARG(1).integer;
-        char *gcstr = value_string_clone(p, n);
-
-        return STRING(gcstr, n);
+        return STRING_CLONE(p, n);
 }
 
 struct value
