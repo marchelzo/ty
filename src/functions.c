@@ -2469,7 +2469,7 @@ builtin_os_signal(int argc, struct value *kwargs)
                         act.sa_handler = SIG_DFL;
                 } else if (CALLABLE(f)) {
                         act.sa_flags = SA_SIGINFO;
-                        act.sa_handler = vm_do_signal;
+                        act.sa_sigaction = vm_do_signal;
                 } else {
                         vm_panic("the second argument to os.signal() must be callable");
                 }
