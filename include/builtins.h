@@ -85,6 +85,7 @@
 { .module = "os",     .name = "stat",              .value = BUILTIN(builtin_os_stat)                       },
 { .module = "os",     .name = "fork",              .value = BUILTIN(builtin_os_fork)                       },
 { .module = "os",     .name = "pipe",              .value = BUILTIN(builtin_os_pipe)                       },
+{ .module = "os",     .name = "dup",               .value = BUILTIN(builtin_os_dup)                        },
 { .module = "os",     .name = "dup2",              .value = BUILTIN(builtin_os_dup2)                       },
 { .module = "os",     .name = "poll",              .value = BUILTIN(builtin_os_poll)                       },
 { .module = "os",     .name = "bind",              .value = BUILTIN(builtin_os_bind)                       },

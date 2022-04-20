@@ -298,6 +298,9 @@ struct value
 builtin_os_pipe(int argc, struct value *kwargs);
 
 struct value
+builtin_os_dup(int argc, struct value *kwargs);
+
+struct value
 builtin_os_dup2(int argc, struct value *kwargs);
 
 struct value

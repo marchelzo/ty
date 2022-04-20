@@ -1922,6 +1922,19 @@ builtin_os_pipe(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_dup(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.dup()", 1);
+
+        struct value old = ARG(0);
+
+        if (old.type != VALUE_INTEGER)
+                vm_panic("os.dup(): argument must be an integer");
+
+        return INTEGER(dup(old.integer));
+}
+
+struct value
 builtin_os_dup2(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.dup2()", 2);

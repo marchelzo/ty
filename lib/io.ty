@@ -13,13 +13,14 @@ let SEEK_SET = stdio.SEEK_SET
 let SEEK_CUR = stdio.SEEK_CUR
 
 class Stream : Iter {
-    init(fd, mode: ?String = 'a+', buffering: ?BufferingMethod) {
+    init(fd, mode: ?String = 'a+', buffering: ?BufferingMethod, dup: Bool = false) {
         if fd :: Int {
-            @fd = fd
+            @fd = match dup { true => os.dup(fd), _ => fd }
 
-            if let $f = stdio.fdopen(fd, mode) {
+            if let $f = stdio.fdopen(@fd, mode) {
                 @f = f
             } else {
+                if dup { os.close(@fd) }
                 throw Err(errno.get())
             }
 
@@ -137,10 +138,10 @@ let stdin = Stream(0, 'r');
 let stdout = Stream(1, 'w');
 let stderr = Stream(2, 'w', NBF);
 
-function open(path: String | Int, mode: String = 'a+', buffering) {
+function open(path: String | Int, mode: String = 'a+', buffering, dup: Bool = false) {
 
     if path :: Int {
-        return Stream(path, mode, buffering);
+        return Stream(path, mode, buffering, dup);
     }
 
     let flags = match mode {
