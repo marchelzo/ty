@@ -715,6 +715,8 @@ lex_token(LexContext ctx)
         if (setjmp(jb) != 0)
                 return (struct token) { .type = TOKEN_ERROR, .start = Start, .end = state.loc, .ctx = state.ctx };
 
+        Start = state.loc;
+
         if (skipspace()) {
                 return mktoken(TOKEN_NEWLINE);
         }
@@ -841,6 +843,12 @@ void
 lex_rewind(struct location const *where)
 {
         state.loc = *where;
+}
+
+void
+lex_need_nl(void)
+{
+        state.need_nl = true;
 }
 
 void

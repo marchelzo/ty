@@ -1,6 +1,8 @@
 #ifndef LEX_H_INCLUDED
 #define LEX_H_INCLUDED
 
+#include <stdbool.h>
+
 #include "location.h"
 
 typedef enum LexContext {
@@ -36,5 +38,8 @@ lex_token(LexContext ctx);
 
 void
 lex_save(LexState *state);
+
+void
+lex_need_nl(void);
 
 #endif

@@ -343,7 +343,12 @@ setctx(int ctx)
 
         lctx = ctx;
 
+        bool next_nl = tok()->type == TOKEN_NEWLINE;
+
         lex_rewind(&tok()->start);
+
+        if (next_nl)
+                lex_need_nl();
 
         while (tokens.count > TokenIndex && !(vec_last(tokens)->ctx & (ctx | LEX_FAKE))) {
                 tokens.count -= 1;
@@ -2481,7 +2486,7 @@ definition_lvalue(struct expression *e)
                                 struct expression *key = mkexpr();
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
                                         EStart = e->keys.items[i]->start;
-                                        EStart = e->keys.items[i]->end;
+                                        EEnd = e->keys.items[i]->end;
                                         error("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
