@@ -2,6 +2,7 @@ import bit
 import math
 import thread
 import base64
+import ffi as c
 
 tag MatchError;
 tag IndexError;
@@ -296,16 +297,6 @@ class String : Iterable {
 
     int(base: Int = 10) {
         return int(self, base)
-    }
-
-    repeat(n) {
-        return if n != nil {
-            let b = blob()
-            for _ in ..n { b.push(self) }
-            b.str()
-        } else {
-            Generator(-> self)
-        }
     }
 
     center(n, c = ' ') {

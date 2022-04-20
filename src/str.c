@@ -177,7 +177,6 @@ string_slice(struct value *string, int argc, struct value *kwargs)
                 n = outpos.graphemes;
         }
 
-
         if (i < 0)
                 i += outpos.graphemes;
         i = min(max(0, i), outpos.graphemes);
@@ -620,6 +619,28 @@ string_comb(struct value *string, int argc, struct value *kwargs)
         a->mark = GC_NONE;
 
         return STRING(chars.items + header, chars.count - header);
+}
+
+static struct value
+string_repeat(struct value *string, int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("String.repeat(): expected 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_INTEGER || ARG(0).integer < 0) {
+                vm_panic("String.repeat(): argument mut be a non-negative integer");
+        }
+
+        char *s = value_string_alloc(string->bytes * ARG(0).integer);
+        size_t off = 0;
+
+        for (int i = 0; i < ARG(0).integer; ++i) {
+                memcpy(s + off, string->string, string->bytes);
+                off += string->bytes;
+        }
+
+        return STRING(s, off);
 }
 
 static struct value
@@ -1123,6 +1144,16 @@ string_ptr(struct value *string, int argc, struct value *kwargs)
         return PTR((void *)string->string);
 }
 
+static struct value
+string_clone(struct value *string, int argc, struct value *kwargs)
+{
+        if (argc != 0) {
+                vm_panic("String.clone(): expected 0 arguments but got %d", argc);
+        }
+
+        return STRING_CLONE(string->string, string->bytes);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "byte",      .func = string_byte      },
         { .name = "bytes",     .func = string_bytes     },
@@ -1130,6 +1161,7 @@ DEFINE_METHOD_TABLE(
         { .name = "chars",     .func = string_chars     },
         { .name = "comb",      .func = string_comb      },
         { .name = "contains?", .func = string_contains  },
+        { .name = "clone",     .func = string_clone     },
         { .name = "count",     .func = string_count     },
         { .name = "cstr",      .func = string_cstr      },
         { .name = "len",       .func = string_length    },
@@ -1141,6 +1173,7 @@ DEFINE_METHOD_TABLE(
         { .name = "padLeft",   .func = string_pad_left  },
         { .name = "padRight",  .func = string_pad_right },
         { .name = "ptr",       .func = string_ptr       },
+        { .name = "repeat",    .func = string_repeat    },
         { .name = "replace",   .func = string_replace   },
         { .name = "search",    .func = string_search    },
         { .name = "size",      .func = string_size      },
