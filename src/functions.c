@@ -2189,13 +2189,14 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
 
         B.count = 0;
 
-        char const *node = B.items;
         vec_push_n(B, host.string, host.bytes);
         vec_push(B, '\0');
 
-        char const *service = B.items + B.count;
         vec_push_n(B, port.string, port.bytes);
         vec_push(B, '\0');
+
+        char const *node = B.items;
+        char const *service = B.items + host.bytes + 1;
 
         struct value results = ARRAY(value_array_new());
         gc_push(&results);
@@ -2358,8 +2359,15 @@ builtin_os_sendto(int argc, struct value *kwargs)
                 vm_panic("the first argument to os.sendto() must be an integer (fd)");
 
         struct value buffer = ARG(1);
-        if (buffer.type != VALUE_BLOB)
-                vm_panic("the second argument to os.sendto() must be a blob");
+        if (buffer.type != VALUE_BLOB && buffer.type != VALUE_STRING) {
+                vm_panic(
+                        "os.sendto(): expected Blob or String as second argument but got: %s%s%s%s",
+                        TERM(1),
+                        TERM(93),
+                        value_show(&buffer),
+                        TERM(0)
+                );
+        }
 
         struct value flags = ARG(2);
         if (flags.type != VALUE_INTEGER)
@@ -2370,10 +2378,12 @@ builtin_os_sendto(int argc, struct value *kwargs)
                 vm_panic("the fourth argument to os.sendto() must be a blob (sockaddr)");
 
         ReleaseLock(true);
-        ssize_t r = sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count);
+        ssize_t r = (buffer.type == VALUE_BLOB)
+                  ? sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count)
+                  : sendto(fd.integer, buffer.string, buffer.bytes, flags.integer, (void *)addr.blob->items, addr.blob->count);
         TakeLock();
 
-        return r < 0 ? NIL : INTEGER(r);
+        return INTEGER(r);
 }
 
 struct value
@@ -2975,13 +2985,14 @@ builtin_time_strptime(int argc, struct value *kwargs)
 
         B.count = 0;
 
-        char const *sp = B.items;
         vec_push_n(B, s.string, s.bytes);
         vec_push(B, '\0');
 
-        char const *fp = B.items + B.count;
         vec_push_n(B, fmt.string, fmt.bytes);
         vec_push(B, '\0');
+
+        char const *sp = B.items;
+        char const *fp = B.items + s.bytes + 1;
 
         struct tm r = {0};
         strptime(sp, fp, &r);
