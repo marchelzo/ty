@@ -434,7 +434,7 @@ string_split(struct value *string, int argc, struct value *kwargs)
                 );
         }
 
-        if (argc == 2 & ARG(1).type != VALUE_INTEGER) {
+        if (argc == 2 && ARG(1).type != VALUE_INTEGER) {
                 vm_panic("the second argument to String.split() must be an Int");
         }
 
