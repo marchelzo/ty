@@ -19,9 +19,6 @@
 #define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
 #define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
 
-#define NOGC(v)   ((ALLOC_OF(v))->mark |= GC_HARD)
-#define OKGC(v)   ((ALLOC_OF(v))->mark &= ~GC_HARD)
-
 #define NOGC(v)   atomic_fetch_add(&(ALLOC_OF(v))->hard, 1)
 #define OKGC(v)   atomic_fetch_sub(&(ALLOC_OF(v))->hard, 1)
 

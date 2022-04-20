@@ -1,6 +1,7 @@
 import bit
 import math
 import thread
+import base64
 
 tag MatchError;
 tag IndexError;
@@ -535,6 +536,10 @@ class Blob : Iterable {
                 return i
             }
         }
+    }
+
+    base64() {
+        base64.encode(self)
     }
 
     __iter__() {

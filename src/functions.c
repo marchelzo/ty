@@ -163,19 +163,19 @@ builtin_slurp(int argc, struct value *kwargs)
                 return STRING(s, n);
         } else if (!S_ISDIR(st.st_mode)) {
                 FILE *f = fdopen(fd, "r");
-                vec(char) s = {0};
                 int r;
 
                 ReleaseLock(true);
 
+                B.count = 0;
+
                 while (!feof(f) && (r = fread(buffer, 1, sizeof buffer, f)) > 0) {
-                        vec_push_n(s, buffer, r);
+                        vec_push_n(B, buffer, r);
                 }
 
                 TakeLock();
 
-                struct value str = STRING_CLONE(s.items, s.count);
-                vec_empty(s);
+                struct value str = STRING_CLONE(B.items, B.count);
 
                 if (need_close)
                         fclose(f);
@@ -203,21 +203,20 @@ builtin_read(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("readLine()", 0);
 
-        static _Thread_local vec(char) input;
-        input.count = 0;
+        B.count = 0;
 
         ReleaseLock(true);
 
         int c;
         while (c = getchar(), c != EOF && c != '\n')
-                vec_push(input, c);
+                vec_push(B, c);
 
         TakeLock();
 
-        if (input.count == 0 && c != '\n')
+        if (B.count == 0 && c != '\n')
                 return NIL;
 
-        return STRING_CLONE(input.items, input.count);
+        return STRING_CLONE(B.items, B.count);
 }
 
 struct value
@@ -1065,7 +1064,7 @@ b64dec(char const *s, size_t n)
         }
 
         for (size_t i = 0; i < n; ++i) {
-                if (s[i] != 'A' && table[s[i]] == 0) {
+                if (s[i] != 'A' && table[(unsigned char)s[i]] == 0) {
                         return false;
                 }
         }
@@ -1234,10 +1233,10 @@ builtin_os_open(int argc, struct value *kwargs)
         if (path.type != VALUE_STRING)
                 vm_panic("the path passed to os.open() must be a string");
 
-        static _Thread_local vec(char) pathbuf;
-        pathbuf.count = 0;
-        vec_push_n(pathbuf, path.string, path.bytes);
-        vec_push(pathbuf, '\0');
+        B.count = 0;
+
+        vec_push_n(B, path.string, path.bytes);
+        vec_push(B, '\0');
 
         struct value flags = ARG(1);
         if (flags.type != VALUE_INTEGER)
@@ -1250,9 +1249,9 @@ builtin_os_open(int argc, struct value *kwargs)
                         vm_panic("os.open() called with O_CREAT but no third argument");
                 if (ARG(2).type != VALUE_INTEGER)
                         vm_panic("the third argument to os.open() must be an integer");
-                fd = open(pathbuf.items, flags.integer, (mode_t) ARG(2).integer);
+                fd = open(B.items, flags.integer, (mode_t) ARG(2).integer);
         } else {
-                fd = open(pathbuf.items, flags.integer);
+                fd = open(B.items, flags.integer);
         }
 
 
@@ -2175,13 +2174,15 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
                 flags = ARG(5).integer;
         }
 
-        vec(char) node = {0};
-        vec_push_n(node, host.string, host.bytes);
-        vec_push(node, '\0');
+        B.count = 0;
 
-        vec(char) service = {0};
-        vec_push_n(service, port.string, port.bytes);
-        vec_push(service, '\0');
+        char const *node = B.items;
+        vec_push_n(B, host.string, host.bytes);
+        vec_push(B, '\0');
+
+        char const *service = B.items + B.count;
+        vec_push_n(B, port.string, port.bytes);
+        vec_push(B, '\0');
 
         struct value results = ARRAY(value_array_new());
         gc_push(&results);
@@ -2195,7 +2196,7 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
         hints.ai_socktype = type.integer;
         hints.ai_protocol = protocol.integer;
 
-        int r = getaddrinfo(node.items, service.items, &hints, &res);
+        int r = getaddrinfo(node, service, &hints, &res);
         if (r == 0) {
                 for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
                         struct blob *b = value_blob_new();
@@ -2678,58 +2679,6 @@ builtin_os_kill(int argc, struct value *kwargs)
 }
 
 struct value
-builtin_os_connect2(int argc, struct value *kwargs)
-{
-        static _Thread_local vec(char) host;
-        static _Thread_local vec(char) port;
-
-        host.count = 0;
-        port.count = 0;
-
-        ASSERT_ARGC("os.connect()", 2);
-
-        struct value h = ARG(0);
-        if (h.type != VALUE_STRING)
-                vm_panic("the first argument to os.connect() must be a string");
-
-        vec_push_n(host, h.string, h.bytes);
-        vec_push(host, '\0');
-
-        struct value p = ARG(1);
-        switch (p.type) {
-        case VALUE_STRING:
-                vec_push_n(port, p.string, p.bytes);
-                vec_push(port, '\0');
-                break;
-        case VALUE_INTEGER:
-                vec_reserve(port, 16);
-                snprintf(port.items, 16, "%d", (int) p.integer);
-                break;
-        default:
-                vm_panic("the second argument to os.connect() must be a string or an int");
-        }
-
-        struct addrinfo hints, *result;
-        int conn;
-
-        memset(&hints, 0, sizeof hints);
-
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-
-        if (getaddrinfo(host.items, port.items, &hints, &result) != 0)
-                return NIL;
-        if ((conn = socket(result->ai_family, result->ai_socktype, result->ai_protocol)) == -1)
-                return NIL;
-        if (connect(conn, result->ai_addr, result->ai_addrlen) == -1) {
-                close(conn);
-                return NIL;
-        }
-
-        return INTEGER(conn);
-}
-
-struct value
 builtin_os_usleep(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.usleep()", 1);
@@ -2753,12 +2702,11 @@ builtin_os_listdir(int argc, struct value *kwargs)
         if (dir.type != VALUE_STRING)
                 vm_panic("the argument to os.listdir() must be a string");
 
-        static _Thread_local vec(char) dirbuf;
-        dirbuf.count = 0;
-        vec_push_n(dirbuf, dir.string, dir.bytes);
-        vec_push(dirbuf, '\0');
+        B.count = 0;
+        vec_push_n(B, dir.string, dir.bytes);
+        vec_push(B, '\0');
 
-        DIR *d = opendir(dirbuf.items);
+        DIR *d = opendir(B.items);
         if (d == NULL)
                 return NIL;
 
@@ -2797,12 +2745,11 @@ builtin_os_stat(int argc, struct value *kwargs)
         if (path.type != VALUE_STRING)
                 vm_panic("the argument to os.stat() must be a string");
 
-        static _Thread_local vec(char) pb;
-        pb.count = 0;
-        vec_push_n(pb, path.string, path.bytes);
-        vec_push(pb, '\0');
+        B.count = 0;
+        vec_push_n(B, path.string, path.bytes);
+        vec_push(B, '\0');
 
-        int r = stat(pb.items, &s);
+        int r = stat(B.items, &s);
         if (r != 0)
                return NIL;
 
@@ -2987,18 +2934,14 @@ builtin_time_strftime(int argc, struct value *kwargs)
                 localtime_r(&sec, &t);
         }
 
-        vec(char) fb;
-        vec_init(fb);
-        vec_push_n(fb, fmt.string, fmt.bytes);
-        vec_push(fb, '\0');
+        B.count = 0;
+        vec_push_n(B, fmt.string, fmt.bytes);
+        vec_push(B, '\0');
 
-        char b[512];
-        int n = strftime(b, sizeof b, fb.items, &t);
-
-        vec_empty(fb);
+        int n = strftime(buffer, sizeof buffer, B.items, &t);
 
         if (n > 0) {
-                return STRING_CLONE(b, n);
+                return STRING_CLONE(buffer, n);
         } else {
                 return NIL;
         }
@@ -3017,23 +2960,18 @@ builtin_time_strptime(int argc, struct value *kwargs)
                 vm_panic("both arguments to time.strptime() must be strings");
         }
 
-        vec(char) sb;
-        vec(char) fb;
+        B.count = 0;
 
-        vec_init(sb);
-        vec_init(fb);
+        char const *sp = B.items;
+        vec_push_n(B, s.string, s.bytes);
+        vec_push(B, '\0');
 
-        vec_push_n(sb, s.string, s.bytes);
-        vec_push_n(fb, fmt.string, fmt.bytes);
-
-        vec_push(sb, '\0');
-        vec_push(fb, '\0');
+        char const *fp = B.items + B.count;
+        vec_push_n(B, fmt.string, fmt.bytes);
+        vec_push(B, '\0');
 
         struct tm r = {0};
-        strptime(sb.items, fb.items, &r);
-
-        vec_empty(sb);
-        vec_empty(fb);
+        strptime(sp, fp, &r);
 
         return value_named_tuple(
                 "sec",   INTEGER(r.tm_sec),
@@ -3143,33 +3081,29 @@ builtin_stdio_fgets(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.fgets()", 1);
 
-        vec(char) line;
-        vec_init(line);
-
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
                 vm_panic("the argument to stdio.fgets() must be a pointer");
 
         FILE *fp = f.ptr;
 
+        B.count = 0;
+
         int c;
         while ((c = fgetc_unlocked(fp)) != EOF && c != '\n') {
-                vec_push(line, c);
+                vec_push(B, c);
         }
 
-        if (line.count == 0 && c == EOF)
+        if (B.count == 0 && c == EOF)
                 return NIL;
 
         struct value s;
 
-        if (line.count == 0) {
+        if (B.count == 0) {
                 s = (c == EOF) ? NIL : STRING_EMPTY;
         } else {
-                s = STRING_CLONE(line.items, line.count);
+                s = STRING_CLONE(B.items, B.count);
         }
-
-
-        vec_empty(line);
 
         return s;
 }
@@ -3295,9 +3229,6 @@ builtin_stdio_fread(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("stdio.fread()", 2, 3);
 
-        vec(char) line;
-        vec_init(line);
-
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
                 vm_panic("the first argument to stdio.fread() must be a pointer");
@@ -3346,9 +3277,6 @@ builtin_stdio_slurp(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.slurp()", 1);
 
-        vec(char) b;
-        vec_init(b);
-
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
                 vm_panic("the argument to stdio.slurp() must be a pointer");
@@ -3356,18 +3284,18 @@ builtin_stdio_slurp(int argc, struct value *kwargs)
         FILE *fp = f.ptr;
         int c;
 
+        B.count = 0;
+
         ReleaseLock(true);
         while ((c = fgetc_unlocked(fp)) != EOF) {
-                vec_push(b, c);
+                vec_push(B, c);
         }
         TakeLock();
 
-        if (c == EOF && b.count == 0)
+        if (c == EOF && B.count == 0)
                 return NIL;
 
-        struct value s = STRING_CLONE(b.items, b.count);
-
-        vec_empty(b);
+        struct value s = STRING_CLONE(B.items, B.count);
 
         return s;
 }

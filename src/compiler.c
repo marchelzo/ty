@@ -4180,6 +4180,9 @@ compiler_load_prelude(void)
         compile(slurp_module("prelude"));
 
         state.global = scope_new(state.global, false);
+
+        vec_empty(state.imports);
+
         return state.code.items;
 }
 
