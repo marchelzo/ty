@@ -1,27 +1,39 @@
 export options, opt, flag
 
-function opt(short, long, pre = true, post = true, convert = id) {
-    return Object(
-        short: short,
-        long: long,
-        pre: pre,
-        post: post,
-        convert: convert,
-        type: 'o'
-    )
+function opt(short, long, pre = true, post = true, convert = id, multi = false) {
+    return {
+        short,
+        long,
+        pre,
+        post,
+        convert,
+        multi,
+        type: 'o',
+    }
 }
 
 function flag(short, long) {
-    return Object(
-        short: short,
-        long: long,
+    return {
+        short,
+        long,
         type: 'f'
-    )
+    }
+}
+
+function add(opt, result, value) {
+    for o in [opt.short, opt.long].remove!(nil) {
+        if opt.multi {
+            result[o] = result[o] ?? []
+            result[o].push(value)
+        } else {
+            result[o] = value
+        }
+    }
 }
 
 function options(*opts) {
     return function (argv) {
-        let result = {}
+        let result = %{}
         let i = 0
 
         function next() {
@@ -40,8 +52,8 @@ function options(*opts) {
 
                 /^--([^=]+)$/ => {
                     if let $opt = opts.filter(o -> o.type == 'f').find(&.long |> (== _1)) {
-                        result << opt.long
-                        result << opt.short
+                        if opt.long  { result << opt.long  }
+                        if opt.short { result << opt.short }
                     } else {
                         throw "Unrecognized flag: {_0}"
                     }
@@ -51,11 +63,11 @@ function options(*opts) {
                         if !(_2 :: opt.pre) {
                             throw "Invalid value for {_1}: {_2}"
                         }
-                        let value = opt.convert(_2)
+                        let value = (opt.convert)(_2)
                         if !(value :: opt.post) {
                             throw "Invalid value for {_1}: {_2}"
                         }
-                        result[opt.short] = result[opt.long] = value
+                        add(opt, result, value)
                     } else {
                         throw "Unrecognized option: {_1}"
                     }
@@ -76,18 +88,18 @@ function options(*opts) {
                             throw "Invalid value for {opt.long ?? _1[0]}: {s}"
                         }
 
-                        let value = opt.convert(s)
+                        let value = (opt.convert)(s)
 
                         if !(value :: opt.post) {
                             throw "Invalid value for {opt.long ?? _1[0]}: {s}"
                         }
 
-                        result[opt.short] = result[opt.long] = value
+                        add(opt, result, value)
                     } else {
                         for c in _1 {
                             if let $opt = opts.filter(&.type |> (== 'f')).find(&.short |> (== c)) {
-                                result << opt.short
-                                result << opt.long
+                                if opt.short { result << opt.short }
+                                if opt.long  { result << opt.long  }
                             } else {
                                 throw "Unrecognized flag: {c}"
                             }
