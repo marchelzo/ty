@@ -182,6 +182,9 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
 static struct scope *
 get_import_scope(char const *);
 
+static struct scope *
+search_import_scope(char const *);
+
 static void
 import_module(struct statement const *s);
 
@@ -612,7 +615,7 @@ to_module_access(struct scope const *scope, struct expression const *e)
 
         vec_insert_n(mod, e->identifier, strlen(e->identifier), 0);
 
-        struct scope *mod_scope = get_import_scope(mod.items);
+        struct scope *mod_scope = search_import_scope(mod.items);
 
         if (mod_scope != NULL) {
                 id->module = sclone(mod.items);
@@ -625,19 +628,31 @@ to_module_access(struct scope const *scope, struct expression const *e)
 }
 
 static struct scope *
-get_import_scope(char const *name)
+search_import_scope(char const *name)
 {
         for (int i = 0; i < state.imports.count; ++i)
                 if (strcmp(name, state.imports.items[i].name) == 0)
                         return state.imports.items[i].scope;
 
-        fail(
-                "reference to undefined module: %s%s%s%s",
-                TERM(93),
-                TERM(1),
-                name,
-                TERM(0)
-        );
+        return NULL;
+}
+
+static struct scope *
+get_import_scope(char const *name)
+{
+        struct scope *scope = search_import_scope(name);
+
+        if (scope == NULL) {
+                fail(
+                        "reference to undefined module: %s%s%s%s",
+                        TERM(93),
+                        TERM(1),
+                        name,
+                        TERM(0)
+                );
+        }
+
+        return scope;
 }
 
 static void
