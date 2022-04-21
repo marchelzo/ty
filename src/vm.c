@@ -2589,7 +2589,12 @@ BadContainer:
                                 vp = class_lookup_method(CLASS_GENERATOR, method, h);
                                 break;
                         case VALUE_TUPLE:
-                                vp = class_lookup_method(CLASS_TUPLE, method, h);
+                                vp = tuple_get(&value, method);
+                                if (vp == NULL) {
+                                        vp = class_lookup_method(CLASS_TUPLE, method, h);
+                                } else {
+                                        self = NULL;
+                                }
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_immediate(CLASS_CLASS, method, h);
