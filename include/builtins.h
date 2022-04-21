@@ -469,6 +469,7 @@
 {.module = "ffi", .name = "call", .value = BUILTIN(cffi_call)},
 {.module = "ffi", .name = "cif", .value = BUILTIN(cffi_cif)},
 {.module = "ffi", .name = "struct", .value = BUILTIN(cffi_struct)},
+{.module = "ffi", .name = "closure", .value = BUILTIN(cffi_closure)},
 {.module = "ffi", .name = "dlsym", .value = BUILTIN(cffi_dlsym)},
 {.module = "ffi", .name = "dlopen", .value = BUILTIN(cffi_dlopen)},
 {.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},

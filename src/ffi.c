@@ -124,6 +124,35 @@ load(ffi_type *t, void const *p)
         return NIL;
 }
 
+static void
+closure_func(ffi_cif *cif, void *ret, void **args, void *data)
+{
+        for (int i = 0; i < cif->nargs; ++i) {
+                struct value arg = load(cif->arg_types[i], args[i]);
+                vm_push(&arg);
+        }
+
+        struct value rv = vm_call(data, cif->nargs);
+
+        switch (cif->rtype->type) {
+        case FFI_TYPE_VOID:
+                break;
+        case FFI_TYPE_INT:
+        case FFI_TYPE_SINT8:
+        case FFI_TYPE_SINT16:
+        case FFI_TYPE_SINT32:
+                store(&ffi_type_sint64, ret, &rv);
+                break;
+        case FFI_TYPE_UINT8:
+        case FFI_TYPE_UINT16:
+        case FFI_TYPE_UINT32:
+                store(&ffi_type_uint64, ret, &rv);
+                break;
+        default:
+                store(cif->rtype, ret, &rv);
+        }
+}
+
 struct value
 cffi_cif(int argc, struct value *kwargs)
 {
@@ -543,7 +572,7 @@ cffi_struct(int argc, struct value *kwargs)
                 struct value member = ARG(i);
 
                 if (member.type != VALUE_PTR) {
-                        vm_panic("non-pointer passed to ffi.struct");
+                        vm_panic("non-pointer passed to ffi.struct()");
                 }
 
                 t->elements[i] = member.ptr;
@@ -554,4 +583,42 @@ cffi_struct(int argc, struct value *kwargs)
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, NULL);
 
         return PTR(t);
+}
+
+struct value
+cffi_closure(int argc, struct value *kwargs)
+{
+        if (argc != 2) {
+                vm_panic("ffi.closure(): expected 2 arguments but got %d", argc);
+        }
+
+        struct value cif = ARG(0);
+        struct value f = ARG(1);
+
+        if (cif.type != VALUE_PTR) {
+                vm_panic("ffi.closre(): first argument must be a pointer to cif");
+        }
+
+        if (!CALLABLE(f)) {
+                vm_panic("ffi.closure(): second argument must be callable");
+        }
+
+        void *code;
+
+        ffi_closure *closure = ffi_closure_alloc(sizeof *closure, &code);
+
+        if (closure == NULL) {
+                vm_panic("ffi.closre(): ffi_closure_alloc() failed");
+        }
+
+        struct value *data = gc_alloc_object(sizeof *data, GC_VALUE);
+        *data = f;
+
+        if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) == FFI_OK) {
+                return GCPTR(code, data);
+        } else {
+                gc_free(data);
+                ffi_closure_free(closure);
+                return NIL;
+        }
 }

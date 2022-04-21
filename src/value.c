@@ -758,6 +758,17 @@ mark_function(struct value const *v)
         }
 }
 
+inline static void
+mark_pointer(struct value const *v)
+{
+        if (v->gcptr != NULL) {
+                MARK(v->gcptr);
+                if (ALLOC_OF(v->gcptr)->type == GC_VALUE) {
+                        value_mark((const struct value *)v->gcptr);
+                }
+        }
+}
+
 char *
 value_string_clone_nul(char const *src, int n)
 {
@@ -798,7 +809,7 @@ _value_mark(struct value const *v)
         case VALUE_OBJECT:          object_mark(v->object);                            break;
         case VALUE_REF:             value_mark(v->ptr);                                break;
         case VALUE_BLOB:            MARK(v->blob);                                     break;
-        case VALUE_PTR:             if (v->gcptr != NULL) MARK(v->gcptr);              break;
+        case VALUE_PTR:             mark_pointer(v);                                   break;
         case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                  break;
         default:                                                                       break;
         }

@@ -470,6 +470,8 @@ Start:
                                         nextchar();
                                         if (isxdigit(C(0)) && isxdigit(C(1))) {
                                                 sscanf(SRC, "%2x", &b);
+                                        } else {
+                                                error("invalid hexadecimal byte value in string: \\x%.2s", SRC);
                                         }
                                         nextchar();
                                         nextchar();
