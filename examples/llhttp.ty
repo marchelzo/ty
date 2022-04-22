@@ -1,0 +1,23 @@
+import llhttp (..)
+
+let p = HttpParser()
+
+let parts = [
+    "POST /foo?bar HTTP/1.1\r\nBased: Keyed",
+    "\r\nAnd: Redpilled\r\nContent-Length: 1",
+    "0\r\nAnd: Redpilled Again\r\n\r\n",
+    "BasedKeyed\r\nGET /king HTTP/1.1\r\nAccept: application/json\r\n\r\nGET /sigma H",
+    "TTP/",
+    "1.1\r\nConnection: Keep-Alive\r\n\r\n"
+]
+
+for part in parts {
+    if p.push(part) != HPE_OK {
+        print("ERROR: {p.error()}")
+        break
+    } else {
+        for req in p.iterRequests() {
+            print(req)
+        }
+    }
+}
