@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <math.h>
 
+#include <utf8proc.h>
+
 #include "vec.h"
 #include "token.h"
 #include "test.h"
@@ -410,6 +412,32 @@ Unterminated:
         error("unterminated expression in interpolated string");
 }
 
+inline static bool
+readhex(int ndigits, unsigned long long *k)
+{
+        char b[32];
+
+        for (int i = 0; i < ndigits; ++i) {
+                if (!isxdigit(C(i))) {
+                        return false;
+                } else  {
+                        b[i] = C(i);
+                }
+        }
+
+        b[ndigits] = '\0';
+
+        if (sscanf(b, "%llx", k) != 1) {
+                return false;
+        }
+
+        while (ndigits --> 0) {
+                nextchar();
+        }
+
+        return true;
+}
+
 static struct token
 lexspecialstr(void)
 {
@@ -466,16 +494,39 @@ Start:
                                 continue;
                         case 'x':
                                 {
-                                        unsigned b;
+                                        unsigned long long b;
+
                                         nextchar();
-                                        if (isxdigit(C(0)) && isxdigit(C(1))) {
-                                                sscanf(SRC, "%2x", &b);
-                                        } else {
+
+                                        if (!readhex(2, &b)) {
                                                 error("invalid hexadecimal byte value in string: \\x%.2s", SRC);
                                         }
-                                        nextchar();
-                                        nextchar();
+
                                         vec_push(str, b);
+
+                                        continue;
+                                }
+                        case 'u':
+                        case 'U':
+                                {
+                                        int c = C(0);
+                                        int ndigits = (c == 'u') ? 4 : 8;
+                                        unsigned long long codepoint;
+
+                                        nextchar();
+
+                                        if (!readhex(ndigits, &codepoint)) {
+                                                error("expected %d hexadecimal digits after \\%c in string", ndigits, c, SRC);
+                                        }
+
+                                        if (!utf8proc_codepoint_valid(codepoint)) {
+                                                error("invalid Unicode codepoint in string: %u", codepoint);
+                                        }
+
+                                        unsigned char bytes[4];
+                                        int n = utf8proc_encode_char(codepoint, bytes);
+                                        vec_push_n(str, (char *)bytes, n);
+
                                         continue;
                                 }
                         }
