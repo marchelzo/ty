@@ -705,7 +705,7 @@ prefix_identifier(void)
         consume(TOKEN_IDENTIFIER);
 
         // TODO: maybe get rid of this
-        if (false && NoEquals && tok()->type == ':') {
+        if (NoEquals && tok()->type == ':') {
                 SAVE_NE(true);
                 next();
                 e->constraint = parse_expr(0);
@@ -907,10 +907,18 @@ prefix_record(void)
         e->type = EXPRESSION_TUPLE;
         vec_init(e->es);
         vec_init(e->names);
+        vec_init(e->required);
 
         consume('{');
 
         while (tok()->type != '}') {
+                if (tok()->type == TOKEN_QUESTION) {
+                        next();
+                        vec_push(e->required, false);
+                } else {
+                        vec_push(e->required, true);
+                }
+
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->names, tok()->identifier);
 
@@ -1119,6 +1127,7 @@ prefix_parenthesis(void)
                 e->only_identifiers = true;
                 vec_init(e->es);
                 vec_init(e->names);
+                vec_init(e->required);
                 return e;
         }
 
@@ -1172,10 +1181,12 @@ prefix_parenthesis(void)
                 list->type = EXPRESSION_TUPLE;
                 vec_init(list->names);
                 vec_init(list->es);
+                vec_init(list->required);
 
                 if (e->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
                         next();
                         vec_push(list->names, e->identifier);
+                        vec_push(list->required, true);
                         e = parse_expr(0);
 
                 } else {
@@ -1196,6 +1207,7 @@ prefix_parenthesis(void)
 
                         if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                                 vec_push(list->names, tok()->identifier);
+                                vec_push(list->required, true);
                                 next();
                                 next();
                         } else {
@@ -1227,6 +1239,7 @@ prefix_parenthesis(void)
                         vec_init(list->names);
                         vec_init(list->es);
                         vec_push(list->names, NULL);
+                        vec_push(list->required, true);
                         vec_push(list->es, e);
                         return list;
                 } else {
@@ -1365,15 +1378,15 @@ prefix_array(void)
                 break;
         }
 
-        setctx(LEX_PREFIX);
-
         e = mkexpr();
         e->type = EXPRESSION_ARRAY;
         vec_init(e->elements);
+        vec_init(e->optional);
 
         consume('[');
 
         while (tok()->type != ']') {
+                setctx(LEX_PREFIX);
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *item = mkexpr();
@@ -1381,7 +1394,14 @@ prefix_array(void)
                         item->value = parse_expr(0);
                         item->start = item->value->start;
                         vec_push(e->elements, item);
+                        vec_push(e->optional, false);
                 } else {
+                        if (tok()->type == TOKEN_QUESTION) {
+                                next();
+                                vec_push(e->optional, true);
+                        } else {
+                                vec_push(e->optional, false);
+                        }
                         vec_push(e->elements, parse_expr(0));
                 }
 

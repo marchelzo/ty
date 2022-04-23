@@ -24,7 +24,7 @@ let end = time.utime()
 
 print("Parsed 30,000 HTTP requests in {(end - start)/1000.0}ms")
 
-for req in p.takeRequests().take(3) {
+for req in p.takeMessages().take(3) {
 	print(req)
 }
 

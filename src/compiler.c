@@ -2120,6 +2120,7 @@ emit_try_match(struct expression const *pattern)
                         } else {
                                 emit_instr(INSTR_TRY_INDEX);
                                 emit_int(i);
+                                emit_boolean(!pattern->optional.items[i]);
                                 vec_push(state.match_fails, state.code.count);
                                 emit_int(0);
 
@@ -2214,6 +2215,7 @@ emit_try_match(struct expression const *pattern)
                                         fail("the *<id> tuple-matching pattern must be the last pattern in the tuple");
                         } else if (pattern->names.items[i] != NULL) {
                                 emit_instr(INSTR_TRY_TUPLE_MEMBER);
+                                emit_boolean(pattern->required.items[i]);
                                 emit_string(pattern->names.items[i]);
                                 vec_push(state.match_fails, state.code.count);
                                 emit_int(0);
@@ -3272,6 +3274,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                         } else {
                                 emit_instr(INSTR_PUSH_ARRAY_ELEM);
                                 emit_int(i);
+                                emit_boolean(!target->optional.items[i]);
                                 emit_assignment2(target->elements.items[i], maybe, def);
                                 emit_instr(INSTR_POP);
                         }
@@ -3322,6 +3325,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                                 emit_instr(INSTR_BAD_MATCH);
                         } else if (target->names.items[i] != NULL) {
                                 emit_instr(INSTR_PUSH_TUPLE_MEMBER);
+                                emit_boolean(target->required.items[i]);
                                 emit_string(target->names.items[i]);
                                 emit_assignment2(target->es.items[i], maybe, def);
                                 emit_instr(INSTR_POP);

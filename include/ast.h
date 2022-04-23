@@ -226,6 +226,7 @@ struct expression {
                 struct {
                         struct symbol *atmp;
                         expression_vector elements;
+                        vec(bool) optional;
                         struct {
                                 struct expression *pattern;
                                 struct expression *iter;
@@ -241,6 +242,7 @@ struct expression {
                         bool only_identifiers;
                         expression_vector es;
                         vec(char const *) names;
+                        vec(bool) required;
                 };
                 struct {
                         struct expression *cond;

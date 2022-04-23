@@ -1150,7 +1150,7 @@ Throw:
                         break;
                 CASE(ENSURE_LEN)
                         READVALUE(n);
-                        b = top()->array->count == n;
+                        b = top()->array->count <= n;
                         READVALUE(n);
                         if (!b)
                                 ip += n;
@@ -1214,12 +1214,22 @@ Throw:
                         break;
                 CASE(TRY_INDEX)
                         READVALUE(i);
+                        READVALUE(b);
                         READVALUE(n);
                         //LOG("trying to index: %s", value_show(top()));
-                        if (top()->type != VALUE_ARRAY || top()->array->count <= i)
+                        if (top()->type != VALUE_ARRAY) {
                                 ip += n;
-                        else
+                                break;
+                        }
+                        if (top()->array->count <= i) {
+                                if (b) {
+                                        ip += n;
+                                } else {
+                                        push(NIL);
+                                }
+                        } else {
                                 push(top()->array->items[i]);
+                        }
                         break;
                 CASE(TRY_INDEX_TUPLE)
                         READVALUE(i);
@@ -1231,8 +1241,12 @@ Throw:
                         }
                         break;
                 CASE(TRY_TUPLE_MEMBER)
+                        // b => required
+                        READVALUE(b);
+
                         str = ip;
                         ip += strlen(str) + 1;
+
                         READVALUE(n);
 
                         if (top()->type != VALUE_TUPLE || top()->names == NULL) {
@@ -1245,6 +1259,11 @@ Throw:
                                         push(top()->items[i]);
                                         goto NextInstruction;
                                 }
+                        }
+
+                        if (!b) {
+                                push(NIL);
+                                goto NextInstruction;
                         }
 
                         ip += n;
@@ -1655,15 +1674,21 @@ Throw:
                         break;
                 CASE(PUSH_ARRAY_ELEM)
                         READVALUE(n);
+                        READVALUE(b);
                         if (top()->type != VALUE_ARRAY) {
                                 MatchError;
                                 vm_panic("attempt to destructure non-array as array in assignment");
                         }
                         if (n >= top()->array->count) {
-                                MatchError;
-                                vm_panic("elment index out of range in destructuring assignment");
+                                if (b) {
+                                        MatchError;
+                                        vm_panic("elment index out of range in destructuring assignment");
+                                } else {
+                                        push(NIL);
+                                }
+                        } else {
+                                push(top()->array->items[n]);
                         }
-                        push(top()->array->items[n]);
                         break;
                 CASE(PUSH_TUPLE_ELEM)
                         READVALUE(n);
@@ -1676,6 +1701,8 @@ Throw:
                         push(top()->items[n]);
                         break;
                 CASE(PUSH_TUPLE_MEMBER)
+                        READVALUE(b);
+
                         member = ip;
                         ip += strlen(member) + 1;
 
@@ -1690,6 +1717,11 @@ Throw:
                                         push(v.items[i]);
                                         goto NextInstruction;
                                 }
+                        }
+
+                        if (!b) {
+                                push(NIL);
+                                goto NextInstruction;
                         }
 
                         goto BadTupleMember;
