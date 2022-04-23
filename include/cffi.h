@@ -62,4 +62,7 @@ cffi_str(int argc, struct value *kwargs);
 struct value
 cffi_closure(int argc, struct value *kwargs);
 
+struct value
+cffi_closure_free(int argc, struct value *kwargs);
+
 #endif

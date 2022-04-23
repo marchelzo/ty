@@ -2409,6 +2409,12 @@ BadContainer:
                                 call(&v, NULL, n, nkw, false);
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
+                                /*
+                                 * Builtin functions may not preserve the stack size, so instead
+                                 * of subtracting `n` after calling the builtin function, we compute
+                                 * the desired final stack size in advance.
+                                 */
+                                k = stack.count - n;
                                 if (nkw > 0) {
                                         container = pop();
                                         gc_push(&container);
@@ -2417,7 +2423,7 @@ BadContainer:
                                 } else {
                                         v = v.builtin_function(n, NULL);
                                 }
-                                stack.count -= n;
+                                stack.count = k;
                                 push(v);
                                 break;
                         case VALUE_GENERATOR:
@@ -2473,6 +2479,7 @@ BadContainer:
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
+                                k = stack.count - n;
                                 if (nkw > 0) {
                                         container = pop();
                                         gc_push(&container);
@@ -2481,7 +2488,7 @@ BadContainer:
                                 } else {
                                         v = v.builtin_method(v.this, n, NULL);
                                 }
-                                stack.count -= n;
+                                stack.count = k;
                                 push(v);
                                 break;
                         case VALUE_NIL:
@@ -3035,6 +3042,7 @@ struct value
 vm_call(struct value const *f, int argc)
 {
         struct value r, *init;
+        size_t n = stack.count - argc;
 
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -3045,11 +3053,11 @@ vm_call(struct value const *f, int argc)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc, NULL);
-                stack.count -= argc;
+                stack.count = n;
                 return r;
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(f->this, argc, NULL);
-                stack.count -= argc;
+                stack.count = n;
                 return r;
         case VALUE_TAG:
                 r = pop();
@@ -3098,6 +3106,8 @@ vm_eval_function(struct value const *f, ...)
 
         va_end(ap);
 
+        size_t n = stack.count - argc;
+
         switch (f->type) {
         case VALUE_FUNCTION:
                 call(f, NULL, argc, 0, true);
@@ -3107,11 +3117,11 @@ vm_eval_function(struct value const *f, ...)
                 return pop();
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(argc, NULL);
-                stack.count -= argc;
+                stack.count = n;
                 return r;
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(f->this, argc, NULL);
-                stack.count -= argc;
+                stack.count = n;
                 return r;
         default:
                 abort();

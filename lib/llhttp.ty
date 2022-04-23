@@ -166,38 +166,49 @@ let llhttp_execute = wrap(lib, 'llhttp_execute', c.int, c.ptr, c.ptr, c.u64)
 let llhttp_resume = wrap(lib, 'llhttp_execute', c.void, c.ptr)
 let llhttp_method_name = wrap(lib, 'llhttp_method_name', c.ptr, c.u8)
 let llhttp_errno_name = wrap(lib, 'llhttp_errno_name', c.ptr, c.int)
+let llhttp_get_error_reason = wrap(lib, 'llhttp_get_error_reason', c.ptr, c.ptr)
+let llhttp_get_error_pos = wrap(lib, 'llhttp_get_error_pos', c.ptr, c.ptr)
 
 let llhttp_get_method = parser -> c.member(llhttp_internal, parser, 10)
+let llhttp_get_status_code = parser -> c.member(llhttp_internal, parser, 18)
+
+let llhttp_get_version = parser -> (
+    major: c.member(llhttp_internal, parser, 11),
+    minor: c.member(llhttp_internal, parser, 12)
+)
+
 let llhttp_get_flags = parser -> c.member(llhttp_internal, parser, 17)
 
 let llhttp_content_length = parser -> {
-	if llhttp_get_flags(parser) .&. F_CONTENT_LENGTH {
-		c.member(llhttp_internal, parser, 8)
-	}
+    if llhttp_get_flags(parser) .&. F_CONTENT_LENGTH {
+        c.member(llhttp_internal, parser, 8)
+    }
 }
 
 let onMessageComplete = (parser) -> {
-	print("Message complete")
-	return 0
+    print("Message complete")
+    return 0
 }
 
 let onMessageBegin = (parser) -> {
-	print("Message begin")
-	return 0
+    print("Message begin")
+    return 0
 }
 
 let printData = (parser, data, len) -> {
-	print("Data = '{c.as_str(data, len)}'")
-	return 0
+    print("Data = '{c.as_str(data, len)}'")
+    return 0
 }
 
 let onHeaderField = (parser, data, len) -> {
 }
 
 class HttpParser {
-	init() {
-        @requests = []
+    init(type=HTTP_BOTH) {
+        @messages = []
         @b = Blob()
+
+        @closures = []
 
         self.reset()
 
@@ -205,67 +216,84 @@ class HttpParser {
         llhttp_settings_init(@settings)
 
         @parser = c.new(llhttp_internal)
-        llhttp_init(@parser, HTTP_BOTH, @settings)
+        llhttp_init(@parser, type, @settings)
 
-        //c.member(llhttp_settings_t, @settings, 0, c.closure(c.cif(c.int, c.ptr), onMessageBegin))
+        self.install(1, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        self.install(2, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        self.install(3, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        self.install(4, c.int, c.ptr, c.ptr, c.u64, self.onData)
+        self.install(6, c.int, c.ptr, c.ptr, c.u64, self.onData)
 
-        c.member(llhttp_settings_t, @settings, 1, c.closure(c.cif(c.int, c.ptr, c.ptr, c.u64), self.onData))
-        c.member(llhttp_settings_t, @settings, 2, c.closure(c.cif(c.int, c.ptr, c.ptr, c.u64), self.onData))
-        c.member(llhttp_settings_t, @settings, 3, c.closure(c.cif(c.int, c.ptr, c.ptr, c.u64), self.onData))
-        c.member(llhttp_settings_t, @settings, 4, c.closure(c.cif(c.int, c.ptr, c.ptr, c.u64), self.onData))
-        c.member(llhttp_settings_t, @settings, 6, c.closure(c.cif(c.int, c.ptr, c.ptr, c.u64), self.onData))
+        self.install(10, c.int, c.ptr, self.onURLComplete)
+        self.install(11, c.int, c.ptr, self.onStatusComplete)
+        self.install(12, c.int, c.ptr, self.onHeaderFieldComplete)
+        self.install(13, c.int, c.ptr, self.onHeaderValueComplete)
 
-        //c.member(llhttp_settings_t, @settings, 5, c.closure(c.cif(c.int, c.ptr), onHeadersComplete))
+        self.install(7, c.int, c.ptr, self.onMessageComplete)
+    }
 
-        c.member(llhttp_settings_t, @settings, 10, c.closure(c.cif(c.int, c.ptr), self.onURLComplete))
-        c.member(llhttp_settings_t, @settings, 12, c.closure(c.cif(c.int, c.ptr), self.onHeaderFieldComplete))
-        c.member(llhttp_settings_t, @settings, 13, c.closure(c.cif(c.int, c.ptr), self.onHeaderValueComplete))
-
-        c.member(llhttp_settings_t, @settings, 7, c.closure(c.cif(c.int, c.ptr), self.onMessageComplete))
-	}
+    install(n, *args) {
+        @closures.push(c.closure(*args))
+        c.member(llhttp_settings_t, @settings, n, @closures[-1])
+    }
 
     reset() {
         @headers = %{}
         @url = nil
+        @status = nil
     }
 
-	onHeaderFieldComplete(parser) {
-		@headerField = @b.str()
-		@b.clear()
-	}
+    onHeaderFieldComplete(parser) {
+        @headerField = @b.str()
+        @b.clear()
+    }
 
-	onHeaderValueComplete(parser) {
-		let headerValue = @b.str()
-		@b.clear()
+    onHeaderValueComplete(parser) {
+        let headerValue = @b.str()
+        @b.clear()
 
-		match @headers[@headerField] {
-			nil         => @headers[@headerField] = headerValue,
-			vs :: Array => vs.push(headerValue),
-			v           => @headers[@headerField] = [v, headerValue]
-		}
-	}
+        match @headers[@headerField] {
+            nil         => @headers[@headerField] = headerValue,
+            vs :: Array => vs.push(headerValue),
+            v           => @headers[@headerField] = [v, headerValue]
+        }
+    }
 
-	onURLComplete(parser) {
-		@url = @b.str()
-		@b.clear()
-	}
+    onURLComplete(parser) {
+        @url = @b.str()
+        @b.clear()
+    }
 
-	onData(parser, data, len) {
-		@b.push(c.as_str(data, len))
-		return HPE_OK
-	}
+    onStatusComplete(parser) {
+        @status = @b.str()
+        @b.clear()
+    }
 
-	onMessageComplete(parser) {
-		let method = c.str(llhttp_method_name(llhttp_get_method(parser)))
+    onData(parser, data, len) {
+        @b.push(c.as_str(data, len))
+        return HPE_OK
+    }
+
+    onMessageComplete(parser) {
         let body = nil
 
         if @b.size() > 0 {
             body, @b = @b, Blob()
         }
 
-        @requests.push({
+        let status = if @status != nil {
+            (code: llhttp_get_status_code(parser), text: @status)
+        }
+
+        let method = if status == nil {
+            c.as_str(llhttp_method_name(llhttp_get_method(parser)))
+        }
+
+        @messages.push({
             method,
-            url: @url
+            url: @url,
+            status,
+            version: llhttp_get_version(parser),
             headers: @headers,
             body
         })
@@ -273,27 +301,39 @@ class HttpParser {
         self.reset()
 
         return HPE_OK
-	}
-
-    push(data) {
-        @err = llhttp_execute(@parser, data, data.size())
     }
 
-    takeRequests() {
-        @requests.slice!(0)
+    push(chunk) {
+        @chunk = chunk
+        @err = llhttp_execute(@parser, chunk, chunk.size())
     }
 
-    iterRequests() {
-        for request in @requests {
-            yield request
+    takeMessages() {
+        @messages.slice!(0)
+    }
+
+    clearMessages() {
+        @messages = []
+    }
+
+    messageCount() {
+        @messages.len()
+    }
+
+    destroy() {
+        if @parser != nil {
+            c.free(@parser)
+            @parser = nil
+            while @closures {
+                c.freeClosure(@closures.pop())
+            }
         }
-
-        @requests = []
     }
 
-	numRequests() {
-		@requests.len()
-	}
+    errorPos() {
+        let pos = llhttp_get_error_pos(@parser)
+        return pos - @chunk.ptr()
+    }
 
     error() {
         c.as_str(llhttp_errno_name(@err))

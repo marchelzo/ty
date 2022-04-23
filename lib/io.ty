@@ -69,9 +69,9 @@ class Stream : Iter {
         }
     }
 
-    next(n: ?Int) {
+    next(n: ?Int, b: ?Blob) {
         match n {
-            $n  => stdio.fread(self.f, n),
+            $n  => stdio.fread(self.f, n, b),
             _   => stdio.fgetc(self.f)
         }
     }

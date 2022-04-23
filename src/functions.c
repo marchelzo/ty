@@ -3262,7 +3262,7 @@ builtin_stdio_fread(int argc, struct value *kwargs)
                 vm_panic("the second argument to stdio.fread() must be a non-negative integer");
 
         struct blob *b;
-        if (argc == 3) {
+        if (argc == 3 && ARG(2).type != VALUE_NIL) {
                 if (ARG(2).type != VALUE_BLOB) {
                         vm_panic("stdio.fread() expects a blob as the third argument but got: %s", value_show(&ARG(2)));
                 }

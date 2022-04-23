@@ -588,37 +588,61 @@ cffi_struct(int argc, struct value *kwargs)
 struct value
 cffi_closure(int argc, struct value *kwargs)
 {
-        if (argc != 2) {
-                vm_panic("ffi.closure(): expected 2 arguments but got %d", argc);
+        if (argc == 0) {
+                vm_panic("ffi.closure(): expected at least 1 argument but got %d", argc);
         }
 
-        struct value cif = ARG(0);
-        struct value f = ARG(1);
-
-        if (cif.type != VALUE_PTR) {
-                vm_panic("ffi.closre(): first argument must be a pointer to cif");
-        }
+        struct value f = ARG(argc - 1);
+		vm_pop();
 
         if (!CALLABLE(f)) {
-                vm_panic("ffi.closure(): second argument must be callable");
+                vm_panic("ffi.closure(): last argument must be callable");
         }
+
+        struct value cif = cffi_cif(argc - 1, NULL);
+
+		if (cif.type == VALUE_NIL) {
+			vm_panic("ffi.closure(): failed to construct cif");
+		}
 
         void *code;
 
         ffi_closure *closure = ffi_closure_alloc(sizeof *closure, &code);
 
         if (closure == NULL) {
-                vm_panic("ffi.closre(): ffi_closure_alloc() failed");
+                vm_panic("ffi.closure(): ffi_closure_alloc() failed");
         }
 
         struct value *data = gc_alloc_object(sizeof *data, GC_VALUE);
         *data = f;
 
+		void **pointers = gc_alloc(sizeof (void *[2]));
+		pointers[0] = closure;
+		pointers[1] = cif.ptr;
+
         if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) == FFI_OK) {
-                return GCPTR(code, data);
+                return EPTR(code, data, pointers);
         } else {
                 gc_free(data);
                 ffi_closure_free(closure);
                 return NIL;
         }
+}
+
+struct value
+cffi_closure_free(int argc, struct value *kwargs)
+{
+	if (argc != 1) {
+		vm_panic("ffi.freeClosure(): expected 1 argument but got %d", argc);
+	}
+
+	struct value p = ARG(0);
+
+	void **pointers = p.extra;
+
+	ffi_closure_free(pointers[0]);
+	gc_free(pointers[1]);
+	gc_free(pointers);
+
+	return NIL;
 }

@@ -175,12 +175,16 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
         if (left->type == VALUE_INTEGER && right->type == VALUE_REAL)
                 return REAL(left->integer - right->real);
 
+        if (left->type == VALUE_PTR && right->type == VALUE_INTEGER)
+                return PTR(((char *)left->ptr) - right->integer);
+
         if (left->type != right->type)
                 vm_panic("the operands to - must have the same type");
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer - right->integer);
         case VALUE_REAL:    return REAL(left->real - right->real);
+        case VALUE_PTR:     return INTEGER((char *)left->ptr - (char *)right->ptr);
         case VALUE_DICT:
                 gc_push((struct value *)left);
                 gc_push((struct value *)right);
