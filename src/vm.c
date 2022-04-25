@@ -2448,8 +2448,8 @@ BadContainer:
                                  */
                                 if (nkw > 0) {
                                         container = pop();
-                                        k = stack.count - n;
                                         gc_push(&container);
+                                        k = stack.count - n;
                                         v = v.builtin_function(n, &container);
                                         gc_pop();
                                 } else {
@@ -2512,13 +2512,14 @@ BadContainer:
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
-                                k = stack.count - n;
                                 if (nkw > 0) {
                                         container = pop();
                                         gc_push(&container);
+                                        k = stack.count - n;
                                         v = v.builtin_method(v.this, n, &container);
                                         gc_pop();
                                 } else {
+                                        k = stack.count - n;
                                         v = v.builtin_method(v.this, n, NULL);
                                 }
                                 stack.count = k;
