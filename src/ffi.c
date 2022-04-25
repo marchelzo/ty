@@ -243,6 +243,29 @@ cffi_alloc(int argc, struct value *kwargs)
 }
 
 struct value
+cffi_realloc(int argc, struct value *kwargs)
+{
+        if (argc != 2) {
+                vm_panic("ffi.realloc() expects 2 arguments but got %d", argc);
+        }
+
+		if (ARG(0).type != VALUE_PTR) {
+			vm_panic("ffi.realloc(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
+		}
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("ffi.realloc(): expected integer as second argument but got: %s", value_show(&ARG(1)));
+        }
+
+        if (ARG(1).integer <= 0)
+                return NIL;
+
+        void *p = realloc(ARG(0).ptr, ARG(1).integer);
+
+        return (p == NULL) ? NIL : PTR(p);
+}
+
+struct value
 cffi_size(int argc, struct value *kwargs)
 {
         if (argc != 1) {

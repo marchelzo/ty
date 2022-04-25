@@ -18,6 +18,9 @@ struct value
 cffi_alloc(int argc, struct value *kwargs);
 
 struct value
+cffi_realloc(int argc, struct value *kwargs);
+
+struct value
 cffi_clone(int argc, struct value *kwargs);
 
 struct value

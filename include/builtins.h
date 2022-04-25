@@ -463,6 +463,7 @@
 {.module = "ffi", .name = "new", .value = BUILTIN(cffi_new)},
 {.module = "ffi", .name = "size", .value = BUILTIN(cffi_size)},
 {.module = "ffi", .name = "alloc", .value = BUILTIN(cffi_alloc)},
+{.module = "ffi", .name = "realloc", .value = BUILTIN(cffi_realloc)},
 {.module = "ffi", .name = "free", .value = BUILTIN(cffi_free)},
 {.module = "ffi", .name = "addr", .value = BUILTIN(cffi_addr)},
 {.module = "ffi", .name = "load", .value = BUILTIN(cffi_load)},
