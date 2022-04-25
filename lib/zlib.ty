@@ -20,20 +20,20 @@ if not let $lib = c.dlopen(libraryName) {
   throw "Failed to load {libraryName}"
 }
 
-let cCompressBound = wrap(lib, 'compressBound', c.u64, c.u64)
-let cCompress = wrap(lib, 'compress', c.int, c.ptr, c.ptr, c.ptr, c.u64)
-let cUncompress = wrap(lib, 'uncompress', c.int, c.ptr, c.ptr, c.ptr, c.u64)
+let cCompressBound = wrap(lib, 'compressBound', c.ulong, c.ulong)
+let cCompress = wrap(lib, 'compress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
+let cUncompress = wrap(lib, 'uncompress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
 
 pub function compress(s: String | Blob) {
   let bound = cCompressBound(s.size())
-  let $pSize = c.new(c.u64, bound)
+  let $pSize = c.new(c.ulong, bound)
   let $buffer = c.alloc(bound)
 
   if let err = cCompress(buffer, pSize, s, s.size()) and err != Z_OK {
     throw Err(err)
   }
 
-  let compressed = Blob(c.as_str(buffer, c.load(c.u64, pSize)))
+  let compressed = Blob(c.as_str(buffer, c.load(c.ulong, pSize)))
 
   c.free(pSize)
   c.free(buffer)
@@ -43,7 +43,7 @@ pub function compress(s: String | Blob) {
 
 pub function uncompress(s: String | Blob, maxSize) {
   let size = 4096
-  let $pSize = c.new(c.u64, size)
+  let $pSize = c.new(c.ulong, size)
   let $buffer = c.alloc(size)
 
   defer {
@@ -58,12 +58,12 @@ pub function uncompress(s: String | Blob, maxSize) {
       return nil
     }
 
-    c.store(c.u64, pSize, size)
+    c.store(c.ulong, pSize, size)
     c.free(buffer)
     $buffer = c.alloc(size)
   }
 
-  return Blob(c.as_str(buffer, c.load(c.u64, pSize)))
+  return Blob(c.as_str(buffer, c.load(c.ulong, pSize)))
 }
 
 function test() {
