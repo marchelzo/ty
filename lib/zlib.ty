@@ -1,0 +1,71 @@
+import ffi as c
+import cutil (wrap)
+
+let Z_OK            = 0
+let Z_STREAM_END    = 1
+let Z_NEED_DICT     = 2
+let Z_ERRNO         = (-1)
+let Z_STREAM_ERROR  = (-2)
+let Z_DATA_ERROR    = (-3)
+let Z_MEM_ERROR     = (-4)
+let Z_BUF_ERROR     = (-5)
+let Z_VERSION_ERROR = (-6)
+
+if not let $lib = c.dlopen('libz.so') ?? c.dlopen('libz.so.3') {
+  throw 'Failed to load libz.so'
+}
+
+let cCompressBound = wrap(lib, 'compressBound', c.u64, c.u64)
+let cCompress = wrap(lib, 'compress', c.int, c.ptr, c.ptr, c.ptr, c.u64)
+let cUncompress = wrap(lib, 'uncompress', c.int, c.ptr, c.ptr, c.ptr, c.u64)
+
+pub function compress(s: String | Blob) {
+  let bound = cCompressBound(s.size())
+  let $pSize = c.new(c.u64, bound)
+  let $buffer = c.alloc(bound)
+
+  if let err = cCompress(buffer, pSize, s, s.size()) and err != Z_OK {
+    throw Err(err)
+  }
+
+  let compressed = Blob(c.as_str(buffer, c.load(c.u64, pSize)))
+
+  c.free(pSize)
+  c.free(buffer)
+
+  return compressed
+}
+
+pub function uncompress(s: String | Blob, maxSize) {
+  let size = 4096
+  let $pSize = c.new(c.u64, size)
+  let $buffer = c.alloc(size)
+
+  defer {
+    c.free(pSize)
+    c.free(buffer)
+  }
+
+  while cUncompress(buffer, pSize, s, s.size()) == Z_BUF_ERROR {
+    size *= 2
+
+    if maxSize != nil && size > maxSize {
+      return nil
+    }
+
+    c.store(c.u64, pSize, size)
+    c.free(buffer)
+    $buffer = c.alloc(size)
+  }
+
+  return Blob(c.as_str(buffer, c.load(c.u64, pSize)))
+}
+
+function test() {
+  let data = 'Hello, world!'.repeat(5000)
+
+  let compressed = compress(data)
+  let uncompressed = uncompress(compressed)
+
+  print(data.size(), compressed.size(), uncompressed.size())
+}
