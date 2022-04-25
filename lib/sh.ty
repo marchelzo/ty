@@ -5,17 +5,17 @@ import errno (ETIMEDOUT)
 export ls, sh, expand
 
 function sh(c, input, timeoutMs, signal = os.SIGKILL) {
-    if not let $p = os::spawn(['bash', '-c', c], detached: timeoutMs != nil) {
-	      return nil;
+    if not let $p = os.spawn(['bash', '-c', c], detached: timeoutMs != nil) {
+	      return nil
     }
 
-    let out = blob();
+    let out = blob()
 
     if input != nil {
-        os::write(p.stdin, input);
+        os.write(p.stdin, input)
     }
 
-    os::close(p.stdin);
+    os.close(p.stdin)
 
     let start = utime()
 
@@ -40,18 +40,18 @@ function sh(c, input, timeoutMs, signal = os.SIGKILL) {
         }
     }
 
-    os::close(p.stdout);
-    os::close(p.stderr);
+    os.close(p.stdout)
+    os.close(p.stderr)
 
-    let (_, s) = os::waitpid(p.pid);
+    let (_, s) = os.waitpid(p.pid)
 
-    return out.str(), os::WEXITSTATUS(s), out;
+    return out.str(), os.WEXITSTATUS(s), out
 }
 
 function ls(d, flags) {
-    return sh("ls '{d}' {flags || ''}").split("\n");
+    return sh("ls '{d}' {flags || ''}").split("\n")
 }
 
 function expand(s) {
-    return sh("echo -n {s}");
+    return sh("echo -n {s}")
 }

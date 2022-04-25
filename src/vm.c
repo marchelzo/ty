@@ -2446,13 +2446,14 @@ BadContainer:
                                  * of subtracting `n` after calling the builtin function, we compute
                                  * the desired final stack size in advance.
                                  */
-                                k = stack.count - n;
                                 if (nkw > 0) {
                                         container = pop();
+                                        k = stack.count - n;
                                         gc_push(&container);
                                         v = v.builtin_function(n, &container);
                                         gc_pop();
                                 } else {
+                                        k = stack.count - n;
                                         v = v.builtin_function(n, NULL);
                                 }
                                 stack.count = k;

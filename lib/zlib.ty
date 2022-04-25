@@ -1,5 +1,6 @@
 import ffi as c
 import cutil (wrap)
+import sh (sh)
 
 let Z_OK            = 0
 let Z_STREAM_END    = 1
@@ -11,8 +12,12 @@ let Z_MEM_ERROR     = (-4)
 let Z_BUF_ERROR     = (-5)
 let Z_VERSION_ERROR = (-6)
 
-if not let $lib = c.dlopen('libz.so') ?? c.dlopen('libz.so.3') {
-  throw 'Failed to load libz.so'
+if not let $libraryName = sh('ldconfig -p').match!(/libz.so(?:\.\d+)*/) {
+  throw 'Failed to find zlib shared object'
+}
+
+if not let $lib = c.dlopen(libraryName) {
+  throw "Failed to load {libraryName}"
 }
 
 let cCompressBound = wrap(lib, 'compressBound', c.u64, c.u64)
