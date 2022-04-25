@@ -35,6 +35,7 @@
 { .module = NULL,     .name = "ord",               .value = BUILTIN(builtin_ord)                           },
 { .module = NULL,     .name = "hash",              .value = BUILTIN(builtin_hash)                          },
 { .module = NULL,     .name = "md5",               .value = BUILTIN(builtin_md5)                           },
+{ .module = NULL,     .name = "sha1",              .value = BUILTIN(builtin_sha1)                          },
 { .module = "base64", .name = "encode",            .value = BUILTIN(builtin_base64_encode)                 },
 { .module = "base64", .name = "decode",            .value = BUILTIN(builtin_base64_decode)                 },
 { .module = NULL,     .name = "getenv",            .value = BUILTIN(builtin_getenv)                        },

@@ -22,6 +22,7 @@
 #include <signal.h>
 #include <sys/mman.h>
 #include <openssl/md5.h>
+#include <openssl/sha.h>
 #include <utf8proc.h>
 #include <sys/epoll.h>
 #include <pthread.h>
@@ -1016,15 +1017,35 @@ builtin_json_encode(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_sha1(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("sha1", 1);
+
+        struct value s = ARG(0);
+        unsigned char digest[SHA_DIGEST_LENGTH];
+
+        if (s.type == VALUE_STRING) {
+                SHA1((unsigned char const *)s.string, s.bytes, digest);
+        } else if (s.type == VALUE_BLOB) {
+                SHA1(s.blob->items, s.blob->count, digest);
+        }
+
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, digest, sizeof digest);
+
+        return BLOB(b);
+}
+
+struct value
 builtin_md5(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("md5", 1);
 
         struct value s = ARG(0);
-        char digest[MD5_DIGEST_LENGTH];
+        unsigned char digest[MD5_DIGEST_LENGTH];
 
         if (s.type == VALUE_STRING) {
-                MD5(s.string, s.bytes, digest);
+                MD5((unsigned char const *)s.string, s.bytes, digest);
         } else if (s.type == VALUE_BLOB) {
                 MD5(s.blob->items, s.blob->count, digest);
         }
@@ -3262,7 +3283,9 @@ builtin_stdio_fread(int argc, struct value *kwargs)
                 vm_panic("the second argument to stdio.fread() must be a non-negative integer");
 
         struct blob *b;
-        if (argc == 3 && ARG(2).type != VALUE_NIL) {
+		bool existing_blob = (argc == 3) && ARG(2).type != VALUE_NIL;
+
+        if (existing_blob) {
                 if (ARG(2).type != VALUE_BLOB) {
                         vm_panic("stdio.fread() expects a blob as the third argument but got: %s", value_show(&ARG(2)));
                 }
@@ -3286,7 +3309,7 @@ builtin_stdio_fread(int argc, struct value *kwargs)
 
         OKGC(b);
 
-        if (argc == 3) {
+        if (existing_blob) {
                 return INTEGER(bytes);
         } else {
                 if (b->count == 0 && n.integer > 0 && c == EOF)
