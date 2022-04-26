@@ -79,7 +79,6 @@ static struct value
 load(ffi_type *t, void const *p)
 {
         void * const *vp;
-        struct value *tuple;
         struct value v;
         int n;
 
@@ -378,8 +377,22 @@ cffi_load_n(int argc, struct value *kwargs)
 struct value
 cffi_store(int argc, struct value *kwargs)
 {
+        if (argc != 3) {
+                vm_panic("ffi.store(): expected 3 arguments but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("ffi.store(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
+        }
+
         ffi_type *t = ARG(0).ptr;
+
+        if (ARG(1).type != VALUE_PTR) {
+                vm_panic("ffi.store(): expected pointer as second argument but got: %s", value_show(&ARG(1)));
+        }
+
         void *p = ARG(1).ptr;
+
         struct value v = ARG(2);
 
         store(t, p, &v);
@@ -391,7 +404,7 @@ struct value
 cffi_call(int argc, struct value *kwargs)
 {
         if (argc < 2) {
-                vm_panic("ffi.call() expects at least 2 arguments (cif, function)");
+                vm_panic("ffi.call() expects at least 2 arguments (cif, function) but got %d", argc);
         }
 
         ffi_cif *cif;
