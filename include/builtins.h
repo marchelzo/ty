@@ -70,6 +70,8 @@
 { .module = "os",     .name = "mktemp",            .value = BUILTIN(builtin_os_mktemp)                     },
 { .module = "os",     .name = "unlink",            .value = BUILTIN(builtin_os_unlink)                     },
 { .module = "os",     .name = "getcwd",            .value = BUILTIN(builtin_os_getcwd)                     },
+{ .module = "os",     .name = "mkdir",             .value = BUILTIN(builtin_os_mkdir)                      },
+{ .module = "os",     .name = "rmdir",             .value = BUILTIN(builtin_os_rmdir)                      },
 { .module = "os",     .name = "chdir",             .value = BUILTIN(builtin_os_chdir)                      },
 { .module = "os",     .name = "opendir",           .value = BUILTIN(builtin_os_opendir)                    },
 { .module = "os",     .name = "readdir",           .value = BUILTIN(builtin_os_readdir)                    },

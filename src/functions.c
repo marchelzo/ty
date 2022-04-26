@@ -1484,6 +1484,52 @@ builtin_os_unlink(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_mkdir(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("os.mkdir()", 1, 2);
+
+        struct value path = ARG(0);
+
+        if (path.type != VALUE_STRING) {
+                vm_panic("os.mkdir(): expected string as first argument but got: %s", value_show(&ARG(0)));
+        }
+
+        mode_t mode = 0777;
+
+        if (argc == 2 && ARG(1).type != VALUE_NIL) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("os.mkdir(): expected integer as second argument but got: %s", value_show(&ARG(1)));
+                } else {
+                        mode = ARG(1).integer;
+                }
+        }
+
+        B.count = 0;
+        vec_push_n(B, path.string, path.bytes);
+        vec_push(B, '\0');
+
+        return INTEGER(mkdir(B.items, mode));
+}
+
+struct value
+builtin_os_rmdir(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.rmdir()", 1);
+
+        struct value path = ARG(0);
+
+        if (path.type != VALUE_STRING) {
+                vm_panic("os.rmdir(): expected string as first argument but got: %s", value_show(&ARG(0)));
+        }
+
+        B.count = 0;
+        vec_push_n(B, path.string, path.bytes);
+        vec_push(B, '\0');
+
+        return INTEGER(rmdir(B.items));
+}
+
+struct value
 builtin_os_chdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.chdir()", 1);

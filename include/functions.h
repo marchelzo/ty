@@ -235,6 +235,12 @@ struct value
 builtin_os_chdir(int argc, struct value *kwargs);
 
 struct value
+builtin_os_mkdir(int argc, struct value *kwargs);
+
+struct value
+builtin_os_rmdir(int argc, struct value *kwargs);
+
+struct value
 builtin_os_unlink(int argc, struct value *kwargs);
 
 struct value
