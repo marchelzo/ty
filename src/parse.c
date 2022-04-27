@@ -3143,12 +3143,22 @@ parse_class_definition(void)
 
         if (tok()->type == ':') {
                 next();
+
+                int start_index = TokenIndex;
+
+                while (tok()->type == TOKEN_IDENTIFIER && token(1)->type == '.') {
+                        next();
+                        next();
+                }
+
                 expect(TOKEN_IDENTIFIER);
-                s->tag.super = mkexpr();
-                s->tag.super->type = EXPRESSION_IDENTIFIER;
-                s->tag.super->identifier = tok()->identifier;
-                s->tag.super->module = tok()->module;
                 next();
+
+                expect('{');
+
+                TokenIndex = start_index;
+
+                s->tag.super = parse_expr(0);
         } else {
                 s->tag.super = NULL;
         }
