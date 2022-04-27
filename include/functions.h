@@ -328,6 +328,9 @@ struct value
 builtin_os_getaddrinfo(int argc, struct value *kwargs);
 
 struct value
+builtin_os_gai_strerror(int argc, struct value *kwargs);
+
+struct value
 builtin_os_bind(int argc, struct value *kwargs);
 
 struct value

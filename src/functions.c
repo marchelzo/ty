@@ -2228,42 +2228,69 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
         ASSERT_ARGC_2("os.getaddrinfo()", 5, 6);
 
         struct value host = ARG(0);
-        if (host.type != VALUE_STRING)
-                vm_panic("the first argument to os.getaddrinfo() must be a string");
+        if (host.type != VALUE_STRING && host.type != VALUE_NIL)
+                vm_panic("the first argument to os.getaddrinfo() (node) must be a string or nil");
 
         struct value port = ARG(1);
-        if (port.type != VALUE_STRING)
-                vm_panic("the second argument to os.getaddrinfo() must be a string");
+        if (port.type != VALUE_STRING && port.type != VALUE_INTEGER && port.type != VALUE_NIL)
+                vm_panic("the second argument to os.getaddrinfo() (service) must be a string, an integer, or nil");
+
+        if (host.type == VALUE_NIL && port.type == VALUE_NIL) {
+                vm_panic("os.getaddrinfo(): the first and second arguments (node and service) cannot both be nil");
+        }
 
         struct value family = ARG(2);
         if (family.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.getaddrinfo() must be an integer");
+                vm_panic("the third argument to os.getaddrinfo() (family) must be an integer");
 
         struct value type = ARG(3);
         if (type.type != VALUE_INTEGER)
-                vm_panic("the fourth argument to os.getaddrinfo() must be an integer");
+                vm_panic("the fourth argument to os.getaddrinfo() (type) must be an integer");
 
         struct value protocol = ARG(4);
         if (protocol.type != VALUE_INTEGER)
-                vm_panic("the fifth argument to os.getaddrinfo() must be an integer");
+                vm_panic("the fifth argument to os.getaddrinfo() (protocol) must be an integer");
 
-        int flags = 0;
-        if (argc == 6) {
+        // Default to the flags used when hints == NULL in glibc getaddrinfo()
+        int flags = AI_V4MAPPED | AI_ADDRCONFIG;
+        if (argc == 6 && ARG(5).type != VALUE_NIL) {
                 if (ARG(5).type != VALUE_INTEGER)
-                        vm_panic("the sixth argument to os.getaddrinfo() must be an integer");
+                        vm_panic("the sixth argument to os.getaddrinfo() (flags) must be an integer");
                 flags = ARG(5).integer;
         }
 
+        char const *node;
+        char const *service;
+
         B.count = 0;
 
-        vec_push_n(B, host.string, host.bytes);
-        vec_push(B, '\0');
+        if (port.type == VALUE_INTEGER) {
+                sprintf(buffer, "%hu", (unsigned short)port.integer);
+                port = STRING_NOGC(buffer, strlen(buffer));
+        }
 
-        vec_push_n(B, port.string, port.bytes);
-        vec_push(B, '\0');
+        if (host.type != VALUE_NIL) {
+                vec_push_n(B, host.string, host.bytes);
+                vec_push(B, '\0');
 
-        char const *node = B.items;
-        char const *service = B.items + host.bytes + 1;
+                vec_push_n(B, port.string, port.bytes);
+                vec_push(B, '\0');
+
+                node = B.items;
+                service = B.items + host.bytes + 1;
+        } else if (port.type == VALUE_NIL) {
+                vec_push_n(B, host.string, host.bytes);
+                vec_push(B, '\0');
+
+                node = B.items;
+                service = NULL;
+        } else {
+                vec_push_n(B, port.string, port.bytes);
+                vec_push(B, '\0');
+
+                node = NULL;
+                service = B.items;
+        }
 
         struct value results = ARRAY(value_array_new());
         gc_push(&results);
@@ -2307,6 +2334,7 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
                 }
 
                 gc_pop();
+
                 freeaddrinfo(res);
 
                 results.tags = tags_lookup("Ok");
@@ -2321,6 +2349,20 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
                         .tags = tags_lookup("Err")
                 };
         }
+}
+
+struct value
+builtin_os_gai_strerror(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.gai_strerror()", 1);
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("os.gai_strerror(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        char const *msg = gai_strerror(ARG(0).integer);
+
+        return STRING_NOGC(msg, strlen(msg));
 }
 
 struct value
