@@ -1,0 +1,21 @@
+function eq!(*args) {
+	for [a, b] in args.window(2) {
+		if a != b {
+			print('FAIL')
+			return
+		}
+	}
+}
+
+let s = 'hello world'
+
+eq!(#s, 11)
+eq!(s.size(), 11)
+eq!(s[5], ' ')
+eq!(s.words(), s.split(' '), s.split(' ', 1), s.split(/ /), ['hello', 'world'])
+eq!(s.chars(), ['h', 'e', 'l', 'l', 'o', ' ', 'w', 'o', 'r', 'l', 'd'])
+eq!(s, 'hello world')
+eq!(s.upper(), 'HELLO WORLD')
+eq!(s.upper().lower(), s.lower(), s)
+
+print('PASS')

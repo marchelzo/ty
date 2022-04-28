@@ -1185,7 +1185,7 @@ Throw:
                         break;
                 CASE(ENSURE_LEN_TUPLE)
                         READVALUE(n);
-                        b = top()->count == n;
+                        b = top()->count <= n;
                         READVALUE(n);
                         if (!b)
                                 ip += n;

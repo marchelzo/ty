@@ -912,6 +912,8 @@ prefix_record(void)
         consume('{');
 
         while (tok()->type != '}') {
+                setctx(LEX_PREFIX);
+
                 if (tok()->type == TOKEN_QUESTION) {
                         next();
                         vec_push(e->required, false);

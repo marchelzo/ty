@@ -1,0 +1,21 @@
+function eq!(*args) {
+	for [a, b] in args.window(2) {
+		if a != b {
+			print('FAIL')
+			return
+		}
+	}
+}
+
+match [3, ('foo', 'bar'), {a: 1, b: 2, c: 3}, 9, 9, 9] {
+	[a, b, {a: 2}, *_] => { print('FAIL') },
+
+	[x, ('foo', _), {a, b, c, ?d}, *rest] => {
+		eq!(x, 3)
+		eq!(a, 1)
+		eq!(b, 2)
+		eq!(c, 3)
+		eq!(rest.sum(), 27)
+		print('PASS')
+	}
+}

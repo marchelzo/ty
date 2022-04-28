@@ -12,3 +12,5 @@ for _ in ..100 {
 		print("Failed: {encoded}")
 	}
 }
+
+print('PASS')

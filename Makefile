@@ -84,14 +84,8 @@ ty: $(OBJECTS) ty.c
 clean:
 	rm -rf $(PROG) *.gcda $(wildcard src/*.o) $(wildcard src/*.gcda)
 
-.PHONY: test.c
-test.c: $(OBJECTS)
-	./test.sh $(TEST_FILTER)
-
-.PHONY: test
-test: $(OBJECTS) test.c
-	$(CC) $(CFLAGS) -o $@ $^
-	time ./test
+test:
+	./ty test.ty
 
 install: $(PROG)
 	sudo install -m755 -s $(PROG) $(DESTDIR)$(PREFIX)$(bindir)

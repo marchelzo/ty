@@ -1,23 +1,23 @@
 if let Some(x) = Some(10) and x > 20 {
   print('1. Bad')
 } else {
-  print('1. Good')
+  ;
 }
 
 if let Some(x) = Some(Ok(3)) and let Ok(y) = x {
-  print('2. Good')
+  ;
 } else {
   print('2. Bad')
 }
 
 if not let [x] = [] {
-  print('3. Good')
+  ;
 } else {
   print('3. Bad')
 }
 
 if not let (a, b) = (4, 5) or a != b {
-  print('4. Good')
+  ;
 } else {
   print('4. Bad')
 }
@@ -25,11 +25,11 @@ if not let (a, b) = (4, 5) or a != b {
 if not let (a, b) = (4, 5) or not a != b {
   print('5. Bad')
 } else {
-  print('5. Good')
+  ;
 }
 
 try [x] = [] or else {
-  print('6. Good')
+  ;
 }
 
 function g() {
@@ -37,5 +37,7 @@ function g() {
 }
 
 try [x] = [g()] or else {
-  print('7. Good')
+  ;
 }
+
+print('PASS')
