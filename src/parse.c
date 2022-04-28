@@ -1677,6 +1677,14 @@ prefix_arrow(void)
 }
 
 static struct expression *
+prefix_expr(void)
+{
+        struct expression *e = tok()->e;
+        next();
+        return e;
+}
+
+static struct expression *
 prefix_dict(void)
 {
         struct expression *e = mkexpr();
@@ -2300,6 +2308,8 @@ get_prefix_parser(void)
 
         case TOKEN_STAR:           return prefix_star;
 
+        case TOKEN_EXPRESSION:     return prefix_expr;
+
         default:                   return NULL;
         }
 
@@ -2645,7 +2655,14 @@ parse_target_list(void)
                 error("expected lvalue in for-each loop");
         }
 
-        while (tok()->type == ',' && (token(1)->type == TOKEN_IDENTIFIER || token(1)->type == '[')) {
+        while (
+                tok()->type == ',' && (
+                        token(1)->type == TOKEN_IDENTIFIER ||
+                        token(1)->type == '[' ||
+                        token(1)->type == '{' ||
+                        (token(1)->type == '%' && token(2)->type == '{')
+                )
+        ) {
                 next();
                 vec_push(e->es, parse_definition_lvalue(LV_EACH));
                 if (vec_last(e->es) == NULL) {
@@ -2664,28 +2681,49 @@ parse_for_loop(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_FOR_LOOP;
 
+        bool match = false;
+
+        if (have_keyword(KEYWORD_MATCH)) {
+                match = true;
+                next();
+        }
+
         /*
          * First try to parse this as a for-each loop. If that fails, assume it's
          * a C-style for loop.
          */
-        if (tok()->type != ';' && (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_LET)) {
+        if (match || (tok()->type != ';' && (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_LET))) {
                 s->type = STATEMENT_EACH_LOOP;
                 s->each.target = parse_target_list();
+
                 consume_keyword(KEYWORD_IN);
+
                 s->each.array = parse_expr(0);
+
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IF) {
                         next();
                         s->each.cond = parse_expr(0);
                 } else {
                         s->each.cond = NULL;
                 }
+
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_WHILE) {
                         next();
                         s->each.stop = parse_expr(0);
                 } else {
                         s->each.stop = NULL;
                 }
+
+                if (match) {
+                        unconsume(TOKEN_EXPRESSION);
+                        tok()->e = s->each.target;
+
+                        unconsume(TOKEN_KEYWORD);
+                        tok()->keyword = KEYWORD_MATCH;
+                }
+
                 s->each.body = parse_statement(-1);
+
                 return s;
         }
 

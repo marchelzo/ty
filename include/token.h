@@ -69,6 +69,7 @@ struct token {
                 TOKEN_MAYBE_EQ,
                 TOKEN_WTF,
                 TOKEN_CHECK_MATCH,
+                TOKEN_EXPRESSION,
                 TOKEN_ERROR,
         } type;
         int ctx;
@@ -111,6 +112,7 @@ struct token {
                         KEYWORD_DEFER,
                         KEYWORD_WITH,
                 } keyword;
+                struct expression *e;
                 struct regex const *regex;
                 struct {
                         vec(char *) strings;
