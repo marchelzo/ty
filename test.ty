@@ -2,7 +2,6 @@ import os (..)
 import sh (sh)
 import chalk (..)
 import time
-import io
 
 let start = time.utime()
 
@@ -11,44 +10,49 @@ let failed = 0
 let timedOut = 0
 
 let g = pen(bold, green)
-let r = pen(bold, brightRed)
+let r = pen(bold, red)
 let m = pen(bold, brightMagenta)
 let b = pen(bold, blue)
 
+let testThreads = []
+
 for test in listdir('tests') {
-	io.stdout.write("Running test {b(test.comb(/\.ty/))} ... ")
-	io.stdout.flush()
+	testThreads.push(Thread((name) -> {
+		let result = if not let $out = sh("./ty tests/{name}", timeoutMs: 2000) {
+			timedOut += 1
+			m('TIMEOUT')
+		} else {
+			match out.strip() {
+				'PASS' => {
+					passed += 1
+					g('PASS')
+				},
 
-	if not let $out = sh("./ty tests/{test}", timeoutMs: 3500) {
-		timedOut += 1
-		io.stdout.print(m('TIMEOUT'))
-	} else {
-		match out.strip() {
-			'PASS' => {
-				io.stdout.print(g('PASS'))
-				passed += 1
-			},
-
-			_      => {
-				io.stdout.print(r('FAIL'))
-				failed += 1
+				_      => {
+					failed += 1
+					r('FAIL')
+				}
 			}
 		}
-	}
+
+		print("{b(name.comb(/\.ty/))} ... {result}")
+	}, test))
 }
+
+testThreads.map(&join)
 
 let elapsedSec = (time.utime() - start) / (1000.0 * 1000.0)
 
 if passed > 0 {
-	io.stdout.print("{g('Passed')}: {g(passed)}")
+	print("{g('Passed')}: {g(passed)}")
 }
 
 if failed > 0 {
-	io.stdout.print("{r('Failed')}: {r(failed)}")
+	print("{r('Failed')}: {r(failed)}")
 }
 
 if timedOut > 0 {
-	io.stdout.print("{m('Timed out')}: {m(timedOut)}")
+	print("{m('Timed out')}: {m(timedOut)}")
 }
 
-io.stdout.print("Elapsed: {b(str(elapsedSec) + 's')}")
+print("Elapsed: {b(str(elapsedSec) + 's')}")
