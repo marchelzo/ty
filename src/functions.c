@@ -1964,6 +1964,26 @@ builtin_thread_create(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_thread_kill(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.kill()", 2);
+
+        struct value t = ARG(0);
+
+        if (t.type != VALUE_PTR) {
+                vm_panic("thread.kill() expects a pointer as the first argument but got: %s", value_show(&t));
+        }
+
+        struct value sig = ARG(1);
+
+        if (sig.type != VALUE_INTEGER) {
+                vm_panic("thread.kill(): expected integer as second argument but got: %s", value_show(&sig));
+        }
+
+        return INTEGER(pthread_kill((pthread_t)t.ptr, sig.integer));
+}
+
+struct value
 builtin_os_fork(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.fork()", 0);

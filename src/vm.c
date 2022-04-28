@@ -129,7 +129,8 @@ typedef vec(char *) CallStack;
 typedef vec(struct try) TryStack;
 typedef vec(struct sigfn) SigfnStack;
 
-static _Thread_local SigfnStack sigfns;
+static SigfnStack sigfns;
+
 static _Thread_local ValueStack stack;
 static _Thread_local CallStack calls;
 static _Thread_local FrameStack frames;
@@ -155,7 +156,6 @@ typedef struct {
         FrameStack *frames;
         TargetStack *targets;
         ValueStack *defer_stack;
-        SigfnStack *sigfns;
         void *root_set;
         AllocList *allocs;
         size_t *MemoryUsed;
@@ -181,6 +181,7 @@ static vec(_Atomic bool *) ThreadStates;
 
 static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 _Thread_local pthread_mutex_t *MyLock;
 static _Thread_local _Atomic bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
@@ -669,7 +670,6 @@ AddThread(void)
                 .stack = &stack,
                 .frames = &frames,
                 .defer_stack = &defer_stack,
-                .sigfns = &sigfns,
                 .targets = &targets,
                 .root_set = GCRootSet(),
                 .allocs = &allocs,
@@ -749,57 +749,85 @@ vm_run_thread(void *p)
 void
 vm_del_sigfn(int sig)
 {
+        pthread_rwlock_wrlock(&SigLock);
+
         for (int i = 0; i < sigfns.count; ++i) {
                 if (sigfns.items[i].sig == sig) {
                         struct sigfn t = *vec_last(sigfns);
                         *vec_last(sigfns) = sigfns.items[i];
                         sigfns.items[i] = t;
                         vec_pop(sigfns);
-                        return;
+                        break;
                 }
         }
+
+        pthread_rwlock_unlock(&SigLock);
 }
 
 void
 vm_set_sigfn(int sig, struct value const *f)
 {
+        pthread_rwlock_wrlock(&SigLock);
+
         for (int i = 0; i < sigfns.count; ++i) {
                 if (sigfns.items[i].sig == sig) {
                         sigfns.items[i].f = *f;
-                        return;
+                        goto End;
                 }
         }
 
         vec_push(sigfns, ((struct sigfn){ .sig = sig, .f = *f }));
+
+End:
+        pthread_rwlock_unlock(&SigLock);
 }
 
 struct value
 vm_get_sigfn(int sig)
 {
+        struct value f = NIL;
+
+        pthread_rwlock_rdlock(&SigLock);
+
         for (int i = 0; i < sigfns.count; ++i) {
                 if (sigfns.items[i].sig == sig) {
-                        return sigfns.items[i].f;
+                        f = sigfns.items[i].f;
+                        break;
                 }
         }
+        
+        pthread_rwlock_unlock(&SigLock);
 
-        return NIL;
+        return f;
 }
 
 void
 vm_do_signal(int sig, siginfo_t *info, void *ctx)
 {
+        struct value f = NIL;
+
+        pthread_rwlock_rdlock(&SigLock);
+
         for (int i = 0; i < sigfns.count; ++i) {
                 if (sigfns.items[i].sig == sig) {
-                        switch (sig) {
-                        case SIGIO:
-                                push(INTEGER(info->si_fd));
-                                vm_call(&sigfns.items[i].f, 1);
-                                break;
-                        default:
-                                vm_call(&sigfns.items[i].f, 0);
-                        }
-                        return;
+                        f = sigfns.items[i].f;
+                        break;
                 }
+        }
+
+        pthread_rwlock_unlock(&SigLock);
+
+        if (f.type == VALUE_NIL) {
+                return;
+        }
+
+        switch (sig) {
+        case SIGIO:
+                push(INTEGER(info->si_fd));
+                vm_call(&f, 1);
+                break;
+        default:
+                vm_call(&f, 0);
         }
 }
 
@@ -3181,10 +3209,6 @@ MarkStorage(ThreadStorage const *storage)
 
         for (int i = 0; i < storage->targets->count; ++i) {
                 value_mark(storage->targets->items[i].t);
-        }
-
-        for (int i = 0; i < storage->sigfns->count; ++i) {
-                value_mark(&storage->sigfns->items[i].f);
         }
 
         for (int i = 0; i < storage->frames->count; ++i) {

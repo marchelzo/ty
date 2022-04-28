@@ -1221,6 +1221,10 @@ class Thread {
     join() {
         thread.join(@id)
     }
+
+	kill(sig) {
+		thread.kill(@id, sig)
+	}
 }
 
 operator ?    5  left
