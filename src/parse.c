@@ -557,6 +557,18 @@ consume_keyword(int type)
         next();
 }
 
+inline static struct expression *
+try_cond(void)
+{
+        if (have_keyword(KEYWORD_IF)) {
+                next();
+                return parse_expr(0);
+        } else {
+                return NULL;
+        }
+}
+
+
 /* * * * | prefix parsers | * * * */
 static struct expression *
 prefix_integer(void)
@@ -741,8 +753,7 @@ prefix_function(void)
 
         consume('(');
 
-        bool ne = NoEquals;
-        NoEquals = true;
+        SAVE_NE(true);
 
         while (tok()->type != ')') {
                 setctx(LEX_PREFIX);
@@ -784,7 +795,7 @@ prefix_function(void)
                 }
         }
 
-        NoEquals = ne;
+        LOAD_NE();
 
         consume(')');
 
@@ -1618,6 +1629,7 @@ prefix_implicit_method(void)
                 e->object = o;
                 e->method_name = tok()->identifier;
                 vec_init(e->method_args);
+                vec_init(e->mconds);
                 vec_init(e->method_kwargs);
                 vec_init(e->method_kws);
 
@@ -1633,11 +1645,13 @@ prefix_implicit_method(void)
                                 return e;
                         } else {
                                 vec_push(e->method_args, parse_expr(0));
+                                vec_push(e->mconds, try_cond());
                         }
 
                         while (tok()->type == ',') {
                                 next();
                                 vec_push(e->method_args, parse_expr(0));
+                                vec_push(e->mconds, try_cond());
                         }
 
                         consume(')');
@@ -1784,6 +1798,8 @@ infix_function_call(struct expression *left)
         vec_init(e->args);
         vec_init(e->kws);
         vec_init(e->kwargs);
+        vec_init(e->fconds);
+        vec_init(e->fkwconds);
 
         consume('(');
 
@@ -1810,14 +1826,16 @@ infix_function_call(struct expression *left)
                                 vec_push(e->kws, "*");
                         } else {
                                 vec_push(e->args, arg);
+                                vec_push(e->fconds, try_cond());
                         }
-        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
                         next();
                         next();
                         vec_push(e->kwargs, parse_expr(0));
                 } else {
                         vec_push(e->args, parse_expr(0));
+                        vec_push(e->fconds, try_cond());
                 }
         }
 
@@ -1840,6 +1858,7 @@ infix_function_call(struct expression *left)
                                 vec_push(e->kws, "*");
                         } else {
                                 vec_push(e->args, arg);
+                                vec_push(e->fconds, try_cond());
                         }
                 } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->kws, tok()->identifier);
@@ -1848,6 +1867,7 @@ infix_function_call(struct expression *left)
                         vec_push(e->kwargs, parse_expr(0));
                 } else {
                         vec_push(e->args, parse_expr(0));
+                        vec_push(e->fconds, try_cond());
                 }
         }
 
@@ -2003,6 +2023,7 @@ infix_member_access(struct expression *left)
         e->method_name = tok()->identifier;
         consume(TOKEN_IDENTIFIER);
         vec_init(e->method_args);
+        vec_init(e->mconds);
         vec_init(e->method_kwargs);
         vec_init(e->method_kws);
 
@@ -2028,6 +2049,7 @@ infix_member_access(struct expression *left)
                         vec_push(e->method_kws, "*");
                 } else {
                         vec_push(e->method_args, arg);
+                        vec_push(e->mconds, try_cond());
                 }
         } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                 vec_push(e->method_kws, tok()->identifier);
@@ -2036,6 +2058,7 @@ infix_member_access(struct expression *left)
                 vec_push(e->method_kwargs, parse_expr(0));
         } else {
                 vec_push(e->method_args, parse_expr(0));
+                vec_push(e->mconds, try_cond());
         }
 
         while (tok()->type == ',') {
@@ -2057,6 +2080,7 @@ infix_member_access(struct expression *left)
                                 vec_push(e->method_kws, "*");
                         } else {
                                 vec_push(e->method_args, arg);
+                                vec_push(e->mconds, try_cond());
                         }
                 } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                         vec_push(e->method_kws, tok()->identifier);
@@ -2065,6 +2089,7 @@ infix_member_access(struct expression *left)
                         vec_push(e->method_kwargs, parse_expr(0));
                 } else {
                         vec_push(e->method_args, parse_expr(0));
+                        vec_push(e->mconds, try_cond());
                 }
         }
 
@@ -2208,11 +2233,15 @@ infix_conditional(struct expression *left)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_CONDITIONAL;
 
-        e->then = left;
-        consume_keyword(KEYWORD_IF);
-        e->cond = parse_expr(0);
-        consume_keyword(KEYWORD_ELSE);
-        e->otherwise = parse_expr(0);
+        e->cond = left;
+
+        consume(TOKEN_QUESTION);
+
+        e->then = parse_expr(2);
+
+        consume(':');
+
+        e->otherwise = parse_expr(2);
 
         return e;
 }
@@ -2390,13 +2419,13 @@ get_infix_parser(void)
         case TOKEN_WTF:            return infix_wtf;
         case TOKEN_AND:            return infix_and;
         case TOKEN_USER_OP:        return infix_user_op;
+        case TOKEN_QUESTION:       return infix_conditional;
         default:                   return NULL;
         }
 
 Keyword:
 
         switch (tok()->keyword) {
-        //case KEYWORD_IF: return infix_conditional;
         //case KEYWORD_AND: return infix_kw_and;
         //case KEYWORD_OR:  return infix_kw_or;
         case KEYWORD_NOT:
@@ -2462,6 +2491,9 @@ get_infix_prec(void)
         /* this may need to have lower precedence. I'm not sure yet. */
         case TOKEN_SQUIGGLY_ARROW: return 3;
         case TOKEN_CHECK_MATCH:    return 3;
+
+        case TOKEN_QUESTION:       return 3;
+
 
         case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return NoEquals ? -3 : 2;

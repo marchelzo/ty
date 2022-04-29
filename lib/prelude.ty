@@ -434,7 +434,7 @@ class Int {
     }
 
     in?(r: Range) {
-        r ? self
+        self in r
     }
 
     pred() {
@@ -552,8 +552,6 @@ class Regex {
     init(x) { regex(x) }
 
     ~=(s) { s.match!(self) }
-
-    ?(s) { s.match?(self) }
 
     test(s) { s.match?(self) }
 
@@ -1124,10 +1122,6 @@ class Range : Iterable {
         k :: self
     }
 
-    ?(k) {
-        k :: self
-    }
-
     __iter__() {
         let a, b = @a, @b
         return if a < b {
@@ -1227,7 +1221,6 @@ class Thread {
 	}
 }
 
-operator ?    5  left
 operator **   10 right
 operator <<   7  left
 operator >>   7  left

@@ -391,21 +391,24 @@ is_const(struct scope const *scope, char const *name)
 }
 
 static bool
-has_spread(struct expression const *e)
+is_variadic(struct expression const *e)
 {
         int n = 0;
         struct expression * const *args = NULL;
+        struct expression * const *conds = NULL;
 
         if (e->type == EXPRESSION_FUNCTION_CALL) {
                 n = e->args.count;
                 args = e->args.items;
+                conds = e->fconds.items;
         } else if (e->type == EXPRESSION_METHOD_CALL) {
                 n = e->method_args.count;
                 args = e->method_args.items;
+                conds = e->mconds.items;
         }
 
         for (int i = 0; i < n; ++i) {
-                if (args[i]->type == EXPRESSION_SPREAD) {
+                if (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL) {
                         return true;
                 }
         }
@@ -1040,6 +1043,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_POSTFIX_DEC:
                 symbolize_expression(scope, e->operand);
                 break;
+        case EXPRESSION_CONDITIONAL:
+                symbolize_expression(scope, e->cond);
+                symbolize_expression(scope, e->then);
+                symbolize_expression(scope, e->otherwise);
+                break;
         case EXPRESSION_STATEMENT:
                 symbolize_statement(scope, e->statement);
                 break;
@@ -1047,6 +1055,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->function);
                 for (size_t i = 0;  i < e->args.count; ++i)
                         symbolize_expression(scope, e->args.items[i]);
+                for (size_t i = 0;  i < e->args.count; ++i)
+                        symbolize_expression(scope, e->fconds.items[i]);
                 for (size_t i = 0; i < e->kwargs.count; ++i)
                         symbolize_expression(scope, e->kwargs.items[i]);
                 break;
@@ -1072,6 +1082,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         fc.args = e->method_args;
                         fc.kwargs = e->method_kwargs;
                         fc.kws = e->method_kws;
+                        fc.fconds = e->mconds;
 
                         fc.function = mod_access;
 
@@ -3092,6 +3103,18 @@ emit_spread(struct expression const *e, bool nils)
 }
 
 static void
+emit_conditional(struct expression const *e)
+{
+        emit_expression(e->cond);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t otherwise);
+        emit_expression(e->then);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
+        PATCH_JUMP(otherwise);
+        emit_expression(e->otherwise);
+        PATCH_JUMP(end);
+}
+
+static void
 emit_for_each2(struct statement const *s, bool want_result)
 {
         bool each_loop_save = state.each_loop;
@@ -3524,18 +3547,25 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_statement(e->statement, true);
                 break;
         case EXPRESSION_FUNCTION_CALL:
-                if (has_spread(e)) {
+                if (is_variadic(e)) {
                         emit_instr(INSTR_SAVE_STACK_POS);
                 }
                 for (size_t i = 0; i < e->args.count; ++i) {
-                        emit_expression(e->args.items[i]);
+                        if (e->fconds.items[i] != NULL) {
+                                emit_expression(e->fconds.items[i]);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                emit_expression(e->args.items[i]);
+                                PATCH_JUMP(skip);
+                        } else {
+                                emit_expression(e->args.items[i]);
+                        }
                 }
                 for (size_t i = 0; i < e->kwargs.count; ++i) {
                         emit_expression(e->kwargs.items[i]);
                 }
                 emit_expression(e->function);
                 emit_instr(INSTR_CALL);
-                if (has_spread(e)) {
+                if (is_variadic(e)) {
                         emit_int(-1);
                 } else {
                         emit_int(e->args.count);
@@ -3546,11 +3576,18 @@ emit_expr(struct expression const *e, bool need_loc)
                 }
                 break;
         case EXPRESSION_METHOD_CALL:
-                if (has_spread(e)) {
+                if (is_variadic(e)) {
                         emit_instr(INSTR_SAVE_STACK_POS);
                 }
                 for (size_t i = 0; i < e->method_args.count; ++i) {
-                        emit_expression(e->method_args.items[i]);
+                        if (e->mconds.items[i] != NULL) {
+                                emit_expression(e->mconds.items[i]);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                emit_expression(e->method_args.items[i]);
+                                PATCH_JUMP(skip);
+                        } else {
+                                emit_expression(e->method_args.items[i]);
+                        }
                 }
                 for (size_t i = 0; i < e->method_kwargs.count; ++i) {
                         emit_expression(e->method_kwargs.items[i]);
@@ -3560,7 +3597,7 @@ emit_expr(struct expression const *e, bool need_loc)
                         emit_instr(INSTR_TRY_CALL_METHOD);
                 else
                         emit_instr(INSTR_CALL_METHOD);
-                if (has_spread(e)) {
+                if (is_variadic(e)) {
                         emit_int(-1);
                 } else {
                         emit_int(e->method_args.count);
@@ -3669,6 +3706,9 @@ emit_expr(struct expression const *e, bool need_loc)
                 break;
         case EXPRESSION_WTF:
                 emit_coalesce(e->left, e->right);
+                break;
+        case EXPRESSION_CONDITIONAL:
+                emit_conditional(e);
                 break;
         case EXPRESSION_LT:
                 emit_expression(e->left);

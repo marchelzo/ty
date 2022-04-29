@@ -301,7 +301,9 @@ struct expression {
                 struct {
                         struct expression *function;
                         expression_vector args;
+                        expression_vector fconds;
                         expression_vector kwargs;
+                        expression_vector fkwconds;
                         name_vector kws;
                 };
                 struct {
@@ -326,6 +328,7 @@ struct expression {
                                 struct {
                                         char const *method_name;
                                         expression_vector method_args;
+                                        expression_vector mconds;
                                         expression_vector method_kwargs;
                                         name_vector method_kws;
                                 };
