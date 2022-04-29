@@ -1,6 +1,5 @@
 import ffi as c
 import cutil (wrap)
-import sh (sh)
 
 let Z_OK            = 0
 let Z_STREAM_END    = 1
