@@ -16,6 +16,23 @@ match [3, ('foo', 'bar'), {a: 1, b: 2, c: 3}, 9, 9, 9] {
 		eq!(b, 2)
 		eq!(c, 3)
 		eq!(rest.sum(), 27)
-		print('PASS')
+	},
+
+	_ => print('FAIL')
+}
+
+match 1, 2, 3 {
+	a, b: String, c => {
+		print('FAIL')
+	},
+
+	a: Int, b, c: c > 3 => {
+		print('FAIL')
+	},
+
+	a, b, c => {
+		if (a, b, c) == (1, 2, 3) {
+			print('PASS')
+		}
 	}
 }

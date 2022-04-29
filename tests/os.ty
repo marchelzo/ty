@@ -1,0 +1,27 @@
+import os (..)
+
+if not let (fd, name) = mktemp('BASED') {
+	print('FAIL')
+}
+
+if close(fd) != 0 {
+	print('FAIL')
+}
+
+if name not in listdir('.') {
+	print('FAIL')
+}
+
+if unlink(name) != 0 {
+	print('FAIL')
+}
+
+if chdir('tests') != 0 {
+	print('FAIL')
+}
+
+if !getcwd().match?(/\/tests$/) {
+	print('FAIL')
+}
+
+print('PASS')
