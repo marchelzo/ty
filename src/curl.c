@@ -208,6 +208,8 @@ builtin_curl_getinfo(int argc, struct value *kwargs)
         case CURLINFO_RESPONSE_CODE:
                 curl_easy_getinfo(curl.ptr, CURLINFO_RESPONSE_CODE, &rc);
                 return INTEGER(rc);
+        default:
+                return NIL;
         }
 }
 

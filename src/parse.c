@@ -2100,6 +2100,22 @@ End:
 }
 
 static struct expression *
+infix_squiggly_not_nil_arrow(struct expression *left)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_NOT_NIL_VIEW_PATTERN;
+
+        consume('$~>');
+
+        e->left = left;
+        e->right = parse_expr(0);
+        e->start = left->start;
+        e->end = End;
+
+        return e;
+}
+
+static struct expression *
 infix_squiggly_arrow(struct expression *left)
 {
         struct expression *e = mkexpr();
@@ -2394,6 +2410,7 @@ get_infix_parser(void)
         case TOKEN_DEC:            return postfix_dec;
         case TOKEN_ARROW:          return infix_arrow_function;
         case TOKEN_SQUIGGLY_ARROW: return infix_squiggly_arrow;
+        case '$~>':                return infix_squiggly_not_nil_arrow;
         case TOKEN_DOT_DOT:        return infix_range;
         case TOKEN_DOT_DOT_DOT:    return infix_incrange;
         case TOKEN_PLUS_EQ:        return infix_plus_eq;
@@ -2489,6 +2506,7 @@ get_infix_prec(void)
         case TOKEN_WTF:            return 4;
 
         /* this may need to have lower precedence. I'm not sure yet. */
+        case '$~>':                return 3;
         case TOKEN_SQUIGGLY_ARROW: return 3;
         case TOKEN_CHECK_MATCH:    return 3;
 

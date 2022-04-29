@@ -814,6 +814,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 }
                 break;
         case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_expression(scope, target->left);
                 symbolize_lvalue(scope, target->right, decl, pub);
                 break;
@@ -910,6 +911,7 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
                 }
                 break;
         case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_expression(scope, e->left);
                 symbolize_pattern(scope, e->right, def);
                 break;
@@ -2112,6 +2114,12 @@ emit_try_match(struct expression const *pattern)
                 emit_int(0);
                 need_loc = true;
                 break;
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                emit_instr(INSTR_DUP);
+                emit_instr(INSTR_JUMP_IF_NIL);
+                vec_push(state.match_fails, state.code.count);
+                emit_int(0);
+                // Fallthrough
         case EXPRESSION_VIEW_PATTERN:
                 emit_instr(INSTR_DUP);
                 emit_expression(pattern->left);

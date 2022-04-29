@@ -66,6 +66,7 @@ static struct {
         { "->",  TOKEN_ARROW          },
         { "=>",  TOKEN_FAT_ARROW      },
         { "~>",  TOKEN_SQUIGGLY_ARROW },
+        { "$~>", '$~>'                },
         { "&&",  TOKEN_AND            },
         { "||",  TOKEN_OR             },
         { "??",  TOKEN_WTF            },

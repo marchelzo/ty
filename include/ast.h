@@ -181,6 +181,7 @@ struct expression {
                 EXPRESSION_DOT_DOT_DOT,
                 EXPRESSION_MATCH,
                 EXPRESSION_VIEW_PATTERN,
+                EXPRESSION_NOT_NIL_VIEW_PATTERN,
                 EXPRESSION_PLUS,
                 EXPRESSION_MINUS,
                 EXPRESSION_STAR,
@@ -272,6 +273,7 @@ struct expression {
                         struct expression *left;
                         struct expression *right;
                         struct expression *sc;
+                        bool not_nil;
                 };
                 struct {
                         struct expression *target;
