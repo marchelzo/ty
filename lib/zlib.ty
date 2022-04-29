@@ -12,9 +12,7 @@ let Z_MEM_ERROR     = (-4)
 let Z_BUF_ERROR     = (-5)
 let Z_VERSION_ERROR = (-6)
 
-if not let $libraryName = sh('ldconfig -p').match!(/libz.so(?:\.\d+)*/) {
-  throw 'Failed to find zlib shared object'
-}
+let libraryName = 'libz.so.1'
 
 if not let $lib = c.dlopen(libraryName) {
   throw "Failed to load {libraryName}"
