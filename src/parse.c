@@ -1383,6 +1383,7 @@ prefix_array(void)
         e = mkexpr();
         e->type = EXPRESSION_ARRAY;
         vec_init(e->elements);
+        vec_init(e->aconds);
         vec_init(e->optional);
 
         consume('[');
@@ -1407,7 +1408,14 @@ prefix_array(void)
                         vec_push(e->elements, parse_expr(0));
                 }
 
-                if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FOR) {
+                if (have_keyword(KEYWORD_IF)) {
+                        next();
+                        vec_push(e->aconds, parse_expr(0));
+                } else {
+                        vec_push(e->aconds, NULL);
+                }
+
+                if (have_keyword(KEYWORD_FOR)) {
                         next();
                         e->type = EXPRESSION_ARRAY_COMPR;
                         e->compr.pattern = parse_target_list();

@@ -795,7 +795,7 @@ vm_get_sigfn(int sig)
                         break;
                 }
         }
-        
+
         pthread_rwlock_unlock(&SigLock);
 
         return f;
@@ -1571,7 +1571,7 @@ Throw:
                         }
                         break;
                 CASE(ARRAY_COMPR)
-                        READVALUE(n);
+                        n = stack.count - *vec_pop(sp_stack);
                         v = top()[-(n + 2)];
                         for (int i = 0; i < n; ++i)
                                 value_array_push(v.array, top()[-i]);

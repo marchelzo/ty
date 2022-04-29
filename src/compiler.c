@@ -745,8 +745,11 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 items->start = tagged[0]->start;
                                 items->end = tagged[tagc - 1]->end;
                                 vec_init(items->elements);
-                                for (int i = 0; i < tagc; ++i)
+                                vec_init(items->aconds);
+                                for (int i = 0; i < tagc; ++i) {
                                         vec_push(items->elements, tagged[i]);
+                                        vec_push(items->aconds, NULL);
+                                }
                                 e->tagged = items;
                         }
                 }
@@ -1172,6 +1175,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         symbolize_expression(scope, e->elements.items[i]);
+                        symbolize_expression(scope, e->aconds.items[i]);
                 }
                 break;
         case EXPRESSION_ARRAY_COMPR:
@@ -1181,6 +1185,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(subscope, e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         symbolize_expression(subscope, e->elements.items[i]);
+                        symbolize_expression(subscope, e->aconds.items[i]);
                 }
                 break;
         case EXPRESSION_DICT:
@@ -2946,11 +2951,20 @@ emit_array_compr2(struct expression const *e)
         PATCH_JUMP(match);
         emit_instr(INSTR_RESTORE_STACK_POS);
 
-        for (int i = e->elements.count - 1; i >= 0; --i)
-                emit_expression(e->elements.items[i]);
+        emit_instr(INSTR_SAVE_STACK_POS);
+
+        for (int i = e->elements.count - 1; i >= 0; --i) {
+                if (e->aconds.items[i] != NULL) {
+                        emit_expression(e->aconds.items[i]);
+                        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                        emit_expression(e->elements.items[i]);
+                        PATCH_JUMP(skip);
+                } else {
+                        emit_expression(e->elements.items[i]);
+                }
+        }
 
         emit_instr(INSTR_ARRAY_COMPR);
-        emit_int((int)e->elements.count);
         JUMP(start);
         PATCH_JUMP(done);
         emit_instr(INSTR_RESTORE_STACK_POS);
@@ -3447,7 +3461,14 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_ARRAY:
                 emit_instr(INSTR_SAVE_STACK_POS);
                 for (int i = 0; i < e->elements.count; ++i) {
-                        emit_expression(e->elements.items[i]);
+                        if (e->aconds.items[i] != NULL) {
+                                emit_expression(e->aconds.items[i]);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                emit_expression(e->elements.items[i]);
+                                PATCH_JUMP(skip);
+                        } else {
+                                emit_expression(e->elements.items[i]);
+                        }
                 }
                 emit_instr(INSTR_ARRAY);
                 break;

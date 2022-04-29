@@ -23,9 +23,9 @@ struct class_definition {
 };
 
 struct condpart {
-	bool def;
-	struct expression *e;
-	struct expression *target;
+        bool def;
+        struct expression *e;
+        struct expression *target;
 };
 
 typedef vec(struct condpart *) condpart_vector;
@@ -226,6 +226,7 @@ struct expression {
                 struct {
                         struct symbol *atmp;
                         expression_vector elements;
+                        expression_vector aconds;
                         vec(bool) optional;
                         struct {
                                 struct expression *pattern;

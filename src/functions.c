@@ -1659,6 +1659,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
                         vm_panic("non-string in array passed to os.spawn()");
 
         struct value *detached = NAMED("detached");
+        struct value *combine = NAMED("combineOutput");
 
         if (detached != NULL && detached->type != VALUE_BOOLEAN) {
                 vm_panic(
@@ -1719,9 +1720,16 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 close(out[0]);
                 close(err[0]);
 
+                int errfd = err[1];
+
+                if (combine && combine->boolean) {
+                        errfd = out[1];
+                        close(err[1]);
+                }
+
                 if (dup2(in[0], STDIN_FILENO) == -1
                 ||  dup2(out[1], STDOUT_FILENO) == -1
-                ||  dup2(err[1], STDERR_FILENO) == -1) {
+                ||  dup2(errfd, STDERR_FILENO) == -1) {
                         write(exc[1], &errno, sizeof errno);
                         exit(EXIT_FAILURE);
                 }
@@ -1768,10 +1776,17 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
                 close(exc[0]);
 
+                struct value stderrfd = INTEGER(err[0]);
+
+                if (combine && combine->boolean) {
+                        stderrfd = NIL;
+                        close(err[0]);
+                }
+
                 return value_named_tuple(
                         "stdin",   INTEGER(in[1]),
                         "stdout",  INTEGER(out[0]),
-                        "stderr",  INTEGER(err[0]),
+                        "stderr",  stderrfd,
                         "pid",     INTEGER(pid),
                         NULL
                 );
@@ -3391,7 +3406,7 @@ builtin_stdio_fread(int argc, struct value *kwargs)
                 vm_panic("the second argument to stdio.fread() must be a non-negative integer");
 
         struct blob *b;
-		bool existing_blob = (argc == 3) && ARG(2).type != VALUE_NIL;
+        bool existing_blob = (argc == 3) && ARG(2).type != VALUE_NIL;
 
         if (existing_blob) {
                 if (ARG(2).type != VALUE_BLOB) {
