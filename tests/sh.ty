@@ -1,0 +1,8 @@
+import sh (sh)
+
+if not let $out = sh('echo -n based') {
+	print('FAIL')
+} else {
+	print(out == 'based' ? 'PASS' : 'FAIL')
+}
+
