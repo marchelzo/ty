@@ -177,7 +177,7 @@ class Array : Iterable {
         for x, i in self {
             if x :: Array {
                 for idx in x.indices() {
-                    yield if idx :: Array { [i] + idx } else { [i, idx] }
+                    yield (idx :: Array) ? ([i] + idx) : [i, idx]
                 }
             } else {
                 yield i
@@ -393,7 +393,7 @@ class Int {
             k /= base
         }
 
-        if self < 0 { '-' + s } else { s }
+        (self < 0) ? ('-' + s) : s
     }
 
     downto(b: Int) {
@@ -510,6 +510,16 @@ class Float {
             [range] => {
                 self.clamp(range.low(), range.high())
             }
+        }
+    }
+
+    str(prec: ?Int) {
+        if prec == nil {
+            str(self)
+        } else {
+            let p10 = math.pow(10, prec)
+            let [whole, ?frac] = str(iround(self * p10) / p10).split('.')
+            return "{whole}.{(frac ?? '').padRight(prec, '0')}"
         }
     }
 }
