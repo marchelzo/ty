@@ -380,6 +380,14 @@ class Int {
         }
     }
 
+    even?() {
+        self % 2 == 0
+    }
+
+    odd?() {
+        self % 2 == 1
+    }
+
     str(base: Int = 10) {
         let digits = '0123456789ABCDEF'
 
