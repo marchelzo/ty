@@ -72,7 +72,12 @@
         goto Throw;
 
 #define TID ((unsigned long long)pthread_self())
-#define GCLOG LOG
+
+#if false
+  #define GCLOG(fmt, ...) fprintf(stderr, fmt "\n", __VA_ARGS__)
+#else
+  #define GCLOG LOG
+#endif
 
 #define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
 
@@ -219,7 +224,8 @@ SetState(bool blocking)
         atomic_store(MyState, blocking);
 }
 
-static void WaitGC()
+static void
+WaitGC()
 {
         GCLOG("Waiting for GC on thread %llu", TID);
 
@@ -241,16 +247,18 @@ static void WaitGC()
         GCLOG("Continuing execution: %llu", TID);
 }
 
-static void CheckGC()
+static void
+CheckGC()
 {
         if (atomic_load(&WantGC)) {
                 WaitGC();
         }
 }
 
-void DoGC()
+void
+DoGC()
 {
-        GCLOG("Trying to do GC on thread %llu", (long long unsigned)pthread_self());
+        GCLOG("Trying to do GC on thread %llu", TID);
 
         if (pthread_mutex_trylock(&GCLock) != 0) {
                 GCLOG("Couldn't take GC lock: calling CheckGC() on thread %llu", TID);
@@ -259,7 +267,7 @@ void DoGC()
 
         pthread_mutex_lock(&ThreadsLock);
 
-        GCLOG("Took threads lock on thread %llu", TID);
+        GCLOG("Took threads lock on thread %llu to do GC", TID);
 
         static int *blockedThreads;
         static int *runningThreads;
@@ -279,6 +287,7 @@ void DoGC()
                 if (pthread_equal(me, ThreadList.items[i])) {
                         continue;
                 }
+                GCLOG("Trying to take lock for thread %llu on thread %llu", (long long unsigned)ThreadList.items[i], TID);
                 pthread_mutex_lock(ThreadLocks.items[i]);
                 if (atomic_load(ThreadStates.items[i])) {
                         GCLOG("Thread %llu is blocked", (long long unsigned)ThreadList.items[i]);
@@ -693,8 +702,13 @@ AddThread(void)
 static void
 CleanupThread(void *ctx)
 {
-        GCLOG("Cleaning up thread: %llu", (long long unsigned)pthread_self());
+        GCLOG("Cleaning up thread: %llu", TID);
+
+        ReleaseLock(true);
+
         pthread_mutex_lock(&ThreadsLock);
+
+        GCLOG("Got threads lock on thread: %llu -- ready to clean up", TID);
 
         for (int i = 0; i < ThreadList.count; ++i) {
                 if (pthread_equal(ThreadList.items[i], pthread_self())) {
@@ -705,10 +719,11 @@ CleanupThread(void *ctx)
                 }
         }
 
-        pthread_mutex_unlock(MyLock);
         pthread_mutex_destroy(MyLock);
 
         free(MyLock);
+
+        GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
 
         pthread_mutex_unlock(&ThreadsLock);
 }
