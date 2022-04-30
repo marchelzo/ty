@@ -47,7 +47,7 @@ for test in listdir('tests') {
             }
         }
 
-        print("{b(name.comb(/\.ty/))} ... {result}")
+        print("{b(name.comb(/\.ty/).padLeft(8))} ... {result}")
     }, test))
 }
 
