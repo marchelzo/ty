@@ -17,4 +17,12 @@
 #define LOG(...) ;
 #endif
 
+#define TID ((unsigned long long)pthread_self())
+
+#if 0
+  #define GCLOG(fmt, ...) fprintf(stderr, "(%14llu): " fmt "\n", TID, __VA_ARGS__)
+#else
+  #define GCLOG LOG
+#endif
+
 #endif

@@ -10,6 +10,8 @@
 #include "alloc.h"
 #include "value.h"
 
+void DoGC(void);
+
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
 #define resize(ptr, n) ((ptr) = gc_resize((ptr), (n)))
@@ -22,7 +24,7 @@
 #define NOGC(v)   atomic_fetch_add(&(ALLOC_OF(v))->hard, 1)
 #define OKGC(v)   atomic_fetch_sub(&(ALLOC_OF(v))->hard, 1)
 
-#define GC_INITIAL_LIMIT (1ULL << 18)
+#define GC_INITIAL_LIMIT (1ULL << 22)
 
 typedef vec(struct alloc *) AllocList;
 
@@ -96,8 +98,9 @@ inline static void
 CheckUsed(void)
 {
         if (GC_ENABLED && MemoryUsed > MemoryLimit) {
-                gc();
-                LOG("gc() returned: %zu MB still in use", MemoryUsed / 1000000);
+                LOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
+                DoGC();
+                LOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
                 while ((MemoryUsed << 1) > MemoryLimit) {
                         if (MemoryLimit == 0) {
                                 MemoryLimit = GC_INITIAL_LIMIT;

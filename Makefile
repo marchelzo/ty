@@ -43,6 +43,10 @@ else ifdef DEBUG
         CFLAGS += -fsanitize=address
         CFLAGS += -fsanitize=leak
         CFLAGS += -ggdb3
+else ifdef TDEBUG
+        CFLAGS += -O0
+        CFLAGS += -fsanitize=thread
+        CFLAGS += -ggdb3
 else
         CFLAGS += -Og
         CFLAGS += -DTY_RELEASE

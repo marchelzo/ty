@@ -12,10 +12,6 @@ class ThreadPool {
   submit(*args, %kwargs) {
     @mtx.lock()
 
-    let cv = CondVar()
-    let mtx = Mutex()
-    let box = []
-
     let future = Future()
 
     @queue.push((args, kwargs, future))

@@ -33,6 +33,7 @@ collect(struct alloc *a)
         case GC_OBJECT:
                 finalizer = &((struct table *)p)->finalizer;
                 if (finalizer->type != VALUE_NIL) {
+                        GCLOG("Calling finalizer %p", (void *)finalizer);
                         vm_call(finalizer, 0);
                 }
                 table_release(p);
@@ -51,8 +52,9 @@ GCMark(void)
 {
         vm_mark();
 
-        for (int i = 0; i < RootSet.count; ++i)
+        for (int i = 0; i < RootSet.count; ++i) {
                 value_mark(RootSet.items[i]);
+        }
 
         for (int i = 0; i < allocs.count; ++i) {
                 if (allocs.items[i]->mark == GC_NONE && allocs.items[i]->type == GC_OBJECT) {
@@ -82,46 +84,7 @@ GCSweep(AllocList *allocs, size_t *used)
 void
 gc(void)
 {
-        if (!GC_ENABLED) {
-                return;
-        }
-
-        LOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
-
-        GC_ENABLED = false;
-
         DoGC();
-
-        GC_ENABLED = true;
-
-        return;
-
-        vm_mark();
-
-        for (int i = 0; i < RootSet.count; ++i)
-                value_mark(RootSet.items[i]);
-
-        for (int i = 0; i < allocs.count; ++i) {
-                if (allocs.items[i]->mark == GC_NONE && allocs.items[i]->type == GC_OBJECT) {
-                        value_mark(&((struct table *)allocs.items[i]->data)->finalizer);
-                }
-        }
-
-        int n = 0;
-        for (int i = 0; i < allocs.count; ++i) {
-                if (allocs.items[i]->mark == GC_NONE) {
-                        MemoryUsed -= allocs.items[i]->size;
-                        collect(allocs.items[i]);
-                        free(allocs.items[i]);
-                } else {
-                        allocs.items[i]->mark &= ~GC_MARK;
-                        allocs.items[n++] = allocs.items[i];
-                }
-        }
-
-        allocs.count = n;
-
-        GC_ENABLED = true;
 }
 
 void

@@ -707,20 +707,20 @@ value_array_mark(struct array *a)
 inline static void
 mark_tuple(struct value const *v)
 {
-        if (!MARKED(v->items)) {
-                for (int i = 0; i < v->count; ++i) {
-                        value_mark(&v->items[i]);
-                }
-        }
+        if (MARKED(v->items)) return;
 
         MARK(v->items);
+
+        for (int i = 0; i < v->count; ++i) {
+                value_mark(&v->items[i]);
+        }
 
         if (v->names != NULL) {
                 MARK(v->names);
                 if (v->gc_names) {
                         for (int i = 0; i < v->count; ++i) {
                                 if (v->names[i] != NULL) {
-                                        MARK(v->names[0]);
+                                        MARK(v->names[i]);
                                         break;
                                 }
                         }
@@ -798,20 +798,20 @@ void
 _value_mark(struct value const *v)
 {
         switch (v->type & ~VALUE_TAGGED) {
-        case VALUE_METHOD:          MARK(v->this); value_mark(v->this);                break;
-        case VALUE_BUILTIN_METHOD:  MARK(v->this); value_mark(v->this);                break;
-        case VALUE_ARRAY:           value_array_mark(v->array);                        break;
-        case VALUE_TUPLE:           mark_tuple(v);                                     break;
-        case VALUE_DICT:            dict_mark(v->dict);                                break;
-        case VALUE_FUNCTION:        mark_function(v);                                  break;
-        case VALUE_GENERATOR:       mark_generator(v);                                 break;
-        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);              break;
-        case VALUE_OBJECT:          object_mark(v->object);                            break;
-        case VALUE_REF:             value_mark(v->ptr);                                break;
-        case VALUE_BLOB:            MARK(v->blob);                                     break;
-        case VALUE_PTR:             mark_pointer(v);                                   break;
-        case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                  break;
-        default:                                                                       break;
+        case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;
+        case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;
+        case VALUE_ARRAY:           value_array_mark(v->array);                                   break;
+        case VALUE_TUPLE:           mark_tuple(v);                                                break;
+        case VALUE_DICT:            dict_mark(v->dict);                                           break;
+        case VALUE_FUNCTION:        mark_function(v);                                             break;
+        case VALUE_GENERATOR:       mark_generator(v);                                            break;
+        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                         break;
+        case VALUE_OBJECT:          object_mark(v->object);                                       break;
+        case VALUE_REF:             value_mark(v->ptr);                                           break;
+        case VALUE_BLOB:            MARK(v->blob);                                                break;
+        case VALUE_PTR:             mark_pointer(v);                                              break;
+        case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                             break;
+        default:                                                                                  break;
         }
 }
 

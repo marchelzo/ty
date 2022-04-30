@@ -28,4 +28,6 @@ object_mark(struct table *o)
         for (int i = 0; i < TABLE_SIZE; ++i)
                 for (int v = 0; v < o->buckets[i].values.count; ++v)
                         value_mark(&o->buckets[i].values.items[v]);
+
+        value_mark(&o->finalizer);
 }

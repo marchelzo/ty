@@ -185,7 +185,7 @@ struct value {
                 struct {
                         void *ptr;
                         void *gcptr;
-						void *extra;
+                        void *extra;
                 };
                 struct {
                         intmax_t integer;

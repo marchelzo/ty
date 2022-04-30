@@ -71,14 +71,6 @@
         push(TAG(tags_lookup("MatchError"))); \
         goto Throw;
 
-#define TID ((unsigned long long)pthread_self())
-
-#if false
-  #define GCLOG(fmt, ...) fprintf(stderr, fmt "\n", __VA_ARGS__)
-#else
-  #define GCLOG LOG
-#endif
-
 #define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
 
 static char halt = INSTR_HALT;
@@ -230,6 +222,7 @@ WaitGC()
         GCLOG("Waiting for GC on thread %llu", TID);
 
         SetState(false);
+        GCLOG("Releasing MyLock: %d", 0);
         pthread_cond_wait(&GCNext, MyLock);
 
         GCLOG("Waiting to mark: %llu", TID);
@@ -247,21 +240,14 @@ WaitGC()
         GCLOG("Continuing execution: %llu", TID);
 }
 
-static void
-CheckGC()
-{
-        if (atomic_load(&WantGC)) {
-                WaitGC();
-        }
-}
-
 void
 DoGC()
 {
         GCLOG("Trying to do GC on thread %llu", TID);
 
         if (pthread_mutex_trylock(&GCLock) != 0) {
-                GCLOG("Couldn't take GC lock: calling CheckGC() on thread %llu", TID);
+                GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
+                WaitGC();
                 return;
         }
 
@@ -329,6 +315,12 @@ DoGC()
 
         pthread_barrier_wait(&GCBarrierMark);
 
+        //GCLOG("Setting GC_ENABLED = false on thread %llu", TID);
+        //GC_ENABLED = false;
+
+        GCLOG("Storing false in WantGC on thread %llu", TID);
+        atomic_store(&WantGC, false);
+
         for (int i = 0; i < nBlocked; ++i) {
                 GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)ThreadList.items[blockedThreads[i]], TID);
                 GCSweep(
@@ -340,12 +332,12 @@ DoGC()
         GCLOG("Sweeping own storage on thread %llu", TID);
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
-        GCLOG("Storing false in WantGC on thread %llu", TID);
-        atomic_store(&WantGC, false);
-
         pthread_barrier_wait(&GCBarrierSweep);
 
         UnlockThreads(blockedThreads, nBlocked);
+
+        //GCLOG("Setting GC_ENABLED = true on thread %llu", TID);
+        //GC_ENABLED = true;
 
         GCLOG("Unlocking ThreadsLock and GCLock on thread %llu", TID);
 
@@ -628,6 +620,7 @@ void
 ReleaseLock(bool blocked)
 {
         SetState(blocked);
+        GCLOG("Releasing MyLock: %d", (int)blocked);
         pthread_mutex_unlock(MyLock);
 }
 
@@ -654,7 +647,6 @@ NewThread(pthread_t *thread, struct value *call)
         sem_destroy(&created);
 
         TakeLock();
-
 }
 
 static void
@@ -738,13 +730,15 @@ vm_run_thread(void *p)
 
         GCLOG("New thread: %llu", (long long unsigned)pthread_self());
 
+        gc_push(&call[0]);
+
+        while (call[argc + 1].type != VALUE_NONE) {
+                push(call[++argc]);
+        }
+
         AddThread();
 
         pthread_cleanup_push(CleanupThread, NULL);
-
-        while (call[argc + 1].type != VALUE_NONE) {
-                vm_push(&call[++argc]);
-        }
 
         sem_post(ctx->created);
 
@@ -859,6 +853,8 @@ vm_exec(char *code)
         int n, nkw = 0, i, j, tag, rc = 0;
         unsigned long h;
 
+        bool AutoThis = false;
+
         struct value left, right, v, key, value, container, subscript, *vp;
         char *str;
         char const *method, *member;
@@ -872,7 +868,6 @@ vm_exec(char *code)
 
 
         for (;;) {
-        CheckGC();
         for (int N = 0; N < 1; ++N) {
         NextInstruction:
                 switch ((unsigned char)*ip++) {
@@ -1847,7 +1842,9 @@ Throw:
                                         struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
                                         *this = v;
                                         this->tags = tags;
+                                        NOGC(this);
                                         push(METHOD(member, vp, this));
+                                        OKGC(this);
                                         break;
                                 }
                         }
@@ -1892,7 +1889,9 @@ Throw:
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
                                 *this = v;
+                                NOGC(this);
                                 push(BUILTIN_METHOD(member, func, this));
+                                OKGC(this);
                                 break;
                         case VALUE_ARRAY:
                                 func = get_array_method(member);
@@ -1904,7 +1903,9 @@ Throw:
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
                                 *this = v;
+                                NOGC(this);
                                 push(BUILTIN_METHOD(member, func, this));
+                                OKGC(this);
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method(member);
@@ -1916,7 +1917,9 @@ Throw:
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
                                 *this = v;
+                                NOGC(this);
                                 push(BUILTIN_METHOD(member, func, this));
+                                OKGC(this);
                                 break;
                         case VALUE_BLOB:
                                 func = get_blob_method(member);
@@ -1928,7 +1931,9 @@ Throw:
                                 v.tags = 0;
                                 this = gc_alloc_object(sizeof *this, GC_VALUE);
                                 *this = v;
+                                NOGC(this);
                                 push(BUILTIN_METHOD(member, func, this));
+                                OKGC(this);
                                 break;
                         case VALUE_INTEGER:
                                 n = CLASS_INT;
@@ -1966,7 +1971,9 @@ ClassLookup:
                                 if (vp != NULL) {
                                         this = gc_alloc_object(sizeof *this, GC_VALUE);
                                         *this = v;
+                                        NOGC(this);
                                         push(METHOD(member, vp, this));
+                                        OKGC(this);
                                         break;
                                 }
                                 if (b) {
@@ -2476,7 +2483,12 @@ BadContainer:
                         }
 
                 Call:
-                        gc_push(&v);
+                        if (!AutoThis) {
+                                gc_push(&v);
+                        } else {
+                                gc_push(v.this);
+                                AutoThis = false;
+                        }
                         switch (v.type) {
                         case VALUE_FUNCTION:
                                 LOG("CALLING %s with %d arguments", value_show(&v), n);
@@ -2531,6 +2543,7 @@ BadContainer:
                                         }
                                 } else {
                                         value = OBJECT(object_new(), v.class);
+                                        NOGC(value.object);
                                         if (vp != NULL) {
                                                 call(vp, &value, n, nkw, true);
                                                 pop();
@@ -2538,6 +2551,7 @@ BadContainer:
                                                 stack.count -= n;
                                         }
                                         push(value);
+                                        OKGC(value.object);
                                 }
                                 break;
                         case VALUE_METHOD:
@@ -2704,6 +2718,7 @@ BadContainer:
                                 pop();
                                 value.type &= ~VALUE_TAGGED;
                                 value.tags = 0;
+                                AutoThis = true;
                                 v = BUILTIN_METHOD(method, func, &value);
                                 if (nkw > 0) {
                                         goto CallKwArgs;
@@ -2713,6 +2728,7 @@ BadContainer:
                         } else if (vp != NULL) {
                                 pop();
                                 if (self != NULL) {
+                                        AutoThis = true;
                                         v = METHOD(method, vp, self);
                                 } else {
                                         v = *vp;
