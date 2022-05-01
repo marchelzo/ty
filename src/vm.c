@@ -255,6 +255,9 @@ DoGC()
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
 
+        GCLOG("Storing true in WantGC on thread %llu", TID);
+        atomic_store(&WantGC, true);
+
         static int *blockedThreads;
         static int *runningThreads;
 
@@ -285,9 +288,6 @@ DoGC()
         }
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
-
-        GCLOG("Storing true in WantGC on thread %llu", TID);
-        atomic_store(&WantGC, true);
 
         pthread_barrier_init(&GCBarrierStart, NULL, nRunning + 1);
         pthread_barrier_init(&GCBarrierMark, NULL, nRunning + 1);
@@ -868,7 +868,10 @@ vm_exec(char *code)
 
 
         for (;;) {
-        for (int N = 0; N < 1; ++N) {
+        if (atomic_load(&WantGC)) {
+                WaitGC();
+        }
+        for (int N = 0; N < 10; ++N) {
         NextInstruction:
                 switch ((unsigned char)*ip++) {
                 CASE(NOP)
