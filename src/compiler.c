@@ -1884,6 +1884,7 @@ emit_throw(struct statement const *s)
 static void
 emit_with(struct expression const *e)
 {
+        emit_statement(e->with.let, false);
         emit_statement(e->with.block, true);
 }
 

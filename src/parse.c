@@ -3351,6 +3351,12 @@ parse_try(void)
                 s->try.s->iff.neg = true;
                 s->try.s->iff.parts = parse_condparts(false);
 
+                while (have_keyword(KEYWORD_CATCH)) {
+                        next();
+                        vec_push(s->try.patterns, parse_expr(0));
+                        vec_push(s->try.handlers, parse_statement(-1));
+                }
+
                 struct statement *otherwise;
 
                 if (have_keywords(KEYWORD_OR, KEYWORD_ELSE)) {
