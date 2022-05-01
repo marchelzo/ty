@@ -1175,7 +1175,13 @@ prefix_parenthesis(void)
                 tok()->module = NULL;
         }
 
+        SAVE_NE(false);
         e = parse_expr(0);
+        LOAD_NE();
+
+        if (e->type == EXPRESSION_EQ || e->type == EXPRESSION_MAYBE_EQ) {
+                expect(')');
+        }
 
         if (tok()->type == ',' || tok()->type == ':') {
                 struct expression *list = mkexpr();
