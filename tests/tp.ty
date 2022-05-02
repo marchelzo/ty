@@ -1,7 +1,7 @@
 import tp (..)
 
-let pool = ThreadPool(8, function (s) {
-  for _ in ..2500 { 
+let pool = ThreadPool(12, function (s) {
+  for _ in ..1500 { 
     s.chars().shuffle().sum()
   }
 
@@ -10,7 +10,7 @@ let pool = ThreadPool(8, function (s) {
 
 let futures = []
 
-for _ in ..250 {
+for _ in ..100 {
   futures.push(pool.submit('PASS'))
 }
 
