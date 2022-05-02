@@ -3826,17 +3826,31 @@ builtin_members(int argc, struct value *kwargs)
 
         struct dict *members = dict_new();
 
-        if (o.type != VALUE_OBJECT) {
-                return DICT(members);
-        }
-
         NOGC(members);
 
-        for (int i = 0; i < TABLE_SIZE; ++i) {
-                for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
-                        char const *key = o.object->buckets[i].names.items[v];
-                        dict_put_member(members, key, o.object->buckets[i].values.items[v]);
+        switch (o.type) {
+        case VALUE_OBJECT:
+                for (int i = 0; i < TABLE_SIZE; ++i) {
+                        for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
+                                char const *key = o.object->buckets[i].names.items[v];
+                                dict_put_member(members, key, o.object->buckets[i].values.items[v]);
+                        }
                 }
+
+                break;
+        case VALUE_TUPLE:
+                for (int i = 0; i < o.count; ++i) {
+                        if (o.names != NULL && o.names[i] != NULL) {
+                                dict_put_value(members, STRING_CLONE(o.names[i], strlen(o.names[i])), o.items[i]);
+                        } else {
+                                dict_put_value(members, INTEGER(i), o.items[i]);
+                        }
+                }
+
+                break;
+        default:
+                OKGC(members);
+                return NIL;
         }
 
         OKGC(members);
