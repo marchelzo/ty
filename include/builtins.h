@@ -158,6 +158,7 @@
 { .module = "os",     .name = "sendto",            .value = BUILTIN(builtin_os_sendto)                     },
 { .module = "os",     .name = "connect",           .value = BUILTIN(builtin_os_connect)                    },
 { .module = "os",     .name = "usleep",            .value = BUILTIN(builtin_os_usleep)                     },
+{ .module = "os",     .name = "sleep",             .value = BUILTIN(builtin_os_sleep)                      },
 { .module = "os",     .name = "POLLIN",            .value = INT(POLLIN)                                    },
 { .module = "os",     .name = "POLLOUT",           .value = INT(POLLOUT)                                   },
 { .module = "os",     .name = "POLLHUP",           .value = INT(POLLHUP)                                   },

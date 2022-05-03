@@ -2845,6 +2845,42 @@ builtin_os_kill(int argc, struct value *kwargs)
         return INTEGER(kill(pid.integer, sig.integer));
 }
 
+static struct value
+timespec_tuple(struct timespec const *ts)
+{
+        return value_named_tuple(
+                "tv_sec",  INTEGER(ts->tv_sec),
+                "tv_nsec", INTEGER(ts->tv_nsec),
+                NULL
+        );
+}
+
+struct value
+builtin_os_sleep(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.usleep()", 1);
+
+        struct timespec dur;
+        struct timespec rem;
+
+        struct value duration = ARG(0);
+        if (duration.type == VALUE_INTEGER) {
+                dur.tv_sec = duration.integer;
+                dur.tv_nsec = 0;
+        } else if (duration.type == VALUE_REAL) {
+                dur.tv_sec = floor(duration.real);
+                dur.tv_nsec = (duration.real - dur.tv_sec) * 1000000000ULL;
+        } else {
+                vm_panic("the argument to os.sleep() must be an integer or a float");
+        }
+
+        if (nanosleep(&dur, &rem) == 0) {
+                return NIL;
+        }
+
+        return timespec_tuple(&rem);
+}
+
 struct value
 builtin_os_usleep(int argc, struct value *kwargs)
 {
@@ -2889,16 +2925,6 @@ builtin_os_listdir(int argc, struct value *kwargs)
         closedir(d);
 
         return ARRAY(files);
-}
-
-static struct value
-timespec_tuple(struct timespec const *ts)
-{
-        return value_named_tuple(
-                "tv_sec",  INTEGER(ts->tv_sec),
-                "tv_nsec", INTEGER(ts->tv_nsec),
-                NULL
-        );
 }
 
 struct value

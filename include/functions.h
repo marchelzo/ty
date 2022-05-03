@@ -256,6 +256,9 @@ struct value
 builtin_os_usleep(int argc, struct value *kwargs);
 
 struct value
+builtin_os_sleep(int argc, struct value *kwargs);
+
+struct value
 builtin_os_fcntl(int argc, struct value *kwargs);
 
 struct value
