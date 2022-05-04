@@ -145,7 +145,7 @@ typedef vec(size_t) SPStack;
 typedef struct generator Generator;
 
 enum {
-        VALUE_FUNCTION         ,
+        VALUE_FUNCTION = 1     ,
         VALUE_METHOD           ,
         VALUE_BUILTIN_FUNCTION ,
         VALUE_BUILTIN_METHOD   ,
