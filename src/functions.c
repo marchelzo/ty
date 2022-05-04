@@ -1643,6 +1643,29 @@ builtin_os_write(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_fsync(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.fsync()", 1);
+
+        struct value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER) {
+                vm_panic("os.fsync(): expected integer but got: %s", value_show(&fd));
+        }
+
+        return INTEGER(fsync(fd.integer));
+}
+
+struct value
+builtin_os_sync(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.sync()", 0);
+
+        sync();
+
+        return NIL;
+}
+
+struct value
 builtin_os_spawn(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.spawn()", 1);

@@ -81,6 +81,8 @@
 { .module = "os",     .name = "rewinddir",         .value = BUILTIN(builtin_os_rewinddir)                  },
 { .module = "os",     .name = "read",              .value = BUILTIN(builtin_os_read)                       },
 { .module = "os",     .name = "write",             .value = BUILTIN(builtin_os_write)                      },
+{ .module = "os",     .name = "sync",              .value = BUILTIN(builtin_os_sync)                       },
+{ .module = "os",     .name = "fsync",             .value = BUILTIN(builtin_os_fsync)                      },
 { .module = "os",     .name = "umask",             .value = BUILTIN(builtin_os_umask)                      },
 { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
 { .module = "os",     .name = "fcntl",             .value = BUILTIN(builtin_os_fcntl)                      },

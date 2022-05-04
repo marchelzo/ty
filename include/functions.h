@@ -250,6 +250,12 @@ struct value
 builtin_os_write(int argc, struct value *kwargs);
 
 struct value
+builtin_os_fsync(int argc, struct value *kwargs);
+
+struct value
+builtin_os_sync(int argc, struct value *kwargs);
+
+struct value
 builtin_os_listdir(int argc, struct value *kwargs);
 
 struct value
