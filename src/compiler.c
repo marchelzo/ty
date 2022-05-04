@@ -3831,6 +3831,15 @@ emit_expr(struct expression const *e, bool need_loc)
                                 PATCH_JUMP(skip);
                                 emit_instr(INSTR_NONE);
                                 PATCH_JUMP(good);
+                        } else if (!e->required.items[i]) {
+                                emit_expression(e->es.items[i]);
+                                emit_instr(INSTR_DUP);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t skip);
+                                PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
+                                PATCH_JUMP(skip);
+                                emit_instr(INSTR_POP);
+                                emit_instr(INSTR_NONE);
+                                PATCH_JUMP(good);
                         } else {
                                 emit_expression(e->es.items[i]);
                         }

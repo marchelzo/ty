@@ -1388,16 +1388,16 @@ Throw:
                 CASE(TUPLE)
                         n = stack.count - *vec_pop(sp_stack);
 
-                        if (n == 0) {
-                                push(TUPLE(NULL, NULL, 0, false));
-                                break;
-                        }
-
                         k = 0;
                         for (int i = 0; i < n; ++i) {
                                 if (stack.items[stack.count - n + i].type != VALUE_NONE) {
                                         k += 1;
                                 }
+                        }
+
+                        if (k == 0) {
+                                push(TUPLE(NULL, NULL, 0, false));
+                                break;
                         }
 
                         vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);

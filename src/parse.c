@@ -939,7 +939,10 @@ prefix_record(void)
                 if (token(1)->type == ':') {
                         next();
                         next();
-                } else if (token(1)->type != ',' && token(1)->type != '}') {
+                } else if (
+                        token(1)->type != ',' && token(1)->type != '}' &&
+                        (token(1)->type != TOKEN_KEYWORD || token(1)->keyword != KEYWORD_IF)
+                ) {
                         // Force a parse error
                         next();
                         expect(':');
