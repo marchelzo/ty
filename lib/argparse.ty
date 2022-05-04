@@ -1,6 +1,17 @@
-export options, opt, flag
+export make, opt, flag
 
-function opt(short, long, pre = true, post = true, convert = id, multi = false) {
+let bools = %{
+	'true': true,
+	'false': false,
+
+	'on': true,
+	'off': false,
+
+	'yes': true,
+	'no': false
+}
+
+function opt(short, long, pre=true, post=true, convert=id, multi=false, help='') {
     return {
         short,
         long,
@@ -8,14 +19,16 @@ function opt(short, long, pre = true, post = true, convert = id, multi = false) 
         post,
         convert,
         multi,
+		help,
         type: 'o',
     }
 }
 
-function flag(short, long) {
+function flag(short, long, help='') {
     return {
         short,
         long,
+		help,
         type: 'f'
     }
 }
@@ -31,7 +44,7 @@ function add(opt, result, value) {
     }
 }
 
-function options(*opts) {
+function make(*opts) {
     return function (argv) {
         let result = %{}
         let i = 0
@@ -49,6 +62,47 @@ function options(*opts) {
                 '--' => {
                     break
                 },
+
+				_ :: ('-h' | '--help') => {
+					let [flags, opts] = opts.partition(o -> o.type == 'f')
+
+					if #opts > 0 {
+						print('Options')
+						print()
+
+						let optStrings = [
+							["-{opt.short}" if opt.short, "--{opt.long}" if opt.long].join(', ')
+							for opt in opts
+						]
+
+						let maxWidth = optStrings.map(&len).max()
+
+						for (opt, s) in opts.zip(optStrings) {
+							print("  {s.padRight(maxWidth)}    {opt.help}")
+						}
+
+						print()
+					}
+
+					if #flags > 0 {
+						print('Flags')
+						print()
+
+						let flagStrings = [
+							["-{flag.short}" if flag.short, "--{flag.long}" if flag.long].join(', ')
+							for flag in flags
+						]
+
+						let maxWidth = flagStrings.map(&len).max()
+
+						for (flag, s) in flags.zip(flagStrings) {
+							print("  {s.padRight(maxWidth)}    {flag.help}")
+						}
+
+						print()
+					}
+
+				},
 
                 /^--([^=]+)$/ => {
                     if let $opt = opts.filter(o -> o.type == 'f').find(&.long |> (== _1)) {
@@ -112,6 +166,8 @@ function options(*opts) {
                 }
             }
         }
+
+		argv.slice!(0, i)
 
         return result
     }
