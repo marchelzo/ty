@@ -96,6 +96,7 @@ enum instruction {
         INSTR_FIX_TO,
         INSTR_REVERSE,
         INSTR_SWAP,
+        INSTR_NONE,
         INSTR_NONE_IF_NIL,
         INSTR_CLEAR_RC,
         INSTR_GET_EXTRA,

@@ -919,6 +919,7 @@ prefix_record(void)
         vec_init(e->es);
         vec_init(e->names);
         vec_init(e->required);
+        vec_init(e->tconds);
 
         consume('{');
 
@@ -945,6 +946,13 @@ prefix_record(void)
                 }
 
                 vec_push(e->es, parse_expr(0));
+
+                if (have_keyword(KEYWORD_IF)) {
+                        next();
+                        vec_push(e->tconds, parse_expr(0));
+                } else {
+                        vec_push(e->tconds, NULL);
+                }
 
                 if (tok()->type == ',') {
                         next();
@@ -1141,6 +1149,7 @@ prefix_parenthesis(void)
                 vec_init(e->es);
                 vec_init(e->names);
                 vec_init(e->required);
+                vec_init(e->tconds);
                 return e;
         }
 
@@ -1201,6 +1210,7 @@ prefix_parenthesis(void)
                 vec_init(list->names);
                 vec_init(list->es);
                 vec_init(list->required);
+                vec_init(list->tconds);
 
                 if (e->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
                         next();
@@ -1214,6 +1224,13 @@ prefix_parenthesis(void)
 
                 e->end = End;
                 vec_push(list->es, e);
+
+                if (have_keyword(KEYWORD_IF)) {
+                        next();
+                        vec_push(list->tconds, parse_expr(0));
+                } else {
+                        vec_push(list->tconds, NULL);
+                }
 
                 while (tok()->type == ',') {
                         next();
@@ -1240,7 +1257,15 @@ prefix_parenthesis(void)
                         } else if (e->type != EXPRESSION_IDENTIFIER) {
                                 list->only_identifiers = false;
                         }
+
                         vec_push(list->es, e);
+
+                        if (have_keyword(KEYWORD_IF)) {
+                                next();
+                                vec_push(list->tconds, parse_expr(0));
+                        } else {
+                                vec_push(list->tconds, NULL);
+                        }
                 }
 
                 consume(')');
@@ -1257,9 +1282,11 @@ prefix_parenthesis(void)
                         list->type = EXPRESSION_TUPLE;
                         vec_init(list->names);
                         vec_init(list->es);
+                        vec_init(list->tconds);
                         vec_push(list->names, NULL);
                         vec_push(list->required, true);
                         vec_push(list->es, e);
+                        vec_push(list->tconds, NULL);
                         return list;
                 } else {
                         return e;

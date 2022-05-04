@@ -1393,31 +1393,37 @@ Throw:
                                 break;
                         }
 
-                        vp = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+                        k = 0;
+                        for (int i = 0; i < n; ++i) {
+                                if (stack.items[stack.count - n + i].type != VALUE_NONE) {
+                                        k += 1;
+                                }
+                        }
 
-                        memcpy(
-                                vp,
-                                stack.items + stack.count - n,
-                                sizeof (struct value [n])
-                        );
+                        vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
+                        v = TUPLE(vp, NULL, k, false);
 
                         NOGC(vp);
 
-                        v = TUPLE(vp, NULL, n, false);
+                        for (int i = 0, j = 0; i < n; ++i, ip += strlen(ip) + 1) {
+                                if (stack.items[stack.count - n + i].type == VALUE_NONE) {
+                                        continue;
+                                }
 
-                        for (int i = 0; i < n; ++i, ip += strlen(ip) + 1) {
+                                vp[j++] = stack.items[stack.count - n + i];
+
                                 if (ip[0] == 0) {
                                         continue;
                                 }
 
                                 if (v.names == NULL) {
-                                        v.names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
-                                        for (int i = 0; i < n; ++i) {
+                                        v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
+                                        for (int i = 0; i < k; ++i) {
                                                 v.names[i] = NULL;
                                         }
                                 }
 
-                                v.names[i] = ip;
+                                v.names[j - 1] = ip;
                         }
 
                         stack.count -= n;
@@ -1611,6 +1617,9 @@ Throw:
                         break;
                 CASE(SENTINEL)
                         push(SENTINEL);
+                        break;
+                CASE(NONE)
+                        push(NONE);
                         break;
                 CASE(NONE_IF_NIL)
                         //if (top()->type == VALUE_NIL)

@@ -1218,10 +1218,15 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         symbolize_expression(subscope, e->values.items[i]);
                 }
                 break;
-        case EXPRESSION_TUPLE:
         case EXPRESSION_LIST:
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_expression(scope, e->es.items[i]);
+                }
+                break;
+        case EXPRESSION_TUPLE:
+                for (int i = 0; i < e->es.count; ++i) {
+                        symbolize_expression(scope, e->es.items[i]);
+                        symbolize_expression(scope, e->tconds.items[i]);
                 }
                 break;
         case EXPRESSION_SPREAD:
@@ -3818,7 +3823,17 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_TUPLE:
                 emit_instr(INSTR_SAVE_STACK_POS);
                 for (int i = 0; i < e->es.count; ++i) {
-                        emit_expression(e->es.items[i]);
+                        if (e->tconds.items[i] != NULL) {
+                                emit_expression(e->tconds.items[i]);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                emit_expression(e->es.items[i]);
+                                PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
+                                PATCH_JUMP(skip);
+                                emit_instr(INSTR_NONE);
+                                PATCH_JUMP(good);
+                        } else {
+                                emit_expression(e->es.items[i]);
+                        }
                 }
                 emit_instr(INSTR_TUPLE);
                 for (int i = 0; i < e->names.count; ++i) {

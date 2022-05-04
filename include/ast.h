@@ -245,6 +245,7 @@ struct expression {
                         expression_vector es;
                         vec(char const *) names;
                         vec(bool) required;
+                        expression_vector tconds;
                 };
                 struct {
                         struct expression *cond;
