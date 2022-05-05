@@ -1395,15 +1395,10 @@ Throw:
                                 }
                         }
 
-                        if (k == 0) {
-                                push(TUPLE(NULL, NULL, 0, false));
-                                break;
-                        }
-
                         vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
                         v = TUPLE(vp, NULL, k, false);
 
-                        NOGC(vp);
+                        if (k > 0) NOGC(vp);
 
                         for (int i = 0, j = 0; i < n; ++i, ip += strlen(ip) + 1) {
                                 if (stack.items[stack.count - n + i].type == VALUE_NONE) {
@@ -1429,7 +1424,7 @@ Throw:
                         stack.count -= n;
                         push(v);
 
-                        OKGC(vp);
+                        if (k > 0) OKGC(vp);
 
                         break;
                 CASE(DICT)

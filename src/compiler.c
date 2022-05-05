@@ -3430,6 +3430,21 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 }
 
 static void
+emit_non_nil_expr(struct expression const *e, bool none)
+{
+        emit_expression(e);
+        emit_instr(INSTR_DUP);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t skip);
+        PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
+        PATCH_JUMP(skip);
+        emit_instr(INSTR_POP);
+        if (none) {
+                emit_instr(INSTR_NONE);
+        }
+        PATCH_JUMP(good);
+}
+
+static void
 emit_expr(struct expression const *e, bool need_loc)
 {
         state.start = e->start;
@@ -3439,6 +3454,8 @@ emit_expr(struct expression const *e, bool need_loc)
         int ac;
 
         char const *method = NULL;
+
+        void (*emit)(struct expression const *);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -3501,8 +3518,14 @@ emit_expr(struct expression const *e, bool need_loc)
                         if (e->aconds.items[i] != NULL) {
                                 emit_expression(e->aconds.items[i]);
                                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
-                                emit_expression(e->elements.items[i]);
+                                if (e->optional.items[i]) {
+                                        emit_non_nil_expr(e->elements.items[i], false);
+                                } else {
+                                        emit_expression(e->elements.items[i]);
+                                }
                                 PATCH_JUMP(skip);
+                        } else if (e->optional.items[i]) {
+                                emit_non_nil_expr(e->elements.items[i], false);
                         } else {
                                 emit_expression(e->elements.items[i]);
                         }
@@ -3826,20 +3849,17 @@ emit_expr(struct expression const *e, bool need_loc)
                         if (e->tconds.items[i] != NULL) {
                                 emit_expression(e->tconds.items[i]);
                                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
-                                emit_expression(e->es.items[i]);
+                                if (!e->required.items[i]) {
+                                        emit_non_nil_expr(e->es.items[i], true);
+                                } else {
+                                        emit_expression(e->es.items[i]);
+                                }
                                 PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
                                 PATCH_JUMP(skip);
                                 emit_instr(INSTR_NONE);
                                 PATCH_JUMP(good);
                         } else if (!e->required.items[i]) {
-                                emit_expression(e->es.items[i]);
-                                emit_instr(INSTR_DUP);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t skip);
-                                PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
-                                PATCH_JUMP(skip);
-                                emit_instr(INSTR_POP);
-                                emit_instr(INSTR_NONE);
-                                PATCH_JUMP(good);
+                                emit_non_nil_expr(e->es.items[i], true);
                         } else {
                                 emit_expression(e->es.items[i]);
                         }
