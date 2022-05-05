@@ -1172,6 +1172,23 @@ class InclusiveRange : Range {
 
 function id(x) { x }
 
+function uuid4() {
+    let b = Blob(*[rand(256) for _ in ..16])
+
+    b.set(6, 0x40 .|. (b[6] .&. 0x0F))
+    b.set(8, 0xA0 .|. (b[8] .&. 0x3F))
+
+    let hex = b.hex()
+
+    return [
+        hex.slice(0, 8),
+        hex.slice(8, 4),
+        hex.slice(12, 4),
+        hex.slice(16, 4),
+        hex.slice(20, 12)
+    ].join('-')
+}
+
 class Mutex {
     init() {
         @mtx = thread.mutex()
