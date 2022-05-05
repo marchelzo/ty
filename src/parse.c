@@ -1218,15 +1218,14 @@ prefix_parenthesis(void)
                 if (e->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
                         next();
                         vec_push(list->names, e->identifier);
-                        vec_push(list->required, true);
                         e = parse_expr(0);
-
                 } else {
                         vec_push(list->names, NULL);
                 }
 
                 e->end = End;
                 vec_push(list->es, e);
+                vec_push(list->required, true);
 
                 if (have_keyword(KEYWORD_IF)) {
                         next();
@@ -1244,9 +1243,15 @@ prefix_parenthesis(void)
                                 tok()->module = NULL;
                         }
 
+                        if (tok()->type == TOKEN_QUESTION) {
+                                next();
+                                vec_push(list->required, false);
+                        } else {
+                                vec_push(list->required, true);
+                        }
+
                         if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
                                 vec_push(list->names, tok()->identifier);
-                                vec_push(list->required, true);
                                 next();
                                 next();
                         } else {
