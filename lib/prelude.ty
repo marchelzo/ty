@@ -340,6 +340,20 @@ class String : Iterable {
         @comb(/^\s+/)
     }
 
+	unhex() {
+		let b = Blob()
+
+		for octet in self.matches(/../) {
+			if let $x = int(octet, 16) {
+				b.push(x)
+			} else {
+				return nil
+			}
+		}
+
+		return b
+	}
+
     __iter__() {
         for c in @chars() {
             yield c
