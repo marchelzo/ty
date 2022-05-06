@@ -617,6 +617,23 @@ class Tuple {
     __str___() {
         str(self)
     }
+
+    __match__(t) {
+        let myMembers = members(self)
+        let tMembers = members(t)
+
+        if #myMembers.diff(tMembers) != 0 {
+            return false
+        }
+
+        for k, v in tMembers {
+            if !(v :: myMembers[k]) {
+                return false
+            }
+        }
+
+        return true
+    }
 }
 
 class Iterable {

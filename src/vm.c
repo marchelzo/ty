@@ -2194,6 +2194,12 @@ BadContainer:
                         if (top()->type == VALUE_CLASS) {
                                 v = pop();
                                 switch (top()->type) {
+                                case VALUE_OBJECT:
+                                        *top() = BOOLEAN(
+                                                top()->type == VALUE_OBJECT &&
+                                                class_is_subclass(top()->class, v.class)
+                                        );
+                                        break;
                                 case VALUE_INTEGER:  *top() = BOOLEAN(class_is_subclass(CLASS_INT, v.class));      break;
                                 case VALUE_REAL:     *top() = BOOLEAN(class_is_subclass(CLASS_FLOAT, v.class));    break;
                                 case VALUE_BOOLEAN:  *top() = BOOLEAN(class_is_subclass(CLASS_BOOL, v.class));     break;
@@ -2206,9 +2212,6 @@ BadContainer:
                                 case VALUE_BUILTIN_FUNCTION:
                                 case VALUE_FUNCTION: *top() = BOOLEAN(class_is_subclass(CLASS_FUNCTION, v.class)); break;
                                 case VALUE_REGEX:    *top() = BOOLEAN(class_is_subclass(CLASS_REGEX, v.class));    break;
-                                case VALUE_OBJECT:
-                                        *top() = BOOLEAN(top()->type == VALUE_OBJECT &&
-                                                         class_is_subclass(top()->class, v.class));                break;
                                 default:             *top() = BOOLEAN(false);                                      break;
                                 }
                         } else if (top()->type == VALUE_BOOLEAN) {
@@ -2216,6 +2219,7 @@ BadContainer:
                                 *top() = v;
                         } else {
                                 n = 1;
+                                nkw = 0;
                                 b = false;
                                 method = "__match__";
                                 h = strhash(method);
@@ -2616,6 +2620,9 @@ BadContainer:
                                 n = stack.count - *vec_pop(sp_stack) - nkw - 1;
                         }
 
+                /*
+                 * b, n, nkw, h, and method must all be correctly set when jumping here
+                 */
                 CallMethod:
                         LOG("METHOD = %s, n = %d", method, n);
                         print_stack(5);

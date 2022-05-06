@@ -351,6 +351,60 @@ dict_same_keys(struct dict const *d, struct dict const *u)
         return true;
 }
 
+inline static void
+copy_unique(struct dict *diff, struct dict const *d, struct dict const *u)
+{
+        for (size_t i = 0; i < d->size; ++i) {
+                if (d->keys[i].type == 0) {
+                        continue;
+                }
+
+                size_t j = find_spot(
+                        u->size,
+                        u->hashes,
+                        u->keys,
+                        d->hashes[i],
+                        &d->keys[i]
+                );
+
+                if (u->keys[j].type == 0) {
+                        size_t k = find_spot(
+                                diff->size,
+                                diff->hashes,
+                                diff->keys,
+                                d->hashes[i],
+                                &d->keys[i]
+                        );
+
+                        put(diff, k, d->hashes[i], d->keys[i], d->values[i]);
+                }
+        }
+}
+
+struct value
+dict_diff(struct value *d, int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("Dict.diff(): expected 1 argument but got %d", argc);
+        }
+
+        struct value u = ARG(0);
+        if (u.type != VALUE_DICT) {
+                vm_panic("Dict.diff(): expected Dict but got %s", value_show(&u));
+        }
+
+        struct dict *diff = dict_new();
+
+        NOGC(diff);
+
+        copy_unique(diff, d->dict, u.dict);
+        copy_unique(diff, u.dict, d->dict);
+
+        OKGC(diff);
+
+        return DICT(diff);
+}
+
 struct value
 dict_intersect(struct value *d, int argc, struct value *kwargs)
 {
@@ -574,6 +628,7 @@ DEFINE_METHOD_TABLE(
         { .name = "clone",        .func = dict_clone          },
         { .name = "contains?",    .func = dict_contains       },
         { .name = "default",      .func = dict_default        },
+        { .name = "diff",         .func = dict_diff           },
         { .name = "has?",         .func = dict_contains       },
         { .name = "intersect",    .func = dict_intersect      },
         { .name = "keys",         .func = dict_keys           },
