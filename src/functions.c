@@ -2661,10 +2661,10 @@ builtin_os_epoll_wait(int argc, struct value *kwargs)
         if (timeout.type != VALUE_INTEGER)
                 vm_panic("the second argument to os.epoll_wait() must be an integer (timeout in ms)");
 
-        struct epoll_event events[16];
+        struct epoll_event events[32];
 
         ReleaseLock(true);
-        int n = epoll_wait(efd.integer, events, 16, timeout.integer);
+        int n = epoll_wait(efd.integer, events, sizeof events / sizeof events[0], timeout.integer);
         TakeLock();
 
         if (n == -1)
