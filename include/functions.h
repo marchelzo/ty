@@ -443,9 +443,6 @@ struct value
 builtin_os_exit(int argc, struct value *kwargs);
 
 struct value
-builtin_os_utime(int argc, struct value *kwargs);
-
-struct value
 builtin_os_exec(int argc, struct value *kwargs);
 
 struct value
@@ -459,6 +456,9 @@ builtin_time_time(int argc, struct value *kwargs);
 
 struct value
 builtin_time_utime(int argc, struct value *kwargs);
+
+struct value
+builtin_time_gettime(int argc, struct value *kwargs);
 
 struct value
 builtin_time_localtime(int argc, struct value *kwargs);

@@ -2878,30 +2878,109 @@ timespec_tuple(struct timespec const *ts)
         );
 }
 
+static struct timespec
+tuple_timespec(char const *func, struct value const *v)
+{
+        struct value *sec = tuple_get(v, "tv_sec");
+
+        if (sec == NULL || sec->type != VALUE_INTEGER) {
+                vm_panic(
+                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
+                        func,
+                        TERM(93),
+                        value_show(v),
+                        TERM(0),
+                        TERM(92),
+                        "tv_sec",
+                        TERM(0)
+                );
+        }
+
+        struct value *nsec = tuple_get(v, "tv_nsec");
+
+        if (nsec == NULL || nsec->type != VALUE_INTEGER) {
+                vm_panic(
+                        "%s: expected timespec %s%s%s to have Int field %s%s%s",
+                        func,
+                        TERM(93),
+                        value_show(v),
+                        TERM(0),
+                        TERM(92),
+                        "tv_nsec",
+                        TERM(0)
+                );
+        }
+
+        return (struct timespec) {
+                .tv_sec = sec->integer,
+                .tv_nsec = nsec->integer
+        };
+}
+
 struct value
 builtin_os_sleep(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.usleep()", 1);
 
         struct timespec dur;
-        struct timespec rem;
+        struct timespec rem = {0};
+
+        clockid_t clk = CLOCK_REALTIME;
+        int flags = 0;
+
+        bool us = false;
+
+        struct value *abs = NAMED("abs");
+
+        if (abs != NULL && abs->type == VALUE_BOOLEAN && abs->boolean) {
+                flags = TIMER_ABSTIME;
+        }
+
+        struct value *clock = NAMED("clock");
+
+        if (clock != NULL && clock->type == VALUE_INTEGER) {
+                clk = clock->integer;
+        }
+
+        struct value *usec = NAMED("usec");
+
+        if (usec != NULL && usec->type == VALUE_BOOLEAN) {
+                us = usec->boolean;
+        }
 
         struct value duration = ARG(0);
         if (duration.type == VALUE_INTEGER) {
-                dur.tv_sec = duration.integer;
-                dur.tv_nsec = 0;
+                if (us) {
+                        dur.tv_sec = duration.integer / 1000000;
+                        dur.tv_nsec = (duration.integer % 1000000) * 1000ULL;
+                } else {
+                        dur.tv_sec = duration.integer;
+                        dur.tv_nsec = 0;
+                }
         } else if (duration.type == VALUE_REAL) {
-                dur.tv_sec = floor(duration.real);
-                dur.tv_nsec = (duration.real - dur.tv_sec) * 1000000000ULL;
+                if (us) {
+                        dur.tv_sec = floor(duration.real / 1000000);
+                        dur.tv_nsec = (duration.real - dur.tv_sec * 1000000) * 1000ULL;
+                } else {
+                        dur.tv_sec = floor(duration.real);
+                        dur.tv_nsec = (duration.real - dur.tv_sec) * 1000000000ULL;
+                }
+        } else if (duration.type == VALUE_TUPLE) {
+                dur = tuple_timespec("os.sleep()", &duration);
         } else {
                 vm_panic("the argument to os.sleep() must be an integer or a float");
         }
 
-        if (nanosleep(&dur, &rem) == 0) {
-                return NIL;
-        }
+        int ret = clock_nanosleep(clk, flags, &dur, &rem);
 
-        return timespec_tuple(&rem);
+        switch (ret) {
+        case 0:
+                return NIL;
+        case EINTR:
+                return timespec_tuple(&rem);
+        default:
+                vm_panic("os.sleep(): invalid argument: clock_nanosleep() returned EINVAL");
+        }
 }
 
 struct value
@@ -3047,6 +3126,27 @@ builtin_errno_str(int argc, struct value *kwargs)
         char const *s = strerror(e);
 
         return STRING_CLONE(s, strlen(s));
+}
+
+struct value
+builtin_time_gettime(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("time.gettime()", 0, 1);
+
+        clockid_t clk;
+        if (argc == 1) {
+                struct value v = ARG(0);
+                if (v.type != VALUE_INTEGER)
+                        vm_panic("the argument to time.gettime() must be an integer");
+                clk = v.integer;
+        } else {
+                clk = CLOCK_REALTIME;
+        }
+
+        struct timespec t = {0};
+        clock_gettime(clk, &t);
+
+        return timespec_tuple(&t);
 }
 
 struct value
