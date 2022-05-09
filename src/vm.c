@@ -1290,12 +1290,12 @@ Throw:
 
                         READVALUE(n);
 
-                        if (top()->type != VALUE_TUPLE || top()->names == NULL) {
+                        if (top()->type != VALUE_TUPLE) {
                                 ip += n;
                                 break;
                         }
 
-                        for (int i = 0; i < top()->count; ++i) {
+                        for (int i = 0; top()->names != NULL && i < top()->count; ++i) {
                                 if (top()->names[i] != NULL && strcmp(top()->names[i], str) == 0) {
                                         push(top()->items[i]);
                                         goto NextInstruction;

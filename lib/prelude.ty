@@ -340,19 +340,19 @@ class String : Iterable {
         @comb(/^\s+/)
     }
 
-	unhex() {
-		let b = Blob()
+    unhex() {
+        let b = Blob()
 
-		for octet in self.matches(/../) {
-			if let $x = int(octet, 16) {
-				b.push(x)
-			} else {
-				return nil
-			}
-		}
+        for octet in self.matches(/../) {
+            if let $x = int(octet, 16) {
+                b.push(x)
+            } else {
+                return nil
+            }
+        }
 
-		return b
-	}
+        return b
+    }
 
     __iter__() {
         for c in @chars() {
@@ -719,6 +719,10 @@ class Iterable {
 
     zip(*its, longest) {
         @__iter__().zip(*its, longest: longest)
+    }
+
+    zipWith(f, *its, longest) {
+        @__iter__().zipWith(f, *its, longest: longest)
     }
 
     mean() {
