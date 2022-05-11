@@ -2,7 +2,7 @@ import base64
 import cutil (memcmp)
 
 for _ in ..100 {
-	let len = rand(1, 5000)
+	let len = rand(1, 1000)
 	let b = Blob(*[rand(256) for _ in ..len])
 
 	let encoded = base64.encode(b)

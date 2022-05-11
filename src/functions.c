@@ -82,6 +82,8 @@ builtin_print(int argc, struct value *kwargs)
                 );
         }
 
+        flockfile(stdout);
+
         for (int i = 0; i < argc; ++i) {
                 struct value *v = &ARG(i);
                 if (i > 0) {
@@ -106,6 +108,8 @@ builtin_print(int argc, struct value *kwargs)
         } else {
                 putchar('\n');
         }
+
+        funlockfile(stdout);
 
         return NIL;
 }
