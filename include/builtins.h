@@ -65,6 +65,8 @@
 { .module = "bit",    .name = "shiftLeft",         .value = BUILTIN(builtin_bit_shift_left)                },
 { .module = "bit",    .name = "shiftRight",        .value = BUILTIN(builtin_bit_shift_right)               },
 #ifndef TY_WITHOUT_OS
+{ .module = "os",     .name = "PATH_MAX",          .value = INT(PATH_MAX)                                  },
+{ .module = "os",     .name = "NAME_MAX",          .value = INT(NAME_MAX)                                  },
 { .module = "os",     .name = "open",              .value = BUILTIN(builtin_os_open)                       },
 { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
 { .module = "os",     .name = "mktemp",            .value = BUILTIN(builtin_os_mktemp)                     },
