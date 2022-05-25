@@ -1382,17 +1382,14 @@ builtin_os_readdir(int argc, struct value *kwargs)
         if (entry == NULL)
                 return NIL;
 
-        struct table *t = object_new();
-        NOGC(t);
-
-        table_put(t, "d_ino", INTEGER(entry->d_ino));
-        table_put(t, "d_off", INTEGER(entry->d_off));
-        table_put(t, "d_reclen", INTEGER(entry->d_reclen));
-        table_put(t, "d_type", INTEGER(entry->d_type));
-        table_put(t, "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)));
-
-        OKGC(t);
-        return OBJECT(t, 0);
+        return value_named_tuple(
+                "d_ino", INTEGER(entry->d_ino),
+                "d_off", INTEGER(entry->d_off),
+                "d_reclen", INTEGER(entry->d_reclen),
+                "d_type", INTEGER(entry->d_type),
+                "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)),
+                NULL
+        );
 }
 
 struct value
