@@ -763,6 +763,20 @@ builtin_log2(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_log10(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("math.log10()", 1);
+
+        struct value x = ARG(0);
+        if (x.type == VALUE_INTEGER)
+                x = REAL(x.integer);
+        if (x.type != VALUE_REAL)
+                vm_panic("the argument to math.log10() must be a float");
+
+        return REAL(log10(x.real));
+}
+
+struct value
 builtin_pow(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("math.pow()", 2);

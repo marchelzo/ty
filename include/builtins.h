@@ -42,6 +42,7 @@
 { .module = NULL,     .name = "setenv",            .value = BUILTIN(builtin_setenv)                        },
 { .module = "math",   .name = "nan?",              .value = BUILTIN(builtin_isnan)                         },
 { .module = "math",   .name = "log2",              .value = BUILTIN(builtin_log2)                          },
+{ .module = "math",   .name = "log10",             .value = BUILTIN(builtin_log10)                         },
 { .module = "math",   .name = "log",               .value = BUILTIN(builtin_log)                           },
 { .module = "math",   .name = "exp",               .value = BUILTIN(builtin_exp)                           },
 { .module = "math",   .name = "pow",               .value = BUILTIN(builtin_pow)                           },

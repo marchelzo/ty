@@ -106,6 +106,9 @@ struct value
 builtin_log2(int argc, struct value *kwargs);
 
 struct value
+builtin_log10(int argc, struct value *kwargs);
+
+struct value
 builtin_pow(int argc, struct value *kwargs);
 
 struct value
