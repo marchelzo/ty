@@ -765,6 +765,10 @@ class Iterable {
         @__iter__().interleave(xs)
     }
 
+    enumerate() {
+        @__iter__().enumerate()
+    }
+
     __len__() {
         @__iter__().__len__()
     }
@@ -998,6 +1002,13 @@ class Iter : Iterable {
         let d = %{*:0}
         for x in self { d[f(x)] += 1 }
         return d
+    }
+
+    enumerate() {
+        let i = 0
+        for x in self {
+            yield (i++, x)
+        }
     }
 
     max(k = id) {
