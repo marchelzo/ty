@@ -1811,13 +1811,45 @@ array_scan_right(struct value *array, int argc, struct value *kwargs)
 static struct value
 array_reverse(struct value *array, int argc, struct value *kwargs)
 {
-        if (argc != 0)
-                vm_panic("the reverse method on arrays expects no arguments but got %d", argc);
+        int lo;
+        int n;
 
-        int lo = 0;
-        int hi = array->array->count - 1;
+        if (argc > 0 && ARG(0).type != VALUE_INTEGER) {
+                vm_panic("array.reverse(): expected integer as first argument but got: %s", value_show(&ARG(0)));
+        }
+
+        if (argc > 1 && ARG(1).type != VALUE_INTEGER) {
+                vm_panic("array.reverse(): expected integer as second argument but got: %s", value_show(&ARG(1)));
+        }
+
+        if (argc > 0) {
+                lo = ARG(0).integer;
+                if (lo < 0) { lo += array->array->count; }
+        } else {
+                lo = 0;
+        }
+
+        if (lo < 0 || lo > array->array->count) {
+                vm_panic("array.reverse(): invalid start index %d for array with size %zu", lo, array->array->count);
+        }
+
+        if (argc > 1) {
+                n = ARG(1).integer;
+        } else {
+                n = array->array->count - lo;
+        }
+
+        int hi = lo + n - 1;
+
+        if (hi > array->array->count) {
+                vm_panic(
+                        "array.reverse(): invalid count %d for start index %d and array with size %zu",
+                        n, lo, array->array->count
+                );
+        }
 
         struct value t;
+
         while (lo < hi) {
                 t = array->array->items[lo];
                 array->array->items[lo] = array->array->items[hi];
