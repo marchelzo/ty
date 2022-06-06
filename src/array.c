@@ -1839,6 +1839,10 @@ array_reverse(struct value *array, int argc, struct value *kwargs)
                 n = array->array->count - lo;
         }
 
+        if (n == 0) {
+                return *array;
+        }
+
         int hi = lo + n - 1;
 
         if (hi > array->array->count) {
