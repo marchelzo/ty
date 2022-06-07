@@ -807,7 +807,7 @@ _value_mark(struct value const *v)
         case VALUE_GENERATOR:       mark_generator(v);                                            break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                         break;
         case VALUE_OBJECT:          object_mark(v->object);                                       break;
-        case VALUE_REF:             value_mark(v->ptr);                                           break;
+        case VALUE_REF:             MARK(v->ptr); value_mark(v->ptr);                             break;
         case VALUE_BLOB:            MARK(v->blob);                                                break;
         case VALUE_PTR:             mark_pointer(v);                                              break;
         case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                             break;
@@ -859,7 +859,10 @@ value_named_tuple(char const *first, ...)
         va_end(ap);
 
         struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+
+        NOGC(items);
         char const **names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+        OKGC(items);
 
         va_start(ap, first);
 
