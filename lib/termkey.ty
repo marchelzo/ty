@@ -1,0 +1,30 @@
+import ffi as c
+import cutil (wrap)
+
+if not let $lib = c.dlopen('libtermkey.so.1') {
+	throw 'Failed to open libtermkey.so'
+}
+
+let TermKeyKey = c.struct(
+	c.int,
+	c.long,
+	c.int,
+	c.struct(*[c.char for _ in ..7])
+	
+)
+
+let termkey_new = wrap(lib, 'termkey_new', c.ptr, c.int, c.int)
+let termkey_waitkey = wrap(lib, 'termkey_waitkey', c.int, c.ptr, c.ptr)
+let termkey_strfkey = wrap(lib, 'termkey_strfkey', c.u64, c.ptr, c.ptr, c.u64, c.ptr, c.int)
+let termkey_destroy = wrap(lib, 'termkey_destroy', c.void, c.ptr)
+
+let tk = termkey_new(0, 0)
+let key = c.new(TermKeyKey)
+let buffer = c.alloc(100)
+
+termkey_waitkey(tk, key)
+termkey_strfkey(tk, buffer, 100, key, 4 .|. 8)
+
+print(c.str(buffer))
+
+termkey_destroy(tk)
