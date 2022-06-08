@@ -100,7 +100,7 @@ class Future {
   }
 
   ready?() {
-    with _ = @mtx.kock() {
+    with _ = @mtx.lock() {
       #@box == 1
     }
   }
