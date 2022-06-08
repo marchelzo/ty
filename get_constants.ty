@@ -1,0 +1,50 @@
+import io
+import os (args)
+import sh (sh)
+
+if not let [_, header, prefix] = args {
+    os.exit(1)
+}
+
+let last = nil
+let constants = []
+let inEnum = false
+
+for line, i in io.open(header, 'r') {
+    match line {
+        /#\s*define\s+(\w+)\s+(.*)$/ => {
+            constants.push((_1, _2))
+        },
+
+        /^\s*(?:typedef\s*)?enum\s/ => {
+            inEnum = true
+        },
+
+        /^\s*}/ => {
+            inEnum = false
+            last = nil
+        },
+
+        /^\s*([A-Z0-9_]+)\s*=\s*([^,]+)/ => {
+            if inEnum {
+                constants.push((_1, _2))
+                last = _1
+            }
+        },
+
+        /^\s*([A-Z0-9_]+)/ => {
+            if inEnum {
+                constants.push((_1, (if last { "{last} + 1" } else { '0' })))
+                last = _1
+            }
+        },
+
+        _ => ;
+    }
+}
+
+constants.filter!(&0 |> [prefix in])
+
+for (name, value) in constants {
+    print("let {name} = {value}")
+}
