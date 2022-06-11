@@ -120,21 +120,9 @@ let TermKeyKey = c.struct(
 	c.long,
 	c.int,
 	c.struct(*[c.char for _ in ..7])
-	
 )
 
-let termkey_new = wrap(lib, 'termkey_new', c.ptr, c.int, c.int)
-let termkey_waitkey = wrap(lib, 'termkey_waitkey', c.int, c.ptr, c.ptr)
-let termkey_strfkey = wrap(lib, 'termkey_strfkey', c.u64, c.ptr, c.ptr, c.u64, c.ptr, c.int)
-let termkey_destroy = wrap(lib, 'termkey_destroy', c.void, c.ptr)
-
-let tk = termkey_new(0, 0)
-let key = c.new(TermKeyKey)
-let buffer = c.alloc(100)
-
-while termkey_waitkey(tk, key) == TERMKEY_RES_KEY {
-	termkey_strfkey(tk, buffer, 100, key, TERMKEY_FORMAT_VIM)
-	print(c.str(buffer))
-}
-
-termkey_destroy(tk)
+pub termkey_new = wrap(lib, 'termkey_new', c.ptr, c.int, c.int)
+pub termkey_waitkey = wrap(lib, 'termkey_waitkey', c.int, c.ptr, c.ptr)
+pub termkey_strfkey = wrap(lib, 'termkey_strfkey', c.u64, c.ptr, c.ptr, c.u64, c.ptr, c.int)
+pub termkey_destroy = wrap(lib, 'termkey_destroy', c.void, c.ptr)
