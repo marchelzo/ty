@@ -248,9 +248,9 @@ cffi_realloc(int argc, struct value *kwargs)
                 vm_panic("ffi.realloc() expects 2 arguments but got %d", argc);
         }
 
-		if (ARG(0).type != VALUE_PTR) {
-			vm_panic("ffi.realloc(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
-		}
+        if (ARG(0).type != VALUE_PTR) {
+            vm_panic("ffi.realloc(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
+        }
 
         if (ARG(1).type != VALUE_INTEGER) {
                 vm_panic("ffi.realloc(): expected integer as second argument but got: %s", value_show(&ARG(1)));
@@ -629,7 +629,7 @@ cffi_closure(int argc, struct value *kwargs)
         }
 
         struct value f = ARG(argc - 1);
-		vm_pop();
+        vm_pop();
 
         if (!CALLABLE(f)) {
                 vm_panic("ffi.closure(): last argument must be callable");
@@ -637,9 +637,9 @@ cffi_closure(int argc, struct value *kwargs)
 
         struct value cif = cffi_cif(argc - 1, NULL);
 
-		if (cif.type == VALUE_NIL) {
-			vm_panic("ffi.closure(): failed to construct cif");
-		}
+        if (cif.type == VALUE_NIL) {
+                vm_panic("ffi.closure(): failed to construct cif");
+        }
 
         void *code;
 
@@ -652,9 +652,9 @@ cffi_closure(int argc, struct value *kwargs)
         struct value *data = gc_alloc_object(sizeof *data, GC_VALUE);
         *data = f;
 
-		void **pointers = gc_alloc(sizeof (void *[2]));
-		pointers[0] = closure;
-		pointers[1] = cif.ptr;
+        void **pointers = gc_alloc(sizeof (void *[2]));
+        pointers[0] = closure;
+        pointers[1] = cif.ptr;
 
         if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) == FFI_OK) {
                 return EPTR(code, data, pointers);
@@ -668,17 +668,17 @@ cffi_closure(int argc, struct value *kwargs)
 struct value
 cffi_closure_free(int argc, struct value *kwargs)
 {
-	if (argc != 1) {
-		vm_panic("ffi.freeClosure(): expected 1 argument but got %d", argc);
-	}
+        if (argc != 1) {
+                vm_panic("ffi.freeClosure(): expected 1 argument but got %d", argc);
+        }
 
-	struct value p = ARG(0);
+        struct value p = ARG(0);
 
-	void **pointers = p.extra;
+        void **pointers = p.extra;
 
-	ffi_closure_free(pointers[0]);
-	gc_free(pointers[1]);
-	gc_free(pointers);
+        ffi_closure_free(pointers[0]);
+        gc_free(pointers[1]);
+        gc_free(pointers);
 
-	return NIL;
+        return NIL;
 }
