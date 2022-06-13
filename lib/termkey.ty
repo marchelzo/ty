@@ -130,3 +130,7 @@ pub termkey_destroy = wrap(lib, 'termkey_destroy', c.void, c.ptr)
 pub function termkey_keytype(key) {
 	c.member(TermKeyKey, key, 0)
 }
+
+pub function termkey_keymod(key) {
+	c.member(TermKeyKey, key, 2)
+}
