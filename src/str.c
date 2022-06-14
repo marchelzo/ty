@@ -195,6 +195,98 @@ string_slice(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
+string_search_all(struct value *string, int argc, struct value *kwargs)
+{
+        if (argc != 1 && argc != 2)
+                vm_panic("str.searchAll() expects 1 or 2 arguments but got %d", argc);
+
+        struct value pattern = ARG(0);
+
+        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
+                vm_panic("the pattern argument to str.searchAll() must be a string or a regex");
+
+        int offset;
+        if (argc == 1)
+                offset = 0;
+        else if (ARG(1).type == VALUE_INTEGER)
+                offset = ARG(1).integer;
+        else
+                vm_panic("the second argument to str.searchAll() must be an integer");
+
+        if (offset < 0) {
+                stringcount(string->string, string->bytes, -1);
+                offset += outpos.graphemes;
+        }
+
+        if (offset < 0)
+                vm_panic("invalid offset passed to str.searchAll()");
+
+        stringcount(string->string, string->bytes, offset);
+        if (outpos.graphemes != offset)
+                return NIL;
+
+        char const *s = string->string + outpos.bytes;
+        int bytes = string->bytes - outpos.bytes;
+
+        int n;
+        int off = 0;
+
+		struct value result = ARRAY(value_array_new());
+
+		gc_push(&result);
+
+        if (pattern.type == VALUE_STRING) {
+                while (off < bytes) {
+                        char const *match = memmem(s + off, bytes - off, pattern.string, pattern.bytes);
+
+                        if (match == NULL)
+                                break;
+
+                        n = match - (s + off);
+
+                        stringcount(s + off, n, -1);
+
+                        value_array_push(result.array, INTEGER(offset + outpos.graphemes));
+
+                        stringcount(s + off, n + pattern.bytes, -1);
+
+                        offset += outpos.graphemes;
+                        off += n + pattern.bytes;
+                }
+        } else {
+                pcre *re = pattern.regex->pcre;
+                int rc;
+                int out[3];
+
+                while (off < bytes) {
+                        rc = pcre_exec(re, pattern.regex->extra, s + off, bytes, 0, 0, out, 3);
+
+                        if (rc == -1 || rc == -2)
+                                break;
+
+                        if (rc < -1)
+                                vm_panic("error executing regular expression: %d", rc);
+
+                        n = out[0];
+
+                        stringcount(s + off, n, -1);
+
+                        value_array_push(result.array, INTEGER(offset + outpos.graphemes));
+
+                        stringcount(s + off, out[1], -1);
+
+                        offset += outpos.graphemes;
+                        off += out[1];
+                }
+        }
+
+
+		gc_pop();
+
+        return result;
+}
+
+static struct value
 string_search(struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
@@ -1155,33 +1247,34 @@ string_clone(struct value *string, int argc, struct value *kwargs)
 }
 
 DEFINE_METHOD_TABLE(
-        { .name = "byte",      .func = string_byte      },
-        { .name = "bytes",     .func = string_bytes     },
-        { .name = "char",      .func = string_char      },
-        { .name = "chars",     .func = string_chars     },
-        { .name = "clone",     .func = string_clone     },
-        { .name = "comb",      .func = string_comb      },
-        { .name = "contains?", .func = string_contains  },
-        { .name = "count",     .func = string_count     },
-        { .name = "cstr",      .func = string_cstr      },
-        { .name = "len",       .func = string_length    },
-        { .name = "lines",     .func = string_lines     },
-        { .name = "lower",     .func = string_lower     },
-        { .name = "match!",    .func = string_match     },
-        { .name = "match?",    .func = string_is_match  },
-        { .name = "matches",   .func = string_matches   },
-        { .name = "padLeft",   .func = string_pad_left  },
-        { .name = "padRight",  .func = string_pad_right },
-        { .name = "ptr",       .func = string_ptr       },
-        { .name = "repeat",    .func = string_repeat    },
-        { .name = "replace",   .func = string_replace   },
-        { .name = "search",    .func = string_search    },
-        { .name = "size",      .func = string_size      },
-        { .name = "slice",     .func = string_slice     },
-        { .name = "split",     .func = string_split     },
-        { .name = "sub",       .func = string_replace   },
-        { .name = "upper",     .func = string_upper     },
-        { .name = "words",     .func = string_words     },
+        { .name = "byte",      .func = string_byte       },
+        { .name = "bytes",     .func = string_bytes      },
+        { .name = "char",      .func = string_char       },
+        { .name = "chars",     .func = string_chars      },
+        { .name = "clone",     .func = string_clone      },
+        { .name = "comb",      .func = string_comb       },
+        { .name = "contains?", .func = string_contains   },
+        { .name = "count",     .func = string_count      },
+        { .name = "cstr",      .func = string_cstr       },
+        { .name = "len",       .func = string_length     },
+        { .name = "lines",     .func = string_lines      },
+        { .name = "lower",     .func = string_lower      },
+        { .name = "match!",    .func = string_match      },
+        { .name = "match?",    .func = string_is_match   },
+        { .name = "matches",   .func = string_matches    },
+        { .name = "padLeft",   .func = string_pad_left   },
+        { .name = "padRight",  .func = string_pad_right  },
+        { .name = "ptr",       .func = string_ptr        },
+        { .name = "repeat",    .func = string_repeat     },
+        { .name = "replace",   .func = string_replace    },
+        { .name = "search",    .func = string_search     },
+        { .name = "searchAll", .func = string_search_all },
+        { .name = "size",      .func = string_size       },
+        { .name = "slice",     .func = string_slice      },
+        { .name = "split",     .func = string_split      },
+        { .name = "sub",       .func = string_replace    },
+        { .name = "upper",     .func = string_upper      },
+        { .name = "words",     .func = string_words      },
 );
 
 DEFINE_METHOD_LOOKUP(string)
