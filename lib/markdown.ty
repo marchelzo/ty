@@ -166,6 +166,3 @@ pub function parse(s) {
     MarkdownNode(doc)
   }
 }
-
-let doc = parse(slurp('test.md'))
-print(doc.html())
