@@ -123,6 +123,7 @@ typedef struct {
 typedef vec(struct value) ValueStack;
 typedef vec(Frame) FrameStack;
 typedef vec(char *) CallStack;
+typedef vec(char const *) StringVector;
 typedef vec(struct try) TryStack;
 typedef vec(struct sigfn) SigfnStack;
 
@@ -840,6 +841,20 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
         }
 }
 
+inline static void
+AddTupleEntry(StringVector *names, ValueVector *values, char const *name, struct value const *v)
+{
+        for (int i = 0; i < names->count; ++i) {
+                if (names->items[i] != NULL && strcmp(names->items[i], name) == 0) {
+                        values->items[i] = *v;
+                        return;
+                }
+        }
+
+        vec_push(*names, name);
+        vec_push(*values, *v);
+}
+
 static void
 vm_exec(char *code)
 {
@@ -1386,47 +1401,59 @@ Throw:
 
                         break;
                 CASE(TUPLE)
+                {
+                        static _Thread_local StringVector names;
+                        static _Thread_local ValueVector values;
+
+                        names.count = 0;
+                        values.count = 0;
+
+                        bool have_names = false;
+
                         n = stack.count - *vec_pop(sp_stack);
 
-                        k = 0;
-                        for (int i = 0; i < n; ++i) {
-                                if (stack.items[stack.count - n + i].type != VALUE_NONE) {
-                                        k += 1;
-                                }
-                        }
-
-                        vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
-                        v = TUPLE(vp, NULL, k, false);
-
-                        if (k > 0) NOGC(vp);
-
-                        for (int i = 0, j = 0; i < n; ++i, ip += strlen(ip) + 1) {
-                                if (stack.items[stack.count - n + i].type == VALUE_NONE) {
-                                        continue;
-                                }
-
-                                vp[j++] = stack.items[stack.count - n + i];
-
-                                if (ip[0] == 0) {
-                                        continue;
-                                }
-
-                                if (v.names == NULL) {
-                                        v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
-                                        for (int i = 0; i < k; ++i) {
-                                                v.names[i] = NULL;
+                        for (int i = 0; i < n; ++i, ip += strlen(ip) + 1) {
+                                struct value *v = &stack.items[stack.count - n + i];
+                                if (v->type == VALUE_TUPLE && strcmp(ip, "*") == 0) {
+                                        for (int j = 0; j < v->count; ++j) {
+                                                if (v->names != NULL && v->names[j] != NULL) {
+                                                        AddTupleEntry(&names, &values, v->names[j], &v->items[j]);
+                                                        have_names = true;
+                                                } else {
+                                                        vec_push(names, NULL);
+                                                        vec_push(values, v->items[j]);
+                                                }
+                                        }
+                                } else if (v->type != VALUE_NONE) {
+                                        if (ip[0] == '\0') {
+                                                vec_push(names, NULL);
+                                                vec_push(values, *v);
+                                        } else {
+                                                AddTupleEntry(&names, &values, ip, v);
+                                                have_names = true;
                                         }
                                 }
-
-                                v.names[j - 1] = ip;
                         }
 
                         stack.count -= n;
+
+                        k = values.count;
+                        vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
+
+                        v = TUPLE(vp, NULL, k, false);
+
+                        if (k > 0) {
+                                memcpy(vp, values.items, sizeof (struct value[k]));
+                                if (have_names) {
+                                        v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
+                                        memcpy(v.names, names.items, sizeof (char *[k]));
+                                }
+                        }
+
                         push(v);
 
-                        if (k > 0) OKGC(vp);
-
                         break;
+                }
                 CASE(DICT)
                         v = DICT(dict_new());
                         NOGC(v.dict);

@@ -933,6 +933,17 @@ prefix_record(void)
                         vec_push(e->required, true);
                 }
 
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *item = mkexpr();
+                        item->type = EXPRESSION_SPREAD;
+                        item->value = parse_expr(0);
+                        item->start = item->value->start;
+                        vec_push(e->names, "*");
+                        vec_push(e->es, item);
+                        goto Next;
+                }
+
                 expect(TOKEN_IDENTIFIER);
                 vec_push(e->names, tok()->identifier);
 
@@ -950,13 +961,13 @@ prefix_record(void)
 
                 vec_push(e->es, parse_expr(0));
 
+Next:
                 if (have_keyword(KEYWORD_IF)) {
                         next();
                         vec_push(e->tconds, parse_expr(0));
                 } else {
                         vec_push(e->tconds, NULL);
                 }
-
                 if (tok()->type == ',') {
                         next();
                 }

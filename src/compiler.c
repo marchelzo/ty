@@ -3859,6 +3859,8 @@ emit_expr(struct expression const *e, bool need_loc)
                                 PATCH_JUMP(good);
                         } else if (!e->required.items[i]) {
                                 emit_non_nil_expr(e->es.items[i], true);
+                        } else if (e->es.items[i]->type == EXPRESSION_SPREAD) {
+                                emit_expression(e->es.items[i]->value);
                         } else {
                                 emit_expression(e->es.items[i]);
                         }
