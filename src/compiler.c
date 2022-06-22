@@ -1148,6 +1148,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         symbolize_expression(scope, e->constraints.items[i]);
                 }
 
+                symbolize_expression(scope, e->return_type);
+
                 symbolize_statement(scope, e->body);
 
                 e->scope = scope;
@@ -1775,6 +1777,20 @@ emit_function(struct expression const *e, int class)
                 emit_statement(&empty, false);
         } else {
                 emit_statement(body, true);
+                if (e->return_type != NULL) {
+                        size_t start = state.code.count;
+                        emit_instr(INSTR_DUP);
+                        emit_constraint(e->return_type);
+                        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+                        emit_instr(INSTR_BAD_CALL);
+                        if (e->name != NULL)
+                                emit_string(e->name);
+                        else
+                                emit_string("(anonymous function)");
+                        emit_string("return value");
+                        add_location(e->return_type, start, state.code.count);
+                        PATCH_JUMP(good);
+                }
                 emit_instr(INSTR_RETURN);
         }
 

@@ -239,7 +239,7 @@ mkfunc(void)
         f->type = EXPRESSION_FUNCTION;
         f->rest = -1;
         f->ikwargs = -1;
-        f->has_defer = false;
+        f->return_type = NULL;
         f->ftype = FT_NONE;
         f->name = NULL;
         f->body = NULL;
@@ -798,6 +798,12 @@ prefix_function(void)
         LOAD_NE();
 
         consume(')');
+
+        // Optional return value constraint
+        if (tok()->type == TOKEN_ARROW) {
+                next();
+                e->return_type = parse_expr(0);
+        }
 
         e->body = parse_statement(-1);
 
@@ -2194,6 +2200,7 @@ infix_arrow_function(struct expression *left)
         e->rest = -1;
         e->ikwargs = -1;
         e->has_defer = false;
+        e->return_type = NULL;
         e->ftype = FT_NONE;
         e->name = NULL;
         vec_init(e->params);
