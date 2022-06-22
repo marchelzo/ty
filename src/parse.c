@@ -53,8 +53,8 @@
         static struct expression * \
         prefix_ ## name(void) \
         { \
-                consume(TOKEN_ ## token); \
                 struct expression *e = mkexpr(); \
+                consume(TOKEN_ ## token); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = parse_expr(prec); \
                 e->end = e->operand->end; \
@@ -65,8 +65,8 @@
         static struct expression * \
         prefix_ ## name(void) \
         { \
-                struct expression *e = mkexpr(); \
                 consume(TOKEN_ ## token); \
+                struct expression *e = mkexpr(); \
                 e->type = EXPRESSION_PREFIX_ ## token; \
                 e->operand = assignment_lvalue(parse_expr(prec)); \
                 e->end = End; \
