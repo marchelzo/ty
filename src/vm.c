@@ -965,6 +965,7 @@ vm_exec(char *code)
                         if (frames.count == 0)
                                 goto TargetGlobal;
                         READVALUE(n);
+                        LOG("Targeting %d", n);
                         pushtarget(local(n), NULL);
                         break;
                 CASE(TARGET_REF)
@@ -1143,16 +1144,20 @@ Throw:
                                 );
                         } else {
                                 t->executing = true;
+                                SWAP(size_t, t->ctxs, frames.count);
                         }
 
                         v = pop();
+
                         stack.count = t->sp;
+
                         push(SENTINEL);
                         push(v);
 
                         targets.count = t->ts;
                         calls.count = t->cs;
                         ip = t->catch;
+
                         gc_truncate_root_set(t->gc);
 
                         longjmp(t->jb, 1);
@@ -1160,6 +1165,9 @@ Throw:
                 CASE(FINALLY)
                 {
                         struct try *t = vec_pop(try_stack);
+                        if (t->executing) {
+                                SWAP(size_t, t->ctxs, frames.count);
+                        }
                         if (t->finally == NULL)
                                 break;
                         *t->end = INSTR_HALT;
@@ -1168,7 +1176,7 @@ Throw:
                         break;
                 }
                 CASE(POP_TRY)
-                        frames.count = vec_last(try_stack)->ctxs;
+                        //frames.count = vec_last(try_stack)->ctxs;
                         --try_stack.count;
                         break;
                 CASE(TRY)
