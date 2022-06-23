@@ -123,8 +123,10 @@ enum instruction {
         INSTR_MAKE_GENERATOR,
 
         INSTR_THROW,
+        INSTR_RETHROW,
         INSTR_TRY,
         INSTR_POP_TRY,
+        INSTR_POP_THROW,
         INSTR_FINALLY,
 
         INSTR_PUSH_DEFER_GROUP,

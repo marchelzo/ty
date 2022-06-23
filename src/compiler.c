@@ -2013,7 +2013,7 @@ emit_try(struct statement const *s, bool want_result)
         }
 
         emit_instr(INSTR_FINALLY);
-        emit_instr(INSTR_THROW);
+        emit_instr(INSTR_RETHROW);
 
         patch_jumps_to(&state.match_successes, state.code.count);
         PATCH_JUMP(end);
@@ -2337,6 +2337,7 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
         bool returns = false;
 
         emit_instr(INSTR_POP_TRY);
+        emit_instr(INSTR_POP_THROW);
 
         if (s != NULL) {
                 returns = emit_statement(s, want_result);

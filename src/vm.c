@@ -100,6 +100,11 @@ struct try {
         bool executing;
 };
 
+typedef struct ThrowCtx {
+        int ctxs;
+        char const *ip;
+} ThrowCtx;
+
 static vec(struct value) Globals;
 
 struct sigfn {
@@ -135,6 +140,7 @@ static _Thread_local FrameStack frames;
 static _Thread_local SPStack sp_stack;
 static _Thread_local TargetStack targets;
 static _Thread_local TryStack try_stack;
+static _Thread_local vec(ThrowCtx) throw_stack;
 static _Thread_local ValueStack defer_stack;
 static _Thread_local char *ip;
 
@@ -1131,7 +1137,18 @@ vm_exec(char *code)
                         break;
                 CASE(THROW)
 Throw:
+                        vec_push(throw_stack, ((ThrowCtx) {
+                                .ctxs = frames.count,
+                                .ip = ip
+                        }));
+                        // Fallthrough
+                CASE(RETHROW)
                         if (try_stack.count == 0) {
+                                ThrowCtx c = *vec_pop(throw_stack);
+
+                                frames.count = c.ctxs;
+                                ip = (char *)c.ip;
+
                                 vm_panic("uncaught exception: %s%s%s", TERM(31), value_show(top()), TERM(39));
                         }
 
@@ -1142,10 +1159,9 @@ Throw:
                                         "an exception was thrown while handling another exception: %s%s%s",
                                         TERM(31), value_show(top()), TERM(39)
                                 );
-                        } else {
-                                t->executing = true;
-                                SWAP(size_t, t->ctxs, frames.count);
                         }
+
+                        t->executing = true;
 
                         v = pop();
 
@@ -1154,6 +1170,7 @@ Throw:
                         push(SENTINEL);
                         push(v);
 
+                        frames.count = t->ctxs;
                         targets.count = t->ts;
                         calls.count = t->cs;
                         ip = t->catch;
@@ -1165,9 +1182,6 @@ Throw:
                 CASE(FINALLY)
                 {
                         struct try *t = vec_pop(try_stack);
-                        if (t->executing) {
-                                SWAP(size_t, t->ctxs, frames.count);
-                        }
                         if (t->finally == NULL)
                                 break;
                         *t->end = INSTR_HALT;
@@ -1176,8 +1190,10 @@ Throw:
                         break;
                 }
                 CASE(POP_TRY)
-                        //frames.count = vec_last(try_stack)->ctxs;
                         --try_stack.count;
+                        break;
+                CASE(POP_THROW)
+                        --throw_stack.count;
                         break;
                 CASE(TRY)
                 {
