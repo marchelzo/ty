@@ -298,6 +298,7 @@ token(int i)
                         lex_save(&CtxCheckpoint);
                 }
                 t = lex_token(lctx);
+                LOG("Adding tokens[%d] = %s\n", tokens.count, token_show(&t));
                 vec_push(tokens, t);
         }
 
@@ -345,12 +346,21 @@ setctx(int ctx)
 
         bool next_nl = tok()->type == TOKEN_NEWLINE;
 
-        lex_rewind(&tok()->start);
+        LOG("Rewinding to: %.8s...  TokenIndex=%d\n", tok()->start.s, TokenIndex);
+
+        struct location start = tok()->start;
+        lex_rewind(&start);
 
         if (next_nl)
                 lex_need_nl();
 
         while (tokens.count > TokenIndex && !(vec_last(tokens)->ctx & (ctx | LEX_FAKE))) {
+                LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(vec_last(tokens)));
+                tokens.count -= 1;
+        }
+
+        while (tokens.count > 0 && vec_last(tokens)->start.s == start.s) {
+                LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(vec_last(tokens)));
                 tokens.count -= 1;
         }
 }
@@ -2807,11 +2817,26 @@ parse_for_loop(void)
                 next();
         }
 
+        int save = TokenIndex;
+        jmp_buf jb_save;
+        memcpy(&jb_save, &jb, sizeof jb);
+        SAVE_NI(true);
+        bool cloop;
+        if (setjmp(jb) != 0) {
+                cloop = true;
+        } else {
+                parse_expr(0);
+                cloop = tok()->type == ';';
+        }
+        LOAD_NI();
+        memcpy(&jb, &jb_save, sizeof jb);
+        seek(save);
+
         /*
          * First try to parse this as a for-each loop. If that fails, assume it's
          * a C-style for loop.
          */
-        if (match || (tok()->type != ';' && (tok()->type != TOKEN_KEYWORD || tok()->keyword != KEYWORD_LET))) {
+        if (!cloop) {
                 s->type = STATEMENT_EACH_LOOP;
                 s->each.target = parse_target_list();
 
