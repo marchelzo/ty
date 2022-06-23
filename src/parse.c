@@ -2843,26 +2843,26 @@ parse_for_loop(void)
         s->type = STATEMENT_FOR_LOOP;
 
         bool match = false;
+        bool cloop = false;
 
         if (have_keyword(KEYWORD_MATCH)) {
                 match = true;
                 next();
-        }
-
-        int save = TokenIndex;
-        jmp_buf jb_save;
-        memcpy(&jb_save, &jb, sizeof jb);
-        SAVE_NI(true);
-        bool cloop;
-        if (setjmp(jb) != 0) {
-                cloop = true;
         } else {
-                parse_expr(0);
-                cloop = tok()->type == ';';
+                int save = TokenIndex;
+                jmp_buf jb_save;
+                memcpy(&jb_save, &jb, sizeof jb);
+                SAVE_NI(true);
+                if (setjmp(jb) != 0) {
+                        cloop = true;
+                } else {
+                        parse_expr(0);
+                        cloop = tok()->type == ';';
+                }
+                LOAD_NI();
+                memcpy(&jb, &jb_save, sizeof jb);
+                seek(save);
         }
-        LOAD_NI();
-        memcpy(&jb, &jb_save, sizeof jb);
-        seek(save);
 
         /*
          * First try to parse this as a for-each loop. If that fails, assume it's
@@ -2870,6 +2870,16 @@ parse_for_loop(void)
          */
         if (!cloop) {
                 s->type = STATEMENT_EACH_LOOP;
+
+                if (match) {
+                        unconsume(TOKEN_KEYWORD);
+                        tok()->keyword = KEYWORD_IN;
+
+                        unconsume(TOKEN_IDENTIFIER);
+                        tok()->identifier = gensym();
+                        tok()->module = NULL;
+                }
+
                 s->each.target = parse_target_list();
 
                 consume_keyword(KEYWORD_IN);
