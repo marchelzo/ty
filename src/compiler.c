@@ -751,9 +751,11 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 items->end = tagged[tagc - 1]->end;
                                 vec_init(items->elements);
                                 vec_init(items->aconds);
+                                vec_init(items->optional);
                                 for (int i = 0; i < tagc; ++i) {
                                         vec_push(items->elements, tagged[i]);
                                         vec_push(items->aconds, NULL);
+                                        vec_push(items->optional, false);
                                 }
                                 e->tagged = items;
                         }
