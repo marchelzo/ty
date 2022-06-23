@@ -22,7 +22,7 @@ array_min_by(struct value *array, int argc, struct value *kwargs);
 static struct value
 array_max_by(struct value *array, int argc, struct value *kwargs);
 
-static struct value *comparison_fn;
+static _Thread_local struct value *comparison_fn;
 
 static int
 compare_by(void const *v1, void const *v2)
@@ -384,7 +384,28 @@ array_sort(struct value *array, int argc, struct value *kwargs)
         if (n < 0 || i < 0 || i + n > array->array->count)
                 vm_panic("invalid index passed to array.sort()");
 
-        qsort(array->array->items + i, n, sizeof (struct value), value_compare);
+        struct value *by = NAMED("by");
+        struct value *cmp = NAMED("cmp");
+
+        if (by != NULL && cmp != NULL) {
+                vm_panic("ambiguous call to Array.sort(): by and cmp both specified");
+        }
+
+        if (by != NULL) {
+                if (!CALLABLE(*by)) {
+                        vm_panic("Array.sort(): `by` is not callable");
+                }
+                comparison_fn = by;
+                qsort(array->array->items + i, n, sizeof (struct value), compare_by);
+        } else if (cmp != NULL) {
+                if (!CALLABLE(*cmp)) {
+                        vm_panic("Array.sort(): `cmp` is not callable");
+                }
+                comparison_fn = cmp;
+                qsort(array->array->items + i, n, sizeof (struct value), compare_by2);
+        } else {
+                qsort(array->array->items + i, n, sizeof (struct value), value_compare);
+        }
 
         return *array;
 }
@@ -1907,6 +1928,26 @@ array_rotate(struct value *array, int argc, struct value *kwargs)
 }
 
 static struct value
+array_sort_on(struct value *array, int argc, struct value *kwargs)
+{
+        if (argc != 1)
+                vm_panic("Array.sortOn() expects 1 argument but got %d", argc);
+
+        struct value f = ARG(0);
+        if (!CALLABLE(f))
+                vm_panic("non-function passed to the Array.sortOn()");
+
+        if (array->array->count == 0)
+                return *array;
+
+        comparison_fn = &f;
+
+        qsort(array->array->items, array->array->count, sizeof (struct value), compare_by);
+
+        return *array;
+}
+
+static struct value
 array_sort_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
@@ -1921,10 +1962,7 @@ array_sort_by(struct value *array, int argc, struct value *kwargs)
 
         comparison_fn = &f;
 
-        if (f.type == VALUE_FUNCTION && f.info[2] > 1)
-                qsort(array->array->items, array->array->count, sizeof (struct value), compare_by2);
-        else
-                qsort(array->array->items, array->array->count, sizeof (struct value), compare_by);
+        qsort(array->array->items, array->array->count, sizeof (struct value), compare_by2);
 
         return *array;
 }
@@ -1968,6 +2006,7 @@ DEFINE_NO_MUT(scan_right);
 DEFINE_NO_MUT(shuffle);
 DEFINE_NO_MUT(sort);
 DEFINE_NO_MUT(sort_by);
+DEFINE_NO_MUT(sort_on);
 DEFINE_NO_MUT(uniq);
 DEFINE_NO_MUT(zip);
 DEFINE_NO_MUT(next_permutation);
@@ -2043,6 +2082,8 @@ DEFINE_METHOD_TABLE(
         { .name = "sort!",             .func = array_sort                    },
         { .name = "sortBy",            .func = array_sort_by_no_mut          },
         { .name = "sortBy!",           .func = array_sort_by                 },
+        { .name = "sortOn",            .func = array_sort_on_no_mut          },
+        { .name = "sortOn!",           .func = array_sort_on                 },
         { .name = "split",             .func = array_split_at                },
         { .name = "sum",               .func = array_sum                     },
         { .name = "swap",              .func = array_swap                    },
