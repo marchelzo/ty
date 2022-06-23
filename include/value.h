@@ -52,6 +52,8 @@ struct value;
 
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)
 
+#define ARITY(f) ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
+
 #define CLASS_OBJECT    0
 #define CLASS_CLASS     1
 #define CLASS_FUNCTION  2

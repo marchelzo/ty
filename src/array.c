@@ -22,6 +22,9 @@ array_min_by(struct value *array, int argc, struct value *kwargs);
 static struct value
 array_max_by(struct value *array, int argc, struct value *kwargs);
 
+static struct value
+array_reverse(struct value *array, int argc, struct value *kwargs);
+
 static _Thread_local struct value *comparison_fn;
 
 static int
@@ -405,6 +408,12 @@ array_sort(struct value *array, int argc, struct value *kwargs)
                 qsort(array->array->items + i, n, sizeof (struct value), compare_by2);
         } else {
                 qsort(array->array->items + i, n, sizeof (struct value), value_compare);
+        }
+
+        struct value *desc = NAMED("desc");
+
+        if (desc != NULL && value_truthy(desc)) {
+                array_reverse(array, argc, NULL);
         }
 
         return *array;
@@ -1951,11 +1960,11 @@ static struct value
 array_sort_by(struct value *array, int argc, struct value *kwargs)
 {
         if (argc != 1)
-                vm_panic("the sortBy method on arrays expects 1 argument but got %d", argc);
+                vm_panic("Array.sortBy() expects 1 argument but got %d", argc);
 
         struct value f = ARG(0);
         if (!CALLABLE(f))
-                vm_panic("non-function passed to the sortBy method on array");
+                vm_panic("non-function passed to the Array.sortBy()");
 
         if (array->array->count == 0)
                 return *array;
