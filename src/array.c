@@ -374,8 +374,6 @@ array_sort(struct value *array, int argc, struct value *kwargs)
                 if (ARG(0).type != VALUE_INTEGER)
                         vm_panic("the first argument to array.sort() must be an integer");
                 i = ARG(0).integer;
-                if (argc == 1)
-                        n = array->array->count - i;
                 break;
         default:
                 vm_panic("array.sort() expects 0, 1, or 2 arguments but got %d", argc);
@@ -383,6 +381,9 @@ array_sort(struct value *array, int argc, struct value *kwargs)
 
         if (i < 0)
                 i += array->array->count;
+
+        if (argc == 1)
+                n = array->array->count - i;
 
         if (n < 0 || i < 0 || i + n > array->array->count)
                 vm_panic("invalid index passed to array.sort()");
