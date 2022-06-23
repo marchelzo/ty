@@ -910,6 +910,12 @@ lex_end(void)
         state = *vec_pop(states);
 }
 
+struct location
+lex_pos(void)
+{
+        return state.loc;
+}
+
 static struct token *
 lex(char const *s)
 {

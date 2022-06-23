@@ -140,6 +140,9 @@ static char const *filename;
 noreturn static void
 error(char const *fmt, ...);
 
+static void
+logctx(void);
+
 static parse_fn *
 get_infix_parser(void);
 
@@ -359,10 +362,35 @@ setctx(int ctx)
                 tokens.count -= 1;
         }
 
-        while (tokens.count > 0 && vec_last(tokens)->start.s == start.s) {
+        while (tokens.count > 0 && vec_last(tokens)->start.s == start.s && !(vec_last(tokens)->ctx & LEX_FAKE)) {
                 LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(vec_last(tokens)));
                 tokens.count -= 1;
         }
+
+        logctx();
+}
+
+static void
+logctx(void)
+{
+#ifndef TY_NO_LOG
+        int lo = max(0, TokenIndex - 3);
+        int hi = min((int)tokens.count - 1, TokenIndex + 3);
+
+        fprintf(stderr, "Lex context: %s    ", lctx == LEX_PREFIX ? "prefix" : "infix");
+
+        for (int i = lo; i <= hi; ++i) {
+                if (i == TokenIndex) {
+                        fprintf(stderr, "  %s[%s]%s", TERM(34), token_show(&tokens.items[i]), TERM(39));
+                } else {
+                        fprintf(stderr, "  [%s]", token_show(&tokens.items[i]));
+                }
+        }
+
+        char const *ahead = lex_pos().s;
+
+        fprintf(stderr, ": %.*s\n\n", (int)strcspn(ahead, "\n"), ahead);
+#endif
 }
 
 
@@ -379,6 +407,10 @@ unconsume(int type)
                 .end = End,
                 .ctx = LEX_FAKE
         };
+
+        LOG("Inserting tokens[%d] = %s", TokenIndex, token_show(&t));
+
+        logctx();
 
         vec_insert(tokens, t, TokenIndex);
 }

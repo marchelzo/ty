@@ -42,4 +42,7 @@ lex_save(LexState *state);
 void
 lex_need_nl(void);
 
+struct location
+lex_pos(void);
+
 #endif
