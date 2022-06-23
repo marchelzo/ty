@@ -136,6 +136,8 @@ struct state {
         location_vector expression_locations;
 };
 
+bool CheckConstraints = true;
+
 static jmp_buf jb;
 static char const *Error;
 
@@ -1712,7 +1714,7 @@ emit_function(struct expression const *e, int class)
         }
 
         for (int i = 0; i < e->param_symbols.count; ++i) {
-                if (e->constraints.items[i] == NULL)
+                if (!CheckConstraints || e->constraints.items[i] == NULL)
                         continue;
                 struct symbol const *s = e->param_symbols.items[i];
                 size_t start = state.code.count;
@@ -1777,7 +1779,7 @@ emit_function(struct expression const *e, int class)
                 emit_statement(&empty, false);
         } else {
                 emit_statement(body, true);
-                if (e->return_type != NULL) {
+                if (CheckConstraints && e->return_type != NULL) {
                         size_t start = state.code.count;
                         emit_instr(INSTR_DUP);
                         emit_constraint(e->return_type);

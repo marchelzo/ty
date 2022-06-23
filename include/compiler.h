@@ -1,6 +1,8 @@
 #ifndef COMPILE_H_INCLUDED
 #define COMPILE_H_INCLUDED
 
+extern _Bool CheckConstraints;
+
 char const *
 compiler_error(void);
 

@@ -199,7 +199,14 @@ main(int argc, char **argv)
         if (argc <= 1)
                 repl();
 
-        if (strcmp(argv[1], "-e") == 0) {
+        int i = 1;
+
+        if (strcmp(argv[i], "-q") == 0) {
+                CheckConstraints = false;
+                i += 1;
+        }
+
+        if (strcmp(argv[i], "-e") == 0) {
                 if (argc < 3) {
                         fputs("error: -e with no program specified", stderr);
                         return -1;
@@ -211,7 +218,7 @@ main(int argc, char **argv)
                         return -1;
                 }
         } else {
-                char const *file = (argc > 1 && strcmp(argv[1], "-") != 0) ? argv[1] : "/dev/stdin";
+                char const *file = (argc > 1 && strcmp(argv[i], "-") != 0) ? argv[i] : "/dev/stdin";
                 if (!vm_execute_file(file)) {
                         fprintf(stderr, "%s\n", vm_error());
                         return -1;
