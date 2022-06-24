@@ -354,6 +354,38 @@ class String : Iterable {
         return b
     }
 
+    editDistance(other) {
+        let a, b = self, other
+
+        let D = [[0 for _ in ...#b] for _ in ...#a]
+
+        for i in ...#a {
+            D[i][0] = i
+        }
+
+        for j in ...#b {
+            D[0][j] = j
+        }
+
+        for i in ..#a {
+            for j in ..#b {
+                let cost = (a[i] == b[j]) ? 0 : 1
+
+                D[i + 1][j + 1] = min(
+                    D[i][j + 1] + 1,
+                    D[i + 1][j] + 1,
+                    D[i][j] + cost
+                )
+
+                if i > 0 && j > 0 && a[i] == b[j - 1] && b[j] == a[i - 1] {
+                    D[i + 1][j + 1] = min(D[i + 1][j + 1], D[i - 1][j - 1] + 1)
+                }
+            }
+        }
+
+        D[#a][#b]
+    }
+
     __iter__() {
         for c in @chars() {
             yield c

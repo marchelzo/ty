@@ -44,16 +44,24 @@ function add(opt, result, value) {
     }
 }
 
-function make(*opts) {
+function make(*opts, version) {
     return function (argv) {
         let result = %{}
-        let i = 0
+        let i = 1
 
         function next() {
             if i == #argv {
                 throw "Expected argument after {argv[i - 1]}"
             }
             return argv[i++]
+        }
+
+        function getflag(f) {
+            opts.find(o -> o.type == 'f' && (o.short == f || o.long == f))
+        }
+
+        function getopt(opt) {
+            opts.find(o -> o.type == 'o' && (o.short == opt || o.long == opt))
         }
 
         while i < #argv {
@@ -65,6 +73,14 @@ function make(*opts) {
 
                 _ :: ('-h' | '--help') => {
                     let [flags, opts] = opts.partition(o -> o.type == 'f')
+
+                    if version {
+                        print("{argv[0]} version {version}\n")
+                    } else {
+                        print("{argv[0]}\n")
+                    }
+
+                    print("USAGE: {argv[0]} [OPTIONS]\n")
 
                     if #opts > 0 {
                         print('Options')
@@ -105,7 +121,7 @@ function make(*opts) {
                 },
 
                 /^--([^=]+)$/ => {
-                    if let $opt = opts.filter(o -> o.type == 'f').find(&.long |> (== _1)) {
+                    if let $opt = getflag(_1) {
                         if opt.long  { result << opt.long  }
                         if opt.short { result << opt.short }
                     } else {
@@ -113,7 +129,7 @@ function make(*opts) {
                     }
                 },
                 /^--([^=]+)=(.+)/ => {
-                    if let $opt = opts.filter(o -> o.type == 'o').find(&.long |> (== _1)) {
+                    if let $opt = getopt(_1) {
                         if !(_2 :: opt.pre) {
                             throw "Invalid value for {_1}: {_2}"
                         }
@@ -122,6 +138,14 @@ function make(*opts) {
                             throw "Invalid value for {_1}: {_2}"
                         }
                         add(opt, result, value)
+                    } else if let $flag = getflag(_1) and _2 in bools {
+                        if bools[_2] {
+                            if flag.short { result << flag.short }
+                            if flag.long  { result << flag.long  }
+                        } else {
+                            result.remove(flag.short)
+                            result.remove(flag.long)
+                        }
                     } else {
                         throw "Unrecognized option: {_1}"
                     }
