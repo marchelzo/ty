@@ -64,6 +64,19 @@ function make(*opts, version) {
             opts.find(o -> o.type == 'o' && (o.short == opt || o.long == opt))
         }
 
+        function similar(opt) {
+            opts.filter(o -> o.long && o.long.editDistance(opt) <= max(1, #o.long / 4)).map(&.long)
+        }
+
+        function unrecognized(opt) {
+            let close = similar(opt).map(${"--{it}"})
+            if #close > 0 {
+                throw "Unrecognized option: --{opt} (similar options: {close.join(', ')})"
+            } else {
+                throw "Unrecognized option: --{opt}"
+            }
+        }
+
         while i < #argv {
             let arg = next()
             match arg {
@@ -125,7 +138,7 @@ function make(*opts, version) {
                         if opt.long  { result << opt.long  }
                         if opt.short { result << opt.short }
                     } else {
-                        throw "Unrecognized flag: {_0}"
+                        unrecognized(_1)
                     }
                 },
                 /^--([^=]+)=(.+)/ => {
@@ -147,7 +160,7 @@ function make(*opts, version) {
                             result.remove(flag.long)
                         }
                     } else {
-                        throw "Unrecognized option: {_1}"
+                        unrecognized(_1)
                     }
                 },
                 /^-(.+)/ => {
@@ -175,7 +188,7 @@ function make(*opts, version) {
                         add(opt, result, value)
                     } else {
                         for c in _1 {
-                            if let $opt = opts.filter(&.type |> (== 'f')).find(&.short |> (== c)) {
+                            if let $opt = getflag(c) {
                                 if opt.short { result << opt.short }
                                 if opt.long  { result << opt.long  }
                             } else {
