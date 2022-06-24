@@ -1,14 +1,14 @@
 export make, opt, flag
 
 let bools = %{
-	'true': true,
-	'false': false,
+    'true': true,
+    'false': false,
 
-	'on': true,
-	'off': false,
+    'on': true,
+    'off': false,
 
-	'yes': true,
-	'no': false
+    'yes': true,
+    'no': false
 }
 
 function opt(short, long, pre=true, post=true, convert=id, multi=false, help='') {
@@ -19,7 +19,7 @@ function opt(short, long, pre=true, post=true, convert=id, multi=false, help='')
         post,
         convert,
         multi,
-		help,
+        help,
         type: 'o',
     }
 }
@@ -28,7 +28,7 @@ function flag(short, long, help='') {
     return {
         short,
         long,
-		help,
+        help,
         type: 'f'
     }
 }
@@ -63,46 +63,46 @@ function make(*opts) {
                     break
                 },
 
-				_ :: ('-h' | '--help') => {
-					let [flags, opts] = opts.partition(o -> o.type == 'f')
+                _ :: ('-h' | '--help') => {
+                    let [flags, opts] = opts.partition(o -> o.type == 'f')
 
-					if #opts > 0 {
-						print('Options')
-						print()
+                    if #opts > 0 {
+                        print('Options')
+                        print()
 
-						let optStrings = [
-							["-{opt.short}" if opt.short, "--{opt.long}" if opt.long].join(', ')
-							for opt in opts
-						]
+                        let optStrings = [
+                            ["-{opt.short}" if opt.short, "--{opt.long}" if opt.long].join(', ')
+                            for opt in opts
+                        ]
 
-						let maxWidth = optStrings.map(&len).max()
+                        let maxWidth = optStrings.map(&len).max()
 
-						for (opt, s) in opts.zip(optStrings) {
-							print("  {s.padRight(maxWidth)}    {opt.help}")
-						}
+                        for (opt, s) in opts.zip(optStrings) {
+                            print("  {s.padRight(maxWidth)}    {opt.help}")
+                        }
 
-						print()
-					}
+                        print()
+                    }
 
-					if #flags > 0 {
-						print('Flags')
-						print()
+                    if #flags > 0 {
+                        print('Flags')
+                        print()
 
-						let flagStrings = [
-							["-{flag.short}" if flag.short, "--{flag.long}" if flag.long].join(', ')
-							for flag in flags
-						]
+                        let flagStrings = [
+                            ["-{flag.short}" if flag.short, "--{flag.long}" if flag.long].join(', ')
+                            for flag in flags
+                        ]
 
-						let maxWidth = flagStrings.map(&len).max()
+                        let maxWidth = flagStrings.map(&len).max()
 
-						for (flag, s) in flags.zip(flagStrings) {
-							print("  {s.padRight(maxWidth)}    {flag.help}")
-						}
+                        for (flag, s) in flags.zip(flagStrings) {
+                            print("  {s.padRight(maxWidth)}    {flag.help}")
+                        }
 
-						print()
-					}
+                        print()
+                    }
 
-				},
+                },
 
                 /^--([^=]+)$/ => {
                     if let $opt = opts.filter(o -> o.type == 'f').find(&.long |> (== _1)) {
@@ -167,7 +167,7 @@ function make(*opts) {
             }
         }
 
-		argv.slice!(0, i)
+        argv.slice!(0, i)
 
         return result
     }
