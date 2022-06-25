@@ -68,7 +68,7 @@
 #define inline __attribute__((always_inline)) inline
 
 #define MatchError \
-        push(TAG(tags_lookup("MatchError"))); \
+        push(TAG(gettag(NULL, "MatchError"))); \
         goto Throw;
 
 #define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
@@ -366,9 +366,6 @@ static int builtin_count = sizeof builtins / sizeof builtins[0];
 
 pcre_jit_stack *JITStack = NULL;
 
-static void
-vm_exec(char *code);
-
 /*
  * This relies on no other symbols being introduced to the compiler
  * up until the point that this is called. i.e., it assumes that the
@@ -394,6 +391,81 @@ add_builtins(int ac, char **av)
         /* Add this here because SIGRTMIN doesn't expand to a constant */
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
+
+        compiler_introduce_tag("ty", "Integer");
+        vec_push(Globals, TAG(gettag("ty", "Integer")));
+
+        compiler_introduce_tag("ty", "String");
+        vec_push(Globals, TAG(gettag("ty", "String")));
+
+        compiler_introduce_tag("ty", "Named");
+        vec_push(Globals, TAG(gettag("ty", "Named")));
+
+        compiler_introduce_tag("ty", "Array");
+        vec_push(Globals, TAG(gettag("ty", "Array")));
+
+        compiler_introduce_tag("ty", "Dict");
+        vec_push(Globals, TAG(gettag("ty", "Dict")));
+
+        compiler_introduce_tag("ty", "Record");
+        vec_push(Globals, TAG(gettag("ty", "Record")));
+
+        compiler_introduce_tag("ty", "Float");
+        vec_push(Globals, TAG(gettag("ty", "Float")));
+
+        compiler_introduce_tag("ty", "Bool");
+        vec_push(Globals, TAG(gettag("ty", "Bool")));
+
+        compiler_introduce_tag("ty", "Id");
+        vec_push(Globals, TAG(gettag("ty", "Id")));
+
+        compiler_introduce_tag("ty", "Let");
+        vec_push(Globals, TAG(gettag("ty", "Let")));
+
+        compiler_introduce_tag("ty", "Add");
+        vec_push(Globals, TAG(gettag("ty", "Add")));
+
+        compiler_introduce_tag("ty", "Sub");
+        vec_push(Globals, TAG(gettag("ty", "Sub")));
+
+        compiler_introduce_tag("ty", "Mul");
+        vec_push(Globals, TAG(gettag("ty", "Mul")));
+
+        compiler_introduce_tag("ty", "Eq");
+        vec_push(Globals, TAG(gettag("ty", "Eq")));
+
+        compiler_introduce_tag("ty", "In");
+        vec_push(Globals, TAG(gettag("ty", "In")));
+
+        compiler_introduce_tag("ty", "NotIn");
+        vec_push(Globals, TAG(gettag("ty", "NotIn")));
+
+        compiler_introduce_tag("ty", "Or");
+        vec_push(Globals, TAG(gettag("ty", "Or")));
+
+        compiler_introduce_tag("ty", "And");
+        vec_push(Globals, TAG(gettag("ty", "And")));
+
+        compiler_introduce_tag("ty", "UserOp");
+        vec_push(Globals, TAG(gettag("ty", "UserOp")));
+
+        compiler_introduce_tag("ty", "Assign");
+        vec_push(Globals, TAG(gettag("ty", "Assign")));
+
+        compiler_introduce_tag("ty", "ArrayItem");
+        vec_push(Globals, TAG(gettag("ty", "ArrayItem")));
+
+        compiler_introduce_tag("ty", "DictItem");
+        vec_push(Globals, TAG(gettag("ty", "DictItem")));
+
+        compiler_introduce_tag("ty", "RecordEntry");
+        vec_push(Globals, TAG(gettag("ty", "RecordEntry")));
+
+        compiler_introduce_tag("ty", "Call");
+        vec_push(Globals, TAG(gettag("ty", "Call")));
+
+        compiler_introduce_tag("ty", "Arg");
+        vec_push(Globals, TAG(gettag("ty", "Arg")));
 }
 
 void
@@ -861,7 +933,7 @@ AddTupleEntry(StringVector *names, ValueVector *values, char const *name, struct
         vec_push(*values, *v);
 }
 
-static void
+void
 vm_exec(char *code)
 {
         char *save = ip;
@@ -1020,7 +1092,7 @@ vm_exec(char *code)
                                         subscript.integer += container.array->count;
                                 if (subscript.integer < 0 || subscript.integer >= container.array->count) {
                                         // Not sure which is the best behavior here
-                                        push(TAG(tags_lookup("IndexError")));
+                                        push(TAG(gettag(NULL, "IndexError")));
                                         goto Throw;
                                         vm_panic("array index out of range in subscript expression");
                                 }
@@ -2102,7 +2174,7 @@ ObjectSubscript:
                                         }
                                         if (subscript.integer < 0 || subscript.integer >= container.array->count) {
                         OutOfRange:
-                                                push(TAG(tags_lookup("IndexError")));
+                                                push(TAG(gettag(NULL, "IndexError")));
                                                 goto Throw;
                                                 vm_panic("array index out of range in subscript expression");
                                         }
@@ -2117,7 +2189,7 @@ ObjectSubscript:
                                                 subscript.integer += container.count;
                                         }
                                         if (subscript.integer < 0 || subscript.integer >= container.count) {
-                                                push(TAG(tags_lookup("IndexError")));
+                                                push(TAG(gettag(NULL, "IndexError")));
                                                 goto Throw;
                                                 vm_panic("list index out of range in subscript expression");
                                         }
@@ -2580,16 +2652,21 @@ BadContainer:
                                 call_co(&v, n);
                                 break;
                         case VALUE_TAG:
-                                if (n == 1) {
+                                if (n == 1 && nkw == 0) {
                                         top()->tags = tags_push(top()->tags, v.tag);
                                         top()->type |= VALUE_TAGGED;
+                                } else if (nkw > 0) {
+                                        container = pop();
+                                        gc_push(&container);
+                                        value = builtin_tuple(n, &container);
+                                        gc_pop();
+                                        stack.count -= n;
+                                        value.type |= VALUE_TAGGED;
+                                        value.tags = tags_push(value.tags, v.tag);
+                                        push(value);
                                 } else {
-                                        struct array *items = value_array_new();
-                                        vec_reserve(*items, n);
-                                        items->count = n;
-                                        while (n --> 0)
-                                                items->items[n] = pop();
-                                        value = ARRAY(items);
+                                        value = builtin_tuple(n, NULL);
+                                        stack.count -= n;
                                         value.type |= VALUE_TAGGED;
                                         value.tags = tags_push(value.tags, v.tag);
                                         push(value);

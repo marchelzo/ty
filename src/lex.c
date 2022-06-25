@@ -316,8 +316,9 @@ lexword(void)
 
         /*
          * Identifiers are allowed to end in '?' or '!'. e.g., [1, 2, 3].map!(a -> a + 1)
+         * Also, macro names end in $
          */
-        if (C(0) == '!' || C(0) == '?')
+        if (C(0) == '!' || C(0) == '?' || C(0) == '$')
                 vec_push(word, nextchar());
 
         if (has_module != 0)

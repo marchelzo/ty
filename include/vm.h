@@ -239,6 +239,9 @@ vm_eval_function(struct value const *f, ...);
 void
 vm_load_c_module(char const *name, void *p);
 
+void
+vm_exec(char *ip);
+
 extern _Thread_local pthread_mutex_t *MyLock;
 
 void

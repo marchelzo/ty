@@ -532,4 +532,7 @@ builtin_stdio_ftell(int argc, struct value *kwargs);
 struct value
 builtin_stdio_setvbuf(int argc, struct value *kwargs);
 
+struct value
+builtin_eval(int argc, struct value *kwargs);
+
 #endif

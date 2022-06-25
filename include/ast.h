@@ -211,6 +211,8 @@ struct expression {
                 EXPRESSION_PREFIX_DEC,
                 EXPRESSION_POSTFIX_INC,
                 EXPRESSION_POSTFIX_DEC,
+
+				EXPRESSION_MACRO_INVOCATION,
         } type;
 
         char const *filename;
@@ -235,6 +237,10 @@ struct expression {
                                 struct expression *cond;
                         } compr;
                 };
+				struct {
+					struct expression *m;
+					struct expression *e;
+				} macro;
                 struct {
                         struct statement *let;
                         struct statement *block;

@@ -37,6 +37,7 @@
 #include "dict.h"
 #include "object.h"
 #include "class.h"
+#include "compiler.h"
 
 static _Thread_local char buffer[1024 * 1024 * 4];
 
@@ -2410,7 +2411,7 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
 
                 freeaddrinfo(res);
 
-                results.tags = tags_lookup("Ok");
+                results.tags = gettag(NULL, "Ok");
                 results.type |= VALUE_TAGGED;
 
                 return results;
@@ -2419,7 +2420,7 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
                 return (struct value) {
                         .type = VALUE_INTEGER | VALUE_TAGGED,
                         .integer = r,
-                        .tags = tags_lookup("Err")
+                        .tags = gettag(NULL, "Err")
                 };
         }
 }
@@ -4085,4 +4086,14 @@ builtin_finalizer(int argc, struct value *kwargs)
         ARG(0).object->finalizer = ARG(1);
 
         return NIL;
+}
+
+struct value
+builtin_eval(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.eval()", 1);
+
+        struct expression *expr = cexpr(&ARG(0));
+
+        return tyeval(expr);
 }

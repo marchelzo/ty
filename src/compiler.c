@@ -23,6 +23,7 @@
 #include "tags.h"
 #include "class.h"
 #include "vm.h"
+#include "compiler.h"
 
 #define emit_instr(i) do { LOG("emitting instr: %s", #i); _emit_instr(i); } while (false)
 
@@ -111,6 +112,8 @@ struct state {
         struct scope *method;
         struct scope *fscope;
 
+        struct scope *macro_scope;
+
         struct scope *implicit_fscope;
         struct expression *implicit_func;
 
@@ -189,6 +192,9 @@ search_import_scope(char const *);
 
 static void
 import_module(struct statement const *s);
+
+static void
+invoke_macro(struct expression *e, struct scope *scope);
 
 static void
 compile(char const *source);
@@ -301,6 +307,12 @@ fail(char const *fmt, ...)
         Error = ERR;
 
         longjmp(jb, 1);
+}
+
+inline static void
+_emit_instr(char c)
+{
+        vec_push(state.code, c);
 }
 
 static char *
@@ -547,6 +559,8 @@ freshstate(void)
         s.implicit_func = NULL;
         s.implicit_fscope = NULL;
 
+        s.macro_scope = NULL;
+
         s.function_depth = 0;
         s.each_loop = false;
         s.loop_want_result = false;
@@ -730,9 +744,26 @@ add_captures(struct expression *pattern, struct scope *scope)
 static void
 try_symbolize_application(struct scope *scope, struct expression *e)
 {
+        struct expression *mod_access = (e->type == EXPRESSION_METHOD_CALL) ? to_module_access(scope, e) : NULL;
+
+        if (mod_access != NULL) {
+                struct expression fc = *e;
+
+                fc.type = EXPRESSION_FUNCTION_CALL;
+                fc.args = e->method_args;
+                fc.kwargs = e->method_kwargs;
+                fc.kws = e->method_kws;
+                fc.fconds = e->mconds;
+
+                fc.function = mod_access;
+
+                *e = fc;
+        }
+
         if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
                 symbolize_expression(scope, e->function);
                 if (e->function->symbol->tag != -1) {
+                        struct expression f = *e;
                         char *identifier = e->function->identifier;
                         char *module = e->function->module;
                         struct expression **tagged = e->args.items;
@@ -746,16 +777,24 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 e->tagged = tagged[0];
                         } else {
                                 struct expression *items = gc_alloc(sizeof *items);
-                                items->type = EXPRESSION_ARRAY;
+                                items->type = EXPRESSION_TUPLE;
                                 items->start = tagged[0]->start;
                                 items->end = tagged[tagc - 1]->end;
-                                vec_init(items->elements);
-                                vec_init(items->aconds);
-                                vec_init(items->optional);
+                                vec_init(items->es);
+                                vec_init(items->tconds);
+                                vec_init(items->required);
+                                vec_init(items->names);
                                 for (int i = 0; i < tagc; ++i) {
-                                        vec_push(items->elements, tagged[i]);
-                                        vec_push(items->aconds, NULL);
-                                        vec_push(items->optional, false);
+                                        vec_push(items->es, tagged[i]);
+                                        vec_push(items->tconds, NULL);
+                                        vec_push(items->required, true);
+                                        vec_push(items->names, NULL);
+                                }
+                                for (int i = 0; i < f.kws.count; ++i) {
+                                        vec_push(items->es, f.kwargs.items[i]);
+                                        vec_push(items->tconds, f.fkwconds.items[i]);
+                                        vec_push(items->required, true);
+                                        vec_push(items->names, f.kws.items[i]);
                                 }
                                 e->tagged = items;
                         }
@@ -1239,6 +1278,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_SPLAT:
                 symbolize_expression(scope, e->value);
                 break;
+        case EXPRESSION_MACRO_INVOCATION:
+                invoke_macro(e, scope);
+                break;
         case EXPRESSION_MATCH_REST:
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
         }
@@ -1409,6 +1451,45 @@ symbolize_statement(struct scope *scope, struct statement *s)
         }
 }
 
+static void
+invoke_macro(struct expression *e, struct scope *scope)
+{
+        struct scope *macro_scope_save = state.macro_scope;
+        state.macro_scope = scope;
+
+        symbolize_expression(scope, e->macro.m);
+
+        byte_vector code_save = state.code;
+
+        vec_init(state.code);
+
+        emit_expression(e->macro.m);
+        emit_instr(INSTR_HALT);
+
+        vm_exec(state.code.items);
+
+        struct value m = *vm_get(0);
+        vm_pop();
+
+        gc_free(state.code.items);
+        state.code = code_save;
+
+        struct value node = tyexpr(e->macro.e);
+        vm_push(&node);
+
+        node = vm_call(&m, 1);
+
+        state.macro_scope = macro_scope_save;
+
+        struct expression *result = cexpr(&node);
+
+        symbolize_expression(scope, result);
+
+        *e = *result;
+
+        gc_free(result);
+}
+
 inline static void
 patch_jumps_to(offset_vector const *js, size_t location)
 {
@@ -1423,12 +1504,6 @@ patch_loop_jumps(size_t begin, size_t end)
 {
         patch_jumps_to(&state.continues, begin);
         patch_jumps_to(&state.breaks, end);
-}
-
-inline static void
-_emit_instr(char c)
-{
-        vec_push(state.code, c);
 }
 
 inline static char
@@ -4282,8 +4357,9 @@ import_module(struct statement const *s)
 
         state = save;
 
-        emit_instr(INSTR_EXEC_CODE);
-        emit_symbol((uintptr_t) m.code);
+        //emit_instr(INSTR_EXEC_CODE);
+        //emit_symbol((uintptr_t) m.code);
+        vm_exec(m.code);
 
 Import:
 {
@@ -4318,6 +4394,7 @@ void
 compiler_init(void)
 {
         tags_init();
+
         state = freshstate();
         global = state.global;
         global->function = global;
@@ -4339,6 +4416,31 @@ compiler_load_prelude(void)
         vec_empty(state.imports);
 
         return state.code.items;
+}
+
+int
+gettag(char const *module, char const *name)
+{
+        struct symbol *sym = compiler_lookup(module, name);
+        if (!(sym != NULL && sym->cnst && sym->tag != -1)) {
+                fprintf(stderr, "failed to find tag %s%s%s\n", module ? module : "", module ? "." : "", name);
+                exit(1);
+        }
+        return sym->tag;
+}
+
+struct symbol *
+compiler_lookup(char const *module, char const *name)
+{
+        struct scope *mscope;
+
+        if (module == NULL) {
+                return scope_lookup(state.global, name);
+        } else if (mscope = get_module_scope(module), mscope != NULL) {
+                return scope_lookup(mscope, name);
+        }
+
+        return NULL;
 }
 
 /*
@@ -4367,6 +4469,35 @@ compiler_introduce_symbol(char const *module, char const *name)
         struct symbol *sym = addsymbol(s, name);
         sym->public = true;
         LOG("%s got index %d", name, sym->i);
+
+        BuiltinCount += 1;
+}
+
+void
+compiler_introduce_tag(char const *module, char const *name)
+{
+        struct scope *s;
+        if (module == NULL) {
+                s = global;
+        } else {
+                s = get_module_scope(module);
+
+                if (s == NULL) {
+                        ++builtin_modules;
+                        s = scope_new(NULL, false);
+                        vec_push(modules, ((struct module){
+                                .path = module,
+                                .code = NULL,
+                                .scope = s
+                        }));
+                }
+        }
+
+        struct symbol *sym = addsymbol(s, name);
+        sym->public = true;
+        sym->cnst = true;
+        sym->tag = tags_new(name);
+        LOG("tag %s got index %d", name, sym->i);
 
         BuiltinCount += 1;
 }
@@ -4532,4 +4663,431 @@ compiler_has_module(char const *name)
         }
 
         return false;
+}
+
+inline static char *
+mkcstr(struct value const *v)
+{
+        char *s = gc_alloc(v->bytes + 1);
+
+        memcpy(s, v->string, v->bytes);
+        s[v->bytes] = '\0';
+
+        return s;
+}
+
+struct value
+tagged(int tag, struct value v, ...)
+{
+        va_list ap;
+
+        va_start(ap, v);
+
+        static vec(struct value) vs;
+        vs.count = 0;
+
+        struct value next = va_arg(ap, struct value);
+
+        if (next.type == VALUE_NONE) {
+                goto TagAndReturn;
+        }
+
+        vec_push(vs, v);
+
+        while (next.type != VALUE_NONE) {
+                vec_push(vs, next);
+                next = va_arg(ap, struct value);
+        }
+
+        v = value_tuple(vs.count);
+        for (int i = 0; i < vs.count; ++i) {
+                v.items[i] = vs.items[i];
+        }
+
+TagAndReturn:
+        v.type |= VALUE_TAGGED;
+        v.tags = tags_push(0, tag);
+        return v;
+}
+
+struct value
+tyexpr(struct expression const *e)
+{
+        struct value v;
+        struct value *vp;
+
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+                v = value_named_tuple(
+                        "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
+                        "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                        NULL
+                );
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Id"));
+                break;
+        case EXPRESSION_ARRAY:
+                v = ARRAY(value_array_new());
+                NOGC(v.array);
+                for (int i = 0; i < e->elements.count; ++i) {
+                        value_array_push(
+                                v.array,
+                                tagged(
+                                        gettag("ty", "ArrayItem"),
+                                        value_named_tuple(
+                                                "", tyexpr(e->elements.items[i]),
+                                                "cond", (e->aconds.items[i] == NULL) ? NIL : tyexpr(e->aconds.items[i]),
+                                                "optional", BOOLEAN(e->optional.items[i]),
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                OKGC(v.array);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Array"));
+                break;
+        case EXPRESSION_TUPLE:
+                v = ARRAY(value_array_new());
+                NOGC(v.array);
+                for (int i = 0; i < e->es.count; ++i) {
+                        value_array_push(
+                                v.array,
+                                tagged(
+                                        gettag("ty", "RecordEntry"),
+                                        value_named_tuple(
+                                                "", tyexpr(e->es.items[i]),
+                                                "name", (e->names.items[i] == NULL) ? NIL : STRING_CLONE(e->names.items[i], strlen(e->names.items[i])),
+                                                "cond", (e->tconds.items[i] == NULL) ? NIL : tyexpr(e->tconds.items[i]),
+                                                "optional", BOOLEAN(!e->required.items[i]),
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                OKGC(v.array);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Record"));
+                break;
+        case EXPRESSION_DICT:
+                v = tagged(
+                        gettag("ty", "Dict"),
+                        value_named_tuple(
+                                "items", ARRAY(value_array_new()),
+                                "default", e->dflt != NULL ? tyexpr(e->dflt) : NIL,
+                                NULL
+                        ),
+                        NONE
+                );
+                NOGC(v.items[0].array);
+                for (int i = 0; i < e->keys.count; ++i) {
+                        value_array_push(
+                                v.items[0].array,
+                                tagged(
+                                        gettag("ty", "DictItem"),
+                                        tyexpr(e->keys.items[i]),
+                                        tyexpr(e->values.items[i]),
+                                        NONE
+                                )
+                        );
+                }
+                OKGC(v.items[0].array);
+                break;
+        case EXPRESSION_FUNCTION_CALL:
+                v = value_named_tuple(
+                        "func", tyexpr(e->function),
+                        "args", ARRAY(value_array_new()),
+                        NULL
+                );
+                for (int i = 0; i < e->args.count; ++i) {
+                        value_array_push(
+                                v.items[1].array,
+                                tagged(
+                                        gettag("ty", "Arg"),
+                                        value_named_tuple(
+                                                "arg", tyexpr(e->args.items[i]),
+                                                "cond", e->fconds.items[i] != NULL ? tyexpr(e->fconds.items[i]) : NIL,
+                                                "name", NIL,
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                for (int i = 0; i < e->kws.count; ++i) {
+                        value_array_push(
+                                v.items[1].array,
+                                tagged(
+                                        gettag("ty", "Arg"),
+                                        value_named_tuple(
+                                                "arg", tyexpr(e->kwargs.items[i]),
+                                                "cond", e->fkwconds.items[i] != NULL ? tyexpr(e->fkwconds.items[i]) : NIL,
+                                                "name", STRING_CLONE(e->kws.items[i], strlen(e->kws.items[i])),
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Call"));
+                break;
+        case EXPRESSION_INTEGER:
+                v = INTEGER(e->integer);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Integer"));
+                break;
+        case EXPRESSION_REAL:
+                v = REAL(e->real);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Float"));
+                break;
+        case EXPRESSION_BOOLEAN:
+                v = BOOLEAN(e->boolean);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Bool"));
+                break;
+        case EXPRESSION_STRING:
+                v = STRING_CLONE(e->string, strlen(e->string));
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "String"));
+                break;
+        case EXPRESSION_EQ:
+                v = tagged(gettag("ty", "Assign"), tyexpr(e->target), tyexpr(e->value), NONE);
+                break;
+        case EXPRESSION_GT:
+                v = tagged(gettag("ty", "GT"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_LT:
+                v = tagged(gettag("ty", "LT"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_PLUS:
+                v = tagged(gettag("ty", "Add"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_STAR:
+                v = tagged(gettag("ty", "Mul"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_MINUS:
+                v = tagged(gettag("ty", "Sub"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_DBL_EQ:
+                v = tagged(gettag("ty", "Eq"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_IN:
+                v = tagged(gettag("ty", "In"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_NOT_IN:
+                v = tagged(gettag("ty", "NotIn"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_STATEMENT:
+                return tystmt(e->statement);
+        }
+
+        return v;
+}
+
+struct value
+tystmt(struct statement *s)
+{
+        struct value v;
+
+        switch (s->type) {
+        case STATEMENT_DEFINITION:
+                v = value_tuple(2);
+                v.items[0] = tyexpr(s->target);
+                v.items[1] = tyexpr(s->value);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Let"));
+                break;
+        case STATEMENT_EXPRESSION:
+                return tyexpr(s->expression);
+        }
+
+        return v;
+}
+
+struct statement *
+cstmt(struct value *v)
+{
+        struct statement *s = gc_alloc(sizeof *s);
+        *s = (struct statement){0};
+
+        if (tags_first(v->tags) == gettag("ty", "Let")) {
+                s->type = STATEMENT_DEFINITION;
+                s->target = cexpr(&v->items[0]);
+                s->value = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Return")) {
+                s->type = STATEMENT_RETURN;
+                vec_init(s->returns);
+                if (v->type == VALUE_TUPLE) {
+                        for (int i = 0; i < v->count; ++i) {
+                                vec_push(s->returns, cexpr(&v->items[i]));
+                        }
+                } else {
+                        v->tags = tags_pop(v->tags);
+                        vec_push(s->returns, cexpr(v));
+                }
+        }
+
+        return s;
+}
+
+struct expression *
+cexpr(struct value *v)
+{
+        struct expression *e = gc_alloc(sizeof *e);
+        *e = (struct expression){0};
+
+        if (tags_first(v->tags) == gettag("ty", "Integer")) {
+                e->type = EXPRESSION_INTEGER;
+                e->integer = v->integer;
+        } else if (tags_first(v->tags) == gettag("ty", "Id")) {
+                e->type = EXPRESSION_IDENTIFIER;
+                e->identifier = mkcstr(tuple_get(v, "name"));
+                e->module = tuple_get(v, "module") ? mkcstr(tuple_get(v, "module")) : NULL;
+        } else if (tags_first(v->tags) == gettag("ty", "String")) {
+                e->type = EXPRESSION_STRING;
+                e->string = mkcstr(v);
+        } else if (tags_first(v->tags) == gettag("ty", "Array")) {
+                e->type = EXPRESSION_ARRAY;
+                vec_init(e->elements);
+                vec_init(e->aconds);
+                vec_init(e->optional);
+                for (int i = 0; i < v->array->count; ++i) {
+                        struct value *entry = &v->array->items[i];
+                        struct value *optional = tuple_get(entry, "optional");
+                        struct value *cond = tuple_get(entry, "cond");
+                        vec_push(e->elements, cexpr(&entry->items[0]));
+                        vec_push(e->optional, optional != NULL ? optional->boolean : false);
+                        vec_push(e->aconds, cond != NULL ? cexpr(cond) : NULL);
+                }
+        } else if (tags_first(v->tags) == gettag("ty", "Record")) {
+                e->type = EXPRESSION_TUPLE;
+                vec_init(e->es);
+                vec_init(e->names);
+                vec_init(e->required);
+                vec_init(e->tconds);
+                for (int i = 0; i < v->array->count; ++i) {
+                        struct value *entry = &v->array->items[i];
+                        struct value *name = tuple_get(entry, "name");
+                        struct value *optional = tuple_get(entry, "optional");
+                        struct value *cond = tuple_get(entry, "cond");
+                        vec_push(e->es, cexpr(&entry->items[0]));
+                        vec_push(e->names, name != NULL ? mkcstr(name) : NULL);
+                        vec_push(e->required, optional != NULL ? !optional->boolean : true);
+                        vec_push(e->tconds, cond != NULL ? cexpr(cond) : NULL);
+                }
+        } else if (tags_first(v->tags) == gettag("ty", "Dict")) {
+                e->type = EXPRESSION_DICT;
+                e->dtmp = NULL;
+                vec_init(e->keys);
+                vec_init(e->values);
+
+                struct value *items = tuple_get(v, "items");
+                struct value *dflt = tuple_get(v, "default");
+
+                e->dflt = dflt != NULL ? cexpr(dflt) : NULL;
+
+                for (int i = 0; i < items->array->count; ++i) {
+                        vec_push(e->keys, cexpr(&items->array->items[i].items[0]));
+                        vec_push(e->values, cexpr(&items->array->items[i].items[1]));
+                }
+        } else if (tags_first(v->tags) == gettag("ty", "Call")) {
+                e->type = EXPRESSION_FUNCTION_CALL;
+                vec_init(e->args);
+                vec_init(e->fconds);
+                vec_init(e->kws);
+                vec_init(e->kwargs);
+                vec_init(e->fkwconds);
+
+                struct value *func = tuple_get(v, "func");
+                e->function = cexpr(func);
+
+                struct value *args = tuple_get(v, "args");
+
+                for (int i = 0; i < args->array->count; ++i) {
+                        struct value *arg = &args->array->items[i];
+                        struct value *name = tuple_get(arg, "name");
+                        struct value *cond = tuple_get(arg, "cond");
+                        if (cond != NULL && cond->type == VALUE_NIL) {
+                                cond = NULL;
+                        }
+                        if (name == NULL || name->type == VALUE_NIL) {
+                                vec_push(e->args, cexpr(tuple_get(arg, "arg")));
+                                vec_push(e->fconds, cond != NULL ? cexpr(cond) : NULL);
+                        } else {
+                                vec_push(e->kwargs, cexpr(tuple_get(arg, "arg")));
+                                vec_push(e->kws, mkcstr(name));
+                                vec_push(e->fkwconds, cond != NULL ? cexpr(cond) : NULL);
+                        }
+                }
+        } else if (tags_first(v->tags) == gettag("ty", "Bool")) {
+                e->type = EXPRESSION_BOOLEAN;
+                e->boolean = v->boolean;
+        } else if (tags_first(v->tags) == gettag("ty", "Add")) {
+                e->type = EXPRESSION_PLUS;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Sub")) {
+                e->type = EXPRESSION_MINUS;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Mul")) {
+                e->type = EXPRESSION_STAR;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Eq")) {
+                e->type = EXPRESSION_DBL_EQ;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "In")) {
+                e->type = EXPRESSION_IN;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "NotIn")) {
+                e->type = EXPRESSION_NOT_IN;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Or")) {
+                e->type = EXPRESSION_OR;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "And")) {
+                e->type = EXPRESSION_AND;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "UserOp")) {
+                e->type = EXPRESSION_USER_OP;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Let")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        }
+
+        return e;
+}
+
+struct value
+tyeval(struct expression *e)
+{
+        symbolize_expression(state.macro_scope, e);
+
+        byte_vector code_save = state.code;
+        vec_init(state.code);
+
+        emit_expression(e);
+        emit_instr(INSTR_HALT);
+
+        vm_exec(state.code.items);
+
+        struct value v = *vm_get(0);
+        vm_pop();
+
+        gc_free(state.code.items);
+        state.code = code_save;
+
+        return v;
 }

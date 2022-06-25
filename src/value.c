@@ -287,11 +287,13 @@ show_tuple(struct value const *v)
 
         vec_push(show_tuples, v->items);
 
+        bool tagged = v->type & VALUE_TAGGED;
         size_t capacity = 1;
-        size_t len = 1;
+        size_t len = !tagged;
         size_t n;
         char *s = gc_alloc(2);
-        strcpy(s, "(");
+
+        strcpy(s, !tagged ? "(" : "");
 
 #define add(str) \
                 n = strlen(str); \
@@ -315,7 +317,9 @@ show_tuple(struct value const *v)
                 gc_free(val);
         }
 
-        add(")");
+        if (!tagged) {
+                add(")");
+        }
 #undef add
 
         --show_tuples.count;
@@ -866,12 +870,13 @@ value_named_tuple(char const *first, ...)
 
         va_start(ap, first);
 
-        names[0] = first;
+        names[0] = first[0] == '\0' ? NULL : first;
         items[0] = va_arg(ap, struct value);
 
         for (int i = 1; i < n; ++i) {
                 names[i] = va_arg(ap, char *);
                 items[i] = va_arg(ap, struct value);
+                names[i] = names[i][0] == '\0' ? NULL : names[i];
         }
 
         va_end(ap);

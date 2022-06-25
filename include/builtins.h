@@ -497,6 +497,7 @@
 {.module = "ffi", .name = "blob", .value = BUILTIN(cffi_blob)},
 {.module = "ffi", .name = "clone", .value = BUILTIN(cffi_clone)},
 {.module = "ffi", .name = "as_str", .value = BUILTIN(cffi_as_str)},
+{.module = "ty", .name = "eval", .value = BUILTIN(builtin_eval)},
 
 #include "ioctl_constants.h"
 

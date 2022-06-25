@@ -758,6 +758,21 @@ prefix_identifier(void)
 
         consume(TOKEN_IDENTIFIER);
 
+        // Is this a macro invocation?
+        if (strchr(e->identifier, '$') != NULL) {
+                e->identifier = sclone(e->identifier);
+                *strchr(e->identifier, '$') = '\0';
+                struct expression *macro = mkexpr();
+                macro->type = EXPRESSION_MACRO_INVOCATION;
+                macro->macro.m = e;
+                macro->macro.e = mkexpr();
+                macro->macro.e->type = EXPRESSION_STATEMENT;
+                macro->macro.e->statement = parse_statement(0);
+                macro->start = e->start;
+                macro->end = End;
+                return macro;
+        }
+
         // TODO: maybe get rid of this
         if (NoEquals && tok()->type == ':') {
                 SAVE_NE(true);
@@ -1350,6 +1365,7 @@ prefix_parenthesis(void)
                         vec_init(list->names);
                         vec_init(list->es);
                         vec_init(list->tconds);
+                        vec_init(list->required);
                         vec_push(list->names, NULL);
                         vec_push(list->required, true);
                         vec_push(list->es, e);
@@ -2658,6 +2674,17 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_FUNCTION_CALL:
                 for (int i = 0; i < e->args.count; ++i) {
                         e->args.items[i] = definition_lvalue(e->args.items[i]);
+                }
+                return e;
+        case EXPRESSION_METHOD_CALL:
+                if (e->object->type != EXPRESSION_IDENTIFIER) {
+                        break;
+                }
+                for (int i = 0; i < e->method_args.count; ++i) {
+                        e->method_args.items[i] = definition_lvalue(e->method_args.items[i]);
+                }
+                for (int i = 0; i < e->method_kwargs.count; ++i) {
+                        e->method_kwargs.items[i] = definition_lvalue(e->method_kwargs.items[i]);
                 }
                 return e;
         case EXPRESSION_VIEW_PATTERN:
