@@ -4834,6 +4834,59 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Call"));
                 break;
+        case EXPRESSION_METHOD_CALL:
+                v = value_named_tuple(
+                        "object", tyexpr(e->function),
+                        "method", STRING_CLONE(e->method_name, strlen(e->method_name)),
+                        "args", ARRAY(value_array_new()),
+                        NULL
+                );
+                for (int i = 0; i < e->method_args.count; ++i) {
+                        value_array_push(
+                                v.items[2].array,
+                                tagged(
+                                        gettag("ty", "Arg"),
+                                        value_named_tuple(
+                                                "arg", tyexpr(e->method_args.items[i]),
+                                                "cond", e->mconds.items[i] != NULL ? tyexpr(e->mconds.items[i]) : NIL,
+                                                "name", NIL,
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                for (int i = 0; i < e->method_kws.count; ++i) {
+                        value_array_push(
+                                v.items[2].array,
+                                tagged(
+                                        gettag("ty", "Arg"),
+                                        value_named_tuple(
+                                                "arg", tyexpr(e->method_kwargs.items[i]),
+                                                // TODO conditional method args
+                                                "cond", NIL,
+                                                "name", STRING_CLONE(e->method_kws.items[i], strlen(e->method_kws.items[i])),
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "MethodCall"));
+                break;
+        case EXPRESSION_NIL:
+                v = TAG(gettag("ty", "Nil"));
+                break;
+        case EXPRESSION_CONDITIONAL:
+                v = tagged(
+                        gettag("ty", "Cond"),
+                        tyexpr(e->cond),
+                        tyexpr(e->then),
+                        tyexpr(e->otherwise),
+                        NONE
+                );
+                break;
         case EXPRESSION_INTEGER:
                 v = INTEGER(e->integer);
                 v.type |= VALUE_TAGGED;
@@ -4863,6 +4916,9 @@ tyexpr(struct expression const *e)
         case EXPRESSION_LT:
                 v = tagged(gettag("ty", "LT"), tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
+        case EXPRESSION_WTF:
+                v = tagged(gettag("ty", "Wtf"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
         case EXPRESSION_PLUS:
                 v = tagged(gettag("ty", "Add"), tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
@@ -4883,6 +4939,8 @@ tyexpr(struct expression const *e)
                 break;
         case EXPRESSION_STATEMENT:
                 return tystmt(e->statement);
+        default:
+                v = tagged(gettag("ty", "Expr"), PTR((void *)e), NONE);
         }
 
         return v;
@@ -4903,6 +4961,8 @@ tystmt(struct statement *s)
                 break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
+        default:
+                v = tagged(gettag("ty", "Stmt"), PTR((void *)s), NONE);
         }
 
         return v;
@@ -4914,7 +4974,9 @@ cstmt(struct value *v)
         struct statement *s = gc_alloc(sizeof *s);
         *s = (struct statement){0};
 
-        if (tags_first(v->tags) == gettag("ty", "Let")) {
+        if (tags_first(v->tags) == gettag("ty", "Stmt")) {
+                return v->ptr;
+        } else if (tags_first(v->tags) == gettag("ty", "Let")) {
                 s->type = STATEMENT_DEFINITION;
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
@@ -4940,7 +5002,9 @@ cexpr(struct value *v)
         struct expression *e = gc_alloc(sizeof *e);
         *e = (struct expression){0};
 
-        if (tags_first(v->tags) == gettag("ty", "Integer")) {
+        if (tags_first(v->tags) == gettag("ty", "Expr")) {
+                return v->ptr;
+        } else if (tags_first(v->tags) == gettag("ty", "Integer")) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
         } else if (tags_first(v->tags) == gettag("ty", "Id")) {
@@ -5023,9 +5087,48 @@ cexpr(struct value *v)
                                 vec_push(e->fkwconds, cond != NULL ? cexpr(cond) : NULL);
                         }
                 }
+        } else if (tags_first(v->tags) == gettag("ty", "MethodCall")) {
+                e->type = EXPRESSION_METHOD_CALL;
+                vec_init(e->method_args);
+                vec_init(e->method_kws);
+                vec_init(e->method_kwargs);
+
+                struct value *object = tuple_get(v, "object");
+                e->object = cexpr(object);
+
+                struct value *method = tuple_get(v, "method");
+                e->method_name = mkcstr(method);
+
+                struct value *args = tuple_get(v, "args");
+
+                for (int i = 0; i < args->array->count; ++i) {
+                        struct value *arg = &args->array->items[i];
+                        struct value *name = tuple_get(arg, "name");
+                        struct value *cond = tuple_get(arg, "cond");
+                        if (cond != NULL && cond->type == VALUE_NIL) {
+                                cond = NULL;
+                        }
+                        if (name == NULL || name->type == VALUE_NIL) {
+                                vec_push(e->method_args, cexpr(tuple_get(arg, "arg")));
+                        } else {
+                                vec_push(e->method_kwargs, cexpr(tuple_get(arg, "arg")));
+                                vec_push(e->method_kws, mkcstr(name));
+                        }
+                }
+        } else if (tags_first(v->tags) == gettag("ty", "Cond")) {
+                e->type = EXPRESSION_CONDITIONAL;
+                e->cond = cexpr(&v->items[0]);
+                e->then = cexpr(&v->items[1]);
+                e->otherwise = cexpr(&v->items[2]);
+        } else if (v->type == VALUE_TAG && v->tag == gettag("ty", "Nil")) {
+                e->type = EXPRESSION_NIL;
         } else if (tags_first(v->tags) == gettag("ty", "Bool")) {
                 e->type = EXPRESSION_BOOLEAN;
                 e->boolean = v->boolean;
+        } else if (tags_first(v->tags) == gettag("ty", "Wtf")) {
+                e->type = EXPRESSION_WTF;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "Add")) {
                 e->type = EXPRESSION_PLUS;
                 e->left = cexpr(&v->items[0]);
@@ -5063,6 +5166,9 @@ cexpr(struct value *v)
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "Let")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == gettag("ty", "Stmt")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         }

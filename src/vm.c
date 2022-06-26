@@ -392,6 +392,12 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
 
+        compiler_introduce_tag("ty", "Expr");
+        vec_push(Globals, TAG(gettag("ty", "Expr")));
+
+        compiler_introduce_tag("ty", "Stmt");
+        vec_push(Globals, TAG(gettag("ty", "Stmt")));
+
         compiler_introduce_tag("ty", "Integer");
         vec_push(Globals, TAG(gettag("ty", "Integer")));
 
@@ -461,8 +467,20 @@ add_builtins(int ac, char **av)
         compiler_introduce_tag("ty", "RecordEntry");
         vec_push(Globals, TAG(gettag("ty", "RecordEntry")));
 
+        compiler_introduce_tag("ty", "Nil");
+        vec_push(Globals, TAG(gettag("ty", "Nil")));
+
+        compiler_introduce_tag("ty", "Wtf");
+        vec_push(Globals, TAG(gettag("ty", "Wtf")));
+
+        compiler_introduce_tag("ty", "Cond");
+        vec_push(Globals, TAG(gettag("ty", "Cond")));
+
         compiler_introduce_tag("ty", "Call");
         vec_push(Globals, TAG(gettag("ty", "Call")));
+
+        compiler_introduce_tag("ty", "MethodCall");
+        vec_push(Globals, TAG(gettag("ty", "MethodCall")));
 
         compiler_introduce_tag("ty", "Arg");
         vec_push(Globals, TAG(gettag("ty", "Arg")));
