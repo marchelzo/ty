@@ -109,7 +109,6 @@ struct statement {
                         expression_vector patterns;
                         expression_vector conds;
                         vec(struct statement *) statements;
-                        int_vector check;
                 } match;
                 struct {
                         condpart_vector parts;

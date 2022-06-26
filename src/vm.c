@@ -398,6 +398,12 @@ add_builtins(int ac, char **av)
         compiler_introduce_tag("ty", "Stmt");
         vec_push(Globals, TAG(gettag("ty", "Stmt")));
 
+        compiler_introduce_tag("ty", "Return");
+        vec_push(Globals, TAG(gettag("ty", "Return")));
+
+        compiler_introduce_tag("ty", "Match");
+        vec_push(Globals, TAG(gettag("ty", "Match")));
+
         compiler_introduce_tag("ty", "Integer");
         vec_push(Globals, TAG(gettag("ty", "Integer")));
 

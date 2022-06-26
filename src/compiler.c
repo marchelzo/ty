@@ -157,6 +157,9 @@ static struct scope *global;
 
 static uint64_t t;
 
+static char const EmptyString[] = { '\0', '\0' };
+static struct location Nowhere = { 0, 0, EmptyString + 1 };
+
 static void
 symbolize_statement(struct scope *scope, struct statement *s);
 
@@ -570,11 +573,8 @@ freshstate(void)
         s.try = 0;
         s.loop = 0;
 
-        static char empty[] = { '\0', '\0' };
-        static struct location nowhere = { 0, 0, empty + 1 };
-
         s.filename = NULL;
-        s.start = s.end = nowhere;
+        s.start = s.end = Nowhere;
 
         vec_init(s.expression_locations);
 
@@ -4714,7 +4714,6 @@ struct value
 tyexpr(struct expression const *e)
 {
         struct value v;
-        struct value *vp;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -4959,6 +4958,22 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Let"));
                 break;
+        case STATEMENT_MATCH:
+                v = value_tuple(2);
+                v.items[0] = tyexpr(s->match.e);
+                v.items[1] = ARRAY(value_array_new());
+                for (int i = 0; i < s->match.patterns.count; ++i) {
+                        struct value _case = value_tuple(2);
+                        _case.items[0] = tyexpr(s->match.patterns.items[i]);
+                        _case.items[1] = tystmt(s->match.statements.items[i]);
+                        value_array_push(
+                                v.items[1].array,
+                                _case
+                        );
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Match"));
+                break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
         default:
@@ -4974,12 +4989,27 @@ cstmt(struct value *v)
         struct statement *s = gc_alloc(sizeof *s);
         *s = (struct statement){0};
 
+        s->start = s->end = Nowhere;
+
         if (tags_first(v->tags) == gettag("ty", "Stmt")) {
                 return v->ptr;
         } else if (tags_first(v->tags) == gettag("ty", "Let")) {
                 s->type = STATEMENT_DEFINITION;
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Match")) {
+                s->type = STATEMENT_MATCH;
+                s->match.e = cexpr(&v->items[0]);
+                vec_init(s->match.patterns);
+                vec_init(s->match.statements);
+                vec_init(s->match.conds);
+                struct value *cases = &v->items[1];
+                for (int i = 0; i < cases->array->count; ++i) {
+                        struct value *_case = &cases->array->items[i];
+                        vec_push(s->match.patterns, cexpr(&_case->items[0]));
+                        vec_push(s->match.statements, cstmt(&_case->items[1]));
+                        vec_push(s->match.conds, NULL);
+                }
         } else if (tags_first(v->tags) == gettag("ty", "Return")) {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
@@ -4991,6 +5021,9 @@ cstmt(struct value *v)
                         v->tags = tags_pop(v->tags);
                         vec_push(s->returns, cexpr(v));
                 }
+        } else {
+                s->type = STATEMENT_EXPRESSION;
+                s->expression = cexpr(v);
         }
 
         return s;
@@ -5002,6 +5035,8 @@ cexpr(struct value *v)
         struct expression *e = gc_alloc(sizeof *e);
         *e = (struct expression){0};
 
+        e->start = e->end = Nowhere;
+
         if (tags_first(v->tags) == gettag("ty", "Expr")) {
                 return v->ptr;
         } else if (tags_first(v->tags) == gettag("ty", "Integer")) {
@@ -5010,7 +5045,8 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == gettag("ty", "Id")) {
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = mkcstr(tuple_get(v, "name"));
-                e->module = tuple_get(v, "module") ? mkcstr(tuple_get(v, "module")) : NULL;
+                struct value *mod = tuple_get(v, "module");
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
         } else if (tags_first(v->tags) == gettag("ty", "String")) {
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(v);
@@ -5166,6 +5202,9 @@ cexpr(struct value *v)
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "Let")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == gettag("ty", "Match")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == gettag("ty", "Stmt")) {
