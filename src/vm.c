@@ -401,6 +401,12 @@ add_builtins(int ac, char **av)
         compiler_introduce_tag("ty", "Block");
         vec_push(Globals, TAG(gettag("ty", "Block")));
 
+        compiler_introduce_tag("ty", "If");
+        vec_push(Globals, TAG(gettag("ty", "If")));
+
+        compiler_introduce_tag("ty", "IfNot");
+        vec_push(Globals, TAG(gettag("ty", "IfNot")));
+
         compiler_introduce_tag("ty", "With");
         vec_push(Globals, TAG(gettag("ty", "With")));
 

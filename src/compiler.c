@@ -4862,7 +4862,7 @@ tyexpr(struct expression const *e)
                                         gettag("ty", "Arg"),
                                         value_named_tuple(
                                                 "arg", tyexpr(e->method_kwargs.items[i]),
-                                                // TODO conditional method args
+                                                // TODO conditional method kwargs
                                                 "cond", NIL,
                                                 "name", STRING_CLONE(e->method_kws.items[i], strlen(e->method_kws.items[i])),
                                                 NULL
@@ -4990,6 +4990,30 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Block"));
                 break;
+        case STATEMENT_IF:
+                v = value_tuple(3);
+                v.items[0] = ARRAY(value_array_new());
+                for (int i = 0; i < s->iff.parts.count; ++i) {
+                        struct condpart *part = s->iff.parts.items[i];
+                        if (part->target != NULL) {
+                                value_array_push(
+                                        v.items[0].array,
+                                        tagged(
+                                                part->def ? gettag("ty", "Let") : gettag("ty", "Eq"),
+                                                tyexpr(part->target),
+                                                tyexpr(part->e),
+                                                NONE
+                                        )
+                                );
+                        } else {
+                                value_array_push(v.items[0].array, tyexpr(part->e));
+                        }
+                }
+                v.items[1] = tystmt(s->iff.then);
+                v.items[2] = s->iff.otherwise != NULL ? tystmt(s->iff.otherwise) : NIL;
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, s->iff.neg ? gettag("ty", "IfNot") : gettag("ty", "If"));
+                break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
         default:
@@ -5013,6 +5037,35 @@ cstmt(struct value *v)
                 s->type = STATEMENT_DEFINITION;
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "If")) {
+                s->type = STATEMENT_IF;
+                s->iff.neg = false;
+                vec_init(s->iff.parts);
+                struct value *parts = &v->items[0];
+                for (int i = 0; i < parts->array->count; ++i) {
+                        struct value *part = &parts->array->items[i];
+                        struct condpart *cp = gc_alloc(sizeof *cp);
+                        if (tags_first(part->tags) == gettag("ty", "Let")) {
+                                cp->def = true;
+                                cp->target = cexpr(&part->items[0]);
+                                cp->e = cexpr(&part->items[1]);
+                        } else if (tags_first(part->tags) == gettag("ty", "Eq")) {
+                                cp->def = false;
+                                cp->target = cexpr(&part->items[0]);
+                                cp->e = cexpr(&part->items[1]);
+                        } else {
+                                cp->def = false;
+                                cp->target = NULL;
+                                cp->e = cexpr(part);
+                        }
+                        vec_push(s->iff.parts, cp);
+                }
+                s->iff.then = cstmt(&v->items[1]);
+                if (v->count > 2 && v->items[2].type != VALUE_NIL) {
+                        s->iff.otherwise = cstmt(&v->items[2]);
+                } else {
+                        s->iff.otherwise = NULL;
+                }
         } else if (tags_first(v->tags) == gettag("ty", "Match")) {
                 s->type = STATEMENT_MATCH;
                 s->match.e = cexpr(&v->items[0]);
@@ -5150,6 +5203,7 @@ cexpr(struct value *v)
                 vec_init(e->method_args);
                 vec_init(e->method_kws);
                 vec_init(e->method_kwargs);
+                vec_init(e->mconds);
 
                 struct value *object = tuple_get(v, "object");
                 e->object = cexpr(object);
@@ -5168,6 +5222,7 @@ cexpr(struct value *v)
                         }
                         if (name == NULL || name->type == VALUE_NIL) {
                                 vec_push(e->method_args, cexpr(tuple_get(arg, "arg")));
+                                vec_push(e->mconds, cond != NULL ? cexpr(cond) : NULL);
                         } else {
                                 vec_push(e->method_kwargs, cexpr(tuple_get(arg, "arg")));
                                 vec_push(e->method_kws, mkcstr(name));
