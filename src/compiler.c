@@ -4738,7 +4738,7 @@ tyexpr(struct expression const *e)
                                 tagged(
                                         gettag("ty", "ArrayItem"),
                                         value_named_tuple(
-                                                "", tyexpr(e->elements.items[i]),
+                                                "item", tyexpr(e->elements.items[i]),
                                                 "cond", (e->aconds.items[i] == NULL) ? NIL : tyexpr(e->aconds.items[i]),
                                                 "optional", BOOLEAN(e->optional.items[i]),
                                                 NULL
@@ -5225,7 +5225,7 @@ cexpr(struct value *v)
                         struct value *entry = &v->array->items[i];
                         struct value *optional = tuple_get(entry, "optional");
                         struct value *cond = tuple_get(entry, "cond");
-                        vec_push(e->elements, cexpr(&entry->items[0]));
+                        vec_push(e->elements, cexpr(tuple_get(entry, "item")));
                         vec_push(e->optional, optional != NULL ? optional->boolean : false);
                         vec_push(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
                 }
@@ -5446,7 +5446,6 @@ tyeval(struct expression *e)
         struct value v = *vm_get(0);
         vm_pop();
 
-        gc_free(state.code.items);
         state.code = code_save;
 
         return v;

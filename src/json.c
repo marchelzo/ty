@@ -290,7 +290,7 @@ try_visit(void const *p)
 static bool
 encode(struct value const *v, str *out)
 {
-        switch (v->type) {
+        switch (v->type & ~VALUE_TAGGED) {
         case VALUE_NIL:
                 vec_push_n(*out, "null", 4);
                 break;
