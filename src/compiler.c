@@ -4874,6 +4874,14 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "MethodCall"));
                 break;
+        case EXPRESSION_WITH:
+                v = tagged(
+                        gettag("ty", "With"),
+                        tystmt(e->with.let),
+                        tystmt(e->with.block),
+                        NONE
+                );
+                break;
         case EXPRESSION_NIL:
                 v = TAG(gettag("ty", "Nil"));
                 break;
@@ -4889,7 +4897,7 @@ tyexpr(struct expression const *e)
         case EXPRESSION_INTEGER:
                 v = INTEGER(e->integer);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Integer"));
+                v.tags = tags_push(0, gettag("ty", "Int"));
                 break;
         case EXPRESSION_REAL:
                 v = REAL(e->real);
@@ -4974,6 +4982,14 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Match"));
                 break;
+        case STATEMENT_BLOCK:
+                v = ARRAY(value_array_new());
+                for (int i = 0; i < s->statements.count; ++i) {
+                        value_array_push(v.array, tystmt(s->statements.items[i]));
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Block"));
+                break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
         default:
@@ -5021,6 +5037,12 @@ cstmt(struct value *v)
                         v->tags = tags_pop(v->tags);
                         vec_push(s->returns, cexpr(v));
                 }
+        } else if (tags_first(v->tags) == gettag("ty", "Block")) {
+                s->type = STATEMENT_BLOCK;
+                vec_init(s->statements);
+                for (int i = 0; i < v->array->count; ++i) {
+                        vec_push(s->statements, cstmt(&v->array->items[i]));
+                }
         } else {
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(v);
@@ -5039,7 +5061,7 @@ cexpr(struct value *v)
 
         if (tags_first(v->tags) == gettag("ty", "Expr")) {
                 return v->ptr;
-        } else if (tags_first(v->tags) == gettag("ty", "Integer")) {
+        } else if (tags_first(v->tags) == gettag("ty", "Int")) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
         } else if (tags_first(v->tags) == gettag("ty", "Id")) {
