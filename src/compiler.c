@@ -4935,8 +4935,17 @@ tyexpr(struct expression const *e)
         case EXPRESSION_MINUS:
                 v = tagged(gettag("ty", "Sub"), tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
+        case EXPRESSION_DIV:
+                v = tagged(gettag("ty", "Div"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_PERCENT:
+                v = tagged(gettag("ty", "Mod"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
         case EXPRESSION_DBL_EQ:
                 v = tagged(gettag("ty", "Eq"), tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_NOT_EQ:
+                v = tagged(gettag("ty", "NotEq"), tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_IN:
                 v = tagged(gettag("ty", "In"), tyexpr(e->left), tyexpr(e->right), NONE);
@@ -4999,7 +5008,7 @@ tystmt(struct statement *s)
                                 value_array_push(
                                         v.items[0].array,
                                         tagged(
-                                                part->def ? gettag("ty", "Let") : gettag("ty", "Eq"),
+                                                part->def ? gettag("ty", "Let") : gettag("ty", "Assign"),
                                                 tyexpr(part->target),
                                                 tyexpr(part->e),
                                                 NONE
@@ -5037,10 +5046,12 @@ cstmt(struct value *v)
                 s->type = STATEMENT_DEFINITION;
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "If")) {
+        } else if (tags_first(v->tags) == gettag("ty", "If") ||
+                   tags_first(v->tags) == gettag("ty", "IfNot")) {
                 s->type = STATEMENT_IF;
-                s->iff.neg = false;
+                s->iff.neg = tags_first(v->tags) == gettag("ty", "IfNot");
                 vec_init(s->iff.parts);
+
                 struct value *parts = &v->items[0];
                 for (int i = 0; i < parts->array->count; ++i) {
                         struct value *part = &parts->array->items[i];
@@ -5049,7 +5060,7 @@ cstmt(struct value *v)
                                 cp->def = true;
                                 cp->target = cexpr(&part->items[0]);
                                 cp->e = cexpr(&part->items[1]);
-                        } else if (tags_first(part->tags) == gettag("ty", "Eq")) {
+                        } else if (tags_first(part->tags) == gettag("ty", "Assign")) {
                                 cp->def = false;
                                 cp->target = cexpr(&part->items[0]);
                                 cp->e = cexpr(&part->items[1]);
@@ -5250,12 +5261,24 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_MINUS;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Mod")) {
+                e->type = EXPRESSION_PERCENT;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "Div")) {
+                e->type = EXPRESSION_DIV;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "Mul")) {
                 e->type = EXPRESSION_STAR;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "Eq")) {
                 e->type = EXPRESSION_DBL_EQ;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "NotEq")) {
+                e->type = EXPRESSION_NOT_EQ;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "In")) {

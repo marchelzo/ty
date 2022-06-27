@@ -455,8 +455,14 @@ add_builtins(int ac, char **av)
         compiler_introduce_tag("ty", "Mul");
         vec_push(Globals, TAG(gettag("ty", "Mul")));
 
+        compiler_introduce_tag("ty", "Div");
+        vec_push(Globals, TAG(gettag("ty", "Div")));
+
         compiler_introduce_tag("ty", "Eq");
         vec_push(Globals, TAG(gettag("ty", "Eq")));
+
+        compiler_introduce_tag("ty", "NotEq");
+        vec_push(Globals, TAG(gettag("ty", "NotEq")));
 
         compiler_introduce_tag("ty", "In");
         vec_push(Globals, TAG(gettag("ty", "In")));
