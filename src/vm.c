@@ -2771,7 +2771,11 @@ BadContainer:
                         if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
                                 vp = tags_lookup_method(value.tag, method, h);
-                                self = NULL;
+                                if (vp == NULL) {
+                                        vp = class_lookup_method(CLASS_TAG, method, h);
+                                } else {
+                                        self = NULL;
+                                }
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method(method);
