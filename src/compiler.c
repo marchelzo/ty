@@ -3556,6 +3556,10 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_IDENTIFIER:
                 emit_load(e->symbol, state.fscope);
                 break;
+        case EXPRESSION_VALUE:
+                emit_instr(INSTR_VALUE);
+                emit_symbol((uintptr_t)e->v);
+                break;
         case EXPRESSION_MATCH:
                 emit_match_expression(e);
                 break;
@@ -5125,6 +5129,13 @@ cexpr(struct value *v)
 
         if (tags_first(v->tags) == gettag("ty", "Expr")) {
                 return v->ptr;
+        } else if (tags_first(v->tags) == gettag("ty", "Value")) {
+                struct value *value = gc_alloc(sizeof *value);
+                *value = *v;
+                value->tags = tags_pop(value->tags);
+                e->type = EXPRESSION_VALUE;
+                e->v = value;
+                gc_push(value);
         } else if (tags_first(v->tags) == gettag("ty", "Int")) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
@@ -5147,7 +5158,7 @@ cexpr(struct value *v)
                         struct value *cond = tuple_get(entry, "cond");
                         vec_push(e->elements, cexpr(&entry->items[0]));
                         vec_push(e->optional, optional != NULL ? optional->boolean : false);
-                        vec_push(e->aconds, cond != NULL ? cexpr(cond) : NULL);
+                        vec_push(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
                 }
         } else if (tags_first(v->tags) == gettag("ty", "Record")) {
                 e->type = EXPRESSION_TUPLE;

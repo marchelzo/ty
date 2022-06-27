@@ -13,6 +13,7 @@
 typedef vec(int) int_vector;
 
 struct expression;
+struct value;
 
 struct class_definition {
         int symbol;
@@ -212,6 +213,7 @@ struct expression {
                 EXPRESSION_POSTFIX_DEC,
 
 				EXPRESSION_MACRO_INVOCATION,
+				EXPRESSION_VALUE,
         } type;
 
         char const *filename;
@@ -225,6 +227,7 @@ struct expression {
                 float real;
                 struct statement *statement;
                 struct expression *operand;
+				struct value *v;
                 struct {
                         struct symbol *atmp;
                         expression_vector elements;

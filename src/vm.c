@@ -395,6 +395,9 @@ add_builtins(int ac, char **av)
         compiler_introduce_tag("ty", "Expr");
         vec_push(Globals, TAG(gettag("ty", "Expr")));
 
+        compiler_introduce_tag("ty", "Value");
+        vec_push(Globals, TAG(gettag("ty", "Value")));
+
         compiler_introduce_tag("ty", "Stmt");
         vec_push(Globals, TAG(gettag("ty", "Stmt")));
 
@@ -457,6 +460,9 @@ add_builtins(int ac, char **av)
 
         compiler_introduce_tag("ty", "Div");
         vec_push(Globals, TAG(gettag("ty", "Div")));
+
+        compiler_introduce_tag("ty", "Mod");
+        vec_push(Globals, TAG(gettag("ty", "Mod")));
 
         compiler_introduce_tag("ty", "Eq");
         vec_push(Globals, TAG(gettag("ty", "Eq")));
@@ -1671,6 +1677,10 @@ Throw:
                         push(v);
                         OKGC(v.gen);
                         goto Return;
+                CASE(VALUE)
+                        READVALUE(s);
+                        push(*(struct value *)s);
+                        break;
                 CASE(FUCK)
                 CASE(FUCK2)
                 CASE(FUCK3)

@@ -115,6 +115,8 @@ enum instruction {
         INSTR_FUCK2,
         INSTR_FUCK3,
 
+        INSTR_VALUE,
+
         INSTR_SAVE_STACK_POS,
         INSTR_RESTORE_STACK_POS,
 
