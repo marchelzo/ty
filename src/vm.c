@@ -392,128 +392,62 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
 
-        compiler_introduce_tag("ty", "Expr");
-        vec_push(Globals, TAG(gettag("ty", "Expr")));
+#define DEF_NODE(name) \
+        do { \
+                compiler_introduce_tag("ty", #name); \
+                vec_push(Globals, TAG(gettag("ty", #name))); \
+        } while (0)
 
-        compiler_introduce_tag("ty", "Value");
-        vec_push(Globals, TAG(gettag("ty", "Value")));
+        DEF_NODE(Expr);
+        DEF_NODE(Stmt);
+        DEF_NODE(Value);
+        DEF_NODE(Match);
+        DEF_NODE(Func);
+        DEF_NODE(FuncDef);
+        DEF_NODE(Param);
+        DEF_NODE(Arg);
+        DEF_NODE(If);
+        DEF_NODE(IfNot);
+        DEF_NODE(In);
+        DEF_NODE(NotIn);
+        DEF_NODE(Eq);
+        DEF_NODE(Or);
+        DEF_NODE(And);
+        DEF_NODE(NotEq);
+        DEF_NODE(Assign);
+        DEF_NODE(Let);
+        DEF_NODE(Class);
+        DEF_NODE(Gather);
+        DEF_NODE(Kwargs);
+        DEF_NODE(Add);
+        DEF_NODE(Mul);
+        DEF_NODE(Sub);
+        DEF_NODE(Div);
+        DEF_NODE(Mod);
+        DEF_NODE(Block);
+        DEF_NODE(With);
+        DEF_NODE(Mod);
+        DEF_NODE(Array);
+        DEF_NODE(Dict);
+        DEF_NODE(String);
+        DEF_NODE(Int);
+        DEF_NODE(Bool);
+        DEF_NODE(Float);
+        DEF_NODE(Nil);
+        DEF_NODE(Float);
+        DEF_NODE(Id);
+        DEF_NODE(Record);
+        DEF_NODE(RecordEntry);
+        DEF_NODE(DictItem);
+        DEF_NODE(ArrayItem);
+        DEF_NODE(Call);
+        DEF_NODE(MethodCall);
+        DEF_NODE(Cond);
+        DEF_NODE(UserOp);
+        DEF_NODE(Return);
+        DEF_NODE(Wtf);
 
-        compiler_introduce_tag("ty", "Stmt");
-        vec_push(Globals, TAG(gettag("ty", "Stmt")));
-
-        compiler_introduce_tag("ty", "Block");
-        vec_push(Globals, TAG(gettag("ty", "Block")));
-
-        compiler_introduce_tag("ty", "If");
-        vec_push(Globals, TAG(gettag("ty", "If")));
-
-        compiler_introduce_tag("ty", "IfNot");
-        vec_push(Globals, TAG(gettag("ty", "IfNot")));
-
-        compiler_introduce_tag("ty", "With");
-        vec_push(Globals, TAG(gettag("ty", "With")));
-
-        compiler_introduce_tag("ty", "Return");
-        vec_push(Globals, TAG(gettag("ty", "Return")));
-
-        compiler_introduce_tag("ty", "Match");
-        vec_push(Globals, TAG(gettag("ty", "Match")));
-
-        compiler_introduce_tag("ty", "Int");
-        vec_push(Globals, TAG(gettag("ty", "Int")));
-
-        compiler_introduce_tag("ty", "String");
-        vec_push(Globals, TAG(gettag("ty", "String")));
-
-        compiler_introduce_tag("ty", "Named");
-        vec_push(Globals, TAG(gettag("ty", "Named")));
-
-        compiler_introduce_tag("ty", "Array");
-        vec_push(Globals, TAG(gettag("ty", "Array")));
-
-        compiler_introduce_tag("ty", "Dict");
-        vec_push(Globals, TAG(gettag("ty", "Dict")));
-
-        compiler_introduce_tag("ty", "Record");
-        vec_push(Globals, TAG(gettag("ty", "Record")));
-
-        compiler_introduce_tag("ty", "Float");
-        vec_push(Globals, TAG(gettag("ty", "Float")));
-
-        compiler_introduce_tag("ty", "Bool");
-        vec_push(Globals, TAG(gettag("ty", "Bool")));
-
-        compiler_introduce_tag("ty", "Id");
-        vec_push(Globals, TAG(gettag("ty", "Id")));
-
-        compiler_introduce_tag("ty", "Let");
-        vec_push(Globals, TAG(gettag("ty", "Let")));
-
-        compiler_introduce_tag("ty", "Add");
-        vec_push(Globals, TAG(gettag("ty", "Add")));
-
-        compiler_introduce_tag("ty", "Sub");
-        vec_push(Globals, TAG(gettag("ty", "Sub")));
-
-        compiler_introduce_tag("ty", "Mul");
-        vec_push(Globals, TAG(gettag("ty", "Mul")));
-
-        compiler_introduce_tag("ty", "Div");
-        vec_push(Globals, TAG(gettag("ty", "Div")));
-
-        compiler_introduce_tag("ty", "Mod");
-        vec_push(Globals, TAG(gettag("ty", "Mod")));
-
-        compiler_introduce_tag("ty", "Eq");
-        vec_push(Globals, TAG(gettag("ty", "Eq")));
-
-        compiler_introduce_tag("ty", "NotEq");
-        vec_push(Globals, TAG(gettag("ty", "NotEq")));
-
-        compiler_introduce_tag("ty", "In");
-        vec_push(Globals, TAG(gettag("ty", "In")));
-
-        compiler_introduce_tag("ty", "NotIn");
-        vec_push(Globals, TAG(gettag("ty", "NotIn")));
-
-        compiler_introduce_tag("ty", "Or");
-        vec_push(Globals, TAG(gettag("ty", "Or")));
-
-        compiler_introduce_tag("ty", "And");
-        vec_push(Globals, TAG(gettag("ty", "And")));
-
-        compiler_introduce_tag("ty", "UserOp");
-        vec_push(Globals, TAG(gettag("ty", "UserOp")));
-
-        compiler_introduce_tag("ty", "Assign");
-        vec_push(Globals, TAG(gettag("ty", "Assign")));
-
-        compiler_introduce_tag("ty", "ArrayItem");
-        vec_push(Globals, TAG(gettag("ty", "ArrayItem")));
-
-        compiler_introduce_tag("ty", "DictItem");
-        vec_push(Globals, TAG(gettag("ty", "DictItem")));
-
-        compiler_introduce_tag("ty", "RecordEntry");
-        vec_push(Globals, TAG(gettag("ty", "RecordEntry")));
-
-        compiler_introduce_tag("ty", "Nil");
-        vec_push(Globals, TAG(gettag("ty", "Nil")));
-
-        compiler_introduce_tag("ty", "Wtf");
-        vec_push(Globals, TAG(gettag("ty", "Wtf")));
-
-        compiler_introduce_tag("ty", "Cond");
-        vec_push(Globals, TAG(gettag("ty", "Cond")));
-
-        compiler_introduce_tag("ty", "Call");
-        vec_push(Globals, TAG(gettag("ty", "Call")));
-
-        compiler_introduce_tag("ty", "MethodCall");
-        vec_push(Globals, TAG(gettag("ty", "MethodCall")));
-
-        compiler_introduce_tag("ty", "Arg");
-        vec_push(Globals, TAG(gettag("ty", "Arg")));
+#undef DEF_NODE
 }
 
 void

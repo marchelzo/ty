@@ -1443,7 +1443,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(scope, s->target, true, s->pub);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
-                if (scope != state.global) {
+                if (true || scope != state.global) {
                         symbolize_lvalue(scope, s->target, true, s->pub);
                 }
                 symbolize_expression(scope, s->value);
@@ -4751,6 +4751,38 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Array"));
                 break;
+        case EXPRESSION_FUNCTION:
+                v = value_named_tuple(
+                        "name", e->name != NULL ? STRING_CLONE(e->name, strlen(e->name)) : NIL,
+                        "params", ARRAY(value_array_new()),
+                        "body", tystmt(e->body),
+                        NULL
+                );
+                for (int i = 0; i < e->params.count; ++i) {
+                        struct value name = STRING_CLONE(e->params.items[i], strlen(e->params.items[i]));
+                        if (i == e->rest) {
+                                value_array_push(
+                                        v.items[1].array,
+                                        tagged(gettag("ty", "Gather"), name, NONE)
+                                );
+                        } else if (i == e->ikwargs) {
+                                value_array_push(
+                                        v.items[1].array,
+                                        tagged(gettag("ty", "Kwargs"), name, NONE)
+                                );
+                        } else {
+                                struct value p = value_named_tuple(
+                                        "name", name,
+                                        "constraint", e->constraints.items[i] != NULL ? tyexpr(e->constraints.items[i]) : NIL,
+                                        "default", e->dflts.items[i] != NULL ? tyexpr(e->dflts.items[i]) : NIL,
+                                        NULL
+                                );
+                                value_array_push(v.items[1].array, tagged(gettag("ty", "Param"), p, NONE));
+                        }
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Func"));
+                break;
         case EXPRESSION_TUPLE:
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
@@ -4979,6 +5011,19 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Let"));
                 break;
+        case STATEMENT_CLASS_DEFINITION:
+                v = value_named_tuple(
+                        "name", STRING_CLONE(s->class.name, strlen(s->class.name)),
+                        "super", s->class.super != NULL ? tyexpr(s->class.super) : NIL,
+                        "methods", ARRAY(value_array_new()),
+                        NULL
+                );
+                for (int i = 0; i < s->class.methods.count; ++i) {
+                        value_array_push(v.items[2].array, tyexpr(s->class.methods.items[i]));
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Class"));
+                break;
         case STATEMENT_MATCH:
                 v = value_tuple(2);
                 v.items[0] = tyexpr(s->match.e);
@@ -5027,6 +5072,10 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, s->iff.neg ? gettag("ty", "IfNot") : gettag("ty", "If"));
                 break;
+        case STATEMENT_FUNCTION_DEFINITION:
+                v = tyexpr(s->value);
+                v.tags = tags_push(0, gettag("ty", "FuncDef"));
+                break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
         default:
@@ -5050,6 +5099,26 @@ cstmt(struct value *v)
                 s->type = STATEMENT_DEFINITION;
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == gettag("ty", "FuncDef")) {
+                struct value f = *v;
+                f.tags = tags_push(0, gettag("ty", "Func"));
+                s->type = STATEMENT_FUNCTION_DEFINITION;
+                s->value = cexpr(&f);
+                s->target = gc_alloc(sizeof *s->target);
+                s->target->type = EXPRESSION_IDENTIFIER;
+                s->target->identifier = mkcstr(tuple_get(v, "name"));
+                s->target->module = NULL;
+                s->target->constraint = NULL;
+        } else if (tags_first(v->tags) == gettag("ty", "Class")) {
+                s->type = STATEMENT_CLASS_DEFINITION;
+                s->class.name = mkcstr(tuple_get(v, "name"));
+                struct value *super = tuple_get(v, "super");
+                s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(super) : NULL;
+                struct value *methods = tuple_get(v, "methods");
+                vec_init(s->class.methods);
+                for (int i = 0; i < methods->array->count; ++i) {
+                        vec_push(s->class.methods, cexpr(&methods->array->items[i]));
+                }
         } else if (tags_first(v->tags) == gettag("ty", "If") ||
                    tags_first(v->tags) == gettag("ty", "IfNot")) {
                 s->type = STATEMENT_IF;
@@ -5250,6 +5319,38 @@ cexpr(struct value *v)
                                 vec_push(e->method_kws, mkcstr(name));
                         }
                 }
+        } else if (tags_first(v->tags) == gettag("ty", "Func")) {
+                e->type = EXPRESSION_FUNCTION;
+                e->ikwargs = -1;
+                e->rest = -1;
+                e->ftype = FT_NONE;
+                struct value *name = tuple_get(v, "name");
+                struct value *params = tuple_get(v, "params");
+                e->name = (name != NULL && name->type != VALUE_NIL) ? mkcstr(name) : NULL;
+                vec_init(e->params);
+                vec_init(e->constraints);
+                vec_init(e->dflts);
+                for (int i = 0; i < params->array->count; ++i) {
+                        struct value *p = &params->array->items[i];
+                        if (tags_first(p->tags) == gettag("ty", "Param")) {
+                                vec_push(e->params, mkcstr(tuple_get(p, "name")));
+                                struct value *c = tuple_get(p, "constraint");
+                                struct value *d = tuple_get(p, "default");
+                                vec_push(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(c) : NULL);
+                                vec_push(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(d) : NULL);
+                        } else if (tags_first(p->tags) == gettag("ty", "Gather")) {
+                                vec_push(e->params, mkcstr(tuple_get(p, "name")));
+                                vec_push(e->constraints, NULL);
+                                vec_push(e->dflts, NULL);
+                                e->rest = i;
+                        } else if (tags_first(p->tags) == gettag("ty", "Kwargs")) {
+                                vec_push(e->params, mkcstr(tuple_get(p, "name")));
+                                vec_push(e->constraints, NULL);
+                                vec_push(e->dflts, NULL);
+                                e->ikwargs = i;
+                        }
+                }
+                e->body = cstmt(tuple_get(v, "body"));
         } else if (tags_first(v->tags) == gettag("ty", "Cond")) {
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(&v->items[0]);
@@ -5319,6 +5420,9 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == gettag("ty", "Stmt")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == gettag("ty", "FuncDef")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         }
