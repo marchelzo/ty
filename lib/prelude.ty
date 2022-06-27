@@ -3,6 +3,7 @@ import math
 import thread
 import base64
 import ffi as c
+import ty
 
 tag MatchError;
 tag IndexError;
@@ -1342,6 +1343,10 @@ class Thread {
     kill(sig) {
         thread.kill(@id, sig)
     }
+}
+
+function static(e) {
+	ty.Value(ty.eval(e))
 }
 
 operator **   10 right
