@@ -5339,12 +5339,12 @@ cexpr(struct value *v)
                                 vec_push(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(c) : NULL);
                                 vec_push(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(d) : NULL);
                         } else if (tags_first(p->tags) == gettag("ty", "Gather")) {
-                                vec_push(e->params, mkcstr(tuple_get(p, "name")));
+                                vec_push(e->params, mkcstr(p));
                                 vec_push(e->constraints, NULL);
                                 vec_push(e->dflts, NULL);
                                 e->rest = i;
                         } else if (tags_first(p->tags) == gettag("ty", "Kwargs")) {
-                                vec_push(e->params, mkcstr(tuple_get(p, "name")));
+                                vec_push(e->params, mkcstr(p));
                                 vec_push(e->constraints, NULL);
                                 vec_push(e->dflts, NULL);
                                 e->ikwargs = i;
