@@ -9,6 +9,8 @@ class Args {
 		let opts = self.info()
 		let args = []
 
+		let version = self.version()
+
 		for o in opts {
 			let short = match o.?short {
 				nil  => o.name[0],
@@ -29,7 +31,7 @@ class Args {
 			}
 		}
 
-		let parse = argparse.make(*args)
+		let parse = argparse.make(*args, version: version)
 
 		parse(argv)
 	}
@@ -39,6 +41,13 @@ pub function clap() {
 	let name = peek(0).id
 
 	next()
+
+	let version = if peek(0).type == 'id' && peek(0).id[0] == 'v' {
+		next()
+		next()
+		peek(-1).str
+	}
+
 	next()
 
 	let args = []
@@ -85,10 +94,11 @@ pub function clap() {
 	}
 
 	let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+	let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
 
 	next()
 
-	ty.Class(name: name, methods: [info], super: ty.Id(name: 'Args', module: 'clap'))
+	ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
 }
 
 /*
