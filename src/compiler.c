@@ -4755,6 +4755,7 @@ tyexpr(struct expression const *e)
                 v = value_named_tuple(
                         "name", e->name != NULL ? STRING_CLONE(e->name, strlen(e->name)) : NIL,
                         "params", ARRAY(value_array_new()),
+                        "rt", e->return_type != NULL ? tyexpr(e->return_type) : NIL,
                         "body", tystmt(e->body),
                         NULL
                 );
@@ -5076,6 +5077,9 @@ tystmt(struct statement *s)
                 v = tyexpr(s->value);
                 v.tags = tags_push(0, gettag("ty", "FuncDef"));
                 break;
+        case STATEMENT_NULL:
+                v = TAG(gettag("ty", "Null"));
+                break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
         default:
@@ -5180,6 +5184,8 @@ cstmt(struct value *v)
                 for (int i = 0; i < v->array->count; ++i) {
                         vec_push(s->statements, cstmt(&v->array->items[i]));
                 }
+        } else if (v->type == VALUE_TAG && v->tag == gettag("ty", "Null")) {
+                s->type = STATEMENT_NULL;
         } else {
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(v);
@@ -5329,7 +5335,9 @@ cexpr(struct value *v)
                 e->ftype = FT_NONE;
                 struct value *name = tuple_get(v, "name");
                 struct value *params = tuple_get(v, "params");
+                struct value *rt = tuple_get(v, "rt");
                 e->name = (name != NULL && name->type != VALUE_NIL) ? mkcstr(name) : NULL;
+                e->return_type = (rt != NULL && rt->type != VALUE_NIL) ? cexpr(rt) : NULL;
                 vec_init(e->params);
                 vec_init(e->constraints);
                 vec_init(e->dflts);

@@ -1,7 +1,7 @@
 import ffi as c
 import cutil (wrap)
 
-if not let $curses = c.dlopen('libncurses.so.5') {
+if not let $curses = c.dlopen('libncurses.so.5') ?? c.dlopen('libncurses.so.6') {
 	throw 'Failed to load curses'
 }
 

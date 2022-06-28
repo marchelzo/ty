@@ -1964,6 +1964,7 @@ infix_function_call(struct expression *left)
                         next();
                         next();
                         vec_push(e->kwargs, parse_expr(0));
+                        vec_push(e->fkwconds, NULL);
                 } else {
                         vec_push(e->args, parse_expr(0));
                         vec_push(e->fconds, try_cond());
@@ -1996,6 +1997,7 @@ infix_function_call(struct expression *left)
                         next();
                         next();
                         vec_push(e->kwargs, parse_expr(0));
+                        vec_push(e->fkwconds, NULL);
                 } else {
                         vec_push(e->args, parse_expr(0));
                         vec_push(e->fconds, try_cond());

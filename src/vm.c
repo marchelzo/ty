@@ -406,6 +406,7 @@ add_builtins(int ac, char **av)
         DEF_NODE(FuncDef);
         DEF_NODE(Param);
         DEF_NODE(Arg);
+        DEF_NODE(Null);
         DEF_NODE(If);
         DEF_NODE(IfNot);
         DEF_NODE(In);
