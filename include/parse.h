@@ -23,4 +23,7 @@ parse_get_stmt(int prec);
 void
 parse_next(void);
 
+void
+make_with(struct expression *e, struct statement *let, struct statement *body);
+
 #endif

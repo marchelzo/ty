@@ -4915,7 +4915,7 @@ tyexpr(struct expression const *e)
                 v = tagged(
                         gettag("ty", "With"),
                         tystmt(e->with.let),
-                        tystmt(e->with.block),
+                        tystmt(e->with.block->statements.items[1]->try.s),
                         NONE
                 );
                 break;
@@ -5362,6 +5362,8 @@ cexpr(struct value *v)
                         }
                 }
                 e->body = cstmt(tuple_get(v, "body"));
+        } else if (tags_first(v->tags) == gettag("ty", "With")) {
+                make_with(e, cstmt(&v->items[0]), cstmt(&v->items[1]));
         } else if (tags_first(v->tags) == gettag("ty", "Cond")) {
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(&v->items[0]);

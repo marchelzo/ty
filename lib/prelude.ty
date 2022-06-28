@@ -1349,6 +1349,11 @@ function static(e) {
 	ty.Value(ty.eval(e))
 }
 
+function showCode(e) {
+    print(e)
+    e
+}
+
 operator **   10 right
 operator <<   7  left
 operator >>   7  left

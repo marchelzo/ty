@@ -1117,21 +1117,20 @@ parse_block_expr(void)
         return e;
 }
 
-static struct expression *
-prefix_with(void)
+void
+make_with(struct expression *e, struct statement *let, struct statement *body)
 {
-        struct expression *e = mkexpr();
         e->type = EXPRESSION_WITH;
 
         tok()->keyword = KEYWORD_LET;
 
-        e->with.let = parse_let_definition();
+        e->with.let = let;
 
         struct statement *try = mkstmt();
         try->type = STATEMENT_TRY;
         vec_init(try->try.patterns);
         vec_init(try->try.handlers);
-        try->try.s = parse_statement(0);
+        try->try.s = body;
 
         try->try.finally = mkstmt();
         try->try.finally->type = STATEMENT_DROP;
@@ -1143,6 +1142,19 @@ prefix_with(void)
         vec_push(s->statements, e->with.let);
         vec_push(s->statements, try);
         e->with.block = s;
+}
+
+static struct expression *
+prefix_with(void)
+{
+        struct expression *e = mkexpr();
+
+        tok()->keyword = KEYWORD_LET;
+
+        struct statement *let = parse_let_definition();
+        struct statement *body = parse_statement(0);
+
+        make_with(e, let, body);
 
         e->end = End;
 
