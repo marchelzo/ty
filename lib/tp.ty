@@ -6,6 +6,7 @@ class ThreadPool {
     @queue = []
     @mtx = Mutex()
     @cv = CondVar()
+    @stop = false
     @threads = [Thread(@runThread) for _ in ..n]
   }
 
@@ -26,8 +27,13 @@ class ThreadPool {
     while true {
       @mtx.lock()
 
-      while #@queue == 0 {
+      while !@stop && #@queue == 0 {
         @cv.wait(@mtx)
+      }
+
+      if @stop && #@queue == 0 {
+        @mtx.unlock()
+        break
       }
 
       let (args, kwargs, future) = @queue.pop(0)
@@ -52,6 +58,18 @@ class ThreadPool {
 
       future.cv.signal()
     }
+  }
+
+  close() {
+    @mtx.lock()
+    @stop = true
+    @mtx.unlock()
+    @cv.broadcast()
+    @threads.map(&join)
+  }
+
+  __drop__() {
+    self.close()
   }
 }
 
