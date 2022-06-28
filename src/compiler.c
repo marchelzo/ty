@@ -5202,6 +5202,9 @@ cexpr(struct value *v)
                 struct value *value = gc_alloc(sizeof *value);
                 *value = *v;
                 value->tags = tags_pop(value->tags);
+                if (value->tags == 0) {
+                        value->type &= ~VALUE_TAGGED;
+                }
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
                 gc_push(value);
@@ -5472,7 +5475,12 @@ typarse(struct expression *e)
         struct value m = *vm_get(0);
         vm_pop();
 
+        struct scope *macro_scope_save = state.macro_scope;
+        state.macro_scope = state.global;
+
         struct value expr = vm_call(&m, 0);
+
+        state.macro_scope = macro_scope_save;
 
         return cexpr(&expr);
 }
