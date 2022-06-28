@@ -1,0 +1,89 @@
+import ty
+import ty.token (next, peek)
+import ty.parse (expr)
+import argparse (opt, flag)
+import os
+
+class Args {
+	parse(argv = os.args) {
+		let opts = self.info()
+		let args = []
+
+		for o in opts {
+			let short = o.?short ?? o.name[0]
+			let long = o.?long ?? o.name
+
+			if o.constraint == Bool {
+				args.push(flag(short: short, long: long, help: o.?help))
+			} else {
+				args.push(opt(short: short, long: long, help: o.?help, convert: o.?conv, post: o.constraint))
+			}
+		}
+
+		let parse = argparse.make(*args)
+
+		parse(argv)
+	}
+}
+
+pub function clap() {
+	let name = peek(0).id
+
+	next()
+	next()
+
+	let args = []
+
+	while peek(0).type != '}' {
+		let help = if peek(0).type == 'comment' {
+			next()
+			peek(-1).comment
+		}
+
+		let name = peek(0).id
+
+		next()
+		next()
+
+		let constraint = ty.eval(expr(0))
+		let conv = nil
+		let short = nil
+		let long = nil
+
+		while peek(0).type == ',' {
+			next()
+
+			let attr = peek(0)
+			next()
+			next()
+
+			match attr.id {
+				'conv' => {
+					conv = ty.eval(expr(0))
+				},
+
+				'short' => {
+					short = ty.eval(expr(0))
+				},
+
+				'long' => {
+					long = ty.eval(expr(0))
+				}
+			}
+		}
+
+		args.push({name, constraint, ?help, ?conv, ?short, ?long})
+	}
+
+	let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+
+	next()
+
+	ty.Class(name: name, methods: [info], super: ty.Id(name: 'Args', module: 'clap'))
+}
+
+/*
+	$[clap] {
+		jobs: 1..10, help: 'Number of jobs!', conv: int
+	}
+*/

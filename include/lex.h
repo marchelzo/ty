@@ -15,6 +15,7 @@ typedef struct LexState {
         struct location loc;
         char const *end;
         bool need_nl;
+        bool keep_comments;
         int ctx;
 } LexState;
 
@@ -41,6 +42,9 @@ lex_save(LexState *state);
 
 void
 lex_need_nl(void);
+
+bool
+lex_keep_comments(bool b);
 
 struct location
 lex_pos(void);

@@ -70,6 +70,7 @@ struct token {
                 TOKEN_WTF,
                 TOKEN_CHECK_MATCH,
                 TOKEN_EXPRESSION,
+                TOKEN_COMMENT,
                 TOKEN_ERROR,
         } type;
         int ctx;
@@ -127,6 +128,7 @@ struct token {
                 };
                 char *operator;
                 char *string;
+                char *comment;
                 intmax_t integer;
                 float real;
         };

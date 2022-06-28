@@ -716,25 +716,34 @@ lexop(void)
         return mktoken(toktype);
 }
 
-static bool
+static struct token
 lexlinecomment(void)
 {
         // skip the leading slashes
         nextchar();
         nextchar();
 
-        bool need_nl = state.need_nl;
-
-        while (C(0) != '\n' && C(0) != '\0') {
+        while (isspace(C(0)) && C(0) != '\n') {
                 nextchar();
         }
 
-        nextchar();
+        vec(char) comment;
+        vec_init(comment);
 
-        state.need_nl = false;
-        Start = state.loc;
+        while (C(0) != '\n' && C(0) != '\0') {
+                vec_push(comment, nextchar());
+        }
 
-        return need_nl;
+        while (comment.count > 0 && isspace(*vec_last(comment))) {
+                vec_pop(comment);
+        }
+
+        vec_push(comment, '\0');
+
+        struct token t = mktoken(TOKEN_COMMENT);
+        t.comment = comment.items;
+
+        return t;
 }
 
 static void
@@ -785,7 +794,10 @@ lex_token(LexContext ctx)
                                 return mktoken(TOKEN_NEWLINE);
                         }
                 } else if (C(0) == '/' && C(1) == '/') {
-                        if (lexlinecomment() || skipspace()) {
+                        struct token t = lexlinecomment();
+                        if (state.keep_comments) {
+                                return t;
+                        } else if (skipspace()) {
                                 return mktoken(TOKEN_NEWLINE);
                         }
                 } else if (ctx == LEX_PREFIX && C(0) == '/') {
@@ -865,6 +877,7 @@ lex_init(char const *file, char const *src)
                 },
                 .end = src + strlen(src),
                 .need_nl = false,
+                .keep_comments = false,
                 .ctx = LEX_PREFIX
         };
 
@@ -901,6 +914,14 @@ void
 lex_need_nl(void)
 {
         state.need_nl = true;
+}
+
+bool
+lex_keep_comments(bool b)
+{
+        bool old = state.keep_comments;
+        state.keep_comments = b;
+        return old;
 }
 
 void

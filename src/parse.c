@@ -304,7 +304,7 @@ token(int i)
                         lex_save(&CtxCheckpoint);
                 }
                 t = lex_token(lctx);
-                LOG("Adding tokens[%d] = %s\n", tokens.count, token_show(&t));
+                LOG("Adding tokens[%d] = %s", (int)tokens.count, token_show(&t));
                 vec_push(tokens, t);
         }
 
@@ -3821,32 +3821,58 @@ parse(char const *source, char const *file)
 struct value
 parse_get_token(int i)
 {
-        struct token *t = token(i);
+        bool keep_comments = lex_keep_comments(true);
         char *type = NULL;
+
+        lex_rewind(&token(-1)->end);
+        tokens.count = TokenIndex;
+
+        struct token *t = token(i);
+
+        lex_keep_comments(keep_comments);
+
 
 #define T(name) (STRING_NOGC(#name, strlen(#name)))
 
         switch (t->type) {
         case TOKEN_IDENTIFIER:
                 return value_named_tuple(
-                        "type", T(Id),
+                        "type", T(id),
                         "id", STRING_NOGC(t->identifier, strlen(t->identifier)),
                         NULL
                 );
         case TOKEN_INTEGER:
                 return value_named_tuple(
-                        "type", T(Int),
+                        "type", T(int),
                         "int", INTEGER(t->integer),
                         NULL
                 );
         case TOKEN_STRING:
                 return value_named_tuple(
-                        "type", T(String),
+                        "type", T(string),
                         "str", STRING_NOGC(t->string, strlen(t->string)),
+                        NULL
+                );
+        case TOKEN_COMMENT:
+                return value_named_tuple(
+                        "type", T(comment),
+                        "comment", STRING_NOGC(t->comment, strlen(t->comment)),
                         NULL
                 );
         case TOKEN_END:
                 return NIL;
+        case TOKEN_DOT_DOT:
+                type = "..";
+                break;
+        case TOKEN_DOT_DOT_DOT:
+                type = "...";
+                break;
+        case TOKEN_AT:
+                type = "@";
+                break;
+        case TOKEN_INC:
+                type = "++";
+                break;
         case TOKEN_BANG:
                 type = "!";
                 break;
@@ -3886,6 +3912,9 @@ parse_get_token(int i)
         case TOKEN_SQUIGGLY_ARROW:
                 type = "~>";
                 break;
+        case TOKEN_KEYWORD:
+                type = (char *)keyword_show(t->keyword);
+                break;
         }
 
 #undef T
@@ -3910,12 +3939,14 @@ struct value
 parse_get_expr(int prec)
 {
                 int save = TokenIndex;
-
+                
                 jmp_buf jb_save;
                 memcpy(&jb_save, &jb, sizeof jb);
 
                 SAVE_NI(false);
                 SAVE_NE(false);
+
+                bool keep_comments = lex_keep_comments(false);
 
                 struct value v;
 
@@ -3930,6 +3961,8 @@ parse_get_expr(int prec)
                 LOAD_NI();
 
                 memcpy(&jb, &jb_save, sizeof jb);
+
+                lex_keep_comments(keep_comments);
 
                 return v;
 }
