@@ -100,7 +100,7 @@ function make(*opts, version) {
                         print()
 
                         let optStrings = [
-                            ["-{opt.short}" if opt.short, "--{opt.long}" if opt.long].join(', ')
+                            [opt.short ? "-{opt.short}, " : '    ', "--{opt.long}" if opt.long].sum()
                             for opt in opts
                         ]
 

@@ -10,8 +10,17 @@ class Args {
 		let args = []
 
 		for o in opts {
-			let short = o.?short ?? o.name[0]
-			let long = o.?long ?? o.name
+			let short = match o.?short {
+				nil  => o.name[0],
+				None => nil,
+				s    => s
+			}
+
+			let long = match o.?long {
+				nil  => o.name,
+				None => nil,
+				s    => s
+			}
 
 			if o.constraint == Bool {
 				args.push(flag(short: short, long: long, help: o.?help))
