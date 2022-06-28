@@ -4122,11 +4122,37 @@ builtin_token_peek(int argc, struct value *kwargs)
 struct value
 builtin_parse_expr(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("ty.parse.expr()", 1);
+        ASSERT_ARGC_2("ty.parse.expr()", 0, 1);
 
-        if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("ty.parse.expr(): expected integer but got: %s", value_show(&ARG(0)));
+        int prec;
+
+        if (argc == 1) {
+                if (ARG(0).type != VALUE_INTEGER) {
+                        vm_panic("ty.parse.expr(): expected integer but got: %s", value_show(&ARG(0)));
+                }
+                prec = ARG(0).integer;
+        } else {
+                prec = 0;
         }
 
-        return parse_get_expr(ARG(0).integer);
+        return parse_get_expr(prec);
+}
+
+struct value
+builtin_parse_stmt(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("ty.parse.stmt()", 0, 1);
+
+        int prec;
+
+        if (argc == 1) {
+                if (ARG(0).type != VALUE_INTEGER) {
+                        vm_panic("ty.parse.stmt(): expected integer but got: %s", value_show(&ARG(0)));
+                }
+                prec = ARG(0).integer;
+        } else {
+                prec = -1;
+        }
+
+        return parse_get_stmt(prec);
 }

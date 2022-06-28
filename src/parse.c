@@ -3968,3 +3968,35 @@ parse_get_expr(int prec)
 
                 return v;
 }
+
+struct value
+parse_get_stmt(int prec)
+{
+                int save = TokenIndex;
+                
+                jmp_buf jb_save;
+                memcpy(&jb_save, &jb, sizeof jb);
+
+                SAVE_NI(false);
+                SAVE_NE(false);
+
+                bool keep_comments = lex_keep_comments(false);
+
+                struct value v;
+
+                if (setjmp(jb) != 0) {
+                        v = NIL;
+                        seek(save);
+                } else {
+                        v = tystmt(parse_statement(prec));
+                }
+
+                LOAD_NE();
+                LOAD_NI();
+
+                memcpy(&jb, &jb_save, sizeof jb);
+
+                lex_keep_comments(keep_comments);
+
+                return v;
+}

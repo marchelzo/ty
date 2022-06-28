@@ -544,4 +544,7 @@ builtin_token_peek(int argc, struct value *kwargs);
 struct value
 builtin_parse_expr(int argc, struct value *kwargs);
 
+struct value
+builtin_parse_stmt(int argc, struct value *kwargs);
+
 #endif
