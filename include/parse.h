@@ -11,4 +11,13 @@ parse_error(void);
 struct statement **
 parse(char const *source, char const *file);
 
+struct value
+parse_get_token(int i);
+
+struct value
+parse_get_expr(int prec);
+
+void
+parse_next(void);
+
 #endif

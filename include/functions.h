@@ -535,4 +535,13 @@ builtin_stdio_setvbuf(int argc, struct value *kwargs);
 struct value
 builtin_eval(int argc, struct value *kwargs);
 
+struct value
+builtin_token_next(int argc, struct value *kwargs);
+
+struct value
+builtin_token_peek(int argc, struct value *kwargs);
+
+struct value
+builtin_parse_expr(int argc, struct value *kwargs);
+
 #endif

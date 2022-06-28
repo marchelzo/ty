@@ -193,7 +193,7 @@ get_import_scope(char const *);
 static struct scope *
 search_import_scope(char const *);
 
-static void
+void
 import_module(struct statement const *s);
 
 static void
@@ -4295,7 +4295,7 @@ compile(char const *source)
         vec_push(location_lists, state.expression_locations);
 }
 
-static void
+void
 import_module(struct statement const *s)
 {
         char const *name = s->import.module;
@@ -5425,6 +5425,9 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == gettag("ty", "FuncDef")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == gettag("ty", "Class")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
         }
 
         return e;
@@ -5449,4 +5452,27 @@ tyeval(struct expression *e)
         state.code = code_save;
 
         return v;
+}
+
+struct expression *
+typarse(struct expression *e)
+{
+        symbolize_expression(state.global, e);
+
+        byte_vector code_save = state.code;
+
+        vec_init(state.code);
+
+        emit_expression(e);
+        emit_instr(INSTR_HALT);
+
+        vm_exec(state.code.items);
+        state.code.count = 0;
+
+        struct value m = *vm_get(0);
+        vm_pop();
+
+        struct value expr = vm_call(&m, 0);
+
+        return cexpr(&expr);
 }

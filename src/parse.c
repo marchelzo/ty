@@ -16,6 +16,7 @@
 #include "alloc.h"
 #include "lex.h"
 #include "operators.h"
+#include "compiler.h"
 #include "value.h"
 #include "table.h"
 #include "log.h"
@@ -90,13 +91,15 @@ enum {
         LV_ANY
 };
 
+typedef vec(struct token) TokenVector;
+
 static jmp_buf jb;
 
 static struct table uops;
 static struct table uopcs;
 
 static LexState CtxCheckpoint;
-static vec(struct token) tokens;
+static TokenVector tokens;
 
 static int TokenIndex = 0;
 LexContext lctx = LEX_PREFIX;
@@ -676,8 +679,7 @@ prefix_special_string(void)
 
         int ti = TokenIndex;
         LexState cp = CtxCheckpoint;
-        vec(struct token) ts;
-        memcpy(&ts, &tokens, sizeof ts);
+        TokenVector ts = tokens;
 
         for (int i = 0; i < count; ++i) {
                 TokenIndex = 0;
@@ -696,7 +698,7 @@ prefix_special_string(void)
 
         TokenIndex = ti;
         CtxCheckpoint = cp;
-        memcpy(&tokens, &ts, sizeof ts);
+        tokens = ts;
 
         // Force lexer reset
         setctx(LEX_PREFIX);
@@ -722,6 +724,14 @@ prefix_dollar(void)
 {
         if (token(1)->type == '{') {
                 return prefix_implicit_lambda();
+        }
+
+        if (token(1)->type == '[') {
+                next();
+                next();
+                struct expression *macro = parse_expr(0);
+                consume(']');
+                return typarse(macro);
         }
 
         struct expression *e = mkexpr();
@@ -771,6 +781,11 @@ prefix_identifier(void)
                 macro->start = e->start;
                 macro->end = End;
                 return macro;
+        }
+
+        // Based
+        if (tok()->type == '`') {
+
         }
 
         // TODO: maybe get rid of this
@@ -3680,6 +3695,12 @@ Expression:
         s->type = STATEMENT_EXPRESSION;
         s->expression = parse_expr(prec);
 
+        if (s->expression->type == EXPRESSION_STATEMENT) {
+                struct statement *inner = s->expression->statement;
+                gc_free(s);
+                s = inner;
+        }
+
         if (tok()->type == ';') {
                 consume(';');
         }
@@ -3723,6 +3744,37 @@ parse(char const *source, char const *file)
                 vec_push(program, parse_import());
         }
 
+        int TokenIndex_ = TokenIndex;
+        TokenVector tokens_ = tokens;
+        LexState CtxCheckpoint_ = CtxCheckpoint;
+        char const *filename_ = filename;
+        jmp_buf jb_;
+        struct location EStart_ = EStart;
+        struct location EEnd_ = EEnd;
+        memcpy(&jb_, &jb, sizeof jb);
+
+        lex_save(&CtxCheckpoint);
+        lex_start(&CtxCheckpoint);
+
+        for (int i = 0; i < program.count; ++i) {
+                import_module(program.items[i]);
+        }
+
+        lex_end();
+
+        memcpy(&jb, &jb_, sizeof jb);
+        CtxCheckpoint = CtxCheckpoint_;
+        TokenIndex = TokenIndex_;
+        tokens = tokens_;
+        filename = filename_;
+        EStart = EStart_;
+        EEnd = EEnd_;
+
+        setctx(LEX_INFIX);
+        setctx(LEX_PREFIX);
+
+        program.count = 0;
+
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT) {
                 vec_push(program, parse_export());
         }
@@ -3764,4 +3816,120 @@ parse(char const *source, char const *file)
         vec_push(program, NULL);
 
         return program.items;
+}
+
+struct value
+parse_get_token(int i)
+{
+        struct token *t = token(i);
+        char *type = NULL;
+
+#define T(name) (STRING_NOGC(#name, strlen(#name)))
+
+        switch (t->type) {
+        case TOKEN_IDENTIFIER:
+                return value_named_tuple(
+                        "type", T(Id),
+                        "id", STRING_NOGC(t->identifier, strlen(t->identifier)),
+                        NULL
+                );
+        case TOKEN_INTEGER:
+                return value_named_tuple(
+                        "type", T(Int),
+                        "int", INTEGER(t->integer),
+                        NULL
+                );
+        case TOKEN_STRING:
+                return value_named_tuple(
+                        "type", T(String),
+                        "str", STRING_NOGC(t->string, strlen(t->string)),
+                        NULL
+                );
+        case TOKEN_END:
+                return NIL;
+        case TOKEN_BANG:
+                type = "!";
+                break;
+        case TOKEN_EQ:
+                type = "=";
+                break;
+        case TOKEN_NOT_EQ:
+                type = "!=";
+                break;
+        case TOKEN_STAR:
+                type = "*";
+                break;
+        case TOKEN_LT:
+                type = "<";
+                break;
+        case TOKEN_GT:
+                type = ">";
+                break;
+        case TOKEN_LEQ:
+                type = "<=";
+                break;
+        case TOKEN_GEQ:
+                type = ">=";
+                break;
+        case TOKEN_CMP:
+                type = "<=>";
+                break;
+        case TOKEN_WTF:
+                type = "??";
+                break;
+        case TOKEN_ARROW:
+                type = "->";
+                break;
+        case TOKEN_FAT_ARROW:
+                type = "=>";
+                break;
+        case TOKEN_SQUIGGLY_ARROW:
+                type = "~>";
+                break;
+        }
+
+#undef T
+
+        if (type == NULL) {
+                type = sclone((char const []){(char)t->type, '\0'});
+        }
+
+        return value_named_tuple(
+                "type", STRING_NOGC(type, strlen(type)),
+                NULL
+        );
+}
+
+void
+parse_next(void)
+{
+        next();
+}
+
+struct value
+parse_get_expr(int prec)
+{
+                int save = TokenIndex;
+
+                jmp_buf jb_save;
+                memcpy(&jb_save, &jb, sizeof jb);
+
+                SAVE_NI(false);
+                SAVE_NE(false);
+
+                struct value v;
+
+                if (setjmp(jb) != 0) {
+                        v = NIL;
+                        seek(save);
+                } else {
+                        v = tyexpr(parse_expr(prec));
+                }
+
+                LOAD_NE();
+                LOAD_NI();
+
+                memcpy(&jb, &jb_save, sizeof jb);
+
+                return v;
 }

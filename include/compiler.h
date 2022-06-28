@@ -44,6 +44,9 @@ compiler_get_location(char const *code, struct location *start, struct location 
 bool
 compiler_has_module(char const *path);
 
+void
+import_module(struct statement const *);
+
 struct value
 tyexpr(struct expression const *);
 
@@ -55,6 +58,9 @@ tystmt(struct statement *s);
 
 struct expression *
 cexpr(struct value *);
+
+struct expression *
+typarse(struct expression *);
 
 struct statement *
 cstmt(struct value *);

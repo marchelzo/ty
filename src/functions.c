@@ -29,6 +29,7 @@
 
 #include "tags.h"
 #include "value.h"
+#include "parse.h"
 #include "vm.h"
 #include "log.h"
 #include "util.h"
@@ -4096,4 +4097,36 @@ builtin_eval(int argc, struct value *kwargs)
         struct expression *expr = cexpr(&ARG(0));
 
         return tyeval(expr);
+}
+
+struct value
+builtin_token_next(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.token.next()", 0);
+        parse_next();
+        return NIL;
+}
+
+struct value
+builtin_token_peek(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.token.peek()", 1);
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("ty.token.peek(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        return parse_get_token(ARG(0).integer);
+}
+
+struct value
+builtin_parse_expr(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.parse.expr()", 1);
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("ty.parse.expr(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        return parse_get_expr(ARG(0).integer);
 }

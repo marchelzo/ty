@@ -870,8 +870,6 @@ lex_init(char const *file, char const *src)
 
         Start = state.loc;
 
-        vec_init(states);
-
         /*
          * Eat the shebang if there is one.
          */

@@ -498,6 +498,9 @@
 {.module = "ffi", .name = "clone", .value = BUILTIN(cffi_clone)},
 {.module = "ffi", .name = "as_str", .value = BUILTIN(cffi_as_str)},
 {.module = "ty", .name = "eval", .value = BUILTIN(builtin_eval)},
+{.module = "ty/token", .name = "next", .value = BUILTIN(builtin_token_next)},
+{.module = "ty/token", .name = "peek", .value = BUILTIN(builtin_token_peek)},
+{.module = "ty/parse", .name = "expr", .value = BUILTIN(builtin_parse_expr)},
 
 #include "ioctl_constants.h"
 
