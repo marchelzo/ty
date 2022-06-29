@@ -37,7 +37,7 @@ class Args {
 	}
 }
 
-pub defmacro clap! {
+pub macro clap! {
 	let name = peek(0).id
 
 	next()
