@@ -3185,7 +3185,17 @@ parse_function_definition(void)
 
         if (tok()->keyword == KEYWORD_MACRO) {
                 s->type = STATEMENT_MACRO_DEFINITION;
-                tok()->keyword = KEYWORD_FUNCTION;
+                struct token kw = *token(0);
+                kw.keyword = KEYWORD_FUNCTION;
+                struct token name = *token(1);
+                next();
+                next();
+                unconsume(')');
+                unconsume('(');
+                unconsume(TOKEN_IDENTIFIER);
+                *tok() = name;
+                unconsume(TOKEN_KEYWORD);
+                *tok() = kw;
         } else {
                 s->type = STATEMENT_FUNCTION_DEFINITION;
         }
@@ -3823,6 +3833,7 @@ parse(char const *source, char const *file)
                 if (pub) {
                         next();
                         if (!have_keyword(KEYWORD_FUNCTION) &&
+                            !have_keyword(KEYWORD_MACRO) &&
                             !have_keyword(KEYWORD_CLASS) &&
                             !have_keyword(KEYWORD_TAG)) {
 
@@ -3840,6 +3851,7 @@ parse(char const *source, char const *file)
                 if (pub) switch (s->type) {
                 case STATEMENT_DEFINITION:
                 case STATEMENT_FUNCTION_DEFINITION:
+                case STATEMENT_MACRO_DEFINITION:
                         s->pub = true;
                         break;
                 case STATEMENT_TAG_DEFINITION:

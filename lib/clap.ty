@@ -37,7 +37,7 @@ class Args {
 	}
 }
 
-pub function clap() {
+pub defmacro clap! {
 	let name = peek(0).id
 
 	next()
@@ -102,7 +102,7 @@ pub function clap() {
 }
 
 /*
-	$[clap] {
+	clap! {
 		jobs: 1..10, help: 'Number of jobs!', conv: int
 	}
 */

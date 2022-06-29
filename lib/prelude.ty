@@ -1347,12 +1347,12 @@ class Thread {
     }
 }
 
-defmacro static!() {
+macro static! {
     let e = parse.expr(50)
     ty.Value(ty.eval(e))
 }
 
-defmacro showCode() {
+macro showCode {
     let e = parse.expr(50)
     print(e)
     e
