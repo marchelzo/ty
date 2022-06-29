@@ -23,6 +23,9 @@ parse_get_stmt(int prec);
 void
 parse_next(void);
 
+noreturn void
+parse_fail(char const *s, size_t n);
+
 void
 make_with(struct expression *e, struct statement *let, struct statement *body);
 

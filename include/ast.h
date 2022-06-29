@@ -60,6 +60,7 @@ struct statement {
                 STATEMENT_TRY_CLEAN,
                 STATEMENT_DROP,
                 STATEMENT_BLOCK,
+                STATEMENT_MULTI,
                 STATEMENT_HALT,
                 STATEMENT_NULL,
                 STATEMENT_EXPRESSION,

@@ -1012,11 +1012,17 @@ prefix_record(void)
                 }
 
                 if (tok()->type == TOKEN_STAR) {
-                        next();
                         struct expression *item = mkexpr();
-                        item->type = EXPRESSION_SPREAD;
-                        item->value = parse_expr(0);
-                        item->start = item->value->start;
+                        next();
+                        if (tok()->type == '}') {
+                                item->type = EXPRESSION_MATCH_REST;
+                                item->identifier = "_";
+                        } else {
+                                item->type = EXPRESSION_SPREAD;
+                                item->value = parse_expr(0);
+                                item->start = item->value->start;
+                                item->end = End;
+                        }
                         vec_push(e->names, "*");
                         vec_push(e->es, item);
                         goto Next;
@@ -1547,9 +1553,16 @@ prefix_array(void)
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         struct expression *item = mkexpr();
-                        item->type = EXPRESSION_SPREAD;
-                        item->value = parse_expr(0);
-                        item->start = item->value->start;
+                        if (tok()->type == ']') {
+                                item->type = EXPRESSION_MATCH_REST;
+                                item->identifier = "_";
+                                item->module = NULL;
+                        } else {
+                                item->type = EXPRESSION_SPREAD;
+                                item->value = parse_expr(0);
+                                item->start = item->value->start;
+                                item->end = End;
+                        }
                         vec_push(e->elements, item);
                         vec_push(e->optional, false);
                 } else {
@@ -4011,4 +4024,10 @@ parse_get_stmt(int prec)
                 lex_keep_comments(keep_comments);
 
                 return v;
+}
+
+noreturn void
+parse_fail(char const *s, size_t n)
+{
+        error("%.*s", (int)n, s);
 }

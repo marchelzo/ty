@@ -426,6 +426,7 @@ add_builtins(int ac, char **av)
         DEF_NODE(Div);
         DEF_NODE(Mod);
         DEF_NODE(Block);
+        DEF_NODE(Multi);
         DEF_NODE(With);
         DEF_NODE(Mod);
         DEF_NODE(Array);

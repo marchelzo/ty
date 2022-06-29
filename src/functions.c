@@ -4156,3 +4156,17 @@ builtin_parse_stmt(int argc, struct value *kwargs)
 
         return parse_get_stmt(prec);
 }
+
+struct value
+builtin_parse_fail(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.parse.fail()", 1);
+
+        if (ARG(0).type != VALUE_STRING) {
+                vm_panic("ty.parse.fail(): expected string but got: %s", value_show(&ARG(0)));
+        }
+
+        parse_fail(ARG(0).string, ARG(0).bytes);
+
+        // Unreachable
+}

@@ -502,6 +502,7 @@
 {.module = "ty/token", .name = "peek", .value = BUILTIN(builtin_token_peek)},
 {.module = "ty/parse", .name = "expr", .value = BUILTIN(builtin_parse_expr)},
 {.module = "ty/parse", .name = "stmt", .value = BUILTIN(builtin_parse_stmt)},
+{.module = "ty/parse", .name = "fail", .value = BUILTIN(builtin_parse_fail)},
 
 #include "ioctl_constants.h"
 

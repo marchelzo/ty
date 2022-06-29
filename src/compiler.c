@@ -1347,6 +1347,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 }
 
                 break;
+        case STATEMENT_MULTI:
+                for (size_t i = 0; i < s->statements.count; ++i) {
+                        symbolize_statement(scope, s->statements.items[i]);
+                }
+                break;
         case STATEMENT_THROW:
                 symbolize_expression(scope, s->throw);
                 break;
@@ -3998,6 +4003,7 @@ emit_statement(struct statement const *s, bool want_result)
 
         switch (s->type) {
         case STATEMENT_BLOCK:
+        case STATEMENT_MULTI:
                 for (int i = 0; !returns && i < s->statements.count; ++i) {
                         bool wr = want_result && (i + 1 == s->statements.count);
                         returns |= emit_statement(s->statements.items[i], wr);
@@ -5049,6 +5055,14 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, gettag("ty", "Block"));
                 break;
+        case STATEMENT_MULTI:
+                v = ARRAY(value_array_new());
+                for (int i = 0; i < s->statements.count; ++i) {
+                        value_array_push(v.array, tystmt(s->statements.items[i]));
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, gettag("ty", "Multi"));
+                break;
         case STATEMENT_IF:
                 v = value_tuple(3);
                 v.items[0] = ARRAY(value_array_new());
@@ -5180,6 +5194,12 @@ cstmt(struct value *v)
                 }
         } else if (tags_first(v->tags) == gettag("ty", "Block")) {
                 s->type = STATEMENT_BLOCK;
+                vec_init(s->statements);
+                for (int i = 0; i < v->array->count; ++i) {
+                        vec_push(s->statements, cstmt(&v->array->items[i]));
+                }
+        } else if (tags_first(v->tags) == gettag("ty", "Multi")) {
+                s->type = STATEMENT_MULTI;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         vec_push(s->statements, cstmt(&v->array->items[i]));
@@ -5374,6 +5394,10 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == gettag("ty", "Bool")) {
                 e->type = EXPRESSION_BOOLEAN;
                 e->boolean = v->boolean;
+        } else if (tags_first(v->tags) == gettag("ty", "Assign")) {
+                e->type = EXPRESSION_EQ;
+                e->target = cexpr(&v->items[0]);
+                e->value = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == gettag("ty", "Wtf")) {
                 e->type = EXPRESSION_WTF;
                 e->left = cexpr(&v->items[0]);
@@ -5433,6 +5457,12 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == gettag("ty", "Stmt")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == gettag("ty", "Block")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == gettag("ty", "Multi")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == gettag("ty", "FuncDef")) {
