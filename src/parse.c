@@ -768,6 +768,10 @@ prefix_identifier(void)
 
         consume(TOKEN_IDENTIFIER);
 
+        if (true && is_macro(e)) {
+                return typarse(e);
+        }
+
         // Is this a macro invocation?
         if (strchr(e->identifier, '$') != NULL) {
                 e->identifier = sclone(e->identifier);
@@ -3178,7 +3182,13 @@ static struct statement *
 parse_function_definition(void)
 {
         struct statement *s = mkstmt();
-        s->type = STATEMENT_FUNCTION_DEFINITION;
+
+        if (tok()->keyword == KEYWORD_MACRO) {
+                s->type = STATEMENT_MACRO_DEFINITION;
+                tok()->keyword = KEYWORD_FUNCTION;
+        } else {
+                s->type = STATEMENT_FUNCTION_DEFINITION;
+        }
 
         struct expression *f = prefix_function();
         if (f->name == NULL)
@@ -3704,6 +3714,7 @@ Keyword:
         case KEYWORD_WHILE:    return parse_while();
         case KEYWORD_IF:       return parse_if();
         case KEYWORD_FUNCTION: return parse_function_definition();
+        case KEYWORD_MACRO:    return parse_function_definition();
         case KEYWORD_OPERATOR: return parse_operator_directive();
         case KEYWORD_MATCH:    return parse_match_statement();
         case KEYWORD_RETURN:   return parse_return_statement();
@@ -3837,6 +3848,11 @@ parse(char const *source, char const *file)
                         break;
                 default:
                         error("This shouldn't happen.");
+                }
+
+                if (s != NULL && s->type == STATEMENT_MACRO_DEFINITION) {
+                        vec_pop(program);
+                        define_macro(s);
                 }
         }
 

@@ -1448,6 +1448,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(scope, s->target, true, s->pub);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_MACRO_DEFINITION:
                 if (true || scope != state.global) {
                         symbolize_lvalue(scope, s->target, true, s->pub);
                 }
@@ -4046,6 +4047,7 @@ emit_statement(struct statement const *s, bool want_result)
                 break;
         case STATEMENT_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_MACRO_DEFINITION:
                 emit_assignment(s->target, s->value, false, true);
                 emit_instr(INSTR_POP);
                 break;
@@ -4184,7 +4186,7 @@ emit_new_globals(void)
                         emit_int(s->i);
                         emit_instr(INSTR_ASSIGN);
                         emit_instr(INSTR_POP);
-                } else {
+                } else if (!s->macro) {
                         emit_instr(INSTR_NIL);
                         emit_instr(INSTR_TARGET_GLOBAL);
                         emit_int(s->i);
@@ -5503,14 +5505,13 @@ typarse(struct expression *e)
         symbolize_expression(state.global, e);
 
         byte_vector code_save = state.code;
-
         vec_init(state.code);
 
         emit_expression(e);
         emit_instr(INSTR_HALT);
 
         vm_exec(state.code.items);
-        state.code.count = 0;
+        state.code = code_save;
 
         struct value m = *vm_get(0);
         vm_pop();
@@ -5523,4 +5524,43 @@ typarse(struct expression *e)
         state.macro_scope = macro_scope_save;
 
         return cexpr(&expr);
+}
+
+void
+define_macro(struct statement *s)
+{
+        s->type = STATEMENT_FUNCTION_DEFINITION;
+        symbolize_statement(state.global, s);
+
+        s->target->symbol->macro = true;
+
+        byte_vector code_save = state.code;
+        vec_init(state.code);
+
+        emit_statement(s, false);
+
+        emit_instr(INSTR_HALT);
+
+        vm_exec(state.code.items);
+
+        state.code = code_save;
+}
+
+bool
+is_macro(struct expression const *e)
+{
+        struct symbol *s = NULL;
+
+        assert(e->type == EXPRESSION_IDENTIFIER);
+
+        if (e->module == NULL) {
+                s = scope_lookup(state.global, e->identifier);
+        } else {
+                struct scope *mod = search_import_scope(e->module);
+                if (mod != NULL) {
+                        s = scope_lookup(mod, e->identifier);
+                }
+        }
+
+        return s != NULL && s->macro;
 }

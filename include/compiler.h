@@ -47,6 +47,12 @@ compiler_has_module(char const *path);
 void
 import_module(struct statement const *);
 
+void
+define_macro(struct statement *);
+
+bool
+is_macro(struct expression const *e);
+
 struct value
 tyexpr(struct expression const *);
 

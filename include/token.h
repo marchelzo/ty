@@ -87,6 +87,7 @@ struct token {
                         KEYWORD_AND,
                         KEYWORD_NOT,
                         KEYWORD_FUNCTION,
+                        KEYWORD_MACRO,
                         KEYWORD_ELSE,
                         KEYWORD_FOR,
                         KEYWORD_IN,

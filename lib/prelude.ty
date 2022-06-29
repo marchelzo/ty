@@ -4,6 +4,8 @@ import thread
 import base64
 import ffi as c
 import ty
+import ty.parse as parse
+import ty.token as lex
 
 tag MatchError;
 tag IndexError;
@@ -1345,11 +1347,13 @@ class Thread {
     }
 }
 
-function static(e) {
-	ty.Value(ty.eval(e))
+defmacro static!() {
+    let e = parse.expr(50)
+    ty.Value(ty.eval(e))
 }
 
-function showCode(e) {
+defmacro showCode() {
+    let e = parse.expr(50)
     print(e)
     e
 }

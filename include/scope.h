@@ -17,6 +17,7 @@ struct symbol {
         int class;
         bool public;
         bool cnst;
+        bool macro;
         bool captured;
         int i;
         int ci;

@@ -22,6 +22,7 @@ static struct {
         { "false",     KEYWORD_FALSE     },
         { "for",       KEYWORD_FOR       },
         { "function",  KEYWORD_FUNCTION  },
+        { "defmacro",  KEYWORD_MACRO     },
         { "if",        KEYWORD_IF        },
         { "or",        KEYWORD_OR        },
         { "and",       KEYWORD_AND       },
