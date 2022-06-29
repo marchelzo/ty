@@ -1,0 +1,18 @@
+function eq!(*args) {
+	for [a, b] in args.window(2) {
+		if a != b {
+			print('FAIL')
+			return
+		}
+	}
+}
+
+let ref = nil
+
+for _ in ..50 {
+	let xs = static!([rand() for _ in ..100])
+	ref ?= xs
+	eq!(xs, ref)
+}
+
+print('PASS')
