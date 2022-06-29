@@ -1448,8 +1448,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(scope, s->target, true, s->pub);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
+                if (scope != state.global) {
         case STATEMENT_MACRO_DEFINITION:
-                if (true || scope != state.global) {
                         symbolize_lvalue(scope, s->target, true, s->pub);
                 }
                 symbolize_expression(scope, s->value);
@@ -5529,10 +5529,10 @@ typarse(struct expression *e)
 void
 define_macro(struct statement *s)
 {
-        s->type = STATEMENT_FUNCTION_DEFINITION;
         symbolize_statement(state.global, s);
-
         s->target->symbol->macro = true;
+
+        s->type = STATEMENT_FUNCTION_DEFINITION;
 
         byte_vector code_save = state.code;
         vec_init(state.code);

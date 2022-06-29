@@ -3994,7 +3994,7 @@ struct value
 parse_get_expr(int prec)
 {
                 int save = TokenIndex;
-                
+
                 jmp_buf jb_save;
                 memcpy(&jb_save, &jb, sizeof jb);
 
@@ -4026,7 +4026,7 @@ struct value
 parse_get_stmt(int prec)
 {
                 int save = TokenIndex;
-                
+
                 jmp_buf jb_save;
                 memcpy(&jb_save, &jb, sizeof jb);
 
