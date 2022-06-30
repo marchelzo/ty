@@ -339,6 +339,15 @@ seek(int i)
         skip(0);
 }
 
+void
+parse_sync_lex(void)
+{
+        if (TokenIndex < tokens.count) {
+                tokens.count = TokenIndex;
+                lex_rewind(&token(-1)->end);
+        }
+}
+
 inline static void
 setctx(int ctx)
 {

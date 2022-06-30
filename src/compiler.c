@@ -5464,6 +5464,9 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == gettag("ty", "Block")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
+        } else if (v->type == VALUE_TAG && v->tag == gettag("ty", "Null")) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
         } else if (tags_first(v->tags) == gettag("ty", "Multi")) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);

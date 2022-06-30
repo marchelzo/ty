@@ -27,6 +27,9 @@ noreturn void
 parse_fail(char const *s, size_t n);
 
 void
+parse_sync_lex(void);
+
+void
 make_with(struct expression *e, struct statement *let, struct statement *body);
 
 #endif

@@ -37,6 +37,12 @@ lex_end(void);
 struct token
 lex_token(LexContext ctx);
 
+int
+lex_peek_char(char *out);
+
+bool
+lex_next_char(char *out);
+
 void
 lex_save(LexState *state);
 

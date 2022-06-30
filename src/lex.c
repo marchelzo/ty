@@ -936,6 +936,59 @@ lex_pos(void)
         return state.loc;
 }
 
+int
+lex_peek_char(char *out)
+{
+
+        int gstate = 0;
+
+        int cp1;
+        int cp2;
+
+        char const *s = SRC;
+
+        int n = utf8proc_iterate((uint8_t *)s, END - s, &cp1);
+
+        if (n == -1) {
+                return 0;
+        }
+
+        for (;;) {
+                while (n --> 0) {
+                        *out++ = *s++;
+                }
+
+                n = utf8proc_iterate((uint8_t *)s, END - s, &cp2);
+                if (n == -1) {
+                        break;
+                }
+
+                if (utf8proc_grapheme_break_stateful(cp1, cp2, &gstate)) {
+                        break;
+                }
+        }
+
+        *out++ = '\0';
+
+        return s - SRC;
+}
+
+bool
+lex_next_char(char *out)
+{
+        int n = lex_peek_char(out);
+
+        if (n == 0) {
+                return false;
+        }
+
+        while (n --> 0) {
+                nextchar();
+        }
+
+        return true;
+}
+
 static struct token *
 lex(char const *s)
 {

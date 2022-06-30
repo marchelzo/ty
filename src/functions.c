@@ -627,7 +627,7 @@ builtin_tuple(int argc, struct value *kwargs)
         } else {
                 tuple.gc_names = true;
         }
-        
+
         for (int i = 0; i < argc; ++i) {
                 tuple.items[i] = ARG(i);
                 if (tuple.names != NULL) {
@@ -3404,7 +3404,7 @@ struct value
 builtin_stdio_tmpfile(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("stdio.tmpfile()", 0);
-        
+
         FILE *f = tmpfile();
 
         return (f == NULL) ? NIL : PTR(f);
@@ -4105,6 +4105,39 @@ builtin_token_next(int argc, struct value *kwargs)
         ASSERT_ARGC("ty.token.next()", 0);
         parse_next();
         return NIL;
+}
+
+struct value
+builtin_lex_peek_char(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.lex.peekc()", 0);
+
+        parse_sync_lex();
+
+        char b[128];
+        int n = lex_peek_char(b);
+
+        if (n == 0) {
+                return NIL;
+        }
+
+        return STRING_CLONE(b, n);
+}
+
+struct value
+builtin_lex_next_char(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.lex.getc()", 0);
+
+        parse_sync_lex();
+
+        char b[128];
+
+        if (!lex_next_char(b)) {
+                return NIL;
+        }
+
+        return STRING_CLONE(b, strlen(b));
 }
 
 struct value

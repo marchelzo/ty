@@ -550,4 +550,10 @@ builtin_parse_stmt(int argc, struct value *kwargs);
 struct value
 builtin_parse_fail(int argc, struct value *kwargs);
 
+struct value
+builtin_lex_peek_char(int argc, struct value *kwargs);
+
+struct value
+builtin_lex_next_char(int argc, struct value *kwargs);
+
 #endif

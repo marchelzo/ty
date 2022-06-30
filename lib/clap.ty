@@ -1,108 +1,115 @@
 import ty
 import ty.token (next, peek)
+import ty.lex (peekc, getc)
 import ty.parse (expr)
 import argparse (opt, flag)
 import os
 
+function short(o) match o.?short {
+    nil  => o.name[0],
+    None => nil,
+    s    => s
+}
+
+function long(o) match o.?long {
+    nil  => o.name,
+    None => nil,
+    s    => s
+}
+
 class Args {
-	parse(argv = os.args) {
-		let opts = self.info()
-		let args = []
+    parse(argv = os.args) {
+        let opts = self.info()
+        let args = []
 
-		let version = self.version()
+        let version = self.version()
 
-		for o in opts {
-			let short = match o.?short {
-				nil  => o.name[0],
-				None => nil,
-				s    => s
-			}
+        for o in opts {
+            let short = short(o)
+            let long = long(o)
+            if o.constraint == Bool {
+                args.push(flag(short: short, long: long, help: o.?help))
+            } else {
+                args.push(opt(short: short, long: long, help: o.?help, convert: o.?conv, post: o.constraint))
+            }
+        }
 
-			let long = match o.?long {
-				nil  => o.name,
-				None => nil,
-				s    => s
-			}
+        let result = argparse.make(*args, version: version)(argv)
 
-			if o.constraint == Bool {
-				args.push(flag(short: short, long: long, help: o.?help))
-			} else {
-				args.push(opt(short: short, long: long, help: o.?help, convert: o.?conv, post: o.constraint))
-			}
-		}
-
-		let parse = argparse.make(*args, version: version)
-
-		parse(argv)
-	}
+        tuple(**%{o.name: result[short(o)] ?? result[long(o)] for o in opts})
+    }
 }
 
 pub macro clap! {
-	let name = peek(0).id
+    let name = peek(0).id
 
-	next()
+    next()
 
-	let version = if peek(0).type == 'id' && peek(0).id[0] == 'v' {
-		next()
-		next()
-		peek(-1).str
-	}
+    while peekc().match?(/\s/) {
+        getc()
+    }
 
-	next()
+    let version = if peekc() == 'v' {
+        getc()
 
-	let args = []
+        let v = ''
 
-	while peek(0).type != '}' {
-		let help = if peek(0).type == 'comment' {
-			next()
-			peek(-1).comment
-		}
+        while !peekc().match?(/\s/) {
+            v += getc()
+        }
 
-		let name = peek(0).id
+        v
+    }
 
-		next()
-		next()
+    next()
 
-		let constraint = ty.eval(expr(0))
-		let conv = nil
-		let short = nil
-		let long = nil
+    let args = []
 
-		while peek(0).type == ',' {
-			next()
+    while peek(0).type != '}' {
+        let help = if peek(0).type == 'comment' {
+            next()
+            peek(-1).comment
+        }
 
-			let attr = peek(0)
-			next()
-			next()
+        let name = peek(0).id
 
-			match attr.id {
-				'conv' => {
-					conv = ty.eval(expr(0))
-				},
+        next()
+        next()
 
-				'short' => {
-					short = ty.eval(expr(0))
-				},
+        let constraint = ty.eval(expr(0))
+        let conv = nil
+        let short = nil
+        let long = nil
 
-				'long' => {
-					long = ty.eval(expr(0))
-				}
-			}
-		}
+        while peek(0).type == ',' {
+            next()
 
-		args.push({name, constraint, ?help, ?conv, ?short, ?long})
-	}
+            let attr = peek(0)
+            next()
+            next()
 
-	let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
-	let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+            match attr.id {
+                'conv' => {
+                    conv = ty.eval(expr(0))
+                },
 
-	next()
+                'short' => {
+                    short = ty.eval(expr(0))
+                },
 
-	ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
+                'long' => {
+                    long = ty.eval(expr(0))
+                }
+            }
+        }
+
+        args.push({name, constraint, ?help, ?conv, ?short, ?long})
+    }
+
+    let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+    let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+
+    next()
+
+    ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
 }
-
-/*
-	clap! {
-		jobs: 1..10, help: 'Number of jobs!', conv: int
-	}
-*/
