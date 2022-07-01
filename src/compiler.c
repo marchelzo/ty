@@ -4735,7 +4735,7 @@ tyexpr(struct expression const *e)
                         NULL
                 );
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Id"));
+                v.tags = tags_push(0, TyId);
                 break;
         case EXPRESSION_ARRAY:
                 v = ARRAY(value_array_new());
@@ -4744,7 +4744,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.array,
                                 tagged(
-                                        gettag("ty", "ArrayItem"),
+                                        TyArrayItem,
                                         value_named_tuple(
                                                 "item", tyexpr(e->elements.items[i]),
                                                 "cond", (e->aconds.items[i] == NULL) ? NIL : tyexpr(e->aconds.items[i]),
@@ -4757,7 +4757,7 @@ tyexpr(struct expression const *e)
                 }
                 OKGC(v.array);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Array"));
+                v.tags = tags_push(0, TyArray);
                 break;
         case EXPRESSION_FUNCTION:
                 v = value_named_tuple(
@@ -4772,12 +4772,12 @@ tyexpr(struct expression const *e)
                         if (i == e->rest) {
                                 value_array_push(
                                         v.items[1].array,
-                                        tagged(gettag("ty", "Gather"), name, NONE)
+                                        tagged(TyGather, name, NONE)
                                 );
                         } else if (i == e->ikwargs) {
                                 value_array_push(
                                         v.items[1].array,
-                                        tagged(gettag("ty", "Kwargs"), name, NONE)
+                                        tagged(TyKwargs, name, NONE)
                                 );
                         } else {
                                 struct value p = value_named_tuple(
@@ -4786,11 +4786,11 @@ tyexpr(struct expression const *e)
                                         "default", e->dflts.items[i] != NULL ? tyexpr(e->dflts.items[i]) : NIL,
                                         NULL
                                 );
-                                value_array_push(v.items[1].array, tagged(gettag("ty", "Param"), p, NONE));
+                                value_array_push(v.items[1].array, tagged(TyParam, p, NONE));
                         }
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Func"));
+                v.tags = tags_push(0, TyFunc);
                 break;
         case EXPRESSION_TUPLE:
                 v = ARRAY(value_array_new());
@@ -4799,7 +4799,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.array,
                                 tagged(
-                                        gettag("ty", "RecordEntry"),
+                                        TyRecordEntry,
                                         value_named_tuple(
                                                 "", tyexpr(e->es.items[i]),
                                                 "name", (e->names.items[i] == NULL) ? NIL : STRING_CLONE(e->names.items[i], strlen(e->names.items[i])),
@@ -4813,11 +4813,11 @@ tyexpr(struct expression const *e)
                 }
                 OKGC(v.array);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Record"));
+                v.tags = tags_push(0, TyRecord);
                 break;
         case EXPRESSION_DICT:
                 v = tagged(
-                        gettag("ty", "Dict"),
+                        TyDict,
                         value_named_tuple(
                                 "items", ARRAY(value_array_new()),
                                 "default", e->dflt != NULL ? tyexpr(e->dflt) : NIL,
@@ -4830,7 +4830,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.items[0].array,
                                 tagged(
-                                        gettag("ty", "DictItem"),
+                                        TyDictItem,
                                         tyexpr(e->keys.items[i]),
                                         tyexpr(e->values.items[i]),
                                         NONE
@@ -4849,7 +4849,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.items[1].array,
                                 tagged(
-                                        gettag("ty", "Arg"),
+                                        TyArg,
                                         value_named_tuple(
                                                 "arg", tyexpr(e->args.items[i]),
                                                 "cond", e->fconds.items[i] != NULL ? tyexpr(e->fconds.items[i]) : NIL,
@@ -4864,7 +4864,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.items[1].array,
                                 tagged(
-                                        gettag("ty", "Arg"),
+                                        TyArg,
                                         value_named_tuple(
                                                 "arg", tyexpr(e->kwargs.items[i]),
                                                 "cond", e->fkwconds.items[i] != NULL ? tyexpr(e->fkwconds.items[i]) : NIL,
@@ -4876,7 +4876,7 @@ tyexpr(struct expression const *e)
                         );
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Call"));
+                v.tags = tags_push(0, TyCall);
                 break;
         case EXPRESSION_METHOD_CALL:
                 v = value_named_tuple(
@@ -4889,7 +4889,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.items[2].array,
                                 tagged(
-                                        gettag("ty", "Arg"),
+                                        TyArg,
                                         value_named_tuple(
                                                 "arg", tyexpr(e->method_args.items[i]),
                                                 "cond", e->mconds.items[i] != NULL ? tyexpr(e->mconds.items[i]) : NIL,
@@ -4904,7 +4904,7 @@ tyexpr(struct expression const *e)
                         value_array_push(
                                 v.items[2].array,
                                 tagged(
-                                        gettag("ty", "Arg"),
+                                        TyArg,
                                         value_named_tuple(
                                                 "arg", tyexpr(e->method_kwargs.items[i]),
                                                 // TODO conditional method kwargs
@@ -4917,22 +4917,22 @@ tyexpr(struct expression const *e)
                         );
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "MethodCall"));
+                v.tags = tags_push(0, TyMethodCall);
                 break;
         case EXPRESSION_WITH:
                 v = tagged(
-                        gettag("ty", "With"),
+                        TyWith,
                         tystmt(e->with.let),
                         tystmt(e->with.block->statements.items[1]->try.s),
                         NONE
                 );
                 break;
         case EXPRESSION_NIL:
-                v = TAG(gettag("ty", "Nil"));
+                v = TAG(TyNil);
                 break;
         case EXPRESSION_CONDITIONAL:
                 v = tagged(
-                        gettag("ty", "Cond"),
+                        TyCond,
                         tyexpr(e->cond),
                         tyexpr(e->then),
                         tyexpr(e->otherwise),
@@ -4942,66 +4942,66 @@ tyexpr(struct expression const *e)
         case EXPRESSION_INTEGER:
                 v = INTEGER(e->integer);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Int"));
+                v.tags = tags_push(0, TyInt);
                 break;
         case EXPRESSION_REAL:
                 v = REAL(e->real);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Float"));
+                v.tags = tags_push(0, TyFloat);
                 break;
         case EXPRESSION_BOOLEAN:
                 v = BOOLEAN(e->boolean);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Bool"));
+                v.tags = tags_push(0, TyBool);
                 break;
         case EXPRESSION_STRING:
                 v = STRING_CLONE(e->string, strlen(e->string));
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "String"));
+                v.tags = tags_push(0, TyString);
                 break;
         case EXPRESSION_EQ:
-                v = tagged(gettag("ty", "Assign"), tyexpr(e->target), tyexpr(e->value), NONE);
+                v = tagged(TyAssign, tyexpr(e->target), tyexpr(e->value), NONE);
                 break;
         case EXPRESSION_GT:
-                v = tagged(gettag("ty", "GT"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyGT, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_LT:
-                v = tagged(gettag("ty", "LT"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyLT, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_WTF:
-                v = tagged(gettag("ty", "Wtf"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyWtf, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_PLUS:
-                v = tagged(gettag("ty", "Add"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyAdd, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_STAR:
-                v = tagged(gettag("ty", "Mul"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyMul, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_MINUS:
-                v = tagged(gettag("ty", "Sub"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TySub, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_DIV:
-                v = tagged(gettag("ty", "Div"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyDiv, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_PERCENT:
-                v = tagged(gettag("ty", "Mod"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyMod, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_DBL_EQ:
-                v = tagged(gettag("ty", "Eq"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyEq, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_NOT_EQ:
-                v = tagged(gettag("ty", "NotEq"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyNotEq, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_IN:
-                v = tagged(gettag("ty", "In"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyIn, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_NOT_IN:
-                v = tagged(gettag("ty", "NotIn"), tyexpr(e->left), tyexpr(e->right), NONE);
+                v = tagged(TyNotIn, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_STATEMENT:
                 return tystmt(e->statement);
         default:
-                v = tagged(gettag("ty", "Expr"), PTR((void *)e), NONE);
+                v = tagged(TyExpr, PTR((void *)e), NONE);
         }
 
         return v;
@@ -5018,7 +5018,7 @@ tystmt(struct statement *s)
                 v.items[0] = tyexpr(s->target);
                 v.items[1] = tyexpr(s->value);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Let"));
+                v.tags = tags_push(0, TyLet);
                 break;
         case STATEMENT_CLASS_DEFINITION:
                 v = value_named_tuple(
@@ -5031,7 +5031,7 @@ tystmt(struct statement *s)
                         value_array_push(v.items[2].array, tyexpr(s->class.methods.items[i]));
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Class"));
+                v.tags = tags_push(0, TyClass);
                 break;
         case STATEMENT_MATCH:
                 v = value_tuple(2);
@@ -5047,7 +5047,7 @@ tystmt(struct statement *s)
                         );
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Match"));
+                v.tags = tags_push(0, TyMatch);
                 break;
         case STATEMENT_BLOCK:
                 v = ARRAY(value_array_new());
@@ -5055,7 +5055,7 @@ tystmt(struct statement *s)
                         value_array_push(v.array, tystmt(s->statements.items[i]));
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Block"));
+                v.tags = tags_push(0, TyBlock);
                 break;
         case STATEMENT_MULTI:
                 v = ARRAY(value_array_new());
@@ -5063,7 +5063,7 @@ tystmt(struct statement *s)
                         value_array_push(v.array, tystmt(s->statements.items[i]));
                 }
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, gettag("ty", "Multi"));
+                v.tags = tags_push(0, TyMulti);
                 break;
         case STATEMENT_IF:
                 v = value_tuple(3);
@@ -5074,7 +5074,7 @@ tystmt(struct statement *s)
                                 value_array_push(
                                         v.items[0].array,
                                         tagged(
-                                                part->def ? gettag("ty", "Let") : gettag("ty", "Assign"),
+                                                part->def ? TyLet : TyAssign,
                                                 tyexpr(part->target),
                                                 tyexpr(part->e),
                                                 NONE
@@ -5087,19 +5087,19 @@ tystmt(struct statement *s)
                 v.items[1] = tystmt(s->iff.then);
                 v.items[2] = s->iff.otherwise != NULL ? tystmt(s->iff.otherwise) : NIL;
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, s->iff.neg ? gettag("ty", "IfNot") : gettag("ty", "If"));
+                v.tags = tags_push(0, s->iff.neg ? TyIfNot : TyIf);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
                 v = tyexpr(s->value);
-                v.tags = tags_push(0, gettag("ty", "FuncDef"));
+                v.tags = tags_push(0, TyFuncDef);
                 break;
         case STATEMENT_NULL:
-                v = TAG(gettag("ty", "Null"));
+                v = TAG(TyNull);
                 break;
         case STATEMENT_EXPRESSION:
                 return tyexpr(s->expression);
         default:
-                v = tagged(gettag("ty", "Stmt"), PTR((void *)s), NONE);
+                v = tagged(TyStmt, PTR((void *)s), NONE);
         }
 
         return v;
@@ -5113,15 +5113,15 @@ cstmt(struct value *v)
 
         s->start = s->end = Nowhere;
 
-        if (tags_first(v->tags) == gettag("ty", "Stmt")) {
+        if (tags_first(v->tags) == TyStmt) {
                 return v->ptr;
-        } else if (tags_first(v->tags) == gettag("ty", "Let")) {
+        } else if (tags_first(v->tags) == TyLet) {
                 s->type = STATEMENT_DEFINITION;
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "FuncDef")) {
+        } else if (tags_first(v->tags) == TyFuncDef) {
                 struct value f = *v;
-                f.tags = tags_push(0, gettag("ty", "Func"));
+                f.tags = tags_push(0, TyFunc);
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(&f);
                 s->target = gc_alloc(sizeof *s->target);
@@ -5129,7 +5129,7 @@ cstmt(struct value *v)
                 s->target->identifier = mkcstr(tuple_get(v, "name"));
                 s->target->module = NULL;
                 s->target->constraint = NULL;
-        } else if (tags_first(v->tags) == gettag("ty", "Class")) {
+        } else if (tags_first(v->tags) == TyClass) {
                 s->type = STATEMENT_CLASS_DEFINITION;
                 s->class.name = mkcstr(tuple_get(v, "name"));
                 struct value *super = tuple_get(v, "super");
@@ -5139,21 +5139,21 @@ cstmt(struct value *v)
                 for (int i = 0; i < methods->array->count; ++i) {
                         vec_push(s->class.methods, cexpr(&methods->array->items[i]));
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "If") ||
-                   tags_first(v->tags) == gettag("ty", "IfNot")) {
+        } else if (tags_first(v->tags) == TyIf ||
+                   tags_first(v->tags) == TyIfNot) {
                 s->type = STATEMENT_IF;
-                s->iff.neg = tags_first(v->tags) == gettag("ty", "IfNot");
+                s->iff.neg = tags_first(v->tags) == TyIfNot;
                 vec_init(s->iff.parts);
 
                 struct value *parts = &v->items[0];
                 for (int i = 0; i < parts->array->count; ++i) {
                         struct value *part = &parts->array->items[i];
                         struct condpart *cp = gc_alloc(sizeof *cp);
-                        if (tags_first(part->tags) == gettag("ty", "Let")) {
+                        if (tags_first(part->tags) == TyLet) {
                                 cp->def = true;
                                 cp->target = cexpr(&part->items[0]);
                                 cp->e = cexpr(&part->items[1]);
-                        } else if (tags_first(part->tags) == gettag("ty", "Assign")) {
+                        } else if (tags_first(part->tags) == TyAssign) {
                                 cp->def = false;
                                 cp->target = cexpr(&part->items[0]);
                                 cp->e = cexpr(&part->items[1]);
@@ -5170,7 +5170,7 @@ cstmt(struct value *v)
                 } else {
                         s->iff.otherwise = NULL;
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Match")) {
+        } else if (tags_first(v->tags) == TyMatch) {
                 s->type = STATEMENT_MATCH;
                 s->match.e = cexpr(&v->items[0]);
                 vec_init(s->match.patterns);
@@ -5183,7 +5183,7 @@ cstmt(struct value *v)
                         vec_push(s->match.statements, cstmt(&_case->items[1]));
                         vec_push(s->match.conds, NULL);
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Return")) {
+        } else if (tags_first(v->tags) == TyReturn) {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
                 if (v->type == VALUE_TUPLE) {
@@ -5194,19 +5194,19 @@ cstmt(struct value *v)
                         v->tags = tags_pop(v->tags);
                         vec_push(s->returns, cexpr(v));
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Block")) {
+        } else if (tags_first(v->tags) == TyBlock) {
                 s->type = STATEMENT_BLOCK;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         vec_push(s->statements, cstmt(&v->array->items[i]));
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Multi")) {
+        } else if (tags_first(v->tags) == TyMulti) {
                 s->type = STATEMENT_MULTI;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         vec_push(s->statements, cstmt(&v->array->items[i]));
                 }
-        } else if (v->type == VALUE_TAG && v->tag == gettag("ty", "Null")) {
+        } else if (v->type == VALUE_TAG && v->tag == TyNull) {
                 s->type = STATEMENT_NULL;
         } else {
                 s->type = STATEMENT_EXPRESSION;
@@ -5224,9 +5224,9 @@ cexpr(struct value *v)
 
         e->start = e->end = Nowhere;
 
-        if (tags_first(v->tags) == gettag("ty", "Expr")) {
+        if (tags_first(v->tags) == TyExpr) {
                 return v->ptr;
-        } else if (tags_first(v->tags) == gettag("ty", "Value")) {
+        } else if (tags_first(v->tags) == TyValue) {
                 struct value *value = gc_alloc(sizeof *value);
                 *value = *v;
                 value->tags = tags_pop(value->tags);
@@ -5236,18 +5236,18 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
                 gc_push(value);
-        } else if (tags_first(v->tags) == gettag("ty", "Int")) {
+        } else if (tags_first(v->tags) == TyInt) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
-        } else if (tags_first(v->tags) == gettag("ty", "Id")) {
+        } else if (tags_first(v->tags) == TyId) {
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
-        } else if (tags_first(v->tags) == gettag("ty", "String")) {
+        } else if (tags_first(v->tags) == TyString) {
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(v);
-        } else if (tags_first(v->tags) == gettag("ty", "Array")) {
+        } else if (tags_first(v->tags) == TyArray) {
                 e->type = EXPRESSION_ARRAY;
                 vec_init(e->elements);
                 vec_init(e->aconds);
@@ -5260,7 +5260,7 @@ cexpr(struct value *v)
                         vec_push(e->optional, optional != NULL ? optional->boolean : false);
                         vec_push(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Record")) {
+        } else if (tags_first(v->tags) == TyRecord) {
                 e->type = EXPRESSION_TUPLE;
                 vec_init(e->es);
                 vec_init(e->names);
@@ -5276,7 +5276,7 @@ cexpr(struct value *v)
                         vec_push(e->required, optional != NULL ? !optional->boolean : true);
                         vec_push(e->tconds, cond != NULL ? cexpr(cond) : NULL);
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Dict")) {
+        } else if (tags_first(v->tags) == TyDict) {
                 e->type = EXPRESSION_DICT;
                 e->dtmp = NULL;
                 vec_init(e->keys);
@@ -5291,7 +5291,7 @@ cexpr(struct value *v)
                         vec_push(e->keys, cexpr(&items->array->items[i].items[0]));
                         vec_push(e->values, cexpr(&items->array->items[i].items[1]));
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Call")) {
+        } else if (tags_first(v->tags) == TyCall) {
                 e->type = EXPRESSION_FUNCTION_CALL;
                 vec_init(e->args);
                 vec_init(e->fconds);
@@ -5320,7 +5320,7 @@ cexpr(struct value *v)
                                 vec_push(e->fkwconds, cond != NULL ? cexpr(cond) : NULL);
                         }
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "MethodCall")) {
+        } else if (tags_first(v->tags) == TyMethodCall) {
                 e->type = EXPRESSION_METHOD_CALL;
                 vec_init(e->method_args);
                 vec_init(e->method_kws);
@@ -5350,7 +5350,7 @@ cexpr(struct value *v)
                                 vec_push(e->method_kws, mkcstr(name));
                         }
                 }
-        } else if (tags_first(v->tags) == gettag("ty", "Func")) {
+        } else if (tags_first(v->tags) == TyFunc) {
                 e->type = EXPRESSION_FUNCTION;
                 e->ikwargs = -1;
                 e->rest = -1;
@@ -5365,18 +5365,18 @@ cexpr(struct value *v)
                 vec_init(e->dflts);
                 for (int i = 0; i < params->array->count; ++i) {
                         struct value *p = &params->array->items[i];
-                        if (tags_first(p->tags) == gettag("ty", "Param")) {
+                        if (tags_first(p->tags) == TyParam) {
                                 vec_push(e->params, mkcstr(tuple_get(p, "name")));
                                 struct value *c = tuple_get(p, "constraint");
                                 struct value *d = tuple_get(p, "default");
                                 vec_push(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(c) : NULL);
                                 vec_push(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(d) : NULL);
-                        } else if (tags_first(p->tags) == gettag("ty", "Gather")) {
+                        } else if (tags_first(p->tags) == TyGather) {
                                 vec_push(e->params, mkcstr(p));
                                 vec_push(e->constraints, NULL);
                                 vec_push(e->dflts, NULL);
                                 e->rest = i;
-                        } else if (tags_first(p->tags) == gettag("ty", "Kwargs")) {
+                        } else if (tags_first(p->tags) == TyKwargs) {
                                 vec_push(e->params, mkcstr(p));
                                 vec_push(e->constraints, NULL);
                                 vec_push(e->dflts, NULL);
@@ -5384,96 +5384,96 @@ cexpr(struct value *v)
                         }
                 }
                 e->body = cstmt(tuple_get(v, "body"));
-        } else if (tags_first(v->tags) == gettag("ty", "With")) {
+        } else if (tags_first(v->tags) == TyWith) {
                 make_with(e, cstmt(&v->items[0]), cstmt(&v->items[1]));
-        } else if (tags_first(v->tags) == gettag("ty", "Cond")) {
+        } else if (tags_first(v->tags) == TyCond) {
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(&v->items[0]);
                 e->then = cexpr(&v->items[1]);
                 e->otherwise = cexpr(&v->items[2]);
-        } else if (v->type == VALUE_TAG && v->tag == gettag("ty", "Nil")) {
+        } else if (v->type == VALUE_TAG && v->tag == TyNil) {
                 e->type = EXPRESSION_NIL;
-        } else if (tags_first(v->tags) == gettag("ty", "Bool")) {
+        } else if (tags_first(v->tags) == TyBool) {
                 e->type = EXPRESSION_BOOLEAN;
                 e->boolean = v->boolean;
-        } else if (tags_first(v->tags) == gettag("ty", "Assign")) {
+        } else if (tags_first(v->tags) == TyAssign) {
                 e->type = EXPRESSION_EQ;
                 e->target = cexpr(&v->items[0]);
                 e->value = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Wtf")) {
+        } else if (tags_first(v->tags) == TyWtf) {
                 e->type = EXPRESSION_WTF;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Add")) {
+        } else if (tags_first(v->tags) == TyAdd) {
                 e->type = EXPRESSION_PLUS;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Sub")) {
+        } else if (tags_first(v->tags) == TySub) {
                 e->type = EXPRESSION_MINUS;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Mod")) {
+        } else if (tags_first(v->tags) == TyMod) {
                 e->type = EXPRESSION_PERCENT;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Div")) {
+        } else if (tags_first(v->tags) == TyDiv) {
                 e->type = EXPRESSION_DIV;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Mul")) {
+        } else if (tags_first(v->tags) == TyMul) {
                 e->type = EXPRESSION_STAR;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Eq")) {
+        } else if (tags_first(v->tags) == TyEq) {
                 e->type = EXPRESSION_DBL_EQ;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "NotEq")) {
+        } else if (tags_first(v->tags) == TyNotEq) {
                 e->type = EXPRESSION_NOT_EQ;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "In")) {
+        } else if (tags_first(v->tags) == TyIn) {
                 e->type = EXPRESSION_IN;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "NotIn")) {
+        } else if (tags_first(v->tags) == TyNotIn) {
                 e->type = EXPRESSION_NOT_IN;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Or")) {
+        } else if (tags_first(v->tags) == TyOr) {
                 e->type = EXPRESSION_OR;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "And")) {
+        } else if (tags_first(v->tags) == TyAnd) {
                 e->type = EXPRESSION_AND;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "UserOp")) {
+        } else if (tags_first(v->tags) == TyUserOp) {
                 e->type = EXPRESSION_USER_OP;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == gettag("ty", "Let")) {
+        } else if (tags_first(v->tags) == TyLet) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == gettag("ty", "Match")) {
+        } else if (tags_first(v->tags) == TyMatch) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == gettag("ty", "Stmt")) {
+        } else if (tags_first(v->tags) == TyStmt) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == gettag("ty", "Block")) {
+        } else if (tags_first(v->tags) == TyBlock) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (v->type == VALUE_TAG && v->tag == gettag("ty", "Null")) {
+        } else if (v->type == VALUE_TAG && v->tag == TyNull) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == gettag("ty", "Multi")) {
+        } else if (tags_first(v->tags) == TyMulti) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == gettag("ty", "FuncDef")) {
+        } else if (tags_first(v->tags) == TyFuncDef) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == gettag("ty", "Class")) {
+        } else if (tags_first(v->tags) == TyClass) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         }

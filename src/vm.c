@@ -395,7 +395,7 @@ add_builtins(int ac, char **av)
 #define DEF_NODE(name) \
         do { \
                 compiler_introduce_tag("ty", #name); \
-                vec_push(Globals, TAG(gettag("ty", #name))); \
+                vec_push(Globals, TAG(Ty ## name)); \
         } while (0)
 
         DEF_NODE(Expr);
@@ -424,7 +424,6 @@ add_builtins(int ac, char **av)
         DEF_NODE(Mul);
         DEF_NODE(Sub);
         DEF_NODE(Div);
-        DEF_NODE(Mod);
         DEF_NODE(Block);
         DEF_NODE(Multi);
         DEF_NODE(With);
@@ -434,7 +433,6 @@ add_builtins(int ac, char **av)
         DEF_NODE(String);
         DEF_NODE(Int);
         DEF_NODE(Bool);
-        DEF_NODE(Float);
         DEF_NODE(Nil);
         DEF_NODE(Float);
         DEF_NODE(Id);
@@ -448,6 +446,8 @@ add_builtins(int ac, char **av)
         DEF_NODE(UserOp);
         DEF_NODE(Return);
         DEF_NODE(Wtf);
+        DEF_NODE(GT);
+        DEF_NODE(LT);
 
 #undef DEF_NODE
 }

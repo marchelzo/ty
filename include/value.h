@@ -70,10 +70,66 @@ struct value;
 #define CLASS_TUPLE     13
 #define CLASS_PRIMITIVE 14
 
-#define TAG_MATCH_ERR 1
-#define TAG_INDEX_ERR 2
-#define TAG_NONE      3
-#define TAG_SOME      4
+enum {
+        TyExpr = 1,
+        TyStmt,
+        TyValue,
+        TyMatch,
+        TyFunc,
+        TyFuncDef,
+        TyParam,
+        TyArg,
+        TyNull,
+        TyIf,
+        TyIfNot,
+        TyIn,
+        TyNotIn,
+        TyEq,
+        TyOr,
+        TyAnd,
+        TyNotEq,
+        TyAssign,
+        TyLet,
+        TyClass,
+        TyGather,
+        TyKwargs,
+        TyAdd,
+        TyMul,
+        TySub,
+        TyDiv,
+        TyMod,
+        TyBlock,
+        TyMulti,
+        TyWith,
+        TyArray,
+        TyDict,
+        TyString,
+        TyInt,
+        TyBool,
+        TyFloat,
+        TyNil,
+        TyId,
+        TyRecord,
+        TyRecordEntry,
+        TyDictItem,
+        TyArrayItem,
+        TyCall,
+        TyMethodCall,
+        TyCond,
+        TyUserOp,
+        TyReturn,
+        TyWtf,
+        TyGT,
+        TyLT,
+        TyMaxNode
+};
+
+enum {
+        TAG_MATCH_ERR = TyMaxNode,
+        TAG_INDEX_ERR,
+        TAG_NONE,
+        TAG_SOME
+};
 
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
