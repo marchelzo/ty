@@ -5,111 +5,105 @@ import ty.parse (expr)
 import argparse (opt, flag)
 import os
 
-function short(o) match o.?short {
-    nil  => o.name[0],
-    None => nil,
-    s    => s
-}
-
-function long(o) match o.?long {
-    nil  => o.name,
-    None => nil,
-    s    => s
+function lispCase(s) {
+    s.matches(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
+     .join('-')
+     .lower()
 }
 
 class Args {
-    parse(argv = os.args) {
-        let opts = self.info()
-        let args = []
+	parse(argv = os.args) {
+		let opts = self.info()
+		let args = []
 
-        let version = self.version()
+		let version = self.version()
 
-        for o in opts {
-            let short = short(o)
-            let long = long(o)
-            if o.constraint == Bool {
-                args.push(flag(short: short, long: long, help: o.?help))
-            } else {
-                args.push(opt(short: short, long: long, help: o.?help, convert: o.?conv, post: o.constraint))
-            }
-        }
+		for o in opts {
+			if o.constraint == Bool {
+				args.push(flag(short: o.short, long: o.long, help: o.?help))
+			} else {
+				args.push(opt(short: o.short, long: o.long, help: o.?help, convert: o.?conv, post: o.constraint))
+			}
+		}
 
-        let result = argparse.make(*args, version: version)(argv)
+		let result = argparse.make(*args, version: version)(argv)
 
-        tuple(**%{o.name: result[short(o)] ?? result[long(o)] for o in opts})
-    }
+                tuple(**%{o.name: result[o.short] ?? result[o.long] for o in opts})
+	}
 }
 
 pub macro clap! {
-    let name = peek(0).id
+	let name = peek(0).id
 
-    next()
+	next()
 
-    while peekc().match?(/\s/) {
-        getc()
-    }
-
-    let version = if peekc() == 'v' {
-        getc()
-
-        let v = ''
-
-        while !peekc().match?(/\s/) {
-            v += getc()
+        while peekc().match?(/\s/) {
+            getc()
         }
 
-        v
-    }
+	let version = if peekc() == 'v' {
+		getc()
 
-    next()
-
-    let args = []
-
-    while peek(0).type != '}' {
-        let help = if peek(0).type == 'comment' {
-            next()
-            peek(-1).comment
-        }
-
-        let name = peek(0).id
-
-        next()
-        next()
-
-        let constraint = ty.eval(expr(0))
-        let conv = nil
-        let short = nil
-        let long = nil
-
-        while peek(0).type == ',' {
-            next()
-
-            let attr = peek(0)
-            next()
-            next()
-
-            match attr.id {
-                'conv' => {
-                    conv = ty.eval(expr(0))
-                },
-
-                'short' => {
-                    short = ty.eval(expr(0))
-                },
-
-                'long' => {
-                    long = ty.eval(expr(0))
+		let v = ''
+		
+                while !peekc().match?(/\s/) {
+                    v += getc()
                 }
-            }
-        }
 
-        args.push({name, constraint, ?help, ?conv, ?short, ?long})
-    }
+                v
+	}
 
-    let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
-    let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+	next()
 
-    next()
+	let args = []
 
-    ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
+	while peek(0).type != '}' {
+		let help = if peek(0).type == 'comment' {
+			next()
+			peek(-1).comment
+		}
+
+		let name = peek(0).id
+
+		next()
+		next()
+
+		let constraint = ty.eval(expr(0))
+		let conv = constraint
+		let short = name[0]
+		let long = lispCase(name)
+
+		while peek(0).type == ',' {
+			next()
+
+			let attr = peek(0)
+			next()
+
+			match attr.id {
+				'conv' => {
+                                        next()
+					conv = ty.eval(expr(0))
+				},
+
+				'short' => {
+                                        next()
+					short = ty.eval(expr(0))
+				},
+
+				'long' => {
+                                        next()
+					long = ty.eval(expr(0))
+				}
+			}
+		}
+
+		args.push({name, constraint, ?help, ?conv, ?short, ?long})
+	}
+
+	let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+	let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
+
+	next()
+
+	ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
 }
