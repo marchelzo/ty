@@ -70,59 +70,65 @@ struct value;
 #define CLASS_TUPLE     13
 #define CLASS_PRIMITIVE 14
 
+#define TY_AST_NODES \
+        X(Expr) \
+        X(Stmt) \
+        X(Value) \
+        X(Match) \
+        X(Func) \
+        X(FuncDef) \
+        X(Param) \
+        X(Arg) \
+        X(Null) \
+        X(If) \
+        X(IfNot) \
+        X(In) \
+        X(NotIn) \
+        X(Eq) \
+        X(Or) \
+        X(And) \
+        X(NotEq) \
+        X(Assign) \
+        X(Let) \
+        X(Class) \
+        X(Gather) \
+        X(Kwargs) \
+        X(Add) \
+        X(Mul) \
+        X(Sub) \
+        X(Div) \
+        X(Mod) \
+        X(Block) \
+        X(Multi) \
+        X(With) \
+        X(Array) \
+        X(Dict) \
+        X(String) \
+        X(Int) \
+        X(Bool) \
+        X(Float) \
+        X(Nil) \
+        X(Id) \
+        X(Record) \
+        X(RecordEntry) \
+        X(DictItem) \
+        X(ArrayItem) \
+        X(Call) \
+        X(MethodCall) \
+        X(Cond) \
+        X(UserOp) \
+        X(Return) \
+        X(Wtf) \
+        X(GT) \
+        X(LT)
+
+#define X(x) Ty ## x,
 enum {
-        TyExpr = 1,
-        TyStmt,
-        TyValue,
-        TyMatch,
-        TyFunc,
-        TyFuncDef,
-        TyParam,
-        TyArg,
-        TyNull,
-        TyIf,
-        TyIfNot,
-        TyIn,
-        TyNotIn,
-        TyEq,
-        TyOr,
-        TyAnd,
-        TyNotEq,
-        TyAssign,
-        TyLet,
-        TyClass,
-        TyGather,
-        TyKwargs,
-        TyAdd,
-        TyMul,
-        TySub,
-        TyDiv,
-        TyMod,
-        TyBlock,
-        TyMulti,
-        TyWith,
-        TyArray,
-        TyDict,
-        TyString,
-        TyInt,
-        TyBool,
-        TyFloat,
-        TyNil,
-        TyId,
-        TyRecord,
-        TyRecordEntry,
-        TyDictItem,
-        TyArrayItem,
-        TyCall,
-        TyMethodCall,
-        TyCond,
-        TyUserOp,
-        TyReturn,
-        TyWtf,
-        TyGT,
-        TyLT,
+        TyZeroNode,
+        TY_AST_NODES
         TyMaxNode
 };
+#undef X
 
 enum {
         TAG_MATCH_ERR = TyMaxNode,

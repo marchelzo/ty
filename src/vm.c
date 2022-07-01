@@ -392,64 +392,15 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
 
-#define DEF_NODE(name) \
+#define X(name) \
         do { \
                 compiler_introduce_tag("ty", #name); \
                 vec_push(Globals, TAG(Ty ## name)); \
-        } while (0)
+        } while (0);
 
-        DEF_NODE(Expr);
-        DEF_NODE(Stmt);
-        DEF_NODE(Value);
-        DEF_NODE(Match);
-        DEF_NODE(Func);
-        DEF_NODE(FuncDef);
-        DEF_NODE(Param);
-        DEF_NODE(Arg);
-        DEF_NODE(Null);
-        DEF_NODE(If);
-        DEF_NODE(IfNot);
-        DEF_NODE(In);
-        DEF_NODE(NotIn);
-        DEF_NODE(Eq);
-        DEF_NODE(Or);
-        DEF_NODE(And);
-        DEF_NODE(NotEq);
-        DEF_NODE(Assign);
-        DEF_NODE(Let);
-        DEF_NODE(Class);
-        DEF_NODE(Gather);
-        DEF_NODE(Kwargs);
-        DEF_NODE(Add);
-        DEF_NODE(Mul);
-        DEF_NODE(Sub);
-        DEF_NODE(Div);
-        DEF_NODE(Block);
-        DEF_NODE(Multi);
-        DEF_NODE(With);
-        DEF_NODE(Mod);
-        DEF_NODE(Array);
-        DEF_NODE(Dict);
-        DEF_NODE(String);
-        DEF_NODE(Int);
-        DEF_NODE(Bool);
-        DEF_NODE(Nil);
-        DEF_NODE(Float);
-        DEF_NODE(Id);
-        DEF_NODE(Record);
-        DEF_NODE(RecordEntry);
-        DEF_NODE(DictItem);
-        DEF_NODE(ArrayItem);
-        DEF_NODE(Call);
-        DEF_NODE(MethodCall);
-        DEF_NODE(Cond);
-        DEF_NODE(UserOp);
-        DEF_NODE(Return);
-        DEF_NODE(Wtf);
-        DEF_NODE(GT);
-        DEF_NODE(LT);
+        TY_AST_NODES
 
-#undef DEF_NODE
+#undef X
 }
 
 void
