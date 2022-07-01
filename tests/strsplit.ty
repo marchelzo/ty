@@ -1,0 +1,14 @@
+function eq!(*args) {
+	for [a, b] in args.window(2) {
+		if a != b {
+			print("FAIL: {a} != {b}")
+			return
+		}
+	}
+}
+
+eq!(' one  two three'.split(/\s+/), ['', 'one', 'two', 'three'])
+eq!('camelCaseSplit'.split(/(?=[[:upper:]])/), ['camel', 'Case', 'Split'])
+eq!('abcd'.split(/./), ['', '', '', '', ''])
+
+print('PASS')
