@@ -108,7 +108,7 @@ string_chars(struct value *string, int argc, struct value *kwargs)
         if (argc != 0)
                 vm_panic("str.chars() expects no arguments but got %d", argc);
 
-        char const *s = string->string;
+        uint8_t const *s = (uint8_t *)string->string;
         int size = string->bytes;
         int offset = 0;
         int state = 0;
@@ -123,7 +123,7 @@ string_chars(struct value *string, int argc, struct value *kwargs)
                         size -= 1;
                         offset += 1;
                         continue;
-                } else while (n < size) {
+                } else if (codepoint & 0xC0) while (n < size) {
                         int next;
                         int m = utf8proc_iterate(s + offset + n, size - n, &next);
                         if (m == -1)
