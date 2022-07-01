@@ -28,7 +28,12 @@ class Args {
 
         let result = argparse.make(*args, version: version)(argv)
 
-        tuple(**%{o.name: result[o.short] ?? result[o.long] for o in opts})
+        tuple(**%{
+            o.name:
+                (o.constraint == Bool) ? ((o.short in result) || (o.long in result))
+                                       : (result[o.short] ?? result[o.long])
+            for o in opts
+        })
     }
 }
 
