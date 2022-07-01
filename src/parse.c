@@ -3871,9 +3871,17 @@ parse(char const *source, char const *file)
                         error("This shouldn't happen.");
                 }
 
-                if (s != NULL && s->type == STATEMENT_MACRO_DEFINITION) {
+                if (s != NULL) switch (s->type) {
+                case STATEMENT_MACRO_DEFINITION:
                         vec_pop(program);
-                        define_macro(s);
+						define_macro(s);
+						break;
+                case STATEMENT_FUNCTION_DEFINITION:
+                        define_function(s);
+                        break;
+                case STATEMENT_CLASS_DEFINITION:
+                        define_class(s);
+                        break;
                 }
         }
 

@@ -50,6 +50,12 @@ import_module(struct statement const *);
 void
 define_macro(struct statement *);
 
+void
+define_class(struct statement *);
+
+void
+define_function(struct statement *);
+
 bool
 is_macro(struct expression const *e);
 

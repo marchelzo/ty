@@ -4217,9 +4217,9 @@ compile(char const *source)
                 longjmp(jb, 1);
         }
 
-        for (size_t i = 0; p[i] != NULL; ++i) {
+        for (size_t i = 0; false && p[i] != NULL; ++i) {
                 if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
-                        symbolize_lvalue(state.global, p[i]->target, true, p[i]->pub);
+                        //symbolize_lvalue(state.global, p[i]->target, true, p[i]->pub);
                         /*
                          * TODO: figure out why this was ever here
                          *
@@ -5527,6 +5527,36 @@ typarse(struct expression *e)
         state.macro_scope = macro_scope_save;
 
         return cexpr(&expr);
+}
+
+void
+define_class(struct statement *s)
+{
+        if (scope_locally_defined(state.global, s->class.name)) {
+                fail(
+                        "redeclaration of class %s%s%s%s%s",
+                        TERM(1),
+                        TERM(34),
+                        s->class.name,
+                        TERM(22),
+                        TERM(39)
+                );
+        }
+
+        struct symbol *sym = addsymbol(state.global, s->class.name);
+        sym->class = class_new(s->class.name);
+        sym->cnst = true;
+        s->class.symbol = sym->class;
+
+        if (s->class.pub) {
+                vec_push(state.exports, s->class.name);
+        }
+}
+
+void
+define_function(struct statement *s)
+{
+        symbolize_lvalue(state.global, s->target, true, s->pub);
 }
 
 void

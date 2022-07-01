@@ -565,21 +565,19 @@ string_split(struct value *string, int argc, struct value *kwargs)
                 pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
                 int start = 0;
+                int pstart = 0;
                 int out[3];
 
                 while (start < len) {
                         if ((argc == 2 && result.array->count == ARG(1).integer) ||
-                            pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) != 1) {
+                            pcre_exec(re, pattern.regex->extra, s, len, pstart, 0, out, 3) != 1) {
                                 out[0] = len;
                                 out[1] = len + 1;
                         }
 
-                        if (out[0] == out[1] && out[0] == start) {
-                                out[0] = ++out[1];
-                        }
+                        value_array_push(result.array, STRING_VIEW(*string, start, out[0] - start));
 
-                        int n = out[0] - start;
-                        value_array_push(result.array, STRING_VIEW(*string, start, n));
+                        pstart = out[1] + (out[0] == out[1]);
                         start = out[1];
                 }
 
