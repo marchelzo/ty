@@ -20,9 +20,9 @@ class Args {
 
         for o in opts {
             if o.constraint == Bool {
-                args.push(flag(short: o.short, long: o.long, help: o.?help))
+                args.push(flag(short: o.short, long: o.long, help: o.help))
             } else {
-                args.push(opt(short: o.short, long: o.long, help: o.?help, convert: o.?conv, post: o.constraint))
+                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: o.constraint))
             }
         }
 
@@ -87,17 +87,17 @@ pub macro clap! {
 
                 'short' => {
                     next()
-                    short = ty.eval(expr(0))
+                    short = match ty.eval(expr(0)) { None => nil, x => x }
                 },
 
                 'long' => {
                     next()
-                    long = ty.eval(expr(0))
+                    long = match ty.eval(expr(0)) { None => nil, x => x }
                 }
             }
         }
 
-        args.push({name, constraint, ?help, ?conv, ?short, ?long})
+        args.push({name, constraint, help, conv, short, long})
     }
 
     let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
