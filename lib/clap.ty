@@ -12,98 +12,98 @@ function lispCase(s) {
 }
 
 class Args {
-	parse(argv = os.args) {
-		let opts = self.info()
-		let args = []
+    parse(argv = os.args) {
+        let opts = self.info()
+        let args = []
 
-		let version = self.version()
+        let version = self.version()
 
-		for o in opts {
-			if o.constraint == Bool {
-				args.push(flag(short: o.short, long: o.long, help: o.?help))
-			} else {
-				args.push(opt(short: o.short, long: o.long, help: o.?help, convert: o.?conv, post: o.constraint))
-			}
-		}
+        for o in opts {
+            if o.constraint == Bool {
+                args.push(flag(short: o.short, long: o.long, help: o.?help))
+            } else {
+                args.push(opt(short: o.short, long: o.long, help: o.?help, convert: o.?conv, post: o.constraint))
+            }
+        }
 
-		let result = argparse.make(*args, version: version)(argv)
+        let result = argparse.make(*args, version: version)(argv)
 
-                tuple(**%{o.name: result[o.short] ?? result[o.long] for o in opts})
-	}
+        tuple(**%{o.name: result[o.short] ?? result[o.long] for o in opts})
+    }
 }
 
 pub macro clap! {
-	let name = peek(0).id
+    let name = peek(0).id
 
-	next()
+    next()
 
-        while peekc().match?(/\s/) {
-            getc()
+    while peekc().match?(/\s/) {
+        getc()
+    }
+
+    let version = if peekc() == 'v' {
+        getc()
+
+        let v = ''
+        
+        while !peekc().match?(/\s/) {
+            v += getc()
         }
 
-	let version = if peekc() == 'v' {
-		getc()
+        v
+    }
 
-		let v = ''
-		
-                while !peekc().match?(/\s/) {
-                    v += getc()
+    next()
+
+    let args = []
+
+    while peek(0).type != '}' {
+        let help = if peek(0).type == 'comment' {
+            next()
+            peek(-1).comment
+        }
+
+        let name = peek(0).id
+
+        next()
+        next()
+
+        let constraint = ty.eval(expr(0))
+        let conv = constraint
+        let short = name[0]
+        let long = lispCase(name)
+
+        while peek(0).type == ',' {
+            next()
+
+            let attr = peek(0)
+            next()
+
+            match attr.id {
+                'conv' => {
+                    next()
+                    conv = ty.eval(expr(0))
+                },
+
+                'short' => {
+                    next()
+                    short = ty.eval(expr(0))
+                },
+
+                'long' => {
+                    next()
+                    long = ty.eval(expr(0))
                 }
+            }
+        }
 
-                v
-	}
+        args.push({name, constraint, ?help, ?conv, ?short, ?long})
+    }
 
-	next()
+    let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
+    let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
 
-	let args = []
+    next()
 
-	while peek(0).type != '}' {
-		let help = if peek(0).type == 'comment' {
-			next()
-			peek(-1).comment
-		}
-
-		let name = peek(0).id
-
-		next()
-		next()
-
-		let constraint = ty.eval(expr(0))
-		let conv = constraint
-		let short = name[0]
-		let long = lispCase(name)
-
-		while peek(0).type == ',' {
-			next()
-
-			let attr = peek(0)
-			next()
-
-			match attr.id {
-				'conv' => {
-                                        next()
-					conv = ty.eval(expr(0))
-				},
-
-				'short' => {
-                                        next()
-					short = ty.eval(expr(0))
-				},
-
-				'long' => {
-                                        next()
-					long = ty.eval(expr(0))
-				}
-			}
-		}
-
-		args.push({name, constraint, ?help, ?conv, ?short, ?long})
-	}
-
-	let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
-	let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
-
-	next()
-
-	ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
+    ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
 }
