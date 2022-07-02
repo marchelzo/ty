@@ -1054,8 +1054,8 @@ string_bytes(struct value *string, int argc, struct value *kwargs)
         struct value result = ARRAY(value_array_new());
         NOGC(result.array);
 
-        for (char const *c = string->string; *c != '\0'; ++c) {
-                value_array_push(result.array, INTEGER((unsigned char)*c));
+        for (int i = 0; i < string->bytes; ++i) {
+                value_array_push(result.array, INTEGER((unsigned char)string->string[i]));
         }
 
         OKGC(result.array);
