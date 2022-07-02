@@ -97,7 +97,7 @@ class Object {
     }
 
     <.>(other) {
-        x -> self(other(x))
+        (*xs) -> self(other(*xs))
     }
 
     |>(f) {
