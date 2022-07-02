@@ -231,6 +231,8 @@ binary_operator_remainder(struct value const *left, struct value const *right)
                 if (R.integer == 0)
                         vm_panic("attempt to use % with a modulus of 0");
                 return INTEGER(L.integer % R.integer);
+        case VALUE_TUPLE:
+                return vm_eval_function(class_method(CLASS_TUPLE, "%"), right, left, NULL);
         default:
         Fail:
                 vm_panic("the operands to %% must be integers");

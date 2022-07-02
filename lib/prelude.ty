@@ -653,6 +653,23 @@ class Tuple {
         str(self)
     }
 
+    %(t) {
+        let myMembers = members(self)
+        let tMembers = members(t)
+
+        for k, v in tMembers {
+            if let $c = myMembers[k] {
+                myMembers[k] = (c.?isTuple() && v.?isTuple()) ? (c % v) : v
+            }
+        }
+
+        tuple(**myMembers)
+    }
+
+    isTuple() {
+        true
+    }
+
     __match__(t) {
         let myMembers = members(self)
         let tMembers = members(t)
