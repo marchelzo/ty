@@ -814,6 +814,11 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         state.start = target->start;
         state.end = target->end;
 
+        if (target->type > EXPRESSION_MAX_TYPE) {
+                target->type &= ~EXPRESSION_SYMBOLIZED;
+                return;
+        }
+
         struct expression *mod_access;
 
         try_symbolize_application(scope, target);
@@ -916,6 +921,11 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         if (e == NULL)
                 return;
 
+        if (e->type > EXPRESSION_MAX_TYPE) {
+                e->type &= ~EXPRESSION_SYMBOLIZED;
+                return;
+        }
+
         try_symbolize_application(scope, e);
 
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
@@ -987,6 +997,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
 {
         if (e == NULL)
                 return;
+
+        if (e->type > EXPRESSION_MAX_TYPE) {
+                e->type &= ~EXPRESSION_SYMBOLIZED;
+                return;
+        }
 
         state.start = e->start;
         state.end = e->end;
@@ -5596,4 +5611,11 @@ is_macro(struct expression const *e)
         }
 
         return s != NULL && s->macro;
+}
+
+void
+compiler_symbolize_expression(struct expression *e)
+{
+        symbolize_expression(state.global, e);
+        e->type |= EXPRESSION_SYMBOLIZED;
 }

@@ -23,6 +23,9 @@ compiler_introduce_symbol(char const *, char const *);
 void
 compiler_introduce_tag(char const *module, char const *name);
 
+void
+compiler_symbolize_expression(struct expression *e);
+
 char *
 compiler_compile_source(char const *source, char const *filename);
 

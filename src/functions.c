@@ -4168,7 +4168,9 @@ builtin_parse_expr(int argc, struct value *kwargs)
                 prec = 0;
         }
 
-        return parse_get_expr(prec);
+        struct value *resolve = NAMED("resolve");
+
+        return parse_get_expr(prec, resolve != NULL && value_truthy(resolve));
 }
 
 struct value

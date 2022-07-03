@@ -3852,10 +3852,17 @@ parse(char const *source, char const *file)
                 }
 
                 struct statement *s = parse_statement(-1);
-                if (s != NULL) {
-                        s->end = End;
-                        vec_push(program, s);
+                if (s == NULL) {
+                        break;
                 }
+
+                // TODO: figure out if this is necessary
+                while (s->type == STATEMENT_EXPRESSION && s->expression->type == EXPRESSION_STATEMENT) {
+                        s = s->expression->statement;
+                }
+
+                s->end = End;
+                vec_push(program, s);
 
                 if (pub) switch (s->type) {
                 case STATEMENT_DEFINITION:
@@ -3871,11 +3878,11 @@ parse(char const *source, char const *file)
                         error("This shouldn't happen.");
                 }
 
-                if (s != NULL) switch (s->type) {
+                switch (s->type) {
                 case STATEMENT_MACRO_DEFINITION:
                         vec_pop(program);
-						define_macro(s);
-						break;
+                        define_macro(s);
+                        break;
                 case STATEMENT_FUNCTION_DEFINITION:
                         define_function(s);
                         break;
@@ -4008,67 +4015,75 @@ parse_next(void)
 }
 
 struct value
-parse_get_expr(int prec)
+parse_get_expr(int prec, bool resolve)
 {
-                int save = TokenIndex;
+        int save = TokenIndex;
 
-                jmp_buf jb_save;
-                memcpy(&jb_save, &jb, sizeof jb);
+        jmp_buf jb_save;
+        memcpy(&jb_save, &jb, sizeof jb);
 
-                SAVE_NI(false);
-                SAVE_NE(false);
+        SAVE_NI(false);
+        SAVE_NE(false);
 
-                bool keep_comments = lex_keep_comments(false);
+        bool keep_comments = lex_keep_comments(false);
 
-                struct value v;
+        struct value v;
 
-                if (setjmp(jb) != 0) {
-                        v = NIL;
-                        seek(save);
+        if (setjmp(jb) != 0) {
+                v = NIL;
+                seek(save);
+        } else {
+                struct expression *e = parse_expr(prec);
+                if (!resolve) {
+                        v = tyexpr(e);
                 } else {
-                        v = tyexpr(parse_expr(prec));
+                        compiler_symbolize_expression(e);
+                        v = PTR(e);
+                        v.type |= VALUE_TAGGED;
+                        v.tags = tags_push(0, TyExpr);
                 }
+        }
 
-                LOAD_NE();
-                LOAD_NI();
+        LOAD_NE();
+        LOAD_NI();
 
-                memcpy(&jb, &jb_save, sizeof jb);
+        memcpy(&jb, &jb_save, sizeof jb);
 
-                lex_keep_comments(keep_comments);
+        lex_keep_comments(keep_comments);
 
-                return v;
+        return v;
 }
 
 struct value
 parse_get_stmt(int prec)
 {
-                int save = TokenIndex;
+        int save = TokenIndex;
 
-                jmp_buf jb_save;
-                memcpy(&jb_save, &jb, sizeof jb);
+        jmp_buf jb_save;
+        memcpy(&jb_save, &jb, sizeof jb);
 
-                SAVE_NI(false);
-                SAVE_NE(false);
+        SAVE_NI(false);
+        SAVE_NE(false);
 
-                bool keep_comments = lex_keep_comments(false);
+        bool keep_comments = lex_keep_comments(false);
 
-                struct value v;
+        struct value v;
 
-                if (setjmp(jb) != 0) {
-                        v = NIL;
-                        seek(save);
-                } else {
-                        v = tystmt(parse_statement(prec));
-                }
+        if (setjmp(jb) != 0) {
+                v = NIL;
+                seek(save);
+        } else {
+                v = tystmt(parse_statement(prec));
+        }
 
-                LOAD_NE();
-                LOAD_NI();
+        LOAD_NE();
+        LOAD_NI();
 
-                memcpy(&jb, &jb_save, sizeof jb);
+        memcpy(&jb, &jb_save, sizeof jb);
 
-                lex_keep_comments(keep_comments);
+        lex_keep_comments(keep_comments);
 
-                return v;
+        return v;
 }
 
 noreturn void

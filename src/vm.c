@@ -1940,7 +1940,7 @@ Throw:
                                 }
                         BadTupleMember:
                                 vm_panic(
-                                        "attmpt to access non-existent field %s'%s'%s of %s%s%s",
+                                        "attempt to access non-existent field %s'%s'%s of %s%s%s",
                                         TERM(34),
                                         member,
                                         TERM(39),

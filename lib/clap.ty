@@ -11,9 +11,16 @@ function lispCase(s) {
      .lower()
 }
 
+function camelCase(s) {
+    let [first, *rest] = s.split('-')
+    rest.map!(s -> s[0].upper() + s.slice(1).lower())
+    [first, *rest].sum()
+}
+
 class Args {
     parse(argv = os.args) {
         let opts = self.info()
+        let cmds = self.cmds()
         let args = []
 
         let version = self.version()
@@ -27,6 +34,28 @@ class Args {
         }
 
         let result = argparse.make(*args, version: version)(argv)
+
+        if #argv > 0 {
+            let sub = camelCase(argv[0])
+            if let $cmd = cmds[sub] {
+                result[sub] = ty.eval(cmd).parse(argv)
+                opts.push({
+                    name: sub,
+                    short: nil,
+                    long: sub,
+                    constraint: true
+                })
+                result['cmd'] = sub
+                opts.push({
+                    name: 'cmd',
+                    short: 'cmd',
+                    long: nil,
+                    constraint: true
+                })
+            } else {
+                // Error?
+            }
+        }
 
         tuple(**%{
             o.name:
@@ -61,6 +90,7 @@ pub macro clap! {
     next()
 
     let args = []
+    let cmds = %{}
 
     while peek(0).type != '}' {
         let help = if peek(0).type == 'comment' {
@@ -69,8 +99,23 @@ pub macro clap! {
         }
 
         let name = peek(0).id
-
         next()
+
+        if name == 'cmd' {
+            let sub = peek(0).id
+            next()
+
+            // :
+            next()
+
+            let parser = expr(999, resolve: true)
+
+            cmds[sub] = parser
+
+            continue
+        }
+
+        // :
         next()
 
         let constraint = ty.eval(expr(0))
@@ -105,10 +150,11 @@ pub macro clap! {
         args.push({name, constraint, help, conv, short, long})
     }
 
+    let getCmds = ty.Func(name: 'cmds', params: [], body: ty.Return(ty.Value(cmds)))
     let info = ty.Func(name: 'info', params: [], body: ty.Return(ty.Value(args)))
     let version = ty.Func(name: 'version', params: [], body: ty.Return(ty.Value(version)))
 
     next()
 
-    ty.Class(name: name, methods: [info, version], super: ty.Id(name: 'Args', module: 'clap'))
+    ty.Class(name: name, methods: [info, getCmds, version], super: ty.Id(name: 'Args', module: 'clap'))
 }
