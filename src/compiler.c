@@ -814,8 +814,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         state.start = target->start;
         state.end = target->end;
 
-        if (target->type > EXPRESSION_MAX_TYPE) {
-                target->type &= ~EXPRESSION_SYMBOLIZED;
+        if (target->type & EXPRESSION_SYMBOLIZED) {
                 return;
         }
 
@@ -921,8 +920,7 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         if (e == NULL)
                 return;
 
-        if (e->type > EXPRESSION_MAX_TYPE) {
-                e->type &= ~EXPRESSION_SYMBOLIZED;
+        if (e->type & EXPRESSION_SYMBOLIZED) {
                 return;
         }
 
@@ -998,8 +996,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
-        if (e->type > EXPRESSION_MAX_TYPE) {
-                e->type &= ~EXPRESSION_SYMBOLIZED;
+        if (e->type & EXPRESSION_SYMBOLIZED) {
                 return;
         }
 
@@ -2198,7 +2195,7 @@ emit_try_match(struct expression const *pattern)
         bool need_loc = false;
         bool set = true;
 
-        switch (pattern->type) {
+        switch (pattern->type & ~EXPRESSION_SYMBOLIZED) {
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(pattern->identifier, "_") == 0) {
                         /* nothing to do */
@@ -2830,7 +2827,7 @@ emit_target(struct expression *target, bool def)
         size_t start = state.code.count;
         bool need_loc = true;
 
-        switch (target->type) {
+        switch (target->type & ~EXPRESSION_SYMBOLIZED) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_REST:
                 need_loc = false;
@@ -3423,7 +3420,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
 
         size_t start = state.code.count;
 
-        switch (target->type) {
+        switch (target->type & ~EXPRESSION_SYMBOLIZED) {
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < target->elements.count; ++i) {
                         if (target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
@@ -3573,7 +3570,7 @@ emit_expr(struct expression const *e, bool need_loc)
 
         void (*emit)(struct expression const *);
 
-        switch (e->type) {
+        switch (e->type & ~EXPRESSION_SYMBOLIZED) {
         case EXPRESSION_IDENTIFIER:
                 emit_load(e->symbol, state.fscope);
                 break;
