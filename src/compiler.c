@@ -814,9 +814,8 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         state.start = target->start;
         state.end = target->end;
 
-        if (target->type & EXPRESSION_SYMBOLIZED) {
+        if (target->type & EXPRESSION_SYMBOLIZED)
                 return;
-        }
 
         struct expression *mod_access;
 
@@ -920,9 +919,8 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         if (e == NULL)
                 return;
 
-        if (e->type & EXPRESSION_SYMBOLIZED) {
+        if (e->type & EXPRESSION_SYMBOLIZED)
                 return;
-        }
 
         try_symbolize_application(scope, e);
 
@@ -996,9 +994,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
-        if (e->type & EXPRESSION_SYMBOLIZED) {
+        if (e->type & EXPRESSION_SYMBOLIZED)
                 return;
-        }
 
         state.start = e->start;
         state.end = e->end;
@@ -5362,8 +5359,8 @@ cexpr(struct value *v)
                                 vec_push(e->method_kws, mkcstr(name));
                         }
                 }
-        } else if (tags_first(v->tags) == TyFunc) {
-                e->type = EXPRESSION_FUNCTION;
+        } else if (tags_first(v->tags) == TyFunc || tags_first(v->tags) == TyImplicitFunc) {
+                e->type = tags_first(v->tags) == TyFunc ? EXPRESSION_FUNCTION : EXPRESSION_IMPLICIT_FUNCTION;
                 e->ikwargs = -1;
                 e->rest = -1;
                 e->ftype = FT_NONE;

@@ -659,7 +659,9 @@ class Tuple {
 
         for k, v in tMembers {
             if let $c = myMembers[k] {
-                myMembers[k] = (c.?isTuple() && v.?isTuple()) ? (c % v) : v
+                myMembers[k] = (c.?isTuple() && v.?isTuple()) ? (c % v) : v(c)
+            } else {
+                myMembers[k] = v(nil)
             }
         }
 
@@ -1373,6 +1375,64 @@ macro showCode {
     let e = parse.expr(50)
     print(e)
     e
+}
+
+macro modify! {
+    function path() {
+        let p = [lex.next().id]
+
+        while lex.peek().type == '.' {
+            lex.next()
+            p.push(lex.next().id)
+        }
+
+        p
+    }
+
+    function convert(d) {
+        let entries = []
+
+        for k, v in d {
+            entries.push(ty.RecordEntry((v :: Dict) ? convert(v) : v, name: k))
+        }
+
+        ty.Record(entries)
+    }
+
+
+    let record = %{}
+
+    // {
+    lex.next()
+
+    while lex.peek().type != '}' {
+        let (p, [field]) = path().split(-1)
+
+        // : or =
+        lex.next()
+
+        let e = ty.ImplicitFunc(body: parse.expr(0), params: [])
+
+        let d = record
+
+        for part in p {
+            if part not in d {
+                d[part] = %{}
+            }
+            d = d[part]
+        }
+
+        d[field] = e
+
+        if lex.peek().type == ',' {
+            lex.next()
+        }
+    }
+
+    // }
+    lex.next()
+
+    convert(record)
 }
 
 operator **   10 right

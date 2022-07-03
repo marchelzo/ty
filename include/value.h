@@ -77,6 +77,7 @@ struct value;
         X(Match) \
         X(Func) \
         X(FuncDef) \
+        X(ImplicitFunc) \
         X(Param) \
         X(Arg) \
         X(Null) \

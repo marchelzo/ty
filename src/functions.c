@@ -4100,14 +4100,6 @@ builtin_eval(int argc, struct value *kwargs)
 }
 
 struct value
-builtin_token_next(int argc, struct value *kwargs)
-{
-        ASSERT_ARGC("ty.token.next()", 0);
-        parse_next();
-        return NIL;
-}
-
-struct value
 builtin_lex_peek_char(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ty.lex.peekc()", 0);
@@ -4143,13 +4135,25 @@ builtin_lex_next_char(int argc, struct value *kwargs)
 struct value
 builtin_token_peek(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("ty.token.peek()", 1);
+        ASSERT_ARGC_2("ty.token.peek()", 0, 1);
 
-        if (ARG(0).type != VALUE_INTEGER) {
+        if (argc == 1 && ARG(0).type != VALUE_INTEGER) {
                 vm_panic("ty.token.peek(): expected integer but got: %s", value_show(&ARG(0)));
         }
 
-        return parse_get_token(ARG(0).integer);
+        return parse_get_token(argc == 0 ? 0 : ARG(0).integer);
+}
+
+struct value
+builtin_token_next(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.token.next()", 0);
+
+        struct value v = builtin_token_peek(0, NULL);
+
+        parse_next();
+
+        return v;
 }
 
 struct value
