@@ -5281,9 +5281,9 @@ cexpr(struct value *v)
                         struct value *optional = tuple_get(entry, "optional");
                         struct value *cond = tuple_get(entry, "cond");
                         vec_push(e->es, cexpr(&entry->items[0]));
-                        vec_push(e->names, name != NULL ? mkcstr(name) : NULL);
+                        vec_push(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(name) : NULL);
                         vec_push(e->required, optional != NULL ? !optional->boolean : true);
-                        vec_push(e->tconds, cond != NULL ? cexpr(cond) : NULL);
+                        vec_push(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(cond) : NULL);
                 }
         } else if (tags_first(v->tags) == TyDict) {
                 e->type = EXPRESSION_DICT;
@@ -5485,6 +5485,8 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == TyClass) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
+        } else {
+                fail("invalid value passed to cexpr(): %s", value_show(v));
         }
 
         return e;
