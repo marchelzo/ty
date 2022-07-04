@@ -9,7 +9,6 @@
 #include "token.h"
 
 _Thread_local AllocList allocs;
-
 _Thread_local size_t MemoryUsed = 0;
 _Thread_local size_t MemoryLimit = GC_INITIAL_LIMIT;
 

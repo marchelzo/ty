@@ -213,6 +213,7 @@
 
 { .module = "thread", .name = "create",            .value = BUILTIN(builtin_thread_create)                 },
 { .module = "thread", .name = "join",              .value = BUILTIN(builtin_thread_join)                   },
+{ .module = "thread", .name = "detach",            .value = BUILTIN(builtin_thread_detach)                 },
 { .module = "thread", .name = "kill",              .value = BUILTIN(builtin_thread_kill)                   },
 { .module = "thread", .name = "mutex",             .value = BUILTIN(builtin_thread_mutex)                  },
 { .module = "thread", .name = "destroyMutex",      .value = BUILTIN(builtin_thread_mutex_destroy)          },

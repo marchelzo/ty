@@ -183,6 +183,10 @@ static vec(pthread_mutex_t *) ThreadLocks;
 static vec(ThreadStorage) ThreadStorages;
 static vec(_Atomic bool *) ThreadStates;
 
+pthread_mutex_t DeadMutex = PTHREAD_MUTEX_INITIALIZER;
+AllocList DeadAllocs;
+size_t DeadUsed = 0;
+
 static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
@@ -250,7 +254,7 @@ WaitGC()
 void
 DoGC()
 {
-        GCLOG("Trying to do GC on thread %llu", TID);
+        GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, DeadUsed);
 
         if (pthread_mutex_trylock(&GCLock) != 0) {
                 GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
@@ -339,6 +343,11 @@ DoGC()
         GCLOG("Sweeping own storage on thread %llu", TID);
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
+        GCLOG("Sweeping objects from dead threads on thread %llu", TID);
+        pthread_mutex_lock(&DeadMutex);
+        GCSweep(&DeadAllocs, &DeadUsed);
+        pthread_mutex_unlock(&DeadMutex);
+
         pthread_barrier_wait(&GCBarrierSweep);
 
         UnlockThreads(blockedThreads, nBlocked);
@@ -346,7 +355,7 @@ DoGC()
         //GCLOG("Setting GC_ENABLED = true on thread %llu", TID);
         //GC_ENABLED = true;
 
-        GCLOG("Unlocking ThreadsLock and GCLock on thread %llu", TID);
+        GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, DeadUsed);
 
         pthread_mutex_unlock(&ThreadsLock);
         pthread_mutex_unlock(&GCLock);
@@ -708,7 +717,20 @@ AddThread(void)
 static void
 CleanupThread(void *ctx)
 {
-        GCLOG("Cleaning up thread: %llu", TID);
+        GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, DeadUsed);
+
+        pthread_mutex_lock(&DeadMutex);
+
+        if (DeadUsed + MemoryUsed > MemoryLimit) {
+                pthread_mutex_unlock(&DeadMutex);
+                DoGC();
+                pthread_mutex_lock(&DeadMutex);
+        }
+
+        vec_push_n_unchecked(DeadAllocs, allocs.items, allocs.count);
+        DeadUsed += MemoryUsed;
+
+        pthread_mutex_unlock(&DeadMutex);
 
         ReleaseLock(true);
 
@@ -725,13 +747,22 @@ CleanupThread(void *ctx)
                 }
         }
 
-        pthread_mutex_destroy(MyLock);
+        pthread_mutex_unlock(&ThreadsLock);
 
+        pthread_mutex_destroy(MyLock);
         free(MyLock);
+        free(MyState);
+        gc_free(stack.items);
+        gc_free(calls.items);
+        gc_free(frames.items);
+        gc_free(sp_stack.items);
+        gc_free(targets.items);
+        gc_free(try_stack.items);
+        gc_free(throw_stack.items);
+        gc_free(defer_stack.items);
+        gc_free(allocs.items);
 
         GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
-
-        pthread_mutex_unlock(&ThreadsLock);
 }
 
 void *
@@ -743,8 +774,6 @@ vm_run_thread(void *p)
         int argc = 0;
 
         GCLOG("New thread: %llu", (long long unsigned)pthread_self());
-
-        gc_push(&call[0]);
 
         while (call[argc + 1].type != VALUE_NONE) {
                 push(call[++argc]);
@@ -760,7 +789,10 @@ vm_run_thread(void *p)
                 // TODO: do something useful here
                 fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
         } else {
+                gc_push(&call[0]);
                 vm_call(call, argc);
+                gc_pop();
+                gc_free(call);
         }
 
         pthread_cleanup_pop(1);

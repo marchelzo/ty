@@ -292,6 +292,9 @@ struct value
 builtin_thread_join(int argc, struct value *kwargs);
 
 struct value
+builtin_thread_detach(int argc, struct value *kwargs);
+
+struct value
 builtin_thread_kill(int argc, struct value *kwargs);
 
 struct value

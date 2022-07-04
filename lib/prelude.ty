@@ -1364,6 +1364,10 @@ class Thread {
     kill(sig) {
         thread.kill(@id, sig)
     }
+
+    detach() {
+        thread.detach(@id)
+    }
 }
 
 macro static! {

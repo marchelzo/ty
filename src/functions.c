@@ -1852,6 +1852,20 @@ builtin_thread_join(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_thread_detach(int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("thread.detach() expects one argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("non-pointer passed to thread.detach(): %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(pthread_detach((pthread_t)ARG(0).ptr));
+}
+
+struct value
 builtin_thread_mutex(int argc, struct value *kwargs)
 {
         pthread_mutex_t *p = gc_alloc_object(sizeof *p, GC_ANY);
