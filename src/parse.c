@@ -385,7 +385,7 @@ setctx(int ctx)
 static void
 logctx(void)
 {
-#ifndef TY_NO_LOG
+#if 0
         int lo = max(0, TokenIndex - 3);
         int hi = min((int)tokens.count - 1, TokenIndex + 3);
 
@@ -3903,8 +3903,19 @@ parse_get_token(int i)
         bool keep_comments = lex_keep_comments(true);
         char *type = NULL;
 
-        lex_rewind(&token(-1)->end);
-        tokens.count = TokenIndex;
+        if (lex_pos().s > vec_last(tokens)->end.s) {
+                tokens.count = TokenIndex;
+                vec_push(tokens, ((struct token) {
+                        .ctx = lctx,
+                        .type = TOKEN_EXPRESSION,
+                        .start = lex_pos(),
+                        .end = lex_pos()
+                }));
+                next();
+        } else {
+                tokens.count = TokenIndex;
+                lex_rewind(&token(-1)->end);
+        }
 
         struct token *t = token(i);
 
