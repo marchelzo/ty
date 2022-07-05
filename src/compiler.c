@@ -5277,10 +5277,11 @@ cexpr(struct value *v)
                 vec_init(e->tconds);
                 for (int i = 0; i < v->array->count; ++i) {
                         struct value *entry = &v->array->items[i];
+                        struct value *item = tuple_get(entry, "item");
                         struct value *name = tuple_get(entry, "name");
                         struct value *optional = tuple_get(entry, "optional");
                         struct value *cond = tuple_get(entry, "cond");
-                        vec_push(e->es, cexpr(&entry->items[0]));
+                        vec_push(e->es, cexpr(item));
                         vec_push(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(name) : NULL);
                         vec_push(e->required, optional != NULL ? !optional->boolean : true);
                         vec_push(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(cond) : NULL);
