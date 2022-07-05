@@ -2,6 +2,7 @@ import bit
 import math
 import thread
 import base64
+import time
 import ffi as c
 import ty
 import ty.parse as parse
@@ -1374,9 +1375,31 @@ macro static! {
 }
 
 macro showCode {
-    let e = parse.expr(50)
+    let e = parse.stmt(0)
     print(e)
     e
+}
+
+macro timed! {
+    let e = parse.expr(50)
+    ty.Block([
+        ty.Let(
+            ty.Array([
+                ty.ArrayItem(item: ty.Id(name: 's')),
+                ty.ArrayItem(item: ty.Id(name: 'x')),
+                ty.ArrayItem(item: ty.Id(name: 'e'))
+            ]),
+            ty.Array([
+                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: [])),
+                ty.ArrayItem(item: e),
+                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: []))
+            ])
+        ),
+        ty.Record([
+            ty.RecordEntry(item: ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's'))),
+            ty.RecordEntry(item: ty.Id(name: 'x'))
+        ])
+    ])
 }
 
 macro modify! {
