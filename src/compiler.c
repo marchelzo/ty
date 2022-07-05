@@ -5394,6 +5394,10 @@ cexpr(struct value *v)
                         }
                 }
                 e->body = cstmt(tuple_get(v, "body"));
+        } else if (tags_first(v->tags) == TyMemberAccess) {
+                e->type = EXPRESSION_MEMBER_ACCESS;
+                e->object = cexpr(&v->items[0]);
+                e->member_name = mkcstr(&v->items[1]);
         } else if (tags_first(v->tags) == TyWith) {
                 make_with(e, cstmt(&v->items[0]), cstmt(&v->items[1]));
         } else if (tags_first(v->tags) == TyCond) {

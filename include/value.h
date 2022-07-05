@@ -116,6 +116,7 @@ struct value;
         X(ArrayItem) \
         X(Call) \
         X(MethodCall) \
+        X(MemberAccess) \
         X(Cond) \
         X(UserOp) \
         X(Return) \
