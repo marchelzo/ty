@@ -1381,8 +1381,15 @@ macro showCode {
 }
 
 macro timed! {
-    let e = parse.expr(50)
-    ty.Block([
+    // (
+    lex.next()
+
+    let e = parse.stmt(0)
+
+    // )
+    lex.next()
+
+    ty.Multi([
         ty.Let(
             ty.Array([
                 ty.ArrayItem(item: ty.Id(name: 's')),
@@ -1396,7 +1403,7 @@ macro timed! {
             ])
         ),
         ty.Record([
-            ty.RecordEntry(item: ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's'))),
+            ty.RecordEntry(item: ty.Div(ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's')), ty.Value(1.0e6))),
             ty.RecordEntry(item: ty.Id(name: 'x'))
         ])
     ])
