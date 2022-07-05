@@ -848,12 +848,10 @@ class Iter : Iterable {
     fold(x, f) {
         if f == nil {
             f = x
-            if x = @__next__() == None {
+            if not Some(x) = @__next__() {
                 return nil
             }
         }
-
-        Some(x) = x
 
         while let Some(y) = @__next__() {
             x = f(x, y)
