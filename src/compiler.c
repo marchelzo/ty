@@ -5125,7 +5125,9 @@ cstmt(struct value *v)
         if (tags_first(v->tags) == TyStmt) {
                 return v->ptr;
         } else if (tags_first(v->tags) == TyLet) {
+                struct value *pub = tuple_get(v, "public");
                 s->type = STATEMENT_DEFINITION;
+                s->pub = pub != NULL && value_truthy(pub);
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == TyFuncDef) {

@@ -1,4 +1,7 @@
 import ffi as c
+import ty
+import ty.token (next, peek)
+import ty.parse (expr)
 
 export iter, wrap, memcpy, strlen, memcmp, strcmp, memset
 
@@ -38,4 +41,31 @@ pub function cstr(s) {
     c.store(c.char, p + s.size(), 0)
 
     return p
+}
+
+pub macro cfun! {
+    let public = peek().type == 'pub'
+    if public { next() }
+
+    let lib = expr(0)
+    let rt = expr(0)
+
+    let name = next().id
+
+    // (
+    next()
+
+    let args = [ty.Arg(arg: lib), ty.Arg(arg: ty.String(name)), ty.Arg(arg: rt)]
+
+    while peek().type != ')' {
+        args.push(ty.Arg(arg: expr(0)))
+        if peek().type == ',' {
+            next()
+        }
+    }
+
+    // )
+    next()
+
+    ty.Let(ty.Id(name: name), ty.Call(func: ty.Value(wrap), args: args), public: public)
 }

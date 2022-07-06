@@ -1,5 +1,5 @@
 import ffi as c
-import cutil (wrap)
+import cutil (wrap, cfun!)
 
 if not let $curses = c.dlopen('libncurses.so.5') ?? c.dlopen('libncurses.so.6') {
 	throw 'Failed to load curses'
@@ -12,15 +12,32 @@ let KEY_RIGHT = KEY_LEFT + 1
 
 let KEY_BACKSPACE = 263
 
+cfun! pub curses c.int start_color()
+cfun! pub curses c.int use_default_colors()
+cfun! pub curses c.int init_pair(c.short, c.short, c.short)
+cfun! pub curses c.int init_color(c.short, c.short, c.short, c.short)
+cfun! pub curses c.int COLOR_PAIR(c.int)
+cfun! pub curses c.int wcolor_set(c.ptr, c.short, c.ptr)
+
 pub initscr = wrap(curses, 'initscr', c.ptr)
 pub endwin = wrap(curses, 'endwin', c.int)
 pub mvaddnstr = wrap(curses, 'mvaddnstr', c.int, c.int, c.int, c.ptr, c.int)
+pub mvwaddnstr = wrap(curses, 'mvwaddnstr', c.int, c.ptr, c.int, c.int, c.ptr, c.int)
+pub waddnstr = wrap(curses, 'waddnstr', c.int, c.ptr, c.ptr, c.int)
 pub refresh = wrap(curses, 'refresh', c.int)
+pub wrefresh = wrap(curses, 'wrefresh', c.int, c.ptr)
+pub wclear = wrap(curses, 'wclear', c.int, c.ptr)
+pub werase = wrap(curses, 'werase', c.int, c.ptr)
 pub getch = wrap(curses, 'getch', c.int)
 pub curs_set = wrap(curses, 'curs_set', c.int, c.int)
 pub getmaxx = wrap(curses, 'getmaxx', c.int, c.ptr)
 pub getmaxy = wrap(curses, 'getmaxy', c.int, c.ptr)
+pub getcurx = wrap(curses, 'getcurx', c.int, c.ptr)
+pub getcury = wrap(curses, 'getcury', c.int, c.ptr)
+pub getparx = wrap(curses, 'getparx', c.int, c.ptr)
+pub getpary = wrap(curses, 'getpary', c.int, c.ptr)
 pub move = wrap(curses, 'move', c.int, c.int, c.int)
+pub wmove = wrap(curses, 'wmove', c.int, c.ptr, c.int, c.int)
 pub echo = wrap(curses, 'echo', c.int)
 pub noecho = wrap(curses, 'noecho', c.int)
 pub cbreak = wrap(curses, 'cbreak', c.int)
@@ -29,6 +46,13 @@ pub raw = wrap(curses, 'raw', c.int)
 pub noraw = wrap(curses, 'noraw', c.int)
 pub keypad = wrap(curses, 'keypad', c.int, c.ptr, c.u8)
 pub clrtoeol = wrap(curses, 'clrtoeol', c.int)
+pub wclrtoeol = wrap(curses, 'wclrtoeol', c.int, c.ptr)
+pub clearok = wrap(curses, 'clearok', c.int, c.ptr, c.u8)
+pub scrollok = wrap(curses, 'scrollok', c.int, c.ptr, c.u8)
+pub immedok = wrap(curses, 'immedok', c.void, c.ptr, c.u8)
+pub idlok = wrap(curses, 'idlok', c.int, c.ptr, c.u8)
+pub wsetscrreg = wrap(curses, 'idlok', c.int, c.ptr, c.int, c.int)
+pub newwin = wrap(curses, 'newwin', c.ptr, c.int, c.int, c.int, c.int)
 
 pub stdscr = nil
 
@@ -40,10 +64,34 @@ let y = c.new(c.int)
 
 pub initscr = () -> { stdscr = initscr() }
 
-pub function getmaxyx() {
-	(getmaxy(stdscr), getmaxx(stdscr))
+pub function getmaxyx(win = stdscr) {
+	(getmaxy(win), getmaxx(win))
+}
+
+pub function getparyx(win = stdscr) {
+	(getpary(win), getparx(win))
+}
+
+pub function getyx(win = stdscr) {
+    (getcury(win), getcurx(win))
 }
 
 pub function mvaddstr(i, j, msg) {
 	mvaddnstr(i, j, msg, msg.size())
+}
+
+pub function mvwaddstr(w, i, j, msg) {
+	mvwaddnstr(w, i, j, msg, msg.size())
+}
+
+pub function waddstr(w, msg) {
+    waddnstr(w, msg, msg.size())
+}
+
+pub function addnstr(msg, n) {
+    waddnstr(stdscr, msg, n)
+}
+
+pub function addstr(msg) {
+    waddnstr(stdscr, msg, msg.size())
 }
