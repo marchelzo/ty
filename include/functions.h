@@ -178,6 +178,9 @@ struct value
 builtin_setenv(int argc, struct value *kwargs);
 
 struct value
+builtin_locale_setlocale(int argc, struct value *kwargs);
+
+struct value
 builtin_json_parse(int argc, struct value *kwargs);
 
 struct value

@@ -184,7 +184,6 @@ complete(char const *s, int start, int end)
 int
 main(int argc, char **argv)
 {
-
         vm_init(argc, argv);
 
         use_readline = isatty(0) && argc < 2;

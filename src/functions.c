@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdnoreturn.h>
 #include <time.h>
+#include <locale.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -1015,6 +1016,28 @@ builtin_getenv(int argc, struct value *kwargs)
                 return NIL;
         else
                 return STRING_NOGC(val, strlen(val));
+}
+
+struct value
+builtin_locale_setlocale(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("locale.setlocale()", 2);
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("locale.setlocale(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_STRING) {
+                vm_panic("locale.setlocale(): expected string but got: %s", value_show(&ARG(0)));
+        }
+
+        size_t n = min(ARG(1).bytes, sizeof buffer - 1);
+        memcpy(buffer, ARG(1).string, n);
+        buffer[n] = '\0';
+
+        setlocale(ARG(0).integer, buffer);
+
+        return NIL;
 }
 
 struct value

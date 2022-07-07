@@ -8,6 +8,7 @@
 #include <stdatomic.h>
 #include <errno.h>
 #include <stdnoreturn.h>
+#include <locale.h>
 
 #include <pcre.h>
 #include <curl/curl.h>
