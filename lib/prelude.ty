@@ -716,8 +716,16 @@ class Iterable {
         @__iter__().take(n)
     }
 
+    takeWhile(pred) {
+        @__iter__().takeWhile(pred)
+    }
+
     drop(n) {
         @__iter__().drop(n)
+    }
+
+    dropWhile(pred) {
+        @__iter__().dropWhile(pred)
     }
 
     set() {
@@ -1032,9 +1040,31 @@ class Iter : Iterable {
         }
     }
 
+    takeWhile(pred) {
+        while let Some(x) = @__next__() {
+            if pred(x) {
+                yield x
+            } else {
+                break
+            }
+        }
+    }
+
     drop(n) {
         for _ in ..n { @__next__() }
         return self
+    }
+
+    dropWhile(pred) {
+        while let Some(x) = @__next__() {
+            if !pred(x) {
+                yield x
+                break
+            }
+        }
+        while let Some(x) = @__next__() {
+            yield x
+        }
     }
 
     set() {
