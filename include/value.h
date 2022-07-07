@@ -92,6 +92,7 @@ struct value;
         X(Assign) \
         X(Let) \
         X(Class) \
+        X(Spread) \
         X(Gather) \
         X(Kwargs) \
         X(Add) \

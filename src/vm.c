@@ -3171,12 +3171,16 @@ vm_execute(char const *source)
         if (filename == NULL)
                 filename = "(repl)";
 
+        GC_ENABLED = false;
+
         char *code = compiler_compile_source(source, filename);
         if (code == NULL) {
                 Error = compiler_error();
                 LOG("compiler error was: %s", Error);
                 return false;
         }
+
+        GC_ENABLED = true;
 
         if (setjmp(jb) != 0) {
                 gc_clear_root_set();

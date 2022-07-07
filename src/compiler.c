@@ -4218,6 +4218,35 @@ get_module_scope(char const *name)
 }
 
 static void
+declare_classes(struct statement *s)
+{
+        if (s->type == STATEMENT_MULTI) {
+                for (int i = 0; i < s->statements.count; ++i) {
+                        declare_classes(s->statements.items[i]);
+                }
+        } else if (s->type == STATEMENT_CLASS_DEFINITION) {
+                if (scope_locally_defined(state.global, s->class.name)) {
+                        fail(
+                                "redeclaration of class %s%s%s%s%s",
+                                TERM(1),
+                                TERM(34),
+                                s->class.name,
+                                TERM(22),
+                                TERM(39)
+                        );
+                }
+                struct symbol *sym = addsymbol(state.global, s->class.name);
+                sym->class = class_new(s->class.name);
+                sym->cnst = true;
+                s->class.symbol = sym->class;
+
+                if (s->class.pub) {
+                        vec_push(state.exports, s->class.name);
+                }
+        }
+}
+
+static void
 compile(char const *source)
 {
         struct statement **p = parse(source, state.filename);
@@ -4234,26 +4263,8 @@ compile(char const *source)
                          *
                          * p[i]->value->name = NULL;
                          */
-                } else if (p[i]->type == STATEMENT_CLASS_DEFINITION) {
-                        if (scope_locally_defined(state.global, p[i]->class.name)) {
-                                fail(
-                                        "redeclaration of class %s%s%s%s%s",
-                                        TERM(1),
-                                        TERM(34),
-                                        p[i]->class.name,
-                                        TERM(22),
-                                        TERM(39)
-                                );
-                        }
-                        struct symbol *sym = addsymbol(state.global, p[i]->class.name);
-                        sym->class = class_new(p[i]->class.name);
-                        sym->cnst = true;
-                        p[i]->class.symbol = sym->class;
-
-                        if (p[i]->class.pub) {
-                                vec_push(state.exports, p[i]->class.name);
-                        }
                 }
+                declare_classes(p[i]);
         }
 
         for (size_t i = 0; p[i] != NULL; ++i) {
@@ -4768,6 +4779,11 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyArray);
                 break;
+        case EXPRESSION_SPREAD:
+                v = tyexpr(e->value);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(v.tags, TySpread);
+                break;
         case EXPRESSION_FUNCTION:
                 v = value_named_tuple(
                         "name", e->name != NULL ? STRING_CLONE(e->name, strlen(e->name)) : NIL,
@@ -4810,7 +4826,7 @@ tyexpr(struct expression const *e)
                                 tagged(
                                         TyRecordEntry,
                                         value_named_tuple(
-                                                "", tyexpr(e->es.items[i]),
+                                                "item", tyexpr(e->es.items[i]),
                                                 "name", (e->names.items[i] == NULL) ? NIL : STRING_CLONE(e->names.items[i], strlen(e->names.items[i])),
                                                 "cond", (e->tconds.items[i] == NULL) ? NIL : tyexpr(e->tconds.items[i]),
                                                 "optional", BOOLEAN(!e->required.items[i]),
@@ -4927,6 +4943,13 @@ tyexpr(struct expression const *e)
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyMethodCall);
+                break;
+        case EXPRESSION_MEMBER_ACCESS:
+                v = value_tuple(2);
+                v.items[0] = tyexpr(e->object);
+                v.items[1] = STRING_CLONE(e->member_name, strlen(e->member_name));
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyMemberAccess);
                 break;
         case EXPRESSION_WITH:
                 v = tagged(
@@ -5255,6 +5278,11 @@ cexpr(struct value *v)
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+        } else if (tags_first(v->tags) == TySpread) {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_SPREAD;
+                e->value = cexpr(&v_);
         } else if (tags_first(v->tags) == TyString) {
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(v);

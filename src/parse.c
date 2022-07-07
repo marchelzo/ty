@@ -3771,6 +3771,29 @@ parse_error(void)
         return ERR;
 }
 
+static void
+define_top(struct statement *s)
+{
+        switch (s->type) {
+        case STATEMENT_MACRO_DEFINITION:
+                define_macro(s);
+                break;
+        case STATEMENT_FUNCTION_DEFINITION:
+                define_function(s);
+                break;
+        case STATEMENT_CLASS_DEFINITION:
+                define_class(s);
+                break;
+        case STATEMENT_MULTI:
+                for (int i = 0; i < s->statements.count; ++i) {
+                        define_top(s->statements.items[i]);
+                }
+                break;
+        default:
+                break;
+        }
+}
+
 struct statement **
 parse(char const *source, char const *file)
 {
@@ -3862,7 +3885,10 @@ parse(char const *source, char const *file)
                 }
 
                 s->end = End;
-                vec_push(program, s);
+
+                if (s->type != STATEMENT_MACRO_DEFINITION) {
+                        vec_push(program, s);
+                }
 
                 if (pub) switch (s->type) {
                 case STATEMENT_DEFINITION:
@@ -3878,18 +3904,7 @@ parse(char const *source, char const *file)
                         error("This shouldn't happen.");
                 }
 
-                switch (s->type) {
-                case STATEMENT_MACRO_DEFINITION:
-                        vec_pop(program);
-                        define_macro(s);
-                        break;
-                case STATEMENT_FUNCTION_DEFINITION:
-                        define_function(s);
-                        break;
-                case STATEMENT_CLASS_DEFINITION:
-                        define_class(s);
-                        break;
-                }
+                define_top(s);
         }
 
         vec_push(program, NULL);

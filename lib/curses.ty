@@ -1,7 +1,7 @@
 import ffi as c
 import cutil (wrap, cfun!)
 
-if not let $curses = c.dlopen('libncurses.so.5') ?? c.dlopen('libncurses.so.6') {
+if not let $curses = c.dlopen('libncursesw.so.5') ?? c.dlopen('libncursesw.so.6') {
 	throw 'Failed to load curses'
 }
 
@@ -18,6 +18,14 @@ cfun! pub curses c.int init_pair(c.short, c.short, c.short)
 cfun! pub curses c.int init_color(c.short, c.short, c.short, c.short)
 cfun! pub curses c.int COLOR_PAIR(c.int)
 cfun! pub curses c.int wcolor_set(c.ptr, c.short, c.ptr)
+cfun! pub curses c.ptr newwin(c.int, c.int, c.int, c.int)
+cfun! pub curses c.ptr subwin(c.ptr, c.int, c.int, c.int, c.int)
+cfun! pub curses c.int delwin(c.ptr)
+cfun! pub curses c.int mvwin(c.ptr, c.int, c.int)
+cfun! pub curses c.void wsyncup(c.ptr)
+cfun! pub curses c.void wsyncdown(c.ptr)
+cfun! pub curses c.ptr newpad(c.int, c.int)
+cfun! pub curses c.int prefresh(c.ptr, c.int, c.int, c.int, c.int, c.int, c.int)
 
 pub initscr = wrap(curses, 'initscr', c.ptr)
 pub endwin = wrap(curses, 'endwin', c.int)
@@ -52,7 +60,6 @@ pub scrollok = wrap(curses, 'scrollok', c.int, c.ptr, c.u8)
 pub immedok = wrap(curses, 'immedok', c.void, c.ptr, c.u8)
 pub idlok = wrap(curses, 'idlok', c.int, c.ptr, c.u8)
 pub wsetscrreg = wrap(curses, 'idlok', c.int, c.ptr, c.int, c.int)
-pub newwin = wrap(curses, 'newwin', c.ptr, c.int, c.int, c.int, c.int)
 
 pub stdscr = nil
 

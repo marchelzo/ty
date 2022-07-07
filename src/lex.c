@@ -354,7 +354,7 @@ lexrawstr(void)
                 switch (C(0)) {
                 case '\0':
                 Unterminated:
-                        error("unterminated string literal");
+                        error("unterminated string literal starting on line %d", Start.line);
                 case '\\':
                         nextchar();
                         switch (C(0)) {
@@ -567,7 +567,7 @@ Expr:
 
 Unterminated:
 
-        error("unterminated string literal");
+        error("unterminated string literal starting on line %d", special.start.line);
 }
 
 static struct token

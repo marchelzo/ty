@@ -69,3 +69,61 @@ pub macro cfun! {
 
     ty.Let(ty.Id(name: name), ty.Call(func: ty.Value(wrap), args: args), public: public)
 }
+
+pub macro struct! {
+    let structName = next().id
+
+    let ty.Record(struct) = expr(99)
+
+    let init = ty.Func(
+        name: 'init',
+        params: [ty.Param(name: '<p>')],
+        body: ty.Assign(
+            ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
+            ty.Wtf(
+                ty.Id(name: '<p>'),
+                ty.Call(
+                    func: ty.Id(name: 'new', module: 'c'),
+                    args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))]
+                )
+            )
+        )
+    )
+
+    let structArgs = []
+    let methods = []
+
+    for entry, i in struct {
+        let ty.RecordEntry({name, item}) = entry
+        structArgs.push(ty.Arg(arg: item))
+        methods.push(
+            ty.Func(
+                name: name,
+                params: [ty.Gather('args')],
+                body: ty.Call(
+                    func: ty.Id(name: 'member', module: 'c'),
+                    args: [
+                        ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                        ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                        ty.Arg(arg: ty.Int(i)),
+                        ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
+                    ]
+                )
+            )
+        )
+    }
+
+    ty.Multi([
+        ty.Let(
+            ty.Id(name: "{structName}_C"),
+            ty.Call(
+                func: ty.Id(name: 'struct', module: 'c'),
+                args: structArgs
+            )
+        ),
+        ty.Class(
+            name: structName,
+            methods: [init, *methods]
+        )
+    ])
+}
