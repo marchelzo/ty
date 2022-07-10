@@ -369,12 +369,14 @@ setctx(int ctx)
         if (next_nl)
                 lex_need_nl();
 
-        while (tokens.count > TokenIndex && !(vec_last(tokens)->ctx & (ctx | LEX_FAKE))) {
+        // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
+
+        while (tokens.count > TokenIndex) {
                 LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(vec_last(tokens)));
                 tokens.count -= 1;
         }
 
-        while (tokens.count > 0 && vec_last(tokens)->start.s == start.s && !(vec_last(tokens)->ctx & LEX_FAKE)) {
+        while (tokens.count > 0 && vec_last(tokens)->start.s == start.s) {
                 LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(vec_last(tokens)));
                 tokens.count -= 1;
         }
@@ -387,7 +389,7 @@ logctx(void)
 {
 #if 0
         int lo = max(0, TokenIndex - 3);
-        int hi = min((int)tokens.count - 1, TokenIndex + 3);
+        int hi = tokens.count - 1;
 
         fprintf(stderr, "Lex context: %s    ", lctx == LEX_PREFIX ? "prefix" : "infix");
 
@@ -2706,7 +2708,7 @@ Keyword:
         //case KEYWORD_OR:  return 4;
         //case KEYWORD_AND: return 4;
         case KEYWORD_NOT:
-        case KEYWORD_IN:  return NoIn ? -3 : 3;
+        case KEYWORD_IN:  return NoIn ? -3 : 6;
         default:          return -3;
         }
 
@@ -2946,10 +2948,6 @@ parse_for_loop(void)
                 seek(save);
         }
 
-        /*
-         * First try to parse this as a for-each loop. If that fails, assume it's
-         * a C-style for loop.
-         */
         if (!cloop) {
                 s->type = STATEMENT_EACH_LOOP;
 
@@ -3138,7 +3136,7 @@ parse_if(void)
 
         s->iff.parts = parse_condparts(s->iff.neg);
 
-        s->iff.then = parse_block();
+        s->iff.then = parse_statement(-1);
 
         if (have_keyword(KEYWORD_ELSE)) {
                 next();
@@ -3356,13 +3354,12 @@ static struct statement *
 parse_continue_statement(void)
 {
         struct statement *s = mkstmt();
+        s->type = STATEMENT_CONTINUE;
 
         consume_keyword(KEYWORD_CONTINUE);
 
         if (tok()->type == ';')
                 next();
-
-        s->type = STATEMENT_CONTINUE;
 
         return s;
 }

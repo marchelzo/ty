@@ -199,6 +199,10 @@ class Array : Iterable {
         return true
     }
 
+    empty?() {
+        #self == 0
+    }
+
     cycle() {
         let i = 0
         while true {
@@ -760,6 +764,10 @@ class Iterable {
         @__iter__().max(k)
     }
 
+    minmax(k) {
+        @__iter__().minmax(k)
+    }
+
     count(x) {
         @__iter__().count(x)
     }
@@ -830,6 +838,10 @@ class Iterable {
 
     enumerate() {
         @__iter__().enumerate()
+    }
+
+    find(p) {
+        @__iter__().find(p)
     }
 
     __len__() {
@@ -928,6 +940,12 @@ class Iter : Iterable {
         }
     }
 
+    find(p) {
+        for x in self {
+            if p(x) return x
+        }
+    }
+
     group(f = id) {
         if not let Some(x) = @__next__() {
             return [].__iter__()
@@ -947,9 +965,9 @@ class Iter : Iterable {
             }
 
             if g {
-                let group = g
+                let g_ = g
                 g = nil
-                return Some(group)
+                return Some(g_)
             } else {
                 None
             }
@@ -1128,6 +1146,29 @@ class Iter : Iterable {
         }
 
         return m
+    }
+
+    minmax(k = id) {
+        if not let Some(x) = @__next__() {
+            return nil
+        }
+
+        let max = x
+        let maxKey = k(x)
+
+        let min = max
+        let minKey = maxKey
+
+        while let Some(x) = @__next__() {
+            let key = k(x)
+            if key < minKey {
+                min, minKey = x, key
+            } else if key > maxKey {
+                max, maxKey = x, key
+            }
+        }
+
+        return (min, max)
     }
 
     intersperse(sep) {
