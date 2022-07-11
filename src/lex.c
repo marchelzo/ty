@@ -624,7 +624,14 @@ lexnum(void)
         char *end;
         errno = 0;
         int base;
-        intmax_t integer = strtoull(SRC, &end, 0);
+
+        intmax_t integer;
+        // Allow integer constants like 0b10100010
+        if (C(0) == '0' && C(1) == 'b') {
+                integer = strtoull(SRC + 2, &end, 2);
+        } else {
+                integer = strtoull(SRC, &end, 0);
+        }
 
         int n = end - SRC;
 
