@@ -199,6 +199,12 @@ class Array : Iterable {
         return true
     }
 
+    at(i) {
+        if i < #self {
+            self[i]
+        }
+    }
+
     empty?() {
         #self == 0
     }
@@ -1496,7 +1502,7 @@ macro modify! {
         let entries = []
 
         for k, v in d {
-            entries.push(ty.RecordEntry((v :: Dict) ? convert(v) : v, name: k))
+            entries.push(ty.RecordEntry(item: (v :: Dict) ? convert(v) : v, name: k))
         }
 
         ty.Record(entries)
@@ -1536,6 +1542,40 @@ macro modify! {
     lex.next()
 
     convert(record)
+}
+
+macro enum! {
+    if lex.peek().type == '{' {
+        lex.next()
+
+        let vars = []
+        let i = 0
+
+        while lex.peek().type != '}' {
+            vars.push(ty.Let(ty.Id(name: lex.next().id), ty.Int(i++)))
+            if lex.peek().type == ',' lex.next()
+        }
+
+        lex.next()
+
+        ty.Multi(vars)
+    } else {
+        let name = lex.next().id
+
+        lex.next()
+
+        let entries = []
+        let i = 0
+
+        while lex.peek().type != '}' {
+            entries.push(ty.RecordEntry(item: ty.Int(i++), name: lex.next().id))
+            if lex.peek().type == ',' lex.next()
+        }
+
+        lex.next()
+
+        ty.Let(ty.Id(name: name), ty.Record(entries))
+    }
 }
 
 operator **   10 right
