@@ -308,6 +308,8 @@ token(int i)
                 vec_push(tokens, t);
         }
 
+        LOG("tokens[%d] = %s", TokenIndex + i, token_show(&tokens.items[TokenIndex + i]));
+
         return &tokens.items[TokenIndex + i];
 }
 
@@ -361,7 +363,7 @@ setctx(int ctx)
 
         bool next_nl = tok()->type == TOKEN_NEWLINE;
 
-        LOG("Rewinding to: %.8s...  TokenIndex=%d\n", tok()->start.s, TokenIndex);
+        LOG("Rewinding to: %.*s...  TokenIndex=%d\n", (int)strcspn(tok()->start.s, "\n"), tok()->start.s, TokenIndex);
 
         struct location start = tok()->start;
         lex_rewind(&start);
@@ -379,6 +381,11 @@ setctx(int ctx)
         while (tokens.count > 0 && vec_last(tokens)->start.s == start.s) {
                 LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(vec_last(tokens)));
                 tokens.count -= 1;
+        }
+
+        // TODO: ???
+        if (TokenIndex > tokens.count) {
+                TokenIndex = tokens.count;
         }
 
         logctx();
