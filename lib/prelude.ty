@@ -1544,16 +1544,28 @@ macro modify! {
     convert(record)
 }
 
+function nextEnumValue(last) {
+    let name = lex.next().id
+    if lex.peek().type == '=' {
+        lex.next()
+        (name, parse.expr(0))
+    } else {
+        (name, ty.Add(last, ty.Int(1)))
+    }
+}
+
 macro enum! {
     if lex.peek().type == '{' {
         lex.next()
 
         let vars = []
-        let i = 0
+        let i = ty.Int(-1)
 
         while lex.peek().type != '}' {
-            vars.push(ty.Let(ty.Id(name: lex.next().id), ty.Int(i++)))
+            let (e, val) = nextEnumValue(i)
+            vars.push(ty.Let(ty.Id(name: e), val))
             if lex.peek().type == ',' lex.next()
+            i = val
         }
 
         lex.next()
@@ -1565,11 +1577,13 @@ macro enum! {
         lex.next()
 
         let entries = []
-        let i = 0
+        let i = ty.Int(-1)
 
         while lex.peek().type != '}' {
-            entries.push(ty.RecordEntry(item: ty.Int(i++), name: lex.next().id))
+            let (e, val) = nextEnumValue(i)
+            entries.push(ty.RecordEntry(item: val, name: e))
             if lex.peek().type == ',' lex.next()
+            i = val
         }
 
         lex.next()
