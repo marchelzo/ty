@@ -1,0 +1,411 @@
+import ffi as c
+import cutil (..)
+
+if not let $tickit = c.dlopen('libtickit.so') {
+	throw 'failed to load libtickit'
+}
+
+pub TICKIT_VERSION_MAJOR = 0
+pub TICKIT_VERSION_MINOR = 4
+pub TICKIT_VERSION_PATCH = 1
+pub TICKIT_BIND_FIRST = 1<<0
+pub TICKIT_BIND_UNBIND = 1<<1
+pub TICKIT_BIND_DESTROY = 1<<2
+pub TICKIT_BIND_ONESHOT = 1<<3
+pub TICKIT_CTL_USE_ALTSCREEN = 1
+pub TICKIT_N_CTLS = TICKIT_CTL_USE_ALTSCREEN + 1
+pub TICKIT_CURSORSHAPE_BLOCK = 1
+pub TICKIT_CURSORSHAPE_UNDER = TICKIT_CURSORSHAPE_BLOCK + 1
+pub TICKIT_CURSORSHAPE_LEFT_BAR = TICKIT_CURSORSHAPE_UNDER + 1
+pub TICKIT_IO_IN = 1<<0
+pub TICKIT_IO_OUT = 1<<1
+pub TICKIT_IO_HUP = 1<<2
+pub TICKIT_IO_ERR = 1<<3
+pub TICKIT_IO_INVAL = 1<<4
+pub TICKIT_LINECAP_START = 0x01
+pub TICKIT_LINECAP_END = 0x02
+pub TICKIT_LINECAP_BOTH = 0x03
+pub TICKIT_LINE_SINGLE = 1
+pub TICKIT_LINE_DOUBLE = 2
+pub TICKIT_LINE_THICK = 3
+pub TICKIT_NO = 0
+pub TICKIT_YES = 1
+pub TICKIT_MAYBE = -1
+pub TICKIT_PEN_FG = 1
+pub TICKIT_PEN_BG = TICKIT_PEN_FG + 1
+pub TICKIT_PEN_BOLD = TICKIT_PEN_BG + 1
+pub TICKIT_PEN_UNDER = TICKIT_PEN_BOLD + 1
+pub TICKIT_PEN_ITALIC = TICKIT_PEN_UNDER + 1
+pub TICKIT_PEN_REVERSE = TICKIT_PEN_ITALIC + 1
+pub TICKIT_PEN_STRIKE = TICKIT_PEN_REVERSE + 1
+pub TICKIT_PEN_ALTFONT = TICKIT_PEN_STRIKE + 1
+pub TICKIT_PEN_BLINK = TICKIT_PEN_ALTFONT + 1
+pub TICKIT_N_PEN_ATTRS = TICKIT_PEN_BLINK + 1
+pub TICKIT_PEN_FG_DESC = 0x100 + TICKIT_PEN_FG
+pub TICKIT_PEN_BG_DESC = 0x100 + TICKIT_PEN_BG
+pub TICKIT_PEN_UNDER_NONE = 0
+pub TICKIT_PEN_UNDER_SINGLE = TICKIT_PEN_UNDER_NONE + 1
+pub TICKIT_PEN_UNDER_DOUBLE = TICKIT_PEN_UNDER_SINGLE + 1
+pub TICKIT_PEN_UNDER_WAVY = TICKIT_PEN_UNDER_DOUBLE + 1
+pub TICKIT_N_PEN_UNDERS = TICKIT_PEN_UNDER_WAVY + 1
+pub TICKIT_RUN_DEFAULT = 0
+pub TICKIT_RUN_ONCE = 1<<0
+pub TICKIT_RUN_NOHANG = 1<<1
+pub TICKIT_RUN_NOSETUP = 1<<2
+pub TICKIT_TERMCTL_ALTSCREEN = 1
+pub TICKIT_TERMCTL_CURSORVIS = TICKIT_TERMCTL_ALTSCREEN + 1
+pub TICKIT_TERMCTL_MOUSE = TICKIT_TERMCTL_CURSORVIS + 1
+pub TICKIT_TERMCTL_CURSORBLINK = TICKIT_TERMCTL_MOUSE + 1
+pub TICKIT_TERMCTL_CURSORSHAPE = TICKIT_TERMCTL_CURSORBLINK + 1
+pub TICKIT_TERMCTL_ICON_TEXT = TICKIT_TERMCTL_CURSORSHAPE + 1
+pub TICKIT_TERMCTL_TITLE_TEXT = TICKIT_TERMCTL_ICON_TEXT + 1
+pub TICKIT_TERMCTL_ICONTITLE_TEXT = TICKIT_TERMCTL_TITLE_TEXT + 1
+pub TICKIT_TERMCTL_KEYPAD_APP = TICKIT_TERMCTL_ICONTITLE_TEXT + 1
+pub TICKIT_TERMCTL_COLORS = TICKIT_TERMCTL_KEYPAD_APP + 1
+pub TICKIT_N_TERMCTLS = TICKIT_TERMCTL_COLORS + 1
+pub TICKIT_TERM_MOUSEMODE_OFF = 0
+pub TICKIT_TERM_MOUSEMODE_CLICK = TICKIT_TERM_MOUSEMODE_OFF + 1
+pub TICKIT_TERM_MOUSEMODE_DRAG = TICKIT_TERM_MOUSEMODE_CLICK + 1
+pub TICKIT_TERM_MOUSEMODE_MOVE = TICKIT_TERM_MOUSEMODE_DRAG + 1
+pub TICKIT_TYPE_NONE = 0
+pub TICKIT_TYPE_BOOL = TICKIT_TYPE_NONE + 1
+pub TICKIT_TYPE_INT = TICKIT_TYPE_BOOL + 1
+pub TICKIT_TYPE_STR = TICKIT_TYPE_INT + 1
+pub TICKIT_TYPE_COLOUR = TICKIT_TYPE_STR + 1
+pub TICKIT_WINCTL_STEAL_INPUT = 1
+pub TICKIT_WINCTL_FOCUS_CHILD_NOTIFY = TICKIT_WINCTL_STEAL_INPUT + 1
+pub TICKIT_WINCTL_CURSORVIS = TICKIT_WINCTL_FOCUS_CHILD_NOTIFY + 1
+pub TICKIT_WINCTL_CURSORBLINK = TICKIT_WINCTL_CURSORVIS + 1
+pub TICKIT_WINCTL_CURSORSHAPE = TICKIT_WINCTL_CURSORBLINK + 1
+pub TICKIT_N_WINCTLS = TICKIT_WINCTL_CURSORSHAPE + 1
+pub TICKIT_WINDOW_HIDDEN = 1<<0
+pub TICKIT_WINDOW_LOWEST = 1<<1
+pub TICKIT_WINDOW_ROOT_PARENT = 1<<2
+pub TICKIT_WINDOW_STEAL_INPUT = 1<<3
+pub TICKIT_WINDOW_POPUP = TICKIT_WINDOW_ROOT_PARENT|TICKIT_WINDOW_STEAL_INPUT
+pub TICKIT_MOD_SHIFT = 0x01
+pub TICKIT_MOD_ALT = 0x02
+pub TICKIT_MOD_CTRL = 0x04
+pub TICKIT_PENTYPE_BOOL = TICKIT_TYPE_BOOL
+pub TICKIT_PENTYPE_INT = TICKIT_TYPE_INT
+pub TICKIT_PENTYPE_COLOUR = TICKIT_TYPE_COLOUR
+pub TICKIT_EV_FIRE = (1 << 0)
+pub TICKIT_EV_UNBIND = (1 << 1)
+pub TICKIT_EV_DESTROY = (1 << 2)
+pub TICKIT_KEYEV_KEY = 1
+pub TICKIT_KEYEV_TEXT = TICKIT_KEYEV_KEY + 1
+pub TICKIT_MOUSEEV_PRESS = 1
+pub TICKIT_MOUSEEV_DRAG = TICKIT_MOUSEEV_PRESS + 1
+pub TICKIT_MOUSEEV_RELEASE = TICKIT_MOUSEEV_DRAG + 1
+pub TICKIT_MOUSEEV_WHEEL = TICKIT_MOUSEEV_RELEASE + 1
+pub TICKIT_MOUSEEV_DRAG_START = 0x101
+pub TICKIT_MOUSEEV_DRAG_OUTSIDE = TICKIT_MOUSEEV_DRAG_START + 1
+pub TICKIT_MOUSEEV_DRAG_DROP = TICKIT_MOUSEEV_DRAG_OUTSIDE + 1
+pub TICKIT_MOUSEEV_DRAG_STOP = TICKIT_MOUSEEV_DRAG_DROP + 1
+pub TICKIT_MOUSEWHEEL_UP = 1
+pub TICKIT_MOUSEWHEEL_DOWN = TICKIT_MOUSEWHEEL_UP + 1
+pub TICKIT_FOCUSEV_IN = 1
+pub TICKIT_FOCUSEV_OUT = TICKIT_FOCUSEV_IN + 1
+pub TICKIT_PEN_ON_DESTROY = 0
+pub TICKIT_PEN_ON_CHANGE = TICKIT_PEN_ON_DESTROY + 1
+pub TICKIT_NO_OPEN = 0
+pub TICKIT_OPEN_FDS = TICKIT_NO_OPEN + 1
+pub TICKIT_OPEN_STDIO = TICKIT_OPEN_FDS + 1
+pub TICKIT_OPEN_STDTTY = TICKIT_OPEN_STDIO + 1
+pub TICKIT_TERM_ON_DESTROY = 0
+pub TICKIT_TERM_ON_RESIZE = TICKIT_TERM_ON_DESTROY + 1
+pub TICKIT_TERM_ON_KEY = TICKIT_TERM_ON_RESIZE + 1
+pub TICKIT_TERM_ON_MOUSE = TICKIT_TERM_ON_KEY + 1
+pub TICKIT_WINDOW_ON_DESTROY = 0
+pub TICKIT_WINDOW_ON_GEOMCHANGE = TICKIT_WINDOW_ON_DESTROY + 1
+pub TICKIT_WINDOW_ON_EXPOSE = TICKIT_WINDOW_ON_GEOMCHANGE + 1
+pub TICKIT_WINDOW_ON_FOCUS = TICKIT_WINDOW_ON_EXPOSE + 1
+pub TICKIT_WINDOW_ON_KEY = TICKIT_WINDOW_ON_FOCUS + 1
+pub TICKIT_WINDOW_ON_MOUSE = TICKIT_WINDOW_ON_KEY + 1
+
+struct! TickitPenRGB8 {
+    r: c.u8,
+    g: c.u8,
+    b: c.u8
+}
+
+struct! TickitRect {
+    top: c.int,
+    left: c.int,
+    lines: c.int,
+    cols: c.int
+}
+
+struct! TickitKeyEventInfo {
+    type: c.int,
+    mod: c.int,
+    str: c.ptr
+}
+
+struct! TickitMouseEventInfo {
+    type: c.int,
+    button: c.int,
+    mod: c.int,
+    line: c.int,
+    col: c.int
+}
+
+struct! TickitExposeEventInfo {
+    rect: TickitRect_C,
+    rb: c.ptr
+}
+
+struct! TickitGeomchangeEventInfo {
+    rect: TickitRect_C,
+    oldrect: TickitRect_C,
+}
+
+cfun! pub tickit c.ptr tickit_new_stdtty()
+cfun! pub tickit c.ptr tickit_new_stdio()
+cfun! pub tickit c.void tickit_term_printn(c.ptr, c.ptr, c.u64)
+cfun! pub tickit c.u8 tickit_term_goto(c.ptr, c.int, c.int)
+cfun! pub tickit c.void tickit_term_move(c.ptr, c.int, c.int)
+cfun! pub tickit c.void tickit_term_flush(c.ptr)
+
+pub function tickit_term_print(t, s) {
+    tickit_term_printn(t, s, s.size())
+}
+
+cfun! pub tickit c.void tickit_build()
+cfun! pub tickit c.void tickit_ctlname()
+cfun! pub tickit c.void tickit_ctltype()
+cfun! pub tickit c.void tickit_debug_init()
+cfun! pub tickit c.void tickit_debug_logf()
+cfun! pub tickit c.void tickit_debug_vlogf()
+cfun! pub tickit c.ptr tickit_get_rootwin(c.ptr)
+cfun! pub tickit c.ptr tickit_get_term(c.ptr)
+cfun! pub tickit c.void tickit_getctl_int()
+cfun! pub tickit c.void tickit_lookup_ctl()
+cfun! pub tickit c.void tickit_pen_attrname()
+cfun! pub tickit c.void tickit_pen_attrtype()
+cfun! pub tickit c.void tickit_pen_bind_event()
+cfun! pub tickit c.void tickit_pen_clear()
+cfun! pub tickit c.void tickit_pen_clear_attr()
+cfun! pub tickit c.ptr tickit_pen_clone(c.ptr)
+cfun! pub tickit c.void tickit_pen_copy(c.ptr, c.ptr, c.u8)
+cfun! pub tickit c.void tickit_pen_copy_attr(c.ptr, c.ptr, c.int)
+cfun! pub tickit c.u8 tickit_pen_equiv(c.ptr, c.ptr)
+cfun! pub tickit c.u8 tickit_pen_equiv_attr(c.ptr, c.ptr, c.int)
+cfun! pub tickit c.void tickit_pen_get_bool_attr()
+cfun! pub tickit c.void tickit_pen_get_colour_attr()
+cfun! pub tickit TickitPenRGB8_C tickit_pen_get_colour_attr_rgb8(c.ptr, c.int)
+cfun! pub tickit c.void tickit_pen_get_int_attr()
+cfun! pub tickit c.void tickit_pen_has_attr()
+cfun! pub tickit c.void tickit_pen_has_colour_attr_rgb8()
+cfun! pub tickit c.void tickit_pen_is_nondefault()
+cfun! pub tickit c.void tickit_pen_is_nonempty()
+cfun! pub tickit c.void tickit_pen_lookup_attr()
+cfun! pub tickit c.ptr tickit_pen_new()
+cfun! pub tickit c.void tickit_pen_new_attrs()
+cfun! pub tickit c.void tickit_pen_nondefault_attr()
+cfun! pub tickit c.void tickit_pen_ref()
+cfun! pub tickit c.void tickit_pen_set_bool_attr()
+cfun! pub tickit c.void tickit_pen_set_colour_attr(c.ptr, c.int, c.int)
+
+cfun! tickit c.u8 tickit_pen_set_colour_attr_desc(c.ptr, c.int, c.ptr)
+pub tickit_pen_set_colour_attr_desc = (pen, attr, s) -> {
+    let p = cstr(s)
+    tickit_pen_set_colour_attr_desc(pen, attr, p)
+    c.free(p)
+}
+
+cfun! pub tickit c.void tickit_pen_set_colour_attr_rgb8(c.ptr, c.int, TickitPenRGB8_C)
+cfun! pub tickit c.void tickit_pen_set_int_attr()
+cfun! pub tickit c.void tickit_pen_unbind_event_id()
+cfun! pub tickit c.void tickit_pen_unref(c.ptr)
+cfun! pub tickit c.void tickit_rect_add()
+//cfun! pub tickit c.void tickit_rect_bottom()
+cfun! pub tickit c.void tickit_rect_contains()
+cfun! pub tickit c.void tickit_rect_init_bounded()
+cfun! pub tickit c.void tickit_rect_init_sized()
+cfun! pub tickit c.void tickit_rect_intersect()
+cfun! pub tickit c.void tickit_rect_intersects()
+//cfun! pub tickit c.void tickit_rect_right()
+cfun! pub tickit c.void tickit_rect_subtract()
+cfun! pub tickit c.void tickit_rect_translate()
+cfun! pub tickit c.void tickit_rectset_add()
+cfun! pub tickit c.void tickit_rectset_clear()
+cfun! pub tickit c.void tickit_rectset_contains()
+cfun! pub tickit c.void tickit_rectset_destroy()
+cfun! pub tickit c.void tickit_rectset_get_rect()
+cfun! pub tickit c.void tickit_rectset_get_rects()
+cfun! pub tickit c.void tickit_rectset_intersects()
+cfun! pub tickit c.void tickit_rectset_new()
+cfun! pub tickit c.void tickit_rectset_rects()
+cfun! pub tickit c.void tickit_rectset_subtract()
+cfun! pub tickit c.void tickit_rectset_translate()
+cfun! pub tickit c.void tickit_ref()
+cfun! pub tickit c.void tickit_renderbuffer_blit()
+cfun! pub tickit c.void tickit_renderbuffer_char()
+cfun! pub tickit c.void tickit_renderbuffer_char_at()
+cfun! pub tickit c.void tickit_renderbuffer_clear(c.ptr)
+cfun! pub tickit c.void tickit_renderbuffer_clip()
+cfun! pub tickit c.void tickit_renderbuffer_copyrect()
+cfun! pub tickit c.void tickit_renderbuffer_erase(c.ptr, c.int)
+cfun! pub tickit c.void tickit_renderbuffer_erase_at(c.ptr, c.int, c.int, c.int)
+cfun! pub tickit c.void tickit_renderbuffer_erase_to(c.ptr, c.int)
+cfun! pub tickit c.void tickit_renderbuffer_eraserect(c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_renderbuffer_flush_to_term(c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_renderbuffer_get_cursorpos()
+cfun! pub tickit c.void tickit_renderbuffer_get_size()
+cfun! pub tickit c.void tickit_renderbuffer_goto(c.ptr, c.int, c.int)
+cfun! pub tickit c.void tickit_renderbuffer_has_cursorpos()
+cfun! pub tickit c.void tickit_renderbuffer_hline_at()
+cfun! pub tickit c.void tickit_renderbuffer_mask()
+cfun! pub tickit c.void tickit_renderbuffer_moverect()
+cfun! pub tickit c.void tickit_renderbuffer_new()
+cfun! pub tickit c.void tickit_renderbuffer_ref(c.ptr)
+cfun! pub tickit c.void tickit_renderbuffer_reset()
+cfun! pub tickit c.void tickit_renderbuffer_restore()
+cfun! pub tickit c.void tickit_renderbuffer_save()
+cfun! pub tickit c.void tickit_renderbuffer_savepen()
+cfun! pub tickit c.void tickit_renderbuffer_setpen(c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_renderbuffer_skip()
+cfun! pub tickit c.void tickit_renderbuffer_skip_at()
+cfun! pub tickit c.void tickit_renderbuffer_skip_to()
+cfun! pub tickit c.void tickit_renderbuffer_skiprect()
+cfun! pub tickit c.void tickit_renderbuffer_textf()
+cfun! pub tickit c.void tickit_renderbuffer_textf_at()
+cfun! pub tickit c.int tickit_renderbuffer_textn(c.ptr, c.ptr, c.u64)
+pub function tickit_renderbuffer_text(rb, s) { tickit_renderbuffer_textn(rb, s, s.size()) }
+cfun! pub tickit c.void tickit_renderbuffer_textn_at(c.ptr, c.int, c.int, c.ptr, c.u64)
+pub function tickit_renderbuffer_text_at(rb, line, col, s) { tickit_renderbuffer_textn_at(rb, line, col, s, s.size()) }
+cfun! pub tickit c.void tickit_renderbuffer_translate()
+cfun! pub tickit c.void tickit_renderbuffer_ungoto()
+cfun! pub tickit c.void tickit_renderbuffer_unref(c.ptr)
+cfun! pub tickit c.void tickit_renderbuffer_vline_at()
+cfun! pub tickit c.void tickit_renderbuffer_vtextf()
+cfun! pub tickit c.void tickit_renderbuffer_vtextf_at()
+cfun! pub tickit c.void tickit_run(c.ptr)
+cfun! pub tickit c.void tickit_setctl_int()
+cfun! pub tickit c.void tickit_stop(c.ptr)
+cfun! pub tickit c.void tickit_string_get()
+cfun! pub tickit c.void tickit_string_len()
+cfun! pub tickit c.void tickit_string_new()
+cfun! pub tickit c.void tickit_string_ref()
+cfun! pub tickit c.void tickit_string_unref(c.ptr)
+//cfun! pub tickit c.void tickit_stringpos_limit_bytes()
+//cfun! pub tickit c.void tickit_stringpos_zero()
+cfun! pub tickit c.void tickit_term_await_started_msec()
+cfun! pub tickit c.void tickit_term_await_started_tv()
+cfun! pub tickit c.void tickit_term_bind_event()
+cfun! pub tickit c.void tickit_term_build()
+cfun! pub tickit c.void tickit_term_chpen(c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_term_clear()
+cfun! pub tickit c.void tickit_term_ctlname()
+cfun! pub tickit c.void tickit_term_ctltype()
+cfun! pub tickit c.void tickit_term_emit_key()
+cfun! pub tickit c.void tickit_term_emit_mouse()
+cfun! pub tickit c.void tickit_term_erasech()
+cfun! pub tickit c.void tickit_term_get_input_fd()
+cfun! pub tickit c.void tickit_term_get_output_fd()
+cfun! pub tickit c.void tickit_term_get_size()
+cfun! pub tickit c.void tickit_term_get_termtype()
+cfun! pub tickit c.void tickit_term_get_utf8()
+cfun! pub tickit c.void tickit_term_getctl_int()
+cfun! pub tickit c.void tickit_term_input_check_timeout_msec()
+cfun! pub tickit c.void tickit_term_input_push_bytes()
+cfun! pub tickit c.void tickit_term_input_readable()
+cfun! pub tickit c.void tickit_term_input_wait_msec(c.ptr, c.long)
+cfun! pub tickit c.void tickit_term_input_wait_tv(c.ptr)
+cfun! pub tickit c.void tickit_term_lookup_ctl()
+cfun! pub tickit c.ptr tickit_term_new()
+cfun! pub tickit c.ptr tickit_term_new_for_termtype(c.ptr)
+cfun! pub tickit c.void tickit_term_observe_sigwinch()
+cfun! pub tickit c.void tickit_term_open_stdio()
+cfun! pub tickit c.void tickit_term_pause(c.ptr)
+cfun! pub tickit c.void tickit_term_printf()
+cfun! pub tickit c.void tickit_term_ref()
+cfun! pub tickit c.void tickit_term_refresh_size()
+cfun! pub tickit c.void tickit_term_resume(c.ptr)
+cfun! pub tickit c.void tickit_term_scrollrect()
+cfun! pub tickit c.void tickit_term_set_input_fd()
+cfun! pub tickit c.void tickit_term_set_output_buffer()
+cfun! pub tickit c.void tickit_term_set_output_fd()
+cfun! pub tickit c.void tickit_term_set_output_func()
+cfun! pub tickit c.void tickit_term_set_size()
+cfun! pub tickit c.void tickit_term_set_utf8()
+cfun! pub tickit c.void tickit_term_setctl_int()
+cfun! pub tickit c.void tickit_term_setctl_str()
+cfun! pub tickit c.void tickit_term_setpen(c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_term_teardown(c.ptr)
+cfun! pub tickit c.void tickit_term_unbind_event_id()
+cfun! pub tickit c.void tickit_term_unref(c.ptr)
+cfun! pub tickit c.void tickit_term_vprintf()
+cfun! pub tickit c.void tickit_tick(c.ptr, c.int)
+cfun! pub tickit c.void tickit_unref(c.ptr)
+cfun! pub tickit c.void tickit_utf8_byte2col()
+cfun! pub tickit c.void tickit_utf8_col2byte()
+cfun! pub tickit c.void tickit_utf8_count()
+cfun! pub tickit c.void tickit_utf8_mbswidth()
+cfun! pub tickit c.void tickit_utf8_put()
+cfun! pub tickit c.void tickit_utf8_seqlen()
+cfun! pub tickit c.void tickit_watch_cancel()
+cfun! pub tickit c.void tickit_watch_io()
+cfun! pub tickit c.void tickit_watch_later()
+//cfun! pub tickit c.void tickit_watch_process()
+//cfun! pub tickit c.void tickit_watch_signal()
+cfun! pub tickit c.void tickit_watch_timer_after_msec()
+cfun! pub tickit c.void tickit_watch_timer_after_tv()
+cfun! pub tickit c.void tickit_watch_timer_at_epoch()
+cfun! pub tickit c.void tickit_watch_timer_at_tv()
+cfun! pub tickit c.int tickit_window_bind_event(c.ptr, c.int, c.int, c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_window_bottom()
+cfun! pub tickit c.void tickit_window_children()
+cfun! pub tickit c.void tickit_window_close(c.ptr)
+//cfun! pub tickit c.void tickit_window_cols()
+cfun! pub tickit c.void tickit_window_ctlname()
+cfun! pub tickit c.void tickit_window_ctltype()
+cfun! pub tickit c.void tickit_window_destroy()
+cfun! pub tickit c.void tickit_window_expose(c.ptr, c.ptr)
+cfun! pub tickit c.void tickit_window_flush(c.ptr)
+cfun! pub tickit c.void tickit_window_get_abs_geometry()
+cfun! pub tickit c.void tickit_window_get_children()
+cfun! pub tickit c.void tickit_window_get_geometry()
+cfun! pub tickit c.void tickit_window_get_pen()
+cfun! pub tickit c.void tickit_window_get_term()
+cfun! pub tickit c.void tickit_window_getctl_int()
+cfun! pub tickit c.void tickit_window_hide()
+cfun! pub tickit c.void tickit_window_is_focused()
+cfun! pub tickit c.void tickit_window_is_steal_input()
+cfun! pub tickit c.void tickit_window_is_visible()
+//cfun! pub tickit c.void tickit_window_left()
+//cfun! pub tickit c.void tickit_window_lines()
+cfun! pub tickit c.void tickit_window_lookup_ctl()
+cfun! pub tickit c.void tickit_window_lower()
+cfun! pub tickit c.void tickit_window_lower_to_back()
+cfun! pub tickit c.ptr tickit_window_new(c.ptr, TickitRect_C)
+cfun! pub tickit c.void tickit_window_new_root()
+cfun! pub tickit c.void tickit_window_parent()
+cfun! pub tickit c.void tickit_window_raise()
+cfun! pub tickit c.void tickit_window_raise_to_front()
+cfun! pub tickit c.void tickit_window_ref()
+cfun! pub tickit c.void tickit_window_reposition(c.ptr, c.int, c.int)
+cfun! pub tickit c.void tickit_window_resize(c.ptr, c.int, c.int)
+cfun! pub tickit c.void tickit_window_right()
+cfun! pub tickit c.void tickit_window_root(c.ptr)
+cfun! pub tickit c.void tickit_window_scroll()
+cfun! pub tickit c.void tickit_window_scroll_with_children()
+cfun! pub tickit c.void tickit_window_scrollrect()
+cfun! pub tickit c.void tickit_window_set_cursor_position()
+cfun! pub tickit c.void tickit_window_set_cursor_shape()
+cfun! pub tickit c.void tickit_window_set_cursor_visible()
+cfun! pub tickit c.void tickit_window_set_focus_child_notify()
+cfun! pub tickit c.void tickit_window_set_geometry(c.ptr, TickitRect_C)
+cfun! pub tickit c.void tickit_window_set_pen()
+cfun! pub tickit c.void tickit_window_set_steal_input()
+cfun! pub tickit c.void tickit_window_setctl_int()
+cfun! pub tickit c.void tickit_window_show()
+cfun! pub tickit c.void tickit_window_take_focus()
+//cfun! pub tickit c.void tickit_window_top()
+cfun! pub tickit c.void tickit_window_unbind_event_id()
+cfun! pub tickit c.void tickit_window_unref(c.ptr)
+
+pub function tickit_callback(f) {
+    c.closure(c.int, c.ptr, c.int, c.ptr, c.ptr, f)
+}

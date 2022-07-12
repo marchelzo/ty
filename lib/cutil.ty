@@ -90,6 +90,12 @@ pub macro struct! {
         )
     )
 
+    let get = ty.Func(
+        name: 'get',
+        params: [],
+        body: ty.MemberAccess(ty.Id(name: 'self'), '<p>')
+    )
+
     let structArgs = []
     let methods = []
 
@@ -123,7 +129,7 @@ pub macro struct! {
         ),
         ty.Class(
             name: structName,
-            methods: [init, *methods]
+            methods: [get, init, *methods]
         )
     ])
 }
