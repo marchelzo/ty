@@ -322,9 +322,16 @@ cffi_member(int argc, struct value *kwargs)
                 n += 1;
         }
 
-        struct value p = ARG(1);
-        if (p.type != VALUE_PTR) {
-                vm_panic("the second argument to ffi.member() must be a pointer");
+        unsigned char *p;
+        switch (ARG(1).type) {
+        case VALUE_PTR:
+                p = ARG(1).ptr;
+                break;
+        case VALUE_BLOB:
+                p = ARG(1).blob->items;
+                break;
+        default:
+                vm_panic("ffi.member(): invalid second argument: %s", value_show(&ARG(1)));
         }
 
         struct value i = ARG(2);
@@ -336,9 +343,9 @@ cffi_member(int argc, struct value *kwargs)
         ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
 
         if (argc == 3) {
-                return load(type->elements[i.integer], (char const *)p.ptr + offsets[i.integer]);
+                return load(type->elements[i.integer], p + offsets[i.integer]);
         } else {
-                store(type->elements[i.integer], (char *)p.ptr + offsets[i.integer], &ARG(3));
+                store(type->elements[i.integer], p + offsets[i.integer], &ARG(3));
                 return NIL;
         }
 }

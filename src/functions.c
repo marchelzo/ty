@@ -2201,6 +2201,98 @@ builtin_os_getsockopt(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_getnameinfo(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.getnameinfo()", 2);
+
+        struct sockaddr *addr;
+        socklen_t alen;
+
+        switch (ARG(0).type) {
+        case VALUE_PTR:
+                addr = ARG(0).ptr;
+                alen = sizeof (struct sockaddr_storage);
+                break;
+        case VALUE_BLOB:
+                addr = (void *)ARG(0).blob->items;
+                alen = ARG(0).blob->count;
+                break;
+        default:
+                vm_panic("os.getnameinfo(): invalid address argument: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("os.getnameinfo(): invalid flags argument: %s", value_show(&ARG(1)));
+        }
+
+        char host[128];
+        char serv[32];
+
+        int r = getnameinfo(addr, alen, host, sizeof host, serv, sizeof serv, ARG(1).integer);
+
+        if (r == 0) {
+                struct value v = value_tuple(2);
+                v.items[0] = STRING_CLONE(host, strlen(host));
+                v.items[1] = STRING_CLONE(serv, strlen(serv));
+                return v;
+        }
+
+        return INTEGER(r);
+}
+
+struct value
+builtin_os_getpeername(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.getpeername()", 1);
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("os.getpeername(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        struct sockaddr_storage addr;
+        socklen_t addr_size = sizeof addr;
+
+        ReleaseLock(true);
+        int r = getpeername(ARG(0).integer, (void *)&addr, &addr_size);
+        TakeLock();
+
+        if (r < 0) {
+                return NIL;
+        }
+
+        struct blob *b = value_blob_new();
+        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
+
+        return BLOB(b);
+}
+
+struct value
+builtin_os_getsockname(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.getsockname()", 1);
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("os.getsockname(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        struct sockaddr_storage addr;
+        socklen_t addr_size = sizeof addr;
+
+        ReleaseLock(true);
+        int r = getsockname(ARG(0).integer, (void *)&addr, &addr_size);
+        TakeLock();
+
+        if (r < 0) {
+                return NIL;
+        }
+
+        struct blob *b = value_blob_new();
+        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
+
+        return BLOB(b);
+}
+
+struct value
 builtin_os_shutdown(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.shutdown()", 2);

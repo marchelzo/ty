@@ -364,6 +364,15 @@ struct value
 builtin_os_getsockopt(int argc, struct value *kwargs);
 
 struct value
+builtin_os_getpeername(int argc, struct value *kwargs);
+
+struct value
+builtin_os_getsockname(int argc, struct value *kwargs);
+
+struct value
+builtin_os_getnameinfo(int argc, struct value *kwargs);
+
+struct value
 builtin_os_listen(int argc, struct value *kwargs);
 
 struct value
