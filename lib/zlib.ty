@@ -1,5 +1,5 @@
 import ffi as c
-import cutil (wrap)
+import cutil (..)
 
 let Z_OK            = 0
 let Z_STREAM_END    = 1
@@ -11,15 +11,51 @@ let Z_MEM_ERROR     = (-4)
 let Z_BUF_ERROR     = (-5)
 let Z_VERSION_ERROR = (-6)
 
+let Z_NO_FLUSH      = 0
+let Z_PARTIAL_FLUSH = 1
+let Z_SYNC_FLUSH    = 2
+let Z_FULL_FLUSH    = 3
+let Z_FINISH        = 4
+let Z_BLOCK         = 5
+let Z_TREES         = 6
+
+let MAX_WBITS = 15
+
 let libraryName = 'libz.so.1'
 
 if not let $lib = c.dlopen(libraryName) {
   throw "Failed to load {libraryName}"
 }
 
+struct! ZStream {
+    next_in: c.ptr,     /* next input byte */
+    avail_in: c.uint,  /* number of bytes available at next_in */
+    total_in: c.ulong,  /* total number of input bytes read so far */
+
+    next_out: c.ptr, /* next output byte will go here */
+    avail_out: c.uint, /* remaining free space at next_out */
+    total_out: c.ulong, /* total number of bytes output so far */
+
+    msg: c.ptr,  /* last error message, NULL if no error */
+    state: c.ptr,
+
+    zalloc: c.ptr, /* used to allocate the internal state */
+    zfree: c.ptr,  /* used to free the internal state */
+    opaque: c.ptr, /* private data object passed to zalloc and zfree */
+
+    data_type: c.int,  /* best guess about the data type: binary or text
+                           for deflate, or the decoding state for inflate */
+    adler: c.ulong,      /* Adler-32 or CRC-32 value of the uncompressed data */
+    reserved: c.ulong,   /* reserved for future use */
+}
+
 let cCompressBound = wrap(lib, 'compressBound', c.ulong, c.ulong)
 let cCompress = wrap(lib, 'compress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
 let cUncompress = wrap(lib, 'uncompress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
+
+cfun! lib c.int inflateInit2_(c.ptr, c.int, c.ptr, c.int)
+cfun! lib c.int inflate(c.ptr, c.int)
+cfun! lib c.int inflateEnd(c.ptr)
 
 pub function compress(s: String | Blob) {
   let bound = cCompressBound(s.size())
@@ -48,19 +84,66 @@ pub function uncompress(s: String | Blob, maxSize) {
     c.free(buffer)
   }
 
-  while cUncompress(buffer, pSize, s, s.size()) == Z_BUF_ERROR {
-    size *= 2
+  while match cUncompress(buffer, pSize, s, s.size()) {
+    ::Z_OK => break,
 
-    if maxSize != nil && size > maxSize {
-      return nil
+    ::Z_BUF_ERROR => {
+      size *= 2
+
+      if maxSize != nil && size > maxSize {
+        return nil
+      }
+
+      c.store(c.ulong, pSize, size)
+      c.free(buffer)
+      $buffer = c.alloc(size)
+    },
+
+    err => {
+      throw Err(err)
     }
-
-    c.store(c.ulong, pSize, size)
-    c.free(buffer)
-    $buffer = c.alloc(size)
   }
 
   return Blob(c.as_str(buffer, c.load(c.ulong, pSize)))
+}
+
+pub function uncompress2(s: String | Blob, maxSize) {
+  let CHUNK = 4096
+
+  let zs = ZStream()
+  inflateInit2_(zs.get(), MAX_WBITS + 32, "1.2.11", c.size(ZStream_C))
+  zs.next_in(s)
+  zs.avail_in(s.size())
+
+  let blob = Blob()
+  let obuf = c.alloc(CHUNK)
+
+  defer {
+    c.free(obuf)
+    inflateEnd(zs.get())
+  }
+
+  let have = nil
+
+  while have == nil || have == CHUNK {
+    zs.avail_out(CHUNK)
+    zs.next_out(obuf)
+
+    let r = inflate(zs.get(), Z_NO_FLUSH)
+
+    match r {
+      ze :: Z_DATA_ERROR | Z_NEED_DICT | Z_MEM_ERROR => {
+        throw Err(ze)
+      },
+
+      _ => {
+        have = CHUNK - zs.avail_out()
+        blob.push(obuf, have)
+      }
+    }
+  }
+
+  return blob
 }
 
 function test() {

@@ -114,7 +114,7 @@ blob_push(struct value *blob, int argc, struct value *kwargs)
         size_t index = blob->blob->count;
         struct value arg;
 
-        if (argc == 2) {
+        if (argc >= 2 && ARG(0).type != VALUE_PTR) {
                 arg = ARG(1);
                 struct value idx = ARG(0);
                 if (idx.type != VALUE_INTEGER)
@@ -139,6 +139,12 @@ blob_push(struct value *blob, int argc, struct value *kwargs)
                 break;
         case VALUE_STRING:
                 vec_insert_n(*blob->blob, arg.string, arg.bytes, index);
+                break;
+        case VALUE_PTR:
+                if (ARG(argc - 1).type != VALUE_INTEGER) {
+                        vm_panic("blob.push(): expected integer length after pointer argument");
+                }
+                vec_insert_n(*blob->blob, arg.ptr, ARG(argc - 1).integer, index);
                 break;
         default:
                 vm_panic("invalid argument passed to blob.push()");
