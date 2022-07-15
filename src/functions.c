@@ -2787,9 +2787,10 @@ builtin_os_epoll_ctl(int argc, struct value *kwargs)
         if (events.type != VALUE_INTEGER)
                 vm_panic("the fourth argument to os.epoll_ctl() must be an integer");
 
-        struct epoll_event ev;
-        ev.events = events.integer;
-        ev.data.fd = fd.integer;
+        struct epoll_event ev = {
+                .events = events.integer,
+                .data = { .fd = fd.integer }
+        };
 
         return INTEGER(epoll_ctl(efd.integer, op.integer, fd.integer, &ev));
 }

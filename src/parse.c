@@ -957,7 +957,7 @@ opfunc(void)
 }
 
 static struct expression *
-prefix_at(void)
+prefix_me(void)
 {
         next();
 
@@ -2534,7 +2534,8 @@ get_prefix_parser(void)
 
         case TOKEN_QUESTION:       return prefix_is_nil;
         case TOKEN_BANG:           return prefix_bang;
-        case TOKEN_AT:             return prefix_at;
+        case TOKEN_AT:             return prefix_me;
+        case ':':                  return prefix_me;
         case TOKEN_MINUS:          return prefix_minus;
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
