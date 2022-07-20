@@ -299,6 +299,12 @@ class Dict : Iterable {
         return new
     }
 
+    iterValues() {
+        for _, v in self {
+            yeild v
+        }
+    }
+
     __iter__() {
         return @keys().zip(@values()).__iter__()
     }
