@@ -23,6 +23,9 @@ struct symbol {
         int ci;
         bool global;
 
+        struct location loc;
+        char const *file;
+
         struct scope *scope;
 
         uint64_t hash;

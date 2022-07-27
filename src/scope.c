@@ -132,6 +132,8 @@ scope_add(struct scope *s, char const *id)
         sym->hash = h;
         sym->next = s->table[i];
 
+        sym->file = NULL;
+
         struct scope *owner = s;
         while (owner->function != owner && owner->parent != NULL) {
                 owner = owner->parent;

@@ -301,7 +301,7 @@ class Dict : Iterable {
 
     iterValues() {
         for _, v in self {
-            yeild v
+            yield v
         }
     }
 

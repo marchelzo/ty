@@ -60,10 +60,10 @@ execln(char *line)
         if (line[0] == ':') {
                 if (line[1] == '!') {
                         system(line + 2) || 0;
-				} else if (!vm_execute_file(line + 1)) {
+                } else if (!vm_execute_file(line + 1)) {
                         fprintf(stderr, "%s\n", vm_error());
-						good = false;
-				}
+                        good = false;
+                }
                 goto Add;
 
         }
@@ -188,8 +188,6 @@ main(int argc, char **argv)
 
         use_readline = isatty(0) && argc < 2;
 
-        sqlite_load();
-
         if (use_readline) {
                 rl_attempted_completion_function = complete;
                 rl_basic_word_break_characters = ".\t\n\r ";
@@ -203,6 +201,24 @@ main(int argc, char **argv)
         if (i < argc && strcmp(argv[i], "-q") == 0) {
                 CheckConstraints = false;
                 i += 1;
+        }
+
+        if (i < argc && strcmp(argv[i], "-c") == 0) {
+                CompileOnly = true;
+                i += 1;
+        }
+
+        if (i + 2 < argc && strcmp(argv[i], "-t") == 0) {
+                char const *f = argv[++i];
+                int line = atoi(argv[++i]) - 1;
+                int col = atoi(argv[++i]) - 1;
+                struct location loc = compiler_find_definition(f, line, col);
+                if (loc.s == NULL) {
+                        return -1;
+                } else {
+                        printf("%s:%d:%d\n", loc.s, loc.line + 1, loc.col + 1);
+                        return 0;
+                }
         }
 
         if (i < argc && strcmp(argv[i], "-e") == 0) {

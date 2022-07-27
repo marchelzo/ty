@@ -6,15 +6,15 @@ export ls, sh, expand
 
 function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false) {
     if not let $p = os.spawn(
-		['bash', '-c', c],
-		detached: timeoutMs != nil,
-		combineOutput: combineOutput
-	) {
-	      return nil
+        ['bash', '-c', c],
+        detached: timeoutMs != nil,
+        combineOutput: combineOutput
+    ) {
+          return nil
     }
 
     let out = blob()
-	let err = blob()
+    let err = blob()
 
     if input != nil {
         os.write(p.stdin, input)
@@ -26,9 +26,9 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false) {
 
     while timeoutMs == nil || timeoutMs > 0 {
         let pfds = [
-			(fd: p.stdout, events: os.POLLIN),
-			(fd: p.stderr, events: os.POLLIN)
-		]
+            (fd: p.stdout, events: os.POLLIN),
+            (fd: p.stderr, events: os.POLLIN) if p.stderr !=  nil
+        ]
 
         if os.poll(pfds, timeoutMs ?? -1) < 1 {
             os.kill(-p.pid, signal)
@@ -41,9 +41,9 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false) {
             start = now
         }
 
-		if pfds.len() > 1 && pfds[1].revents .&. os.POLLIN {
-			os.read(p.stderr, err, 4096)
-		}
+        if pfds.len() > 1 && pfds[1].revents .&. os.POLLIN {
+            os.read(p.stderr, err, 4096)
+        }
 
         if pfds[0].revents .&. os.POLLIN {
             os.read(p.stdout, out, 4096)

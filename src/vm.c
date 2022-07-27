@@ -170,8 +170,8 @@ static vec(TyThread) Threads;
 static int ThreadIndex;
 
 static char const *filename;
-
 static char const *Error;
+bool CompileOnly = false;
 
 pthread_t BuiltinRunner;
 pthread_t MainThread;
@@ -3178,6 +3178,10 @@ vm_execute(char const *source)
                 Error = compiler_error();
                 LOG("compiler error was: %s", Error);
                 return false;
+        }
+
+        if (CompileOnly) {
+                return true;
         }
 
         GC_ENABLED = true;

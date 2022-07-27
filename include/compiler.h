@@ -41,6 +41,9 @@ gettag(char const *module, char const *name);
 char *
 compiler_load_prelude(void);
 
+struct location
+compiler_find_definition(char const *file, int line, int col);
+
 char const *
 compiler_get_location(char const *code, struct location *start, struct location *end);
 

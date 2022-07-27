@@ -75,6 +75,7 @@ struct eloc {
         struct location start;
         struct location end;
         char const *filename;
+        struct expression const *e;
 };
 
 struct module {
@@ -356,7 +357,8 @@ add_location(struct expression const *e, size_t start_off, size_t end_off)
                         .end_off = end_off,
                         .start = e->start,
                         .end = e->end,
-                        .filename = state.filename
+                        .filename = state.filename,
+                        .e = e
                 })
         );
 }
@@ -451,6 +453,8 @@ addsymbol(struct scope *scope, char const *name)
         }
 
         struct symbol *s = scope_add(scope, name);
+        s->file = state.filename;
+        s->loc = state.start;
 
         if (scope->function == global && isupper(name[0])) {
             vec_push(state.exports, name);
@@ -4558,6 +4562,40 @@ int
 compiler_symbol_count(void)
 {
         return scope_get_symbol();
+}
+
+struct location
+compiler_find_definition(char const *file, int line, int col)
+{
+        location_vector *locs = NULL;
+
+        for (int i = 0; i < location_lists.count; ++i) {
+                if (location_lists.items[i].count == 0)
+                        continue;
+                if (strcmp(file, location_lists.items[i].items[0].filename) != 0)
+                        continue;
+                locs = &location_lists.items[i];
+                break;
+        }
+
+        if (locs == NULL) {
+                return (struct location) {0};
+        }
+
+
+        for (int i = 0; i < locs->count; ++i) {
+                if (locs->items[i].e->type == EXPRESSION_IDENTIFIER &&
+                    locs->items[i].start.line == line &&
+                    locs->items[i].start.col == col) {
+                        return (struct location) {
+                                .line = locs->items[i].e->symbol->loc.line,
+                                .col = locs->items[i].e->symbol->loc.col,
+                                .s = locs->items[i].e->symbol->file
+                        };
+                }
+        }
+
+        return (struct location) {0};
 }
 
 char const *

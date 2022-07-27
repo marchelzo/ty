@@ -10,8 +10,8 @@
 
 #include "value.h"
 
-struct variable;
 
+extern bool CompileOnly;
 extern pthread_t MainThread;
 
 enum instruction {
