@@ -5514,6 +5514,14 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_NOT_EQ;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == TyGT) {
+                e->type = EXPRESSION_GT;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == TyLT) {
+                e->type = EXPRESSION_LT;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == TyIn) {
                 e->type = EXPRESSION_IN;
                 e->left = cexpr(&v->items[0]);

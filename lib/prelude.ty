@@ -1598,6 +1598,18 @@ macro enum! {
     }
 }
 
+macro lock! {
+    let mtx = parse.expr(0)
+    let stmt = parse.stmt(0)
+    ty.With(
+        ty.Let(
+            ty.Id(name: '_'),
+            ty.MethodCall(object: mtx, method: 'lock', args: [])
+        ),
+        stmt
+    )
+}
+
 operator **   10 right
 operator <<   7  left
 operator >>   7  left
