@@ -112,6 +112,7 @@ static struct location End;
 static int depth;
 static bool NoEquals = false;
 static bool NoIn = false;
+static bool NoPipe = false;
 
 static struct expression WildCard = {
         .type = EXPRESSION_IDENTIFIER,
@@ -133,10 +134,12 @@ static enum {
 #define SAVE_NE(b) bool NESave = NoEquals; NoEquals = (b);
 #define SAVE_NC(b) bool NCSave = NoConstraint; NoConstraint = (b);
 #define SAVE_NI(b) bool NISave = NoIn; NoIn = (b);
+#define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
 
 #define LOAD_NE() NoEquals = NESave;
 #define LOAD_NC() NoConstraint = NCSave;
 #define LOAD_NI() NoIn = NISave;
+#define LOAD_NP() NoPipe = NPSave;
 
 static char const *filename;
 
@@ -1867,6 +1870,35 @@ prefix_implicit_lambda(void)
 }
 
 static struct expression *
+prefix_bit_or(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_LIST;
+        e->only_identifiers = true;
+        vec_init(e->es);
+
+        next();
+
+        SAVE_NE(true);
+        SAVE_NP(true);
+        for (int i = 0; tok()->type != '|'; ++i) {
+                struct expression *item = parse_expr(1);
+                e->only_identifiers &= (item->type == EXPRESSION_IDENTIFIER);
+                vec_push(e->es, item);
+                if (tok()->type != '|')
+                        consume(',');
+        }
+        LOAD_NE();
+        LOAD_NP();
+
+        consume('|');
+
+        e->end = End;
+
+        return e;
+}
+
+static struct expression *
 prefix_arrow(void)
 {
         unconsume(')');
@@ -2329,7 +2361,7 @@ infix_arrow_function(struct expression *left)
         vec_init(e->dflts);
         vec_init(e->constraints);
 
-        if (left->type != EXPRESSION_TUPLE || !left->only_identifiers) {
+        if (left->type != EXPRESSION_LIST && (left->type != EXPRESSION_TUPLE || !left->only_identifiers)) {
                 struct expression *l = mkexpr();
                 l->type = EXPRESSION_LIST;
                 vec_init(l->es);
@@ -2543,6 +2575,8 @@ get_prefix_parser(void)
 
         case TOKEN_ARROW:          return prefix_arrow;
 
+        case '|':                  return prefix_bit_or;
+
         case TOKEN_STAR:           return prefix_star;
 
         case TOKEN_EXPRESSION:     return prefix_expr;
@@ -2682,7 +2716,7 @@ get_infix_prec(void)
 
         case TOKEN_AND:            return 5;
         case '&':                  return 5;
-        case '|':                  return 5;
+        case '|':                  return NoPipe ? -3 : 5;
 
         case TOKEN_OR:             return 4;
         case TOKEN_WTF:            return 4;
