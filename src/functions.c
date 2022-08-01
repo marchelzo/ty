@@ -3177,6 +3177,32 @@ builtin_os_listdir(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_realpath(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.realpath()", 1);
+
+        struct value path = ARG(0);
+        if (path.type != VALUE_STRING)
+                vm_panic("the argument to os.realpath() must be a string");
+
+        if (path.bytes >= PATH_MAX)
+                return NIL;
+
+        char in[PATH_MAX + 1];
+        char out[PATH_MAX + 1];
+
+        memcpy(in, path.string, path.bytes);
+        in[path.bytes] = '\0';
+
+        char *resolved = realpath(in, out);
+
+        if (resolved == NULL)
+                return NIL;
+
+        return STRING_CLONE(out, strlen(out));
+}
+
+struct value
 builtin_os_stat(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.stat()", 1);

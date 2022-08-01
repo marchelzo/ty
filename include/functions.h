@@ -280,6 +280,9 @@ struct value
 builtin_os_stat(int argc, struct value *kwargs);
 
 struct value
+builtin_os_realpath(int argc, struct value *kwargs);
+
+struct value
 builtin_os_fork(int argc, struct value *kwargs);
 
 struct value
