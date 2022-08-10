@@ -1,0 +1,45 @@
+import bit
+import os
+import ffi as c
+import termios (..)
+
+let t = c.new(termios)
+
+print(tcgetattr(0, t))
+print(c.member(termios, t, 0))
+print(c.member(termios, t, 1))
+print(c.member(termios, t, 2))
+print(c.member(termios, t, 3))
+
+/*
+     termios_p->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP
+                       | INLCR | IGNCR | ICRNL | IXON);
+     termios_p->c_oflag &= ~OPOST;
+     termios_p->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+     termios_p->c_cflag &= ~(CSIZE | PARENB);
+     termios_p->c_cflag |= CS8;
+*/
+
+let iflag = c.member(termios, t, 0)
+iflag = iflag .&. bit.complement(IGNBRK .|. BRKINT .|. PARMRK .|. ISTRIP .|. INLCR .|. IGNCR .|. ICRNL .|. IXON)
+c.member(termios, t, 0, iflag)
+
+let oflag = c.member(termios, t, 1)
+oflag = oflag .&. bit.complement(OPOST)
+c.member(termios, t, 1, oflag)
+
+let cflag = c.member(termios, t, 2)
+cflag = cflag .&. bit.complement(CSIZE .|. PARENB)
+cflag = cflag .|. CS8
+c.member(termios, t, 2, cflag)
+
+let lflag = c.member(termios, t, 3)
+lflag = lflag .|. bit.complement(ICANON)
+c.member(termios, t, 3, lflag)
+
+print(tcsetattr(0, TCSANOW, t))
+
+while let $b = os.read(0, 1) and #b > 0 {
+  print("Read: {b[0]}\r");
+}
+
