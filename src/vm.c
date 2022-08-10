@@ -2549,6 +2549,12 @@ BadContainer:
                          */
                         if (nkw > 0) {
                 CallKwArgs:
+                                if (!AutoThis) {
+                                        gc_push(&v);
+                                } else {
+                                        gc_push(v.this);
+                                        AutoThis = false;
+                                }
                                 container = DICT(dict_new());
                                 NOGC(container.dict);
                                 for (int i = 0; i < nkw; ++i) {
@@ -2582,6 +2588,7 @@ BadContainer:
                                         }
                                         ip += strlen(ip) + 1;
                                 }
+                                gc_pop();
                                 push(container);
                                 OKGC(container.dict);
                         } else {
