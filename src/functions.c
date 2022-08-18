@@ -85,6 +85,9 @@ builtin_print(int argc, struct value *kwargs)
                 );
         }
 
+        struct value *flush = NAMED("flush");
+        bool do_flush = flush != NULL && value_truthy(flush);
+
         flockfile(stdout);
 
         for (int i = 0; i < argc; ++i) {
@@ -110,6 +113,10 @@ builtin_print(int argc, struct value *kwargs)
                 fwrite(end->string, 1, end->bytes, stdout);
         } else {
                 putchar('\n');
+        }
+
+        if (do_flush) {
+                fflush(stdout);
         }
 
         funlockfile(stdout);

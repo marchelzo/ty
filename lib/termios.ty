@@ -94,3 +94,4 @@ pub termios = c.struct(
 
 pub tcgetattr = wrap(nil, 'tcgetattr', c.int, c.int, c.ptr)
 pub tcsetattr = wrap(nil, 'tcsetattr', c.int, c.int, c.int, c.ptr)
+pub tcdrain = wrap(nil, 'tcdrain', c.int, c.int)

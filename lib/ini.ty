@@ -1,0 +1,51 @@
+tag INISyntaxError;
+
+pub function parse(s) {
+    let d = %{*: %{}}
+
+    let section = nil
+
+    for line in s.lines() if !line.match?(/^#/) {
+        match line {
+            /^\s*$/ => { },
+
+            /^\s*\[(.*)\]\S*$/ => {
+                section = _1
+            },
+
+            /^([^=]+)=(.*)$/ => {
+                d[section][_1.strip()] = _2.strip()
+            },
+
+            _ => {
+                throw INISyntaxError(line)
+            }
+        }
+    }
+
+    return d
+}
+
+pub function read(path) {
+    parse(slurp(path))
+}
+
+pub function str(d) {
+    let b = Blob()
+
+    if let $top = d[nil] and #top > 0 {
+        for k, v in top {
+            b.push("{k} = {v}\n")
+        }
+    }
+
+    for name, settings in d if name != nil && #settings > 0 {
+        if #b > 0 { b.push('\n') }
+        b.push("[{name}]\n")
+        for k, v in settings {
+            b.push("{k} = {v}\n")
+        }
+    }
+
+    b.str()
+}
