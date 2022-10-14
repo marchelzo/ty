@@ -927,7 +927,6 @@ vm_exec(char *code)
         char const *fname;
 #endif
 
-
         for (;;) {
         if (atomic_load(&WantGC)) {
                 WaitGC();
@@ -2548,7 +2547,7 @@ BadContainer:
                          * Move all the keyword args into a dict.
                          */
                         if (nkw > 0) {
-                CallKwArgs:
+        CallKwArgs:
                                 if (!AutoThis) {
                                         gc_push(&v);
                                 } else {
@@ -2588,20 +2587,19 @@ BadContainer:
                                         }
                                         ip += strlen(ip) + 1;
                                 }
-                                gc_pop();
                                 push(container);
                                 OKGC(container.dict);
                         } else {
                                 container = NIL;
+        Call:
+                                if (!AutoThis) {
+                                        gc_push(&v);
+                                } else {
+                                        gc_push(v.this);
+                                        AutoThis = false;
+                                }
                         }
 
-                Call:
-                        if (!AutoThis) {
-                                gc_push(&v);
-                        } else {
-                                gc_push(v.this);
-                                AutoThis = false;
-                        }
                         switch (v.type) {
                         case VALUE_FUNCTION:
                                 LOG("CALLING %s with %d arguments", value_show(&v), n);
