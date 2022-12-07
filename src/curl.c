@@ -1,4 +1,5 @@
 #include <curl/curl.h>
+#include <curl/easy.h>
 
 #include "value.h"
 #include "alloc.h"
@@ -253,6 +254,28 @@ builtin_curl_setopt(int argc, struct value *kwargs)
                 curl_easy_setopt(curl.ptr, CURLOPT_POST, (long)s.integer);
                 break;
         case CURLOPT_POSTFIELDS:
+        case CURLOPT_COPYPOSTFIELDS:
+                s = ARG(2);
+                switch (s.type) {
+                case VALUE_BLOB:
+                        curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)s.blob->count);
+                        curl_easy_setopt(curl.ptr, opt.integer, s.blob->items);
+                        break;
+                case VALUE_STRING:
+                        curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)s.bytes);
+                        curl_easy_setopt(curl.ptr, opt.integer, s.string);
+                        break;
+                case VALUE_PTR:
+                        if (argc > 3 && ARG(3).type == VALUE_INTEGER) {
+                                curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)ARG(3).integer);
+                        } else {
+                                curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, -1L);
+                        }
+                        curl_easy_setopt(curl.ptr, opt.integer, s.ptr);
+                        break;
+                default:
+                        vm_panic("the value for the CURLOPT_POSTFIELDS option must be a string, a blob, or a pointer");
+                }
                 break;
         case CURLOPT_MIMEPOST:
                 s = ARG(2);
@@ -263,7 +286,7 @@ builtin_curl_setopt(int argc, struct value *kwargs)
                 break;
         case CURLOPT_HTTPHEADER:
                 s = ARG(2);
-                if (s.type != VALUE_ARRAY) {
+                if (s.type != VALUE_PTR) {
                         vm_panic("the value of CURLOPT_HTTPHEADER must be an pointer");
                 }
                 curl_easy_setopt(curl.ptr, CURLOPT_HTTPHEADER, s.ptr);

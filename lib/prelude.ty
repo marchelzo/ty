@@ -348,6 +348,18 @@ class String : Iterable {
         }
     }
 
+    trim() {
+        return @comb(/^\s+|\s+$/)
+    }
+
+    trimRight() {
+        @comb(/\s+$/)
+    }
+
+    trimLeft() {
+        @comb(/^\s+/)
+    }
+
     strip() {
         return @comb(/^\s+|\s+$/)
     }

@@ -704,7 +704,7 @@ static void
 add_captures(struct expression *pattern, struct scope *scope)
 {
         /*
-         * /(\w+) = (\d+)/ => $0, $1, $2
+         * /(\w+) = (\d+)/ => _0, _1, _2
          */
         struct regex const *re = pattern->regex;
 

@@ -1,5 +1,7 @@
 import curl::mime as mime
 import curl::core (..)
+import curl.slist as slist
+import ptr (null)
 
 export CURL
 
@@ -7,12 +9,18 @@ class CURL {
     init(url) {
         self.handle = init()
         self.url = url
-        self.headers = %{}
+        self.headers = null
         setopt(self.handle, CURLOPT_URL, url)
-        setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
+        //setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
     }
 
     post(data) {
+        let s = data.list().map(pair -> "{pair.0}={pair.1}").join('&')
+        setopt(self.handle, CURLOPT_COPYPOSTFIELDS, s)
+        return self
+    }
+
+    mimePost(data) {
         let mime = mime::init(self.handle)
         for k, v in data {
             let part = mime::add(mime)
@@ -20,10 +28,15 @@ class CURL {
             mime::data(part, v)
         }
         setopt(self.handle, CURLOPT_MIMEPOST, mime)
+        return self
     }
 
     header(k: String, v) {
-        self.headers[k] = str(v)
+        let b = Blob("{k}: {v}")
+        b.push(0)
+        @headers = slist.append(@headers, b)
+        setopt(self.handle, CURLOPT_HTTPHEADER, @headers)
+        return self
     }
 
     perform() {

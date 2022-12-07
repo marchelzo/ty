@@ -1730,6 +1730,11 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
         struct value *detached = NAMED("detached");
         struct value *combine = NAMED("combineOutput");
+        struct value *share_stderr = NAMED("shareStderr");
+
+        if (share_stderr != NULL && !value_truthy(share_stderr)) {
+                share_stderr = NULL;
+        }
 
         if (detached != NULL && detached->type != VALUE_BOOLEAN) {
                 vm_panic(
@@ -1755,7 +1760,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 return NIL;
         }
 
-        if (pipe(err) == -1) {
+        if (!share_stderr && pipe(err) == -1) {
                 close(in[0]);
                 close(in[1]);
                 close(out[0]);
@@ -1768,8 +1773,10 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 close(in[1]);
                 close(out[0]);
                 close(out[1]);
-                close(err[0]);
-                close(err[1]);
+                if (!share_stderr) {
+                        close(err[0]);
+                        close(err[1]);
+                }
                 return NIL;
         }
 
@@ -1780,15 +1787,19 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 close(in[1]);
                 close(out[0]);
                 close(out[1]);
-                close(err[0]);
-                close(err[1]);
+                if (!share_stderr) {
+                        close(err[0]);
+                        close(err[1]);
+                }
                 close(exc[0]);
                 close(exc[1]);
                 return NIL;
         case 0:
                 close(in[1]);
                 close(out[0]);
-                close(err[0]);
+                if (!share_stderr) {
+                        close(err[0]);
+                }
 
                 int errfd = err[1];
 
@@ -1799,7 +1810,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
                 if (dup2(in[0], STDIN_FILENO) == -1
                 ||  dup2(out[1], STDOUT_FILENO) == -1
-                ||  dup2(errfd, STDERR_FILENO) == -1) {
+                ||  (!share_stderr && dup2(errfd, STDERR_FILENO) == -1)) {
                         write(exc[1], &errno, sizeof errno);
                         exit(EXIT_FAILURE);
                 }
@@ -1831,7 +1842,9 @@ builtin_os_spawn(int argc, struct value *kwargs)
         default:
                 close(in[0]);
                 close(out[1]);
-                close(err[1]);
+                if (!share_stderr) {
+                        close(err[1]);
+                }
                 close(exc[1]);
 
                 int status;
@@ -1839,16 +1852,20 @@ builtin_os_spawn(int argc, struct value *kwargs)
                         errno = status;
                         close(in[1]);
                         close(out[0]);
-                        close(err[0]);
+                        if (!share_stderr) {
+                                close(err[0]);
+                        }
                         close(exc[0]);
                         return NIL;
                 }
 
                 close(exc[0]);
 
-                struct value stderrfd = INTEGER(err[0]);
+                struct value stderrfd;
 
-                if (combine && combine->boolean) {
+                if (!share_stderr && (!combine || !combine->boolean)) {
+                        stderrfd = INTEGER(err[0]);
+                } else {
                         stderrfd = NIL;
                         close(err[0]);
                 }
@@ -3521,7 +3538,13 @@ builtin_time_time(int argc, struct value *kwargs)
         if ((vp = tuple_get(&v, "isdst")) != NULL && vp->type == VALUE_BOOLEAN)
                 t.tm_isdst = vp->boolean;
 
-        return INTEGER(mktime(&t));
+        struct value *utc = NAMED("utc");
+
+        return INTEGER(
+                  utc != NULL && value_truthy(utc)
+                ? timegm(&t)
+                : mktime(&t)
+        );
 }
 
 struct value
