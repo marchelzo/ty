@@ -1,0 +1,122 @@
+#!/usr/bin/env ty
+
+import os (args, exit, getcwd)
+import time (localtime)
+import io (stderr)
+import sh (sh)
+import curl (CURL)
+import html
+import json
+import chalk
+
+let warn = stderr.print
+
+let YEAR = getcwd().match!(/\d{4}/)
+let ADDR = 'https://adventofcode.com'
+
+let WRONG = 'not the right'
+let RIGHT = 'the right answer!'
+
+if not let $key = (slurp('.key') ?? slurp('../.key')).trim() {
+    warn("Couldn't read key file: .key")
+    exit(1)
+}
+
+let (day, level) = match args.drop(1) {
+    []    => (localtime().mday, 1),
+    ['b'] => (localtime().mday, 2),
+    [n]   => (int(n.match!(/\d+/)), ('b' in n) ? 2 : 1)
+}
+
+os.mkdir(".aoc")
+os.mkdir(".aoc/{key}")
+os.mkdir(".aoc/{key}/{YEAR}")
+os.mkdir(".aoc/{key}/{YEAR}/{day}")
+
+function curl(resource) {
+    let request = CURL("{ADDR}/{YEAR}/day/{day}/{resource}")
+    request.header('User-Agent', 'constxd (bradgaragan@gmail.com)')
+    request.header('Cookie', "session={key}")
+    return request
+}
+
+function get() {
+    let path = ".aoc/{key}/{YEAR}/{day}/in"
+
+    if let $input = slurp(path) {
+        return input
+    }
+
+    let inputRequest = curl('input')
+    let response = inputRequest.perform().str()
+
+    if inputRequest.responseCode() != 200 {
+        warn("Failed to fetch puzzle input (response code {inputRequest.responseCode()}): {response}")
+        exit(1)
+    }
+
+    with f = io.open(path, 'w') {
+        f.write(response)
+    }
+
+    return response
+}
+
+function submit(answer) {
+    let answer = str(answer).trim()
+    let path = ".aoc/{key}/{YEAR}/{day}/a{level}"
+
+    let history = json.parse(slurp(path) ?? '{}')
+
+    if let $response = history[answer] {
+        warn("Returning cached response for: {answer}")
+        return response
+    }
+
+    let submitRequest = curl('answer').post(%{'answer': answer, 'level': level})
+
+    let response = submitRequest.perform().str()
+
+    if submitRequest.responseCode() != 200 {
+        warn("Failed to submit answer (response code {submitRequest.responseCode()}): {response}")
+        exit(1)
+    }
+
+    let response = html.parse(response).find('p')[0].fullText().match!(/^[^.!]+./)
+
+    if (WRONG in response) || (RIGHT in response) {
+        history[answer] = response
+        with f = io.open(path, 'w') {
+            f.write(json.encode(history))
+        }
+    }
+
+    return response
+}
+
+let input = get()
+let prog = level == 1 ? "{day}a.ty" : "{day}b.ty"
+let &trim ~> answer, status = sh("ty {prog}", input: input, shareStderr: true)
+
+if status != 0 {
+    exit(1)
+}
+
+print({answer})
+
+print('Press <Enter> to submit answer, or <C-c> to abort.')
+readLine()
+
+let response = submit(answer)
+
+if let [_, a, b] = response.match!(/^(.*)(?<=your answer is )(.*)$/) {
+    print(chalk.yellow(a) + chalk.bold(chalk.brightRed(b)))
+} else if RIGHT not in response {
+    print(chalk.yellow(response))
+} else {
+    print(chalk.brightGreen(response))
+
+    if level == 1 && os.stat("{day}b.ty") == nil {
+        sh("cp {day}a.ty {day}b.ty")
+    }
+}
