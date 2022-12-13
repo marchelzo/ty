@@ -1090,6 +1090,7 @@ vm_exec(char *code)
                 CASE(ARRAY_REST)
                         READVALUE(i);
                         READVALUE(n);
+                        vp = poptarget();
                         if (top()->type != VALUE_ARRAY) {
                                 LOG("cannot do rest: top is not an array");
                                 ip += n;
@@ -1097,20 +1098,21 @@ vm_exec(char *code)
                                 struct array *rest = value_array_new();
                                 NOGC(rest);
                                 vec_push_n(*rest, top()->array->items + i, top()->array->count - i);
-                                *poptarget() = ARRAY(rest);
+                                *vp = ARRAY(rest);
                                 OKGC(rest);
                         }
                         break;
                 CASE(TUPLE_REST)
                         READVALUE(i);
                         READVALUE(n);
+                        vp = poptarget();
                         if (top()->type != VALUE_TUPLE) {
                                 ip += n;
                         } else {
                                 int count = top()->count - i;
                                 struct value *rest = gc_alloc_object(sizeof (struct value[count]), GC_TUPLE);
                                 memcpy(rest, top()->items + i, count * sizeof (struct value));
-                                *poptarget() = TUPLE(rest, NULL, count, false);
+                                *vp = TUPLE(rest, NULL, count, false);
                         }
                         break;
                 CASE(THROW_IF_NIL)
@@ -1269,14 +1271,14 @@ Throw:
                         break;
                 CASE(ENSURE_LEN)
                         READVALUE(n);
-                        b = top()->array->count <= n;
+                        b = top()->type == VALUE_ARRAY && top()->array->count <= n;
                         READVALUE(n);
                         if (!b)
                                 ip += n;
                         break;
                 CASE(ENSURE_LEN_TUPLE)
                         READVALUE(n);
-                        b = top()->count <= n;
+                        b = top()->type == VALUE_TUPLE && top()->count <= n;
                         READVALUE(n);
                         if (!b)
                                 ip += n;
