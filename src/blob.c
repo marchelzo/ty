@@ -383,7 +383,7 @@ blob_slice(struct value *blob, int argc, struct value *kwargs)
 
         if (start < 0)
                 start += blob->blob->count;
-        if (start < 0 || start >= blob->blob->count)
+        if (start < 0 || start > blob->blob->count)
                 vm_panic("start index %d out of range in call to blob.slice()", start);
 
         if (n < 0)

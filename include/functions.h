@@ -485,6 +485,9 @@ struct value
 builtin_time_localtime(int argc, struct value *kwargs);
 
 struct value
+builtin_time_gmtime(int argc, struct value *kwargs);
+
+struct value
 builtin_time_strftime(int argc, struct value *kwargs);
 
 struct value
@@ -516,6 +519,18 @@ builtin_stdio_read_float(int argc, struct value *kwargs);
 
 struct value
 builtin_stdio_read_double(int argc, struct value *kwargs);
+
+struct value
+builtin_stdio_write_float(int argc, struct value *kwargs);
+
+struct value
+builtin_stdio_write_double(int argc, struct value *kwargs);
+
+struct value
+builtin_stdio_write_signed(int argc, struct value *kwargs);
+
+struct value
+builtin_stdio_write_unsigned(int argc, struct value *kwargs);
 
 struct value
 builtin_stdio_puts(int argc, struct value *kwargs);
@@ -560,6 +575,9 @@ struct value
 builtin_token_peek(int argc, struct value *kwargs);
 
 struct value
+builtin_parse_source(int argc, struct value *kwargs);
+
+struct value
 builtin_parse_expr(int argc, struct value *kwargs);
 
 struct value
@@ -573,5 +591,11 @@ builtin_lex_peek_char(int argc, struct value *kwargs);
 
 struct value
 builtin_lex_next_char(int argc, struct value *kwargs);
+
+struct value
+builtin_ty_unlock(int argc, struct value *kwargs);
+
+struct value
+builtin_ty_lock(int argc, struct value *kwargs);
 
 #endif

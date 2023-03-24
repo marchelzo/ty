@@ -3402,6 +3402,40 @@ builtin_time_localtime(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_time_gmtime(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("time.gmtime()", 0, 1);
+
+        time_t t;
+
+        if (argc == 1) {
+                struct value v = ARG(0);
+                if (v.type != VALUE_INTEGER) {
+                        vm_panic("the argument to time.gmtime() must be an integer");
+                }
+                t = v.integer;
+        } else {
+                t = time(NULL);
+        }
+
+        struct tm r = {0};
+        gmtime_r(&t, &r);
+
+        return value_named_tuple(
+                "sec",   INTEGER(r.tm_sec),
+                "min",   INTEGER(r.tm_min),
+                "hour",  INTEGER(r.tm_hour),
+                "mday",  INTEGER(r.tm_mday),
+                "mon",   INTEGER(r.tm_mon),
+                "year",  INTEGER(r.tm_year),
+                "wday",  INTEGER(r.tm_wday),
+                "yday",  INTEGER(r.tm_yday),
+                "isdst", BOOLEAN(r.tm_isdst),
+                NULL
+        );
+}
+
+struct value
 builtin_time_strftime(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("time.strftime()", 1, 2);
@@ -3610,9 +3644,12 @@ builtin_stdio_fgets(int argc, struct value *kwargs)
         B.count = 0;
 
         int c;
+
+        ReleaseLock(true);
         while ((c = fgetc_unlocked(fp)) != EOF && c != '\n') {
                 vec_push(B, c);
         }
+		TakeLock();
 
         if (B.count == 0 && c == EOF)
                 return NIL;
@@ -3669,6 +3706,52 @@ builtin_stdio_read_signed(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_stdio_write_signed(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("stdio.writeSigned()", 2, 3);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.writeSigned() must be a pointer");
+
+        FILE *fp = f.ptr;
+
+        int size;
+        struct value x;
+
+        if (argc == 3) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("expected intger as second argument to stdio.writeSigned() but got: %s", value_show(&ARG(1)));
+                }
+                size = ARG(1).integer;
+                x = ARG(2);
+        } else {
+                size = sizeof (int);
+                x = ARG(3);
+        }
+
+        if (x.type != VALUE_INTEGER) {
+                vm_panic("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(&x));
+        }
+
+        char b[sizeof (intmax_t)];
+
+        switch (size) {
+        case (sizeof (char)):      memcpy(b, &(char)     {x.integer}, size); break;
+        case (sizeof (short)):     memcpy(b, &(short)    {x.integer}, size); break;
+        case (sizeof (int)):       memcpy(b, &(int)      {x.integer}, size); break;
+        case (sizeof (long long)): memcpy(b, &(long long){x.integer}, size); break;
+        default: return BOOLEAN(false);
+        }
+
+        ReleaseLock(true);
+        size_t n = fwrite_unlocked(b, size, 1, fp);
+        TakeLock();
+
+        return BOOLEAN(n == 1);
+}
+
+struct value
 builtin_stdio_read_unsigned(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("stdio.readUnsigned()", 1, 2);
@@ -3696,6 +3779,52 @@ builtin_stdio_read_unsigned(int argc, struct value *kwargs)
         } else {
                 return INTEGER(k);
         }
+}
+
+struct value
+builtin_stdio_write_unsigned(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("stdio.writeUnsigned()", 2, 3);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.writeUnsigned() must be a pointer");
+
+        FILE *fp = f.ptr;
+
+        int size;
+        struct value x;
+
+        if (argc == 3) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("expected intger as second argument to stdio.writeUnsigned() but got: %s", value_show(&ARG(1)));
+                }
+                size = ARG(1).integer;
+                x = ARG(2);
+        } else {
+                size = sizeof (int);
+                x = ARG(3);
+        }
+
+        if (x.type != VALUE_INTEGER) {
+                vm_panic("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(&x));
+        }
+
+        char b[sizeof (uintmax_t)];
+
+        switch (size) {
+        case (sizeof (unsigned char)):      memcpy(b, &(unsigned char)     {x.integer}, size); break;
+        case (sizeof (unsigned short)):     memcpy(b, &(unsigned short)    {x.integer}, size); break;
+        case (sizeof (unsigned int)):       memcpy(b, &(unsigned int)      {x.integer}, size); break;
+        case (sizeof (unsigned long long)): memcpy(b, &(unsigned long long){x.integer}, size); break;
+        default: return BOOLEAN(false);
+        }
+
+        ReleaseLock(true);
+        size_t n = fwrite_unlocked(b, size, 1, fp);
+        TakeLock();
+
+        return BOOLEAN(n == 1);
 }
 
 struct value
@@ -3742,6 +3871,56 @@ builtin_stdio_read_float(int argc, struct value *kwargs)
                 TakeLock();
                 return NIL;
         }
+}
+
+struct value
+builtin_stdio_write_float(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("stdio.writeFloat()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.writeFloat() must be a pointer");
+
+        struct value x = ARG(1);
+        if (x.type != VALUE_REAL)
+                vm_panic("the second argument to stdio.writeFloat() must be a float");
+
+        FILE *fp = f.ptr;
+        float fx = (float)x.real;
+
+        ReleaseLock(true);
+
+        size_t n = fwrite_unlocked(&fx, sizeof fx, 1, fp);
+
+        TakeLock();
+
+        return BOOLEAN(n > 0);
+}
+
+struct value
+builtin_stdio_write_double(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("stdio.writeDouble()", 2);
+
+        struct value f = ARG(0);
+        if (f.type != VALUE_PTR)
+                vm_panic("the first argument to stdio.writeDouble() must be a pointer");
+
+        struct value x = ARG(1);
+        if (x.type != VALUE_REAL)
+                vm_panic("the second argument to stdio.writeDouble() must be a float");
+
+        FILE *fp = f.ptr;
+        double fx = x.real;
+
+        ReleaseLock(true);
+
+        size_t n = fwrite_unlocked(&fx, sizeof fx, 1, fp);
+
+        TakeLock();
+
+        return BOOLEAN(n > 0);
 }
 
 struct value
@@ -4276,6 +4455,18 @@ builtin_finalizer(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_ty_unlock(int argc, struct value *kwargs)
+{
+	ReleaseLock(true);
+}
+
+struct value
+builtin_ty_lock(int argc, struct value *kwargs)
+{
+	TakeLock();
+}
+
+struct value
 builtin_eval(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ty.eval()", 1);
@@ -4341,6 +4532,38 @@ builtin_token_next(int argc, struct value *kwargs)
 
         return v;
 }
+
+struct value
+builtin_parse_source(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("ty.parse.source()", 0, 1);
+
+        char const *s;
+        size_t n;
+
+        switch (ARG(0).type) {
+        case VALUE_STRING:
+                s = ARG(0).string;
+                n = ARG(0).bytes;
+                break;
+        case VALUE_BLOB:
+                s = (char const *)ARG(0).blob->items;
+                n = ARG(0).blob->count;
+                break;
+        default:
+                vm_panic("ty.parse.source(): expected Blob or String but got: %s", value_show(&ARG(0)));
+        }
+
+        char *src = gc_alloc(n + 2) + 1;
+        memcpy(src, s, n);
+        src[-1] = '\0';
+        src[n] = '\0';
+
+        struct statement **p = parse(src, NULL);
+
+        return tyexpr(p[0]->expression);
+}
+
 
 struct value
 builtin_parse_expr(int argc, struct value *kwargs)

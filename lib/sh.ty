@@ -4,11 +4,12 @@ import errno (ETIMEDOUT)
 
 export ls, sh, expand
 
-function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false) {
+function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareStderr=false) {
     if not let $p = os.spawn(
         ['bash', '-c', c],
         detached: timeoutMs != nil,
-        combineOutput: combineOutput
+        combineOutput: combineOutput,
+        shareStderr: shareStderr
     ) {
           return nil
     }

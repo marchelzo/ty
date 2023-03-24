@@ -637,6 +637,7 @@ call_co(struct value *v, int n)
 void
 TakeLock(void)
 {
+        GCLOG("Taking MyLock%s", "");
         pthread_mutex_lock(MyLock);
 }
 

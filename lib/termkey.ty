@@ -1,3 +1,4 @@
+import ty
 import ffi as c
 import cutil (wrap)
 
@@ -123,7 +124,7 @@ pub TermKeyKey = c.struct(
 )
 
 pub termkey_new = wrap(lib, 'termkey_new', c.ptr, c.int, c.int)
-pub termkey_waitkey = wrap(lib, 'termkey_waitkey', c.int, c.ptr, c.ptr)
+let waitkey = wrap(lib, 'termkey_waitkey', c.int, c.ptr, c.ptr)
 pub termkey_strfkey = wrap(lib, 'termkey_strfkey', c.u64, c.ptr, c.ptr, c.u64, c.ptr, c.int)
 pub termkey_destroy = wrap(lib, 'termkey_destroy', c.void, c.ptr)
 
@@ -133,4 +134,11 @@ pub function termkey_keytype(key) {
 
 pub function termkey_keymod(key) {
 	c.member(TermKeyKey, key, 2)
+}
+
+pub function termkey_waitkey(tk, k) {
+    ty.unlock()
+    let x = waitkey(tk, k)
+    ty.lock()
+    return x
 }

@@ -83,6 +83,22 @@ class Stream : Iter {
         }
     }
 
+    writeSigned(*args) {
+        stdio.writeSigned(@f, *args)
+    }
+
+    writeUnsigned(*args) {
+        stdio.writeUnsigned(@f, *args)
+    }
+
+    writeFloat(*args) {
+        stdio.writeFloat(@f, *args)
+    }
+
+    writeDouble(*args) {
+        stdio.writeDouble(@f, *args)
+    }
+
     putc(c) {
         stdio.fputc(@f, c)
     }

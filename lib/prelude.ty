@@ -167,6 +167,13 @@ class Array : Iterable {
         xs
     }
 
+    of(*shape, fill) {
+        match shape {
+            [k]      => [fill for _ in ..k],
+            [k, *ks] => [Array.of(*ks, fill: fill) for _ in ..k]
+        }
+    }
+
     shape() {
         let s = []
         let x = self
@@ -175,6 +182,18 @@ class Array : Iterable {
             x = x[0]
         }
         return s
+    }
+
+    T() {
+        let t = [[nil for _ in self] for _ in self[0]]
+
+        for i in ..#self {
+            for j in ..#self[i] {
+                t[j][i] = self[i][j]
+            }
+        }
+
+        return t
     }
 
     indices() {
@@ -464,6 +483,10 @@ class Int {
 
     odd?() {
         self % 2 == 1
+    }
+
+    sgn() {
+        self <=> 0
     }
 
     str(base: Int = 10) {
