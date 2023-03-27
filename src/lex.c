@@ -168,7 +168,8 @@ mkregex(char const *pat, int flags)
                 );
         }
 
-        pcre_assign_jit_stack(extra, NULL, JITStack);
+        if (JITStack != NULL)
+                pcre_assign_jit_stack(extra, NULL, JITStack);
 
         struct regex *r = gc_alloc(sizeof *r);
         r->pattern = pat;

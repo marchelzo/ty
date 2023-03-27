@@ -231,9 +231,8 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         int n;
         int off = 0;
 
-		struct value result = ARRAY(value_array_new());
-
-		gc_push(&result);
+        struct value result = ARRAY(value_array_new());
+        gc_push(&result);
 
         if (pattern.type == VALUE_STRING) {
                 while (off < bytes) {
@@ -281,7 +280,7 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         }
 
 
-		gc_pop();
+        gc_pop();
 
         return result;
 }
@@ -700,8 +699,9 @@ string_comb(struct value *string, int argc, struct value *kwargs)
                         start = out[1];
                 }
 
-                vec_push_n(chars, s + start, len - start);
-
+                if (s != NULL) {
+                        vec_push_n(chars, s + start, len - start);
+                }
         }
 
         struct alloc *a = (void *)chars.items;

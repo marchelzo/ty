@@ -25,8 +25,11 @@
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 #include <utf8proc.h>
-#include <sys/epoll.h>
 #include <pthread.h>
+
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
 
 #include "tags.h"
 #include "value.h"
@@ -40,6 +43,13 @@
 #include "object.h"
 #include "class.h"
 #include "compiler.h"
+
+#ifdef __APPLE__
+#define fputc_unlocked fputc
+#define fgetc_unlocked fgetc
+#define fwrite_unlocked fwrite
+#define fread_unlocked fread
+#endif
 
 static _Thread_local char buffer[1024 * 1024 * 4];
 
@@ -683,7 +693,8 @@ builtin_regex(int argc, struct value *kwargs)
         if (extra == NULL)
                 return NIL;
 
-        pcre_assign_jit_stack(extra, NULL, JITStack);
+        if (JITStack != NULL)
+                pcre_assign_jit_stack(extra, NULL, JITStack);
 
         struct regex *r = gc_alloc_object(sizeof *r, GC_REGEX);
         r->pcre = re;
@@ -1430,7 +1441,6 @@ builtin_os_readdir(int argc, struct value *kwargs)
 
         return value_named_tuple(
                 "d_ino", INTEGER(entry->d_ino),
-                "d_off", INTEGER(entry->d_off),
                 "d_reclen", INTEGER(entry->d_reclen),
                 "d_type", INTEGER(entry->d_type),
                 "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)),
@@ -2778,6 +2788,7 @@ builtin_os_poll(int argc, struct value *kwargs)
         return INTEGER(ret);
 }
 
+#ifdef __linux__
 struct value
 builtin_os_epoll_create(int argc, struct value *kwargs)
 {
@@ -2858,6 +2869,7 @@ builtin_os_epoll_wait(int argc, struct value *kwargs)
 
         return ARRAY(result);
 }
+#endif
 
 struct value
 builtin_os_waitpid(int argc, struct value *kwargs)
@@ -3088,6 +3100,7 @@ tuple_timespec(char const *func, struct value const *v)
         };
 }
 
+#if !defined(__APPLE__)
 struct value
 builtin_os_sleep(int argc, struct value *kwargs)
 {
@@ -3153,6 +3166,13 @@ builtin_os_sleep(int argc, struct value *kwargs)
                 vm_panic("os.sleep(): invalid argument: clock_nanosleep() returned EINVAL");
         }
 }
+#else
+struct value
+builtin_os_sleep(int argc, struct value *kwargs)
+{
+        return NIL;
+}
+#endif
 
 struct value
 builtin_os_usleep(int argc, struct value *kwargs)
@@ -3256,9 +3276,15 @@ builtin_os_stat(int argc, struct value *kwargs)
                 "st_size", INTEGER(s.st_size),
                 "st_blocks", INTEGER(s.st_blocks),
                 "st_blksize", INTEGER(s.st_blksize),
+#ifdef __APPLE__
+                "st_atim", timespec_tuple(&s.st_atimespec),
+                "st_mtim", timespec_tuple(&s.st_mtimespec),
+                "st_ctim", timespec_tuple(&s.st_ctimespec),
+#else
                 "st_atim", timespec_tuple(&s.st_atim),
                 "st_mtim", timespec_tuple(&s.st_mtim),
                 "st_ctim", timespec_tuple(&s.st_ctim),
+#endif
                 NULL
         );
 
@@ -3283,13 +3309,14 @@ builtin_os_fcntl(int argc, struct value *kwargs)
         struct value arg = ARG(2);
         switch (cmd.integer) {
         case F_DUPFD:
-#ifdef __APPLE__
-        case F_DUPFD_CLOEXEC:
-#endif
         case F_SETFD:
         case F_SETFL:
-        case F_SETSIG:
         case F_SETOWN:
+#ifdef __APPLE__
+        case F_DUPFD_CLOEXEC:
+#else
+        case F_SETSIG:
+#endif
                 if (arg.type != VALUE_INTEGER)
                         vm_panic("expected the third argument to be an integer in call to os.fcntl()");
                 return INTEGER(fcntl(fd.integer, cmd.integer, (int) arg.integer));

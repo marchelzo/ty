@@ -31,7 +31,9 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
             (fd: p.stderr, events: os.POLLIN) if p.stderr !=  nil
         ]
 
-        if os.poll(pfds, timeoutMs ?? -1) < 1 {
+        let n = os.poll(pfds, timeoutMs ?? -1)
+
+        if n < 1 {
             os.kill(-p.pid, signal)
             return nil
         }
@@ -48,7 +50,9 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
 
         if pfds[0].revents .&. os.POLLIN {
             os.read(p.stdout, out, 4096)
-        } else if pfds[0].revents .&. (os.POLLERR .|. os.POLLHUP) {
+        }
+
+        if pfds[0].revents .&. (os.POLLERR .|. os.POLLHUP) {
             break
         }
     }

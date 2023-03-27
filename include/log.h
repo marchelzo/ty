@@ -20,9 +20,15 @@
 #define TID ((unsigned long long)pthread_self())
 
 #if 0
-  #define GCLOG(fmt, ...) fprintf(stderr, "(%14llu): " fmt "\n", TID, __VA_ARGS__)
+#define GCLOG(...) do { \
+                        flockfile(stderr), \
+                        fprintf(stderr, "(%14llu) ", TID), \
+                        fprintf(stderr, __VA_ARGS__), \
+                        fprintf(stderr, "\n"), \
+                        funlockfile(stderr); \
+                } while (0)
 #else
-  #define GCLOG LOG
+#define GCLOG LOG
 #endif
 
 #endif

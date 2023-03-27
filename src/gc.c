@@ -67,12 +67,12 @@ GCSweep(AllocList *allocs, size_t *used)
 {
         int n = 0;
         for (int i = 0; i < allocs->count; ++i) {
-                if (allocs->items[i]->mark == GC_NONE && atomic_load(&allocs->items[i]->hard) == 0) {
+                if (!atomic_load(&allocs->items[i]->mark) && atomic_load(&allocs->items[i]->hard) == 0) {
                         *used -= min(allocs->items[i]->size, *used);
                         collect(allocs->items[i]);
                         free(allocs->items[i]);
                 } else {
-                        allocs->items[i]->mark &= ~GC_MARK;
+                        atomic_store(&allocs->items[i]->mark, false);
                         allocs->items[n++] = allocs->items[i];
                 }
         }

@@ -17,9 +17,13 @@ void DoGC(void);
 #define resize(ptr, n) ((ptr) = gc_resize((ptr), (n)))
 #define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked((ptr), (n)))
 
-#define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
-#define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
-#define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
+//#define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
+//#define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
+//#define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
+
+#define MARKED(v) atomic_load(&(ALLOC_OF(v))->mark)
+#define MARK(v)   atomic_store(&(ALLOC_OF(v))->mark, 1)
+#define UNMARK(v) atomic_store(&(ALLOC_OF(v))->mark, 0)
 
 #define NOGC(v)   atomic_fetch_add(&(ALLOC_OF(v))->hard, 1)
 #define OKGC(v)   atomic_fetch_sub(&(ALLOC_OF(v))->hard, 1)
@@ -38,8 +42,8 @@ struct alloc {
         union {
                 struct {
                         char type;
-                        char mark;
-                        _Atomic uint16_t hard;
+                        atomic_bool mark;
+                        atomic_uint_least16_t hard;
                         uint32_t size;
                 };
                 void const * restrict padding;
@@ -123,8 +127,8 @@ gc_alloc(size_t n)
         }
 
         a->size = n;
-        a->mark = GC_HARD;
         a->type = GC_ANY;
+        atomic_init(&a->mark, false);
         atomic_init(&a->hard, 0);
 
         return a->data;
@@ -144,10 +148,10 @@ gc_alloc_object(size_t n, char type)
                 panic("Out of memory!");
         }
 
-        a->mark = GC_NONE;
+        atomic_init(&a->mark, false);
+        atomic_init(&a->hard, 0);
         a->type = type;
         a->size = n;
-        atomic_init(&a->hard, 0);
 
         vec_push_unchecked(allocs, a);
 

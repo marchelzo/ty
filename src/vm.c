@@ -20,9 +20,15 @@
 #include <dirent.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <termios.h>
+
+#include "barrier.h"
+
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
 
 #include <sys/types.h>
-#include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -31,6 +37,7 @@
 #include <sys/wait.h>
 #include <netdb.h>
 #include <netinet/ip.h>
+#include <net/if.h>
 
 #include "value.h"
 #include "cffi.h"
@@ -183,6 +190,7 @@ static vec(pthread_t) ThreadList;
 static vec(pthread_mutex_t *) ThreadLocks;
 static vec(ThreadStorage) ThreadStorages;
 static vec(_Atomic bool *) ThreadStates;
+static vec(pthread_cond_t *) ThreadConds;
 
 pthread_mutex_t DeadMutex = PTHREAD_MUTEX_INITIALIZER;
 AllocList DeadAllocs;
@@ -192,11 +200,11 @@ static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 _Thread_local pthread_mutex_t *MyLock;
+static _Thread_local pthread_cond_t *MyCond;
 static _Thread_local _Atomic bool *MyState;
+static _Thread_local _Atomic bool *MyGCState;
 static _Thread_local ThreadStorage MyStorage;
 static _Atomic bool WantGC;
-
-static pthread_cond_t GCNext = PTHREAD_COND_INITIALIZER;
 
 static pthread_barrier_t GCBarrierStart;
 static pthread_barrier_t GCBarrierMark;
@@ -214,11 +222,19 @@ LockThreads(int *threads, int n)
         }
 }
 
-static void
+inline static void
 UnlockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
                 pthread_mutex_unlock(ThreadLocks.items[threads[i]]);
+        }
+}
+
+inline static void
+SignalThreadsForGC(int *threads, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                pthread_cond_signal(ThreadConds.items[threads[i]]);
         }
 }
 
@@ -235,7 +251,12 @@ WaitGC()
 
         SetState(false);
         GCLOG("Releasing MyLock: %d", 0);
-        pthread_cond_wait(&GCNext, MyLock);
+
+        do {
+                GCLOG("Waiting for GCNext. Lock = %p", (void *)MyLock);
+                int r = pthread_cond_wait(MyCond, MyLock);
+                GCLOG("cond_wait returned %d; state = %d", r, (int)atomic_load(MyState));
+        } while (!atomic_load(MyState));
 
         GCLOG("Waiting to mark: %llu", TID);
         pthread_barrier_wait(&GCBarrierStart);
@@ -288,7 +309,7 @@ DoGC()
                 if (pthread_equal(me, ThreadList.items[i])) {
                         continue;
                 }
-                GCLOG("Trying to take lock for thread %llu on thread %llu", (long long unsigned)ThreadList.items[i], TID);
+                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)ThreadList.items[i], (void *)ThreadLocks.items[i]);
                 pthread_mutex_lock(ThreadLocks.items[i]);
                 if (atomic_load(ThreadStates.items[i])) {
                         GCLOG("Thread %llu is blocked", (long long unsigned)ThreadList.items[i]);
@@ -296,6 +317,7 @@ DoGC()
                 } else {
                         GCLOG("Thread %llu is running", (long long unsigned)ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
+                        atomic_store(ThreadStates.items[i], true);
                 }
         }
 
@@ -306,9 +328,8 @@ DoGC()
         pthread_barrier_init(&GCBarrierSweep, NULL, nRunning + 1);
         pthread_barrier_init(&GCBarrierDone, NULL, nRunning + 1);
 
-        pthread_cond_broadcast(&GCNext);
-
         UnlockThreads(runningThreads, nRunning);
+        SignalThreadsForGC(runningThreads, nRunning);
 
         pthread_barrier_wait(&GCBarrierStart);
 
@@ -398,9 +419,11 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "args");
         vec_push(Globals, ARRAY(args));
 
+#ifdef SIGRTMIN
         /* Add this here because SIGRTMIN doesn't expand to a constant */
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
+#endif
 
 #define X(name) \
         do { \
@@ -639,6 +662,7 @@ TakeLock(void)
 {
         GCLOG("Taking MyLock%s", "");
         pthread_mutex_lock(MyLock);
+        GCLOG("Took MyLock");
 }
 
 void
@@ -655,18 +679,17 @@ NewThread(pthread_t *thread, struct value *call)
         ReleaseLock(true);
 
         static _Thread_local sem_t created;
-        static _Thread_local bool init = false;
 
-        NewThreadCtx ctx = {
+        NewThreadCtx *ctx = malloc(sizeof *ctx);
+
+        *ctx = (NewThreadCtx) {
                 .ctx = call,
                 .created = &created
         };
 
-        if (!init++) {
-                sem_init(&created, 0, 0);
-        }
+        sem_init(&created, 0, 0);
 
-        pthread_create(thread, NULL, vm_run_thread, &ctx);
+        pthread_create(thread, NULL, vm_run_thread, ctx);
 
         sem_wait(&created);
         sem_destroy(&created);
@@ -706,8 +729,11 @@ AddThread(void)
 
         MyState = malloc(sizeof *MyState);
         *MyState = false;
-
         vec_push(ThreadStates, MyState);
+
+        MyCond = malloc(sizeof *MyCond);
+        pthread_cond_init(MyCond, NULL);
+        vec_push(ThreadConds, MyCond);
 
         GC_ENABLED = true;
 
@@ -746,6 +772,7 @@ CleanupThread(void *ctx)
                         ThreadLocks.items[i] = *vec_pop(ThreadLocks);
                         ThreadStorages.items[i] = *vec_pop(ThreadStorages);
                         ThreadStates.items[i] = *vec_pop(ThreadStates);
+                        ThreadConds.items[i] = *vec_pop(ThreadConds);
                 }
         }
 
@@ -754,6 +781,7 @@ CleanupThread(void *ctx)
         pthread_mutex_destroy(MyLock);
         free(MyLock);
         free(MyState);
+        free(MyCond);
         gc_free(stack.items);
         gc_free(calls.items);
         gc_free(frames.items);
@@ -782,6 +810,7 @@ vm_run_thread(void *p)
         }
 
         AddThread();
+        gc_push(&call[0]);
 
         pthread_cleanup_push(CleanupThread, NULL);
 
@@ -791,11 +820,11 @@ vm_run_thread(void *p)
                 // TODO: do something useful here
                 fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
         } else {
-                gc_push(&call[0]);
                 vm_call(call, argc);
-                gc_pop();
-                gc_free(call);
         }
+
+        gc_pop();
+        gc_free(call);
 
         pthread_cleanup_pop(1);
 
@@ -880,7 +909,11 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
 
         switch (sig) {
         case SIGIO:
+#ifdef __APPLE__
+                push(INTEGER(info->si_value.sival_int));
+#else
                 push(INTEGER(info->si_fd));
+#endif
                 vm_call(&f, 1);
                 break;
         default:
@@ -2908,6 +2941,8 @@ BadContainer:
                 ;
         }
 
+        continue;
+
         TyThread *current = &Threads.items[ThreadIndex];
 
         for (int i = 1; i < Threads.count; ++i) {
@@ -2987,9 +3022,6 @@ vm_init(int ac, char **av)
 
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
-        if (JITStack == NULL) {
-                panic("out of memory");
-        }
 
         curl_global_init(CURL_GLOBAL_ALL);
 

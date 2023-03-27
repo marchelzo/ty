@@ -162,6 +162,7 @@
 #ifdef WIFCONTINUED
 { .module = "os",     .name = "WIFCONTINUED",      .value = BUILTIN(builtin_os_WIFCONTINUED)               },
 #endif
+#ifdef __linux__
 { .module = "os",     .name = "epoll_create",      .value = BUILTIN(builtin_os_epoll_create)               },
 { .module = "os",     .name = "epoll_ctl",         .value = BUILTIN(builtin_os_epoll_ctl)                  },
 { .module = "os",     .name = "epoll_wait",        .value = BUILTIN(builtin_os_epoll_wait)                 },
@@ -172,6 +173,7 @@
 { .module = "os",     .name = "EPOLLET",           .value = INT(EPOLLET)                                   },
 { .module = "os",     .name = "EPOLLOUT",          .value = INT(EPOLLOUT)                                  },
 { .module = "os",     .name = "EPOLLHUP",          .value = INT(EPOLLHUP)                                  },
+#endif
 { .module = "os",     .name = "recvfrom",          .value = BUILTIN(builtin_os_recvfrom)                   },
 { .module = "os",     .name = "sendto",            .value = BUILTIN(builtin_os_sendto)                     },
 { .module = "os",     .name = "connect",           .value = BUILTIN(builtin_os_connect)                    },
@@ -204,8 +206,6 @@
 { .module = "os",     .name = "F_GETFL",           .value = INT(F_GETFL)                                   },
 { .module = "os",     .name = "F_SETFL",           .value = INT(F_SETFL)                                   },
 { .module = "os",     .name = "F_DUPFD",           .value = INT(F_DUPFD)                                   },
-{ .module = "os",     .name = "F_SETSIG",          .value = INT(F_SETSIG)                                  },
-{ .module = "os",     .name = "F_GETSIG",          .value = INT(F_GETSIG)                                  },
 { .module = "os",     .name = "F_SETOWN",          .value = INT(F_SETOWN)                                  },
 { .module = "os",     .name = "F_GETOWN",          .value = INT(F_GETOWN)                                  },
 #ifdef __APPLE__
@@ -221,6 +221,9 @@
 { .module = "os",     .name = "F_FULLFSYNC",       .value = INT(F_FULLFSYNC)                               },
 { .module = "os",     .name = "F_SETNOSIGPIPE",    .value = INT(F_SETNOSIGPIPE)                            },
 { .module = "os",     .name = "F_GETNOSIGPIPE",    .value = INT(F_GETNOSIGPIPE)                            },
+#else
+{ .module = "os",     .name = "F_GETSIG",          .value = INT(F_GETSIG)                                  },
+{ .module = "os",     .name = "F_SETSIG",          .value = INT(F_SETSIG)                                  },
 #endif
 #endif
 

@@ -488,6 +488,8 @@ code_of(struct value const *v)
 
 #define None                     TAG(TAG_NONE)
 
+int tags_push(int, int);
+
 inline static struct value
 Some(struct value v)
 {

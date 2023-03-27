@@ -21,10 +21,14 @@ let Z_TREES         = 6
 
 let MAX_WBITS = 15
 
-let libraryName = 'libz.so.1'
+let libraryNames = ['libz.so.1', 'libz.dylib']
 
-if not let $lib = c.dlopen(libraryName) {
-  throw "Failed to load {libraryName}"
+if not let $lib = for name in libraryNames {
+    if let $lib = c.dlopen(name) {
+        break lib
+    }
+} {
+  throw "Failed to load {libraryNames}"
 }
 
 struct! ZStream {
