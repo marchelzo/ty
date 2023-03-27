@@ -19,7 +19,6 @@
 #include <signal.h>
 #include <dirent.h>
 #include <pthread.h>
-#include <semaphore.h>
 #include <termios.h>
 
 #include "barrier.h"
@@ -127,7 +126,7 @@ typedef struct Frame {
 } Frame;
 
 typedef struct {
-        sem_t *created;
+        atomic_bool *created;
         struct value *ctx;
 } NewThreadCtx;
 
@@ -678,7 +677,7 @@ NewThread(pthread_t *thread, struct value *call)
 {
         ReleaseLock(true);
 
-        static _Thread_local sem_t created;
+        static _Thread_local atomic_bool created;
 
         NewThreadCtx *ctx = malloc(sizeof *ctx);
 
@@ -687,12 +686,11 @@ NewThread(pthread_t *thread, struct value *call)
                 .created = &created
         };
 
-        sem_init(&created, 0, 0);
-
+        atomic_store(&created, false);
         pthread_create(thread, NULL, vm_run_thread, ctx);
 
-        sem_wait(&created);
-        sem_destroy(&created);
+        while (!atomic_load(&created))
+                ;
 
         TakeLock();
 }
@@ -814,7 +812,7 @@ vm_run_thread(void *p)
 
         pthread_cleanup_push(CleanupThread, NULL);
 
-        sem_post(ctx->created);
+        atomic_store(ctx->created, true);
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
