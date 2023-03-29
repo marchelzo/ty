@@ -28,6 +28,8 @@ class Args {
         for o in opts {
             if o.constraint == Bool {
                 args.push(flag(short: o.short, long: o.long, help: o.help))
+            } else if let [c] = o.constraint {
+                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: c, multi: true))
             } else {
                 args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: o.constraint))
             }
@@ -62,7 +64,7 @@ class Args {
                 (o.constraint == Bool) ? ((o.short in result) || (o.long in result))
                                        : (result[o.short] ?? result[o.long])
             for o in opts
-        })
+        } + %{ 'help': 'help' in result })
     }
 }
 
