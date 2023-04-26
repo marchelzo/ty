@@ -171,7 +171,9 @@ builtin_slurp(int argc, struct value *kwargs)
                 return NIL;
         }
 
-        if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+        struct value *use_mmap = NAMED("mmap");
+
+        if ((use_mmap == NULL || value_truthy(use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
                 size_t n = st.st_size;
                 void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
                 if (m == NULL) {
@@ -3676,7 +3678,7 @@ builtin_stdio_fgets(int argc, struct value *kwargs)
         while ((c = fgetc_unlocked(fp)) != EOF && c != '\n') {
                 vec_push(B, c);
         }
-		TakeLock();
+        TakeLock();
 
         if (B.count == 0 && c == EOF)
                 return NIL;
@@ -4484,13 +4486,15 @@ builtin_finalizer(int argc, struct value *kwargs)
 struct value
 builtin_ty_unlock(int argc, struct value *kwargs)
 {
-	ReleaseLock(true);
+        ReleaseLock(true);
+        return NIL;
 }
 
 struct value
 builtin_ty_lock(int argc, struct value *kwargs)
 {
-	TakeLock();
+        TakeLock();
+        return NIL;
 }
 
 struct value
