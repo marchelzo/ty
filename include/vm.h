@@ -12,6 +12,7 @@
 
 
 extern bool CompileOnly;
+extern bool PrintResult;
 extern pthread_t MainThread;
 
 enum instruction {

@@ -178,6 +178,7 @@ static int ThreadIndex;
 static char const *filename;
 static char const *Error;
 bool CompileOnly = false;
+bool PrintResult = false;
 
 pthread_t BuiltinRunner;
 pthread_t MainThread;
@@ -3235,6 +3236,10 @@ vm_execute(char const *source)
         }
 
         vm_exec(code);
+
+        if (PrintResult && stack.capacity > 0) {
+                printf("%s\n", value_show(top() + 1));
+        }
 
         return true;
 }

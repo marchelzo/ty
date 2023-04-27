@@ -208,6 +208,11 @@ main(int argc, char **argv)
                 i += 1;
         }
 
+        if (i < argc && strcmp(argv[i], "-p") == 0) {
+                PrintResult = true;
+                i += 1;
+        }
+
         if (i + 2 < argc && strcmp(argv[i], "-t") == 0) {
                 char const *f = argv[++i];
                 int line = atoi(argv[++i]) - 1;
