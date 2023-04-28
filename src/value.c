@@ -711,7 +711,7 @@ value_array_mark(struct array *a)
 inline static void
 mark_tuple(struct value const *v)
 {
-        if (MARKED(v->items)) return;
+        if (v->items == NULL || MARKED(v->items)) return;
 
         MARK(v->items);
 
