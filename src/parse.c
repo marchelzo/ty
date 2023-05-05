@@ -731,11 +731,13 @@ prefix_special_string(void)
 static struct expression *
 prefix_hash(void)
 {
+        struct expression *e = mkexpr();
+
         consume('#');
 
-        struct expression *e = mkexpr();
         e->type = EXPRESSION_PREFIX_HASH;
         e->operand = parse_expr(10);
+        e->end = End;
 
         return e;
 }
@@ -1412,7 +1414,6 @@ prefix_parenthesis(void)
 
                 return list;
         } else {
-                e->start = start;
                 consume(')');
 
                 if (e->type == EXPRESSION_TUPLE) {
