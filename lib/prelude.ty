@@ -843,6 +843,14 @@ class Iterable {
         @__iter__().zipWith(f, *its, longest: longest)
     }
 
+    unzip() {
+        @__iter__().unzip()
+    }
+
+    unzipWith(f) {
+        @__iter__().unzipWith(f)
+    }
+
     mean() {
         @__iter__().mean()
     }
@@ -947,6 +955,29 @@ class Iter : Iterable {
                 yield x
             }
         }
+    }
+
+    unzipWith(f) {
+        let lists = []
+
+        for x in self {
+            let t = f(x)
+            let n = #members(t)
+
+            while #lists < n {
+                lists.push([])
+            }
+
+            for i in ..n {
+                lists[i].push(t[i])
+            }
+        }
+
+        return tuple(*lists)
+    }
+
+    unzip() {
+        self.unzipWith(id)
     }
 
     zipWith(f, *its, longest) {
