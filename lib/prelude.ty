@@ -1389,6 +1389,13 @@ class InclusiveRange : Range {
 
 function id(x) { x }
 
+function zip(*xs) {
+    match xs {
+        [x, *xs] => x.zip(*xs),
+        []       => []
+    }
+}
+
 function uuid4() {
     let b = Blob(*[rand(256) for _ in ..16])
 
