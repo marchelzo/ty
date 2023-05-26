@@ -636,7 +636,17 @@ class Float {
 class Blob : Iterable {
     init(*args) {
         let b = blob()
-        for arg in args { b.push(arg) }
+
+        for arg in args {
+            if (arg :: Iterable) && !(arg :: String) {
+                for c in arg {
+                    b.push(c)
+                }
+            } else {
+                b.push(arg)
+            }
+        }
+
         return b
     }
 
