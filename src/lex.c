@@ -355,6 +355,23 @@ end_of_docstring(int ndelim)
         return true;
 }
 
+static bool
+eat_line_ending(void)
+{
+        if (C(0) == '\n') {
+                nextchar();
+                return true;
+        }
+
+        if (C(0) == '\r' && C(1) == '\n') {
+                nextchar();
+                nextchar();
+                return true;
+        }
+
+        return false;
+}
+
 static struct token
 lexdocstring(void)
 {
@@ -370,13 +387,10 @@ lexdocstring(void)
                 ndelim += 1;
         }
 
-        if (C(0) == '\n') {
-                nextchar();
-        }
+        eat_line_ending();
 
         while (!end_of_docstring(ndelim) && C(0) != '\0') {
-                if (C(0) == '\n') {
-                        nextchar();
+                if (eat_line_ending()) {
                         vec_push(line, '\0');
                         vec_push(lines, line.items);
                         vec_init(line);
