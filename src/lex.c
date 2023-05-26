@@ -343,6 +343,88 @@ lexword(void)
         }
 }
 
+static bool
+end_of_docstring(int ndelim)
+{
+        for (int i = 0; i < ndelim; ++i) {
+                if (C(i) != '\'') {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static struct token
+lexdocstring(void)
+{
+        vec(char *) lines;
+        vec(char) line;
+
+        vec_init(lines);
+        vec_init(line);
+
+        int ndelim = 0;
+        while (C(0) == '\'') {
+                nextchar();
+                ndelim += 1;
+        }
+
+        if (C(0) == '\n') {
+                nextchar();
+        }
+
+        while (!end_of_docstring(ndelim) && C(0) != '\0') {
+                if (C(0) == '\n') {
+                        nextchar();
+                        vec_push(line, '\0');
+                        vec_push(lines, line.items);
+                        vec_init(line);
+                } else {
+                        vec_push(line, nextchar());
+                }
+        }
+
+        if (!end_of_docstring(ndelim)) {
+                error("unterminated docstring starting on line %d", Start.line);
+        }
+
+        // The only characters on this line before the docstring terminator should be whitespace
+        for (int i = 0; i < line.count; ++i) {
+                if (!isspace(line.items[i])) {
+                        error("illegal docstring terminator on line %d", state.loc.line);
+                }
+        }
+
+        while (ndelim --> 0) {
+                nextchar();
+        }
+
+        int nstrip = line.count;
+        vec_empty(line);
+
+        vec(char) s;
+        vec_init(s);
+
+        for (int i = 0; i < lines.count; ++i) {
+                int off = 0;
+                while (off < nstrip && isspace(lines.items[i][off])) {
+                        off += 1;
+                }
+                while (lines.items[i][off] != '\0') {
+                        vec_push(s, lines.items[i][off++]);
+                }
+                if (i + 1 != lines.count) {
+                        vec_push(s, '\n');
+                }
+                gc_free(lines.items[i]);
+        }
+
+        vec_push(s, '\0');
+
+        return mkstring(s.items);
+}
+
 static struct token
 lexrawstr(void)
 {
@@ -846,7 +928,11 @@ lex_token(LexContext ctx)
                 } else if (isdigit(C(0))) {
                         return lexnum();
                 } else if (C(0) == '\'') {
-                        return lexrawstr();
+                        if (C(1) == '\'' && C(2) == '\'') {
+                                return lexdocstring();
+                        } else {
+                                return lexrawstr();
+                        }
                 } else if (C(0) == '"') {
                         return lexspecialstr();
                 } else if (C(0) == '.' && C(1) == '.') {
