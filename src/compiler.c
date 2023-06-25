@@ -5311,6 +5311,9 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == TyInt) {
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
+        } else if (tags_first(v->tags) == TyFloat) {
+                e->type = EXPRESSION_REAL;
+                e->real = v->real;
         } else if (tags_first(v->tags) == TyId) {
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = mkcstr(tuple_get(v, "name"));

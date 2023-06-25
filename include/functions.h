@@ -328,6 +328,12 @@ struct value
 builtin_thread_cond_wait(int argc, struct value *kwargs);
 
 struct value
+builtin_thread_getname(int argc, struct value *kwargs);
+
+struct value
+builtin_thread_setname(int argc, struct value *kwargs);
+
+struct value
 builtin_os_pipe(int argc, struct value *kwargs);
 
 struct value

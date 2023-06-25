@@ -2112,6 +2112,57 @@ builtin_thread_kill(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_thread_setname(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.setName()", 1);
+
+        struct value name = ARG(0);
+        char const *pname;
+        int n;
+
+        switch (name.type) {
+        case VALUE_STRING:
+                n = min(sizeof buffer - 1, name.bytes);
+                memcpy(buffer, name.string, n);
+                buffer[n] = '\0';
+                pname = buffer;
+                break;
+        case VALUE_BLOB:
+                n = min(sizeof buffer - 1, name.blob->count);
+                memcpy(buffer, name.blob->items, n);
+                buffer[n] = '\0';
+                pname = buffer;
+                break;
+        case VALUE_PTR:
+                pname = name.ptr;
+                break;
+        default:
+                vm_panic("thread.setName(): expected string but got: %s", value_show(&name));
+        }
+
+#ifdef __APPLE__
+        pthread_setname_np(pname);
+#else
+        pthread_setname_np(pthread_self(), pname);
+#endif
+
+        return NIL;
+}
+
+struct value
+builtin_thread_getname(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.getName()", 0);
+
+        int r = pthread_getname_np(pthread_self(), buffer, sizeof buffer);
+        if (r != 0) {
+                return NIL;
+        }
+
+        return STRING_CLONE(buffer, strlen(buffer));
+}
+
+struct value
 builtin_os_fork(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.fork()", 0);
@@ -3106,7 +3157,7 @@ tuple_timespec(char const *func, struct value const *v)
 struct value
 builtin_os_sleep(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("os.usleep()", 1);
+        ASSERT_ARGC("os.sleep()", 1);
 
         struct timespec dur;
         struct timespec rem = {0};
@@ -3172,7 +3223,54 @@ builtin_os_sleep(int argc, struct value *kwargs)
 struct value
 builtin_os_sleep(int argc, struct value *kwargs)
 {
-        return NIL;
+        ASSERT_ARGC("os.sleep()", 1);
+
+        struct timespec dur;
+        struct timespec rem = {0};
+
+        bool us = false;
+
+        struct value *usec = NAMED("usec");
+
+        if (usec != NULL && usec->type == VALUE_BOOLEAN) {
+                us = usec->boolean;
+        }
+
+        struct value duration = ARG(0);
+        if (duration.type == VALUE_INTEGER) {
+                if (us) {
+                        dur.tv_sec = duration.integer / 1000000;
+                        dur.tv_nsec = (duration.integer % 1000000) * 1000ULL;
+                } else {
+                        dur.tv_sec = duration.integer;
+                        dur.tv_nsec = 0;
+                }
+        } else if (duration.type == VALUE_REAL) {
+                if (us) {
+                        dur.tv_sec = floor(duration.real / 1000000);
+                        dur.tv_nsec = (duration.real - dur.tv_sec * 1000000) * 1000ULL;
+                } else {
+                        dur.tv_sec = floor(duration.real);
+                        dur.tv_nsec = (duration.real - dur.tv_sec) * 1000000000ULL;
+                }
+        } else if (duration.type == VALUE_TUPLE) {
+                dur = tuple_timespec("os.sleep()", &duration);
+        } else {
+                vm_panic("the argument to os.sleep() must be an integer or a float");
+        }
+
+        int ret = nanosleep(&dur, &rem);
+
+        switch (ret) {
+        case 0:
+                return NIL;
+        case -1:
+                if (errno == EINTR) {
+                        return timespec_tuple(&rem);
+                } else {
+                        vm_panic("os.sleep(): invalid argument: nanosleep() returned EINVAL");
+                }
+        }
 }
 #endif
 
