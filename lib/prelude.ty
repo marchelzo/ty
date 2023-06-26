@@ -295,7 +295,7 @@ class Array : Iterable {
 class Dict : Iterable {
     init(ks, vs) {
         if ks && vs {
-            return %{ k: v for [k, v] in ks.zip(vs) }
+            return %{ k: v for (k, v) in ks.zip(vs) }
         } else {
             return %{}
         }
