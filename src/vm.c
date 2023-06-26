@@ -249,6 +249,8 @@ WaitGC()
 {
         GCLOG("Waiting for GC on thread %llu", TID);
 
+        ReleaseLock(false);
+
         while (!atomic_load(MyState)) {
                 if (!atomic_load(&WantGC)) {
                         SetState(true);
