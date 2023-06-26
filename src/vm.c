@@ -249,14 +249,15 @@ WaitGC()
 {
         GCLOG("Waiting for GC on thread %llu", TID);
 
-        SetState(false);
-        GCLOG("Releasing MyLock: %d", 0);
+        while (!atomic_load(MyState)) {
+                if (!atomic_load(&WantGC)) {
+                        SetState(true);
+                        TakeLock();
+                        return;
+                }
+        }
 
-        do {
-                GCLOG("Waiting for GCNext. Lock = %p", (void *)MyLock);
-                int r = pthread_cond_wait(MyCond, MyLock);
-                GCLOG("cond_wait returned %d; state = %d", r, (int)atomic_load(MyState));
-        } while (!atomic_load(MyState));
+        TakeLock();
 
         GCLOG("Waiting to mark: %llu", TID);
         pthread_barrier_wait(&GCBarrierStart);
