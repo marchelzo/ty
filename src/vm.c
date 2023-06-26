@@ -760,6 +760,8 @@ CleanupThread(void *ctx)
         vec_push_n_unchecked(DeadAllocs, allocs.items, allocs.count);
         DeadUsed += MemoryUsed;
 
+        allocs.count = 0;
+
         pthread_mutex_unlock(&DeadMutex);
 
         ReleaseLock(true);
