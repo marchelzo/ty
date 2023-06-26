@@ -270,6 +270,7 @@ WaitGC()
 
         GCLOG("Waiting to continue execution: %llu", TID);
         pthread_barrier_wait(&GCBarrierSweep);
+        pthread_barrier_wait(&GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
 }
 
@@ -383,6 +384,8 @@ DoGC()
         pthread_mutex_unlock(&GCLock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
+
+        pthread_barrier_wait(&GCBarrierDone);
 }
 
 static struct {
