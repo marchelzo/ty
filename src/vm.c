@@ -799,6 +799,9 @@ CleanupThread(void *ctx)
         gc_free(defer_stack.items);
         gc_free(allocs.items);
 
+        vec(struct value const *) *root_set = GCRootSet();
+        gc_free(root_set->items);
+
         GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
 }
 
