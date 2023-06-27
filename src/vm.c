@@ -1549,6 +1549,8 @@ Throw:
                         k = values.count;
                         vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
 
+                        NOGC(vp);
+
                         v = TUPLE(vp, NULL, k, false);
 
                         if (k > 0) {
@@ -1560,6 +1562,8 @@ Throw:
                         }
 
                         push(v);
+
+                        OKGC(vp);
 
                         break;
                 }
