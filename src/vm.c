@@ -1549,21 +1549,19 @@ Throw:
                         k = values.count;
                         vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
 
-                        NOGC(vp);
-
                         v = TUPLE(vp, NULL, k, false);
 
                         if (k > 0) {
                                 memcpy(vp, values.items, sizeof (struct value[k]));
                                 if (have_names) {
+                                        NOGC(vp);
                                         v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
                                         memcpy(v.names, names.items, sizeof (char *[k]));
+                                        OKGC(vp);
                                 }
                         }
 
                         push(v);
-
-                        OKGC(vp);
 
                         break;
                 }
@@ -2447,11 +2445,13 @@ BadContainer:
                         poptarget();
                         break;
                 CASE(MUT_ADD)
-                        vp = poptarget();
+                        vp = peektarget();
                         if (vp->type == VALUE_ARRAY) {
                                 if (top()->type != VALUE_ARRAY)
                                         vm_panic("attempt to add non-array to array");
-                                value_array_extend(vp->array, pop().array);
+                                value_array_extend(vp->array, top()->array);
+                                pop();
+                                poptarget();
                         } else if (vp->type == VALUE_DICT) {
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to add non-dict to dict");

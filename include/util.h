@@ -61,10 +61,10 @@ strstrn(char const *haystack, int hn, char const *needle, int nn)
 inline static unsigned long
 strhash(char const *s)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
 
         while (*s != '\0')
-                hash = ((hash << 5) + hash) + *s++; /* hash * 33 + c */
+                hash = (hash ^ *s++) * 16777619UL;
 
         return hash;
 }

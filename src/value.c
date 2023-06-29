@@ -53,18 +53,13 @@ tuples_equal(struct value const *v1, struct value const *v2)
         return true;
 }
 
-/*
- * These hash functions are based on djb's djb2 hash function,
- * copied from http://www.cse.yorku.ca/~oz/hash.html
- */
-
 inline static unsigned long
 str_hash(char const *str, int n)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
 
-        while (n > 0)
-                hash = ((hash << 5) + hash) + str[--n]; /* hash * 33 + c */
+        for (int i = 0; i < n; ++i)
+                hash = (hash ^ str[i]) * 16777619UL;
 
         return hash;
 }
@@ -72,13 +67,13 @@ str_hash(char const *str, int n)
 inline static unsigned long
 int_hash(intmax_t k)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
         char const *bytes = (char const *) &k;
-        char c;
+        unsigned char c;
 
         for (int i = 0; i < sizeof k; ++i) {
                 c = bytes[i];
-                hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+                hash = (hash ^ c) * 16777619UL;
         }
 
         return hash;
@@ -87,13 +82,13 @@ int_hash(intmax_t k)
 inline static unsigned long
 ptr_hash(void const *p)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
         char const *bytes = (char const *) &p;
-        char c;
+        unsigned char c;
 
         for (int i = 0; i < sizeof p; ++i) {
                 c = bytes[i];
-                hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+                hash = (hash ^ c) * 16777619UL;
         }
 
         return hash;
@@ -102,13 +97,13 @@ ptr_hash(void const *p)
 inline static unsigned long
 flt_hash(float flt)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
         char const *bytes = (char const *) &flt;
-        char c;
+        unsigned char c;
 
         for (int i = 0; i < sizeof flt; ++i) {
                 c = bytes[i];
-                hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+                hash = (hash ^ c) * 16777619UL;
         }
 
         return hash;
@@ -117,11 +112,11 @@ flt_hash(float flt)
 inline static unsigned long
 ary_hash(struct value const *a)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
 
         for (int i = 0; i < a->array->count; ++i) {
-                unsigned long c = value_hash(&a->array->items[i]);
-                hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+                unsigned char c = value_hash(&a->array->items[i]);
+                hash = (hash ^ c) * 16777619UL;
         }
 
         return hash;
@@ -130,11 +125,11 @@ ary_hash(struct value const *a)
 inline static unsigned long
 tpl_hash(struct value const *t)
 {
-        unsigned long hash = 5381;
+        unsigned long hash = 2166136261UL;
 
         for (int i = 0; i < t->count; ++i) {
-                unsigned long c = value_hash(&t->items[i]);
-                hash = ((hash << 5) + hash) + c; /* hash * 33 + c */
+                unsigned char c = value_hash(&t->items[i]);
+                hash = (hash ^ c) * 16777619UL;
         }
 
         return hash;
