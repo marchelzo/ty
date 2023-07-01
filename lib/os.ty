@@ -23,6 +23,8 @@ function walk(path) {
         }
     }
 
+    closedir(d)
+
     yield (path, ds, fs)
 }
 

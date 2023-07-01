@@ -3051,6 +3051,8 @@ vm_init(int ac, char **av)
                 return false;
         }
 
+        compiler_load_builtin_modules();
+
         if (setjmp(jb) != 0) {
                 Error = ERR;
                 return false;

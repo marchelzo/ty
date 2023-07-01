@@ -152,8 +152,6 @@ static int jumpdistance;
 static vec(struct module) modules;
 static struct state state;
 
-static vec(char const *) import_stack;
-
 static vec(location_vector) location_lists;
 
 static struct scope *global;
@@ -4342,18 +4340,6 @@ compile(char const *source)
         vec_push(location_lists, state.expression_locations);
 }
 
-static bool
-on_import_stack(char const *name)
-{
-        for (int i = 0; i < import_stack.count; ++i) {
-                if (strcmp(name, import_stack.items[i]) == 0) {
-                        return true;
-                }
-        }
-
-        return false;
-}
-
 static struct scope *
 load_module(char const *name, bool missing_ok)
 {
@@ -4362,8 +4348,6 @@ load_module(char const *name, bool missing_ok)
         if (source == NULL) {
                 return NULL;
         }
-
-        vec_push(import_stack, name);
 
         /*
          * Save the current compiler state so we can restore it after compiling
@@ -4395,8 +4379,6 @@ load_module(char const *name, bool missing_ok)
         //emit_instr(INSTR_EXEC_CODE);
         //emit_symbol((uintptr_t) m.code);
         vm_exec(m.code);
-
-        vec_pop(import_stack);
 
         return module_scope;
 }
@@ -4433,12 +4415,6 @@ import_module(struct statement const *s)
 
         if (module_scope == NULL) {
                 module_scope = load_module(name, false);
-        } else {
-                char extras[512];
-                snprintf(extras, sizeof extras - 1, "@%s", name);
-                if (get_module_scope(extras) == NULL && !on_import_stack(extras)) {
-                        load_module(extras, true);
-                }
         }
 
         char const **identifiers = (char const **) s->import.identifiers.items;
@@ -4475,6 +4451,21 @@ compiler_init(void)
         state = freshstate();
         global = state.global;
         global->function = global;
+}
+
+void
+compiler_load_builtin_modules(void)
+{
+        if (setjmp(jb) != 0) {
+                fprintf(stderr, "Aborting, failed to load builtin modules: %s\n", compiler_error());
+                exit(1);
+        }
+
+        int n = modules.count;
+
+        for (int i = 0; i < n; ++i) {
+                load_module(modules.items[i].path, true);
+        }
 }
 
 char *

@@ -18,6 +18,9 @@ int
 compiler_get_completions(char const *mod, char const *prefix, char **out, int max);
 
 void
+compiler_load_builtin_modules(void);
+
+void
 compiler_introduce_symbol(char const *, char const *);
 
 void
