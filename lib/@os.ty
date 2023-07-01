@@ -1,0 +1,29 @@
+import os (..)
+
+function walk(path) {
+    let d = opendir(path)
+
+    let fs = []
+    let ds = []
+
+    // Skip . and ..
+    readdir(d)
+    readdir(d)
+
+    while let $entry = readdir(d) {
+        match entry.d_type {
+            ::DT_DIR => ds.push(entry.d_name),
+            _        => fs.push(entry.d_name)
+        }
+    }
+
+    for d in ds {
+        for t in walk("{path}/{d}") {
+            yield t
+        }
+    }
+
+    yield (path, ds, fs)
+}
+
+let os::walk = walk

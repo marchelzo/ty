@@ -152,6 +152,8 @@ static int jumpdistance;
 static vec(struct module) modules;
 static struct state state;
 
+static vec(char const *) import_stack;
+
 static vec(location_vector) location_lists;
 
 static struct scope *global;
@@ -320,7 +322,7 @@ _emit_instr(char c)
 }
 
 static char *
-slurp_module(char const *name)
+try_slurp_module(char const *name)
 {
         char pathbuf[512];
         char const *home = getenv("HOME");
@@ -335,8 +337,16 @@ slurp_module(char const *name)
                 source = slurp(pathbuf);
         }
 
+        return source;
+}
+
+static char *
+slurp_module(char const *name)
+{
+        char *source = try_slurp_module(name);
+
         if (source == NULL) {
-                fail("failed to read file: %s", pathbuf);
+                fail("failed to load module: %s", name);
         }
 
         return source;
@@ -830,11 +840,16 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
                 if (decl) {
+                        if (target->module != NULL) {
+                                scope = get_import_scope(target->module);
+                                pub = true;
+                        }
                         target->symbol = addsymbol(scope, target->identifier);
                         target->local = true;
                         symbolize_expression(scope, target->constraint);
                         if (pub) {
-                                vec_push(state.exports, target->identifier);
+                                target->symbol->public = true;
+                                //vec_push(state.exports, target->identifier);
                         }
                 } else {
                         if (target->constraint != NULL) {
@@ -4327,6 +4342,65 @@ compile(char const *source)
         vec_push(location_lists, state.expression_locations);
 }
 
+static bool
+on_import_stack(char const *name)
+{
+        for (int i = 0; i < import_stack.count; ++i) {
+                if (strcmp(name, import_stack.items[i]) == 0) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static struct scope *
+load_module(char const *name, bool missing_ok)
+{
+        char *source = missing_ok ? try_slurp_module(name) : slurp_module(name);
+
+        if (source == NULL) {
+                return NULL;
+        }
+
+        vec_push(import_stack, name);
+
+        /*
+         * Save the current compiler state so we can restore it after compiling
+         * this module.
+         */
+        struct state save = state;
+        state = freshstate();
+        state.filename = name;
+
+        compile(source);
+
+        struct scope *module_scope = state.global;
+
+        /*
+         * Mark it as external so that only public symbols can be used by other modules.
+         */
+        module_scope->external = true;
+
+        struct module m = {
+                .path = name,
+                .code = state.code.items,
+                .scope = module_scope
+        };
+
+        vec_push(modules, m);
+
+        state = save;
+
+        //emit_instr(INSTR_EXEC_CODE);
+        //emit_symbol((uintptr_t) m.code);
+        vm_exec(m.code);
+
+        vec_pop(import_stack);
+
+        return module_scope;
+}
+
 void
 import_module(struct statement const *s)
 {
@@ -4357,48 +4431,16 @@ import_module(struct statement const *s)
                         fail("the module '%s' has already been imported", name);
         }
 
-        /*
-         * If we've already generated code to load this module, we can skip to the part of the code
-         * where we add the module to the current scope.
-         */
-        if (module_scope != NULL)
-                goto Import;
+        if (module_scope == NULL) {
+                module_scope = load_module(name, false);
+        } else {
+                char extras[512];
+                snprintf(extras, sizeof extras - 1, "@%s", name);
+                if (get_module_scope(extras) == NULL && !on_import_stack(extras)) {
+                        load_module(extras, true);
+                }
+        }
 
-        char *source = slurp_module(name);
-
-        /*
-         * Save the current compiler state so we can restore it after compiling
-         * this module.
-         */
-        struct state save = state;
-        state = freshstate();
-        state.filename = name;
-
-        compile(source);
-
-        module_scope = state.global;
-
-        /*
-         * Mark it as external so that only public symbols can be used by other modules.
-         */
-        module_scope->external = true;
-
-        struct module m = {
-                .path = name,
-                .code = state.code.items,
-                .scope = module_scope
-        };
-
-        vec_push(modules, m);
-
-        state = save;
-
-        //emit_instr(INSTR_EXEC_CODE);
-        //emit_symbol((uintptr_t) m.code);
-        vm_exec(m.code);
-
-Import:
-{
         char const **identifiers = (char const **) s->import.identifiers.items;
         int n = s->import.identifiers.count;
         bool everything = n == 1 && strcmp(identifiers[0], "..") == 0;
@@ -4417,7 +4459,6 @@ Import:
         }
 
         vec_push(state.imports, ((struct import){ .name = as, .scope = module_scope }));
-}
 }
 
 char const *
