@@ -1673,32 +1673,62 @@ builtin_os_write(int argc, struct value *kwargs)
                 vm_panic("the first argument to os.write() must be an integer");
 
         ssize_t n;
-
-        ReleaseLock(true);
+        void const *p;
+        unsigned char c;
 
         switch (data.type) {
         case VALUE_BLOB:
-                n = write(file.integer, (void *)data.blob->items, data.blob->count);
+                p = data.blob->items;
+                n = data.blob->count;
                 break;
         case VALUE_STRING:
-                n = write(file.integer, data.string, data.bytes);
+                p = data.string;
+                n = data.bytes;
                 break;
         case VALUE_INTEGER:
-                n = write(file.integer, &((unsigned char){data.integer}), 1);
+                c = data.integer;
+                p = &c;
+                n = 1;
                 break;
         case VALUE_PTR:
                 if (argc != 3 || ARG(2).type != VALUE_INTEGER) {
                         vm_panic("os.write(): expected integer as third argument");
                 }
-                n = write(file.integer, data.ptr, ARG(2).integer);
+                p = data.ptr;
+                n = ARG(2).integer;
                 break;
         default:
                 vm_panic("invalid argument to os.write()");
         }
 
+        struct value *all = NAMED("all");
+        bool write_all = all != NULL && value_truthy(all);
+
+        ReleaseLock(true);
+
+        size_t off = 0;
+
+        while (n > 0) {
+                ssize_t r = write(file.integer, ((unsigned char const *)p) + off, n);
+                if (r < 0) {
+                        TakeLock();
+                        return INTEGER(r);
+                }
+                if (r == 0) {
+                        break;
+                }
+
+                n -= r;
+                off += r;
+
+                if (!write_all) {
+                        break;
+                }
+        }
+
         TakeLock();
 
-        return INTEGER(n);
+        return INTEGER(off);
 }
 
 struct value
