@@ -220,9 +220,10 @@ struct expression {
                 EXPRESSION_SYMBOLIZED = 1 << 20
         } type;
 
-        char const *filename;
         struct location start;
         struct location end;
+
+        char const *filename;
 
         union {
                 intmax_t integer;

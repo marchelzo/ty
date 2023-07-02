@@ -533,6 +533,7 @@
 {.module = "ty/parse", .name = "expr", .value = BUILTIN(builtin_parse_expr)},
 {.module = "ty/parse", .name = "stmt", .value = BUILTIN(builtin_parse_stmt)},
 {.module = "ty/parse", .name = "fail", .value = BUILTIN(builtin_parse_fail)},
+{.module = "ty/parse", .name = "show", .value = BUILTIN(builtin_parse_show)},
 {.module = "ty/lex", .name = "peekc", .value = BUILTIN(builtin_lex_peek_char)},
 {.module = "ty/lex", .name = "getc", .value = BUILTIN(builtin_lex_next_char)},
 

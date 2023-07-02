@@ -18,7 +18,7 @@ struct value
 parse_get_expr(int prec, bool resolve);
 
 struct value
-parse_get_stmt(int prec);
+parse_get_stmt(int prec, bool want_raw);
 
 void
 parse_next(void);

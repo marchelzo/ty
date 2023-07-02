@@ -3791,6 +3791,7 @@ Expression:
         s = mkstmt();
         s->type = STATEMENT_EXPRESSION;
         s->expression = parse_expr(prec);
+        s->end = s->expression->end;
 
         if (s->expression->type == EXPRESSION_STATEMENT) {
                 struct statement *inner = s->expression->statement;
@@ -4121,7 +4122,7 @@ parse_get_expr(int prec, bool resolve)
 }
 
 struct value
-parse_get_stmt(int prec)
+parse_get_stmt(int prec, bool want_raw)
 {
         int save = TokenIndex;
 
@@ -4139,7 +4140,14 @@ parse_get_stmt(int prec)
                 v = NIL;
                 seek(save);
         } else {
-                v = tystmt(parse_statement(prec));
+                struct statement *s = parse_statement(prec);
+                if (want_raw) {
+                        v = value_tuple(2);
+                        v.items[0] = PTR(s);
+                        v.items[1] = tystmt(s);
+                } else {
+                        v = tystmt(s);
+                }
         }
 
         LOAD_NE();

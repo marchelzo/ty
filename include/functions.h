@@ -593,6 +593,9 @@ struct value
 builtin_parse_fail(int argc, struct value *kwargs);
 
 struct value
+builtin_parse_show(int argc, struct value *kwargs);
+
+struct value
 builtin_lex_peek_char(int argc, struct value *kwargs);
 
 struct value

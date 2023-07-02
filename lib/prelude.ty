@@ -1546,6 +1546,29 @@ macro showCode {
     e
 }
 
+macro dbg! {
+    // (
+    lex.next()
+
+    let (p, e) = parse.stmt(0, raw: true)
+
+    // )
+    lex.next()
+
+    ty.Block([
+        ty.Let(ty.Id(name: 'x'), e),
+        ty.Call(
+            func: ty.Id(name: 'print'),
+            args: [
+                ty.Arg(arg: ty.String(parse.show(p))),
+                ty.Arg(arg: ty.Id(name: 'x')),
+                ty.Arg(name: 'sep', arg: ty.String(' = '))
+            ]
+        ),
+        ty.Id(name: 'x')
+    ])
+}
+
 macro timed! {
     // (
     lex.next()
@@ -1555,7 +1578,7 @@ macro timed! {
     // )
     lex.next()
 
-    ty.Multi([
+    ty.Block([
         ty.Let(
             ty.Array([
                 ty.ArrayItem(item: ty.Id(name: 's')),

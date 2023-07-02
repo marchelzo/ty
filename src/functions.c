@@ -4722,6 +4722,8 @@ builtin_parse_stmt(int argc, struct value *kwargs)
 
         int prec;
 
+        struct value *raw = NAMED("raw");
+
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
                         vm_panic("ty.parse.stmt(): expected integer but got: %s", value_show(&ARG(0)));
@@ -4731,7 +4733,23 @@ builtin_parse_stmt(int argc, struct value *kwargs)
                 prec = -1;
         }
 
-        return parse_get_stmt(prec);
+        return parse_get_stmt(prec, raw != NULL && value_truthy(raw));
+}
+
+struct value
+builtin_parse_show(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.parse.fail()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("ty.parse.show(): expected pointer but got: %s", value_show(&ARG(0)));
+        }
+
+        struct expression const *e = ARG(0).ptr;
+
+        int n = e->end.s - e->start.s;
+
+        return STRING_CLONE(e->start.s, n);
 }
 
 struct value
