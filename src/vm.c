@@ -338,7 +338,6 @@ DoGC()
         pthread_barrier_wait(&GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                // mark
                 GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)ThreadList.items[blockedThreads[i]], TID);
                 MarkStorage(&ThreadStorages.items[blockedThreads[i]]);
         }
@@ -351,9 +350,6 @@ DoGC()
         }
 
         pthread_barrier_wait(&GCBarrierMark);
-
-        //GCLOG("Setting GC_ENABLED = false on thread %llu", TID);
-        //GC_ENABLED = false;
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
         atomic_store(&WantGC, false);
@@ -377,9 +373,6 @@ DoGC()
         pthread_barrier_wait(&GCBarrierSweep);
 
         UnlockThreads(blockedThreads, nBlocked);
-
-        //GCLOG("Setting GC_ENABLED = true on thread %llu", TID);
-        //GC_ENABLED = true;
 
         GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, DeadUsed);
 
@@ -692,9 +685,16 @@ NewThread(pthread_t *thread, struct value *call)
                 .ctx = call,
                 .created = &created
         };
-
         atomic_store(&created, false);
+
+#ifndef TY_RELEASE
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setstacksize(&attr, 1ULL << 22);
+        pthread_create(thread, &attr, vm_run_thread, ctx);
+#else
         pthread_create(thread, NULL, vm_run_thread, ctx);
+#endif
 
         while (!atomic_load(&created))
                 ;
@@ -2445,13 +2445,12 @@ BadContainer:
                         poptarget();
                         break;
                 CASE(MUT_ADD)
-                        vp = peektarget();
+                        vp = poptarget();
                         if (vp->type == VALUE_ARRAY) {
                                 if (top()->type != VALUE_ARRAY)
                                         vm_panic("attempt to add non-array to array");
                                 value_array_extend(vp->array, top()->array);
                                 pop();
-                                poptarget();
                         } else if (vp->type == VALUE_DICT) {
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to add non-dict to dict");

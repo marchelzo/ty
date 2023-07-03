@@ -643,7 +643,9 @@ builtin_tuple(int argc, struct value *kwargs)
         struct value tuple = value_tuple(argc + named);
 
         if (named > 0) {
+                NOGC(tuple.items);
                 tuple.names = gc_alloc_object((argc + named) * sizeof (char *), GC_ANY);
+                OKGC(tuple.items);
         } else {
                 tuple.gc_names = true;
         }

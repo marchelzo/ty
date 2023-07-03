@@ -227,12 +227,12 @@ main(int argc, char **argv)
         }
 
         if (i < argc && strcmp(argv[i], "-e") == 0) {
-                if (argc < 3) {
+                if (argc < i + 1) {
                         fputs("error: -e with no program specified", stderr);
                         return -1;
                 }
                 char buffer[8192] = {0};
-                strncpy(buffer, argv[2], sizeof buffer - 1);
+                strncpy(buffer, argv[i + 1], sizeof buffer - 1);
 
                 if (!execln(buffer)) {
                         return -1;
