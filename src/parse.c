@@ -792,7 +792,14 @@ prefix_identifier(void)
         consume(TOKEN_IDENTIFIER);
 
         if (true && is_macro(e)) {
-                return typarse(e);
+                struct expression *expanded = typarse(e);
+                expanded->start = e->start;
+                expanded->end = token(-1)->end;
+                if (expanded->type == EXPRESSION_STATEMENT) {
+                        expanded->statement->start = e->start;
+                        expanded->statement->end = End;
+                }
+                return expanded;
         }
 
         // Is this a macro invocation?
