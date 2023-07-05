@@ -1412,6 +1412,8 @@ prefix_parenthesis(void)
 
                 consume(')');
 
+                list->end = End;
+
                 return list;
         } else {
                 consume(')');
