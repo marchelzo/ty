@@ -11,7 +11,7 @@ class CURL {
         self.url = url
         self.headers = null
         setopt(self.handle, CURLOPT_URL, url)
-        //setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
+        setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
     }
 
     post(data) {

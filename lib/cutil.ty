@@ -119,6 +119,29 @@ pub macro struct! {
         )
     }
 
+    let show = ty.Func(
+        name: '__str__',
+        params: [],
+        body: ty.Call(
+            func: ty.Value(str),
+            args: [
+                ty.Arg(
+                    arg: ty.Record([
+                        ty.RecordEntry(
+                            name: e.name,
+                            item: ty.MethodCall(
+                                object: ty.Id(name: 'self'),
+                                method: e.name,
+                                args: []
+                            )
+                        )
+                        for e in struct
+                    ])
+                )
+            ]
+        )
+    )
+
     ty.Multi([
         ty.Let(
             ty.Id(name: "{structName}_C"),
@@ -129,7 +152,7 @@ pub macro struct! {
         ),
         ty.Class(
             name: structName,
-            methods: [get, init, *methods]
+            methods: [get, init, show, *methods]
         )
     ])
 }
