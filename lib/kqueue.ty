@@ -87,10 +87,10 @@ let NOTE_TRACK = 0x00000001              /* follow across forks */
 let NOTE_TRACKERR = 0x00000002              /* could not track child */
 let NOTE_CHILD = 0x00000004              /* am a child process */
 
-cfun! nil c.int kqueue(c.void)
+cfun! pub nil c.int kqueue(c.void)
 
-//                 kq     changelist  nchanges  eventlist  nevents  timeout
-cfun! nil c.int kevent(c.int, c.ptr,      c.int,    c.ptr,     c.int,   c.ptr)
+//                         kq     changelist  nchanges  eventlist  nevents  timeout
+cfun! pub nil c.int kevent(c.int, c.ptr,      c.int,    c.ptr,     c.int,   c.ptr)
 
 struct! KEvent {
     ident:  c.u64, /* identifier for this event */
