@@ -1,0 +1,128 @@
+import ffi as c
+import cutil (wrap, cfun!, struct!)
+import bit
+
+let EVFILT_READ = (-1)
+let EVFILT_WRITE = (-2)
+let EVFILT_AIO = (-3)    /* attached to aio requests */
+let EVFILT_VNODE = (-4)    /* attached to vnodes */
+let EVFILT_PROC = (-5)    /* attached to struct proc */
+let EVFILT_SIGNAL = (-6)    /* attached to struct proc */
+let EVFILT_TIMER = (-7)    /* timers */
+let EVFILT_MACHPORT = (-8)    /* Mach portsets */
+let EVFILT_FS = (-9)    /* Filesystem events */
+let EVFILT_USER = (-10)   /* User events */
+let EVFILT_VM = (-12)   /* Virtual memory events */
+let EVFILT_EXCEPT = (-15)   /* Exception events */
+let EVFILT_SYSCOUNT = 17
+let EVFILT_THREADMARKER = EVFILT_SYSCOUNT /* Internal use only */
+let KEVENT_FLAG_NONE = 0x000000       /* no flag value */
+let KEVENT_FLAG_IMMEDIATE = 0x000001       /* immediate timeout */
+let KEVENT_FLAG_ERROR_EVENTS = 0x000002       /* output events only include change errors */
+let EV_ADD = 0x0001      /* add event to kq (implies enable) */
+let EV_DELETE = 0x0002      /* delete event from kq */
+let EV_ENABLE = 0x0004      /* enable event */
+let EV_DISABLE = 0x0008      /* disable event (not reported) */
+let EV_ONESHOT = 0x0010      /* only report one occurrence */
+let EV_CLEAR = 0x0020      /* clear event state after reporting */
+let EV_RECEIPT = 0x0040      /* force immediate event output */
+let EV_DISPATCH = 0x0080      /* disable event after reporting */
+let EV_UDATA_SPECIFIC = 0x0100      /* unique kevent per udata value */
+let EV_DISPATCH2 = (EV_DISPATCH | EV_UDATA_SPECIFIC)
+let EV_VANISHED = 0x0200      /* report that source has vanished  */
+let EV_SYSFLAGS = 0xF000      /* reserved by system */
+let EV_FLAG0 = 0x1000      /* filter-specific flag */
+let EV_FLAG1 = 0x2000      /* filter-specific flag */
+let EV_EOF = 0x8000      /* EOF detected */
+let EV_ERROR = 0x4000      /* error, data contains errno */
+let EV_POLL = EV_FLAG0
+let EV_OOBAND = EV_FLAG1
+
+let NOTE_TRIGGER = 0x01000000
+let NOTE_FFNOP = 0x00000000              /* ignore input fflags */
+let NOTE_FFAND = 0x40000000              /* and fflags */
+let NOTE_FFOR = 0x80000000              /* or fflags */
+let NOTE_FFCOPY = 0xc0000000              /* copy fflags */
+let NOTE_FFCTRLMASK = 0xc0000000              /* mask for operations */
+let NOTE_FFLAGSMASK = 0x00ffffff
+let NOTE_LOWAT = 0x00000001              /* low water mark */
+let NOTE_OOB = 0x00000002              /* OOB data */
+let NOTE_DELETE = 0x00000001              /* vnode was removed */
+let NOTE_WRITE = 0x00000002              /* data contents changed */
+let NOTE_EXTEND = 0x00000004              /* size increased */
+let NOTE_ATTRIB = 0x00000008              /* attributes changed */
+let NOTE_LINK = 0x00000010              /* link count changed */
+let NOTE_RENAME = 0x00000020              /* vnode was renamed */
+let NOTE_REVOKE = 0x00000040              /* vnode access was revoked */
+let NOTE_NONE = 0x00000080              /* No specific vnode event: to test for EVFILT_READ activation*/
+let NOTE_FUNLOCK = 0x00000100              /* vnode was unlocked by flock(2) */
+let NOTE_LEASE_DOWNGRADE = 0x00000200         /* lease downgrade requested */
+let NOTE_LEASE_RELEASE = 0x00000400           /* lease release requested */
+let NOTE_EXIT = 0x80000000      /* process exited */
+let NOTE_FORK = 0x40000000      /* process forked */
+let NOTE_EXEC = 0x20000000      /* process exec'd */
+let NOTE_SIGNAL = 0x08000000      /* shared with EVFILT_SIGNAL */
+let NOTE_EXITSTATUS = 0x04000000      /* exit status to be returned, valid for child process or when allowed to signal target pid */
+let NOTE_EXIT_DETAIL = 0x02000000      /* provide details on reasons for exit */
+let NOTE_PDATAMASK = 0x000fffff              /* mask for signal & exit status */
+let NOTE_PCTRLMASK = bit.complement(NOTE_PDATAMASK)
+let NOTE_EXIT_DETAIL_MASK = 0x00070000
+let NOTE_EXIT_DECRYPTFAIL = 0x00010000
+let NOTE_EXIT_MEMORY = 0x00020000
+let NOTE_EXIT_CSERROR = 0x00040000
+let NOTE_VM_PRESSURE = 0x80000000              /* will react on memory pressure */
+let NOTE_VM_PRESSURE_TERMINATE = 0x40000000              /* will quit on memory pressure, possibly after cleaning up dirty state */
+let NOTE_VM_PRESSURE_SUDDEN_TERMINATE = 0x20000000              /* will quit immediately on memory pressure */
+let NOTE_VM_ERROR = 0x10000000              /* there was an error */
+let NOTE_SECONDS = 0x00000001              /* data is seconds         */
+let NOTE_USECONDS = 0x00000002              /* data is microseconds    */
+let NOTE_NSECONDS = 0x00000004              /* data is nanoseconds     */
+let NOTE_ABSOLUTE = 0x00000008              /* absolute timeout        */
+let NOTE_LEEWAY = 0x00000010              /* ext[1] holds leeway for power aware timers */
+let NOTE_CRITICAL = 0x00000020              /* system does minimal timer coalescing */
+let NOTE_BACKGROUND = 0x00000040              /* system does maximum timer coalescing */
+let NOTE_MACH_CONTINUOUS_TIME = 0x00000080
+let NOTE_MACHTIME = 0x00000100              /* data is mach absolute time units */
+let NOTE_TRACK = 0x00000001              /* follow across forks */
+let NOTE_TRACKERR = 0x00000002              /* could not track child */
+let NOTE_CHILD = 0x00000004              /* am a child process */
+
+cfun! nil c.int kqueue(c.void)
+
+//                 kq     changelist  nchanges  eventlist  nevents  timeout
+cfun! nil c.int kevent(c.int, c.ptr,      c.int,    c.ptr,     c.int,   c.ptr)
+
+struct! KEvent {
+    ident:  c.u64, /* identifier for this event */
+    filter: c.i16, /* filter for event */
+    flags:  c.u16, /* general flags */
+    fflags: c.u32, /* filter-specific flags */
+    data:   c.i64, /* filter-specific data */
+    udata:  c.ptr  /* opaque user data identifier */
+};
+
+struct! Timespec {
+    sec:  c.u64,
+    nsec: c.long
+}
+
+/*
+#define EV_SET(kevp, a, b, c, d, e, f) do {     \
+	struct kevent *__kevp__ = (kevp);       \
+	__kevp__->ident = (a);                  \
+	__kevp__->filter = (b);                 \
+	__kevp__->flags = (c);                  \
+	__kevp__->fflags = (d);                 \
+	__kevp__->data = (e);                   \
+	__kevp__->udata = (f);                  \
+} while(0)
+*/
+
+function EV_SET(ev, a, b, c, d, e, f) {
+    ev.ident(a)
+    ev.filter(b)
+    ev.flags(c)
+    ev.fflags(d)
+    ev.data(e)
+    ev.udata(f)
+}
