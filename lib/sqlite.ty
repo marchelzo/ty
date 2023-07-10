@@ -9,12 +9,13 @@ tag SQLiteError {
 }
 
 class SQLiteRowIter : Iter {
-    init(s) {
+    init(s, assoc=true) {
         self.s = s
+        self.assoc = assoc
     }
 
     __next__() {
-        Some.from(self.s.nextRow())
+        Some.from(self.s.nextRow(self.assoc))
     }
 }
 
@@ -44,10 +45,10 @@ class SQLiteStatement : Iterable {
         }
     }
 
-    row() {
+    row(assoc=true) {
         if self.p {
             if self.status == SQLITE_ROW {
-                return fetchAssoc(self.p)
+                return assoc ? fetchAssoc(self.p) : fetch(self.p)
             } else {
                 return nil
             }
@@ -56,9 +57,9 @@ class SQLiteStatement : Iterable {
         }
     }
 
-    nextRow() {
+    nextRow(assoc=true) {
         self.step()
-        let row = self.row()
+        let row = self.row(assoc)
         if self.status == SQLITE_DONE {
             self.finalize()
         }
@@ -72,12 +73,12 @@ class SQLiteStatement : Iterable {
         }
     }
 
-    rows() {
+    rows(assoc=true) {
         if !self.p {
             throw SQLiteError(SQLITE_MISUSE)
         }
         reset(self.p)
-        return SQLiteRowIter(self)
+        return SQLiteRowIter(self, assoc)
     }
 
     __drop__() {
@@ -118,6 +119,14 @@ class SQLite {
         }
 
         return SQLiteStatement(s)
+    }
+
+    changes() {
+        changes(@db)
+    }
+
+    totalChanges() {
+        totalChanges(@db)
     }
 
     exec(sql, *ps) {

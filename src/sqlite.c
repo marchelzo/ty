@@ -104,6 +104,42 @@ step(int argc, struct value *kwargs)
 }
 
 static struct value
+changes(int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("sqlite3.changes() expects exactly 1 argument");
+        }
+
+        struct value ptr = ARG(0);
+
+        if (ptr.type != VALUE_PTR) {
+                vm_panic("the first argument to sqlite3.changes() must be a pointer");
+        }
+
+        sqlite3 *db = ptr.ptr;
+
+        return INTEGER(sqlite3_changes(db));
+}
+
+static struct value
+total_changes(int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("sqlite3.totalChanges() expects exactly 1 argument");
+        }
+
+        struct value ptr = ARG(0);
+
+        if (ptr.type != VALUE_PTR) {
+                vm_panic("the first argument to sqlite3.totalChanges() must be a pointer");
+        }
+
+        sqlite3 *db = ptr.ptr;
+
+        return INTEGER(sqlite3_total_changes(db));
+}
+
+static struct value
 column_count(int argc, struct value *kwargs)
 {
         if (argc != 1) {
@@ -442,20 +478,22 @@ static struct {
         char const *name;
         struct value value;
 } builtins[] = {
-        { .name = "open",         .value = BUILTIN(dbopen)       },
-        { .name = "close",        .value = BUILTIN(dbclose)      },
-        { .name = "fetch",        .value = BUILTIN(fetch)        },
-        { .name = "fetchAssoc",   .value = BUILTIN(fetch_dict)   },
-        { .name = "prepare",      .value = BUILTIN(prepare)      },
-        { .name = "step",         .value = BUILTIN(step)         },
-        { .name = "finalize",     .value = BUILTIN(finalize)     },
-        { .name = "reset",        .value = BUILTIN(reset)        },
-        { .name = "bind",         .value = BUILTIN(bind)         },
-        { .name = "column",       .value = BUILTIN(get_column)   },
-        { .name = "columnCount",  .value = BUILTIN(column_count) },
-        { .name = "columnName",   .value = BUILTIN(column_name)  },
-        { .name = "error",        .value = BUILTIN(error_code)   },
-        { .name = "errorMessage", .value = BUILTIN(error_msg)    },
+        { .name = "open",         .value = BUILTIN(dbopen)        },
+        { .name = "close",        .value = BUILTIN(dbclose)       },
+        { .name = "fetch",        .value = BUILTIN(fetch)         },
+        { .name = "fetchAssoc",   .value = BUILTIN(fetch_dict)    },
+        { .name = "prepare",      .value = BUILTIN(prepare)       },
+        { .name = "step",         .value = BUILTIN(step)          },
+        { .name = "finalize",     .value = BUILTIN(finalize)      },
+        { .name = "reset",        .value = BUILTIN(reset)         },
+        { .name = "bind",         .value = BUILTIN(bind)          },
+        { .name = "column",       .value = BUILTIN(get_column)    },
+        { .name = "columnCount",  .value = BUILTIN(column_count)  },
+        { .name = "columnName",   .value = BUILTIN(column_name)   },
+        { .name = "error",        .value = BUILTIN(error_code)    },
+        { .name = "errorMessage", .value = BUILTIN(error_msg)     },
+        { .name = "changes",      .value = BUILTIN(changes)       },
+        { .name = "totalChanges", .value = BUILTIN(total_changes) },
         { .name = "SQLITE_ABORT", .value = INT(4) },
         { .name = "SQLITE_AUTH", .value = INT(23) },
         { .name = "SQLITE_BUSY", .value = INT(5) },
