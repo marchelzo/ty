@@ -41,6 +41,12 @@ let FCGI_MAX_CONNS  = "FCGI_MAX_CONNS";
 let FCGI_MAX_REQS   = "FCGI_MAX_REQS";
 let FCGI_MPXS_CONNS = "FCGI_MPXS_CONNS";
 
+let statusText = %{
+    400: 'Bad Request',
+    404: 'Not Found',
+    200: 'OK'
+}
+
 class FCGIRecord {
     read(f) {
         let r = FCGIRecord();
@@ -137,28 +143,39 @@ class FCGIRequest {
         self.params = ps
     }
 
-    sendHTML(html) {
-        self.sendResponse(0, "Content-type: text/html\r\n\r\n{html}\r\n");
+    sendHTML(html, headers, status=200) {
+        self.sendResponse(status, html, [('Content-Type', 'text/html'), *headers])
     }
 
-    sendResponse(status, body) {
-        let size = body.size();
-        let response = blob();
+    sendResponse(status, body='', headers=[]) {
+        let buffer = blob()
+        let push = buffer.push
+        let exitStatus = 0
 
+        let output = blob()
+
+        for (k, v) in headers {
+            output.push("{k}: {v}\r\n")
+        }
+
+        output.push("Status: {status} {statusText[status]}\r\n\r\n")
+        output.push(body)
+
+        let size = #output
         let offset = 0
 
         while size > 0xFFFF {
-            response.push(FCGI_VERSION_1);
-            response.push(FCGI_STDOUT);
-            response.push(0);
-            response.push(1);
-            response.push(0xFF);
-            response.push(0xFF);
-            response.push(0);
-            response.push(0);
-            response.push(body.slice(offset, 0xFFFF));
-            @stream.write(response)
-            response.clear();
+            push(FCGI_VERSION_1);
+            push(FCGI_STDOUT);
+            push(0);
+            push(1);
+            push(0xFF);
+            push(0xFF);
+            push(0);
+            push(0);
+            push(output.slice(offset, 0xFFFF));
+            @stream.write(buffer)
+            buffer.clear();
 
             size -= 0xFFFF
             offset += 0xFFFF
@@ -166,48 +183,48 @@ class FCGIRequest {
 
 
         if size > 0 {
-            response.push(FCGI_VERSION_1);
-            response.push(FCGI_STDOUT);
-            response.push(0);
-            response.push(1);
-            response.push(size >> 8);
-            response.push(0xFF .&. size);
-            response.push(0);
-            response.push(0);
-            response.push(body.slice(offset));
-            @stream.write(response)
-            response.clear();
+            push(FCGI_VERSION_1);
+            push(FCGI_STDOUT);
+            push(0);
+            push(1);
+            push(size >> 8);
+            push(0xFF .&. size);
+            push(0);
+            push(0);
+            push(output.slice(offset));
+            @stream.write(buffer)
+            buffer.clear();
         }
 
-        response.push(FCGI_VERSION_1);
-        response.push(FCGI_STDOUT);
-        response.push(0);
-        response.push(1);
-        response.push(0);
-        response.push(0);
-        response.push(0);
-        response.push(0);
-        @stream.write(response)
-        response.clear();
+        push(FCGI_VERSION_1);
+        push(FCGI_STDOUT);
+        push(0);
+        push(1);
+        push(0);
+        push(0);
+        push(0);
+        push(0);
+        @stream.write(buffer)
+        buffer.clear();
 
-        response.push(FCGI_VERSION_1);
-        response.push(FCGI_END_REQUEST);
-        response.push(0);
-        response.push(1);
-        response.push(0);
-        response.push(8);
-        response.push(0);
-        response.push(0);
-        response.push((status >> 24) .&. 0xFF);
-        response.push((status >> 16) .&. 0xFF);
-        response.push((status >> 8) .&. 0xFF);
-        response.push(status .&. 0xFF);
-        response.push(FCGI_REQUEST_COMPLETE);
-        response.push(0);
-        response.push(0);
-        response.push(0);
+        push(FCGI_VERSION_1);
+        push(FCGI_END_REQUEST);
+        push(0);
+        push(1);
+        push(0);
+        push(8);
+        push(0);
+        push(0);
+        push((exitStatus >> 24) .&. 0xFF);
+        push((exitStatus >> 16) .&. 0xFF);
+        push((exitStatus >> 8) .&. 0xFF);
+        push(exitStatus .&. 0xFF);
+        push(FCGI_REQUEST_COMPLETE);
+        push(0);
+        push(0);
+        push(0);
 
-        @stream.write(response)
+        @stream.write(buffer)
 
         @stream.close()
     }
