@@ -2,7 +2,7 @@ import io
 import os (args)
 import sh (sh)
 
-if not let [_, header, prefix] = args {
+if not let [_, header, *prefixes] = args {
     os.exit(1)
 }
 
@@ -16,7 +16,7 @@ for line, i in io.open(header, 'r') {
             constants.push((_1, _2))
         },
 
-        /^\s*(?:typedef\s*)?enum\s/ => {
+        /^\s*(?:typedef\s*)?enum(?:\s|$)/ => {
             inEnum = true
         },
 
@@ -43,7 +43,7 @@ for line, i in io.open(header, 'r') {
     }
 }
 
-constants.filter!(&0 |> [prefix in])
+constants.filter!(${prefixes.any?([in it.0])})
 
 for (name, value) in constants {
     print("let {name} = {value}")
