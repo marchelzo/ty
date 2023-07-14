@@ -193,6 +193,7 @@
 { .module = "os",     .name = "O_NONBLOCK",        .value = INT(O_NONBLOCK)                                },
 { .module = "os",     .name = "O_ASYNC",           .value = INT(O_ASYNC)                                   },
 { .module = "os",     .name = "O_DIRECTORY",       .value = INT(O_DIRECTORY)                               },
+{ .module = "os",     .name = "O_EXCL",            .value = INT(O_EXCL)                                    },
 #ifdef WNOHANG
 { .module = "os",     .name = "WNOHANG",           .value = INT(WNOHANG)                                   },
 #endif
