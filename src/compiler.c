@@ -1459,9 +1459,14 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(subscope, s->each.stop);
                 break;
         case STATEMENT_RETURN:
+                if (state.func == NULL) {
+                        fail("invalid return statement (not inside of a function)");
+                }
+
                 if (state.func->ftype == FT_GEN) {
                         fail("return statement cannot appear in generator context");
                 }
+
                 for (int i = 0; i < s->returns.count; ++i) {
                     symbolize_expression(scope, s->returns.items[i]);
                 }
@@ -2048,10 +2053,6 @@ emit_yield(struct expression const *e)
 static bool
 emit_return(struct statement const *s)
 {
-        if (state.function_depth == 0) {
-                fail("invalid return statement (not inside of a function)");
-        }
-
         if (state.finally) {
                 fail("invalid return statement (occurs in a finally block)");
         }
