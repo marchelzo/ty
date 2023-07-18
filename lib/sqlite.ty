@@ -92,7 +92,11 @@ class SQLiteStatement : Iterable {
 
 class SQLite {
     init(path, fullMutex: Bool = false) {
-        if let $db = open(path, (SQLITE_OPEN_FULLMUTEX .|. SQLITE_OPEN_READWRITE .|. SQLITE_OPEN_CREATE) if fullMutex) {
+        let fullMutexFlags =  SQLITE_OPEN_FULLMUTEX
+                          .|. SQLITE_OPEN_READWRITE
+                          .|. SQLITE_OPEN_CREATE
+
+        if let $db = open(path, fullMutexFlags if fullMutex) {
             @db = db
         } else {
             throw SQLiteError(error())
