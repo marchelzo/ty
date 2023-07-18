@@ -2,6 +2,7 @@ import os
 import io
 import bit (shiftLeft, shiftRight, AND)
 import errno
+import json
 
 export FCGIApp
 
@@ -42,9 +43,10 @@ let FCGI_MAX_REQS   = "FCGI_MAX_REQS";
 let FCGI_MPXS_CONNS = "FCGI_MPXS_CONNS";
 
 let statusText = %{
+    200: 'OK',
     400: 'Bad Request',
-    404: 'Not Found',
-    200: 'OK'
+    401: 'Unauthorized',
+    404: 'Not Found'
 }
 
 class FCGIRecord {
@@ -143,8 +145,12 @@ class FCGIRequest {
         self.params = ps
     }
 
-    sendHTML(html, headers, status=200) {
+    sendHTML(html, headers=[], status=200) {
         self.sendResponse(status, html, [('Content-Type', 'text/html'), *headers])
+    }
+
+    sendJSON(x, headers=[], status=200) {
+        self.sendResponse(status, json.encode(x), [('Content-Type', 'application/json'), *headers])
     }
 
     sendResponse(status, body='', headers=[]) {
@@ -239,8 +245,10 @@ class FCGIRequest {
             let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})");
             let fields = self.body.matches(pattern);
             return %{ k: v for [_, k, v] in fields };
-        } else {
+        } else if self.params['CONTENT_TYPE'].match?(/^application\/x-www-form-urlencoded/) {
             return urlDecode(self.body);
+        } else {
+            return urlDecode(self.params['QUERY_STRING']);
         }
     }
 }
@@ -250,9 +258,13 @@ class FCGIApp {
         self.socket = socket;
     }
 
-    waitRequest() {
+    waitRequest(keepTrying: Bool = false) {
         if not let ($fd, addr) = os.accept(self.socket) {
-            return nil;
+            if keepTrying && errno.get() == errno.EINTR {
+                return self.waitRequest()
+            } else {
+                return nil
+            }
         }
 
         let stream = io.open(fd, 'r+')
