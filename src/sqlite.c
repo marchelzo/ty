@@ -5,19 +5,28 @@
 #include "vec.h"
 #include "dict.h"
 
-static int error;
+static _Thread_local int error;
 
 static struct value
 dbopen(int argc, struct value *kwargs)
 {
-        if (argc != 1) {
-                vm_panic("sqlite3.open() expects exactly 1 argument");
+        if (argc != 1 && argc != 2) {
+                vm_panic("sqlite3.open(): expected 1 or 2 arguments but got %d", argc);
         }
 
         struct value file = ARG(0);
-
         if (file.type != VALUE_STRING) {
-                vm_panic("the argument to sqlite3.open() must be a string");
+                vm_panic("sqlite3.open(): expected a string but got: %s", value_show(&file));
+        }
+
+        int flags;
+        if (argc > 1) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("sqlite3.open(): expected an integer but got: %s", value_show(&ARG(1)));
+                }
+                flags = ARG(1).integer;
+        } else {
+                flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
         }
 
         vec(char) s;
@@ -26,7 +35,9 @@ dbopen(int argc, struct value *kwargs)
         vec_push(s, '\0');
 
         sqlite3 *db;
-        int r = sqlite3_open(s.items, &db);
+        int r = sqlite3_open_v2(s.items, &db, flags, NULL);
+
+        gc_free(s.items);
 
         if (r == SQLITE_OK) {
                 return PTR(db);
@@ -435,8 +446,8 @@ column_name(int argc, struct value *kwargs)
 static struct value
 error_code(int argc, struct value *kwargs)
 {
-        if (argc != 1) {
-                vm_panic("sqlite3.error() expects exactly 1 argument");
+        if (argc == 0) {
+                return INTEGER(error);
         }
 
         struct value v = ARG(0);
@@ -445,7 +456,8 @@ error_code(int argc, struct value *kwargs)
                 vm_panic("the argument to sqlite3.error() must be a pointer");
         }
 
-        return INTEGER(error);
+        return INTEGER(sqlite3_errcode(v.ptr));
+
 }
 
 static struct value
@@ -586,6 +598,28 @@ static struct {
         { .name = "SQLITE_READONLY_RECOVERY", .value = INT(264) },
         { .name = "SQLITE_READONLY_ROLLBACK", .value = INT(776) },
         { .name = "SQLITE_WARNING_AUTOINDEX", .value = INT(284) },
+        { .name = "SQLITE_OPEN_READONLY", .value = INT(0x00000001) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_READWRITE", .value = INT(0x00000002) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_CREATE", .value = INT(0x00000004) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_DELETEONCLOSE", .value = INT(0x00000008) },  /* VFS only */
+        { .name = "SQLITE_OPEN_EXCLUSIVE", .value = INT(0x00000010) },  /* VFS only */
+        { .name = "SQLITE_OPEN_AUTOPROXY", .value = INT(0x00000020) },  /* VFS only */
+        { .name = "SQLITE_OPEN_URI", .value = INT(0x00000040) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_MEMORY", .value = INT(0x00000080) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_MAIN_DB", .value = INT(0x00000100) },  /* VFS only */
+        { .name = "SQLITE_OPEN_TEMP_DB", .value = INT(0x00000200) },  /* VFS only */
+        { .name = "SQLITE_OPEN_TRANSIENT_DB", .value = INT(0x00000400) },  /* VFS only */
+        { .name = "SQLITE_OPEN_MAIN_JOURNAL", .value = INT(0x00000800) },  /* VFS only */
+        { .name = "SQLITE_OPEN_TEMP_JOURNAL", .value = INT(0x00001000) },  /* VFS only */
+        { .name = "SQLITE_OPEN_SUBJOURNAL", .value = INT(0x00002000) },  /* VFS only */
+        { .name = "SQLITE_OPEN_SUPER_JOURNAL", .value = INT(0x00004000) },  /* VFS only */
+        { .name = "SQLITE_OPEN_NOMUTEX", .value = INT(0x00008000) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_FULLMUTEX", .value = INT(0x00010000) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_SHAREDCACHE", .value = INT(0x00020000) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_PRIVATECACHE", .value = INT(0x00040000) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_WAL", .value = INT(0x00080000) },  /* VFS only */
+        { .name = "SQLITE_OPEN_NOFOLLOW", .value = INT(0x01000000) },  /* Ok for sqlite3_open_v2() */
+        { .name = "SQLITE_OPEN_EXRESCODE", .value = INT(0x02000000) },  /* Extended result codes */
         { .name = NULL                                          }
 };
 
