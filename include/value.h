@@ -205,9 +205,14 @@ struct target {
 
 typedef struct target Target;
 
+struct frame;
+typedef struct frame Frame;
+
 typedef vec(struct value) ValueVector;
 typedef vec(Target) TargetStack;
 typedef vec(size_t) SPStack;
+typedef vec(char *) CallStack;
+typedef vec(Frame) FrameStack;
 
 typedef struct generator Generator;
 
@@ -295,10 +300,19 @@ struct value {
         };
 };
 
+struct frame {
+        size_t fp;
+        struct value f;
+        char const *ip;
+};
+
 struct generator {
         char *ip;
         struct value f;
+        int fp;
         ValueVector frame;
+        FrameStack frames;
+        CallStack calls;
         SPStack sps;
         TargetStack targets;
 };

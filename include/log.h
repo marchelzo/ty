@@ -5,6 +5,14 @@
 #include <sys/file.h>
 #include <stdio.h>
 
+#define XLOG(...) do { \
+                        flockfile(stderr), \
+                        fprintf(stderr, "(%d) ", getpid()), \
+                        fprintf(stderr, __VA_ARGS__), \
+                        fprintf(stderr, "\n"), \
+                        funlockfile(stderr); \
+                } while (0)
+
 #ifndef TY_NO_LOG
 #define LOG(...) do { \
                         flockfile(stderr), \

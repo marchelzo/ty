@@ -119,12 +119,6 @@ struct sigfn {
         struct value f;
 };
 
-typedef struct Frame {
-        size_t fp;
-        struct value f;
-        char const *ip;
-} Frame;
-
 typedef struct {
         atomic_bool *created;
         struct value *ctx;
@@ -133,8 +127,6 @@ typedef struct {
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
 
 typedef vec(struct value) ValueStack;
-typedef vec(Frame) FrameStack;
-typedef vec(char *) CallStack;
 typedef vec(char const *) StringVector;
 typedef vec(struct try) TryStack;
 typedef vec(struct sigfn) SigfnStack;
@@ -636,18 +628,27 @@ call_co(struct value *v, int n)
                 }
         }
 
-        TargetStack ts = v->gen->targets;
-        v->gen->targets = targets;
-        targets = ts;
-
-        SPStack sps = v->gen->sps;
-        v->gen->sps = sp_stack;
-        sp_stack = sps;
-
         push(*v);
-
         call(&v->gen->f, NULL, 0, 0, false);
         stack.count = vec_last(frames)->fp;
+
+        if (v->gen->frames.count == 0) {
+                vec_push(v->gen->frames, *vec_last(frames));
+        } else {
+                v->gen->frames.items[0] = *vec_last(frames);
+        }
+
+        int diff = (int)stack.count - v->gen->fp;
+        for (int i = 1; i < v->gen->frames.count; ++i) {
+                v->gen->frames.items[i].fp += diff;
+        }
+
+        v->gen->fp = stack.count;
+
+        SWAP(CallStack, v->gen->calls, calls);
+        SWAP(TargetStack, v->gen->targets, targets);
+        SWAP(SPStack, v->gen->sps, sp_stack);
+        SWAP(FrameStack, v->gen->frames, frames);
 
         for (int i = 0; i < v->gen->frame.count; ++i) {
                 push(v->gen->frame.items[i]);
@@ -1617,17 +1618,26 @@ Throw:
                         h = strhash(method);
                         goto CallMethod;
                 CASE(YIELD)
-                        n = vec_last(frames)->fp;
+                        n = frames.items[0].fp;
+
                         v.gen = stack.items[n - 1].gen;
                         v.gen->ip = ip;
                         v.gen->frame.count = 0;
+
                         SWAP(SPStack, v.gen->sps, sp_stack);
                         SWAP(TargetStack, v.gen->targets, targets);
+                        SWAP(CallStack, v.gen->calls, calls);
+                        SWAP(FrameStack, v.gen->frames, frames);
+
                         vec_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
+
                         stack.items[n - 1] = peek();
                         stack.count = n;
+
                         vec_pop(frames);
+
                         ip = *vec_pop(calls);
+
                         break;
                 CASE(MAKE_GENERATOR)
                         v.type = VALUE_GENERATOR;
@@ -1641,6 +1651,8 @@ Throw:
                         vec_push_n(v.gen->frame, stack.items + stack.count - n, n);
                         vec_init(v.gen->sps);
                         vec_init(v.gen->targets);
+                        vec_init(v.gen->calls);
+                        vec_init(v.gen->frames);
                         push(v);
                         OKGC(v.gen);
                         goto Return;
@@ -1719,7 +1731,7 @@ Throw:
                         case VALUE_GENERATOR:
                                 vec_push(calls, ip);
                                 call_co(&v, 0);
-                                *vec_last(calls) = next_fix;
+                                *vec_last(v.gen->calls) = next_fix;
                                 break;
                         default:
                         NoIter:

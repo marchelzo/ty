@@ -1255,9 +1255,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
                 break;
         case EXPRESSION_YIELD:
-                if (state.func->ftype == FT_FUNC) {
-                        fail("yield expression cannot appear outside of generator context");
-                }
                 for (int i = 0; i < e->es.count; ++i) {
                     symbolize_expression(scope, e->es.items[i]);
                 }
@@ -1468,14 +1465,12 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         fail("invalid return statement (not inside of a function)");
                 }
 
-                if (state.func->ftype == FT_GEN) {
-                        fail("return statement cannot appear in generator context");
-                }
-
                 for (int i = 0; i < s->returns.count; ++i) {
                     symbolize_expression(scope, s->returns.items[i]);
                 }
+
                 state.func->ftype = FT_FUNC;
+
                 break;
         case STATEMENT_DEFINITION:
                 if (s->value->type == EXPRESSION_LIST) {

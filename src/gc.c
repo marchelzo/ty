@@ -28,7 +28,13 @@ collect(struct alloc *a)
         case GC_ARRAY:     gc_free(((struct array *)p)->items);    break;
         case GC_BLOB:      gc_free(((struct blob *)p)->items);     break;
         case GC_DICT:      dict_free(p);                           break;
-        case GC_GENERATOR: gc_free(((Generator *)p)->frame.items); break;
+        case GC_GENERATOR:
+                gc_free(((Generator *)p)->frame.items);
+                gc_free(((Generator *)p)->calls.items);
+                gc_free(((Generator *)p)->frames.items);
+                gc_free(((Generator *)p)->targets.items);
+                gc_free(((Generator *)p)->sps.items);
+                break;
         case GC_OBJECT:
                 finalizer = &((struct table *)p)->finalizer;
                 if (finalizer->type != VALUE_NIL) {

@@ -478,8 +478,17 @@ value_compare(void const *_v1, void const *_v2)
                 v1 = &v;
         }
 
-        if (v1->type != v2->type && v1->type != VALUE_OBJECT)
-                vm_panic("attempt to compare values of different types");
+        if (v1->type != v2->type && v1->type != VALUE_OBJECT) {
+                vm_panic(
+                        "attempt to compare values of different types: %s%s%s and %s%s%s",
+                        TERM(33),
+                        value_show(v1),
+                        TERM(0),
+                        TERM(33),
+                        value_show(v2),
+                        TERM(0)
+                );
+        }
 
         switch (v1->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER: return (v1->integer < v2->integer) ? -1 : (v1->integer != v2->integer);

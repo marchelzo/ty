@@ -171,7 +171,7 @@ blob_get(struct value *blob, int argc, struct value *kwargs)
         if (i.integer < 0)
                 i.integer += blob->blob->count;
         if (i.integer < 0 || i.integer >= blob->blob->count)
-                vm_panic("invalid index passed to blob.get()");
+                vm_panic("blob.get(): invalid index: %"PRIiMAX, i.integer);
 
         return INTEGER(blob->blob->items[i.integer]);
 }
