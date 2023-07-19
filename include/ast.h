@@ -31,6 +31,7 @@ struct condpart {
 
 typedef vec(struct condpart *) condpart_vector;
 typedef vec(struct expression *) expression_vector;
+typedef vec(struct statement *) statement_vector;
 typedef vec(char *) name_vector;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
@@ -131,7 +132,15 @@ struct statement {
         };
 };
 
+
 struct expression {
+        struct location start;
+        struct location end;
+
+        char const *filename;
+
+        bool symbolized;
+
         enum {
                 EXPRESSION_FUNCTION,
                 EXPRESSION_IMPLICIT_FUNCTION,
@@ -216,14 +225,8 @@ struct expression {
 
                 EXPRESSION_MACRO_INVOCATION,
                 EXPRESSION_VALUE,
-                EXPRESSION_MAX_TYPE,
-                EXPRESSION_SYMBOLIZED = 1 << 20
+                EXPRESSION_MAX_TYPE
         } type;
-
-        struct location start;
-        struct location end;
-
-        char const *filename;
 
         union {
                 intmax_t integer;
@@ -249,7 +252,7 @@ struct expression {
                     struct expression *e;
                 } macro;
                 struct {
-                        struct statement *let;
+                        statement_vector defs;
                         struct statement *block;
                 } with;
                 struct {

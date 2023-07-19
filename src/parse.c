@@ -235,6 +235,7 @@ mkexpr(void)
         struct expression *e = gc_alloc(sizeof *e);
         e->constraint = NULL;
         e->is_method = false;
+        e->symbolized = false;
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -1158,13 +1159,11 @@ parse_block_expr(void)
 }
 
 void
-make_with(struct expression *e, struct statement *let, struct statement *body)
+make_with(struct expression *e, statement_vector defs, struct statement *body)
 {
         e->type = EXPRESSION_WITH;
 
-        tok()->keyword = KEYWORD_LET;
-
-        e->with.let = let;
+        e->with.defs = defs;
 
         struct statement *try = mkstmt();
         try->type = STATEMENT_TRY;
@@ -1177,9 +1176,9 @@ make_with(struct expression *e, struct statement *let, struct statement *body)
         vec_init(try->try.finally->drop);
 
         struct statement *s = mkstmt();
-        s->type = STATEMENT_BLOCK;
+        s->type = STATEMENT_MULTI;
         vec_init(s->statements);
-        vec_push(s->statements, e->with.let);
+        vec_push_n(s->statements, defs.items, defs.count);
         vec_push(s->statements, try);
         e->with.block = s;
 }
@@ -1188,33 +1187,45 @@ static struct expression *
 prefix_with(void)
 {
         struct expression *with = mkexpr();
+        statement_vector defs = {0};
 
+        // with
         next();
 
-        SAVE_NE(true);
-        struct expression *e = parse_expr(0);
-        LOAD_NE();
+        for (;;) {
+            SAVE_NE(true);
+            struct expression *e = parse_expr(0);
+            LOAD_NE();
 
-        struct statement *def = mkstmt();
-        def->type = STATEMENT_DEFINITION;
-        def->pub = false;
+            struct statement *def = mkstmt();
+            def->type = STATEMENT_DEFINITION;
+            def->pub = false;
 
-        if (tok()->type == TOKEN_EQ) {
-                next();
-                def->target = definition_lvalue(e);
-                def->value = parse_expr(0);
-        } else {
-                struct expression *t = mkexpr();
-                t->type = EXPRESSION_IDENTIFIER;
-                t->identifier = gensym();
-                t->module = NULL;
-                def->target = t;
-                def->value = e;
+            if (tok()->type == TOKEN_EQ) {
+                    next();
+                    def->target = definition_lvalue(e);
+                    def->value = parse_expr(0);
+            } else {
+                    struct expression *t = mkexpr();
+                    t->type = EXPRESSION_IDENTIFIER;
+                    t->identifier = gensym();
+                    t->module = NULL;
+                    def->target = t;
+                    def->value = e;
+            }
+
+            vec_push(defs, def);
+
+            if (tok()->type == ',') {
+                    next();
+            } else {
+                break;
+            }
         }
 
         struct statement *body = parse_statement(0);
 
-        make_with(with, def, body);
+        make_with(with, defs, body);
 
         with->end = End;
 

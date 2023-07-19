@@ -30,6 +30,6 @@ void
 parse_sync_lex(void);
 
 void
-make_with(struct expression *e, struct statement *let, struct statement *body);
+make_with(struct expression *e, statement_vector defs, struct statement *body);
 
 #endif

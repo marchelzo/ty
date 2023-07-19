@@ -826,7 +826,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         state.start = target->start;
         state.end = target->end;
 
-        if (target->type & EXPRESSION_SYMBOLIZED)
+        if (target->symbolized)
                 return;
 
         struct expression *mod_access;
@@ -928,6 +928,8 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 }
                 break;
         }
+
+        target->symbolized = true;
 }
 
 static void
@@ -936,7 +938,7 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         if (e == NULL)
                 return;
 
-        if (e->type & EXPRESSION_SYMBOLIZED)
+        if (e->symbolized)
                 return;
 
         try_symbolize_application(scope, e);
@@ -1003,6 +1005,8 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
                 symbolize_expression(scope, e);
                 break;
         }
+
+        e->symbolized = true;
 }
 
 static void
@@ -1011,7 +1015,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
-        if (e->type & EXPRESSION_SYMBOLIZED)
+        if (e->symbolized)
                 return;
 
         state.start = e->start;
@@ -1240,16 +1244,15 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_WITH:
                 subscope = scope_new(scope, false);
-                symbolize_statement(subscope, e->with.let);
+                symbolize_statement(subscope, e->with.block);
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
                                 // Make sure it's not a tmpsymbol() symbol
                                 if (!isdigit(sym->identifier[0])) {
-                                        vec_push(e->with.block->statements.items[1]->try.finally->drop, sym);
+                                        vec_push(vec_last(e->with.block->statements)[0]->try.finally->drop, sym);
                                 }
                         }
                 }
-                symbolize_statement(subscope, e->with.block->statements.items[1]);
                 break;
         case EXPRESSION_YIELD:
                 if (state.func->ftype == FT_FUNC) {
@@ -1314,6 +1317,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_MATCH_REST:
                 fail("*<identifier> 'match-rest' pattern used outside of pattern context");
         }
+
+        e->symbolized = true;
 }
 
 static void
@@ -2214,7 +2219,7 @@ emit_try_match(struct expression const *pattern)
         bool need_loc = false;
         bool set = true;
 
-        switch (pattern->type & ~EXPRESSION_SYMBOLIZED) {
+        switch (pattern->type) {
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(pattern->identifier, "_") == 0) {
                         /* nothing to do */
@@ -2846,7 +2851,7 @@ emit_target(struct expression *target, bool def)
         size_t start = state.code.count;
         bool need_loc = true;
 
-        switch (target->type & ~EXPRESSION_SYMBOLIZED) {
+        switch (target->type) {
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_REST:
                 need_loc = false;
@@ -3439,7 +3444,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
 
         size_t start = state.code.count;
 
-        switch (target->type & ~EXPRESSION_SYMBOLIZED) {
+        switch (target->type) {
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < target->elements.count; ++i) {
                         if (target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
@@ -3589,7 +3594,7 @@ emit_expr(struct expression const *e, bool need_loc)
 
         void (*emit)(struct expression const *);
 
-        switch (e->type & ~EXPRESSION_SYMBOLIZED) {
+        switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 emit_load(e->symbol, state.fscope);
                 break;
@@ -4012,7 +4017,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 }
                 break;
         default:
-                fail("expression unexpected in this context");
+                fail("expression unexpected in this context: %d", (int)e->type);
         }
 
         if (e->type > EXPRESSION_KEEP_LOC || need_loc)
@@ -5029,7 +5034,7 @@ tyexpr(struct expression const *e)
         case EXPRESSION_WITH:
                 v = tagged(
                         TyWith,
-                        tystmt(e->with.let),
+                        tystmt(e->with.defs.items[0]),
                         tystmt(e->with.block->statements.items[1]->try.s),
                         NONE
                 );
@@ -5238,6 +5243,7 @@ cstmt(struct value *v)
                 s->target->identifier = mkcstr(tuple_get(v, "name"));
                 s->target->module = NULL;
                 s->target->constraint = NULL;
+                s->target->symbolized = false;
         } else if (tags_first(v->tags) == TyClass) {
                 s->type = STATEMENT_CLASS_DEFINITION;
                 s->class.name = mkcstr(tuple_get(v, "name"));
@@ -5507,7 +5513,9 @@ cexpr(struct value *v)
                 e->object = cexpr(&v->items[0]);
                 e->member_name = mkcstr(&v->items[1]);
         } else if (tags_first(v->tags) == TyWith) {
-                make_with(e, cstmt(&v->items[0]), cstmt(&v->items[1]));
+                statement_vector defs = {0};
+                vec_push(defs, cstmt(&v->items[0]));
+                make_with(e, defs, cstmt(&v->items[1]));
         } else if (tags_first(v->tags) == TyCond) {
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(&v->items[0]);
@@ -5734,5 +5742,5 @@ void
 compiler_symbolize_expression(struct expression *e)
 {
         symbolize_expression(state.global, e);
-        e->type |= EXPRESSION_SYMBOLIZED;
+        e->symbolized = true;
 }
