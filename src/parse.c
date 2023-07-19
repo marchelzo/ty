@@ -1187,18 +1187,38 @@ make_with(struct expression *e, struct statement *let, struct statement *body)
 static struct expression *
 prefix_with(void)
 {
-        struct expression *e = mkexpr();
+        struct expression *with = mkexpr();
 
-        tok()->keyword = KEYWORD_LET;
+        next();
 
-        struct statement *let = parse_let_definition();
+        SAVE_NE(true);
+        struct expression *e = parse_expr(0);
+        LOAD_NE();
+
+        struct statement *def = mkstmt();
+        def->type = STATEMENT_DEFINITION;
+        def->pub = false;
+
+        if (tok()->type == TOKEN_EQ) {
+                next();
+                def->target = definition_lvalue(e);
+                def->value = parse_expr(0);
+        } else {
+                struct expression *t = mkexpr();
+                t->type = EXPRESSION_IDENTIFIER;
+                t->identifier = gensym();
+                t->module = NULL;
+                def->target = t;
+                def->value = e;
+        }
+
         struct statement *body = parse_statement(0);
 
-        make_with(e, let, body);
+        make_with(with, def, body);
 
-        e->end = End;
+        with->end = End;
 
-        return e;
+        return with;
 }
 
 static struct expression *
