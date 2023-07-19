@@ -1569,6 +1569,42 @@ macro dbg! {
     ])
 }
 
+macro time! {
+    // (
+    lex.next()
+
+    let (p, e) = parse.stmt(0, raw: true)
+
+    // )
+    lex.next()
+
+    ty.Block([
+        ty.Let(
+            ty.Array([
+                ty.ArrayItem(item: ty.Id(name: 's')),
+                ty.ArrayItem(item: ty.Id(name: 'x')),
+                ty.ArrayItem(item: ty.Id(name: 'e'))
+            ]),
+            ty.Array([
+                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: [])),
+                ty.ArrayItem(item: e),
+                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: []))
+            ])
+        ),
+        ty.Multi([
+            ty.Call(
+                func: ty.Id(name: 'print'),
+                args: [
+                    ty.Arg(arg: ty.String(parse.show(p))),
+                    ty.Arg(arg: ty.Div(ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's')), ty.Value(1.0e6))),
+                    ty.Arg(name: 'sep', arg: ty.String(': '))
+                ]
+            ),
+            ty.Id(name: 'x')
+        ])
+    ])
+}
+
 macro timed! {
     // (
     lex.next()
