@@ -95,6 +95,8 @@
 { .module = "os",     .name = "fcntl",             .value = BUILTIN(builtin_os_fcntl)                      },
 { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
 { .module = "os",     .name = "stat",              .value = BUILTIN(builtin_os_stat)                       },
+{ .module = "os",     .name = "truncate",          .value = BUILTIN(builtin_os_truncate)                   },
+{ .module = "os",     .name = "ftruncate",         .value = BUILTIN(builtin_os_ftruncate)                  },
 { .module = "os",     .name = "realpath",          .value = BUILTIN(builtin_os_realpath)                   },
 { .module = "os",     .name = "fork",              .value = BUILTIN(builtin_os_fork)                       },
 { .module = "os",     .name = "pipe",              .value = BUILTIN(builtin_os_pipe)                       },

@@ -280,6 +280,12 @@ struct value
 builtin_os_stat(int argc, struct value *kwargs);
 
 struct value
+builtin_os_truncate(int argc, struct value *kwargs);
+
+struct value
+builtin_os_ftruncate(int argc, struct value *kwargs);
+
+struct value
 builtin_os_realpath(int argc, struct value *kwargs);
 
 struct value

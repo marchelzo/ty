@@ -3379,6 +3379,42 @@ builtin_os_realpath(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_ftruncate(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.ftruncate()", 2);
+
+        struct value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("os.ftruncate(): expected integer as first argument but got: %s", value_show(&fd));
+
+        struct value size = ARG(1);
+        if (size.type != VALUE_INTEGER)
+                vm_panic("os.truncate(): expected integer as second argumnet but got: %s", value_show(&size));
+
+        return INTEGER(ftruncate(fd.integer, size.integer));
+}
+
+struct value
+builtin_os_truncate(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.truncate()", 2);
+
+        struct value path = ARG(0);
+        if (path.type != VALUE_STRING)
+                vm_panic("the first argument to os.truncate() must be a string");
+
+        B.count = 0;
+        vec_push_n(B, path.string, path.bytes);
+        vec_push(B, '\0');
+
+        struct value size = ARG(1);
+        if (size.type != VALUE_INTEGER)
+                vm_panic("os.truncate(): expected integer as second argumnet but got: %s", value_show(&size));
+
+        return INTEGER(truncate(B.items, size.integer));
+}
+
+struct value
 builtin_os_stat(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.stat()", 1);
