@@ -1,0 +1,15 @@
+function f(k) {
+    (yield nil) * k
+}
+
+let g = generator {
+    return f(4)
+}
+
+g()
+
+if g(8) == 32 {
+    print('PASS')
+}
+
+

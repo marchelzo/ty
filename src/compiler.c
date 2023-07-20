@@ -2029,7 +2029,7 @@ emit_with(struct expression const *e)
 }
 
 static void
-emit_yield(struct expression const **es, int n)
+emit_yield(struct expression const **es, int n, bool wrap)
 {
         if (state.function_depth == 0) {
                 fail("invalid yield expression (not inside of a function)");
@@ -2041,8 +2041,10 @@ emit_yield(struct expression const **es, int n)
 
         for (int i = 0; i < n; ++i) {
                 emit_expression(es[i]);
-                emit_instr(INSTR_TAG_PUSH);
-                emit_int(TAG_SOME);
+                if (wrap) {
+                        emit_instr(INSTR_TAG_PUSH);
+                        emit_int(TAG_SOME);
+                }
         }
 
         emit_instr(INSTR_YIELD);
@@ -3785,7 +3787,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_with(e);
                 break;
         case EXPRESSION_YIELD:
-                emit_yield(e->es.items, e->es.count);
+                emit_yield(e->es.items, e->es.count, true);
                 break;
         case EXPRESSION_SPREAD:
                 emit_spread(e, false);
@@ -4133,7 +4135,7 @@ emit_statement(struct statement const *s, bool want_result)
                 returns |= emit_return(s);
                 break;
         case STATEMENT_GENERATOR_RETURN:
-                emit_yield(s->returns.items, s->returns.count);
+                emit_yield(s->returns.items, s->returns.count, false);
                 emit_instr(INSTR_JUMP);
                 vec_push(state.generator_returns, state.code.count);
                 emit_int(0);
