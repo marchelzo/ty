@@ -50,7 +50,8 @@ let statusText = %{
 }
 
 class FCGIParser {
-    init() {
+    init(fd) {
+        @fd = fd
         @buffer = Blob()
         @parser = self.start()
         (@parser)()
@@ -67,7 +68,7 @@ class FCGIParser {
         }
     }
 
-    start(fd) {
+    start*() {
         while true {
             let body = blob()
             let params = %{}
@@ -116,7 +117,7 @@ class FCGIParser {
                 }
             }
 
-            yield FCGIRequest(nil, body.str(), params)
+            yield FCGIRequest(nil, body.str(), params, @fd)
         }
     }
 
@@ -176,8 +177,9 @@ function urlDecode(s) {
 }
 
 class FCGIRequest {
-    init(stream, body, ps) {
+    init(stream, body, ps, fd) {
         @stream = stream
+        @fd = fd
         self.body = body
         self.params = ps
     }
@@ -269,7 +271,8 @@ class FCGIRequest {
 
         @stream.write(buffer)
 
-        @stream.close()
+        @stream.flush()
+        os.write(@app.death.1, Blob(@fd >> 8, @fd .&. 0xFF))
     }
 
     queryParams() {
@@ -293,33 +296,50 @@ class FCGIRequest {
 class FCGIApp {
     init(socket) {
         self.socket = socket
+        @death = os.pipe()
         @clients = %{}
     }
 
-    run() {
+    run*() {
         while true {
-            let pollFds = [(fd: @socket, events: os.POLLIN)]
+            let pollFds = [
+                (fd: @socket, events: os.POLLIN),
+                (fd: @death.0, events: os.POLLIN)
+            ]
 
             for client in @clients {
                 pollFds.push((fd: client, events: os.POLLIN))
             }
 
-            let n = os.poll(pollFds, -1)
+            let (t, n) = timed!(os.poll(pollFds, 50))
+            if n == 0 {
+                continue
+            }
 
-            for {fd, events, revents} in pollFds {
-                if fd == @socket && (revents .&. os.POLLIN) {
-                    let (conn, addr) = os.accept(@socket)
-                    @clients[conn] = FCGIParser()
-                } else {
-                    if revents .&. os.POLLIN {
-                        if let $request = @clients[fd].push(os.read(fd, 4096)) {
+            if pollFds[0].revents .&. os.POLLIN {
+                let (conn, addr) = os.accept(@socket)
+                @clients[conn] = FCGIParser(conn)
+            }
+
+            if pollFds[1].revents .&. os.POLLIN {
+                let b = os.read(@death.0, 2)
+                let fd = (b[0] << 8) + b[1]
+                os.close(fd)
+            }
+
+            for {fd, events, revents} in pollFds.drop(2) {
+                if revents .&. os.POLLIN {
+                    if let $data = os.read(fd, 4096) {
+                        if let $request = @clients[fd].push(data) {
+                            request.app = self
                             request.stream = io.open(fd, 'w')
                             yield request
                         }
-                    }
-                    if revents .&. os.POLLHUP {
+                    } else {
                         @clients.remove(fd)
                     }
+                } else if revents .&. (os.POLLNVAL .|. os.POLLERR) {
+                    @clients.remove(fd)
                 }
             }
         }
