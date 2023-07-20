@@ -1,0 +1,11 @@
+function f(x: Int, s: String) {
+    ;
+}
+
+f(10, 'foo')
+
+print('PASS')
+
+f(10, 20)
+
+print('FAIL')

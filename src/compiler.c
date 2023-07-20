@@ -189,6 +189,9 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
 static bool
 emit_catch(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
 
+static bool
+emit_return_check(struct expression const *f);
+
 static struct scope *
 get_import_scope(char const *);
 
@@ -1748,6 +1751,9 @@ emit_function(struct expression const *e, int class)
         struct scope *fs_save = state.fscope;
         state.fscope = e->scope;
 
+        struct expression *func_save = state.func;
+        state.func = e;
+
         struct symbol **caps = e->scope->captured.items;
         int *cap_indices = e->scope->cap_indices.items;
         int ncaps = e->scope->captured.count;
@@ -1898,18 +1904,7 @@ emit_function(struct expression const *e, int class)
         } else {
                 emit_statement(body, true);
                 if (CheckConstraints && e->return_type != NULL) {
-                        size_t start = state.code.count;
-                        emit_instr(INSTR_DUP);
-                        emit_constraint(e->return_type);
-                        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
-                        emit_instr(INSTR_BAD_CALL);
-                        if (e->name != NULL)
-                                emit_string(e->name);
-                        else
-                                emit_string("(anonymous function)");
-                        emit_string("return value");
-                        add_location(e->return_type, start, state.code.count);
-                        PATCH_JUMP(good);
+                        emit_return_check(e);
                 }
                 emit_instr(INSTR_RETURN);
         }
@@ -2051,6 +2046,28 @@ emit_yield(struct expression const **es, int n, bool wrap)
 }
 
 static bool
+emit_return_check(struct expression const *f)
+{
+        size_t start = state.code.count;
+
+        emit_instr(INSTR_DUP);
+        emit_constraint(f->return_type);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+        emit_instr(INSTR_BAD_CALL);
+
+        if (f->name != NULL)
+                emit_string(f->name);
+        else
+                emit_string("(anonymous function)");
+
+        emit_string("return value");
+
+        add_location(f->return_type, start, state.code.count);
+
+        PATCH_JUMP(good);
+}
+
+static bool
 emit_return(struct statement const *s)
 {
         if (state.finally) {
@@ -2075,6 +2092,10 @@ emit_return(struct statement const *s)
 
         if (state.try) {
                 emit_instr(INSTR_FINALLY);
+        }
+
+        if (CheckConstraints && state.func->return_type != NULL) {
+                emit_return_check(state.func);
         }
 
         if (s->returns.count > 1) {
