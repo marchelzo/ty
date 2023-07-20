@@ -688,14 +688,19 @@ NewThread(pthread_t *thread, struct value *call)
         };
         atomic_store(&created, false);
 
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) && 0
         pthread_attr_t attr;
         pthread_attr_init(&attr);
-        pthread_attr_setstacksize(&attr, 1ULL << 22);
-        pthread_create(thread, &attr, vm_run_thread, ctx);
+        int r = pthread_attr_setstacksize(&attr, 1ULL << 26);
+        if (r != 0)
+                vm_panic("pthread_attr_setstacksize(): %s", strerror(r));
+        r = pthread_create(thread, &attr, vm_run_thread, ctx);
 #else
-        pthread_create(thread, NULL, vm_run_thread, ctx);
+        int r = pthread_create(thread, NULL, vm_run_thread, ctx);
 #endif
+
+        if (r != 0)
+                vm_panic("pthread_create(): %s", strerror(r));
 
         while (!atomic_load(&created))
                 ;

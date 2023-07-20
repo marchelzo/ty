@@ -51,7 +51,7 @@ struct statement {
                 STATEMENT_MATCH,
                 STATEMENT_IF,
                 STATEMENT_RETURN,
-                STATEMENT_RETURN_GENERATOR,
+                STATEMENT_GENERATOR_RETURN,
                 STATEMENT_NEXT,
                 STATEMENT_CONTINUE,
                 STATEMENT_BREAK,

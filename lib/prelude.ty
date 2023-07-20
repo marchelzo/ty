@@ -196,7 +196,7 @@ class Array : Iterable {
         return t
     }
 
-    indices() {
+    indices*() {
         for x, i in self {
             if x :: Array {
                 for idx in x.indices() {
@@ -228,7 +228,7 @@ class Array : Iterable {
         #self == 0
     }
 
-    cycle() {
+    cycle*() {
         let i = 0
         while true {
             yield self[i++ % #self]
@@ -279,7 +279,7 @@ class Array : Iterable {
         return i
     }
 
-    __iter__() {
+    __iter__*() {
         for x in self { yield x }
     }
 
@@ -318,7 +318,7 @@ class Dict : Iterable {
         return new
     }
 
-    iterValues() {
+    iterValues*() {
         for _, v in self {
             yield v
         }
@@ -437,7 +437,7 @@ class String : Iterable {
         D[#a][#b]
     }
 
-    __iter__() {
+    __iter__*() {
         for c in @chars() {
             yield c
         }
@@ -471,7 +471,7 @@ class Int {
         }
     }
 
-    upto(b: Int) {
+    upto*(b: Int) {
         while self <= b {
             yield self++
         }
@@ -505,13 +505,13 @@ class Int {
         (self < 0) ? ('-' + s) : s
     }
 
-    downto(b: Int) {
+    downto*(b: Int) {
         while self >= b {
             yield self--
         }
     }
 
-    count(k: Int = 1) {
+    count*(k: Int = 1) {
         while true {
             yield self
             self += k
@@ -662,7 +662,7 @@ class Blob : Iterable {
         base64.encode(self)
     }
 
-    __iter__() {
+    __iter__*() {
         for x in self {
             yield x
         }
@@ -692,7 +692,7 @@ class Regex {
 }
 
 class Generator : Iter {
-    init(f) {
+    init*(f) {
         while let Some(x) = f() {
             yield x
         }
@@ -919,13 +919,13 @@ class Iterable {
 }
 
 class Iter : Iterable {
-    map(f) {
+    map*(f) {
         for x in self {
             yield f(x)
         }
     }
 
-    filter(f) {
+    filter*(f) {
         for x in self if f(x) {
             yield x
         }
@@ -956,7 +956,7 @@ class Iter : Iterable {
         return n
     }
 
-    uniq(f: Function = id) {
+    uniq*(f: Function = id) {
         let seen = %{}
         for x in self {
             let y = f(x)
@@ -990,7 +990,7 @@ class Iter : Iterable {
         self.unzipWith(id)
     }
 
-    zipWith(f, *its, longest) {
+    zipWith*(f, *its, longest) {
         its.map!(&__iter__)
         its.insert(0, self)
 
@@ -1016,7 +1016,7 @@ class Iter : Iterable {
         self.zipWith(tuple, *its, longest: longest)
     }
 
-    pad(n, x) {
+    pad*(n, x) {
         let i = 0
         for x in self {
             yield x
@@ -1072,7 +1072,7 @@ class Iter : Iterable {
         return d
     }
 
-    groupsOf(n: Int & n >= 0, keepShort: Bool = true) {
+    groupsOf*(n: Int & n >= 0, keepShort: Bool = true) {
         while let xs = @take(n).list() and #xs > 0 {
             if #xs == n || keepShort {
                 yield xs
@@ -1118,7 +1118,7 @@ class Iter : Iterable {
         return n
     }
 
-    interleave(ys) {
+    interleave*(ys) {
         ys = ys.__iter__()
         for x in self {
             yield x
@@ -1136,7 +1136,7 @@ class Iter : Iterable {
         return ReverseIter(self)
     }
 
-    take(n) {
+    take*(n) {
         for _ in ..n {
             if let Some(x) = @__next__() {
                 yield x
@@ -1146,7 +1146,7 @@ class Iter : Iterable {
         }
     }
 
-    takeWhile(pred) {
+    takeWhile*(pred) {
         while let Some(x) = @__next__() {
             if pred(x) {
                 yield x
@@ -1161,7 +1161,7 @@ class Iter : Iterable {
         return self
     }
 
-    dropWhile(pred) {
+    dropWhile*(pred) {
         while let Some(x) = @__next__() {
             if !pred(x) {
                 yield x
@@ -1193,7 +1193,7 @@ class Iter : Iterable {
         return d
     }
 
-    enumerate() {
+    enumerate*() {
         let i = 0
         for x in self {
             yield (i++, x)
@@ -1259,7 +1259,7 @@ class Iter : Iterable {
         return (min, max)
     }
 
-    intersperse(sep) {
+    intersperse*(sep) {
         let first = true;
         for x in self {
             if !first {
@@ -1272,7 +1272,7 @@ class Iter : Iterable {
         }
     }
 
-    chainAll() {
+    chainAll*() {
         for it in self {
             for x in it.__iter__() {
                 yield x
@@ -1280,7 +1280,7 @@ class Iter : Iterable {
         }
     }
 
-    chain(*its) {
+    chain*(*its) {
         for it in its {
             for x in it.__iter__() {
                 yield x
@@ -1292,7 +1292,7 @@ class Iter : Iterable {
         return @list().cycle()
     }
 
-    repeat(n) {
+    repeat*(n) {
         let xs = []
 
         for x in self {
@@ -1308,7 +1308,7 @@ class Iter : Iterable {
         }
     }
 
-    replicate(x, n) {
+    replicate*(x, n) {
         for _ in ..n {
             yield x
         }

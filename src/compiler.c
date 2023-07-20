@@ -107,6 +107,7 @@ struct state {
         offset_vector continues;
         offset_vector match_fails;
         offset_vector match_successes;
+        offset_vector generator_returns;
 
         symbol_vector bound_symbols;
 
@@ -562,6 +563,7 @@ freshstate(void)
 
         vec_init(s.breaks);
         vec_init(s.continues);
+        vec_init(s.generator_returns);
 
         vec_init(s.imports);
         vec_init(s.exports);
@@ -1233,10 +1235,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 e->bound_symbols.items = scope->owned.items;
                 e->bound_symbols.count = scope->owned.count;
 
-                if (e->ftype == FT_GEN) {
-                        e->type = EXPRESSION_GENERATOR;
-                }
-
                 state.func = func;
                 state.implicit_fscope = implicit_fscope;
                 state.implicit_func = implicit_func;
@@ -1258,7 +1256,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 for (int i = 0; i < e->es.count; ++i) {
                     symbolize_expression(scope, e->es.items[i]);
                 }
-                state.func->ftype = FT_GEN;
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i) {
@@ -1469,7 +1466,9 @@ symbolize_statement(struct scope *scope, struct statement *s)
                     symbolize_expression(scope, s->returns.items[i]);
                 }
 
-                state.func->ftype = FT_FUNC;
+                if (state.func->type == EXPRESSION_GENERATOR) {
+                        s->type = STATEMENT_GENERATOR_RETURN;
+                }
 
                 break;
         case STATEMENT_DEFINITION:
@@ -1883,6 +1882,7 @@ emit_function(struct expression const *e, int class)
                 emit_instr(INSTR_YIELD);
                 emit_instr(INSTR_POP);
                 JUMP(end);
+                patch_jumps_to(&state.generator_returns, end);
         } else if (false && !emit_statement(body, false)) {
                 /*
                  * Add an implicit 'return nil;' if the function
@@ -2029,22 +2029,20 @@ emit_with(struct expression const *e)
 }
 
 static void
-emit_yield(struct expression const *e)
+emit_yield(struct expression const **es, int n)
 {
         if (state.function_depth == 0) {
                 fail("invalid yield expression (not inside of a function)");
         }
 
-        if (e->es.count > 1) {
+        if (n > 1) {
                 fail("yielding multiple values isn't implemented yet");
         }
 
-        if (e->es.count > 0) for (int i = 0; i < e->es.count; ++i) {
-                emit_expression(e->es.items[i]);
+        for (int i = 0; i < n; ++i) {
+                emit_expression(es[i]);
                 emit_instr(INSTR_TAG_PUSH);
                 emit_int(TAG_SOME);
-        } else {
-                emit_instr(INSTR_NIL);
         }
 
         emit_instr(INSTR_YIELD);
@@ -3787,7 +3785,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_with(e);
                 break;
         case EXPRESSION_YIELD:
-                emit_yield(e);
+                emit_yield(e->es.items, e->es.count);
                 break;
         case EXPRESSION_SPREAD:
                 emit_spread(e, false);
@@ -3843,6 +3841,11 @@ emit_expr(struct expression const *e, bool need_loc)
                 }
                 break;
         case EXPRESSION_GENERATOR:
+                emit_function(e, -1);
+                emit_instr(INSTR_CALL);
+                emit_int(0);
+                emit_int(0);
+                break;
         case EXPRESSION_FUNCTION:
                 emit_function(e, -1);
                 break;
@@ -4126,9 +4129,14 @@ emit_statement(struct statement const *s, bool want_result)
                 }
                 returns |= emit_throw(s);
                 break;
-        case STATEMENT_RETURN_GENERATOR:
         case STATEMENT_RETURN:
                 returns |= emit_return(s);
+                break;
+        case STATEMENT_GENERATOR_RETURN:
+                emit_yield(s->returns.items, s->returns.count);
+                emit_instr(INSTR_JUMP);
+                vec_push(state.generator_returns, state.code.count);
+                emit_int(0);
                 break;
         case STATEMENT_BREAK:
                 if (state.loop == 0) {

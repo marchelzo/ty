@@ -851,11 +851,19 @@ prefix_function(void)
 
         next();
 
+        if (e->type == EXPRESSION_GENERATOR)
+                goto Body;
+
+        bool sugared_generator = false;
+
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
                 next();
-        } else {
-                e->name = NULL;
+        }
+
+        if (tok()->type == TOKEN_STAR) {
+                sugared_generator = true;
+                next();
         }
 
         consume('(');
@@ -912,6 +920,12 @@ prefix_function(void)
                 e->return_type = parse_expr(0);
         }
 
+        if (sugared_generator) {
+                unconsume(TOKEN_KEYWORD);
+                tok()->keyword = KEYWORD_GENERATOR;
+        }
+
+Body:
         e->body = parse_statement(-1);
 
         return e;
