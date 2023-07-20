@@ -49,55 +49,101 @@ let statusText = %{
     404: 'Not Found'
 }
 
-class FCGIRecord {
-    read(f) {
-        let r = FCGIRecord();
-
-        r.version = f.next();
-        if r.version == nil {
-            return nil;
-        }
-
-        r.type = f.next();
-
-        r.requestID = nextShort(f);
-
-        let contentLength = nextShort(f);
-        let paddingLength = f.next();
-
-        f.next(); /* skip the reserved byte */
-
-        r.content = f.next(contentLength);
-
-        f.next(paddingLength); /* skip padding bytes */
-
-        return r;
+class FCGIParser {
+    init() {
+        @buffer = Blob()
+        @parser = self.start()
+        (@parser)()
     }
 
+    next(n) {
+        while #@buffer < (n ?? 1) {
+            @buffer.push(yield nil)
+        }
+        return if n == nil {
+            @buffer.splice(0, 1)[0]
+        } else {
+            @buffer.splice(0, n)
+        }
+    }
+
+    start(fd) {
+        while true {
+            let body = blob()
+            let params = %{}
+
+            while true {
+                let next = self.next
+
+                let nextShort = function () {
+                    let b = next(2)
+                    (b[0] << 8) + b[1]
+                }
+
+                let r = FCGIRecord();
+
+                r.version = next()
+                r.type = next()
+                r.requestID = nextShort()
+
+                let contentLength = nextShort()
+                let paddingLength = next()
+
+                next()
+
+                r.content = next(contentLength)
+
+                next(paddingLength)
+
+                match r.type {
+                    ::FCGI_BEGIN_REQUEST => {
+                        r.beginRequest()
+                    },
+
+                    ::FCGI_PARAMS => {
+                        params += r.getParams()
+                    },
+
+                    ::FCGI_STDIN => {
+                        if #r.content == 0 {
+                            break
+                        } else {
+                            body.push(r.content)
+                        }
+                    },
+
+                    t => { print("Type = {t}") }
+                }
+            }
+
+            yield FCGIRequest(nil, body.str(), params)
+        }
+    }
+
+    push(data) {
+        if let Some($request) = (@parser)(data) {
+            request
+        }
+    }
+}
+
+class FCGIRecord {
     beginRequest() {
-        let b = self.content.splice(0, 8);
-        self.role = (b[0] << 8) + b[1];
-        self.flags = b[2];
-        return self;
     }
 
     getParams() {
-        let b = self.content;
-        let ps = %{};
+        let b = @content
+        let ps = %{}
 
         while b.size() != 0 {
-            let nameLength = getLength(b);
-            let valueLength = getLength(b);
-            let name = b.splice(0, nameLength).str();
-            let value = b.splice(0, valueLength).str();
-            ps[name] = value;
+            let nameLength = getLength(b)
+            let valueLength = getLength(b)
+            let name = b.splice(0, nameLength).str()
+            let value = b.splice(0, valueLength).str()
+            ps[name] = value
         }
 
-        return self.params = ps;
-    }
-
-    readInput() {
-        return self.content;
+        return @params = ps
     }
 }
 
@@ -106,30 +152,21 @@ function getLength(b) {
         let n = ((b[0] .&. 0x7F) << 24)
               + (b[1] << 16)
               + (b[2] << 8)
-              + b[3];
-        b.splice(0, 4);
-        return n;
+              + b[3]
+        b.splice(0, 4)
+        return n
     } else {
-        let n = b[0];
-        b.splice(0, 1);
-        return n;
+        let n = b[0]
+        b.splice(0, 1)
+        return n
     }
-}
-
-function nextShort(f) {
-    let B1 = f.next();
-    let B0 = f.next();
-    if B1 == nil || B0 == nil {
-        return nil;
-    }
-    return (B1 << 8) + B0;
 }
 
 function decode(s) {
-    return s.sub('+', ' ')
-            .sub(/%../, s -> chr(int(s.slice(1), 16)))
-            .sub("\r\n", "\n")
-            .sub("\r", "\n");
+    s.sub('+', ' ')
+     .sub(/%../, s -> chr(int(s.slice(1), 16)))
+     .sub("\r\n", "\n")
+     .sub("\r", "\n")
 }
 
 function urlDecode(s) {
@@ -145,11 +182,11 @@ class FCGIRequest {
         self.params = ps
     }
 
-    sendHTML(html, headers=[], status=200) {
+    sendHTML(html, headers, status=200) {
         self.sendResponse(status, html, [('Content-Type', 'text/html'), *headers])
     }
 
-    sendJSON(x, headers=[], status=200) {
+    sendJSON(x, headers, status=200) {
         self.sendResponse(status, json.encode(x), [('Content-Type', 'application/json'), *headers])
     }
 
@@ -241,66 +278,50 @@ class FCGIRequest {
 
     formData() {
         if self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/) {
-            let [_, delim] = self.body.match!(/^(.*)\r\n/);
-            let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})");
-            let fields = self.body.matches(pattern);
-            return %{ k: v for [_, k, v] in fields };
+            let [_, delim] = self.body.match!(/^(.*)\r\n/)
+            let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})")
+            let fields = self.body.matches(pattern)
+            return %{ k: v for [_, k, v] in fields }
         } else if self.params['CONTENT_TYPE'].match?(/^application\/x-www-form-urlencoded/) {
-            return urlDecode(self.body);
+            return urlDecode(self.body)
         } else {
-            return urlDecode(self.params['QUERY_STRING']);
+            return urlDecode(self.params['QUERY_STRING'])
         }
     }
 }
 
 class FCGIApp {
     init(socket) {
-        self.socket = socket;
+        self.socket = socket
+        @clients = %{}
     }
 
-    waitRequest(keepTrying: Bool = false) {
-        if not let ($fd, addr) = os.accept(self.socket) {
-            if keepTrying && errno.get() == errno.EINTR {
-                return self.waitRequest()
-            } else {
-                return nil
+    run() {
+        while true {
+            let pollFds = [(fd: @socket, events: os.POLLIN)]
+
+            for client in @clients {
+                pollFds.push((fd: client, events: os.POLLIN))
             }
-        }
 
-        let stream = io.open(fd, 'r+')
+            let n = os.poll(pollFds, -1)
 
-        let body = blob()
-        let params = %{}
-
-        while let $r = FCGIRecord.read(stream) {
-            match r.type {
-                ::FCGI_BEGIN_REQUEST => {
-                    let role, flags = r.beginRequest()
-                },
-
-                ::FCGI_PARAMS => {
-                    params += r.getParams()
-                },
-
-                ::FCGI_STDIN => {
-                    let input = r.readInput();
-                    if input.size() == 0 {
-                        break;
-                    } else {
-                        body.push(input);
+            for {fd, events, revents} in pollFds {
+                if fd == @socket && (revents .&. os.POLLIN) {
+                    let (conn, addr) = os.accept(@socket)
+                    @clients[conn] = FCGIParser()
+                } else {
+                    if revents .&. os.POLLIN {
+                        if let $request = @clients[fd].push(os.read(fd, 4096)) {
+                            request.stream = io.open(fd, 'w')
+                            yield request
+                        }
                     }
-                },
-
-                t => { print("Type = {t}") }
+                    if revents .&. os.POLLHUP {
+                        @clients.remove(fd)
+                    }
+                }
             }
-        }
-
-        return FCGIRequest(stream, body.str(), params);
-    }
-
-    requests() {
-        while let $r = self.waitRequest() {
-            yield r
         }
     }
 }

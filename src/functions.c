@@ -1646,7 +1646,9 @@ builtin_os_read(int argc, struct value *kwargs)
         if (n.integer < 0)
                 vm_panic("the third argument to os.read() must be non-negative");
 
+        NOGC(blob.blob);
         vec_reserve(*blob.blob, blob.blob->count + n.integer);
+        OKGC(blob.blob);
 
         ReleaseLock(true);
         ssize_t nr = read(file.integer, blob.blob->items + blob.blob->count, n.integer);
@@ -4807,17 +4809,17 @@ builtin_parse_stmt(int argc, struct value *kwargs)
 struct value
 builtin_parse_show(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("ty.parse.fail()", 1);
+        ASSERT_ARGC("ty.parse.show()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
                 vm_panic("ty.parse.show(): expected pointer but got: %s", value_show(&ARG(0)));
         }
 
-        struct expression const *e = ARG(0).ptr;
+        struct statement const *s = ARG(0).ptr;
 
-        int n = e->end.s - e->start.s;
+        int n = s->end.s - s->start.s;
 
-        return STRING_CLONE(e->start.s, n);
+        return STRING_CLONE(s->start.s, n);
 }
 
 struct value

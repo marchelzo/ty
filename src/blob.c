@@ -393,7 +393,9 @@ blob_slice(struct value *blob, int argc, struct value *kwargs)
         n = min(n, blob->blob->count - start);
 
         struct blob *b = value_blob_new();
+        NOGC(b);
         vec_push_n(*b, blob->blob->items + start, n);
+        OKGC(b);
 
         return BLOB(b);
 }
@@ -431,7 +433,10 @@ blob_splice(struct value *blob, int argc, struct value *kwargs)
         n = min(n, blob->blob->count - start);
 
         struct blob *b = value_blob_new();
+        NOGC(b);
         vec_push_n(*b, blob->blob->items + start, n);
+        OKGC(b);
+
 
         memmove(blob->blob->items + start, blob->blob->items + start + n, blob->blob->count - start - n);
         blob->blob->count -= n;

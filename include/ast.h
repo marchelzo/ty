@@ -134,13 +134,6 @@ struct statement {
 
 
 struct expression {
-        struct location start;
-        struct location end;
-
-        char const *filename;
-
-        bool symbolized;
-
         enum {
                 EXPRESSION_FUNCTION,
                 EXPRESSION_IMPLICIT_FUNCTION,
@@ -227,6 +220,12 @@ struct expression {
                 EXPRESSION_VALUE,
                 EXPRESSION_MAX_TYPE
         } type;
+
+        struct location start;
+        struct location end;
+        char const *filename;
+
+        bool symbolized;
 
         union {
                 intmax_t integer;

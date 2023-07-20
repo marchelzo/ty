@@ -636,13 +636,12 @@ to_module_access(struct scope const *scope, struct expression const *e)
         }
 
         struct expression *id = gc_alloc(sizeof *id);
+        *id = (struct expression){0};
 
         id->start = start;
         id->end = end;
         id->identifier = (char *)name;
         id->type = EXPRESSION_IDENTIFIER;
-        id->constraint = NULL;
-        id->tagged = NULL;
 
         vec_insert_n(mod, e->identifier, strlen(e->identifier), 0);
 
@@ -789,6 +788,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 e->tagged = tagged[0];
                         } else {
                                 struct expression *items = gc_alloc(sizeof *items);
+                                *items = (struct expression){0};
                                 items->type = EXPRESSION_TUPLE;
                                 items->start = tagged[0]->start;
                                 items->end = tagged[tagc - 1]->end;
@@ -5234,6 +5234,7 @@ cstmt(struct value *v)
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(&f);
                 s->target = gc_alloc(sizeof *s->target);
+                *s->target = (struct expression){0};
                 s->target->type = EXPRESSION_IDENTIFIER;
                 s->target->identifier = mkcstr(tuple_get(v, "name"));
                 s->target->module = NULL;
