@@ -3390,6 +3390,8 @@ parse_let_definition(void)
 
         s->value = parse_expr(-1);
 
+        s->end = End;
+
         if (tok()->type == ';')
                 next();
 
