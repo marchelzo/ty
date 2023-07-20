@@ -1620,6 +1620,10 @@ Throw:
                 CASE(YIELD)
                         n = frames.items[0].fp;
 
+                        if (stack.items[n - 1].type != VALUE_GENERATOR) {
+                                vm_panic("attempt to yield from outside generator context");
+                        }
+
                         v.gen = stack.items[n - 1].gen;
                         v.gen->ip = ip;
                         v.gen->frame.count = 0;
