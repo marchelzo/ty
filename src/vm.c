@@ -1786,7 +1786,6 @@ Throw:
                         if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
                                 *top() = NONE;
                         } else if (top()->tags != 0 && tags_first(top()->tags) == TAG_SOME) {
-                                LOG("Dumping in a tag pop: %s", value_show(top()));
                                 top()->tags = tags_pop(top()->tags);
                                 if (top()->tags == 0) {
                                         top()->type &= ~VALUE_TAGGED;

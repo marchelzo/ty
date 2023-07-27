@@ -92,7 +92,6 @@ struct statement {
                         struct expression *cond;
                         struct expression *next;
                         struct statement *body;
-                        int_vector check;
                 } for_loop;
                 struct {
                         struct expression *target;
@@ -100,7 +99,6 @@ struct statement {
                         struct statement *body;
                         struct expression *cond;
                         struct expression *stop;
-                        int_vector check;
                 } each;
                 struct {
                         struct statement *s;

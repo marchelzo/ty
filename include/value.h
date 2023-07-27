@@ -75,6 +75,7 @@ struct value;
         X(Stmt) \
         X(Value) \
         X(Match) \
+        X(Each) \
         X(Func) \
         X(FuncDef) \
         X(ImplicitFunc) \

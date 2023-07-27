@@ -4374,6 +4374,10 @@ compile(char const *source)
         //add_location(end, end, state);
         patch_location_info();
         vec_push(location_lists, state.expression_locations);
+
+        state.generator_returns.count = 0;
+        state.breaks.count = 0;
+        state.continues.count = 0;
 }
 
 static struct scope *
@@ -5187,6 +5191,18 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyMatch);
                 break;
+        case STATEMENT_EACH_LOOP:
+                v = value_named_tuple(
+                        "pattern", tyexpr(s->each.target),
+                        "iter", tyexpr(s->each.array),
+                        "expr", tystmt(s->each.body),
+                        "cond", s->each.cond != NULL ? tyexpr(s->each.cond) : NIL,
+                        "stop", s->each.stop != NULL ? tyexpr(s->each.stop) : NIL,
+                        NULL
+                );
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyEach);
+                break;
         case STATEMENT_BLOCK:
                 v = ARRAY(value_array_new());
                 for (int i = 0; i < s->statements.count; ++i) {
@@ -5325,6 +5341,15 @@ cstmt(struct value *v)
                         vec_push(s->match.statements, cstmt(&_case->items[1]));
                         vec_push(s->match.conds, NULL);
                 }
+        } else if (tags_first(v->tags) == TyEach) {
+                s->type = STATEMENT_EACH_LOOP;
+                s->each.target = cexpr(tuple_get(v, "pattern"));
+                s->each.array = cexpr(tuple_get(v, "iter"));
+                s->each.body = cstmt(tuple_get(v, "expr"));
+                struct value *cond = tuple_get(v, "cond");
+                s->each.cond = (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL;
+                struct value *stop = tuple_get(v, "stop");
+                s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(stop) : NULL;
         } else if (tags_first(v->tags) == TyReturn) {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
@@ -5621,6 +5646,9 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == TyMatch) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == TyEach) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == TyStmt) {
