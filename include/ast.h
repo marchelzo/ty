@@ -172,6 +172,7 @@ struct expression {
                 EXPRESSION_SPECIAL_STRING,
                 EXPRESSION_FUNCTION_CALL,
                 EXPRESSION_MEMBER_ACCESS,
+                EXPRESSION_SELF_ACCESS,
                 EXPRESSION_SUBSCRIPT,
                 EXPRESSION_METHOD_CALL,
                 EXPRESSION_USER_OP,

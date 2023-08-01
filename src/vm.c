@@ -803,7 +803,7 @@ CleanupThread(void *ctx)
         gc_free(try_stack.items);
         gc_free(throw_stack.items);
         gc_free(defer_stack.items);
-        gc_free(allocs.items);
+        free(allocs.items);
 
         vec(struct value const *) *root_set = GCRootSet();
         gc_free(root_set->items);
@@ -2524,16 +2524,14 @@ BadContainer:
                 }
                 CASE(DEFINE_CLASS)
                 {
-                        int class, super, n;
+                        int class, n;
                         READVALUE(class);
-                        READVALUE(super);
                         READVALUE(n);
                         while (n --> 0) {
                                 v = pop();
                                 class_add_method(class, ip, v);
                                 ip += strlen(ip) + 1;
                         }
-                        class_set_super(class, super);
                         break;
                 }
                 CASE(FUNCTION)
@@ -3228,6 +3226,11 @@ vm_execute_file(char const *path)
         filename = path;
 
         bool success = vm_execute(source);
+
+        GCLOG("Allocs before: %zu", allocs.count);
+        DoGC();
+        GCLOG("Allocs after: %zu", allocs.count);
+
         /*
          * When we read the file, we copy into an allocated buffer with a 0 byte at
          * the beginning, so we need to subtract 1 here to get something appropriate

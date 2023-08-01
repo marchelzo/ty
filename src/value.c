@@ -805,6 +805,10 @@ value_string_alloc(int n)
 void
 _value_mark(struct value const *v)
 {
+        GC_ENABLED = false;
+        GCLOG("Mark: %s", value_show(v));
+        GC_ENABLED = true;
+
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;
         case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;

@@ -75,3 +75,19 @@ gc_resize(void *p, size_t n);
         (((v).capacity < (n)) && (((v).capacity = (n)), resize((v).items, (v).capacity * (sizeof (*(v).items)))))
 
 #define vec_for_each(v, idx, name) for (size_t idx = 0; ((name) = vec_get((v), idx)), idx < (v).count; ++idx)
+
+#define vec_nogc_push(v, item) \
+          (((v).count == (v).capacity) \
+        ? ((resize_nogc((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
+                        ((v).items[(v).count++] = (item)), \
+                        ((v).items + (v).count - 1)) \
+        : (((v).items[(v).count++] = (item)), \
+                ((v).items + (v).count - 1)))
+
+#define vec_nogc_push_n(v, elements, n) \
+          (((v).count + (n) >= (v).capacity) \
+        ? ((resize_nogc((v).items, (((v).capacity = ((v).capacity + ((n) + 16))) * (sizeof (*(v).items)))), \
+                        (memcpy((v).items + (v).count, (elements), ((n) * (sizeof (*(v).items))))), \
+                        ((v).count += (n)))) \
+        : ((memcpy((v).items + (v).count, (elements), ((n) * (sizeof (*(v).items))))), \
+                ((v).count += (n))))

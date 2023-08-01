@@ -645,13 +645,7 @@ string_count(struct value *string, int argc, struct value *kwargs)
 static struct value
 string_comb(struct value *string, int argc, struct value *kwargs)
 {
-        vec(char) chars;
-        size_t const header = offsetof(struct alloc, data);
-        // TODO: yikes
-
-        vec_init(chars);
-        vec_reserve(chars, header);
-        chars.count = chars.capacity;
+        vec(char) chars = {0};
 
         if (argc != 1)
                 vm_panic("the comb method on strings expects 1 arguments but got %d", argc);
@@ -704,11 +698,11 @@ string_comb(struct value *string, int argc, struct value *kwargs)
                 }
         }
 
-        struct alloc *a = (void *)chars.items;
-        a->type = GC_STRING;
-        a->mark = GC_NONE;
+        struct value r = STRING_CLONE(chars.items, chars.count);
 
-        return STRING(chars.items + header, chars.count - header);
+        gc_free(chars.items);
+
+        return r;
 }
 
 static struct value
@@ -736,13 +730,7 @@ string_repeat(struct value *string, int argc, struct value *kwargs)
 static struct value
 string_replace(struct value *string, int argc, struct value *kwargs)
 {
-        vec(char) chars;
-        size_t const header = offsetof(struct alloc, data);
-        // TODO: yikes
-
-        vec_init(chars);
-        vec_reserve(chars, header);
-        chars.count = chars.capacity;
+        vec(char) chars = {0};
 
         if (argc != 2)
                 vm_panic("the replace method on strings expects 2 arguments but got %d", argc);
@@ -756,7 +744,6 @@ string_replace(struct value *string, int argc, struct value *kwargs)
         char const *s = string->string;
 
         if (pattern.type == VALUE_STRING) {
-
                 vm_push(&replacement);
                 replacement = builtin_str(1, NULL);
                 vm_pop();
@@ -835,7 +822,7 @@ string_replace(struct value *string, int argc, struct value *kwargs)
                                 vm_panic("non-string returned by the replacement function passed to string's replace method");
 
                         if (match.type == VALUE_ARRAY)
-                            OKGC(match.array);
+                                OKGC(match.array);
 
                         vec_push_n(chars, repstr.string, repstr.bytes);
 
@@ -847,10 +834,11 @@ string_replace(struct value *string, int argc, struct value *kwargs)
                 vm_panic("invalid replacement passed to replace method on string");
         }
 
-        struct alloc *a = (void *)chars.items;
-        a->type = GC_STRING;
-        a->mark = GC_NONE;
-        return STRING(chars.items + header, chars.count - header);
+        struct value r = STRING_CLONE(chars.items, chars.count);
+
+        gc_free(chars.items);
+
+        return r;
 }
 
 static struct value

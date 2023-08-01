@@ -120,6 +120,7 @@ struct state {
         struct expression *implicit_func;
 
         struct expression *func;
+        int class;
 
         int function_depth;
         bool each_loop;
@@ -403,17 +404,6 @@ is_tag(struct expression const *e)
 }
 
 inline static bool
-is_class(struct expression const *e)
-{
-        assert(e->type == EXPRESSION_IDENTIFIER);
-
-        struct scope const *scope = (e->module == NULL || *e->module == '\0') ? state.global : get_import_scope(e->module);
-        struct symbol *sym = scope_lookup(scope, e->identifier);
-
-        return sym != NULL && sym->class != -1;
-}
-
-inline static bool
 is_const(struct scope const *scope, char const *name)
 {
         struct symbol const *s = scope_lookup(scope, name);
@@ -574,6 +564,7 @@ freshstate(void)
         s.method = NULL;
         s.global = scope_new(global, false);
         s.fscope = NULL;
+        s.class = -1;
 
         s.func = NULL;
         s.implicit_func = NULL;
@@ -932,6 +923,8 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                         symbolize_lvalue(scope, target->es.items[i], decl, pub);
                 }
                 break;
+        default:
+                assert(false);
         }
 
         target->symbolized = true;
@@ -1036,6 +1029,23 @@ symbolize_expression(struct scope *scope, struct expression *e)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 LOG("symbolizing var: %s%s%s", (e->module == NULL ? "" : e->module), (e->module == NULL ? "" : "::"), e->identifier);
+                if (state.class != -1 && e->module == NULL) {
+                        struct symbol *sym = scope_lookup(scope, e->identifier);
+                        if (sym == NULL || sym->scope == state.global || sym->scope == global) {
+                                if (class_method(state.class, e->identifier)) {
+                                        char const *id = e->identifier;
+                                        e->type = EXPRESSION_SELF_ACCESS;
+                                        e->member_name = id;
+                                        e->maybe = false;
+                                        e->object = gc_alloc(sizeof *e->object);
+                                        *e->object = (struct expression){0};
+                                        e->object->type = EXPRESSION_IDENTIFIER;
+                                        e->object->identifier = "self";
+                                        symbolize_expression(scope, e->object);
+                                        break;
+                                }
+                        }
+                }
                 e->symbol = getsymbol(
                         ((e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module)),
                         e->identifier,
@@ -1350,11 +1360,16 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_CLASS_DEFINITION:
                 if (s->class.super != NULL) {
                         symbolize_expression(scope, s->class.super);
-                        if (!is_class(s->class.super))
+                        if (s->class.super->symbol->class == -1)
                                 fail("attempt to extend non-class");
+                        class_set_super(s->class.symbol, s->class.super->symbol->class);
+                } else {
+                        class_set_super(s->class.symbol, 0);
                 }
                 subscope = scope_new(scope, false);
+                state.class = s->class.symbol;
                 symbolize_methods(subscope, s->class.methods.items, s->class.methods.count);
+                state.class = -1;
                 break;
         case STATEMENT_TAG_DEFINITION:
                 if (scope_locally_defined(state.global, s->tag.name))
@@ -2875,6 +2890,7 @@ emit_target(struct expression *target, bool def)
                 emit_tgt(target->symbol, state.fscope, def);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
                 LOG("MEMBER ACCESS: %s", target->member_name);
                 emit_expression(target->object);
                 emit_instr(INSTR_TARGET_MEMBER);
@@ -3724,6 +3740,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_expression(e->value);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
                 emit_expression(e->object);
                 if (e->maybe)
                         emit_instr(INSTR_TRY_MEMBER_ACCESS);
@@ -4130,7 +4147,6 @@ emit_statement(struct statement const *s, bool want_result)
 
                 emit_instr(INSTR_DEFINE_CLASS);
                 emit_int(s->class.symbol);
-                emit_int(s->class.super == NULL ? 0 : s->class.super->symbol->class);
                 emit_int(s->class.methods.count);
 
                 for (int i = s->class.methods.count; i > 0; --i)
@@ -5055,6 +5071,7 @@ tyexpr(struct expression const *e)
                 v.tags = tags_push(0, TyMethodCall);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
                 v = value_tuple(2);
                 v.items[0] = tyexpr(e->object);
                 v.items[1] = STRING_CLONE(e->member_name, strlen(e->member_name));
@@ -5712,16 +5729,22 @@ typarse(struct expression *e)
         state.code = code_save;
 
         struct value m = *vm_get(0);
-        vm_pop();
 
         struct scope *macro_scope_save = state.macro_scope;
         state.macro_scope = state.global;
 
         struct value expr = vm_call(&m, 0);
+        vm_push(&expr);
 
         state.macro_scope = macro_scope_save;
 
-        return cexpr(&expr);
+        struct expression *e_ = cexpr(&expr);
+
+        // Take `m` and `expr` off the stack
+        vm_pop();
+        vm_pop();
+
+        return e_;
 }
 
 void
@@ -5742,6 +5765,10 @@ define_class(struct statement *s)
         sym->class = class_new(s->class.name);
         sym->cnst = true;
         s->class.symbol = sym->class;
+
+        for (int i = 0; i < s->class.methods.count; ++i) {
+                class_declare_method(sym->class, s->class.methods.items[i]->name);
+        }
 
         if (s->class.pub) {
                 vec_push(state.exports, s->class.name);

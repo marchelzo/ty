@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
+#include <pthread.h>
 
 #include "vec.h"
 #include "log.h"
@@ -16,6 +17,7 @@ void DoGC(void);
 
 #define resize(ptr, n) ((ptr) = gc_resize((ptr), (n)))
 #define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked((ptr), (n)))
+#define resize_nogc(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 
 //#define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
 //#define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
@@ -75,6 +77,9 @@ void
 gc(void);
 
 inline static void *
+mrealloc(void *p, size_t n);
+
+inline static void *
 gc_resize_unchecked(void *p, size_t n) {
         struct alloc *a;
 
@@ -102,15 +107,12 @@ inline static void
 CheckUsed(void)
 {
         if (GC_ENABLED && MemoryUsed > MemoryLimit) {
-                LOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
+                GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC();
-                LOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
-                while ((MemoryUsed << 1) > MemoryLimit) {
-                        if (MemoryLimit == 0) {
-                                MemoryLimit = GC_INITIAL_LIMIT;
-                        }
+                GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
+                while ((MemoryUsed << 1) >= MemoryLimit) {
                         MemoryLimit <<= 1;
-                        LOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
+                        GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
                 }
         }
 }
@@ -153,7 +155,7 @@ gc_alloc_object(size_t n, char type)
         a->type = type;
         a->size = n;
 
-        vec_push_unchecked(allocs, a);
+        vec_nogc_push(allocs, a);
 
         return a->data;
 }
@@ -197,6 +199,18 @@ gc_free(void *p)
                 }
                 free(a);
         }
+}
+
+inline static void *
+mrealloc(void *p, size_t n)
+{
+        p = realloc(p, n);
+
+        if (p == NULL) {
+                panic("Out of memory!");
+        }
+
+        return p;
 }
 
 inline static void *
