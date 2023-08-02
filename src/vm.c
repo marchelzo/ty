@@ -398,6 +398,10 @@ add_builtins(int ac, char **av)
 {
         for (int i = 0; i < builtin_count; ++i) {
                 compiler_introduce_symbol(builtins[i].module, builtins[i].name);
+                if (builtins[i].value.type == VALUE_BUILTIN_FUNCTION) {
+                        builtins[i].value.name = builtins[i].name;
+                        builtins[i].value.module = builtins[i].module;
+                }
                 vec_push(Globals, builtins[i].value);
         }
 
@@ -2362,19 +2366,20 @@ BadContainer:
                                                 class_is_subclass(top()->class, v.class)
                                         );
                                         break;
-                                case VALUE_INTEGER:  *top() = BOOLEAN(class_is_subclass(CLASS_INT, v.class));      break;
-                                case VALUE_REAL:     *top() = BOOLEAN(class_is_subclass(CLASS_FLOAT, v.class));    break;
-                                case VALUE_BOOLEAN:  *top() = BOOLEAN(class_is_subclass(CLASS_BOOL, v.class));     break;
-                                case VALUE_ARRAY:    *top() = BOOLEAN(class_is_subclass(CLASS_ARRAY, v.class));    break;
-                                case VALUE_STRING:   *top() = BOOLEAN(class_is_subclass(CLASS_STRING, v.class));   break;
-                                case VALUE_BLOB:     *top() = BOOLEAN(class_is_subclass(CLASS_BLOB, v.class));     break;
-                                case VALUE_DICT:     *top() = BOOLEAN(class_is_subclass(CLASS_DICT, v.class));     break;
+                                case VALUE_INTEGER:   *top() = BOOLEAN(class_is_subclass(CLASS_INT, v.class));       break;
+                                case VALUE_REAL:      *top() = BOOLEAN(class_is_subclass(CLASS_FLOAT, v.class));     break;
+                                case VALUE_BOOLEAN:   *top() = BOOLEAN(class_is_subclass(CLASS_BOOL, v.class));      break;
+                                case VALUE_ARRAY:     *top() = BOOLEAN(class_is_subclass(CLASS_ARRAY, v.class));     break;
+                                case VALUE_STRING:    *top() = BOOLEAN(class_is_subclass(CLASS_STRING, v.class));    break;
+                                case VALUE_BLOB:      *top() = BOOLEAN(class_is_subclass(CLASS_BLOB, v.class));      break;
+                                case VALUE_DICT:      *top() = BOOLEAN(class_is_subclass(CLASS_DICT, v.class));      break;
                                 case VALUE_METHOD:
                                 case VALUE_BUILTIN_METHOD:
                                 case VALUE_BUILTIN_FUNCTION:
-                                case VALUE_FUNCTION: *top() = BOOLEAN(class_is_subclass(CLASS_FUNCTION, v.class)); break;
-                                case VALUE_REGEX:    *top() = BOOLEAN(class_is_subclass(CLASS_REGEX, v.class));    break;
-                                default:             *top() = BOOLEAN(false);                                      break;
+                                case VALUE_FUNCTION:  *top() = BOOLEAN(class_is_subclass(CLASS_FUNCTION, v.class));  break;
+                                case VALUE_GENERATOR: *top() = BOOLEAN(class_is_subclass(CLASS_GENERATOR, v.class)); break;
+                                case VALUE_REGEX:     *top() = BOOLEAN(class_is_subclass(CLASS_REGEX, v.class));     break;
+                                default:              *top() = BOOLEAN(false);                                       break;
                                 }
                         } else if (top()->type == VALUE_BOOLEAN) {
                                 v = pop();

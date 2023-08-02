@@ -1,0 +1,143 @@
+import ty
+import ty.parse as parse
+import ty.token (next)
+import os (write)
+import time
+import chalk
+
+enum! {
+    CRITICAL,
+    ERROR,
+    WARN,
+    INFO,
+    DEBUG
+}
+
+let levels = %{
+    CRITICAL: 'critical',
+    ERROR: 'error',
+    WARN: 'warning',
+    INFO: 'info',
+    DEBUG: 'debug'
+}
+
+let pens = %{
+    CRITICAL: chalk.pen(chalk.bold, chalk.underline, chalk.brightRed),
+    ERROR: chalk.brightRed,
+    WARN: chalk.brightYellow,
+    INFO: chalk.fg('#4989eb'),
+    DEBUG: chalk.fg('#ff45be')
+}
+
+let timePen = chalk.fg('#5c5469')
+let namePen = chalk.fg('#92e83c')
+
+class Logger {
+    init(name) {
+        @name = name
+        @color = true
+        @level = WARN
+        @prefix = function (level, color) {
+            let t = time.utime()
+            if color {
+                let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
+                timePen("{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000}") + " {levelName} {namePen(@name ?? 'root')}"
+            } else {
+                let levelName = "[{levels[level]}]".padLeft(10)
+                "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000} {levelName} {@name ?? 'root'}"
+            }
+        }
+    }
+
+    setLevel(level) {
+        @level = level
+    }
+
+    setPrefix(f) {
+        @prefix = f
+    }
+
+    log(level, msg) {
+        if @level >= level {
+            write(2, (@prefix)(level, @color) + ": {msg}\n")
+        }
+    }
+
+    warn(msg) {
+        log(WARN, msg)
+    }
+
+    error(msg) {
+        log(ERROR, msg)
+    }
+
+    info(msg) {
+        log(INFO, msg)
+    }
+
+    critical(msg) {
+        log(CRITICAL, msg)
+    }
+
+    debug(msg) {
+        log(DEBUG, msg)
+    }
+}
+
+pub function getLogger(name) {
+    let mtx = static!(Mutex())
+    let d = static!(%{})
+    with mtx.lock() {
+        if let $logger = d[name] {
+            logger
+        } else {
+            d[name] = Logger(name)
+        }
+    }
+}
+
+function logMacro(level) {
+    let e = parse.expr(50)
+    ty.Block([
+        ty.Let(
+            ty.Id(name: 'logger'),
+            ty.Call(
+                func: ty.Id(module: 'log', name: 'getLogger'),
+                args: [
+                    ty.Arg(arg: ty.Id(name: '__module__'))
+                ]
+            )
+        ),
+        ty.MethodCall(
+            object: ty.Id(name: 'logger'),
+            method: level,
+            args: [ty.Arg(arg: e)]
+        )
+    ])
+}
+
+pub macro debug!    { logMacro('debug') }
+pub macro info!     { logMacro('info') }
+pub macro warn!     { logMacro('warn') }
+pub macro error!    { logMacro('error') }
+pub macro critical! { logMacro('critical') }
+
+pub macro logLevel! {
+    let e = parse.expr(50)
+    ty.Block([
+        ty.Let(
+            ty.Id(name: 'logger'),
+            ty.Call(
+                func: ty.Id(module: 'log', name: 'getLogger'),
+                args: [
+                    ty.Arg(arg: ty.Id(name: '__module__'))
+                ]
+            )
+        ),
+        ty.MethodCall(
+            object: ty.Id(name: 'logger'),
+            method: 'setLevel',
+            args: [ty.Arg(arg: e)]
+        )
+    ])
+}

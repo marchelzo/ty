@@ -16,9 +16,6 @@ char const *
 class_name(int class);
 
 void
-class_declare_method(int class, char const *name);
-
-void
 class_add_method(int class, char const *name, struct value f);
 
 void

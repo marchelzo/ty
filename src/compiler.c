@@ -458,8 +458,8 @@ addsymbol(struct scope *scope, char const *name)
         s->file = state.filename;
         s->loc = state.start;
 
-        if (scope->function == global && isupper(name[0])) {
-            vec_push(state.exports, name);
+        if ((scope == global || scope == state.global) && isupper(name[0])) {
+                vec_push(state.exports, name);
         }
 
         LOG("adding symbol: %s -> %d\n", name, s->symbol);
@@ -1029,6 +1029,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 LOG("symbolizing var: %s%s%s", (e->module == NULL ? "" : e->module), (e->module == NULL ? "" : "::"), e->identifier);
+                if (e->module == NULL && strcmp(e->identifier, "__module__") == 0) {
+                        e->type = EXPRESSION_STRING;
+                        e->string = state.filename;
+                        break;
+                }
                 if (state.class != -1 && e->module == NULL) {
                         struct symbol *sym = scope_lookup(scope, e->identifier);
                         if (sym == NULL || sym->scope == state.global || sym->scope == global) {
@@ -1041,6 +1046,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                                         *e->object = (struct expression){0};
                                         e->object->type = EXPRESSION_IDENTIFIER;
                                         e->object->identifier = "self";
+                                        e->object->start = e->start;
+                                        e->object->end = e->end;
                                         symbolize_expression(scope, e->object);
                                         break;
                                 }
@@ -1358,6 +1365,9 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->expression);
                 break;
         case STATEMENT_CLASS_DEFINITION:
+                if (!scope_locally_defined(state.global, s->class.name)) {
+                        define_class(s);
+                }
                 if (s->class.super != NULL) {
                         symbolize_expression(scope, s->class.super);
                         if (s->class.super->symbol->class == -1)
@@ -1368,7 +1378,19 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 }
                 subscope = scope_new(scope, false);
                 state.class = s->class.symbol;
-                symbolize_methods(subscope, s->class.methods.items, s->class.methods.count);
+                for (int i = 0; i < s->class.methods.count; ++i) {
+                        if (s->class.methods.items[i]->return_type == NULL && s->class.super != NULL) {
+                                struct value *m = class_method(s->class.super->symbol->class, s->class.methods.items[i]->name);
+                                if (m != NULL && m->type == VALUE_PTR) {
+                                        s->class.methods.items[i]->return_type = ((struct expression *)m->ptr)->return_type;
+                                }
+                        }
+						char const *name = s->class.methods.items[i]->name;
+						s->class.methods.items[i]->name = NULL;
+                        s->class.methods.items[i]->is_method = true;
+                        symbolize_expression(subscope, s->class.methods.items[i]);
+						s->class.methods.items[i]->name = name;
+                }
                 state.class = -1;
                 break;
         case STATEMENT_TAG_DEFINITION:
@@ -3560,7 +3582,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
         default:
                 emit_target(target, def);
                 emit_instr(instr);
-                if (target->type == EXPRESSION_IDENTIFIER && target->constraint != NULL) {
+                if (target->type == EXPRESSION_IDENTIFIER && target->constraint != NULL && CheckConstraints) {
                         size_t start = state.code.count;
                         emit_instr(INSTR_DUP);
                         emit_expression(target->constraint);
@@ -5478,7 +5500,7 @@ cexpr(struct value *v)
                 struct value *items = tuple_get(v, "items");
                 struct value *dflt = tuple_get(v, "default");
 
-                e->dflt = dflt != NULL ? cexpr(dflt) : NULL;
+                e->dflt = (dflt != NULL && dflt->type != VALUE_NIL) ? cexpr(dflt) : NULL;
 
                 for (int i = 0; i < items->array->count; ++i) {
                         vec_push(e->keys, cexpr(&items->array->items[i].items[0]));
@@ -5767,7 +5789,7 @@ define_class(struct statement *s)
         s->class.symbol = sym->class;
 
         for (int i = 0; i < s->class.methods.count; ++i) {
-                class_declare_method(sym->class, s->class.methods.items[i]->name);
+                class_add_method(sym->class, s->class.methods.items[i]->name, PTR(s->class.methods.items[i]));
         }
 
         if (s->class.pub) {

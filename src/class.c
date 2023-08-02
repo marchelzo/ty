@@ -55,12 +55,6 @@ class_name(int class)
 }
 
 void
-class_declare_method(int class, char const *name, struct value f)
-{
-        table_put(&tables.items[class], name, NIL);
-}
-
-void
 class_add_method(int class, char const *name, struct value f)
 {
         table_put(&tables.items[class], name, f);

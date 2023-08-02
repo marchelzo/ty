@@ -87,6 +87,7 @@ static struct {
         { ":",   ':'                  },
         { "|",   '|'                  },
         { "&",   '&'                  },
+        { "~",   '~'                  },
         { "::",  TOKEN_CHECK_MATCH    },
         { ".",   '.'                  },
         { ".?",  TOKEN_DOT_MAYBE      },

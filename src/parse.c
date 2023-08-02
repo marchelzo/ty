@@ -3637,17 +3637,19 @@ parse_class_definition(void)
                          * Lol.
                          */
                         switch (tok()->type) {
-                        case TOKEN_DBL_EQ:  tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "==";   break;
-                        case TOKEN_CMP:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "<=>";  break;
-                        case TOKEN_PLUS:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "+";    break;
-                        case TOKEN_DIV:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "/";    break;
-                        case TOKEN_MINUS:   tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-";    break;
-                        case TOKEN_STAR:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*";    break;
-                        case TOKEN_PERCENT: tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "%";    break;
-                        case '&':           tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "&";    break;
-                        case '|':           tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "|";    break;
-                        case TOKEN_USER_OP: tok()->type = TOKEN_IDENTIFIER;                             break;
-                        default:                                                                        break;
+                        case TOKEN_DBL_EQ:      tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "==";   break;
+                        case TOKEN_CMP:         tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "<=>";  break;
+                        case TOKEN_PLUS:        tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "+";    break;
+                        case TOKEN_DIV:         tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "/";    break;
+                        case TOKEN_MINUS:       tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-";    break;
+                        case TOKEN_STAR:        tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*";    break;
+                        case TOKEN_PERCENT:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "%";    break;
+                        case '&':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "&";    break;
+                        case '|':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "|";    break;
+                        case TOKEN_USER_OP:     tok()->type = TOKEN_IDENTIFIER;                             break;
+                        case '~':               next();
+                        case TOKEN_IDENTIFIER:                                                              break;
+                        default: expect(TOKEN_IDENTIFIER);                                                  break;
                         }
                         struct location start = tok()->start;
                         /*

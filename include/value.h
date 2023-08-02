@@ -253,7 +253,6 @@ struct value {
                 bool boolean;
                 struct array *array;
                 struct dict *dict;
-                struct value (*builtin_function)(int, struct value *);
                 struct blob *blob;
                 struct {
                         void *ptr;
@@ -269,10 +268,18 @@ struct value {
                         struct table *object;
                 };
                 struct {
-                        struct value *this;
                         union {
-                                struct value *method;
-                                struct value (*builtin_method)(struct value *, int, struct value *);
+                                struct {
+                                        struct value *this;
+                                        union {
+                                                struct value *method;
+                                                struct value (*builtin_method)(struct value *, int, struct value *);
+                                        };
+                                };
+                                struct {
+                                        struct value (*builtin_function)(int, struct value *);
+                                        char const *module;
+                                };
                         };
                         char const *name;
                 };

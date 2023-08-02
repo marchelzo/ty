@@ -407,7 +407,12 @@ value_show(struct value const *v)
                 snprintf(buffer, 1024, "<bound builtin method '%s'>", v->name);
                 break;
         case VALUE_BUILTIN_FUNCTION:
-                snprintf(buffer, 1024, "<builtin function>");
+                if (v->name == NULL)
+                        snprintf(buffer, 1024, "<builtin function>");
+                else if (v->module == NULL)
+                        snprintf(buffer, 1024, "<builtin function '%s'>", v->name);
+                else
+                        snprintf(buffer, 1024, "<builtin function '%s::%s'>", v->module, v->name);
                 break;
         case VALUE_CLASS:
                 snprintf(buffer, 1024, "<class %s>", class_name(v->class));

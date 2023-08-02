@@ -184,11 +184,11 @@ class FCGIRequest {
         self.params = ps
     }
 
-    sendHTML(html, headers, status=200) {
+    sendHTML(html, headers=[], status=200) {
         self.sendResponse(status, html, [('Content-Type', 'text/html'), *headers])
     }
 
-    sendJSON(x, headers, status=200) {
+    sendJSON(x, headers=[], status=200) {
         self.sendResponse(status, json.encode(x), [('Content-Type', 'application/json'), *headers])
     }
 

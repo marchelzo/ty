@@ -78,7 +78,7 @@ class Object {
     }
 
     setFinalizer(*args) {
-        setFinalizer(self, *args)
+        ::setFinalizer(self, *args)
     }
 
     |(other) {
@@ -236,7 +236,7 @@ class Array : Iterable {
     }
 
     str() {
-        @map(str).sum()
+        map(::str).sum()
     }
 
     list() {
@@ -617,7 +617,7 @@ class Float {
             },
 
             [range] => {
-                self.clamp(range.low(), range.high())
+                clamp(range.low(), range.high())
             }
         }
     }
@@ -754,131 +754,131 @@ class Tuple {
 
 class Iterable {
     map(f) {
-        @__iter__().map(f)
+        __iter__().map(f)
     }
 
     filter(f) {
-        @__iter__().filter(f)
+        __iter__().filter(f)
     }
 
     reverse() {
-        @__iter__().reverse()
+        __iter__().reverse()
     }
 
     list() {
-        @__iter__().list()
+        __iter__().list()
     }
 
     uniq(f) {
-        @__iter__().uniq(f)
+        __iter__().uniq(f)
     }
 
     take(n) {
-        @__iter__().take(n)
+        __iter__().take(n)
     }
 
     takeWhile(pred) {
-        @__iter__().takeWhile(pred)
+        __iter__().takeWhile(pred)
     }
 
     drop(n) {
-        @__iter__().drop(n)
+        __iter__().drop(n)
     }
 
     dropWhile(pred) {
-        @__iter__().dropWhile(pred)
+        __iter__().dropWhile(pred)
     }
 
     set() {
-        @__iter__().set()
+        __iter__().set()
     }
 
     str() {
-        @__iter__().str()
+        __iter__().str()
     }
 
     join(s) {
-        @__iter__().join(s)
+        __iter__().join(s)
     }
 
     unlines() {
-        @__iter__().unlines()
+        __iter__().unlines()
     }
 
     unwords() {
-        @__iter__().unwords()
+        __iter__().unwords()
     }
 
     tally(f) {
-        @__iter__().tally(f)
+        __iter__().tally(f)
     }
 
     min(k) {
-        @__iter__().min(k)
+        __iter__().min(k)
     }
 
     max(k) {
-        @__iter__().max(k)
+        __iter__().max(k)
     }
 
     minmax(k) {
-        @__iter__().minmax(k)
+        __iter__().minmax(k)
     }
 
     count(x) {
-        @__iter__().count(x)
+        __iter__().count(x)
     }
 
     intersperse(x) {
-        @__iter__().intersperse(x)
+        __iter__().intersperse(x)
     }
 
     groupsOf(n, keepShort) {
-        @__iter__().groupsOf(n, keepShort)
+        __iter__().groupsOf(n, keepShort)
     }
 
     classify(f = id) {
-        @__iter__().classify(f)
+        __iter__().classify(f)
     }
 
     pad(n, x) {
-        @__iter__().pad(n, x)
+        __iter__().pad(n, x)
     }
 
     zip(*its, longest) {
-        @__iter__().zip(*its, longest: longest)
+        __iter__().zip(*its, longest: longest)
     }
 
     zipWith(f, *its, longest) {
-        @__iter__().zipWith(f, *its, longest: longest)
+        __iter__().zipWith(f, *its, longest: longest)
     }
 
     unzip() {
-        @__iter__().unzip()
+        __iter__().unzip()
     }
 
     unzipWith(f) {
-        @__iter__().unzipWith(f)
+        __iter__().unzipWith(f)
     }
 
     mean() {
-        @__iter__().mean()
+        __iter__().mean()
     }
 
     median() {
-        @__iter__().median()
+        __iter__().median()
     }
 
     sum() {
-        @__iter__().sum()
+        __iter__().sum()
     }
 
     fold(a, b) {
-        @__iter__().fold(a, b)
+        __iter__().fold(a, b)
     }
 
     group(f) {
-        @__iter__().group(f)
+        __iter__().group(f)
     }
 
     chain(A, B) {
@@ -886,36 +886,38 @@ class Iterable {
     }
 
     cycle() {
-        @list().cycle()
+        list().cycle()
     }
 
     repeat(n) {
-        @__iter__().repeat(n)
+        __iter__().repeat(n)
     }
 
     all?(pred) {
-        @__iter__().all?(pred)
+        __iter__().all?(pred)
     }
 
     interleave(xs) {
-        @__iter__().interleave(xs)
+        __iter__().interleave(xs)
     }
 
     enumerate() {
-        @__iter__().enumerate()
+        __iter__().enumerate()
     }
 
     find(p) {
-        @__iter__().find(p)
+        __iter__().find(p)
     }
 
     __len__() {
-        @__iter__().__len__()
+        __iter__().__len__()
     }
 
     __subscript__(i) {
-        @__iter__().__subscript__(i)
+        __iter__().__subscript__(i)
     }
+
+    __iter__() -> Iter;
 }
 
 class Iter : Iterable {
@@ -987,7 +989,7 @@ class Iter : Iterable {
     }
 
     unzip() {
-        self.unzipWith(id)
+        unzipWith(id)
     }
 
     zipWith*(f, *its, longest) {
@@ -1013,7 +1015,7 @@ class Iter : Iterable {
     }
 
     zip(*its, longest = false) {
-        self.zipWith(tuple, *its, longest: longest)
+        zipWith(tuple, *its, longest: longest)
     }
 
     pad*(n, x) {
@@ -1344,7 +1346,7 @@ class Iter : Iterable {
         }
     }
 
-    __iter__() { return self }
+    __iter__() { self }
 }
 
 class ReverseIter : Iter {
@@ -1371,11 +1373,11 @@ class Range : Iterable {
     }
 
     low() {
-        return min(@a, @b)
+        return ::min(@a, @b)
     }
 
     high() {
-        return max(@a, @b) - 1
+        return ::max(@a, @b) - 1
     }
 
     __len__() {
@@ -1457,7 +1459,7 @@ function uuid4() {
 class Mutex {
     init() {
         @mtx = thread.mutex()
-        self.setFinalizer(@destroy)
+        setFinalizer(@destroy)
     }
 
     inner() {
@@ -1497,7 +1499,7 @@ class MutexLock {
 class CondVar {
     init() {
         @var = thread.cond()
-        self.setFinalizer(@destroy)
+        setFinalizer(@destroy)
     }
 
     destroy() {
