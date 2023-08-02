@@ -86,3 +86,17 @@ function pen(*args) {
 
   return p
 }
+
+function strip(s) {
+    s.comb(/\x1b[^m]*m/)
+}
+
+pub function padLeft(s) {
+    let w = #strip(s)
+    ' '.repeat(max(0, w - #s)) + s
+}
+
+pub function padRight(s) {
+    let w = #strip(s)
+    s + ' '.repeat(max(0, w - #s))
+}

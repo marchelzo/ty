@@ -29,7 +29,7 @@ let pens = %{
     DEBUG: chalk.fg('#ff45be')
 }
 
-let timePen = chalk.fg('#5c5469')
+let timePen = chalk.fg('#10ccb9')
 let namePen = chalk.fg('#92e83c')
 
 class Logger {
@@ -39,12 +39,13 @@ class Logger {
         @level = WARN
         @prefix = function (level, color) {
             let t = time.utime()
+            let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.%03{(t % 1000000) / 1000}"
             if color {
                 let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
-                timePen("{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000}") + " {levelName} {namePen(@name ?? 'root')}"
+                "{timePen(tString)} {levelName} {namePen(@name ?? 'root')}"
             } else {
                 let levelName = "[{levels[level]}]".padLeft(10)
-                "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000} {levelName} {@name ?? 'root'}"
+                "{tString} {levelName} {@name ?? 'root'}"
             }
         }
     }
