@@ -26,6 +26,7 @@
 #include <openssl/sha.h>
 #include <utf8proc.h>
 #include <pthread.h>
+#include <termios.h>
 
 #ifdef __linux__
 #include <sys/epoll.h>
@@ -907,7 +908,7 @@ builtin_bit_and(int argc, struct value *kwargs)
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit.and() must be an integer");
 
-        return INTEGER(a.integer & b.integer);
+        return INTEGER((uintmax_t)a.integer & (uintmax_t)b.integer);
 }
 
 struct value
@@ -923,7 +924,7 @@ builtin_bit_or(int argc, struct value *kwargs)
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit.or() must be an integer");
 
-        return INTEGER(a.integer | b.integer);
+        return INTEGER((uintmax_t)a.integer | (uintmax_t)b.integer);
 }
 
 struct value
@@ -939,7 +940,7 @@ builtin_bit_xor(int argc, struct value *kwargs)
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit.xor() must be an integer");
 
-        return INTEGER(a.integer ^ b.integer);
+        return INTEGER((uintmax_t)a.integer ^ (uintmax_t)b.integer);
 }
 
 struct value
@@ -955,7 +956,7 @@ builtin_bit_shift_left(int argc, struct value *kwargs)
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit.shiftLeft() must be an integer");
 
-        return INTEGER(a.integer << b.integer);
+        return INTEGER((uintmax_t)a.integer << (uintmax_t)b.integer);
 }
 
 struct value
@@ -971,7 +972,7 @@ builtin_bit_shift_right(int argc, struct value *kwargs)
         if (b.type != VALUE_INTEGER)
                 vm_panic("the second argument to bit.shiftRight() must be an integer");
 
-        return INTEGER(a.integer >> b.integer);
+        return INTEGER((uintmax_t)a.integer >> (uintmax_t)b.integer);
 }
 
 struct value
@@ -983,7 +984,7 @@ builtin_bit_complement(int argc, struct value *kwargs)
         if (a.type != VALUE_INTEGER)
                 vm_panic("the first argument to bit.complement() must be an integer");
 
-        return INTEGER(~a.integer);
+        return INTEGER(~(uintmax_t)a.integer);
 }
 
 struct value
@@ -3493,6 +3494,85 @@ builtin_os_fcntl(int argc, struct value *kwargs)
         }
 
         vm_panic("os.fcntl() functionality not implemented yet");
+}
+
+struct value
+builtin_termios_tcgetattr(int argc, struct value *kwargs)
+{
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("termios.tcgetattr(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        struct termios t;
+
+        if (tcgetattr(ARG(0).integer, &t) != 0) {
+                return NIL;
+        }
+
+        struct blob *cc = value_blob_new();
+        NOGC(cc);
+
+        for (int i = 0; i < sizeof t.c_cc; ++i) {
+                vec_push(*cc, t.c_cc[i]);
+        }
+
+        OKGC(cc);
+
+        return value_named_tuple(
+                "iflag", INTEGER(t.c_iflag),
+                "oflag", INTEGER(t.c_oflag),
+                "cflag", INTEGER(t.c_cflag),
+                "lflag", INTEGER(t.c_lflag),
+                "ispeed", INTEGER(t.c_ispeed),
+                "ospeed", INTEGER(t.c_ospeed),
+                "cc", BLOB(cc),
+                NULL
+        );
+}
+
+struct value
+builtin_termios_tcsetattr(int argc, struct value *kwargs)
+{
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("termios.tcsetattr(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        struct termios t;
+
+        if (tcgetattr(ARG(0).integer, &t) != 0) {
+                return BOOLEAN(false);
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("termios.tcsetattr(_, flags, _): expected integer but got: %s", value_show(&ARG(1)));
+        }
+
+        if (ARG(2).type != VALUE_TUPLE) {
+                vm_panic("termios.tcsetattr(_, _, t): expected tuple but got: %s", value_show(&ARG(2)));
+        }
+
+        struct value *iflag = tuple_get(&ARG(2), "iflag");
+        struct value *oflag = tuple_get(&ARG(2), "oflag");
+        struct value *cflag = tuple_get(&ARG(2), "cflag");
+        struct value *lflag = tuple_get(&ARG(2), "lflag");
+        struct value *ispeed = tuple_get(&ARG(2), "ispeed");
+        struct value *ospeed = tuple_get(&ARG(2), "ospeed");
+        struct value *cc = tuple_get(&ARG(2), "cc");
+
+        if (iflag != NULL && iflag->type == VALUE_INTEGER) { t.c_iflag = iflag->integer; }
+        if (oflag != NULL && oflag->type == VALUE_INTEGER) { t.c_oflag = oflag->integer; }
+        if (cflag != NULL && cflag->type == VALUE_INTEGER) { t.c_cflag = cflag->integer; }
+        if (lflag != NULL && lflag->type == VALUE_INTEGER) { t.c_lflag = lflag->integer; }
+        if (ispeed != NULL && ispeed->type == VALUE_INTEGER) { t.c_ispeed = ispeed->integer; }
+        if (ospeed != NULL && ospeed->type == VALUE_INTEGER) { t.c_ospeed = ospeed->integer; }
+
+        if (cc != NULL && cc->type == VALUE_BLOB) {
+                for (int i = 0; i < min(cc->blob->count, sizeof t.c_cc); ++i) {
+                        t.c_cc[i] = cc->blob->items[i];
+                }
+        }
+
+        return BOOLEAN(tcsetattr(ARG(0).integer, ARG(1).integer, &t) == 0);
 }
 
 struct value

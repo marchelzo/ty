@@ -335,7 +335,7 @@ class String : Iterable {
     }
 
     int(base: Int = 10) {
-        return int(self, base)
+        return ::int(self, base)
     }
 
     center(n, c = ' ') {
@@ -444,7 +444,7 @@ class String : Iterable {
     }
 
     __fmt__(s) {
-        match int(s) {
+        match ::int(s) {
             nil        => self,
             n :: n > 0 => @padRight(n),
             n :: n < 0 => @padLeft(-n)
@@ -572,6 +572,13 @@ class Int {
 
     clamp(*args) {
         Float.clamp.bind(self)(*args)
+    }
+
+    __fmt__(fmt) {
+        match fmt {
+            /^(0?)(\d+)/ => "{self}".padLeft(::int(_2), _1 || ' '),
+            /^-(\d+)/ => "{self}".padRight(::int(_1))
+        }
     }
 }
 
@@ -1083,7 +1090,7 @@ class Iter : Iterable {
     }
 
     join(sep: String) {
-        if not let Some(str ~> $s) = @__next__() {
+        if not let Some(::str ~> $s) = @__next__() {
             return ''
         }
 
@@ -1092,7 +1099,7 @@ class Iter : Iterable {
 
         while let Some(s) = @__next__() {
             b.push(sep)
-            b.push(str(s))
+            b.push(::str(s))
         }
 
         return b.str()
@@ -1564,7 +1571,8 @@ macro dbg! {
             args: [
                 ty.Arg(arg: ty.String(parse.show(p))),
                 ty.Arg(arg: ty.Id(name: 'x')),
-                ty.Arg(name: 'sep', arg: ty.String(' = '))
+                ty.Arg(name: 'sep', arg: ty.String(' = ')),
+                ty.Arg(name: 'flush', arg: ty.Bool(true))
             ]
         ),
         ty.Id(name: 'x')

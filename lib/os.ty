@@ -1,4 +1,6 @@
 import os (..)
+import ffi as c
+import cutil (cfun!)
 
 function walk(path) {
     let d = opendir(path)
@@ -28,4 +30,7 @@ function walk(path) {
     yield (path, ds, fs)
 }
 
+cfun! nil c.int isatty(c.int)
+
 let os::walk = walk
+let os::isatty = isatty

@@ -1962,9 +1962,6 @@ Throw:
                         stack.items[stack.count - 1] = v;
                         break;
                 CASE(RANGE)
-                        right = pop();
-                        left = pop();
-
                         i = class_lookup("Range");
                         if (i == -1 || (vp = class_method(i, "init")) == NULL) {
                                 vm_panic("failed to load Range class. was prelude loaded correctly?");
@@ -1972,17 +1969,11 @@ Throw:
 
                         v = OBJECT(object_new(), i);
                         NOGC(v.object);
-                        push(left);
-                        push(right);
                         call(vp, &v, 2, 0, true);
-                        pop();
-                        push(v);
+                        *top() = v;
                         OKGC(v.object);
                         break;
                 CASE(INCRANGE)
-                        right = pop();
-                        left = pop();
-
                         i = class_lookup("InclusiveRange");
                         if (i == -1 || (vp = class_method(i, "init")) == NULL) {
                                 vm_panic("failed to load InclusiveRange class. was prelude loaded correctly?");
@@ -1990,11 +1981,8 @@ Throw:
 
                         v = OBJECT(object_new(), i);
                         NOGC(v.object);
-                        push(left);
-                        push(right);
                         call(vp, &v, 2, 0, true);
-                        pop();
-                        push(v);
+                        *top() = v;
                         OKGC(v.object);
                         break;
                 CASE(TRY_MEMBER_ACCESS)
@@ -3073,8 +3061,6 @@ vm_init(int ac, char **av)
                 return false;
         }
 
-        compiler_load_builtin_modules();
-
         if (setjmp(jb) != 0) {
                 Error = ERR;
                 return false;
@@ -3093,6 +3079,8 @@ vm_init(int ac, char **av)
 //        }
 
         vm_exec(prelude);
+
+        compiler_load_builtin_modules();
 
         sqlite_load();
 

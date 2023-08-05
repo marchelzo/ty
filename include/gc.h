@@ -36,6 +36,7 @@ typedef vec(struct alloc *) AllocList;
 
 extern _Thread_local AllocList allocs;
 extern _Thread_local bool GC_ENABLED;
+extern _Thread_local int GC_OFF_COUNT;
 
 extern _Thread_local size_t MemoryUsed;
 extern _Thread_local size_t MemoryLimit;
@@ -106,7 +107,7 @@ gc_resize_unchecked(void *p, size_t n) {
 inline static void
 CheckUsed(void)
 {
-        if (GC_ENABLED && MemoryUsed > MemoryLimit) {
+        if (GC_ENABLED && GC_OFF_COUNT == 0 && MemoryUsed > MemoryLimit) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC();
                 GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);

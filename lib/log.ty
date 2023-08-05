@@ -1,7 +1,7 @@
 import ty
 import ty.parse as parse
 import ty.token (next)
-import os (write)
+import os (write, isatty)
 import time
 import chalk
 
@@ -35,14 +35,16 @@ let namePen = chalk.fg('#92e83c')
 class Logger {
     init(name) {
         @name = name
-        @color = true
+        @color = isatty(2)
+        @indent = 4
         @level = WARN
+        @stack = []
         @prefix = function (level, color) {
             let t = time.utime()
             let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.%03{(t % 1000000) / 1000}"
             if color {
                 let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
-                "{timePen(tString)} {levelName} {namePen(@name ?? 'root')}"
+                "{timePen(tString)} {levelName}"
             } else {
                 let levelName = "[{levels[level]}]".padLeft(10)
                 "{tString} {levelName} {@name ?? 'root'}"
@@ -60,7 +62,12 @@ class Logger {
 
     log(level, msg) {
         if @level >= level {
-            write(2, (@prefix)(level, @color) + ": {msg}\n")
+            let name = if #@stack == 0 {
+                @name
+            } else {
+                "{@name}[{@stack.join('.')}]"
+            }
+            write(2, (@prefix)(level, @color) + " {@color ? namePen(name) : name}: {msg}\n")
         }
     }
 
@@ -82,6 +89,14 @@ class Logger {
 
     debug(msg) {
         log(DEBUG, msg)
+    }
+
+    push(name) {
+        @stack.push(name)
+    }
+
+    pop() {
+        @stack.pop()
     }
 }
 
@@ -139,6 +154,36 @@ pub macro logLevel! {
             object: ty.Id(name: 'logger'),
             method: 'setLevel',
             args: [ty.Arg(arg: e)]
+        )
+    ])
+}
+
+pub macro logCtx! {
+    let name = parse.expr(50)
+    ty.Multi([
+        ty.Let(
+            ty.Id(name: 'logger'),
+            ty.Call(
+                func: ty.Id(module: 'log', name: 'getLogger'),
+                args: [
+                    ty.Arg(arg: ty.Id(name: '__module__'))
+                ]
+            )
+        ),
+        ty.MethodCall(
+            object: ty.Id(name: 'logger'),
+            method: 'push',
+            args: [ty.Arg(arg: name)]
+        ),
+        ty.Defer(
+            ty.Func(
+                params: [],
+                body: ty.MethodCall(
+                    object: ty.Id(name: 'logger'),
+                    method: 'pop',
+                    args: []
+                )
+            )
         )
     ])
 }

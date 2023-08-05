@@ -104,6 +104,7 @@ struct value;
         X(Block) \
         X(Multi) \
         X(With) \
+        X(Defer) \
         X(Array) \
         X(Dict) \
         X(String) \

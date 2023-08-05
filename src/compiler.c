@@ -1385,11 +1385,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                                         s->class.methods.items[i]->return_type = ((struct expression *)m->ptr)->return_type;
                                 }
                         }
-						char const *name = s->class.methods.items[i]->name;
-						s->class.methods.items[i]->name = NULL;
+                        char const *name = s->class.methods.items[i]->name;
+                        s->class.methods.items[i]->name = NULL;
                         s->class.methods.items[i]->is_method = true;
                         symbolize_expression(subscope, s->class.methods.items[i]);
-						s->class.methods.items[i]->name = name;
+                        s->class.methods.items[i]->name = name;
                 }
                 state.class = -1;
                 break;
@@ -5193,6 +5193,8 @@ tystmt(struct statement *s)
 {
         struct value v;
 
+        ++GC_OFF_COUNT;
+
         switch (s->type) {
         case STATEMENT_DEFINITION:
                 v = value_tuple(2);
@@ -5213,6 +5215,10 @@ tystmt(struct statement *s)
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyClass);
+                break;
+        case STATEMENT_DEFER:
+                v = tyexpr(s->expression);
+                v.tags = tags_push(v.tags, TyDefer);
                 break;
         case STATEMENT_MATCH:
                 v = value_tuple(2);
@@ -5295,6 +5301,8 @@ tystmt(struct statement *s)
                 v = tagged(TyStmt, PTR((void *)s), NONE);
         }
 
+        --GC_OFF_COUNT;
+
         return v;
 }
 
@@ -5367,6 +5375,10 @@ cstmt(struct value *v)
                 } else {
                         s->iff.otherwise = NULL;
                 }
+        } else if (tags_first(v->tags) == TyDefer) {
+                v->tags = tags_pop(v->tags);
+                s->type = STATEMENT_DEFER;
+                s->expression = cexpr(v);
         } else if (tags_first(v->tags) == TyMatch) {
                 s->type = STATEMENT_MATCH;
                 s->match.e = cexpr(&v->items[0]);

@@ -291,7 +291,11 @@ cffi_new(int argc, struct value *kwargs)
 
         ffi_type *t = ARG(0).ptr;
 
-        struct value p = PTR(aligned_alloc(max(t->alignment, sizeof (void *)), max(t->size, sizeof (void *))));
+        unsigned align = max(t->alignment, sizeof (void *));
+        unsigned size = max(t->size, sizeof (void *));
+        size += (size % align);
+
+        struct value p = PTR(aligned_alloc(align, size));
 
         if (argc == 2) {
                 struct value v = ARG(1);
