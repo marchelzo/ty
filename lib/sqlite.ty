@@ -38,7 +38,7 @@ class SQLiteStatement : Iterable {
 
     step() {
         if self.p {
-            self.status = ::step(self.p)
+            self.status = step(self.p)
             return self.status
         } else {
             throw SQLiteError(SQLITE_MISUSE)
@@ -68,7 +68,7 @@ class SQLiteStatement : Iterable {
 
     finalize() {
         if @p {
-            ::finalize(@p)
+            finalize(@p)
             @p = nil
         }
     }

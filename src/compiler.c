@@ -1051,7 +1051,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         e->integer = e->start.line;
                         break;
                 }
-                if (state.class != -1 && e->module == NULL) {
+                // This turned out to be cringe
+                if (false && state.class != -1 && e->module == NULL) {
                         struct symbol *sym = scope_lookup(scope, e->identifier);
                         if (sym == NULL || sym->scope == state.global || sym->scope == global) {
                                 if (class_method(state.class, e->identifier)) {
