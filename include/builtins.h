@@ -140,6 +140,7 @@
 { .module = "os",     .name = "kill",              .value = BUILTIN(builtin_os_kill)                       },
 { .module = "os",     .name = "signal",            .value = BUILTIN(builtin_os_signal)                     },
 { .module = "os",     .name = "exit",              .value = BUILTIN(builtin_os_exit)                       },
+{ .module = "os",     .name = "isatty",            .value = BUILTIN(builtin_os_isatty)                     },
 { .module = "os",     .name = "exec",              .value = BUILTIN(builtin_os_exec)                       },
 { .module = "os",     .name = "getpid",            .value = BUILTIN(builtin_os_getpid)                     },
 { .module = "os",     .name = "getppid",           .value = BUILTIN(builtin_os_getppid)                    },

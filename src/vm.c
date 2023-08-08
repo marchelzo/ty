@@ -488,7 +488,7 @@ peek(void)
 inline static void
 push(struct value v)
 {
-        vec_push_unchecked(stack, v);
+        vec_nogc_push(stack, v);
         LOG("PUSH: %s", value_show(&v));
         print_stack(10);
 }
@@ -625,9 +625,9 @@ call_co(struct value *v, int n)
 {
         if (v->gen->ip != code_of(&v->gen->f)) {
                 if (n == 0) {
-                        vec_push(v->gen->frame, NIL);
+                        vec_nogc_push(v->gen->frame, NIL);
                 } else {
-                        vec_push_n(v->gen->frame, top() - (n - 1), n);
+                        vec_nogc_push_n(v->gen->frame, top() - (n - 1), n);
                         stack.count -= n;
                 }
         }
@@ -799,7 +799,7 @@ CleanupThread(void *ctx)
         free(MyLock);
         free(MyState);
         free(MyCond);
-        gc_free(stack.items);
+        free(stack.items);
         gc_free(calls.items);
         gc_free(frames.items);
         gc_free(sp_stack.items);
@@ -1642,7 +1642,7 @@ Throw:
                         SWAP(CallStack, v.gen->calls, calls);
                         SWAP(FrameStack, v.gen->frames, frames);
 
-                        vec_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
+                        vec_nogc_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
 
                         stack.items[n - 1] = peek();
                         stack.count = n;

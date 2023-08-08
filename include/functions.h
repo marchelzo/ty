@@ -292,6 +292,9 @@ struct value
 builtin_os_fork(int argc, struct value *kwargs);
 
 struct value
+builtin_os_isatty(int argc, struct value *kwargs);
+
+struct value
 builtin_termios_tcgetattr(int argc, struct value *kwargs);
 
 struct value

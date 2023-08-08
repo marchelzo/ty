@@ -3497,6 +3497,16 @@ builtin_os_fcntl(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_isatty(int argc, struct value *kwargs)
+{
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("os.isatty(): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        return INTEGER(isatty(ARG(0).integer));
+}
+
+struct value
 builtin_termios_tcgetattr(int argc, struct value *kwargs)
 {
         if (ARG(0).type != VALUE_INTEGER) {
