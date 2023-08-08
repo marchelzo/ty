@@ -2208,7 +2208,7 @@ builtin_thread_id(int argc, struct value *kwargs)
         pthread_threadid_np(NULL, &id);
         return INTEGER(id);
 #else
-        return INTEGER(pthread_threadid_np());
+        return INTEGER(gettid());
 #endif
 }
 

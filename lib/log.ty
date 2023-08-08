@@ -32,7 +32,45 @@ let pens = %{
 
 let timePen = chalk.fg('#10ccb9')
 let namePen = chalk.fg('#92e83c')
-let threadPen = chalk.fg('#32e86c')
+
+function hslToRgb(h, s, l) {
+  let r, g, b = nil, nil, nil
+
+  if s == 0 {
+    r = g = b = l // achromatic
+  } else {
+    let q = (l < 0.5) ? l * (1 + s) : l + s - l * s
+    let p = 2 * l - q
+    r = hueToRgb(p, q, h + 1.0/3)
+    g = hueToRgb(p, q, h)
+    b = hueToRgb(p, q, h - 1.0/3)
+  }
+
+  return (iround(r * 255), iround(g * 255), iround(b * 255))
+}
+
+function hueToRgb(p, q, t) {
+  if t < 0 { t += 1 }
+  if t > 1 { t -= 1 }
+  if t < 1.0/6 { return p + (q - p) * 6 * t }
+  if t < 1.0/2 { return q }
+  if t < 2.0/3 { return p + (q - p) * (2.0/3 - t) * 6 }
+  return p
+}
+
+function threadPen() {
+    let pens = static!(%{})
+    let mtx = static!(Mutex())
+
+    with mtx.lock() {
+        if let $p = pens[thread.id()] {
+            return p
+        } else {
+            let (r, g, b) = hslToRgb(rand(), 0.4 + rand()*0.6, 0.4 + rand()*0.3)
+            return pens[thread.id()] = chalk.fg("#{r.str(16)}{g.str(16)}{b.str(16)}")
+        }
+    }
+}
 
 class Logger {
     init(name) {
@@ -47,7 +85,7 @@ class Logger {
             let threadName = (Thread.getName() || 'main') + "({thread.id()})"
             if color {
                 let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
-                let threadString = chalk.padLeft(threadPen("[{threadName}]"), 10)
+                let threadString = chalk.padLeft(threadPen()("[{threadName}]"), 10)
                 "{timePen(tString)} {levelName} {threadString}"
             } else {
                 let levelName = "[{levels[level]}]".padLeft(10)
