@@ -204,7 +204,7 @@ void *
 vm_run_thread(void *);
 
 void
-NewThread(pthread_t *thread, struct value *ctx);
+NewThread(pthread_t *thread, struct value *ctx, struct value *name);
 
 void
 vm_set_sigfn(int, struct value const *);

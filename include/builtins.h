@@ -248,6 +248,8 @@
 { .module = "thread", .name = "broadcastCond",     .value = BUILTIN(builtin_thread_cond_broadcast)         },
 { .module = "thread", .name = "setName",           .value = BUILTIN(builtin_thread_setname)                },
 { .module = "thread", .name = "getName",           .value = BUILTIN(builtin_thread_getname)                },
+{ .module = "thread", .name = "self",              .value = BUILTIN(builtin_thread_self)                   },
+{ .module = "thread", .name = "id",                .value = BUILTIN(builtin_thread_id)                     },
 
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fileno",            .value = BUILTIN(builtin_stdio_fileno)                  },

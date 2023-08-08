@@ -122,6 +122,7 @@ struct sigfn {
 typedef struct {
         atomic_bool *created;
         struct value *ctx;
+        struct value *name;
 } NewThreadCtx;
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -678,7 +679,7 @@ ReleaseLock(bool blocked)
 }
 
 void
-NewThread(pthread_t *thread, struct value *call)
+NewThread(pthread_t *thread, struct value *call, struct value *name)
 {
         ReleaseLock(true);
 
@@ -688,6 +689,7 @@ NewThread(pthread_t *thread, struct value *call)
 
         *ctx = (NewThreadCtx) {
                 .ctx = call,
+                .name = name,
                 .created = &created
         };
         atomic_store(&created, false);
@@ -820,6 +822,7 @@ vm_run_thread(void *p)
 {
         NewThreadCtx *ctx = p;
         struct value *call = ctx->ctx;
+        struct value *name = ctx->name;
 
         int argc = 0;
 
@@ -831,6 +834,12 @@ vm_run_thread(void *p)
 
         AddThread();
         gc_push(&call[0]);
+
+        if (name != NULL) {
+                push(*name);
+                builtin_thread_setname(1, NULL);
+                pop();
+        }
 
         pthread_cleanup_push(CleanupThread, NULL);
 

@@ -531,6 +531,7 @@ Coerce:
         case VALUE_ARRAY:   v.integer = a.array->count;                   return v;
         case VALUE_DICT:    v.integer = a.dict->count;                    return v;
         case VALUE_BLOB:    v.integer = a.blob->count;                    return v;
+        case VALUE_PTR:     return INTEGER((uintptr_t)a.ptr);
         case VALUE_STRING:
                 base = 0;
                 if (a.bytes >= sizeof buffer)
@@ -2121,7 +2122,7 @@ builtin_thread_create(int argc, struct value *kwargs)
 
         ctx[argc] = NONE;
 
-        NewThread(&p, ctx);
+        NewThread(&p, ctx, NAMED("name"));
 
         return PTR((void *)p);
 }
@@ -2195,6 +2196,27 @@ builtin_thread_getname(int argc, struct value *kwargs)
         }
 
         return STRING_CLONE(buffer, strlen(buffer));
+}
+
+struct value
+builtin_thread_id(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.id()", 0);
+
+#ifdef __APPLE__
+        uint64_t id;
+        pthread_threadid_np(NULL, &id);
+        return INTEGER(id);
+#else
+        return INTEGER(pthread_threadid_np());
+#endif
+}
+
+struct value
+builtin_thread_self(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.self()", 0);
+        return PTR((void *)pthread_self());
 }
 
 struct value

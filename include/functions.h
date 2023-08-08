@@ -346,6 +346,12 @@ struct value
 builtin_thread_getname(int argc, struct value *kwargs);
 
 struct value
+builtin_thread_self(int argc, struct value *kwargs);
+
+struct value
+builtin_thread_id(int argc, struct value *kwargs);
+
+struct value
 builtin_thread_setname(int argc, struct value *kwargs);
 
 struct value

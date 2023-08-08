@@ -1527,20 +1527,36 @@ class CondVar {
 }
 
 class Thread {
-    init(*args) {
-        @id = thread.create(*args)
+    init(*args, name) {
+        if name != nil {
+            @handle = thread.create(*args, name: name)
+        } else {
+            @handle = thread.create(*args)
+        }
+    }
+
+    getName() {
+        thread.getName()
+    }
+
+    setName(s) {
+        thread.setName(s)
     }
 
     join() {
-        thread.join(@id)
+        thread.join(@handle)
     }
 
     kill(sig) {
-        thread.kill(@id, sig)
+        thread.kill(@handle, sig)
     }
 
     detach() {
-        thread.detach(@id)
+        thread.detach(@handle)
+    }
+
+    id() {
+        int(@handle)
     }
 }
 

@@ -4,6 +4,7 @@ import ty.token (next)
 import os (write, isatty)
 import time
 import chalk
+import thread
 
 enum! {
     CRITICAL,
@@ -31,6 +32,7 @@ let pens = %{
 
 let timePen = chalk.fg('#10ccb9')
 let namePen = chalk.fg('#92e83c')
+let threadPen = chalk.fg('#32e86c')
 
 class Logger {
     init(name) {
@@ -42,12 +44,15 @@ class Logger {
         @prefix = function (level, color) {
             let t = time.utime()
             let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.%03{(t % 1000000) / 1000}"
+            let threadName = (Thread.getName() || 'main') + "({thread.id()})"
             if color {
                 let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
-                "{timePen(tString)} {levelName}"
+                let threadString = chalk.padLeft(threadPen("[{threadName}]"), 10)
+                "{timePen(tString)} {levelName} {threadString}"
             } else {
                 let levelName = "[{levels[level]}]".padLeft(10)
-                "{tString} {levelName} {@name ?? 'root'}"
+                let threadString = "[{threadName}]".padLeft(10)
+                "{tString} {levelName} {threadString}"
             }
         }
     }
