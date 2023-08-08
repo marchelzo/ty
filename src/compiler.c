@@ -139,6 +139,9 @@ struct state {
         struct location start;
         struct location end;
 
+        struct location const *mstart;
+        struct location const *mend;
+
         location_vector expression_locations;
 };
 
@@ -1032,6 +1035,20 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 if (e->module == NULL && strcmp(e->identifier, "__module__") == 0) {
                         e->type = EXPRESSION_STRING;
                         e->string = state.filename;
+                        break;
+                }
+                if (e->module == NULL && strcmp(e->identifier, "__func__") == 0) {
+                        if (state.func && state.func->name != NULL) {
+                                e->type = EXPRESSION_STRING;
+                                e->string = state.func->name;
+                        } else {
+                                e->type = EXPRESSION_NIL;
+                        }
+                        break;
+                }
+                if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
+                        e->type = EXPRESSION_INTEGER;
+                        e->integer = e->start.line;
                         break;
                 }
                 if (state.class != -1 && e->module == NULL) {
@@ -1973,6 +1990,8 @@ emit_function(struct expression const *e, int class)
                 emit_tgt(e->function_symbol, e->scope->parent, false);
                 emit_instr(INSTR_ASSIGN);
         }
+
+        state.func = func_save;
 }
 
 static void
@@ -5312,7 +5331,12 @@ cstmt(struct value *v)
         struct statement *s = gc_alloc(sizeof *s);
         *s = (struct statement){0};
 
-        s->start = s->end = Nowhere;
+        if (state.mstart != NULL && state.mend != NULL) {
+                s->start = *state.mstart;
+                s->end = *state.mend;
+        } else {
+                s->start = s->end = Nowhere;
+        }
 
         if (tags_first(v->tags) == TyStmt) {
                 return v->ptr;
@@ -5440,7 +5464,12 @@ cexpr(struct value *v)
         struct expression *e = gc_alloc(sizeof *e);
         *e = (struct expression){0};
 
-        e->start = e->end = Nowhere;
+        if (state.mstart != NULL && state.mend != NULL) {
+                e->start = *state.mstart;
+                e->end = *state.mend;
+        } else {
+                e->start = e->end = Nowhere;
+        }
 
         if (tags_first(v->tags) == TyExpr) {
                 return v->ptr;
@@ -5749,7 +5778,7 @@ tyeval(struct expression *e)
 }
 
 struct expression *
-typarse(struct expression *e)
+typarse(struct expression *e, struct location const *start, struct location const *end)
 {
         symbolize_expression(state.global, e);
 
@@ -5767,12 +5796,20 @@ typarse(struct expression *e)
         struct scope *macro_scope_save = state.macro_scope;
         state.macro_scope = state.global;
 
+        struct location const *mstart = state.mstart;
+        struct location const *mend = state.mend;
+        state.mstart = start;
+        state.mend = end;
+
         struct value expr = vm_call(&m, 0);
         vm_push(&expr);
 
         state.macro_scope = macro_scope_save;
 
         struct expression *e_ = cexpr(&expr);
+
+        state.mstart = mstart;
+        state.mend = mend;
 
         // Take `m` and `expr` off the stack
         vm_pop();

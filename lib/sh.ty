@@ -24,6 +24,7 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
     os.close(p.stdin)
 
     let start = utime()
+    let timedOut = false
 
     while timeoutMs == nil || timeoutMs > 0 {
         let pfds = [
@@ -35,7 +36,8 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
 
         if n < 1 {
             os.kill(-p.pid, signal)
-            return nil
+            timedOut = true
+            break
         }
 
         if timeoutMs != nil {
@@ -62,7 +64,9 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
 
     let (_, s) = os.waitpid(p.pid)
 
-    return out.str(), os.WEXITSTATUS(s), out
+    if !timedOut {
+        return out.str(), os.WEXITSTATUS(s), out
+    }
 }
 
 function ls(d, flags) {

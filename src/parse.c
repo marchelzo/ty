@@ -750,14 +750,6 @@ prefix_dollar(void)
                 return prefix_implicit_lambda();
         }
 
-        if (token(1)->type == '[') {
-                next();
-                next();
-                struct expression *macro = parse_expr(0);
-                consume(']');
-                return typarse(macro);
-        }
-
         struct expression *e = mkexpr();
 
         consume('$');
@@ -793,14 +785,7 @@ prefix_identifier(void)
         consume(TOKEN_IDENTIFIER);
 
         if (true && is_macro(e)) {
-                struct expression *expanded = typarse(e);
-                expanded->start = e->start;
-                expanded->end = token(-1)->end;
-                if (expanded->type == EXPRESSION_STATEMENT) {
-                        expanded->statement->start = e->start;
-                        expanded->statement->end = End;
-                }
-                return expanded;
+                return typarse(e, &e->start, &token(-1)->end);
         }
 
         // Is this a macro invocation?

@@ -81,7 +81,7 @@ struct expression *
 cexpr(struct value *);
 
 struct expression *
-typarse(struct expression *);
+typarse(struct expression *, struct location const *start, struct location const *end);
 
 struct statement *
 cstmt(struct value *);

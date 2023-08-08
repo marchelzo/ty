@@ -1569,9 +1569,14 @@ macro dbg! {
         ty.Call(
             func: ty.Id(name: 'print'),
             args: [
+                ty.Arg(arg: ty.Id(name: '__module__')),
+                ty.Arg(arg: ty.String(':')),
+                ty.Arg(arg: ty.Id(name: '__line__')),
+                ty.Arg(arg: ty.String(': ')),
                 ty.Arg(arg: ty.String(parse.show(p))),
+                ty.Arg(arg: ty.String(' = ')),
                 ty.Arg(arg: ty.Id(name: 'x')),
-                ty.Arg(name: 'sep', arg: ty.String(' = ')),
+                ty.Arg(name: 'sep', arg: ty.String('')),
                 ty.Arg(name: 'flush', arg: ty.Bool(true))
             ]
         ),
@@ -1605,9 +1610,15 @@ macro time! {
             ty.Call(
                 func: ty.Id(name: 'print'),
                 args: [
+                    ty.Arg(arg: ty.Id(name: '__module__')),
+                    ty.Arg(arg: ty.String(':')),
+                    ty.Arg(arg: ty.Id(name: '__line__')),
+                    ty.Arg(arg: ty.String(': ')),
                     ty.Arg(arg: ty.String(parse.show(p))),
+                    ty.Arg(arg: ty.String(': ')),
                     ty.Arg(arg: ty.Div(ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's')), ty.Value(1.0e6))),
-                    ty.Arg(name: 'sep', arg: ty.String(': '))
+                    ty.Arg(arg: ty.String('s')),
+                    ty.Arg(name: 'sep', arg: ty.String(''))
                 ]
             ),
             ty.Id(name: 'x')
