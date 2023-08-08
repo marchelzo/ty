@@ -10,12 +10,12 @@ tag SQLiteError {
 
 class SQLiteRowIter : Iter {
     init(s, assoc=true) {
-        self.s = s
-        self.assoc = assoc
+        @s = s
+        @assoc = assoc
     }
 
     __next__() {
-        Some.from(self.s.nextRow(self.assoc))
+        Some.from(@s.nextRow(@assoc))
     }
 }
 
@@ -38,7 +38,7 @@ class SQLiteStatement : Iterable {
 
     step() {
         if self.p {
-            self.status = step(self.p)
+            self.status = ::step(self.p)
             return self.status
         } else {
             throw SQLiteError(SQLITE_MISUSE)
@@ -67,9 +67,9 @@ class SQLiteStatement : Iterable {
     }
 
     finalize() {
-        if self.p {
-            finalize(self.p)
-            self.p = nil
+        if @p {
+            ::finalize(@p)
+            @p = nil
         }
     }
 

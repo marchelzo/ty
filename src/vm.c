@@ -2105,6 +2105,9 @@ Throw:
                                 push(BUILTIN_METHOD(member, func, this));
                                 OKGC(this);
                                 break;
+                        case VALUE_GENERATOR:
+                                n = CLASS_GENERATOR;
+                                goto ClassLookup;
                         case VALUE_INTEGER:
                                 n = CLASS_INT;
                                 goto ClassLookup;

@@ -99,7 +99,9 @@ builtin_print(int argc, struct value *kwargs)
         struct value *flush = NAMED("flush");
         bool do_flush = flush != NULL && value_truthy(flush);
 
+        ReleaseLock(true);
         flockfile(stdout);
+        TakeLock();
 
         for (int i = 0; i < argc; ++i) {
                 struct value *v = &ARG(i);
@@ -358,7 +360,7 @@ builtin_round(int argc, struct value *kwargs)
         struct value x = ARG(0);
 
         switch (x.type) {
-        case VALUE_INTEGER: return x;
+        case VALUE_INTEGER: return REAL(x.integer);
         case VALUE_REAL:    return REAL(round(x.real));
         default:
                 vm_panic("the argument to round() must be a number");
