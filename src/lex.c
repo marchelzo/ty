@@ -344,10 +344,10 @@ lexword(void)
 }
 
 static bool
-end_of_docstring(int ndelim)
+end_of_docstring(char c, int ndelim)
 {
         for (int i = 0; i < ndelim; ++i) {
-                if (C(i) != '\'') {
+                if (C(i) != c) {
                         return false;
                 }
         }
@@ -389,7 +389,7 @@ lexdocstring(void)
 
         eat_line_ending();
 
-        while (!end_of_docstring(ndelim) && C(0) != '\0') {
+        while (!end_of_docstring('\'', ndelim) && C(0) != '\0') {
                 if (eat_line_ending()) {
                         vec_push(line, '\0');
                         vec_push(lines, line.items);
@@ -399,7 +399,7 @@ lexdocstring(void)
                 }
         }
 
-        if (!end_of_docstring(ndelim)) {
+        if (!end_of_docstring('\'', ndelim)) {
                 error("unterminated docstring starting on line %d", Start.line);
         }
 
@@ -536,6 +536,184 @@ readhex(int ndigits, unsigned long long *k)
         return true;
 }
 
+struct SDSLine {
+        vec(char *) strs;
+        vec(char *) fmts;
+        vec(LexState) exprs;
+};
+
+static struct token
+lexspecialdocstring(void)
+{
+        vec(struct SDSLine) lines;
+        vec_init(lines);
+
+        vec(char) str;
+        vec_init(str);
+
+        vec_push(lines, (struct SDSLine){0});
+
+        char *fmt = NULL;
+
+        int ndelim = 0;
+        while (C(0) == '"') {
+                nextchar();
+                ndelim += 1;
+        }
+
+        eat_line_ending();
+
+        while (!end_of_docstring('"', ndelim) && C(0) != '\0') {
+                if (eat_line_ending()) {
+                        vec_push(str, '\n');
+                        vec_push(str, '\0');
+                        vec_push(vec_last(lines)->strs, str.items);
+                        vec_init(str);
+                        vec_push(lines, (struct SDSLine){0});
+                } else if (C(0) == '{') {
+                        vec_push(str, '\0');
+                        vec_push(vec_last(lines)->strs, str.items);
+                        vec_init(str);
+                        nextchar();
+                        LexState st = state;
+                        st.end = lexexpr();
+                        nextchar();
+                        vec_push(vec_last(lines)->fmts, NULL);
+                        vec_push(vec_last(lines)->exprs, st);
+                } else switch (C(0)) {
+                        case '\0': goto Unterminated;
+                        case '%':
+                                nextchar();
+                                if (C(0) != '%') {
+                                        fmt = SRC;
+                                        while (C(0) != '\0' && C(0) != '{' && C(0) != '"') {
+                                                nextchar();
+                                        }
+                                        if (C(0) != '{') {
+                                                error("unterminated format specifier");
+                                        }
+                                } else {
+                                        vec_push(str, nextchar());
+                                }
+                                break;
+                        case '\\':
+                                nextchar();
+                                switch (C(0)) {
+                                case '\0':
+                                        goto Unterminated;
+                                case 'n':
+                                        nextchar();
+                                        vec_push(str, '\n');
+                                        continue;
+                                case 'r':
+                                        printf("Appending \\r\n");
+                                        nextchar();
+                                        vec_push(str, '\r');
+                                        continue;
+                                case 't':
+                                        nextchar();
+                                        vec_push(str, '\t');
+                                        continue;
+                                case 'x':
+                                        {
+                                                unsigned long long b;
+
+                                                nextchar();
+
+                                                if (!readhex(2, &b)) {
+                                                        error("invalid hexadecimal byte value in string: \\x%.2s", SRC);
+                                                }
+
+                                                vec_push(str, b);
+
+                                                continue;
+                                        }
+                                case 'u':
+                                case 'U':
+                                        {
+                                                int c = C(0);
+                                                int ndigits = (c == 'u') ? 4 : 8;
+                                                unsigned long long codepoint;
+
+                                                nextchar();
+
+                                                if (!readhex(ndigits, &codepoint)) {
+                                                        error("expected %d hexadecimal digits after \\%c in string", ndigits, c, SRC);
+                                                }
+
+                                                if (!utf8proc_codepoint_valid(codepoint)) {
+                                                        error("invalid Unicode codepoint in string: %u", codepoint);
+                                                }
+
+                                                unsigned char bytes[4];
+                                                int n = utf8proc_encode_char(codepoint, bytes);
+                                                vec_push_n(str, (char *)bytes, n);
+
+                                                continue;
+                                        }
+                                }
+                        default:
+                                vec_push(str, nextchar());
+                }
+        }
+
+        if (!end_of_docstring('"', ndelim)) {
+                error("unterminated docstring starting on line %d", Start.line);
+        }
+
+        // The only characters on this line before the docstring terminator should be whitespace
+        for (int i = 0; i < str.count; ++i) {
+                if (!isspace(str.items[i])) {
+                        error("illegal docstring terminator on line %d", state.loc.line);
+                }
+        }
+
+        while (ndelim --> 0) {
+                nextchar();
+        }
+
+        int nstrip = str.count;
+        vec_empty(str);
+
+        struct token special = mktoken(TOKEN_SPECIAL_STRING);
+        vec_init(special.strings);
+        vec_init(special.fmts);
+        vec_init(special.expressions);
+        vec_init(special.starts);
+        vec_init(special.ends);
+
+        vec_pop(lines);
+
+        for (int i = 0; i < lines.count; ++i) {
+                int off = 0;
+                while (off < nstrip && isspace(lines.items[i].strs.items[0][off])) {
+                        off += 1;
+                }
+                printf("Adding str of len %zu\n", strlen(lines.items[i].strs.items[0] + off));
+                if (i == 0) {
+                        vec_push(special.strings, lines.items[i].strs.items[0] + off);
+                } else {
+                        char const *s = gc_alloc(strlen(*vec_last(special.strings)) + strlen(lines.items[i].strs.items[0] + off) + 1);
+                        strcpy(s, *vec_last(special.strings));
+                        strcat(s, lines.items[i].strs.items[0] + off);
+                        *vec_last(special.strings) = s;
+                }
+                for (int j = 0; j < lines.items[i].exprs.count; ++j) {
+                        vec_push(special.expressions, lines.items[i].exprs.items[j]);
+                        vec_push(special.fmts, lines.items[i].fmts.items[j]);
+                        vec_push(special.strings, lines.items[i].strs.items[j + 1]);
+                        printf("Adding str of len %zu\n", strlen(lines.items[i].strs.items[j + 1]));
+                }
+        }
+
+        *strrchr(*vec_last(special.strings), '\n') = '\0';
+
+        return special;
+
+Unterminated:
+        error("unterminated docstring literal starting on line %d", special.start.line);
+}
+
 static struct token
 lexspecialstr(void)
 {
@@ -663,7 +841,6 @@ Expr:
         goto Start;
 
 Unterminated:
-
         error("unterminated string literal starting on line %d", special.start.line);
 }
 
@@ -949,7 +1126,11 @@ lex_token(LexContext ctx)
                                 return lexrawstr();
                         }
                 } else if (C(0) == '"') {
-                        return lexspecialstr();
+                        if (C(1) == '"' && C(2) == '"') {
+                                return lexspecialdocstring();
+                        } else {
+                                return lexspecialstr();
+                        }
                 } else if (C(0) == '.' && C(1) == '.') {
                         nextchar();
                         nextchar();

@@ -13,7 +13,7 @@
                         funlockfile(stderr); \
                 } while (0)
 
-#ifndef TY_NO_LOG
+#if !defined(TY_NO_LOG) || 0
 #define LOG(...) do { \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \

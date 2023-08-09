@@ -361,7 +361,7 @@ reset(int argc, struct value *kwargs)
 }
 
 static struct value
-bind(int argc, struct value *kwargs)
+mbind(int argc, struct value *kwargs)
 {
         if (argc != 3) {
                 vm_panic("sqlite3.bind() expects exactly 3 arguments");
@@ -498,7 +498,7 @@ static struct {
         { .name = "step",         .value = BUILTIN(step)          },
         { .name = "finalize",     .value = BUILTIN(finalize)      },
         { .name = "reset",        .value = BUILTIN(reset)         },
-        { .name = "bind",         .value = BUILTIN(bind)          },
+        { .name = "bind",         .value = BUILTIN(mbind)          },
         { .name = "column",       .value = BUILTIN(get_column)    },
         { .name = "columnCount",  .value = BUILTIN(column_count)  },
         { .name = "columnName",   .value = BUILTIN(column_name)   },

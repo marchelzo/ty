@@ -139,8 +139,8 @@ struct state {
         struct location start;
         struct location end;
 
-        struct location const *mstart;
-        struct location const *mend;
+        struct location mstart;
+        struct location mend;
 
         location_vector expression_locations;
 };
@@ -5332,12 +5332,8 @@ cstmt(struct value *v)
         struct statement *s = gc_alloc(sizeof *s);
         *s = (struct statement){0};
 
-        if (state.mstart != NULL && state.mend != NULL) {
-                s->start = *state.mstart;
-                s->end = *state.mend;
-        } else {
-                s->start = s->end = Nowhere;
-        }
+        s->start = state.mstart;
+        s->end = state.mend;
 
         if (tags_first(v->tags) == TyStmt) {
                 return v->ptr;
@@ -5465,12 +5461,8 @@ cexpr(struct value *v)
         struct expression *e = gc_alloc(sizeof *e);
         *e = (struct expression){0};
 
-        if (state.mstart != NULL && state.mend != NULL) {
-                e->start = *state.mstart;
-                e->end = *state.mend;
-        } else {
-                e->start = e->end = Nowhere;
-        }
+        e->start = state.mstart;
+        e->end = state.mend;
 
         if (tags_first(v->tags) == TyExpr) {
                 return v->ptr;
@@ -5797,10 +5789,10 @@ typarse(struct expression *e, struct location const *start, struct location cons
         struct scope *macro_scope_save = state.macro_scope;
         state.macro_scope = state.global;
 
-        struct location const *mstart = state.mstart;
-        struct location const *mend = state.mend;
-        state.mstart = start;
-        state.mend = end;
+        struct location const mstart = state.mstart;
+        struct location const mend = state.mend;
+        state.mstart = *start;
+        state.mend = *end;
 
         struct value expr = vm_call(&m, 0);
         vm_push(&expr);

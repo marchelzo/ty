@@ -330,7 +330,7 @@ show_string(char const *s, size_t n)
 
         vec_push(v, '\'');
 
-        for (char const *c = s; c < s + n; ++c) switch (*c) {
+        if (s != NULL) for (char const *c = s; c < s + n; ++c) switch (*c) {
         case '\t':
                 vec_push(v, '\\');
                 vec_push(v, 't');

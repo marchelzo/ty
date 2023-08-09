@@ -1161,7 +1161,7 @@ vm_exec(char *code)
                                 if (subscript.integer < 0)
                                         subscript.integer += container.array->count;
                                 if (subscript.integer < 0 || subscript.integer >= container.array->count) {
-                                        // Not sure which is the best behavior here
+                                        // TODO: Not sure which is the best behavior here
                                         push(TAG(gettag(NULL, "IndexError")));
                                         goto Throw;
                                         vm_panic("array index out of range in subscript expression");
