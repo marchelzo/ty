@@ -1466,7 +1466,7 @@ function uuid4() {
 class Mutex {
     init() {
         @mtx = thread.mutex()
-        setFinalizer(@destroy)
+        @setFinalizer(@destroy)
     }
 
     inner() {
@@ -1506,7 +1506,7 @@ class MutexLock {
 class CondVar {
     init() {
         @var = thread.cond()
-        setFinalizer(@destroy)
+        @setFinalizer(@destroy)
     }
 
     destroy() {

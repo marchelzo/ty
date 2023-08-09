@@ -215,6 +215,85 @@ blob_set(struct value *blob, int argc, struct value *kwargs)
 }
 
 static struct value
+blob_xor(struct value *blob, int argc, struct value *kwargs)
+{
+        if (argc == 1 && ARG(0).type == VALUE_BLOB) {
+                struct blob *b = ARG(0).blob;
+                if (b->count > 0) for (size_t i = 0; i < blob->blob->count; ++i) {
+                        blob->blob->items[i] ^= b->items[i % b->count];
+                }
+                return *blob;
+        }
+
+        if (argc != 2) {
+                vm_panic("blob.xor(): expected 2 arguments but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("blob.xor(mask, _): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("blob.xor(_, size): expected integer but got: %s", value_show(&ARG(0)));
+        }
+
+        uint8_t u8;
+        uint16_t u16, *pu16;
+        uint32_t u32, *pu32;
+        uint64_t u64, *pu64;
+
+        uint8_t size = ARG(1).integer;
+        uint8_t r;
+
+        switch (size) {
+        case 1:
+                u8 = ARG(0).integer;
+                for (size_t i = 0; i < blob->blob->count; ++i) {
+                        blob->blob->items[i] ^= u8;
+                }
+                break;
+        case 2:
+                u16 = ARG(0).integer;
+                pu16 = (void *)blob->blob->items;
+                for (size_t i = 0; i < blob->blob->count / 2; ++i) {
+                        pu16[i] ^= u16;
+                }
+                r =  blob->blob->count % 2;
+                for (int i = 0; i < r; ++i) {
+                        blob->blob->items[blob->blob->count - r + i] ^= ((u16 >> (8 * i)) & 0xFF);
+                }
+                break;
+        case 4:
+                u32 = ARG(0).integer;
+                pu32 = (void *)blob->blob->items;
+                for (size_t i = 0; i < blob->blob->count / 4; ++i) {
+                        pu32[i] ^= u32;
+                }
+                r =  blob->blob->count % 4;
+                for (int i = 0; i < r; ++i) {
+                        blob->blob->items[blob->blob->count - r + i] ^= ((u32 >> (8 * i)) & 0xFF);
+                }
+                break;
+        case 8:
+                u64 = ARG(0).integer;
+                pu64 = (void *)blob->blob->items;
+                for (size_t i = 0; i < blob->blob->count / 8; ++i) {
+                        pu64[i] ^= u64;
+                }
+                r =  blob->blob->count % 8;
+                for (int i = 0; i < r; ++i) {
+                        blob->blob->items[blob->blob->count - r + i] ^= ((u64 >> (8 * i)) & 0xFF);
+                }
+                break;
+        default:
+                vm_panic("blob.xor(): invalid mask size: %"PRIiMAX, ARG(1).integer);
+        }
+
+        return *blob;
+}
+
+
+static struct value
 blob_str(struct value *blob, int argc, struct value *kwargs)
 {
         int start;
@@ -460,6 +539,7 @@ DEFINE_METHOD_TABLE(
         { .name = "splice",   .func = blob_splice       },
         { .name = "str",      .func = blob_str          },
         { .name = "str!",     .func = blob_str_unsafe   },
+        { .name = "xor",      .func = blob_xor          },
 );
 
 DEFINE_METHOD_LOOKUP(blob)
