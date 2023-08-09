@@ -187,6 +187,7 @@ static vec(pthread_cond_t *) ThreadConds;
 
 pthread_mutex_t DeadMutex = PTHREAD_MUTEX_INITIALIZER;
 AllocList DeadAllocs;
+vec(struct value *) DeadRoot;
 size_t DeadUsed = 0;
 
 static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
@@ -342,6 +343,13 @@ DoGC()
                 value_mark(&Globals.items[i]);
         }
 
+        pthread_mutex_lock(&DeadMutex);
+
+        for (int i = 0; i < DeadRoot.count; ++i) {
+                MARK(DeadRoot.items[i]);
+                value_mark(DeadRoot.items[i]);
+        }
+
         pthread_barrier_wait(&GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
@@ -359,7 +367,6 @@ DoGC()
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        pthread_mutex_lock(&DeadMutex);
         GCSweep(&DeadAllocs, &DeadUsed);
         pthread_mutex_unlock(&DeadMutex);
 
@@ -759,6 +766,36 @@ AddThread(void)
         GCLOG("AddThread(): %llu: finished", (long long unsigned)pthread_self());
 }
 
+static struct value *
+AllocateReturnValue(void)
+{
+        struct value *v = gc_alloc_object(sizeof (struct value), GC_VALUE);
+
+        ReleaseLock(true);
+        pthread_mutex_lock(&DeadMutex);
+        vec_nogc_push(DeadRoot, v);
+        pthread_mutex_unlock(&DeadMutex);
+        TakeLock();
+
+        return v;
+}
+
+void
+RemoveFromRootSet(struct value *v)
+{
+        ReleaseLock(true);
+        pthread_mutex_lock(&DeadMutex);
+        for (int i = 0; i < DeadRoot.count; ++i) {
+                if (DeadRoot.items[i] == v) {
+                        DeadRoot.items[i] = DeadRoot.items[DeadRoot.count - 1];
+                        DeadRoot.count -= 1;
+                        break;
+                }
+        }
+        pthread_mutex_unlock(&DeadMutex);
+        TakeLock();
+}
+
 static void
 CleanupThread(void *ctx)
 {
@@ -841,6 +878,8 @@ vm_run_thread(void *p)
                 pop();
         }
 
+        struct value *v = AllocateReturnValue();
+
         pthread_cleanup_push(CleanupThread, NULL);
 
         atomic_store(ctx->created, true);
@@ -848,8 +887,9 @@ vm_run_thread(void *p)
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
                 fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
+                *v = NIL;
         } else {
-                vm_call(call, argc);
+                *v = vm_call(call, argc);
         }
 
         gc_pop();
@@ -857,7 +897,7 @@ vm_run_thread(void *p)
 
         pthread_cleanup_pop(1);
 
-        return NULL;
+        return v;
 }
 
 

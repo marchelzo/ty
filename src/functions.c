@@ -1941,11 +1941,15 @@ builtin_thread_join(int argc, struct value *kwargs)
                 vm_panic("non-pointer passed to thread.join(): %s", value_show(&ARG(0)));
         }
 
+        void *v;
+
         ReleaseLock(true);
-        pthread_join((pthread_t)ARG(0).ptr, NULL);
+        pthread_join((pthread_t)ARG(0).ptr, &v);
         TakeLock();
 
-        return NIL;
+        RemoveFromRootSet(v);
+
+        return *(struct value *)v;
 }
 
 struct value

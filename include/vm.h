@@ -253,4 +253,7 @@ TakeLock(void);
 void
 ReleaseLock(bool blocked);
 
+void
+RemoveFromRootSet(struct value *v);
+
 #endif
