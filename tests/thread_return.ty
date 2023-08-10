@@ -1,0 +1,2 @@
+let t = Thread(${'PASS'})
+print(t.join())
