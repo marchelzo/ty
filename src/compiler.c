@@ -5316,7 +5316,8 @@ tystmt(struct statement *s)
                 v = TAG(TyNull);
                 break;
         case STATEMENT_EXPRESSION:
-                return tyexpr(s->expression);
+                v = tyexpr(s->expression);
+                break;
         default:
                 v = tagged(TyStmt, PTR((void *)s), NONE);
         }
