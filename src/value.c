@@ -429,6 +429,9 @@ value_show(struct value const *v)
         case VALUE_GENERATOR:
                 snprintf(buffer, 1024, "<generator at %p>", v->gen);
                 break;
+        case VALUE_THREAD:
+                snprintf(buffer, 1024, "<thread %"PRIu64">", v->thread->i);
+                break;
         case VALUE_SENTINEL:
                 return sclone("<sentinel>");
         case VALUE_REF:
@@ -742,6 +745,14 @@ mark_tuple(struct value const *v)
 }
 
 inline static void
+mark_thread(struct value const *v)
+{
+        if (MARKED(v->thread)) return;
+        MARK(v->thread);
+        value_mark(&v->thread->v);
+}
+
+inline static void
 mark_generator(struct value const *v)
 {
         if (MARKED(v->gen)) return;
@@ -810,9 +821,9 @@ value_string_alloc(int n)
 void
 _value_mark(struct value const *v)
 {
-        GC_ENABLED = false;
+        ++GC_OFF_COUNT;
         GCLOG("Mark: %s", value_show(v));
-        GC_ENABLED = true;
+        --GC_OFF_COUNT;
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;
@@ -822,6 +833,7 @@ _value_mark(struct value const *v)
         case VALUE_DICT:            dict_mark(v->dict);                                           break;
         case VALUE_FUNCTION:        mark_function(v);                                             break;
         case VALUE_GENERATOR:       mark_generator(v);                                            break;
+        case VALUE_THREAD:          mark_thread(v);                                               break;
         case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                         break;
         case VALUE_OBJECT:          object_mark(v->object);                                       break;
         case VALUE_REF:             MARK(v->ptr); value_mark(v->ptr);                             break;

@@ -14,7 +14,6 @@ _Thread_local size_t MemoryLimit = GC_INITIAL_LIMIT;
 
 static _Thread_local vec(struct value const *) RootSet;
 
-_Thread_local bool GC_ENABLED = true;
 _Thread_local int GC_OFF_COUNT = 0;
 
 inline static void
@@ -35,6 +34,9 @@ collect(struct alloc *a)
                 gc_free(((Generator *)p)->frames.items);
                 gc_free(((Generator *)p)->targets.items);
                 gc_free(((Generator *)p)->sps.items);
+                break;
+        case GC_THREAD:
+                pthread_detach(((Thread *)p)->t);
                 break;
         case GC_OBJECT:
                 finalizer = &((struct table *)p)->finalizer;

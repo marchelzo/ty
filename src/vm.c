@@ -123,6 +123,7 @@ typedef struct {
         atomic_bool *created;
         struct value *ctx;
         struct value *name;
+        Thread *t;
 } NewThreadCtx;
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -187,7 +188,6 @@ static vec(pthread_cond_t *) ThreadConds;
 
 pthread_mutex_t DeadMutex = PTHREAD_MUTEX_INITIALIZER;
 AllocList DeadAllocs;
-vec(struct value *) DeadRoot;
 size_t DeadUsed = 0;
 
 static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
@@ -343,13 +343,6 @@ DoGC()
                 value_mark(&Globals.items[i]);
         }
 
-        pthread_mutex_lock(&DeadMutex);
-
-        for (int i = 0; i < DeadRoot.count; ++i) {
-                MARK(DeadRoot.items[i]);
-                value_mark(DeadRoot.items[i]);
-        }
-
         pthread_barrier_wait(&GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
@@ -367,6 +360,7 @@ DoGC()
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
+        pthread_mutex_lock(&DeadMutex);
         GCSweep(&DeadAllocs, &DeadUsed);
         pthread_mutex_unlock(&DeadMutex);
 
@@ -686,18 +680,18 @@ ReleaseLock(bool blocked)
 }
 
 void
-NewThread(pthread_t *thread, struct value *call, struct value *name)
+NewThread(Thread *t, struct value *call, struct value *name)
 {
         ReleaseLock(true);
 
         static _Thread_local atomic_bool created;
 
         NewThreadCtx *ctx = malloc(sizeof *ctx);
-
         *ctx = (NewThreadCtx) {
                 .ctx = call,
                 .name = name,
-                .created = &created
+                .created = &created,
+                .t = t
         };
         atomic_store(&created, false);
 
@@ -709,7 +703,7 @@ NewThread(pthread_t *thread, struct value *call, struct value *name)
                 vm_panic("pthread_attr_setstacksize(): %s", strerror(r));
         r = pthread_create(thread, &attr, vm_run_thread, ctx);
 #else
-        int r = pthread_create(thread, NULL, vm_run_thread, ctx);
+        int r = pthread_create(&t->t, NULL, vm_run_thread, ctx);
 #endif
 
         if (r != 0)
@@ -730,7 +724,7 @@ AddThread(void)
 
         GCLOG("AddThread(): %llu: took lock", (long long unsigned)pthread_self());
 
-        GC_ENABLED = false;
+        ++GC_OFF_COUNT;
 
         vec_push(ThreadList, pthread_self());
 
@@ -759,41 +753,11 @@ AddThread(void)
         pthread_cond_init(MyCond, NULL);
         vec_push(ThreadConds, MyCond);
 
-        GC_ENABLED = true;
+        --GC_OFF_COUNT;
 
         pthread_mutex_unlock(&ThreadsLock);
 
         GCLOG("AddThread(): %llu: finished", (long long unsigned)pthread_self());
-}
-
-static struct value *
-AllocateReturnValue(void)
-{
-        struct value *v = gc_alloc_object(sizeof (struct value), GC_VALUE);
-
-        ReleaseLock(true);
-        pthread_mutex_lock(&DeadMutex);
-        vec_nogc_push(DeadRoot, v);
-        pthread_mutex_unlock(&DeadMutex);
-        TakeLock();
-
-        return v;
-}
-
-void
-RemoveFromRootSet(struct value *v)
-{
-        ReleaseLock(true);
-        pthread_mutex_lock(&DeadMutex);
-        for (int i = 0; i < DeadRoot.count; ++i) {
-                if (DeadRoot.items[i] == v) {
-                        DeadRoot.items[i] = DeadRoot.items[DeadRoot.count - 1];
-                        DeadRoot.count -= 1;
-                        break;
-                }
-        }
-        pthread_mutex_unlock(&DeadMutex);
-        TakeLock();
 }
 
 static void
@@ -860,6 +824,7 @@ vm_run_thread(void *p)
         NewThreadCtx *ctx = p;
         struct value *call = ctx->ctx;
         struct value *name = ctx->name;
+        Thread *t = ctx->t;
 
         int argc = 0;
 
@@ -878,8 +843,6 @@ vm_run_thread(void *p)
                 pop();
         }
 
-        struct value *v = AllocateReturnValue();
-
         pthread_cleanup_push(CleanupThread, NULL);
 
         atomic_store(ctx->created, true);
@@ -887,17 +850,18 @@ vm_run_thread(void *p)
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
                 fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
-                *v = NIL;
+                t->v = NIL;
         } else {
-                *v = vm_call(call, argc);
+                t->v = vm_call(call, argc);
         }
-
-        gc_pop();
-        gc_free(call);
 
         pthread_cleanup_pop(1);
 
-        return v;
+		free(ctx);
+        gc_free(call);
+        OKGC(t);
+
+        return &t->v;
 }
 
 
@@ -2606,7 +2570,7 @@ BadContainer:
                         if (ncaps > 0) {
                                 LOG("Allocating ENV for %d caps", ncaps);
                                 v.env = gc_alloc_object(ncaps * sizeof (struct value *), GC_ENV);
-                                GC_ENABLED = false;
+                                ++GC_OFF_COUNT;
 
                                 for (int i = 0; i < ncaps; ++i) {
                                         READVALUE(b);
@@ -2627,7 +2591,7 @@ BadContainer:
                                         }
                                 }
 
-                                GC_ENABLED = true;
+                                --GC_OFF_COUNT;
                         } else {
                                 LOG("Setting ENV to NULL");
                                 v.env = NULL;
@@ -3086,7 +3050,7 @@ vm_error(void)
 bool
 vm_init(int ac, char **av)
 {
-        GC_ENABLED = false;
+        GC_OFF_COUNT += 1;
 
         vec_init(stack);
         vec_init(calls);
@@ -3123,7 +3087,7 @@ vm_init(int ac, char **av)
 
         AddThread();
 
-        GC_ENABLED = true;
+        --GC_OFF_COUNT;
 
 //        int e;
 //        if (e = pthread_create(&BuiltinRunner, NULL, run_builtin_thread, NULL), e != 0) {
@@ -3294,7 +3258,7 @@ vm_execute(char const *source)
         if (filename == NULL)
                 filename = "(repl)";
 
-        GC_ENABLED = false;
+        ++GC_OFF_COUNT;
 
         if (setjmp(jb) != 0) {
                 gc_clear_root_set();
@@ -3313,7 +3277,7 @@ vm_execute(char const *source)
                 return false;
         }
 
-        GC_ENABLED = true;
+        --GC_OFF_COUNT;
 
         if (CompileOnly) {
                 return true;

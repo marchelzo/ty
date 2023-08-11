@@ -36,6 +36,7 @@ struct value;
 #define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
 #define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
 #define GENERATOR(g)             ((struct value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
+#define THREAD(t)                ((struct value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
 #define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
 #define NIL                      ((struct value){ .type = VALUE_NIL,                                                                                     .tags = 0 })
 
@@ -217,6 +218,7 @@ typedef vec(char *) CallStack;
 typedef vec(Frame) FrameStack;
 
 typedef struct generator Generator;
+typedef struct thread Thread;
 
 enum {
         VALUE_FUNCTION = 1     ,
@@ -241,6 +243,7 @@ enum {
         VALUE_NONE             ,
         VALUE_PTR              ,
         VALUE_REF              ,
+        VALUE_THREAD           ,
         VALUE_TUPLE            ,
         VALUE_TAGGED           = 1 << 7
 };
@@ -255,6 +258,7 @@ struct value {
                 struct array *array;
                 struct dict *dict;
                 struct blob *blob;
+                Thread *thread;
                 struct {
                         void *ptr;
                         void *gcptr;
@@ -324,6 +328,12 @@ struct generator {
         CallStack calls;
         SPStack sps;
         TargetStack targets;
+};
+
+struct thread {
+        pthread_t t;
+        struct value v;
+        uint64_t i;
 };
 
 struct dict {

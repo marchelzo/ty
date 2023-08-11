@@ -126,9 +126,9 @@ dict_get_value(struct dict *d, struct value *key)
 
         if (d->dflt.type != VALUE_NONE) {
                 struct value dflt = value_apply_callable(&d->dflt, key);
-                GC_ENABLED = false;
+                ++GC_OFF_COUNT;
                 struct value *v = put(d, i, h, *key, dflt);
-                GC_ENABLED = true;
+                --GC_OFF_COUNT;
                 return v;
         }
 

@@ -53,8 +53,8 @@
 #endif
 
 static _Thread_local char buffer[1024 * 1024 * 4];
-
 static _Thread_local vec(char) B;
+static _Atomic uint64_t tid = 1;
 
 #define ASSERT_ARGC(func, ac) \
         if (argc != (ac)) { \
@@ -1937,17 +1937,15 @@ builtin_thread_join(int argc, struct value *kwargs)
                 vm_panic("thread.join() expects one argument but got %d", argc);
         }
 
-        if (ARG(0).type != VALUE_PTR) {
-                vm_panic("non-pointer passed to thread.join(): %s", value_show(&ARG(0)));
+        if (ARG(0).type != VALUE_THREAD) {
+                vm_panic("non-thread passed to thread.join(): %s", value_show(&ARG(0)));
         }
 
         void *v;
 
         ReleaseLock(true);
-        pthread_join((pthread_t)ARG(0).ptr, &v);
+        pthread_join(ARG(0).thread->t, &v);
         TakeLock();
-
-        RemoveFromRootSet(v);
 
         return *(struct value *)v;
 }
@@ -1959,11 +1957,11 @@ builtin_thread_detach(int argc, struct value *kwargs)
                 vm_panic("thread.detach() expects one argument but got %d", argc);
         }
 
-        if (ARG(0).type != VALUE_PTR) {
-                vm_panic("non-pointer passed to thread.detach(): %s", value_show(&ARG(0)));
+        if (ARG(0).type != VALUE_THREAD) {
+                vm_panic("non-thread passed to thread.detach(): %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_detach((pthread_t)ARG(0).ptr));
+        return INTEGER(pthread_detach(ARG(0).thread->t));
 }
 
 struct value
@@ -2119,8 +2117,12 @@ builtin_thread_create(int argc, struct value *kwargs)
                 vm_panic("non-callable value passed to thread.create(): %s", value_show(&ARG(0)));
         }
 
-        pthread_t p;
         struct value *ctx = gc_alloc(sizeof (struct value[argc + 1]));
+        Thread *t = gc_alloc_object(sizeof *t, GC_THREAD);
+
+        NOGC(t);
+        t->i = atomic_fetch_add(&tid, 1);
+        t->v = NONE;
 
         for (int i = 0; i < argc; ++i) {
                 ctx[i] = ARG(i);
@@ -2128,9 +2130,9 @@ builtin_thread_create(int argc, struct value *kwargs)
 
         ctx[argc] = NONE;
 
-        NewThread(&p, ctx, NAMED("name"));
+        NewThread(t, ctx, NAMED("name"));
 
-        return PTR((void *)p);
+        return THREAD(t);
 }
 
 struct value
@@ -2140,8 +2142,8 @@ builtin_thread_kill(int argc, struct value *kwargs)
 
         struct value t = ARG(0);
 
-        if (t.type != VALUE_PTR) {
-                vm_panic("thread.kill() expects a pointer as the first argument but got: %s", value_show(&t));
+        if (t.type != VALUE_THREAD) {
+                vm_panic("thread.kill() expects a thread as the first argument but got: %s", value_show(&t));
         }
 
         struct value sig = ARG(1);
@@ -2150,7 +2152,7 @@ builtin_thread_kill(int argc, struct value *kwargs)
                 vm_panic("thread.kill(): expected integer as second argument but got: %s", value_show(&sig));
         }
 
-        return INTEGER(pthread_kill((pthread_t)t.ptr, sig.integer));
+        return INTEGER(pthread_kill(t.thread->t, sig.integer));
 }
 
 struct value

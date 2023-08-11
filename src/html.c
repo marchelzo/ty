@@ -149,9 +149,9 @@ html_parse(int argc, struct value *kwargs)
                 vec_empty(b);
                 return NIL;
         } else {
-                gc_disable();
+                ++GC_OFF_COUNT;
                 struct value v = convert(out);
-                gc_enable();
+                --GC_OFF_COUNT;
                 vec_empty(b);
                 gumbo_destroy_output(&kGumboDefaultOptions, out);
                 return v;

@@ -440,10 +440,10 @@ json_parse(char const *s, int n)
         json = s;
         len = n;
 
-        gc_disable();
+        ++GC_OFF_COUNT;
 
         if (setjmp(jb) != 0) {
-                gc_enable();
+                --GC_OFF_COUNT;
                 return NIL;
         }
 
@@ -453,7 +453,7 @@ json_parse(char const *s, int n)
         if (peek() != '\0')
                 v = NIL;
 
-        gc_enable();
+        --GC_OFF_COUNT;
 
         return v;
 }

@@ -35,7 +35,6 @@ void DoGC(void);
 typedef vec(struct alloc *) AllocList;
 
 extern _Thread_local AllocList allocs;
-extern _Thread_local bool GC_ENABLED;
 extern _Thread_local int GC_OFF_COUNT;
 
 extern _Thread_local size_t MemoryUsed;
@@ -64,6 +63,7 @@ enum {
         GC_VALUE,
         GC_ENV,
         GC_GENERATOR,
+        GC_THREAD,
         GC_REGEX,
         GC_ANY
 };
@@ -107,7 +107,7 @@ gc_resize_unchecked(void *p, size_t n) {
 inline static void
 CheckUsed(void)
 {
-        if (GC_ENABLED && GC_OFF_COUNT == 0 && MemoryUsed > MemoryLimit) {
+        if (GC_OFF_COUNT == 0 && MemoryUsed > MemoryLimit) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC();
                 GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
@@ -249,18 +249,6 @@ gc_alloc_unregistered(size_t n, char type)
         void *p = gc_alloc(n);
         ALLOC_OF(p)->type = type;
         return p;
-}
-
-inline static void
-gc_disable(void)
-{
-        GC_ENABLED = false;
-}
-
-inline static void
-gc_enable(void)
-{
-        GC_ENABLED = true;
 }
 
 void GCMark(void);
