@@ -33,6 +33,9 @@ class_method(int class, char const *name)
         return class_lookup_method(class, name, strhash(name));
 }
 
+char const *
+class_method_name(int class, char const *name);
+
 void
 class_set_super(int class, int super);
 

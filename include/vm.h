@@ -245,6 +245,9 @@ vm_load_c_module(char const *name, void *p);
 void
 vm_exec(char *ip);
 
+struct value
+GetMember(struct value v, char const *member, unsigned long h, bool b);
+
 extern _Thread_local pthread_mutex_t *MyLock;
 
 void

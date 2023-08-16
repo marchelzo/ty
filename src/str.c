@@ -11,8 +11,8 @@
 #include "token.h"
 #include "functions.h"
 
-static struct stringpos limitpos;
-static struct stringpos outpos;
+static _Thread_local struct stringpos limitpos;
+static _Thread_local struct stringpos outpos;
 
 inline static void
 stringcount(char const *s, int byte_lim, int grapheme_lim)

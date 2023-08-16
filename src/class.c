@@ -108,3 +108,16 @@ class_get_completions(int class, char const *prefix, char **out, int max)
         int n = table_get_completions(&tables.items[class], prefix, out, max);
         return n + class_get_completions(supers.items[class], prefix, out + n, max - n);
 }
+
+char const *
+class_method_name(int class, char const *name)
+{
+        do {
+                struct table const *t = &tables.items[class];
+                char const *s = table_look_key(t, name);
+                if (s != NULL) return s;
+                class = supers.items[class];
+        } while (class != -1);
+
+        return NULL;
+}

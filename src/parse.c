@@ -1301,6 +1301,37 @@ prefix_match(void)
 static struct expression *
 gencompr(struct expression *e)
 {
+        next();
+        struct expression *target = parse_target_list();
+        consume_keyword(KEYWORD_IN);
+        struct expression *iter = parse_expr(0);
+        struct expression *g = mkfunc();
+        g->start = e->start;
+        g->type = EXPRESSION_GENERATOR;
+        g->body = mkstmt();
+        g->body->type = STATEMENT_EACH_LOOP;
+        if (have_keyword(KEYWORD_IF)) {
+                next();
+                g->body->each.cond = parse_expr(0);
+        } else {
+                g->body->each.cond = NULL;
+        }
+        if (have_keyword(KEYWORD_WHILE)) {
+                next();
+                g->body->each.stop = parse_expr(0);
+        } else {
+                g->body->each.stop = NULL;
+        }
+        g->body->each.target = target;
+        g->body->each.array = iter;
+        g->body->each.body = mkstmt();
+        g->body->each.body->type = STATEMENT_EXPRESSION;
+        g->body->each.body->expression = mkexpr();
+        g->body->each.body->expression->type = EXPRESSION_YIELD;
+        vec_init(g->body->each.body->expression->es);
+        vec_push(g->body->each.body->expression->es, e);
+        g->end = End;
+        return g;
 }
 
 static struct expression *
@@ -1458,38 +1489,9 @@ prefix_parenthesis(void)
 
                 return list;
         } else if (have_keyword(KEYWORD_FOR)) {
-                next();
-                struct expression *target = parse_target_list();
-                consume_keyword(KEYWORD_IN);
-                struct expression *iter = parse_expr(0);
-                struct expression *g = mkfunc();
-                g->start = start;
-                g->type = EXPRESSION_GENERATOR;
-                g->body = mkstmt();
-                g->body->type = STATEMENT_EACH_LOOP;
-                if (have_keyword(KEYWORD_IF)) {
-                        next();
-                        g->body->each.cond = parse_expr(0);
-                } else {
-                        g->body->each.cond = NULL;
-                }
-                if (have_keyword(KEYWORD_WHILE)) {
-                        next();
-                        g->body->each.stop = parse_expr(0);
-                } else {
-                        g->body->each.stop = NULL;
-                }
-                g->body->each.target = target;
-                g->body->each.array = iter;
-                g->body->each.body = mkstmt();
-                g->body->each.body->type = STATEMENT_EXPRESSION;
-                g->body->each.body->expression = mkexpr();
-                g->body->each.body->expression->type = EXPRESSION_YIELD;
-                vec_init(g->body->each.body->expression->es);
-                vec_push(g->body->each.body->expression->es, e);
+                e = gencompr(e);
                 consume(')');
-                g->end = End;
-                return g;
+                return e;
         } else {
                 consume(')');
 
@@ -2126,6 +2128,9 @@ infix_function_call(struct expression *left)
                         vec_push(e->args, parse_expr(0));
                         vec_push(e->fconds, try_cond());
                 }
+                if (have_keyword(KEYWORD_FOR)) {
+                        *vec_last(e->args) = gencompr(*vec_last(e->args));
+                }
         }
 
         while (tok()->type == ',') {
@@ -2349,6 +2354,10 @@ infix_member_access(struct expression *left)
         } else {
                 vec_push(e->method_args, parse_expr(0));
                 vec_push(e->mconds, try_cond());
+        }
+
+        if (have_keyword(KEYWORD_FOR)) {
+                *vec_last(e->method_args) = gencompr(*vec_last(e->method_args));
         }
 
         while (tok()->type == ',') {
