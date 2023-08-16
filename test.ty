@@ -5,9 +5,9 @@ import time
 
 let start = time.utime()
 
-let passed = 0
-let failed = 0
-let timedOut = 0
+let passed = Sync(0)
+let failed = Sync(0)
+let timedOut = Sync(0)
 
 let g = pen(bold, green)
 let r = pen(bold, red)
@@ -17,19 +17,19 @@ let b = pen(bold, blue)
 let r2 = x -> round(x * 100) / 100
 
 let testThreads = []
-
+let tests = listdir('tests')
 for test in listdir('tests') {
     testThreads.push(Thread(name -> {
         let testStart = time.utime()
 
         let result = match sh("./ty tests/{name}", timeoutMs: 2000) {
             nil => {
-                timedOut += 1
+                timedOut.modify(${it + 1})
                 m('TIMEOUT')
             },
 
             &strip ~> 'PASS' => {
-                passed += 1
+                passed.modify(${it + 1})
 
                 let elapsedMs = (time.utime() - testStart) / 1000.0
 
@@ -42,7 +42,7 @@ for test in listdir('tests') {
             },
 
             _ => {
-                failed += 1
+                failed.modify(${it + 1})
                 r('FAIL')
             }
         }
@@ -56,16 +56,16 @@ print()
 
 let elapsedSec = (time.utime() - start) / (1000.0 * 1000.0)
 
-if passed > 0 {
-    print("{g('Passed')}: {g(passed)}")
+if passed.get() > 0 {
+    print("{g('Passed')}: {g(passed.get())}")
 }
 
-if failed > 0 {
-    print("{r('Failed')}: {r(failed)}")
+if failed.get() > 0 {
+    print("{r('Failed')}: {r(failed.get())}")
 }
 
-if timedOut > 0 {
-    print("{m('Timed out')}: {m(timedOut)}")
+if timedOut.get() > 0 {
+    print("{m('Timed out')}: {m(timedOut.get())}")
 }
 
 print()

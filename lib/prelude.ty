@@ -1503,6 +1503,26 @@ class MutexLock {
     }
 }
 
+class Sync {
+    init(x) {
+        @x = x
+        @mtx = Mutex()
+    }
+
+    __missing__(name, *args) {
+        with @mtx.lock() {
+            let f = member(@x, name)
+            f(*args)
+        }
+    }
+
+    add(y) {
+        with @mtx.lock() {
+            @x += y
+        }
+    }
+}
+
 class CondVar {
     init() {
         @var = thread.cond()

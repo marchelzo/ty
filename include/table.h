@@ -43,6 +43,15 @@ table_look(struct table const *t, char const *name)
         return table_lookup(t, name, strhash(name));
 }
 
+char const *
+table_lookup_key(struct table const *t, char const *name, unsigned long h);
+
+inline static char const *
+table_look_key(struct table const *t, char const *name)
+{
+        return table_lookup_key(t, name, strhash(name));
+}
+
 int
 table_get_completions(struct table const *t, char const *prefix, char **out, int max);
 

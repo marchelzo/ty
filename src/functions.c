@@ -4712,10 +4712,6 @@ builtin_member(int argc, struct value *kwargs)
         struct value o = ARG(0);
         struct value name = ARG(1);
 
-        if (o.type != VALUE_OBJECT) {
-                vm_panic("the first argument to member() must be an object");
-        }
-
         if (name.type != VALUE_STRING) {
                 vm_panic("the second argument to member() must be a string");
         }
@@ -4729,14 +4725,9 @@ builtin_member(int argc, struct value *kwargs)
         buffer[name.bytes] = '\0';
 
         if (argc == 2) {
-                struct value *v = table_look(o.object, buffer);
-
-                if (v == NULL) {
-                        return NIL;
-                }
-
-                return *v;
-        } else {
+                struct value v = GetMember(o, buffer, strhash(buffer), false);
+                return (v.type == VALUE_NONE) ? NIL : v;
+        } else if (o.type == VALUE_OBJECT) {
                 static _Thread_local struct table NameTable;
 
                 struct value *np = table_look(&NameTable, buffer);
@@ -4748,6 +4739,8 @@ builtin_member(int argc, struct value *kwargs)
                 );
 
                 return NIL;
+        } else {
+                vm_panic("member(o, _, _): expected object but got: %s", value_show(&o));
         }
 }
 

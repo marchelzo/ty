@@ -84,6 +84,8 @@ static char halt = INSTR_HALT;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
+static char const *MISSING = "__missing__";
+
 static _Thread_local jmp_buf jb;
 
 typedef struct {
@@ -1002,6 +1004,128 @@ AddTupleEntry(StringVector *names, ValueVector *values, char const *name, struct
 
         vec_push(*names, name);
         vec_push(*values, *v);
+}
+
+struct value
+GetMember(struct value v, char const *member, unsigned long h, bool b)
+{
+
+        int n;
+        struct value *vp = NULL, *this;
+        struct value (*func)(struct value *, int, struct value *);
+
+        if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(tags)) {
+                vp = tags_lookup_method(tags_first(tags), member, h);
+                if (vp != NULL)  {
+                        struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
+                        *this = v;
+                        this->tags = tags;
+                        return METHOD(member, vp, this);
+                }
+        }
+
+        switch (v.type & ~VALUE_TAGGED) {
+        case VALUE_TUPLE:
+                vp = tuple_get(&v, member);
+                return (vp == NULL) ? NONE : *vp;
+        case VALUE_DICT:
+                func = get_dict_method(member);
+                if (func == NULL) {
+                        n = CLASS_DICT;
+                        goto ClassLookup;
+                }
+                v.type = VALUE_ARRAY;
+                v.tags = 0;
+                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                *this = v;
+                return BUILTIN_METHOD(member, func, this);
+        case VALUE_ARRAY:
+                func = get_array_method(member);
+                if (func == NULL) {
+                        n = CLASS_ARRAY;
+                        goto ClassLookup;
+                }
+                v.type = VALUE_ARRAY;
+                v.tags = 0;
+                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                *this = v;
+                return BUILTIN_METHOD(member, func, this);
+        case VALUE_STRING:
+                func = get_string_method(member);
+                if (func == NULL) {
+                        n = CLASS_STRING;
+                        goto ClassLookup;
+                }
+                v.type = VALUE_STRING;
+                v.tags = 0;
+                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                *this = v;
+                return BUILTIN_METHOD(member, func, this);
+        case VALUE_BLOB:
+                func = get_blob_method(member);
+                if (func == NULL) {
+                        n = CLASS_BLOB;
+                        goto ClassLookup;
+                }
+                v.type = VALUE_BLOB;
+                v.tags = 0;
+                this = gc_alloc_object(sizeof *this, GC_VALUE);
+                *this = v;
+                return BUILTIN_METHOD(member, func, this);
+        case VALUE_GENERATOR:
+                n = CLASS_GENERATOR;
+                goto ClassLookup;
+        case VALUE_INTEGER:
+                n = CLASS_INT;
+                goto ClassLookup;
+        case VALUE_REAL:
+                n = CLASS_FLOAT;
+                goto ClassLookup;
+        case VALUE_BOOLEAN:
+                n = CLASS_BOOL;
+                goto ClassLookup;
+        case VALUE_FUNCTION:
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_FUNCTION:
+        case VALUE_BUILTIN_METHOD:
+                n = CLASS_FUNCTION;
+                goto ClassLookup;
+        case VALUE_CLASS:
+                vp = class_lookup_method(v.class, member, h);
+                if (vp == NULL) {
+                        n = CLASS_CLASS;
+                        goto ClassLookup;
+                } else {
+                        return *vp;
+                }
+                break;
+        case VALUE_OBJECT:
+                vp = table_lookup(v.object, member, h);
+                if (vp != NULL) {
+                        return *vp;
+                }
+                n = v.class;
+ClassLookup:
+                vp = class_lookup_method(n, member, h);
+                if (vp != NULL) {
+                        this = gc_alloc_object(sizeof *this, GC_VALUE);
+                        *this = v;
+                        return METHOD(member, vp, this);
+                }
+                vp = b ? class_method(n, "__missing__") : NULL;
+                if (vp != NULL) {
+                        this = gc_alloc_object(sizeof (struct value [3]), GC_VALUE);
+                        this[0] = v;
+                        this[1] = STRING_NOGC(member, strlen(member));
+                        return METHOD(MISSING, vp, this);
+                }
+                break;
+        case VALUE_TAG:
+                vp = tags_lookup_method(v.tag, member, h);
+                return (vp == NULL) ? NIL : *vp;
+        }
+
+        return NONE;
 }
 
 void
@@ -2036,7 +2160,7 @@ Throw:
                         break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
-                        v = pop();
+                        value = pop();
 
                         b = ip[-1] == INSTR_TRY_MEMBER_ACCESS;
 
@@ -2045,40 +2169,17 @@ Throw:
 
                         READVALUE(h);
 
-                        vp = NULL;
-                        if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(tags)) {
-                                vp = tags_lookup_method(tags_first(tags), member, h);
-                                if (vp != NULL)  {
-                                        struct value *this = gc_alloc_object(sizeof *this, GC_VALUE);
-                                        *this = v;
-                                        this->tags = tags;
-                                        NOGC(this);
-                                        push(METHOD(member, vp, this));
-                                        OKGC(this);
-                                        break;
-                                }
+                        push(NIL);
+                        v = GetMember(value, member, h, true);
+
+                        if (v.type != VALUE_NONE) {
+                                *top() = v;
+                                break;
+                        } else if (b) {
+                                break;
                         }
 
-                        if (vp != NULL)
-                                break;
-
-                        struct value *this;
-
-                        switch (v.type & ~VALUE_TAGGED) {
-                        case VALUE_NIL:
-                                push(NIL);
-                                break;
-                        case VALUE_TUPLE:
-                                vp = tuple_get(&v, member);
-                                if (vp != NULL) {
-                                        push(*vp);
-                                        goto NextInstruction;
-                                }
-                                if (b) {
-                                        // (1, 2).?z
-                                        push(NIL);
-                                        goto NextInstruction;
-                                }
+                        if (value.type == VALUE_TUPLE) {
                         BadTupleMember:
                                 vm_panic(
                                         "attempt to access non-existent field %s'%s'%s of %s%s%s",
@@ -2089,129 +2190,16 @@ Throw:
                                         value_show(&v),
                                         TERM(39)
                                 );
-                        case VALUE_DICT:
-                                func = get_dict_method(member);
-                                if (func == NULL) {
-                                        n = CLASS_DICT;
-                                        goto ClassLookup;
-                                }
-                                v.type = VALUE_ARRAY;
-                                v.tags = 0;
-                                this = gc_alloc_object(sizeof *this, GC_VALUE);
-                                *this = v;
-                                NOGC(this);
-                                push(BUILTIN_METHOD(member, func, this));
-                                OKGC(this);
-                                break;
-                        case VALUE_ARRAY:
-                                func = get_array_method(member);
-                                if (func == NULL) {
-                                        n = CLASS_ARRAY;
-                                        goto ClassLookup;
-                                }
-                                v.type = VALUE_ARRAY;
-                                v.tags = 0;
-                                this = gc_alloc_object(sizeof *this, GC_VALUE);
-                                *this = v;
-                                NOGC(this);
-                                push(BUILTIN_METHOD(member, func, this));
-                                OKGC(this);
-                                break;
-                        case VALUE_STRING:
-                                func = get_string_method(member);
-                                if (func == NULL) {
-                                        n = CLASS_STRING;
-                                        goto ClassLookup;
-                                }
-                                v.type = VALUE_STRING;
-                                v.tags = 0;
-                                this = gc_alloc_object(sizeof *this, GC_VALUE);
-                                *this = v;
-                                NOGC(this);
-                                push(BUILTIN_METHOD(member, func, this));
-                                OKGC(this);
-                                break;
-                        case VALUE_BLOB:
-                                func = get_blob_method(member);
-                                if (func == NULL) {
-                                        n = CLASS_BLOB;
-                                        goto ClassLookup;
-                                }
-                                v.type = VALUE_BLOB;
-                                v.tags = 0;
-                                this = gc_alloc_object(sizeof *this, GC_VALUE);
-                                *this = v;
-                                NOGC(this);
-                                push(BUILTIN_METHOD(member, func, this));
-                                OKGC(this);
-                                break;
-                        case VALUE_GENERATOR:
-                                n = CLASS_GENERATOR;
-                                goto ClassLookup;
-                        case VALUE_INTEGER:
-                                n = CLASS_INT;
-                                goto ClassLookup;
-                        case VALUE_REAL:
-                                n = CLASS_FLOAT;
-                                goto ClassLookup;
-                        case VALUE_BOOLEAN:
-                                n = CLASS_BOOL;
-                                goto ClassLookup;
-                        case VALUE_FUNCTION:
-                        case VALUE_METHOD:
-                        case VALUE_BUILTIN_FUNCTION:
-                        case VALUE_BUILTIN_METHOD:
-                                n = CLASS_FUNCTION;
-                                goto ClassLookup;
-                        case VALUE_CLASS:
-                                vp = class_lookup_method(v.class, member, h);
-                                if (vp == NULL) {
-                                        n = CLASS_CLASS;
-                                        goto ClassLookup;
-                                } else {
-                                        push(*vp);
-                                }
-                                break;
-                        case VALUE_OBJECT:
-                                vp = table_lookup(v.object, member, h);
-                                if (vp != NULL) {
-                                        push(*vp);
-                                        break;
-                                }
-                                n = v.class;
-ClassLookup:
-                                vp = class_lookup_method(n, member, h);
-                                if (vp != NULL) {
-                                        this = gc_alloc_object(sizeof *this, GC_VALUE);
-                                        *this = v;
-                                        NOGC(this);
-                                        push(METHOD(member, vp, this));
-                                        OKGC(this);
-                                        break;
-                                }
-                                if (b) {
-                                        push(NIL);
-                                } else {
-                                        vm_panic(
-                                                "attempt to access non-existent member %s'%s'%s of %s%s%s",
-                                                TERM(34),
-                                                member,
-                                                TERM(39),
-                                                TERM(97),
-                                                value_show(&v),
-                                                TERM(39)
-                                        );
-                                }
-                                break;
-                        case VALUE_TAG:
-                                vp = tags_lookup_method(v.tag, member, h);
-                                push(vp == NULL ? NIL : *vp);
-                                break;
-                        default:
-                                if (b)
-                                        push(NIL);
-                                else
-                                        vm_panic("member access on value of invalid type: %s", value_show(&v));
+                        } else {
+                                vm_panic(
+                                        "attempt to access non-existent member %s'%s'%s of %s%s%s",
+                                        TERM(34),
+                                        member,
+                                        TERM(39),
+                                        TERM(97),
+                                        value_show(&v),
+                                        TERM(39)
+                                );
                         }
 
                         break;
@@ -2783,6 +2771,11 @@ BadContainer:
                                 }
                                 break;
                         case VALUE_METHOD:
+                                if (v.name == MISSING) {
+                                        push(peek());
+                                        memmove(top() - n, top() - (n + 1), n * sizeof (struct value));
+                                        top()[-n++] = v.this[1];
+                                }
                                 call(v.method, v.this, n, nkw, false);
                                 break;
                         case VALUE_REGEX:
@@ -2961,6 +2954,7 @@ BadContainer:
                                         goto Call;
                                 }
                         } else if (vp != NULL) {
+                        SetupMethodCall:
                                 pop();
                                 if (self != NULL) {
                                         AutoThis = true;
@@ -2977,6 +2971,18 @@ BadContainer:
                                 stack.count -= (n + 1 + nkw);
                                 push(NIL);
                         } else {
+                                if (value.type == VALUE_OBJECT) {
+                                        vp = class_method(value.class, "__missing__");
+                                        if (vp != NULL) {
+                                                v = pop();
+                                                push(peek());
+                                                memmove(top() - n, top() - (n + 1), n * sizeof (struct value));
+                                                top()[-n++] = STRING_NOGC(method, strlen(method));
+                                                push(v);
+                                                self = &value;
+                                                goto SetupMethodCall;
+                                        }
+                                }
                                 vm_panic("call to non-existent method '%s' on %s", method, value_show(&value));
                         }
                         break;
