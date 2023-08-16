@@ -28,7 +28,8 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 struct value const *f = class_method(left->class, "+");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function(f, left, right, NULL);
+                struct value method = METHOD("+", f, left);
+                return vm_eval_function(&method, right, NULL);
         }
 
         if (left->type == VALUE_PTR) {

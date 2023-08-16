@@ -1509,6 +1509,12 @@ class Sync {
         @mtx = Mutex()
     }
 
+    get() {
+        with @mtx.lock() {
+            @x
+        }
+    }
+
     __missing__(name, *args) {
         with @mtx.lock() {
             let f = member(@x, name)
@@ -1516,9 +1522,62 @@ class Sync {
         }
     }
 
-    add(y) {
+
+    __str__() {
+        "Sync({@x})"
+    }
+
+    __subscript__(i) {
+        with @mtx.lock() {
+            @x[i]
+        }
+    }
+
+    +=(y) {
         with @mtx.lock() {
             @x += y
+        }
+    }
+
+    +(y) {
+        with @mtx.lock() {
+            @x + y
+        }
+    }
+
+    *=(y) {
+        with @mtx.lock() {
+            @x *= y
+        }
+    }
+
+    *(y) {
+        with @mtx.lock() {
+            @x * y
+        }
+    }
+
+    -=(y) {
+        with @mtx.lock() {
+            @x -= y
+        }
+    }
+
+    -(y) {
+        with @mtx.lock() {
+            @x - y
+        }
+    }
+
+    /=(y) {
+        with @mtx.lock() {
+            @x /= y
+        }
+    }
+
+    /(y) {
+        with @mtx.lock() {
+            @x / y
         }
     }
 }

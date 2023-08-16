@@ -1107,7 +1107,7 @@ vm_exec(char *code)
 
         bool AutoThis = false;
 
-        struct value left, right, v, key, value, container, subscript, *vp;
+        struct value left, right, v, key, value, container, subscript, *vp, *vp2;
         char *str;
         char const *method, *member;
 
@@ -2431,7 +2431,7 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
                         case VALUE_REAL:    ++peektarget()->real;    break;
-                        default:            vm_panic("pre-increment applied to invalid type");
+                        default:            vm_panic("pre-increment applied to invalid type: %s", value_show(peektarget()));
                         }
                         push(*poptarget());
                         break;
@@ -2440,7 +2440,7 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
                         case VALUE_REAL:    ++peektarget()->real;    break;
-                        default:            vm_panic("post-increment applied to invalid type");
+                        default:            vm_panic("post-increment applied to invalid type: %s", value_show(peektarget()));
                         }
                         poptarget();
                         break;
@@ -2448,7 +2448,7 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
                         case VALUE_REAL:    --peektarget()->real;    break;
-                        default:            vm_panic("pre-decrement applied to invalid type");
+                        default:            vm_panic("pre-decrement applied to invalid type: %s", value_show(peektarget()));
                         }
                         push(*poptarget());
                         break;
@@ -2457,7 +2457,7 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
                         case VALUE_REAL:    --peektarget()->real;    break;
-                        default:            vm_panic("post-decrement applied to invalid type");
+                        default:            vm_panic("post-decrement applied to invalid type: %s", value_show(peektarget()));
                         }
                         poptarget();
                         break;
@@ -2473,6 +2473,11 @@ BadContainer:
                                         vm_panic("attempt to add non-dict to dict");
                                 dict_update(vp, 1, NULL);
                                 pop();
+                        } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "+=")) != NULL) {
+                                gc_push(vp);
+                                call(vp2, vp, 1, 0, true);
+                                gc_pop();
+                                pop();
                         } else {
                                 v = pop();
                                 *vp = binary_operator_addition(vp, &v);
@@ -2481,14 +2486,28 @@ BadContainer:
                         break;
                 CASE(MUT_MUL)
                         vp = poptarget();
-                        v = pop();
-                        *vp = binary_operator_multiplication(vp, &v);
+                        if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "*=")) != NULL) {
+                                gc_push(vp);
+                                call(vp2, vp, 1, 0, true);
+                                gc_pop();
+                                pop();
+                        } else {
+                                v = pop();
+                                *vp = binary_operator_multiplication(vp, &v);
+                        }
                         push(*vp);
                         break;
                 CASE(MUT_DIV)
-                        vp = poptarget();
-                        v = pop();
-                        *vp = binary_operator_division(vp, &v);
+                        if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "/=")) != NULL) {
+                                gc_push(vp);
+                                call(vp2, vp, 1, 0, true);
+                                gc_pop();
+                                pop();
+                        } else {
+                                vp = poptarget();
+                                v = pop();
+                                *vp = binary_operator_division(vp, &v);
+                        }
                         push(*vp);
                         break;
                 CASE(MUT_SUB)
@@ -2497,6 +2516,11 @@ BadContainer:
                                 if (top()->type != VALUE_DICT)
                                         vm_panic("attempt to subtract non-dict from dict");
                                 dict_subtract(vp, 1, NULL);
+                                pop();
+                        } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "-=")) != NULL) {
+                                gc_push(vp);
+                                call(vp2, vp, 1, 0, true);
+                                gc_pop();
                                 pop();
                         } else {
                                 v = pop();
@@ -3402,6 +3426,11 @@ vm_call(struct value const *f, int argc)
         default:
                 abort();
         }
+}
+
+struct value
+vm_eval_function2(struct value const *f, struct value *self, ...)
+{
 }
 
 struct value

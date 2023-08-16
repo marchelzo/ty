@@ -3638,6 +3638,10 @@ parse_class_definition(void)
                         case TOKEN_MINUS:       tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-";    break;
                         case TOKEN_STAR:        tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*";    break;
                         case TOKEN_PERCENT:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "%";    break;
+                        case TOKEN_PLUS_EQ:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "+=";   break;
+                        case TOKEN_STAR_EQ:     tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "*=";   break;
+                        case TOKEN_MINUS_EQ:    tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "-=";   break;
+                        case TOKEN_DIV_EQ:      tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "/=";   break;
                         case '&':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "&";    break;
                         case '|':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "|";    break;
                         case TOKEN_USER_OP:     tok()->type = TOKEN_IDENTIFIER;                             break;
