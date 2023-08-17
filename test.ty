@@ -24,15 +24,13 @@ for test in listdir('tests') {
 
         let result = match sh("./ty tests/{name}", timeoutMs: 2000) {
             nil => {
-                timedOut.modify(${it + 1})
+                timedOut += 1
                 m('TIMEOUT')
             },
 
             &strip ~> 'PASS' => {
-                passed.modify(${it + 1})
-
+                passed += 1
                 let elapsedMs = (time.utime() - testStart) / 1000.0
-
                 let elapsed = match elapsedMs <=> 100.0 {
                     -1 => "({round(elapsedMs)}ms)",
                     _  => "({r2(elapsedMs / 1000.0)}s)"
@@ -42,7 +40,7 @@ for test in listdir('tests') {
             },
 
             _ => {
-                failed.modify(${it + 1})
+                failed += 1
                 r('FAIL')
             }
         }
@@ -56,16 +54,16 @@ print()
 
 let elapsedSec = (time.utime() - start) / (1000.0 * 1000.0)
 
-if passed.get() > 0 {
-    print("{g('Passed')}: {g(passed.get())}")
+if passed > 0 {
+    print("{g('Passed')}: {g(passed)}")
 }
 
-if failed.get() > 0 {
-    print("{r('Failed')}: {r(failed.get())}")
+if failed > 0 {
+    print("{r('Failed')}: {r(failed)}")
 }
 
-if timedOut.get() > 0 {
-    print("{m('Timed out')}: {m(timedOut.get())}")
+if timedOut > 0 {
+    print("{m('Timed out')}: {m(timedOut)}")
 }
 
 print()
