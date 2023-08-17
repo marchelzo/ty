@@ -521,9 +521,10 @@ value_compare(void const *_v1, void const *_v2)
                 return ((int)v1->count) - ((int)v2->count);
         case VALUE_OBJECT:;
                 struct value const *cmpfn = class_method(v1->class, "<=>");
+                struct value method = METHOD("<=>", cmpfn, v1);
                 if (cmpfn == NULL)
                         goto Fail;
-                struct value v = vm_eval_function(cmpfn, v1, v2, NULL);
+                struct value v = vm_eval_function(&method, v2, NULL);
                 if (v.type != VALUE_INTEGER)
                         vm_panic("user-defined %s.<=> method returned non-integer", class_name(v1->class));
                 return v.integer;
@@ -668,7 +669,7 @@ value_apply_callable(struct value *f, struct value *v)
 bool
 value_test_equality(struct value const *v1, struct value const *v2)
 {
-        if (v1->type != v2->type)
+        if (v1->type != v2->type && v1->type != VALUE_OBJECT)
                 return false;
 
         struct value *f;
@@ -697,7 +698,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
                         if (value_compare(v1, v2) != 0) {
                                 return false;
                         }
-                } else if (v1->object != v2->object) {
+                } else if (v2->type != VALUE_OBJECT || v1->object != v2->object) {
                         return false;
                 }
         }

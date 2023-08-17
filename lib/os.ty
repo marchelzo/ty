@@ -2,7 +2,7 @@ import os (..)
 import ffi as c
 import cutil (cfun!)
 
-function walk(path) {
+function walk*(path) {
     let d = opendir(path)
 
     let fs = []
@@ -19,6 +19,8 @@ function walk(path) {
         }
     }
 
+    yield (path, ds, fs)
+
     for d in ds {
         for t in walk("{path}/{d}") {
             yield t
@@ -26,8 +28,6 @@ function walk(path) {
     }
 
     closedir(d)
-
-    yield (path, ds, fs)
 }
 
 cfun! nil c.int isatty(c.int)

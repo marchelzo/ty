@@ -1522,14 +1522,44 @@ class Sync {
         }
     }
 
+    ==(y) {
+        with @mtx.lock() {
+            @x == y
+        }
+    }
+
+    <=>(y) {
+        with @mtx.lock() {
+            @x <=> y
+        }
+    }
+
+    __len__() {
+        with @mtx.lock() {
+            #@x
+        }
+    }
 
     __str__() {
-        "Sync({@x})"
+        "{@x}"
     }
 
     __subscript__(i) {
         with @mtx.lock() {
             @x[i]
+        }
+    }
+
+    ++() {
+        with @mtx.lock() {
+            ++(@x)
+        }
+    }
+
+
+    --() {
+        with @mtx.lock() {
+            --(@x)
         }
     }
 

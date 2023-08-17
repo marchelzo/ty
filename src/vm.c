@@ -2431,7 +2431,14 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
                         case VALUE_REAL:    ++peektarget()->real;    break;
-                        default:            vm_panic("pre-increment applied to invalid type: %s", value_show(peektarget()));
+                        case VALUE_OBJECT:
+                                vp = class_method(peektarget()->class, "++");
+                                if (vp != NULL) {
+                                        call(vp, peektarget(), 0, 0, true);
+                                        break;
+                                }
+                        default:
+                                vm_panic("pre-increment applied to invalid type: %s", value_show(peektarget()));
                         }
                         push(*poptarget());
                         break;
@@ -2448,7 +2455,14 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
                         case VALUE_REAL:    --peektarget()->real;    break;
-                        default:            vm_panic("pre-decrement applied to invalid type: %s", value_show(peektarget()));
+                        case VALUE_OBJECT:
+                                vp = class_method(peektarget()->class, "--");
+                                if (vp != NULL) {
+                                        call(vp, peektarget(), 0, 0, true);
+                                        break;
+                                }
+                        default:
+                                vm_panic("pre-decrement applied to invalid type: %s", value_show(peektarget()));
                         }
                         push(*poptarget());
                         break;
