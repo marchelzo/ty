@@ -36,7 +36,9 @@ collect(struct alloc *a)
                 gc_free(((Generator *)p)->sps.items);
                 break;
         case GC_THREAD:
-                pthread_detach(((Thread *)p)->t);
+                if (((Thread *)p)->v.type == VALUE_NONE) {
+                        pthread_detach(((Thread *)p)->t);
+                }
                 break;
         case GC_OBJECT:
                 finalizer = &((struct table *)p)->finalizer;
