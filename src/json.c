@@ -8,6 +8,7 @@
 #include "dict.h"
 #include "util.h"
 #include "table.h"
+#include "class.h"
 #include "vec.h"
 #include "vm.h"
 
@@ -366,27 +367,44 @@ encode(struct value const *v, str *out)
                 vec_push(*out, '}');
                 break;
         case VALUE_OBJECT:
-                vec_push(*out, '{');
+        {
                 if (!try_visit(v->object))
                         return false;
-                for (int i = 0; i < TABLE_SIZE; ++i) {
-                        for (int j = 0; j < v->object->buckets[i].names.count; ++j) {
-                                vec_push(*out, '"');
-                                char const *name = v->object->buckets[i].names.items[j];
-                                vec_push_n(*out, name, strlen(name));
-                                vec_push(*out, '"');
-                                vec_push(*out, ':');
-                                if (!encode(&v->object->buckets[i].values.items[j], out))
-                                        return false;
-                                vec_push(*out, ',');
+
+                struct value *vp = class_method(v->class, "__json__");
+
+                if (vp != NULL) {
+                        struct value method = METHOD("__json__", vp, v);
+                        struct value s = vm_eval_function(&method, NULL);
+                        if (s.type == VALUE_STRING) {
+                                gc_push(&s);
+                                vec_push_n(*out, s.string, s.bytes);
+                                gc_pop();
+                        } else {
+                                return encode(&s, out);
                         }
+                } else {
+                        vec_push(*out, '{');
+                        for (int i = 0; i < TABLE_SIZE; ++i) {
+                                for (int j = 0; j < v->object->buckets[i].names.count; ++j) {
+                                        vec_push(*out, '"');
+                                        char const *name = v->object->buckets[i].names.items[j];
+                                        vec_push_n(*out, name, strlen(name));
+                                        vec_push(*out, '"');
+                                        vec_push(*out, ':');
+                                        if (!encode(&v->object->buckets[i].values.items[j], out))
+                                                return false;
+                                        vec_push(*out, ',');
+                                }
+                        }
+                        vec_pop(Visiting);
+                        if (*vec_last(*out) == ',')
+                                *vec_last(*out) = '}';
+                        else
+                                vec_push(*out, '}');
                 }
-                vec_pop(Visiting);
-                if (*vec_last(*out) == ',')
-                        *vec_last(*out) = '}';
-                else
-                        vec_push(*out, '}');
                 break;
+        }
         case VALUE_TUPLE:
                 vec_push(*out, '{');
                 if (!try_visit(v->items))

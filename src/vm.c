@@ -2151,7 +2151,7 @@ Throw:
                                         member,
                                         TERM(39),
                                         TERM(97),
-                                        value_show(&v),
+                                        value_show(&value),
                                         TERM(39)
                                 );
                         } else {
@@ -2161,7 +2161,7 @@ Throw:
                                         member,
                                         TERM(39),
                                         TERM(97),
-                                        value_show(&v),
+                                        value_show(&value),
                                         TERM(39)
                                 );
                         }
@@ -3440,11 +3440,6 @@ vm_call(struct value const *f, int argc)
         default:
                 abort();
         }
-}
-
-struct value
-vm_eval_function2(struct value const *f, struct value *self, ...)
-{
 }
 
 struct value

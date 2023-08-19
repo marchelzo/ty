@@ -35,7 +35,7 @@ let CMARK_NODE_IMAGE = 20
 let CMARK_NODE_FIRST_INLINE = CMARK_NODE_TEXT
 let CMARK_NODE_LAST_INLINE = CMARK_NODE_IMAGE
 
-if not let $cmark = c.dlopen('libcmark.so') {
+if not let $cmark = c.dlopen('libcmark.so') ?? c.dlopen('libcmark.dylib') {
   throw "Couldn't load libcmark.so"
 }
 
@@ -125,7 +125,7 @@ class MarkdownNode {
     }
   }
 
-  children() {
+  children*() {
     for let c = cmark_node_first_child(@node); c != nil; c = cmark_node_next(c) {
       yield MarkdownNode(c)
     }
@@ -136,7 +136,7 @@ class MarkdownNode {
   }
 
   codeTag() {
-    if let $lang = @infoString() {
+    if let $lang = @infoString() and #lang > 0 {
       "<code class=\"language-{lang}\">"
     } else {
       "<code>"
@@ -161,7 +161,7 @@ class MarkdownNode {
   }
 }
 
-pub function parse(s) {
+pub function parse(s) -> ?MarkdownNode {
   if let $doc = cmark_parse_document(s, s.size(), 0) {
     MarkdownNode(doc)
   }
