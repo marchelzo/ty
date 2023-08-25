@@ -5199,6 +5199,11 @@ tyexpr(struct expression const *e)
         case EXPRESSION_NOT_IN:
                 v = tagged(TyNotIn, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
+        case EXPRESSION_PREFIX_HASH:
+                v = tyexpr(e->operand);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(v.tags, TyCount);
+                break;
         case EXPRESSION_STATEMENT:
                 return tystmt(e->statement);
         default:
@@ -5577,6 +5582,9 @@ cexpr(struct value *v)
                 vec_init(e->method_kwargs);
                 vec_init(e->mconds);
 
+                struct value *maybe = tuple_get(v, "maybe");
+                e->maybe = maybe != NULL && value_truthy(maybe);
+
                 struct value *object = tuple_get(v, "object");
                 e->object = cexpr(object);
 
@@ -5716,6 +5724,11 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_USER_OP;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
+        } else if (tags_first(v->tags) == TyCount) {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_PREFIX_HASH;
+                e->operand = cexpr(&v_);
         } else if (tags_first(v->tags) == TyLet) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);

@@ -602,6 +602,7 @@
 {.module = "ffi", .name = "dlsym", .value = BUILTIN(cffi_dlsym)},
 {.module = "ffi", .name = "dlopen", .value = BUILTIN(cffi_dlopen)},
 {.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},
+{.module = "ffi", .name = "pmember", .value = BUILTIN(cffi_pmember)},
 {.module = "ffi", .name = "str", .value = BUILTIN(cffi_str)},
 {.module = "ffi", .name = "blob", .value = BUILTIN(cffi_blob)},
 {.module = "ffi", .name = "clone", .value = BUILTIN(cffi_clone)},

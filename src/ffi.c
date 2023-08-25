@@ -308,6 +308,50 @@ cffi_new(int argc, struct value *kwargs)
 }
 
 struct value
+cffi_pmember(int argc, struct value *kwargs)
+{
+        if (argc != 3) {
+                vm_panic("ffi.pmember(): expected 3 arguments but got %d", argc);
+        }
+
+
+        struct value t = ARG(0);
+        if (t.type != VALUE_PTR) {
+                vm_panic("the first argument to ffi.member() must be a pointer");
+        }
+
+        ffi_type *type = t.ptr;
+
+        int n = 0;
+        while (type->elements[n] != NULL) {
+                n += 1;
+        }
+
+        unsigned char *p;
+        switch (ARG(1).type) {
+        case VALUE_PTR:
+                p = ARG(1).ptr;
+                break;
+        case VALUE_BLOB:
+                p = ARG(1).blob->items;
+                break;
+        default:
+                vm_panic("ffi.pmember(): invalid second argument: %s", value_show(&ARG(1)));
+        }
+
+        struct value i = ARG(2);
+        if (i.type != VALUE_INTEGER || i.integer < 0 || i.integer >= n) {
+                vm_panic("invalid third argument to ffi.pmember(): %s", value_show(&i));
+        }
+
+        size_t offsets[64];
+        ffi_get_struct_offsets(FFI_DEFAULT_ABI, type, offsets);
+
+        return PTR(p + offsets[i.integer]);
+
+}
+
+struct value
 cffi_member(int argc, struct value *kwargs)
 {
         if (argc != 3 && argc != 4) {

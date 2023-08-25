@@ -83,7 +83,7 @@ pub macro struct! {
             ty.Wtf(
                 ty.Id(name: '<p>'),
                 ty.Call(
-                    func: ty.Id(name: 'new', module: 'c'),
+                    func: ty.Value(c.new),
                     args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))]
                 )
             )
@@ -101,22 +101,74 @@ pub macro struct! {
 
     for entry, i in struct {
         let ty.RecordEntry({name, item}) = entry
-        structArgs.push(ty.Arg(arg: item))
-        methods.push(
-            ty.Func(
-                name: name,
-                params: [ty.Gather('args')],
-                body: ty.Call(
-                    func: ty.Id(name: 'member', module: 'c'),
-                    args: [
-                        ty.Arg(arg: ty.Id(name: "{structName}_C")),
-                        ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
-                        ty.Arg(arg: ty.Int(i)),
-                        ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
-                    ]
+        match item {
+            ty.Array([ty.ArrayItem({item: t, *}), ty.ArrayItem({item: ty.eval ~> n, *})]) => {
+                structArgs.push(ty.Arg(arg: ty.Call(func: ty.Value(c.struct), args: [ty.Arg(arg: t) for _ in ..n])))
+                methods.push(
+                    ty.Func(
+                        name: name,
+                        params: [ty.Gather('args')],
+                        body: ty.If(
+                            [ty.GT(ty.Count(ty.Id(name: 'args')), ty.Int(0))],
+                            ty.Block([
+                                ty.Let(ty.Array([ty.ArrayItem(item: ty.Id(name: 'x'))]), ty.Id(name: 'args')),
+                                ty.Let(
+                                    ty.Id(name: 'p'),
+                                    ty.MethodCall(
+                                        object: ty.Id(name: 'x'),
+                                        method: 'ptr',
+                                        args: []
+                                    )
+                                ),
+                                ty.Call(
+                                    func: ty.Id(name: 'memcpy', module: 'cutil'),
+                                    args: [
+                                        ty.Arg(
+                                            arg: ty.Call(
+                                                func: ty.Value(c.pmember),
+                                                args: [
+                                                    ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                                    ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                                    ty.Arg(arg: ty.Int(i)),
+                                                ]
+                                            )
+                                        ),
+                                        ty.Arg(arg: ty.Wtf(ty.Id(name: 'p'), ty.Id(name: 'x'))),
+                                        ty.Arg(arg: ty.Mul(ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: t)]), ty.Value(n)))
+                                    ]
+                                )
+                            ]),
+                            ty.Call(
+                                func: ty.Value(c.pmember),
+                                args: [
+                                    ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                    ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                    ty.Arg(arg: ty.Int(i)),
+                                ]
+                            )
+                        )
+                    )
                 )
-            )
-        )
+            },
+            _ => {
+                structArgs.push(ty.Arg(arg: item))
+                methods.push(
+                    ty.Func(
+                        name: name,
+                        params: [ty.Gather('args')],
+                        body: ty.Call(
+                            func: ty.Value(c.member),
+                            args: [
+                                ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                ty.Arg(arg: ty.Int(i)),
+                                ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
+                            ]
+                        )
+                    )
+                )
+            }
+        }
     }
 
     let show = ty.Func(
@@ -146,7 +198,7 @@ pub macro struct! {
         ty.Let(
             ty.Id(name: "{structName}_C"),
             ty.Call(
-                func: ty.Id(name: 'struct', module: 'c'),
+                func: ty.Value(c.struct),
                 args: structArgs
             )
         ),

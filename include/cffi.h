@@ -36,6 +36,9 @@ struct value
 cffi_member(int argc, struct value *kwargs);
 
 struct value
+cffi_pmember(int argc, struct value *kwargs);
+
+struct value
 cffi_load(int argc, struct value *kwargs);
 
 struct value

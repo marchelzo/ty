@@ -126,7 +126,8 @@ struct value;
         X(Return) \
         X(Wtf) \
         X(GT) \
-        X(LT)
+        X(LT) \
+        X(Count)
 
 #define X(x) Ty ## x,
 enum {
