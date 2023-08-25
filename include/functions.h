@@ -628,4 +628,7 @@ builtin_ty_unlock(int argc, struct value *kwargs);
 struct value
 builtin_ty_lock(int argc, struct value *kwargs);
 
+struct value
+builtin_ptr_typed(int argc, struct value *kwargs);
+
 #endif

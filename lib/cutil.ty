@@ -2,6 +2,7 @@ import ffi as c
 import ty
 import ty.token (next, peek)
 import ty.parse (expr)
+import ptr
 
 export iter, wrap, memcpy, strlen, memcmp, strcmp, memset
 
@@ -93,7 +94,13 @@ pub macro struct! {
     let get = ty.Func(
         name: 'get',
         params: [],
-        body: ty.MemberAccess(ty.Id(name: 'self'), '<p>')
+        body: ty.Call(
+            func: ty.Value(ptr.typed),
+            args: [
+                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                ty.Arg(arg: ty.Id(name: "{structName}_C"))
+            ]
+        )
     )
 
     let structArgs = []
@@ -139,11 +146,17 @@ pub macro struct! {
                                 )
                             ]),
                             ty.Call(
-                                func: ty.Value(c.pmember),
+                                func: ty.Value(ptr.typed),
                                 args: [
-                                    ty.Arg(arg: ty.Id(name: "{structName}_C")),
-                                    ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
-                                    ty.Arg(arg: ty.Int(i)),
+                                    ty.Arg(arg: ty.Call(
+                                        func: ty.Value(c.pmember),
+                                        args: [
+                                            ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                            ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                            ty.Arg(arg: ty.Int(i)),
+                                        ]
+                                    )),
+                                    ty.Arg(arg: t)
                                 ]
                             )
                         )
@@ -194,6 +207,12 @@ pub macro struct! {
         )
     )
 
+    let size = ty.Func(
+        name: '__len__',
+        params: [],
+        body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))])
+    )
+
     ty.Multi([
         ty.Let(
             ty.Id(name: "{structName}_C"),
@@ -204,7 +223,7 @@ pub macro struct! {
         ),
         ty.Class(
             name: structName,
-            methods: [get, init, show, *methods]
+            methods: [get, init, size, show, *methods]
         )
     ])
 }

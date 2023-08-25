@@ -4948,3 +4948,19 @@ builtin_parse_fail(int argc, struct value *kwargs)
 
         // Unreachable
 }
+
+struct value
+builtin_ptr_typed(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ptr.typed()", 2);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("ptr.typed(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_PTR) {
+                vm_panic("ptr.typed(): expected pointer as second argument but got: %s", value_show(&ARG(1)));
+        }
+
+        return TGCPTR(ARG(0).ptr, ARG(1).ptr, ARG(0).gcptr);
+}

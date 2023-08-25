@@ -2266,6 +2266,18 @@ ObjectSubscript:
                                 method = "__subscript__";
                                 h = strhash(method);
                                 goto CallMethod;
+                        case VALUE_PTR:
+                                if (subscript.type != VALUE_INTEGER) {
+                                        vm_panic("non-integer used to subscript pointer: %s", value_show(&subscript));
+                                }
+                                v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
+                                push(v);
+                                push(PTR(((char *)container.ptr) + ((ffi_type *)v.ptr)->size * subscript.integer));
+                                v = cffi_load(2, NULL);
+                                pop();
+                                pop();
+                                push(v);
+                                break;
                         case VALUE_NIL:
                                 push(NIL);
                                 break;
@@ -2437,6 +2449,10 @@ BadContainer:
                                         call(vp, peektarget(), 0, 0, true);
                                         break;
                                 }
+                        case VALUE_PTR:
+                                vp = peektarget();
+                                vp->ptr = ((char *)vp->ptr) + ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
+                                break;
                         default:
                                 vm_panic("pre-increment applied to invalid type: %s", value_show(peektarget()));
                         }
@@ -2447,6 +2463,10 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
                         case VALUE_REAL:    ++peektarget()->real;    break;
+                        case VALUE_PTR:
+                                vp = peektarget();
+                                vp->ptr = ((char *)vp->ptr) + ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
+                                break;
                         default:            vm_panic("post-increment applied to invalid type: %s", value_show(peektarget()));
                         }
                         poptarget();
@@ -2461,6 +2481,10 @@ BadContainer:
                                         call(vp, peektarget(), 0, 0, true);
                                         break;
                                 }
+                        case VALUE_PTR:
+                                vp = peektarget();
+                                vp->ptr = ((char *)vp->ptr) - ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
+                                break;
                         default:
                                 vm_panic("pre-decrement applied to invalid type: %s", value_show(peektarget()));
                         }
@@ -2471,6 +2495,10 @@ BadContainer:
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
                         case VALUE_REAL:    --peektarget()->real;    break;
+                        case VALUE_PTR:
+                                vp = peektarget();
+                                vp->ptr = ((char *)vp->ptr) - ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
+                                break;
                         default:            vm_panic("post-decrement applied to invalid type: %s", value_show(peektarget()));
                         }
                         poptarget();

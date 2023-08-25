@@ -1,4 +1,5 @@
 #include <string.h>
+#include <ffi.h>
 
 #include "alloc.h"
 #include "value.h"
@@ -37,7 +38,9 @@ binary_operator_addition(struct value const *left, struct value const *right)
                         vm_panic("attempt to add non-integer to pointer: %s", value_show(right));
                 }
 
-                return PTR((char *)left->ptr + right->integer);
+                ffi_type *t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
+
+                return PTR((char *)left->ptr + right->integer * t->size);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -176,8 +179,10 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
         if (left->type == VALUE_INTEGER && right->type == VALUE_REAL)
                 return REAL(left->integer - right->real);
 
-        if (left->type == VALUE_PTR && right->type == VALUE_INTEGER)
-                return PTR(((char *)left->ptr) - right->integer);
+        if (left->type == VALUE_PTR && right->type == VALUE_INTEGER) {
+                ffi_type *t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
+                return PTR(((char *)left->ptr) - right->integer * t->size);
+        }
 
         if (left->type != right->type)
                 vm_panic("the operands to - must have the same type");

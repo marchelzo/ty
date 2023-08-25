@@ -335,6 +335,7 @@
 { .module = "time",   .name = "CLOCK_MONOTONIC_RAW",    .value = INT(CLOCK_MONOTONIC_RAW)                            },
 #endif
 { .module = "ptr",    .name = "null",              .value = POINTER(NULL)                                  },
+{ .module = "ptr",    .name = "typed",             .value = BUILTIN(builtin_ptr_typed)                     },
 
 { .module = "json",   .name = "parse",             .value = BUILTIN(builtin_json_parse)                    },
 { .module = "json",   .name = "encode",            .value = BUILTIN(builtin_json_encode)                   },
