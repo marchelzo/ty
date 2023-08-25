@@ -1,7 +1,7 @@
 import ffi as c
 import ty
 import ty.token (next, peek)
-import ty.parse (expr)
+import ty.parse (expr, fail)
 import ptr
 
 export iter, wrap, memcpy, strlen, memcmp, strcmp, memset
@@ -226,4 +226,30 @@ pub macro struct! {
             methods: [get, init, size, show, *methods]
         )
     ])
+}
+
+pub macro closure! {
+    let ty.Func(f) = expr(0)
+
+    if not let $rt = f.?rt {
+        fail('need return type')
+    }
+
+    let args = [rt]
+
+    for ty.Param(p), i in f.params {
+        args.push(p.constraint)
+        p.constraint = nil
+    }
+
+    ty.Let(
+        ty.Id(name: f.name),
+        ty.Call(
+            func: ty.Value(c.closure),
+            args: [
+                *(ty.Arg(arg: t) for t in args),
+                ty.Arg(arg: ty.Func({*f, rt: nil}))
+            ]
+        )
+    )
 }
