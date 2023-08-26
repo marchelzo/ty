@@ -1,6 +1,7 @@
 #include <ctype.h>
 #include <setjmp.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdnoreturn.h>
@@ -893,6 +894,31 @@ Unterminated:
         error("unterminated regular expression: %s/%.20s%s...", TERM(36), pat.items, TERM(39));
 }
 
+static intmax_t
+uatou(char const *s, char const **end, int base)
+{
+        char num[128];
+        int n = 0;
+        int i = 0;
+
+        for (;; ++i) {
+                if (n == sizeof num - 1) {
+                        error("invalid numeric literal: %.*s", n, num);
+                }
+                if (isxdigit(s[i]) || ((base == 0) && s[i] == 'x' && i == 1)) {
+                        num[n++] = s[i];
+                } else if (s[i] != '_') {
+                        break;
+                }
+        }
+
+        num[n] = '\0';
+
+        *end = s + i;
+
+        return strtoull(num, NULL, base);
+}
+
 static struct token
 lexnum(void)
 {
@@ -903,9 +929,9 @@ lexnum(void)
         intmax_t integer;
         // Allow integer constants like 0b10100010
         if (C(0) == '0' && C(1) == 'b') {
-                integer = strtoull(SRC + 2, &end, 2);
+                integer = uatou(SRC + 2, &end, 2);
         } else {
-                integer = strtoull(SRC, &end, 0);
+                integer = uatou(SRC, &end, 0);
         }
 
         int n = end - SRC;
