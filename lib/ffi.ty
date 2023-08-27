@@ -1,7 +1,7 @@
 import ffi as c
 import ty
 import ty.token (next, peek)
-import ty.parse (expr, fail)
+import ty.parse (expr, stmt, fail)
 import ptr (typed)
 
 export iter, wrap, memcpy, strlen, memcmp, strcmp, memset
@@ -257,11 +257,64 @@ function strct() {
     ])
 }
 
+function clos() {
+    // closure
+    next()
+
+    let name = next().id
+
+    // (
+    next()
+
+    let params = []
+
+    while peek().type != ')' {
+        let name = next().id
+        // :
+        next()
+        let t = expr(0)
+        params.push({name, t})
+        if peek().type == ',' {
+            next()
+        }
+    }
+
+    // )
+    next()
+
+    // ->
+    next()
+
+    let rt = expr(0)
+    let body = stmt(0)
+
+    let args = [rt, *params.map(&.t)]
+
+    let f = ty.Func(
+        name: name,
+        params: [ty.Param(name: name) for {name, *} in params],
+        body: body
+    )
+
+    ty.Let(
+        ty.Id(name: f.name),
+        ty.Call(
+            func: ty.Value(c.closure),
+            args: [
+                *(ty.Arg(arg: t) for t in args),
+                ty.Arg(arg: f)
+            ]
+        )
+    )
+}
+
 pub macro C! {
     if 'function' in [peek(), peek(1), peek(2)].map(&.type) {
         fun()
     } else if peek().?id == 'struct' {
         strct()
+    } else if peek().?id == 'closure' {
+        clos()
     } else {
         fail('expected function or struct')
     }
