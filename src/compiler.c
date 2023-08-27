@@ -4301,12 +4301,6 @@ emit_new_globals(void)
                         emit_int(s->i);
                         emit_instr(INSTR_ASSIGN);
                         emit_instr(INSTR_POP);
-                } else if (!s->macro) {
-                        emit_instr(INSTR_NIL);
-                        emit_instr(INSTR_TARGET_GLOBAL);
-                        emit_int(s->i);
-                        emit_instr(INSTR_ASSIGN);
-                        emit_instr(INSTR_POP);
                 }
         }
 

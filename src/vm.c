@@ -859,7 +859,7 @@ vm_run_thread(void *p)
 
         pthread_cleanup_pop(1);
 
-		free(ctx);
+        free(ctx);
         gc_free(call);
         OKGC(t);
 
