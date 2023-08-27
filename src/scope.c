@@ -29,7 +29,6 @@ scope_new(struct scope *parent, bool is_function)
 {
         struct scope *s = gc_alloc(sizeof *s);
 
-        s->is_function = is_function;
         s->parent = parent;
         s->function = (is_function || parent == NULL) ? s : parent->function;
         s->external = false;
@@ -154,7 +153,7 @@ scope_add(struct scope *s, char const *id)
         return sym;
 }
 
-void
+struct symbol *
 scope_insert(struct scope *s, struct symbol *sym)
 {
         struct symbol *newsym = gc_alloc(sizeof *newsym);
@@ -166,23 +165,28 @@ scope_insert(struct scope *s, struct symbol *sym)
         int i = sym->hash % SYMBOL_TABLE_SIZE;
         newsym->next = s->table[i];
         s->table[i] = newsym;
+
+        return newsym;
 }
 
 char const *
-scope_copy_public(struct scope *dst, struct scope const *src)
+scope_copy_public(struct scope *dst, struct scope const *src, bool reexport)
 {
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
                         struct symbol *conflict = scope_lookup(dst, s->identifier);
-                        if (conflict != NULL && conflict->public)
+                        if (conflict != NULL && conflict->scope != src && conflict->public)
                                 return conflict->identifier;
                 }
         }
 
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i)
-                for (struct symbol *s = src->table[i]; s != NULL; s = s->next)
-                        if (s->public)
-                                scope_insert(dst, s);
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
+                        if (s->public) {
+                                scope_insert(dst, s)->public = reexport;
+                        }
+                }
+        }
 
         return NULL;
 }

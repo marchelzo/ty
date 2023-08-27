@@ -405,8 +405,12 @@ cffi_load(int argc, struct value *kwargs)
                 return cffi_load_n(argc, kwargs);
         }
 
-        ffi_type *t = ARG(0).ptr;
-        return load(t, ARG(1).ptr);
+		if (argc == 1) {
+			ffi_type *t = (ARG(0).extra == NULL) ? &ffi_type_uint8 : ARG(0).extra;
+			return load(t, ARG(0).ptr);
+		}
+
+        return load(ARG(0).ptr, ARG(1).ptr);
 }
 
 struct value

@@ -539,12 +539,7 @@ tmpsymbol(struct scope *scope)
 
         sprintf(idbuf, "%d", i++);
 
-/*
-        if (scope_locally_defined(global, idbuf))
-                return scope_lookup(global, idbuf);
-        else
-*/
-                return scope_add(scope, sclone(idbuf));
+        return scope_add(scope, sclone(idbuf));
 }
 
 static struct state
@@ -4439,9 +4434,9 @@ compile(char const *source)
 }
 
 static struct scope *
-load_module(char const *name, bool missing_ok)
+load_module(char const *name, struct scope *scope)
 {
-        char *source = missing_ok ? try_slurp_module(name) : slurp_module(name);
+        char *source = slurp_module(name);
 
         if (source == NULL) {
                 return NULL;
@@ -4457,26 +4452,30 @@ load_module(char const *name, bool missing_ok)
 
         compile(source);
 
-        struct scope *module_scope = state.global;
+        struct scope *module_scope;
+        char *code = state.code.items;
 
-        /*
-         * Mark it as external so that only public symbols can be used by other modules.
-         */
-        module_scope->external = true;
+        if (scope != NULL) {
+                scope_copy_public(scope, state.global, true);
+                module_scope = scope;
+        } else {
+                module_scope = state.global;
+                module_scope->external = true;
 
-        struct module m = {
-                .path = name,
-                .code = state.code.items,
-                .scope = module_scope
-        };
+                struct module m = {
+                        .path = name,
+                        .code = code,
+                        .scope = module_scope
+                };
 
-        vec_push(modules, m);
+                vec_push(modules, m);
+        }
 
         state = save;
 
         //emit_instr(INSTR_EXEC_CODE);
         //emit_symbol((uintptr_t) m.code);
-        vm_exec(m.code);
+        vm_exec(code);
 
         return module_scope;
 }
@@ -4512,7 +4511,7 @@ import_module(struct statement const *s)
         }
 
         if (module_scope == NULL) {
-                module_scope = load_module(name, false);
+                module_scope = load_module(name, NULL);
         }
 
         char const **identifiers = (char const **) s->import.identifiers.items;
@@ -4520,7 +4519,7 @@ import_module(struct statement const *s)
         bool everything = n == 1 && strcmp(identifiers[0], "..") == 0;
 
         if (everything) {
-                char const *id = scope_copy_public(state.global, module_scope);
+                char const *id = scope_copy_public(state.global, module_scope, false);
                 if (id != NULL)
                         fail("module '%s' exports conflcting name '%s'", name, id);
         } else for (int i = 0; i < n; ++i) {
@@ -4548,7 +4547,6 @@ compiler_init(void)
 
         state = freshstate();
         global = state.global;
-        global->function = global;
 }
 
 void
@@ -4559,11 +4557,8 @@ compiler_load_builtin_modules(void)
                 exit(1);
         }
 
-        int n = modules.count;
-
-        for (int i = 0; i < n; ++i) {
-                load_module(modules.items[i].path, true);
-        }
+        load_module("ffi", get_module_scope("ffi"));
+        load_module("os", get_module_scope("os"));
 }
 
 char *
@@ -4623,7 +4618,7 @@ compiler_introduce_symbol(char const *module, char const *name)
 
                 if (s == NULL) {
                         ++builtin_modules;
-                        s = scope_new(NULL, false);
+                        s = scope_new(global, false);
                         vec_push(modules, ((struct module){
                                 .path = module,
                                 .code = NULL,

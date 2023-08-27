@@ -1,0 +1,478 @@
+import ffi as c
+import ty
+import ty.token (next, peek)
+import ty.parse (expr, fail)
+import ptr (typed)
+
+export iter, wrap, memcpy, strlen, memcmp, strcmp, memset
+
+function wrap(lib, name, rType, *aTypes) {
+    if not let $fp = c.dlsym(name, lib) {
+        throw Err("Failed to load symbol '{name}'")
+    }
+
+    let interface = c.cif(rType, *aTypes)
+    let argStorage = [c.new(t) for t in aTypes]
+
+    return function (*args) {
+        for arg, i in args {
+            c.store(aTypes[i], argStorage[i], arg)
+        }
+        c.call(interface, fp, *argStorage)
+    }
+}
+
+function iter(type, p, n) {
+    let size = c.size(type)
+    for i in ..n {
+        yield c.load(type, p + i*size)
+    }
+}
+
+let memcpy = wrap(nil, 'memcpy', c.ptr, c.ptr, c.ptr, c.u64)
+let strlen = wrap(nil, 'strlen', c.u64, c.ptr)
+let memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
+let strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)
+let memset = wrap(nil, 'memset', c.void, c.ptr, c.int, c.u64)
+
+pub function cstr(s) {
+    let p = c.alloc(s.size() + 1)
+
+    memcpy(p, s, s.size())
+    c.store(c.char, p + s.size(), 0)
+
+    return p
+}
+
+function fun() {
+    let public = peek().type == 'pub'
+    if public { next() }
+
+    let lib = if peek().type != 'function' {
+        expr(99)
+    } ?? ty.Nil
+
+    // function
+    next()
+    
+    let name = next().id
+
+    // (
+    next()
+
+    let ps = []
+    while peek().type != ')' {
+        ps.push(expr(0))
+        if peek().type == ',' {
+            next()
+        }
+    }
+
+    // )
+    next()
+
+    // ->
+    next()
+
+    let rt = expr(0)
+
+    let args = [ty.Arg(arg: lib), ty.Arg(arg: ty.String(name)), ty.Arg(arg: rt), *(ty.Arg(arg: p) for p in ps)]
+
+    ty.Let(ty.Id(name: name), ty.Call(func: ty.Value(wrap), args: args), public: public)
+}
+
+function strct() {
+    // struct
+    next()
+
+    let structName = next().id
+
+    // {
+    next()
+
+    let members = []
+
+    while peek().type != '}' {
+        let t = expr(0)
+        let name = next().id
+        let count = if peek().type == '[' {
+            next() // [
+            let n = expr(0)
+            next() // ]
+            n
+        }
+        members.push({t, name, count})
+        next() // ;
+    }
+
+    next() // }
+
+    let init = ty.Func(
+        name: 'init',
+        params: [ty.Param(name: '<p>')],
+        body: ty.Assign(
+            ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
+            ty.Wtf(
+                ty.Id(name: '<p>'),
+                ty.Call(
+                    func: ty.Value(c.new),
+                    args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))]
+                )
+            )
+        )
+    )
+
+    let get = ty.Func(
+        name: 'get',
+        params: [],
+        body: ty.Call(
+            func: ty.Value(typed),
+            args: [
+                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                ty.Arg(arg: ty.Id(name: "{structName}_C"))
+            ]
+        )
+    )
+
+    let structArgs = []
+    let methods = []
+
+    for {name, t, count}, i in members {
+        if count != nil {
+            let n = ty.eval(count)
+            structArgs.push(ty.Arg(arg: ty.Call(func: ty.Value(c.struct), args: [ty.Arg(arg: t) for _ in ..n])))
+            methods.push(
+                ty.Func(
+                    name: name,
+                    params: [ty.Gather('args')],
+                    body: ty.If(
+                        [ty.GT(ty.Count(ty.Id(name: 'args')), ty.Int(0))],
+                        ty.Block([
+                            ty.Let(ty.Array([ty.ArrayItem(item: ty.Id(name: 'x'))]), ty.Id(name: 'args')),
+                            ty.Let(
+                                ty.Id(name: 'p'),
+                                ty.MethodCall(
+                                    object: ty.Id(name: 'x'),
+                                    method: 'ptr',
+                                    args: []
+                                )
+                            ),
+                            ty.Call(
+                                ty.Value(memcpy),
+                                //func: ty.Id(name: 'memcpy', module: 'c'),
+                                args: [
+                                    ty.Arg(
+                                        arg: ty.Call(
+                                            func: ty.Value(c.pmember),
+                                            args: [
+                                                ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                                ty.Arg(arg: ty.Int(i)),
+                                            ]
+                                        )
+                                    ),
+                                    ty.Arg(arg: ty.Wtf(ty.Id(name: 'p'), ty.Id(name: 'x'))),
+                                    ty.Arg(arg: ty.Mul(ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: t)]), ty.Value(n)))
+                                ]
+                            )
+                        ]),
+                        ty.Call(
+                            func: ty.Value(typed),
+                            args: [
+                                ty.Arg(arg: ty.Call(
+                                    func: ty.Value(c.pmember),
+                                    args: [
+                                        ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                        ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                        ty.Arg(arg: ty.Int(i)),
+                                    ]
+                                )),
+                                ty.Arg(arg: t)
+                            ]
+                        )
+                    )
+                )
+            )
+        } else {
+            structArgs.push(ty.Arg(arg: t))
+            methods.push(
+                ty.Func(
+                    name: name,
+                    params: [ty.Gather('args')],
+                    body: ty.Call(
+                        func: ty.Value(c.member),
+                        args: [
+                            ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                            ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                            ty.Arg(arg: ty.Int(i)),
+                            ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
+                        ]
+                    )
+                )
+            )
+        }
+    }
+
+    let show = ty.Func(
+        name: '__str__',
+        params: [],
+        body: ty.Call(
+            func: ty.Value(str),
+            args: [
+                ty.Arg(
+                    arg: ty.Record([
+                        ty.RecordEntry(
+                            name: e.name,
+                            item: ty.MethodCall(
+                                object: ty.Id(name: 'self'),
+                                method: e.name,
+                                args: []
+                            )
+                        )
+                        for e in members
+                    ])
+                )
+            ]
+        )
+    )
+
+    let size = ty.Func(
+        name: '__len__',
+        params: [],
+        body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))])
+    )
+
+    ty.Multi([
+        ty.Let(
+            ty.Id(name: "{structName}_C"),
+            ty.Call(
+                func: ty.Value(c.struct),
+                args: structArgs
+            )
+        ),
+        ty.Class(
+            name: structName,
+            methods: [get, init, size, show, *methods]
+        )
+    ])
+}
+
+pub macro C! {
+    if 'function' in [peek(), peek(1), peek(2)].map(&.type) {
+        fun()
+    } else if peek().?id == 'struct' {
+        strct()
+    } else {
+        fail('expected function or struct')
+    }
+}
+
+pub macro cfun! {
+    let public = peek().type == 'pub'
+    if public { next() }
+
+    let lib = expr(0)
+    let rt = expr(0)
+
+    let name = next().id
+
+    // (
+    next()
+
+    let args = [ty.Arg(arg: lib), ty.Arg(arg: ty.String(name)), ty.Arg(arg: rt)]
+
+    while peek().type != ')' {
+        args.push(ty.Arg(arg: expr(0)))
+        if peek().type == ',' {
+            next()
+        }
+    }
+
+    // )
+    next()
+
+    ty.Let(ty.Id(name: name), ty.Call(func: ty.Value(wrap), args: args), public: public)
+}
+
+pub macro struct! {
+    let structName = next().id
+
+    let ty.Record(struct) = expr(99)
+
+    let init = ty.Func(
+        name: 'init',
+        params: [ty.Param(name: '<p>')],
+        body: ty.Assign(
+            ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
+            ty.Wtf(
+                ty.Id(name: '<p>'),
+                ty.Call(
+                    func: ty.Value(c.new),
+                    args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))]
+                )
+            )
+        )
+    )
+
+    let get = ty.Func(
+        name: 'get',
+        params: [],
+        body: ty.Call(
+            func: ty.Value(typed),
+            args: [
+                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                ty.Arg(arg: ty.Id(name: "{structName}_C"))
+            ]
+        )
+    )
+
+    let structArgs = []
+    let methods = []
+
+    for entry, i in struct {
+        let ty.RecordEntry({name, item}) = entry
+        match item {
+            ty.Array([ty.ArrayItem({item: t, *}), ty.ArrayItem({item: ty.eval ~> n, *})]) => {
+                structArgs.push(ty.Arg(arg: ty.Call(func: ty.Value(c.struct), args: [ty.Arg(arg: t) for _ in ..n])))
+                methods.push(
+                    ty.Func(
+                        name: name,
+                        params: [ty.Gather('args')],
+                        body: ty.If(
+                            [ty.GT(ty.Count(ty.Id(name: 'args')), ty.Int(0))],
+                            ty.Block([
+                                ty.Let(ty.Array([ty.ArrayItem(item: ty.Id(name: 'x'))]), ty.Id(name: 'args')),
+                                ty.Let(
+                                    ty.Id(name: 'p'),
+                                    ty.MethodCall(
+                                        object: ty.Id(name: 'x'),
+                                        method: 'ptr',
+                                        args: []
+                                    )
+                                ),
+                                ty.Call(
+                                    func: ty.Id(name: 'memcpy', module: 'c'),
+                                    args: [
+                                        ty.Arg(
+                                            arg: ty.Call(
+                                                func: ty.Value(c.pmember),
+                                                args: [
+                                                    ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                                    ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                                    ty.Arg(arg: ty.Int(i)),
+                                                ]
+                                            )
+                                        ),
+                                        ty.Arg(arg: ty.Wtf(ty.Id(name: 'p'), ty.Id(name: 'x'))),
+                                        ty.Arg(arg: ty.Mul(ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: t)]), ty.Value(n)))
+                                    ]
+                                )
+                            ]),
+                            ty.Call(
+                                func: ty.Value(typed),
+                                args: [
+                                    ty.Arg(arg: ty.Call(
+                                        func: ty.Value(c.pmember),
+                                        args: [
+                                            ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                            ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                            ty.Arg(arg: ty.Int(i)),
+                                        ]
+                                    )),
+                                    ty.Arg(arg: t)
+                                ]
+                            )
+                        )
+                    )
+                )
+            },
+            _ => {
+                structArgs.push(ty.Arg(arg: item))
+                methods.push(
+                    ty.Func(
+                        name: name,
+                        params: [ty.Gather('args')],
+                        body: ty.Call(
+                            func: ty.Value(c.member),
+                            args: [
+                                ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                                ty.Arg(arg: ty.Int(i)),
+                                ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
+                            ]
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    let show = ty.Func(
+        name: '__str__',
+        params: [],
+        body: ty.Call(
+            func: ty.Value(str),
+            args: [
+                ty.Arg(
+                    arg: ty.Record([
+                        ty.RecordEntry(
+                            name: e.name,
+                            item: ty.MethodCall(
+                                object: ty.Id(name: 'self'),
+                                method: e.name,
+                                args: []
+                            )
+                        )
+                        for e in struct
+                    ])
+                )
+            ]
+        )
+    )
+
+    let size = ty.Func(
+        name: '__len__',
+        params: [],
+        body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))])
+    )
+
+    ty.Multi([
+        ty.Let(
+            ty.Id(name: "{structName}_C"),
+            ty.Call(
+                func: ty.Value(c.struct),
+                args: structArgs
+            )
+        ),
+        ty.Class(
+            name: structName,
+            methods: [get, init, size, show, *methods]
+        )
+    ])
+}
+
+pub macro closure! {
+    let ty.Func(f) = expr(0)
+
+    if not let $rt = f.?rt {
+        fail('need return type')
+    }
+
+    let args = [rt]
+
+    for ty.Param(p), i in f.params {
+        args.push(p.constraint)
+        p.constraint = nil
+    }
+
+    ty.Let(
+        ty.Id(name: f.name),
+        ty.Call(
+            func: ty.Value(c.closure),
+            args: [
+                *(ty.Arg(arg: t) for t in args),
+                ty.Arg(arg: ty.Func({*f, rt: nil}))
+            ]
+        )
+    )
+}
