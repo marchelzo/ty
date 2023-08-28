@@ -3,7 +3,7 @@ import cutil
 
 export hash, verify
 
-let lib = c.dlopen('libsodium.so')
+let lib = c.dlopen('libsodium.so') ?? c.dlopen('libsodium.dylib')
 
 function wrap(*args) {
   cutil.wrap(lib, *args)
@@ -76,7 +76,7 @@ let default_alg = crypto_pwhash_alg_default()
 
 let buf = c.alloc(str_bytes)
 
-function hash(pass: String) {
+function hash(pass: String | Blob) {
   match crypto_pwhash_str(
     buf,
     pass, pass.size(),
@@ -88,6 +88,6 @@ function hash(pass: String) {
   }
 }
 
-function verify(hash: String, pass: String) {
+function verify(hash: String, pass: String | Blob) {
   crypto_pwhash_str_verify(hash, pass, pass.size()) == 0
 }

@@ -808,6 +808,10 @@ value_string_clone_nul(char const *src, int n)
 char *
 value_string_clone(char const *src, int n)
 {
+        if (n == 0) {
+                return NULL;
+        }
+
         char *s = gc_alloc_object(n, GC_STRING);
         memcpy(s, src, n);
         return s;

@@ -2,6 +2,7 @@ import os (..)
 import sh (sh)
 import chalk (..)
 import time
+import tp (ThreadPool)
 
 let start = time.utime()
 
@@ -16,40 +17,43 @@ let b = pen(bold, blue)
 
 let r2 = x -> round(x * 100) / 100
 
-let testThreads = []
-let tests = listdir('tests')
-for test in listdir('tests') {
-    testThreads.push(Thread(name -> {
-        let testStart = time.utime()
+function doTest(name) {
+    let testStart = time.utime()
 
-        let result = match sh("./ty tests/{name}", timeoutMs: 2000) {
-            nil => {
-                timedOut += 1
-                m('TIMEOUT')
-            },
+    let result = match sh("./ty tests/{name}", timeoutMs: 2000) {
+        nil => {
+            timedOut += 1
+            m('TIMEOUT')
+        },
 
-            &strip ~> 'PASS' => {
-                passed += 1
-                let elapsedMs = (time.utime() - testStart) / 1000.0
-                let elapsed = match elapsedMs <=> 100.0 {
-                    -1 => "({round(elapsedMs)}ms)",
-                    _  => "({r2(elapsedMs / 1000.0)}s)"
-                }
-
-                "{g('PASS')} {yellow(elapsed)}"
-            },
-
-            _ => {
-                failed += 1
-                r('FAIL')
+        &strip ~> 'PASS' => {
+            passed += 1
+            let elapsedMs = (time.utime() - testStart) / 1000.0
+            let elapsed = match elapsedMs <=> 100.0 {
+                -1 => "({round(elapsedMs)}ms)",
+                _  => "({r2(elapsedMs / 1000.0)}s)"
             }
-        }
 
-        print("{b(name.comb(/\.ty$/).padLeft(14))} ... {result}")
-    }, test))
+            "{g('PASS')} {yellow(elapsed)}"
+        },
+
+        x => {
+            failed += 1
+            r('FAIL')
+        }
+    }
+
+    print("{b(name.comb(/\.ty$/).padLeft(14))} ... {result}")
 }
 
-testThreads.map(&join)
+let pool = ThreadPool(16, doTest)
+let fs = []
+
+for test in listdir('tests') {
+    fs.push(pool.submit(test))
+}
+
+fs.map(&wait)
 print()
 
 let elapsedSec = (time.utime() - start) / (1000.0 * 1000.0)

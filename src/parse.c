@@ -1051,6 +1051,7 @@ prefix_record(void)
                         if (tok()->type == '}') {
                                 item->type = EXPRESSION_MATCH_REST;
                                 item->identifier = "_";
+                                item->module = NULL;
                         } else {
                                 item->type = EXPRESSION_SPREAD;
                                 item->value = parse_expr(0);

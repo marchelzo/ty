@@ -600,8 +600,13 @@ string_count(struct value *string, int argc, struct value *kwargs)
         struct value pattern = ARG(0);
         int count = 0;
 
+        char const *s = string->string;
+
+        if (s == NULL) {
+                return STRING_EMPTY;
+        }
+
         if (pattern.type == VALUE_STRING) {
-                char const *s = string->string;
                 char const *p = pattern.string;
                 int len = string->bytes;
                 int plen = pattern.bytes;
@@ -614,9 +619,7 @@ string_count(struct value *string, int argc, struct value *kwargs)
                 }
         } else if (pattern.type == VALUE_REGEX) {
                 int ovec[30];
-                char const *s = string->string;
                 int len = string->bytes;
-                int offset = 0;
                 int rc;
 
                 while ((rc = pcre_exec(
@@ -631,7 +634,6 @@ string_count(struct value *string, int argc, struct value *kwargs)
                         )) > 0) {
                         count += 1;
                         s += ovec[1];
-                        offset += ovec[1];
                         len -= ovec[1];
                 }
         } else {
@@ -651,17 +653,18 @@ string_comb(struct value *string, int argc, struct value *kwargs)
                 vm_panic("the comb method on strings expects 1 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
-        struct value replacement = STRING_EMPTY;
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
                 vm_panic("the pattern argument to string's comb method must be a regex or a string");
 
         char const *s = string->string;
 
-        if (pattern.type == VALUE_STRING) {
+        if (s == NULL) {
+                return STRING_EMPTY;
+        }
 
+        if (pattern.type == VALUE_STRING) {
                 char const *p = pattern.string;
-                char const *r = replacement.string;
 
                 int len = string->bytes;
                 int plen = pattern.bytes;
@@ -669,9 +672,6 @@ string_comb(struct value *string, int argc, struct value *kwargs)
 
                 while ((m = sfind(s, len, p, plen)) != NULL) {
                         vec_push_n(chars, s, m - s);
-
-                        vec_push_n(chars, r, replacement.bytes);
-
                         len -= (m - s + plen);
                         s = m + plen;
                 }
@@ -679,23 +679,16 @@ string_comb(struct value *string, int argc, struct value *kwargs)
                 vec_push_n(chars, s, len);
         } else {
                 pcre *re = pattern.regex->pcre;
-                char const *r = replacement.string;
                 int len = string->bytes;
                 int start = 0;
                 int out[3];
 
                 while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
-
                         vec_push_n(chars, s + start, out[0] - start);
-
-                        vec_push_n(chars, r, replacement.bytes);
-
                         start = out[1];
                 }
 
-                if (s != NULL) {
-                        vec_push_n(chars, s + start, len - start);
-                }
+                vec_push_n(chars, s + start, len - start);
         }
 
         struct value r = STRING_CLONE(chars.items, chars.count);

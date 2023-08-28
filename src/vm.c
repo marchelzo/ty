@@ -697,13 +697,13 @@ NewThread(Thread *t, struct value *call, struct value *name)
         };
         atomic_store(&created, false);
 
-#if !defined(TY_RELEASE) && 0
+#if !defined(TY_RELEASE)
         pthread_attr_t attr;
         pthread_attr_init(&attr);
         int r = pthread_attr_setstacksize(&attr, 1ULL << 26);
         if (r != 0)
                 vm_panic("pthread_attr_setstacksize(): %s", strerror(r));
-        r = pthread_create(thread, &attr, vm_run_thread, ctx);
+        r = pthread_create(&t->t, &attr, vm_run_thread, ctx);
 #else
         int r = pthread_create(&t->t, NULL, vm_run_thread, ctx);
 #endif
@@ -1076,7 +1076,7 @@ ClassLookup:
                         *this = v;
                         return METHOD(member, vp, this);
                 }
-                vp = b ? class_method(n, "__missing__") : NULL;
+                vp = b ? class_method(n, MISSING) : NULL;
                 if (vp != NULL) {
                         this = gc_alloc_object(sizeof (struct value [3]), GC_VALUE);
                         this[0] = v;
@@ -2802,8 +2802,8 @@ BadContainer:
                                 break;
                         case VALUE_METHOD:
                                 if (v.name == MISSING) {
-                                        push(peek());
-                                        memmove(top() - n, top() - (n + 1), n * sizeof (struct value));
+                                        push(NIL);
+                                        memmove(top() - (n - 1), top() - n, n * sizeof (struct value));
                                         top()[-n++] = v.this[1];
                                 }
                                 call(v.method, v.this, n, nkw, false);
@@ -3002,11 +3002,11 @@ BadContainer:
                                 push(NIL);
                         } else {
                                 if (value.type == VALUE_OBJECT) {
-                                        vp = class_method(value.class, "__missing__");
+                                        vp = class_method(value.class, MISSING);
                                         if (vp != NULL) {
                                                 v = pop();
-                                                push(peek());
-                                                memmove(top() - n, top() - (n + 1), n * sizeof (struct value));
+                                                push(NIL);
+                                                memmove(top() - (n - 1), top() - n, n * sizeof (struct value));
                                                 top()[-n++] = STRING_NOGC(method, strlen(method));
                                                 push(v);
                                                 self = &value;
