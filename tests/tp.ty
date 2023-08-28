@@ -1,7 +1,7 @@
 import tp (..)
 
 let pool = ThreadPool(12, function (s) {
-  for _ in ..1500 { 
+  for i in ..1500 {
     s.chars().shuffle().sum()
   }
 

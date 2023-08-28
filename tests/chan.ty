@@ -1,0 +1,16 @@
+import os (..)
+
+let chan = Channel()
+
+Thread(incel: true, function () {
+    sleep(0.01)
+    chan.send('PASS')
+})
+
+if let Some(x) = chan.recv(0) {
+    print('FAIL')
+}
+
+if let Some(x) = chan.recv() {
+    print(x)
+}

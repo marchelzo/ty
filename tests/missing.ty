@@ -1,0 +1,9 @@
+let xs = Sync([])
+
+for i in 1...100 {
+    xs.push(i)
+}
+
+if #xs != 100 || xs.sum() != 5050 { print('FAIL') }
+
+print('PASS')
