@@ -124,7 +124,7 @@ typedef struct {
         struct value *ctx;
         struct value *name;
         Thread *t;
-        bool incel;
+        bool isolated;
 } NewThreadCtx;
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -197,7 +197,7 @@ _Thread_local pthread_mutex_t *MyLock;
 static _Thread_local _Atomic bool *MyState;
 static _Thread_local _Atomic bool *MyGCState;
 static _Thread_local ThreadStorage MyStorage;
-static _Thread_local bool IncelThread = false;
+static _Thread_local bool IsolatedThread = false;
 static _Atomic bool WantGC;
 
 static pthread_barrier_t GCBarrierStart;
@@ -279,7 +279,7 @@ WaitGC()
 void
 DoGC()
 {
-        if (IncelThread) {
+        if (IsolatedThread) {
                 MarkStorage(&MyStorage);
                 GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
                 return;
@@ -690,7 +690,7 @@ ReleaseLock(bool blocked)
 }
 
 void
-NewThread(Thread *t, struct value *call, struct value *name, bool incel)
+NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
 {
         ReleaseLock(true);
 
@@ -702,7 +702,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool incel)
                 .name = name,
                 .created = &created,
                 .t = t,
-                .incel = incel
+                .isolated = isolated
         };
         atomic_store(&created, false);
 
@@ -727,7 +727,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool incel)
 }
 
 static void
-SetupIncelThread(void)
+SetupIsolatedThread(void)
 {
         ++GC_OFF_COUNT;
 
@@ -748,7 +748,7 @@ SetupIncelThread(void)
         MyState = malloc(sizeof *MyState);
         *MyState = false;
 
-        IncelThread = true;
+        IsolatedThread = true;
 
         --GC_OFF_COUNT;
 }
@@ -866,8 +866,8 @@ vm_run_thread(void *p)
                 push(call[++argc]);
         }
 
-        if (ctx->incel) {
-                SetupIncelThread();
+        if (ctx->isolated) {
+                SetupIsolatedThread();
         } else {
                 AddThread();
         }
@@ -1154,7 +1154,7 @@ vm_exec(char *code)
 #endif
 
         for (;;) {
-        if (!IncelThread && GC_OFF_COUNT == 0 && atomic_load(&WantGC)) {
+        if (!IsolatedThread && GC_OFF_COUNT == 0 && atomic_load(&WantGC)) {
                 WaitGC();
         }
         for (int N = 0; N < 10; ++N) {

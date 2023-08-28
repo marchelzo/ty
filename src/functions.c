@@ -2130,9 +2130,9 @@ builtin_thread_create(int argc, struct value *kwargs)
 
         ctx[argc] = NONE;
 
-        struct value *incel = NAMED("incel");
+        struct value *isolated = NAMED("isolated");
 
-        NewThread(t, ctx, NAMED("name"), incel != NULL && value_truthy(incel));
+        NewThread(t, ctx, NAMED("name"), isolated != NULL && value_truthy(isolated));
 
         return THREAD(t);
 }

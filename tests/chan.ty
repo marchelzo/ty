@@ -2,7 +2,7 @@ import os (..)
 
 let chan = Channel()
 
-Thread(incel: true, function () {
+Thread(isolated: true, function () {
     sleep(0.01)
     chan.send('PASS')
 })
