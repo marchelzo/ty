@@ -250,6 +250,10 @@
 { .module = "thread", .name = "getName",           .value = BUILTIN(builtin_thread_getname)                },
 { .module = "thread", .name = "self",              .value = BUILTIN(builtin_thread_self)                   },
 { .module = "thread", .name = "id",                .value = BUILTIN(builtin_thread_id)                     },
+{ .module = "thread", .name = "channel",           .value = BUILTIN(builtin_thread_channel)                },
+{ .module = "thread", .name = "close",             .value = BUILTIN(builtin_thread_close)                  },
+{ .module = "thread", .name = "send",              .value = BUILTIN(builtin_thread_send)                   },
+{ .module = "thread", .name = "recv",              .value = BUILTIN(builtin_thread_recv)                   },
 
 { .module = "stdio",  .name = "fdopen",            .value = BUILTIN(builtin_stdio_fdopen)                  },
 { .module = "stdio",  .name = "fileno",            .value = BUILTIN(builtin_stdio_fileno)                  },

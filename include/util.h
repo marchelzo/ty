@@ -13,6 +13,8 @@
 #define TERM(n) (isatty(2) ? ("\x1b[" #n "m") : "")
 #define ERR_SIZE 4096
 
+#define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
+
 #define P_ALIGN (_Alignof (uintptr_t))
 
 extern _Thread_local char ERR[ERR_SIZE];

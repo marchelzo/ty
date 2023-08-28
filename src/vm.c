@@ -78,8 +78,6 @@
         push(TAG(gettag(NULL, "MatchError"))); \
         goto Throw;
 
-#define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
-
 static char halt = INSTR_HALT;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
@@ -126,6 +124,7 @@ typedef struct {
         struct value *ctx;
         struct value *name;
         Thread *t;
+        bool incel;
 } NewThreadCtx;
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -186,7 +185,6 @@ static vec(pthread_t) ThreadList;
 static vec(pthread_mutex_t *) ThreadLocks;
 static vec(ThreadStorage) ThreadStorages;
 static vec(_Atomic bool *) ThreadStates;
-static vec(pthread_cond_t *) ThreadConds;
 
 pthread_mutex_t DeadMutex = PTHREAD_MUTEX_INITIALIZER;
 AllocList DeadAllocs;
@@ -196,10 +194,10 @@ static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 _Thread_local pthread_mutex_t *MyLock;
-static _Thread_local pthread_cond_t *MyCond;
 static _Thread_local _Atomic bool *MyState;
 static _Thread_local _Atomic bool *MyGCState;
 static _Thread_local ThreadStorage MyStorage;
+static _Thread_local bool IncelThread = false;
 static _Atomic bool WantGC;
 
 static pthread_barrier_t GCBarrierStart;
@@ -227,17 +225,22 @@ UnlockThreads(int *threads, int n)
 }
 
 inline static void
-SignalThreadsForGC(int *threads, int n)
-{
-        for (int i = 0; i < n; ++i) {
-                pthread_cond_signal(ThreadConds.items[threads[i]]);
-        }
-}
-
-inline static void
 SetState(bool blocking)
 {
         atomic_store(MyState, blocking);
+}
+
+void
+Forget(struct value *v, AllocList *allocs)
+{
+        size_t n = MyStorage.allocs->count;
+
+        value_mark(v);
+        GCForget(MyStorage.allocs, MyStorage.MemoryUsed);
+
+        for (size_t i = MyStorage.allocs->count; i < n; ++i) {
+                vec_push_unchecked(*allocs, MyStorage.allocs->items[i]);
+        }
 }
 
 static void
@@ -276,6 +279,12 @@ WaitGC()
 void
 DoGC()
 {
+        if (IncelThread) {
+                MarkStorage(&MyStorage);
+                GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
+                return;
+        }
+
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, DeadUsed);
 
         if (pthread_mutex_trylock(&GCLock) != 0) {
@@ -329,7 +338,6 @@ DoGC()
         pthread_barrier_init(&GCBarrierDone, NULL, nRunning + 1);
 
         UnlockThreads(runningThreads, nRunning);
-        SignalThreadsForGC(runningThreads, nRunning);
 
         pthread_barrier_wait(&GCBarrierStart);
 
@@ -682,7 +690,7 @@ ReleaseLock(bool blocked)
 }
 
 void
-NewThread(Thread *t, struct value *call, struct value *name)
+NewThread(Thread *t, struct value *call, struct value *name, bool incel)
 {
         ReleaseLock(true);
 
@@ -693,7 +701,8 @@ NewThread(Thread *t, struct value *call, struct value *name)
                 .ctx = call,
                 .name = name,
                 .created = &created,
-                .t = t
+                .t = t,
+                .incel = incel
         };
         atomic_store(&created, false);
 
@@ -715,6 +724,33 @@ NewThread(Thread *t, struct value *call, struct value *name)
                 ;
 
         TakeLock();
+}
+
+static void
+SetupIncelThread(void)
+{
+        ++GC_OFF_COUNT;
+
+        MyLock = malloc(sizeof *MyLock);
+        pthread_mutex_init(MyLock, NULL);
+        pthread_mutex_lock(MyLock);
+
+        MyStorage = (ThreadStorage) {
+                .stack = &stack,
+                .frames = &frames,
+                .defer_stack = &defer_stack,
+                .targets = &targets,
+                .root_set = GCRootSet(),
+                .allocs = &allocs,
+                .MemoryUsed = &MemoryUsed
+        };
+
+        MyState = malloc(sizeof *MyState);
+        *MyState = false;
+
+        IncelThread = true;
+
+        --GC_OFF_COUNT;
 }
 
 static void
@@ -750,10 +786,6 @@ AddThread(void)
         MyState = malloc(sizeof *MyState);
         *MyState = false;
         vec_push(ThreadStates, MyState);
-
-        MyCond = malloc(sizeof *MyCond);
-        pthread_cond_init(MyCond, NULL);
-        vec_push(ThreadConds, MyCond);
 
         --GC_OFF_COUNT;
 
@@ -794,7 +826,6 @@ CleanupThread(void *ctx)
                         ThreadLocks.items[i] = *vec_pop(ThreadLocks);
                         ThreadStorages.items[i] = *vec_pop(ThreadStorages);
                         ThreadStates.items[i] = *vec_pop(ThreadStates);
-                        ThreadConds.items[i] = *vec_pop(ThreadConds);
                 }
         }
 
@@ -803,7 +834,6 @@ CleanupThread(void *ctx)
         pthread_mutex_destroy(MyLock);
         free(MyLock);
         free(MyState);
-        free(MyCond);
         free(stack.items);
         gc_free(calls.items);
         gc_free(frames.items);
@@ -836,7 +866,12 @@ vm_run_thread(void *p)
                 push(call[++argc]);
         }
 
-        AddThread();
+        if (ctx->incel) {
+                SetupIncelThread();
+        } else {
+                AddThread();
+        }
+
         gc_push(&call[0]);
 
         if (name != NULL) {
@@ -1119,7 +1154,7 @@ vm_exec(char *code)
 #endif
 
         for (;;) {
-        if (atomic_load(&WantGC)) {
+        if (!IncelThread && GC_OFF_COUNT == 0 && atomic_load(&WantGC)) {
                 WaitGC();
         }
         for (int N = 0; N < 10; ++N) {
@@ -3515,26 +3550,32 @@ MarkStorage(ThreadStorage const *storage)
 {
         vec(struct value const *) *root_set = storage->root_set;
 
+        GCLOG("Marking root set");
         for (int i = 0; i < root_set->count; ++i) {
                 value_mark(root_set->items[i]);
         }
 
+        GCLOG("Marking stack");
         for (int i = 0; i < storage->stack->count; ++i) {
                 value_mark(&storage->stack->items[i]);
         }
 
+        GCLOG("Marking defer_stack");
         for (int i = 0; i < storage->defer_stack->count; ++i) {
                 value_mark(&storage->defer_stack->items[i]);
         }
 
+        GCLOG("Marking targets");
         for (int i = 0; i < storage->targets->count; ++i) {
                 value_mark(storage->targets->items[i].t);
         }
 
+        GCLOG("Marking frame functions");
         for (int i = 0; i < storage->frames->count; ++i) {
                 value_mark(&storage->frames->items[i].f);
         }
 
+        GCLOG("Marking finalizers");
         for (int i = 0; i < storage->allocs->count; ++i) {
                 if (storage->allocs->items[i]->mark == GC_NONE && storage->allocs->items[i]->type == GC_OBJECT) {
                         value_mark(&((struct table *)storage->allocs->items[i]->data)->finalizer);

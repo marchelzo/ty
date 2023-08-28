@@ -355,6 +355,18 @@ struct value
 builtin_thread_setname(int argc, struct value *kwargs);
 
 struct value
+builtin_thread_send(int argc, struct value *kwargs);
+
+struct value
+builtin_thread_recv(int argc, struct value *kwargs);
+
+struct value
+builtin_thread_channel(int argc, struct value *kwargs);
+
+struct value
+builtin_thread_close(int argc, struct value *kwargs);
+
+struct value
 builtin_os_pipe(int argc, struct value *kwargs);
 
 struct value

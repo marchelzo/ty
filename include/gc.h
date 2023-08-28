@@ -253,6 +253,8 @@ gc_alloc_unregistered(size_t n, char type)
 
 void GCMark(void);
 void GCSweep(AllocList *allocs, size_t *used);
+void GCForget(AllocList *allocs, size_t *used);
+void GCTakeOwnership(AllocList *new);
 
 void *GCRootSet(void);
 

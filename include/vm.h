@@ -198,13 +198,16 @@ void
 vm_mark(void);
 
 void
+Forget(struct value *v, AllocList *allocs);
+
+void
 DoGC(void);
 
 void *
 vm_run_thread(void *);
 
 void
-NewThread(Thread *thread, struct value *ctx, struct value *name);
+NewThread(Thread *thread, struct value *ctx, struct value *name, bool sigma);
 
 void
 vm_set_sigfn(int, struct value const *);

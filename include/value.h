@@ -11,7 +11,6 @@ struct value;
 #include "ast.h"
 #include "gc.h"
 #include "tags.h"
-#include "vec.h"
 
 #define V_ALIGN (_Alignof (struct value))
 
@@ -222,6 +221,8 @@ typedef vec(Frame) FrameStack;
 
 typedef struct generator Generator;
 typedef struct thread Thread;
+typedef struct channel Channel; 
+typedef struct chanval ChanVal; 
 
 enum {
         VALUE_FUNCTION = 1     ,
@@ -337,6 +338,18 @@ struct thread {
         pthread_t t;
         struct value v;
         uint64_t i;
+};
+
+struct chanval {
+        vec(void *) as;
+        struct value v;
+};
+
+struct channel {
+        bool open;
+        pthread_mutex_t m;
+        pthread_cond_t c;
+        vec(ChanVal) q;
 };
 
 struct dict {
@@ -529,6 +542,7 @@ int tags_push(int, int);
 inline static struct value
 Some(struct value v)
 {
+        v.type |= VALUE_TAGGED;
         v.tags = tags_push(v.tags, TAG_SOME);
         return v;
 }

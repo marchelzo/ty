@@ -1503,6 +1503,20 @@ class MutexLock {
     }
 }
 
+class Channel {
+    init() {
+        @chan = thread.channel()
+    }
+
+    send(x) {
+        thread.send(@chan, x)
+    }
+
+    recv(timeoutMs: ?Int) {
+        thread.recv(@chan, timeoutMs if timeoutMs != nil)
+    }
+}
+
 class Sync {
     init(x) {
         @x = x
@@ -1636,12 +1650,8 @@ class CondVar {
 }
 
 class Thread {
-    init(*args, name) {
-        if name != nil {
-            @handle = thread.create(*args, name: name)
-        } else {
-            @handle = thread.create(*args)
-        }
+    init(*args,  %kwargs) {
+        @handle = thread.create(*args, **kwargs)
     }
 
     getName() {

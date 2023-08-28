@@ -2130,9 +2130,118 @@ builtin_thread_create(int argc, struct value *kwargs)
 
         ctx[argc] = NONE;
 
-        NewThread(t, ctx, NAMED("name"));
+        struct value *incel = NAMED("incel");
+
+        NewThread(t, ctx, NAMED("name"), incel != NULL && value_truthy(incel));
 
         return THREAD(t);
+}
+
+
+struct value
+builtin_thread_channel(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.channel()", 0);
+
+        Channel *c = gc_alloc_object(sizeof *c, GC_ANY);
+
+        c->open = true;
+        vec_init(c->q);
+        pthread_cond_init(&c->c, NULL);
+        pthread_mutex_init(&c->m, NULL);
+
+        return GCPTR(c, c);
+}
+
+struct value
+builtin_thread_send(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.send()", 2);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.send(): expected pointer to channel but got: %s", value_show(&ARG(0)));
+        }
+
+        Channel *chan = ARG(0).ptr;
+        ChanVal cv = { .v = ARG(1) };
+
+        Forget(&cv.v, &cv.as);
+
+        pthread_mutex_lock(&chan->m);
+        vec_push(chan->q, cv);
+        pthread_mutex_unlock(&chan->m);
+        pthread_cond_signal(&chan->c);
+
+        return NIL;
+}
+
+
+
+struct value
+builtin_thread_recv(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC_2("thread.recv()", 1, 2);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.recv(): expected pointer to channel but got: %s", value_show(&ARG(0)));
+        }
+
+        Channel *chan = ARG(0).ptr;
+
+        pthread_mutex_lock(&chan->m);
+
+        if (argc == 1) {
+                while (chan->open && chan->q.count == 0) {
+                        pthread_cond_wait(&chan->c, &chan->m);
+                }
+        } else {
+                struct timespec ts;
+                clock_gettime(CLOCK_REALTIME, &ts);
+                struct value t = ARG(1);
+                if (t.type != VALUE_INTEGER) {
+                        vm_panic("thread.recv(): expected integer but got: %s", value_show(&t));
+                }
+                ts.tv_sec += (t.integer / 1000);
+                ts.tv_nsec += 1000 * (t.integer % 1000);
+                while (chan->open && chan->q.count == 0) {
+                        if (pthread_cond_timedwait(&chan->c, &chan->m, &ts) == ETIMEDOUT) {
+                                break;
+                        }
+                }
+        }
+
+        if (chan->q.count == 0) {
+                pthread_mutex_unlock(&chan->m);
+                return None;
+        }
+
+        ChanVal v = chan->q.items[0];
+
+        vec_pop_ith(chan->q, 0);
+
+        pthread_mutex_unlock(&chan->m);
+
+        GCTakeOwnership((AllocList *)&v.as);
+
+        return Some(v.v);
+}
+
+struct value
+builtin_thread_close(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("thread.close()", 1);
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("thread.close(): expected pointer to channel but got: %s", value_show(&ARG(0)));
+        }
+
+        Channel *chan = ARG(0).ptr;
+
+        pthread_mutex_lock(&chan->m);
+        chan->open = false;
+        pthread_mutex_unlock(&chan->m);
+
+        return NIL;
 }
 
 struct value

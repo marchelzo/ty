@@ -74,6 +74,23 @@ GCMark(void)
 }
 
 void
+GCForget(AllocList *allocs, size_t *used)
+{
+        size_t n = 0;
+
+        for (size_t i = 0; i < allocs->count;) {
+                if (!atomic_load(&allocs->items[i]->mark) && atomic_load(&allocs->items[i]->hard) == 0) {
+                        atomic_store(&allocs->items[i]->mark, false);
+                        allocs->items[n++] = allocs->items[i++];
+                } else {
+                        *used -= min(allocs->items[i]->size, *used);
+                        SWAP(struct alloc *, allocs->items[i], allocs->items[allocs->count - 1]);
+                        allocs->count -= 1;
+                }
+        }
+}
+
+void
 GCSweep(AllocList *allocs, size_t *used)
 {
         int n = 0;
@@ -89,6 +106,15 @@ GCSweep(AllocList *allocs, size_t *used)
         }
 
         allocs->count = n;
+}
+
+void
+GCTakeOwnership(AllocList *new)
+{
+        for (size_t i = 0; i < new->count; ++i) {
+                vec_push(allocs, new->items[i]);
+                MemoryUsed += new->items[i]->size;
+        }
 }
 
 void
