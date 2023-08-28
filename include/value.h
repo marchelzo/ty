@@ -221,8 +221,8 @@ typedef vec(Frame) FrameStack;
 
 typedef struct generator Generator;
 typedef struct thread Thread;
-typedef struct channel Channel; 
-typedef struct chanval ChanVal; 
+typedef struct channel Channel;
+typedef struct chanval ChanVal;
 
 enum {
         VALUE_FUNCTION = 1     ,
