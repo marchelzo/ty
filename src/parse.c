@@ -3740,7 +3740,7 @@ parse_try(void)
                 vec_push(s->try.handlers, parse_statement(-1));
         }
 
-        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_FINALLY) {
+        if (have_keyword(KEYWORD_FINALLY)) {
                 next();
                 s->try.finally = parse_statement(-1);
         } else {
