@@ -2167,7 +2167,9 @@ builtin_thread_send(int argc, struct value *kwargs)
 
         Forget(&cv.v, &cv.as);
 
+        ReleaseLock(true);
         pthread_mutex_lock(&chan->m);
+        TakeLock();
         vec_push(chan->q, cv);
         pthread_mutex_unlock(&chan->m);
         pthread_cond_signal(&chan->c);
@@ -2188,6 +2190,7 @@ builtin_thread_recv(int argc, struct value *kwargs)
 
         Channel *chan = ARG(0).ptr;
 
+        ReleaseLock(true);
         pthread_mutex_lock(&chan->m);
 
         if (argc == 1) {
@@ -2209,6 +2212,8 @@ builtin_thread_recv(int argc, struct value *kwargs)
                         }
                 }
         }
+
+        TakeLock();
 
         if (chan->q.count == 0) {
                 pthread_mutex_unlock(&chan->m);
@@ -2237,7 +2242,9 @@ builtin_thread_close(int argc, struct value *kwargs)
 
         Channel *chan = ARG(0).ptr;
 
+        ReleaseLock(true);
         pthread_mutex_lock(&chan->m);
+        TakeLock();
         chan->open = false;
         pthread_mutex_unlock(&chan->m);
 
