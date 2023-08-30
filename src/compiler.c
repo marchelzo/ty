@@ -3523,7 +3523,6 @@ static void
 emit_assignment2(struct expression *target, bool maybe, bool def)
 {
         char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
-        char multi = maybe ? INSTR_MAYBE_MULTI : INSTR_MULTI_ASSIGN;
 
         size_t start = state.code.count;
 
@@ -3598,11 +3597,8 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < target->es.count; ++i) {
                         if (target->es.items[i]->type == EXPRESSION_MATCH_REST) {
-                                // might use later
-                                int after = target->es.count - (i + 1);
-
+                                // FIXME: should we handle elements after the match-rest?
                                 emit_target(target->es.items[i], def);
-
                                 emit_instr(INSTR_TUPLE_REST);
                                 emit_int(i);
                                 emit_int(sizeof (int) + 1);

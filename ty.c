@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdnoreturn.h>
+#include <setjmp.h>
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -54,8 +55,10 @@ execln(char *line)
         /*
          * Very bad.
          */
-        if (use_readline)
+        if (use_readline) {
                 line = realloc(line, strlen(line) + 2);
+                add_history(line);
+        }
 
         if (line[0] == ':') {
                 if (line[1] == '!') {
@@ -64,23 +67,20 @@ execln(char *line)
                         fprintf(stderr, "%s\n", vm_error());
                         good = false;
                 }
-                goto Add;
+                goto End;
 
         }
 
         snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
         if (vm_execute(buffer + 1))
-                goto Add;
+                goto End;
         snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
         if (strstr(vm_error(), "ParseError") != NULL && vm_execute(buffer + 1))
-                goto Add;
+                goto End;
 
         good = false;
         fprintf(stderr, "%s\n", vm_error());
-Add:
-        if (use_readline) {
-                add_history(line);
-        }
+End:
 
         fflush(stdout);
 
@@ -88,14 +88,33 @@ Add:
 }
 
 noreturn static void
+repl(void);
+
+static jmp_buf InterruptJB;
+
+static void
+sigint(int signal)
+{
+        puts("Interrupted.");
+        longjmp(InterruptJB, 1);
+}
+
+noreturn static void
 repl(void)
 {
 
-        for (char *line; line = readln(), line != NULL;) {
-                execln(line);
-        }
+        signal(SIGINT, sigint);
 
-        exit(EXIT_SUCCESS);
+        for (;;) {
+                (void)setjmp(InterruptJB);
+                for (;;) {
+                        char *line = readln();
+                        if (line == NULL) {
+                                exit(EXIT_SUCCESS);
+                        }
+                        execln(line);
+                }
+        }
 }
 
 static char *
