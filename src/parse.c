@@ -1055,7 +1055,6 @@ prefix_record(void)
                         } else {
                                 item->type = EXPRESSION_SPREAD;
                                 item->value = parse_expr(0);
-                                item->start = item->value->start;
                                 item->end = End;
                         }
                         vec_push(e->names, "*");
@@ -1657,8 +1656,8 @@ prefix_array(void)
         while (tok()->type != ']') {
                 setctx(LEX_PREFIX);
                 if (tok()->type == TOKEN_STAR) {
-                        next();
                         struct expression *item = mkexpr();
+                        next();
                         if (tok()->type == ']') {
                                 item->type = EXPRESSION_MATCH_REST;
                                 item->identifier = "_";
@@ -1666,7 +1665,6 @@ prefix_array(void)
                         } else {
                                 item->type = EXPRESSION_SPREAD;
                                 item->value = parse_expr(0);
-                                item->start = item->value->start;
                                 item->end = End;
                         }
                         vec_push(e->elements, item);
@@ -2927,8 +2925,9 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_SPREAD:
                 // TODO: fix this so spread/match-rest are differentiated earlier
                 v = e->value;
-                assert(v->type == EXPRESSION_IDENTIFIER);
+                //assert(v->type == EXPRESSION_IDENTIFIER);
                 v->type = EXPRESSION_MATCH_REST;
+                v->start = e->start;
                 gc_free(e);
                 return v;
         case EXPRESSION_ARRAY:

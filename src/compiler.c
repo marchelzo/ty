@@ -2286,6 +2286,7 @@ emit_try_match(struct expression const *pattern)
         size_t start = state.code.count;
         bool need_loc = false;
         bool set = true;
+        bool after = false;
 
         switch (pattern->type) {
         case EXPRESSION_IDENTIFIER:
@@ -2343,17 +2344,31 @@ emit_try_match(struct expression const *pattern)
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < pattern->elements.count; ++i) {
                         if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST) {
+                                if (after) {
+                                        state.start = pattern->elements.items[i]->start;
+                                        state.end = pattern->elements.items[i]->end;
+                                        fail("array pattern cannot contain multiple gather elements");
+                                } else {
+                                        after = true;
+                                }
                                 emit_tgt(pattern->elements.items[i]->symbol, state.fscope, true);
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_int(i);
+                                emit_int(pattern->elements.count - i - 1);
                                 vec_push(state.match_fails, state.code.count);
                                 emit_int(0);
-
-                                if (i + 1 != pattern->elements.count)
-                                        fail("the *<id> array-matching pattern must be the last pattern in the array");
                         } else {
                                 emit_instr(INSTR_TRY_INDEX);
-                                emit_int(i);
+                                if (after) {
+                                        if (pattern->optional.items[i]) {
+                                                state.start = pattern->elements.items[i]->start;
+                                                state.end = pattern->elements.items[i]->end;
+                                                fail("optional element cannot come after a gather element in array pattern");
+                                        }
+                                        emit_int(i - pattern->elements.count);
+                                } else {
+                                        emit_int(i);
+                                }
                                 emit_boolean(!pattern->optional.items[i]);
                                 vec_push(state.match_fails, state.code.count);
                                 emit_int(0);
@@ -2928,7 +2943,6 @@ emit_target(struct expression *target, bool def)
                 break;
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
-                LOG("MEMBER ACCESS: %s", target->member_name);
                 emit_expression(target->object);
                 emit_instr(INSTR_TARGET_MEMBER);
                 emit_string(target->member_name);
@@ -3513,24 +3527,39 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
 
         size_t start = state.code.count;
 
+        bool after = false;
+
         switch (target->type) {
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < target->elements.count; ++i) {
                         if (target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
-                                // might use later
-                                int after = target->elements.count - (i + 1);
-
+                                if (after) {
+                                        state.start = target->elements.items[i]->start;
+                                        state.end = target->elements.items[i]->end;
+                                        fail("array pattern cannot contain multiple gather elements");
+                                } else {
+                                        after = true;
+                                }
                                 emit_target(target->elements.items[i], def);
-
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_int(i);
+                                emit_int(target->elements.count - i - 1);
                                 emit_int(sizeof (int) + 1);
                                 emit_instr(INSTR_JUMP);
                                 emit_int(1);
                                 emit_instr(INSTR_BAD_MATCH);
                         } else {
                                 emit_instr(INSTR_PUSH_ARRAY_ELEM);
-                                emit_int(i);
+                                if (after) {
+                                        if (target->optional.items[i]) {
+                                                state.start = target->elements.items[i]->start;
+                                                state.end = target->elements.items[i]->end;
+                                                fail("optional element cannot come after a gather element in array pattern");
+                                        }
+                                        emit_int(i - target->elements.count);
+                                } else {
+                                        emit_int(i);
+                                }
                                 emit_boolean(!target->optional.items[i]);
                                 emit_assignment2(target->elements.items[i], maybe, def);
                                 emit_instr(INSTR_POP);
@@ -3657,11 +3686,7 @@ emit_expr(struct expression const *e, bool need_loc)
         state.end = e->end;
 
         size_t start = state.code.count;
-        int ac;
-
         char const *method = NULL;
-
-        void (*emit)(struct expression const *);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:

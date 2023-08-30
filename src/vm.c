@@ -514,7 +514,7 @@ local(int i)
 inline static struct value *
 poptarget(void)
 {
-        struct target t = *vec_pop(targets);
+        Target t = *vec_pop(targets);
         if (t.gc != NULL) OKGC(t.gc);
         LOG("Popping Target: %p", (void *)t.t);
         return t.t;
@@ -529,7 +529,7 @@ peektarget(void)
 inline static void
 pushtarget(struct value *v, void *gc)
 {
-        struct target t = { .t = v, .gc = gc };
+        Target t = { .t = v, .gc = gc };
         if (gc != NULL) NOGC(gc);
         vec_push(targets, t);
         LOG("TARGETS: (%zu)", targets.count);
@@ -1315,15 +1315,15 @@ vm_exec(char *code)
                         break;
                 CASE(ARRAY_REST)
                         READVALUE(i);
+                        READVALUE(j);
                         READVALUE(n);
                         vp = poptarget();
-                        if (top()->type != VALUE_ARRAY) {
-                                LOG("cannot do rest: top is not an array");
+                        if (top()->type != VALUE_ARRAY || top()->array->count < i + j) {
                                 ip += n;
                         } else {
                                 struct array *rest = value_array_new();
                                 NOGC(rest);
-                                vec_push_n(*rest, top()->array->items + i, top()->array->count - i);
+                                vec_push_n(*rest, top()->array->items + i, top()->array->count - (i + j));
                                 *vp = ARRAY(rest);
                                 OKGC(rest);
                         }
@@ -1567,6 +1567,9 @@ Throw:
                         if (top()->type != VALUE_ARRAY) {
                                 ip += n;
                                 break;
+                        }
+                        if (i < 0) {
+                                i += top()->array->count;
                         }
                         if (top()->array->count <= i) {
                                 if (b) {
@@ -2061,6 +2064,9 @@ Throw:
                         if (top()->type != VALUE_ARRAY) {
                                 MatchError;
                                 vm_panic("attempt to destructure non-array as array in assignment");
+                        }
+                        if (n < 0) {
+                                n += top()->array->count;
                         }
                         if (n >= top()->array->count) {
                                 if (b) {
@@ -3367,12 +3373,13 @@ vm_execute(char const *source)
 
         ++GC_OFF_COUNT;
 
+        gc_clear_root_set();
+        stack.count = 0;
+        sp_stack.count = 0;
+        try_stack.count = 0;
+        targets.count = 0;
+
         if (setjmp(jb) != 0) {
-                gc_clear_root_set();
-                stack.count = 0;
-                sp_stack.count = 0;
-                try_stack.count = 0;
-                targets.count = 0;
                 Error = ERR;
                 return false;
         }
