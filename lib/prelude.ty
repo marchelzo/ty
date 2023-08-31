@@ -1694,27 +1694,37 @@ macro dbg! {
     // (
     lex.next()
 
-    let (p, e) = parse.stmt(0, raw: true)
+    let args = []
+
+    while lex.peek().type != ')' {
+        args.push(parse.stmt(0, raw: true))
+        if lex.peek().type == ',' {
+            lex.next()
+        }
+    }
 
     // )
     lex.next()
 
     ty.Block([
-        ty.Let(ty.Id(name: 'x'), e),
-        ty.Call(
-            func: ty.Id(name: 'print'),
-            args: [
-                ty.Arg(arg: ty.Id(name: '__module__')),
-                ty.Arg(arg: ty.String(':')),
-                ty.Arg(arg: ty.Id(name: '__line__')),
-                ty.Arg(arg: ty.String(': ')),
-                ty.Arg(arg: ty.String(parse.show(p))),
-                ty.Arg(arg: ty.String(' = ')),
-                ty.Arg(arg: ty.Id(name: 'x')),
-                ty.Arg(name: 'sep', arg: ty.String('')),
-                ty.Arg(name: 'flush', arg: ty.Bool(true))
-            ]
-        ),
+        *[
+            ty.Let(ty.Id(name: 'x'), e),
+            ty.Call(
+                func: ty.Id(name: 'print'),
+                args: [
+                    ty.Arg(arg: ty.Id(name: '__module__')),
+                    ty.Arg(arg: ty.String(':')),
+                    ty.Arg(arg: ty.Id(name: '__line__')),
+                    ty.Arg(arg: ty.String(': ')),
+                    ty.Arg(arg: ty.String(parse.show(p))),
+                    ty.Arg(arg: ty.String(' = ')),
+                    ty.Arg(arg: ty.Id(name: 'x')),
+                    ty.Arg(name: 'sep', arg: ty.String('')),
+                    ty.Arg(name: 'flush', arg: ty.Bool(true))
+                ]
+            )
+            for (p, e) in args
+        ],
         ty.Id(name: 'x')
     ])
 }
