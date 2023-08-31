@@ -590,9 +590,11 @@ expect(int type)
 {
         if (tok()->type != type) {
                 error(
-                        "expected %s but found %s",
+                        "expected %s but found %s%s%s",
                         token_show_type(type),
-                        token_show(tok())
+                        TERM(34),
+                        token_show(tok()),
+                        TERM(0)
                 );
         }
 }
@@ -603,9 +605,11 @@ expect_keyword(int type)
 {
         if (tok()->type != TOKEN_KEYWORD || tok()->keyword != type) {
                 error(
-                        "expected %s but found %s",
+                        "expected %s but found %s%s%s",
                         token_show(&(struct token){ .type = TOKEN_KEYWORD, .keyword = type }),
-                        token_show(tok())
+                        TERM(34),
+                        token_show(tok()),
+                        TERM(0)
                 );
         }
 }
@@ -3531,8 +3535,14 @@ parse_expr(int prec)
                 error("exceeded maximum recursion depth of 256");
 
         parse_fn *f = get_prefix_parser();
-        if (f == NULL)
-                error("expected expression but found %s", token_show(tok()));
+        if (f == NULL) {
+                error(
+                        "expected expression but found %s%s%s",
+                        TERM(34),
+                        token_show(tok()),
+                        TERM(0)
+                );
+        }
 
         e = f();
 
@@ -3588,6 +3598,8 @@ parse_class_definition(void)
         s->tag.pub = false;
         s->tag.name = tok()->identifier;
         vec_init(s->tag.methods);
+        vec_init(s->tag.getters);
+        vec_init(s->tag.setters);
 
         next();
 
@@ -3652,16 +3664,36 @@ parse_class_definition(void)
                         default: expect(TOKEN_IDENTIFIER);                                                  break;
                         }
                         struct location start = tok()->start;
-                        /*
-                         * Push a 'function' keyword token back onto the stream so that we can
-                         * use the existing function parsing code to parse the method.
-                         */
-                        unconsume(TOKEN_KEYWORD);
-                        tok()->keyword = KEYWORD_FUNCTION;
+                        if (token(1)->type == TOKEN_EQ) {
+                                struct token t = *tok();
+                                skip(2);
+                                unconsume(TOKEN_IDENTIFIER);
+                                *tok() = t;
+                                unconsume(TOKEN_KEYWORD);
+                                tok()->keyword = KEYWORD_FUNCTION;
+                                vec_push(s->tag.setters, prefix_function());
+                                (*vec_last(s->tag.setters))->start = start;
+                                (*vec_last(s->tag.setters))->start = End;
 
-                        vec_push(s->tag.methods, prefix_function());
-                        (*vec_last(s->tag.methods))->start = start;
-                        (*vec_last(s->tag.methods))->start = End;
+                        } else if (token(1)->type == '{') {
+                                struct token t = *tok();
+                                next();
+                                unconsume(')');
+                                unconsume('(');
+                                unconsume(TOKEN_IDENTIFIER);
+                                *tok() = t;
+                                unconsume(TOKEN_KEYWORD);
+                                tok()->keyword = KEYWORD_FUNCTION;
+                                vec_push(s->tag.getters, prefix_function());
+                                (*vec_last(s->tag.getters))->start = start;
+                                (*vec_last(s->tag.getters))->start = End;
+                        } else {
+                                unconsume(TOKEN_KEYWORD);
+                                tok()->keyword = KEYWORD_FUNCTION;
+                                vec_push(s->tag.methods, prefix_function());
+                                (*vec_last(s->tag.methods))->start = start;
+                                (*vec_last(s->tag.methods))->start = End;
+                        }
                 }
                 setctx(LEX_PREFIX);
                 consume('}');

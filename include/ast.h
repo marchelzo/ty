@@ -21,6 +21,8 @@ struct class_definition {
         char *name;
         struct expression *super;
         vec(struct expression *) methods;
+        vec(struct expression *) getters;
+        vec(struct expression *) setters;
 };
 
 struct condpart {
@@ -33,6 +35,7 @@ typedef vec(struct condpart *) condpart_vector;
 typedef vec(struct expression *) expression_vector;
 typedef vec(struct statement *) statement_vector;
 typedef vec(char *) name_vector;
+typedef struct class_definition ClassDefinition;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
 

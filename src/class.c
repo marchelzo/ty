@@ -11,7 +11,9 @@
 static int class = 0;
 static vec(char const *) names;
 static vec(int) supers;
-static vec(struct table) tables;
+static vec(struct table) mtables;
+static vec(struct table) gtables;
+static vec(struct table) stables;
 
 int
 class_new(char const *name)
@@ -21,7 +23,9 @@ class_new(char const *name)
 
         struct table t;
         table_init(&t);
-        vec_push(tables, t);
+        vec_push(mtables, t);
+        vec_push(gtables, t);
+        vec_push(stables, t);
 
         return class++;
 }
@@ -57,22 +61,60 @@ class_name(int class)
 void
 class_add_method(int class, char const *name, struct value f)
 {
-        table_put(&tables.items[class], name, f);
+        table_put(&mtables.items[class], name, f);
+}
+
+void
+class_add_getter(int class, char const *name, struct value f)
+{
+        table_put(&gtables.items[class], name, f);
+}
+
+void
+class_add_setter(int class, char const *name, struct value f)
+{
+        table_put(&stables.items[class], name, f);
 }
 
 void
 class_copy_methods(int dst, int src)
 {
-        struct table *dt = &tables.items[dst];
-        struct table const *st = &tables.items[src];
-        table_copy(dt, st);
+        table_copy(&mtables.items[dst], &mtables.items[src]);
+        table_copy(&gtables.items[dst], &gtables.items[src]);
+        table_copy(&stables.items[dst], &stables.items[src]);
+}
+
+struct value *
+class_lookup_getter(int class, char const *name, unsigned long h)
+{
+        do {
+                struct table const *t = &gtables.items[class];
+                struct value *v = table_lookup(t, name, h);
+                if (v != NULL) return v;
+                class = supers.items[class];
+        } while (class != -1);
+
+        return NULL;
+}
+
+struct value *
+class_lookup_setter(int class, char const *name, unsigned long h)
+{
+        do {
+                struct table const *t = &stables.items[class];
+                struct value *v = table_lookup(t, name, h);
+                if (v != NULL) return v;
+                class = supers.items[class];
+        } while (class != -1);
+
+        return NULL;
 }
 
 struct value *
 class_lookup_method(int class, char const *name, unsigned long h)
 {
         do {
-                struct table const *t = &tables.items[class];
+                struct table const *t = &mtables.items[class];
                 struct value *v = table_lookup(t, name, h);
                 if (v != NULL) return v;
                 class = supers.items[class];
@@ -84,7 +126,7 @@ class_lookup_method(int class, char const *name, unsigned long h)
 struct value *
 class_lookup_immediate(int class, char const *name, unsigned long h)
 {
-        struct table const *t = &tables.items[class];
+        struct table const *t = &mtables.items[class];
         return table_lookup(t, name, h);
 }
 
@@ -105,7 +147,7 @@ class_get_completions(int class, char const *prefix, char **out, int max)
         if (class == -1)
                 return 0;
 
-        int n = table_get_completions(&tables.items[class], prefix, out, max);
+        int n = table_get_completions(&mtables.items[class], prefix, out, max);
         return n + class_get_completions(supers.items[class], prefix, out + n, max - n);
 }
 
@@ -113,7 +155,7 @@ char const *
 class_method_name(int class, char const *name)
 {
         do {
-                struct table const *t = &tables.items[class];
+                struct table const *t = &mtables.items[class];
                 char const *s = table_look_key(t, name);
                 if (s != NULL) return s;
                 class = supers.items[class];

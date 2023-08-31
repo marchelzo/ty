@@ -204,24 +204,9 @@ struct blob {
 };
 
 struct target {
-        enum {
-                TARGET_VALUE,
-                TARGET_SUBSCRIPT,
-                TARGET_MEMBER,
-        } type;
-        union {
-                struct {
-                        struct value *t;
-                        void *gc;
-                };
-                struct {
-                        struct value *v;
-                        char const *member;
-                };
-                struct {
-                        struct value *a;
-                        struct value *i;
-                };
+        struct {
+                struct value *t;
+                void *gc;
         };
 };
 

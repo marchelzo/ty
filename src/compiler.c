@@ -1404,6 +1404,8 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_expression(subscope, s->class.methods.items[i]);
                         s->class.methods.items[i]->name = name;
                 }
+                symbolize_methods(subscope, s->class.getters.items, s->class.getters.count);
+                symbolize_methods(subscope, s->class.setters.items, s->class.setters.count);
                 state.class = -1;
                 break;
         case STATEMENT_TAG_DEFINITION:
@@ -4198,6 +4200,14 @@ emit_statement(struct statement const *s, bool want_result)
 
                 break;
         case STATEMENT_CLASS_DEFINITION:
+                for (int i = 0; i < s->class.setters.count; ++i) {
+                        state.method = s->class.setters.items[i]->scope;
+                        emit_function(s->class.setters.items[i], s->class.symbol);
+                }
+                for (int i = 0; i < s->class.getters.count; ++i) {
+                        state.method = s->class.getters.items[i]->scope;
+                        emit_function(s->class.getters.items[i], s->class.symbol);
+                }
                 for (int i = 0; i < s->class.methods.count; ++i) {
                         state.method = s->class.methods.items[i]->scope;
                         emit_function(s->class.methods.items[i], s->class.symbol);
@@ -4206,9 +4216,17 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_instr(INSTR_DEFINE_CLASS);
                 emit_int(s->class.symbol);
                 emit_int(s->class.methods.count);
+                emit_int(s->class.getters.count);
+                emit_int(s->class.setters.count);
 
                 for (int i = s->class.methods.count; i > 0; --i)
                         emit_string(s->class.methods.items[i - 1]->name);
+
+                for (int i = s->class.getters.count; i > 0; --i)
+                        emit_string(s->class.getters.items[i - 1]->name);
+
+                for (int i = s->class.setters.count; i > 0; --i)
+                        emit_string(s->class.setters.items[i - 1]->name);
 
                 break;
         case STATEMENT_CLEANUP:
@@ -5378,6 +5396,8 @@ cstmt(struct value *v)
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(super) : NULL;
                 struct value *methods = tuple_get(v, "methods");
                 vec_init(s->class.methods);
+                vec_init(s->class.getters);
+                vec_init(s->class.setters);
                 for (int i = 0; i < methods->array->count; ++i) {
                         vec_push(s->class.methods, cexpr(&methods->array->items[i]));
                 }

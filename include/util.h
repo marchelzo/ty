@@ -17,6 +17,14 @@
 
 #define P_ALIGN (_Alignof (uintptr_t))
 
+#ifdef TY_UNSAFE
+#define FALSE_OR(x) if (false)
+#define TRUE_OR(x) if (true)
+#else
+#define FALSE_OR(x) if (x)
+#define TRUE_OR(x) if (!(x))
+#endif
+
 extern _Thread_local char ERR[ERR_SIZE];
 
 extern pcre_jit_stack *JITStack;

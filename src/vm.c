@@ -538,6 +538,12 @@ pushtarget(struct value *v, void *gc)
         }
 }
 
+inline static bool
+SpecialTarget(void)
+{
+        return (((uintptr_t)targets.items[targets.count - 1].t) & 0x07) != 0;
+}
+
 inline static void
 call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 {
@@ -1099,6 +1105,10 @@ GetMember(struct value v, char const *member, unsigned long h, bool b)
                 }
                 break;
         case VALUE_OBJECT:
+                vp = class_lookup_getter(v.class, member, h);
+                if (vp != NULL) {
+                        return vm_call(&METHOD(member, vp, &v), 0);
+                }
                 vp = table_lookup(v.object, member, h);
                 if (vp != NULL) {
                         return *vp;
@@ -1125,6 +1135,218 @@ ClassLookup:
         }
 
         return NONE;
+}
+
+inline static void
+DoMutDiv(void)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct table *o;
+        struct value *vp, *vp2, x;
+        void *v = vp = (void *)(p & ~0x07);
+        unsigned char b;
+
+        switch (p & 0x07) {
+        case 0:
+                if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "/=")) != NULL) {
+                        gc_push(vp);
+                        call(vp2, vp, 1, 0, true);
+                        gc_pop();
+                        pop();
+                } else {
+                        x = pop();
+                        *vp = binary_operator_division(vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                FALSE_OR (top()->type != VALUE_INTEGER) {
+                        vm_panic("attempt to divide byte by non-integer");
+                }
+                b = ((struct blob *)targets.items[targets.count].gc)->items[((uintptr_t)vp) >> 3] /= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = targets.items[targets.count].gc;
+                vp = poptarget();
+                call(vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = binary_operator_division(top(), top() - 1);
+                pop();
+                call(v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                vm_panic("bad target pointer :(");
+        }
+}
+inline static void
+DoMutMul(void)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct table *o;
+        struct value *vp, *vp2, x;
+        void *v = vp = (void *)(p & ~0x07);
+        unsigned char b;
+
+        switch (p & 0x07) {
+        case 0:
+                if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "*=")) != NULL) {
+                        gc_push(vp);
+                        call(vp2, vp, 1, 0, true);
+                        gc_pop();
+                        pop();
+                } else {
+                        x = pop();
+                        *vp = binary_operator_multiplication(vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                FALSE_OR (top()->type != VALUE_INTEGER) {
+                        vm_panic("attempt to multiply byte by non-integer");
+                }
+                b = ((struct blob *)targets.items[targets.count].gc)->items[((uintptr_t)vp) >> 3] *= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = targets.items[targets.count].gc;
+                vp = poptarget();
+                call(vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = binary_operator_multiplication(top(), top() - 1);
+                pop();
+                call(v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                vm_panic("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutSub(void)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct table *o;
+        struct value *vp, *vp2, x;
+        void *v = vp = (void *)(p & ~0x07);
+        unsigned char b;
+
+        switch (p & 0x07) {
+        case 0:
+                if (vp->type == VALUE_DICT) {
+                        FALSE_OR (top()->type != VALUE_DICT)
+                                vm_panic("attempt to subtract non-dict from dict");
+                        dict_subtract(vp, 1, NULL);
+                        pop();
+                } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "+=")) != NULL) {
+                        gc_push(vp);
+                        call(vp2, vp, 1, 0, true);
+                        gc_pop();
+                        pop();
+                } else {
+                        x = pop();
+                        *vp = binary_operator_addition(vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                FALSE_OR (top()->type != VALUE_INTEGER) {
+                        vm_panic("attempt to subtract non-integer from byte");
+                }
+                b = ((struct blob *)targets.items[targets.count].gc)->items[((uintptr_t)vp) >> 3] -= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = targets.items[targets.count].gc;
+                vp = poptarget();
+                call(vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = binary_operator_subtraction(top(), top() - 1);
+                pop();
+                call(v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                vm_panic("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutAdd(void)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct table *o;
+        struct value *vp, *vp2, x;
+        void *v = vp = (void *)(p & ~0x07);
+        unsigned char b;
+
+        switch (p & 0x07) {
+        case 0:
+                if (vp->type == VALUE_ARRAY) {
+                        FALSE_OR (top()->type != VALUE_ARRAY)
+                                vm_panic("attempt to add non-array to array");
+                        value_array_extend(vp->array, top()->array);
+                        pop();
+                } else if (vp->type == VALUE_DICT) {
+                        FALSE_OR (top()->type != VALUE_DICT)
+                                vm_panic("attempt to add non-dict to dict");
+                        dict_update(vp, 1, NULL);
+                        pop();
+                } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "+=")) != NULL) {
+                        gc_push(vp);
+                        call(vp2, vp, 1, 0, true);
+                        gc_pop();
+                        pop();
+                } else {
+                        x = pop();
+                        *vp = binary_operator_addition(vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                FALSE_OR (top()->type != VALUE_INTEGER) {
+                        vm_panic("attempt to add non-integer to byte");
+                }
+                b = ((struct blob *)targets.items[targets.count].gc)->items[((uintptr_t)vp) >> 3] += pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = targets.items[targets.count].gc;
+                printf("o: %p\n", o);
+                vp = poptarget();
+                call(vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = binary_operator_addition(top(), top() - 1);
+                pop();
+                call(v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                vm_panic("bad target pointer :(");
+        }
+}
+
+inline static void
+DoAssign(void)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        void *v = (void *)(p & ~0x07);
+        struct table *o;
+
+        switch (p & 0x07) {
+        case 0:
+                *(struct value *)v = peek();
+                break;
+        case 1:
+                ((struct blob *)targets.items[targets.count].gc)->items[((uintptr_t)v >> 3)] = peek().integer;
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = targets.items[targets.count].gc;
+                poptarget();
+                call(v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                vm_panic("bad target pointer :(");
+        }
 }
 
 void
@@ -1258,6 +1480,25 @@ vm_exec(char *code)
                         ip += strlen(ip) + 1;
                         READVALUE(h);
                         if (v.type == VALUE_OBJECT) {
+                                vp = class_lookup_setter(v.class, member, h);
+                                if (vp != NULL) {
+                                        vp2 = class_lookup_getter(v.class, member, h);
+                                        FALSE_OR (vp2 == NULL) {
+                                                vm_panic(
+                                                        "class %s%s%s needs a getter for %s%s%s!",
+                                                        TERM(33),
+                                                        class_name(v.class),
+                                                        TERM(0),
+                                                        TERM(34),
+                                                        member,
+                                                        TERM(0)
+                                                );
+                                        }
+                                        pushtarget(vp2, NULL);
+                                        pushtarget((struct value *)(uintptr_t)v.class, v.object);
+                                        pushtarget((struct value *)(((uintptr_t)vp) | 2), NULL);
+                                        break;
+                                }
                                 vp = table_lookup(v.object, member, h);
                                 if (vp != NULL) {
                                         pushtarget(vp, v.object);
@@ -1279,7 +1520,7 @@ vm_exec(char *code)
                         container = top()[-1];
 
                         if (container.type == VALUE_ARRAY) {
-                                if (subscript.type != VALUE_INTEGER)
+                                FALSE_OR (subscript.type != VALUE_INTEGER)
                                         vm_panic("non-integer array index used in subscript assignment");
                                 if (subscript.integer < 0)
                                         subscript.integer += container.array->count;
@@ -1292,6 +1533,20 @@ vm_exec(char *code)
                                 pushtarget(&container.array->items[subscript.integer], container.array);
                         } else if (container.type == VALUE_DICT) {
                                 pushtarget(dict_put_key_if_not_exists(container.dict, subscript), container.dict);
+                        } else if (container.type == VALUE_BLOB) {
+                                FALSE_OR (subscript.type != VALUE_INTEGER) {
+                                        vm_panic("non-integer blob index used in subscript assignment");
+                                }
+                                if (subscript.integer < 0) {
+                                        subscript.integer += container.blob->count;
+                                }
+                                if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
+                                        // TODO: Not sure which is the best behavior here
+                                        push(TAG(gettag(NULL, "IndexError")));
+                                        goto Throw;
+                                        vm_panic("blob index out of range in subscript expression");
+                                }
+                                pushtarget((struct value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
                         } else {
                                 vm_panic("attempt to perform subscript assignment on something other than an object or array");
                         }
@@ -1301,7 +1556,7 @@ vm_exec(char *code)
 
                         break;
                 CASE(ASSIGN)
-                        *poptarget() = peek();
+                        DoAssign();
                         break;
                 CASE(MAYBE_ASSIGN)
                         vp = poptarget();
@@ -1410,6 +1665,7 @@ Throw:
                         }));
                         // Fallthrough
                 CASE(RETHROW)
+                {
                         if (try_stack.count == 0) {
                                 ThrowCtx c = *vec_pop(throw_stack);
 
@@ -1421,7 +1677,7 @@ Throw:
 
                         struct try *t = vec_last(try_stack);
 
-                        if (t->executing) {
+                        FALSE_OR (t->executing) {
                                 vm_panic(
                                         "an exception was thrown while handling another exception: %s%s%s",
                                         TERM(31), value_show(top()), TERM(39)
@@ -1446,6 +1702,7 @@ Throw:
 
                         longjmp(t->jb, 1);
                         /* unreachable */
+                }
                 CASE(FINALLY)
                 {
                         struct try *t = vec_pop(try_stack);
@@ -1804,7 +2061,7 @@ Throw:
                 CASE(YIELD)
                         n = frames.items[0].fp;
 
-                        if (stack.items[n - 1].type != VALUE_GENERATOR) {
+                        FALSE_OR (stack.items[n - 1].type != VALUE_GENERATOR) {
                                 vm_panic("attempt to yield from outside generator context");
                         }
 
@@ -1959,18 +2216,15 @@ Throw:
                         push(NONE);
                         break;
                 CASE(NONE_IF_NIL)
-                        //if (top()->type == VALUE_NIL)
-                                //*top() = NONE;
-                // Once iterators are fixed:
                         if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
                                 *top() = NONE;
-                        } else if (top()->tags != 0 && tags_first(top()->tags) == TAG_SOME) {
+                        } else FALSE_OR (!(top()->tags != 0 && tags_first(top()->tags) == TAG_SOME)) {
+                                vm_panic("iterator returned invalid type. expected None or Some(x) but got %s", value_show(top()));
+                        } else {
                                 top()->tags = tags_pop(top()->tags);
                                 if (top()->tags == 0) {
                                         top()->type &= ~VALUE_TAGGED;
                                 }
-                        } else {
-                                vm_panic("iterator returned invalid type. expected None or Some(x) but got %s", value_show(top()));
                         }
                         break;
                 CASE(CLEAR_RC)
@@ -2081,10 +2335,10 @@ Throw:
                         break;
                 CASE(PUSH_TUPLE_ELEM)
                         READVALUE(n);
-                        if (top()->type != VALUE_TUPLE) {
+                        FALSE_OR (top()->type != VALUE_TUPLE) {
                                 vm_panic("attempt to destructure non-tuple as tuple in assignment");
                         }
-                        if (n >= top()->count) {
+                        FALSE_OR (n >= top()->count) {
                                 vm_panic("elment index out of range in destructuring assignment");
                         }
                         push(top()->items[n]);
@@ -2219,7 +2473,7 @@ ObjectSubscript:
                                         vp = class_method(subscript.class, "__next__");
                                         if (vp == NULL) {
                                                 vp = class_method(subscript.class, "__iter__");
-                                                if (vp == NULL) {
+                                                FALSE_OR (vp == NULL) {
                                                         vm_panic("non-iterable object used in subscript expression");
                                                 }
                                                 call(vp, &subscript, 0, 0, true);
@@ -2234,7 +2488,7 @@ ObjectSubscript:
                                                 struct value r = pop();
                                                 if (r.type == VALUE_NIL)
                                                         break;
-                                                if (r.type != VALUE_INTEGER)
+                                                FALSE_OR (r.type != VALUE_INTEGER)
                                                         vm_panic("iterator yielded non-integer array index in subscript expression");
                                                 if (r.integer < 0)
                                                         r.integer += container.array->count;
@@ -2308,7 +2562,7 @@ ObjectSubscript:
                                 h = strhash(method);
                                 goto CallMethod;
                         case VALUE_PTR:
-                                if (subscript.type != VALUE_INTEGER) {
+                                FALSE_OR (subscript.type != VALUE_INTEGER) {
                                         vm_panic("non-integer used to subscript pointer: %s", value_show(&subscript));
                                 }
                                 v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
@@ -2481,6 +2735,9 @@ BadContainer:
                         push(INTEGER(v.array->count)); // TODO
                         break;
                 CASE(PRE_INC)
+                        FALSE_OR (SpecialTarget()) {
+                                vm_panic("pre-increment applied to invalid target");
+                        }
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
                         case VALUE_REAL:    ++peektarget()->real;    break;
@@ -2500,6 +2757,9 @@ BadContainer:
                         push(*poptarget());
                         break;
                 CASE(POST_INC)
+                        FALSE_OR (SpecialTarget()) {
+                                vm_panic("pre-increment applied to invalid target");
+                        }
                         push(*peektarget());
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
@@ -2513,6 +2773,9 @@ BadContainer:
                         poptarget();
                         break;
                 CASE(PRE_DEC)
+                        if (SpecialTarget()) {
+                                vm_panic("pre-decrement applied to invalid target");
+                        }
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
                         case VALUE_REAL:    --peektarget()->real;    break;
@@ -2532,6 +2795,9 @@ BadContainer:
                         push(*poptarget());
                         break;
                 CASE(POST_DEC)
+                        if (SpecialTarget()) {
+                                vm_panic("post-decrement applied to invalid target");
+                        }
                         push(*peektarget());
                         switch (peektarget()->type) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
@@ -2545,71 +2811,16 @@ BadContainer:
                         poptarget();
                         break;
                 CASE(MUT_ADD)
-                        vp = poptarget();
-                        if (vp->type == VALUE_ARRAY) {
-                                if (top()->type != VALUE_ARRAY)
-                                        vm_panic("attempt to add non-array to array");
-                                value_array_extend(vp->array, top()->array);
-                                pop();
-                        } else if (vp->type == VALUE_DICT) {
-                                if (top()->type != VALUE_DICT)
-                                        vm_panic("attempt to add non-dict to dict");
-                                dict_update(vp, 1, NULL);
-                                pop();
-                        } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "+=")) != NULL) {
-                                gc_push(vp);
-                                call(vp2, vp, 1, 0, true);
-                                gc_pop();
-                                pop();
-                        } else {
-                                v = pop();
-                                *vp = binary_operator_addition(vp, &v);
-                        }
-                        push(*vp);
+                        DoMutAdd();
                         break;
                 CASE(MUT_MUL)
-                        vp = poptarget();
-                        if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "*=")) != NULL) {
-                                gc_push(vp);
-                                call(vp2, vp, 1, 0, true);
-                                gc_pop();
-                                pop();
-                        } else {
-                                v = pop();
-                                *vp = binary_operator_multiplication(vp, &v);
-                        }
-                        push(*vp);
+                        DoMutMul();
                         break;
                 CASE(MUT_DIV)
-                        if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "/=")) != NULL) {
-                                gc_push(vp);
-                                call(vp2, vp, 1, 0, true);
-                                gc_pop();
-                                pop();
-                        } else {
-                                vp = poptarget();
-                                v = pop();
-                                *vp = binary_operator_division(vp, &v);
-                        }
-                        push(*vp);
+                        DoMutDiv();
                         break;
                 CASE(MUT_SUB)
-                        vp = poptarget();
-                        if (vp->type == VALUE_DICT) {
-                                if (top()->type != VALUE_DICT)
-                                        vm_panic("attempt to subtract non-dict from dict");
-                                dict_subtract(vp, 1, NULL);
-                                pop();
-                        } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "-=")) != NULL) {
-                                gc_push(vp);
-                                call(vp2, vp, 1, 0, true);
-                                gc_pop();
-                                pop();
-                        } else {
-                                v = pop();
-                                *vp = binary_operator_subtraction(vp, &v);
-                        }
-                        push(*vp);
+                        DoMutSub();
                         break;
                 CASE(DEFINE_TAG)
                 {
@@ -2628,12 +2839,24 @@ BadContainer:
                 }
                 CASE(DEFINE_CLASS)
                 {
-                        int class, n;
+                        int class, n, g, s;
                         READVALUE(class);
                         READVALUE(n);
+                        READVALUE(g);
+                        READVALUE(s);
                         while (n --> 0) {
                                 v = pop();
                                 class_add_method(class, ip, v);
+                                ip += strlen(ip) + 1;
+                        }
+                        while (g --> 0) {
+                                v = pop();
+                                class_add_getter(class, ip, v);
+                                ip += strlen(ip) + 1;
+                        }
+                        while (s --> 0) {
+                                v = pop();
+                                class_add_setter(class, ip, v);
                                 ip += strlen(ip) + 1;
                         }
                         break;
@@ -3574,7 +3797,9 @@ MarkStorage(ThreadStorage const *storage)
 
         GCLOG("Marking targets");
         for (int i = 0; i < storage->targets->count; ++i) {
-                value_mark(storage->targets->items[i].t);
+                if ((((uintptr_t)storage->targets->items[i].t) & 0x07) == 0) {
+                        value_mark(storage->targets->items[i].t);
+                }
         }
 
         GCLOG("Marking frame functions");
