@@ -19,6 +19,9 @@ void
 class_add_method(int class, char const *name, struct value f);
 
 void
+class_add_static(int class, char const *name, struct value f);
+
+void
 class_add_getter(int class, char const *name, struct value f);
 
 void
@@ -35,6 +38,9 @@ class_lookup_getter(int class, char const *name, unsigned long h);
 
 struct value *
 class_lookup_setter(int class, char const *name, unsigned long h);
+
+struct value *
+class_lookup_static(int class, char const *name, unsigned long h);
 
 struct value *
 class_lookup_immediate(int class, char const *name, unsigned long h);

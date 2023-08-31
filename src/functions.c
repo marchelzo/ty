@@ -4895,6 +4895,16 @@ builtin_ty_lock(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_ty_gensym(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.gensym()", 0);
+
+        char const *s = gensym();
+
+        return STRING_NOGC(s, strlen(s));
+}
+
+struct value
 builtin_eval(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ty.eval()", 1);

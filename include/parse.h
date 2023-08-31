@@ -32,4 +32,7 @@ parse_sync_lex(void);
 void
 make_with(struct expression *e, statement_vector defs, struct statement *body);
 
+char *
+gensym(void);
+
 #endif

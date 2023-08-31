@@ -14,6 +14,7 @@ static vec(int) supers;
 static vec(struct table) mtables;
 static vec(struct table) gtables;
 static vec(struct table) stables;
+static vec(struct table) ctables;
 
 int
 class_new(char const *name)
@@ -26,6 +27,7 @@ class_new(char const *name)
         vec_push(mtables, t);
         vec_push(gtables, t);
         vec_push(stables, t);
+        vec_push(ctables, t);
 
         return class++;
 }
@@ -56,6 +58,12 @@ char const *
 class_name(int class)
 {
         return names.items[class];
+}
+
+void
+class_add_static(int class, char const *name, struct value f)
+{
+        table_put(&ctables.items[class], name, f);
 }
 
 void
@@ -115,6 +123,19 @@ class_lookup_method(int class, char const *name, unsigned long h)
 {
         do {
                 struct table const *t = &mtables.items[class];
+                struct value *v = table_lookup(t, name, h);
+                if (v != NULL) return v;
+                class = supers.items[class];
+        } while (class != -1);
+
+        return NULL;
+}
+
+struct value *
+class_lookup_static(int class, char const *name, unsigned long h)
+{
+        do {
+                struct table const *t = &ctables.items[class];
                 struct value *v = table_lookup(t, name, h);
                 if (v != NULL) return v;
                 class = supers.items[class];

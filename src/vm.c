@@ -1096,7 +1096,10 @@ GetMember(struct value v, char const *member, unsigned long h, bool b)
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
         case VALUE_CLASS:
-                vp = class_lookup_method(v.class, member, h);
+                vp = class_lookup_static(v.class, member, h);
+                if (vp == NULL) {
+                        vp = class_lookup_method(v.class, member, h);
+                }
                 if (vp == NULL) {
                         n = CLASS_CLASS;
                         goto ClassLookup;
@@ -2839,11 +2842,17 @@ BadContainer:
                 }
                 CASE(DEFINE_CLASS)
                 {
-                        int class, n, g, s;
+                        int class, c, n, g, s;
                         READVALUE(class);
+                        READVALUE(c);
                         READVALUE(n);
                         READVALUE(g);
                         READVALUE(s);
+                        while (c --> 0) {
+                                v = pop();
+                                class_add_static(class, ip, v);
+                                ip += strlen(ip) + 1;
+                        }
                         while (n --> 0) {
                                 v = pop();
                                 class_add_method(class, ip, v);
@@ -3218,6 +3227,9 @@ BadContainer:
                                 break;
                         case VALUE_CLASS: /* lol */
                                 vp = class_lookup_immediate(CLASS_CLASS, method, h);
+                                if (vp == NULL) {
+                                        vp = class_lookup_static(value.class, method, h);
+                                }
                                 if (vp == NULL) {
                                         vp = class_lookup_method(value.class, method, h);
                                 }

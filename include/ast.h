@@ -23,6 +23,7 @@ struct class_definition {
         vec(struct expression *) methods;
         vec(struct expression *) getters;
         vec(struct expression *) setters;
+        vec(struct expression *) statics;
 };
 
 struct condpart {

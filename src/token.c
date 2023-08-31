@@ -48,6 +48,7 @@ static struct {
         { "yield",     KEYWORD_YIELD     },
         { "Next",      KEYWORD_NEXT      },
         { "generator", KEYWORD_GENERATOR },
+        { "static",    KEYWORD_STATIC    },
 };
 
 static struct {

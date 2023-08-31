@@ -3600,6 +3600,7 @@ parse_class_definition(void)
         vec_init(s->tag.methods);
         vec_init(s->tag.getters);
         vec_init(s->tag.setters);
+        vec_init(s->tag.statics);
 
         next();
 
@@ -3661,10 +3662,18 @@ parse_class_definition(void)
                         case TOKEN_USER_OP:     tok()->type = TOKEN_IDENTIFIER;                             break;
                         case '~':               next();
                         case TOKEN_IDENTIFIER:                                                              break;
-                        default: expect(TOKEN_IDENTIFIER);                                                  break;
+                        default: if (!have_keyword(KEYWORD_STATIC)) expect(TOKEN_IDENTIFIER);               break;
                         }
                         struct location start = tok()->start;
-                        if (token(1)->type == TOKEN_EQ) {
+                        if (have_keyword(KEYWORD_STATIC)) {
+                                next();
+                                expect(TOKEN_IDENTIFIER);
+                                unconsume(TOKEN_KEYWORD);
+                                tok()->keyword = KEYWORD_FUNCTION;
+                                vec_push(s->tag.statics, prefix_function());
+                                (*vec_last(s->tag.statics))->start = start;
+                                (*vec_last(s->tag.statics))->start = End;
+                        } else if (token(1)->type == TOKEN_EQ) {
                                 struct token t = *tok();
                                 skip(2);
                                 unconsume(TOKEN_IDENTIFIER);

@@ -1523,9 +1523,9 @@ class Sync {
         @mtx = Mutex()
     }
 
-    get() {
-        with @mtx.lock() {
-            @x
+    static get(x) {
+        with x.mtx.lock() {
+            x.x
         }
     }
 
@@ -1706,9 +1706,11 @@ macro dbg! {
     // )
     lex.next()
 
+    let tmp = ty.gensym()
+
     ty.Block([
         *[
-            ty.Let(ty.Id(name: 'x'), e),
+            ty.Let(ty.Id(name: tmp), e),
             ty.Call(
                 func: ty.Id(name: 'print'),
                 args: [
@@ -1718,14 +1720,14 @@ macro dbg! {
                     ty.Arg(arg: ty.String(': ')),
                     ty.Arg(arg: ty.String(parse.show(p))),
                     ty.Arg(arg: ty.String(' = ')),
-                    ty.Arg(arg: ty.Id(name: 'x')),
+                    ty.Arg(arg: ty.Id(name: tmp)),
                     ty.Arg(name: 'sep', arg: ty.String('')),
                     ty.Arg(name: 'flush', arg: ty.Bool(true))
                 ]
             )
             for (p, e) in args
         ],
-        ty.Id(name: 'x')
+        ty.Id(name: tmp)
     ])
 }
 

@@ -608,6 +608,9 @@ struct value
 builtin_eval(int argc, struct value *kwargs);
 
 struct value
+builtin_ty_gensym(int argc, struct value *kwargs);
+
+struct value
 builtin_token_next(int argc, struct value *kwargs);
 
 struct value

@@ -1406,6 +1406,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 }
                 symbolize_methods(subscope, s->class.getters.items, s->class.getters.count);
                 symbolize_methods(subscope, s->class.setters.items, s->class.setters.count);
+                symbolize_methods(subscope, s->class.statics.items, s->class.statics.count);
                 state.class = -1;
                 break;
         case STATEMENT_TAG_DEFINITION:
@@ -4212,12 +4213,20 @@ emit_statement(struct statement const *s, bool want_result)
                         state.method = s->class.methods.items[i]->scope;
                         emit_function(s->class.methods.items[i], s->class.symbol);
                 }
+                for (int i = 0; i < s->class.statics.count; ++i) {
+                        state.method = s->class.statics.items[i]->scope;
+                        emit_function(s->class.statics.items[i], s->class.symbol);
+                }
 
                 emit_instr(INSTR_DEFINE_CLASS);
                 emit_int(s->class.symbol);
+                emit_int(s->class.statics.count);
                 emit_int(s->class.methods.count);
                 emit_int(s->class.getters.count);
                 emit_int(s->class.setters.count);
+
+                for (int i = s->class.statics.count; i > 0; --i)
+                        emit_string(s->class.statics.items[i - 1]->name);
 
                 for (int i = s->class.methods.count; i > 0; --i)
                         emit_string(s->class.methods.items[i - 1]->name);
@@ -5398,6 +5407,7 @@ cstmt(struct value *v)
                 vec_init(s->class.methods);
                 vec_init(s->class.getters);
                 vec_init(s->class.setters);
+                vec_init(s->class.statics);
                 for (int i = 0; i < methods->array->count; ++i) {
                         vec_push(s->class.methods, cexpr(&methods->array->items[i]));
                 }
