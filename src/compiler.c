@@ -997,6 +997,9 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
                 symbolize_pattern(scope, e->left, def);
                 symbolize_expression(scope, e->right);
                 break;
+        case EXPRESSION_REGEX:
+                add_captures(e, scope);
+                break;
         default:
                 symbolize_expression(scope, e);
                 break;
@@ -1106,9 +1109,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
                         subscope = scope_new(scope, false);
-                        if (e->patterns.items[i]->type == EXPRESSION_REGEX) {
-                                add_captures(e->patterns.items[i], subscope);
-                        }
                         symbolize_pattern(subscope, e->patterns.items[i], true);
                         symbolize_expression(subscope, e->thens.items[i]);
                 }
@@ -1460,9 +1460,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
                         subscope = scope_new(scope, false);
-                        if (s->match.patterns.items[i]->type == EXPRESSION_REGEX) {
-                                add_captures(s->match.patterns.items[i], subscope);
-                        }
                         symbolize_pattern(subscope, s->match.patterns.items[i], true);
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }

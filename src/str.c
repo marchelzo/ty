@@ -88,7 +88,7 @@ string_length(struct value *string, int argc, struct value *kwargs)
                 } else while (n < size) {
                         int next;
                         int m = utf8proc_iterate(s + offset + n, size - n, &next);
-                        if (m == -1)
+                        if (m < 0)
                                 break;
                         if (utf8proc_grapheme_break_stateful(codepoint, next, &state))
                                 break;
@@ -119,14 +119,14 @@ string_chars(struct value *string, int argc, struct value *kwargs)
         while (size > 0) {
                 int codepoint;
                 int n = utf8proc_iterate(s + offset, size, &codepoint);
-                if (n == -1) {
+                if (n < 0) {
                         size -= 1;
                         offset += 1;
                         continue;
                 } else if (codepoint & 0xC0) while (n < size) {
                         int next;
                         int m = utf8proc_iterate(s + offset + n, size - n, &next);
-                        if (m == -1)
+                        if (m < 0)
                                 break;
                         if (utf8proc_grapheme_break_stateful(codepoint, next, &state))
                                 break;
