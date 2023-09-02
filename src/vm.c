@@ -119,14 +119,6 @@ struct sigfn {
         struct value f;
 };
 
-typedef struct {
-        atomic_bool *created;
-        struct value *ctx;
-        struct value *name;
-        Thread *t;
-        bool isolated;
-} NewThreadCtx;
-
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
 
 typedef vec(struct value) ValueStack;
@@ -181,29 +173,40 @@ pthread_t MainThread;
 MessageQueue q1;
 MessageQueue q2;
 
-static vec(pthread_t) ThreadList;
-static vec(pthread_mutex_t *) ThreadLocks;
-static vec(ThreadStorage) ThreadStorages;
-static vec(_Atomic bool *) ThreadStates;
+typedef struct thread_group {
+        pthread_mutex_t Lock;
+        pthread_mutex_t GCLock;
+        vec(pthread_t) ThreadList;
+        vec(pthread_mutex_t *) ThreadLocks;
+        vec(ThreadStorage) ThreadStorages;
+        vec(_Atomic bool *) ThreadStates;
+        atomic_bool WantGC;
+        pthread_barrier_t GCBarrierStart;
+        pthread_barrier_t GCBarrierMark;
+        pthread_barrier_t GCBarrierSweep;
+        pthread_barrier_t GCBarrierDone;
+        pthread_mutex_t DLock;
+        AllocList DeadAllocs;
+        size_t DeadUsed;
+} ThreadGroup;
 
-pthread_mutex_t DeadMutex = PTHREAD_MUTEX_INITIALIZER;
-AllocList DeadAllocs;
-size_t DeadUsed = 0;
+typedef struct {
+        atomic_bool *created;
+        struct value *ctx;
+        struct value *name;
+        Thread *t;
+        ThreadGroup *group;
+} NewThreadCtx;
 
-static pthread_mutex_t ThreadsLock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t GCLock = PTHREAD_MUTEX_INITIALIZER;
+
+static ThreadGroup MainGroup;
+
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
+
 _Thread_local pthread_mutex_t *MyLock;
 static _Thread_local _Atomic bool *MyState;
-static _Thread_local _Atomic bool *MyGCState;
 static _Thread_local ThreadStorage MyStorage;
-static _Thread_local bool IsolatedThread = false;
-static _Atomic bool WantGC;
-
-static pthread_barrier_t GCBarrierStart;
-static pthread_barrier_t GCBarrierMark;
-static pthread_barrier_t GCBarrierSweep;
-static pthread_barrier_t GCBarrierDone;
+static _Thread_local ThreadGroup *MyGroup;
 
 void
 MarkStorage(ThreadStorage const *storage);
@@ -212,7 +215,7 @@ static void
 LockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                pthread_mutex_lock(ThreadLocks.items[threads[i]]);
+                pthread_mutex_lock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
@@ -220,7 +223,7 @@ inline static void
 UnlockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                pthread_mutex_unlock(ThreadLocks.items[threads[i]]);
+                pthread_mutex_unlock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
@@ -244,6 +247,30 @@ Forget(struct value *v, AllocList *allocs)
 }
 
 static void
+InitThreadGroup(ThreadGroup *g)
+{
+        vec_init(g->ThreadList);
+        vec_init(g->ThreadStates);
+        vec_init(g->ThreadStorages);
+        vec_init(g->ThreadLocks);
+        vec_init(g->DeadAllocs);
+        pthread_mutex_init(&g->Lock, NULL);
+        pthread_mutex_init(&g->GCLock, NULL);
+        pthread_mutex_init(&g->DLock, NULL);
+        atomic_store(&g->WantGC, false);
+        g->DeadUsed = 0;
+
+}
+
+static ThreadGroup *
+NewThreadGroup(void)
+{
+        ThreadGroup *g = gc_alloc(sizeof *g);
+        InitThreadGroup(g);
+        return g;
+}
+
+static void
 WaitGC()
 {
         GCLOG("Waiting for GC on thread %llu", TID);
@@ -251,7 +278,7 @@ WaitGC()
         ReleaseLock(false);
 
         while (!atomic_load(MyState)) {
-                if (!atomic_load(&WantGC)) {
+                if (!atomic_load(&MyGroup->WantGC)) {
                         SetState(true);
                         TakeLock();
                         return;
@@ -261,44 +288,40 @@ WaitGC()
         TakeLock();
 
         GCLOG("Waiting to mark: %llu", TID);
-        pthread_barrier_wait(&GCBarrierStart);
+        pthread_barrier_wait(&MyGroup->GCBarrierStart);
         GCLOG("Marking: %llu", TID);
         MarkStorage(&MyStorage);
 
         GCLOG("Waiting to sweep: %llu", TID);
-        pthread_barrier_wait(&GCBarrierMark);
+        pthread_barrier_wait(&MyGroup->GCBarrierMark);
         GCLOG("Sweeping: %llu", TID);
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Waiting to continue execution: %llu", TID);
-        pthread_barrier_wait(&GCBarrierSweep);
-        pthread_barrier_wait(&GCBarrierDone);
+        pthread_barrier_wait(&MyGroup->GCBarrierSweep);
+        pthread_barrier_wait(&MyGroup->GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
 }
 
 void
 DoGC()
 {
-        if (IsolatedThread) {
-                MarkStorage(&MyStorage);
-                GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
-                return;
-        }
+        GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, DeadUsed);
-
-        if (pthread_mutex_trylock(&GCLock) != 0) {
+        if (pthread_mutex_trylock(&MyGroup->GCLock) != 0) {
                 GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
                 WaitGC();
                 return;
         }
 
-        pthread_mutex_lock(&ThreadsLock);
+        pthread_mutex_lock(&MyGroup->Lock);
+
+        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
 
         GCLOG("Storing true in WantGC on thread %llu", TID);
-        atomic_store(&WantGC, true);
+        atomic_store(&MyGroup->WantGC, true);
 
         static int *blockedThreads;
         static int *runningThreads;
@@ -314,55 +337,57 @@ DoGC()
 
         pthread_t me = pthread_self();
 
-        for (int i = 0; i < ThreadList.count; ++i) {
-                if (pthread_equal(me, ThreadList.items[i])) {
+        for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
+                if (pthread_equal(me, MyGroup->ThreadList.items[i])) {
                         continue;
                 }
-                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)ThreadList.items[i], (void *)ThreadLocks.items[i]);
-                pthread_mutex_lock(ThreadLocks.items[i]);
-                if (atomic_load(ThreadStates.items[i])) {
-                        GCLOG("Thread %llu is blocked", (long long unsigned)ThreadList.items[i]);
+                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
+                pthread_mutex_lock(MyGroup->ThreadLocks.items[i]);
+                if (atomic_load(MyGroup->ThreadStates.items[i])) {
+                        GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
                         blockedThreads[nBlocked++] = i;
                 } else {
-                        GCLOG("Thread %llu is running", (long long unsigned)ThreadList.items[i]);
+                        GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
-                        atomic_store(ThreadStates.items[i], true);
+                        atomic_store(MyGroup->ThreadStates.items[i], true);
                 }
         }
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
-        pthread_barrier_init(&GCBarrierStart, NULL, nRunning + 1);
-        pthread_barrier_init(&GCBarrierMark, NULL, nRunning + 1);
-        pthread_barrier_init(&GCBarrierSweep, NULL, nRunning + 1);
-        pthread_barrier_init(&GCBarrierDone, NULL, nRunning + 1);
+        pthread_barrier_init(&MyGroup->GCBarrierStart, NULL, nRunning + 1);
+        pthread_barrier_init(&MyGroup->GCBarrierMark, NULL, nRunning + 1);
+        pthread_barrier_init(&MyGroup->GCBarrierSweep, NULL, nRunning + 1);
+        pthread_barrier_init(&MyGroup->GCBarrierDone, NULL, nRunning + 1);
 
         UnlockThreads(runningThreads, nRunning);
 
-        pthread_barrier_wait(&GCBarrierStart);
+        pthread_barrier_wait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)ThreadList.items[blockedThreads[i]], TID);
-                MarkStorage(&ThreadStorages.items[blockedThreads[i]]);
+                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                MarkStorage(&MyGroup->ThreadStorages.items[blockedThreads[i]]);
         }
 
         GCLOG("Marking own storage on thread %llu", TID);
         MarkStorage(&MyStorage);
 
-        for (int i = 0; i < Globals.count; ++i) {
-                value_mark(&Globals.items[i]);
+        if (MyGroup == &MainGroup) {
+                for (int i = 0; i < Globals.count; ++i) {
+                        value_mark(&Globals.items[i]);
+                }
         }
 
-        pthread_barrier_wait(&GCBarrierMark);
+        pthread_barrier_wait(&MyGroup->GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
-        atomic_store(&WantGC, false);
+        atomic_store(&MyGroup->WantGC, false);
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)ThreadList.items[blockedThreads[i]], TID);
+                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 GCSweep(
-                        ThreadStorages.items[blockedThreads[i]].allocs,
-                        ThreadStorages.items[blockedThreads[i]].MemoryUsed
+                        MyGroup->ThreadStorages.items[blockedThreads[i]].allocs,
+                        MyGroup->ThreadStorages.items[blockedThreads[i]].MemoryUsed
                 );
         }
 
@@ -370,22 +395,22 @@ DoGC()
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        pthread_mutex_lock(&DeadMutex);
-        GCSweep(&DeadAllocs, &DeadUsed);
-        pthread_mutex_unlock(&DeadMutex);
+        pthread_mutex_lock(&MyGroup->DLock);
+        GCSweep(&MyGroup->DeadAllocs, &MyGroup->DeadUsed);
+        pthread_mutex_unlock(&MyGroup->DLock);
 
-        pthread_barrier_wait(&GCBarrierSweep);
+        pthread_barrier_wait(&MyGroup->GCBarrierSweep);
 
         UnlockThreads(blockedThreads, nBlocked);
 
-        GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, DeadUsed);
+        GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        pthread_mutex_unlock(&ThreadsLock);
-        pthread_mutex_unlock(&GCLock);
+        pthread_mutex_unlock(&MyGroup->Lock);
+        pthread_mutex_unlock(&MyGroup->GCLock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
-        pthread_barrier_wait(&GCBarrierDone);
+        pthread_barrier_wait(&MyGroup->GCBarrierDone);
 }
 
 static struct {
@@ -708,7 +733,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
                 .name = name,
                 .created = &created,
                 .t = t,
-                .isolated = isolated
+                .group = isolated ? NewThreadGroup() : MyGroup
         };
         atomic_store(&created, false);
 
@@ -733,49 +758,22 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
 }
 
 static void
-SetupIsolatedThread(void)
-{
-        ++GC_OFF_COUNT;
-
-        MyLock = malloc(sizeof *MyLock);
-        pthread_mutex_init(MyLock, NULL);
-        pthread_mutex_lock(MyLock);
-
-        MyStorage = (ThreadStorage) {
-                .stack = &stack,
-                .frames = &frames,
-                .defer_stack = &defer_stack,
-                .targets = &targets,
-                .root_set = GCRootSet(),
-                .allocs = &allocs,
-                .MemoryUsed = &MemoryUsed
-        };
-
-        MyState = malloc(sizeof *MyState);
-        *MyState = false;
-
-        IsolatedThread = true;
-
-        --GC_OFF_COUNT;
-}
-
-static void
 AddThread(void)
 {
         GCLOG("AddThread(): %llu: taking lock", (long long unsigned)pthread_self());
 
-        pthread_mutex_lock(&ThreadsLock);
+        pthread_mutex_lock(&MyGroup->Lock);
 
         GCLOG("AddThread(): %llu: took lock", (long long unsigned)pthread_self());
 
         ++GC_OFF_COUNT;
 
-        vec_push(ThreadList, pthread_self());
+        vec_push(MyGroup->ThreadList, pthread_self());
 
         MyLock = malloc(sizeof *MyLock);
         pthread_mutex_init(MyLock, NULL);
         pthread_mutex_lock(MyLock);
-        vec_push(ThreadLocks, MyLock);
+        vec_push(MyGroup->ThreadLocks, MyLock);
 
         MyStorage = (ThreadStorage) {
                 .stack = &stack,
@@ -787,15 +785,15 @@ AddThread(void)
                 .MemoryUsed = &MemoryUsed
         };
 
-        vec_push(ThreadStorages, MyStorage);
+        vec_push(MyGroup->ThreadStorages, MyStorage);
 
         MyState = malloc(sizeof *MyState);
         *MyState = false;
-        vec_push(ThreadStates, MyState);
+        vec_push(MyGroup->ThreadStates, MyState);
 
         --GC_OFF_COUNT;
 
-        pthread_mutex_unlock(&ThreadsLock);
+        pthread_mutex_unlock(&MyGroup->Lock);
 
         GCLOG("AddThread(): %llu: finished", (long long unsigned)pthread_self());
 }
@@ -803,39 +801,39 @@ AddThread(void)
 static void
 CleanupThread(void *ctx)
 {
-        GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, DeadUsed);
+        GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        pthread_mutex_lock(&DeadMutex);
+        pthread_mutex_lock(&MyGroup->DLock);
 
-        if (DeadUsed + MemoryUsed > MemoryLimit) {
-                pthread_mutex_unlock(&DeadMutex);
+        if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
+                pthread_mutex_unlock(&MyGroup->DLock);
                 DoGC();
-                pthread_mutex_lock(&DeadMutex);
+                pthread_mutex_lock(&MyGroup->DLock);
         }
 
-        vec_push_n_unchecked(DeadAllocs, allocs.items, allocs.count);
-        DeadUsed += MemoryUsed;
+        vec_push_n_unchecked(MyGroup->DeadAllocs, allocs.items, allocs.count);
+        MyGroup->DeadUsed += MemoryUsed;
 
         allocs.count = 0;
 
-        pthread_mutex_unlock(&DeadMutex);
+        pthread_mutex_unlock(&MyGroup->DLock);
 
         ReleaseLock(true);
 
-        pthread_mutex_lock(&ThreadsLock);
+        pthread_mutex_lock(&MyGroup->Lock);
 
         GCLOG("Got threads lock on thread: %llu -- ready to clean up", TID);
 
-        for (int i = 0; i < ThreadList.count; ++i) {
-                if (pthread_equal(ThreadList.items[i], pthread_self())) {
-                        ThreadList.items[i] = *vec_pop(ThreadList);
-                        ThreadLocks.items[i] = *vec_pop(ThreadLocks);
-                        ThreadStorages.items[i] = *vec_pop(ThreadStorages);
-                        ThreadStates.items[i] = *vec_pop(ThreadStates);
+        for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
+                if (pthread_equal(MyGroup->ThreadList.items[i], pthread_self())) {
+                        MyGroup->ThreadList.items[i] = *vec_pop(MyGroup->ThreadList);
+                        MyGroup->ThreadLocks.items[i] = *vec_pop(MyGroup->ThreadLocks);
+                        MyGroup->ThreadStorages.items[i] = *vec_pop(MyGroup->ThreadStorages);
+                        MyGroup->ThreadStates.items[i] = *vec_pop(MyGroup->ThreadStates);
                 }
         }
 
-        pthread_mutex_unlock(&ThreadsLock);
+        pthread_mutex_unlock(&MyGroup->Lock);
 
         pthread_mutex_destroy(MyLock);
         free(MyLock);
@@ -852,6 +850,18 @@ CleanupThread(void *ctx)
 
         vec(struct value const *) *root_set = GCRootSet();
         gc_free(root_set->items);
+
+        if (MyGroup->ThreadList.count == 0) {
+                pthread_mutex_destroy(&MyGroup->Lock);
+                pthread_mutex_destroy(&MyGroup->GCLock);
+                pthread_mutex_destroy(&MyGroup->DLock);
+                gc_free(MyGroup->ThreadList.items);
+                gc_free(MyGroup->ThreadLocks.items);
+                gc_free(MyGroup->ThreadStates.items);
+                gc_free(MyGroup->ThreadStorages.items);
+                gc_free(MyGroup->DeadAllocs.items);
+                gc_free(MyGroup);
+        }
 
         GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
 }
@@ -872,11 +882,9 @@ vm_run_thread(void *p)
                 push(call[++argc]);
         }
 
-        if (ctx->isolated) {
-                SetupIsolatedThread();
-        } else {
-                AddThread();
-        }
+        MyGroup = ctx->group;
+
+        AddThread();
 
         gc_push(&call[0]);
 
@@ -1379,7 +1387,7 @@ vm_exec(char *code)
 #endif
 
         for (;;) {
-        if (!IsolatedThread && GC_OFF_COUNT == 0 && atomic_load(&WantGC)) {
+        if (GC_OFF_COUNT == 0 && atomic_load(&MyGroup->WantGC)) {
                 WaitGC();
         }
         for (int N = 0; N < 10; ++N) {
@@ -1936,7 +1944,6 @@ Throw:
                         NOGC(v.array);
 
                         if (n > 0) {
-
                                 vec_reserve(*v.array, n);
 
                                 memcpy(
@@ -3404,9 +3411,9 @@ vm_init(int ac, char **av)
         vec_init(calls);
         vec_init(targets);
 
-        MainThread = pthread_self();
+        InitThreadGroup(MyGroup = &MainGroup);
 
-        atomic_init(&WantGC, false);
+        MainThread = pthread_self();
 
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);

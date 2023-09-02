@@ -4881,6 +4881,14 @@ builtin_finalizer(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_ty_gc(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.gc()", 0);
+        DoGC();
+        return NIL;
+}
+
+struct value
 builtin_ty_unlock(int argc, struct value *kwargs)
 {
         ReleaseLock(true);

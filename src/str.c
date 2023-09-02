@@ -152,6 +152,39 @@ string_size(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
+string_bslice(struct value *string, int argc, struct value *kwargs)
+{
+        if (argc == 0 || argc > 2)
+                vm_panic("str.bslice() expects 1 or 2 arguments but got %d", argc);
+
+        struct value start = ARG(0);
+
+        if (start.type != VALUE_INTEGER)
+                vm_panic("str.bslice(): expected integer but got: %s", value_show(&start));
+
+        int i = start.integer;
+        int n;
+
+        if (i < 0) {
+                i += string->bytes;
+        }
+
+        if (argc == 2) {
+                struct value len = ARG(1);
+                if (len.type != VALUE_INTEGER)
+                        vm_panic("str.bslice(): expected integer but got: %s", value_show(&len));
+                n = len.integer;
+        } else {
+                n = (int)string->bytes - i;
+        }
+
+        i = min(max(i, 0), string->bytes);
+        n = min(max(n, 0), string->bytes - i);
+
+        return STRING_VIEW(*string, i, n);
+}
+
+static struct value
 string_slice(struct value *string, int argc, struct value *kwargs)
 {
         if (argc == 0 || argc > 2)
@@ -283,6 +316,63 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         gc_pop();
 
         return result;
+}
+
+static struct value
+string_bsearch(struct value *string, int argc, struct value *kwargs)
+{
+        if (argc != 1 && argc != 2)
+                vm_panic("str.bsearch() expects 1 or 2 arguments but got %d", argc);
+
+        struct value pattern = ARG(0);
+
+        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
+                vm_panic("the pattern argument to str.bsearch() must be a string or a regex");
+
+        int offset;
+        if (argc == 1)
+                offset = 0;
+        else if (ARG(1).type == VALUE_INTEGER)
+                offset = ARG(1).integer;
+        else
+                vm_panic("the second argument to str.bsearch() must be an integer");
+
+        if (offset < 0) {
+                offset += string->bytes;
+        }
+
+        if (offset < 0)
+                vm_panic("invalid offset passed to str.bsearch()");
+
+        char const *s = string->string + offset;
+        int bytes = string->bytes - offset;
+
+        int n;
+
+        if (pattern.type == VALUE_STRING) {
+                char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
+
+                if (match == NULL)
+                        return NIL;
+
+                n = match - s;
+        } else {
+                pcre *re = pattern.regex->pcre;
+                int rc;
+                int out[3];
+
+                rc = pcre_exec(re, pattern.regex->extra, s, bytes, 0, 0, out, 3);
+
+                if (rc == -1 || rc == -2)
+                        return NIL;
+
+                if (rc < -1)
+                        vm_panic("error executing regular expression: %d", rc);
+
+                n = out[0];
+        }
+
+        return INTEGER(offset + n);
 }
 
 static struct value
@@ -1226,6 +1316,8 @@ string_clone(struct value *string, int argc, struct value *kwargs)
 }
 
 DEFINE_METHOD_TABLE(
+        { .name = "bsearch",   .func = string_bsearch    },
+        { .name = "bslice",    .func = string_bslice     },
         { .name = "byte",      .func = string_byte       },
         { .name = "bytes",     .func = string_bytes      },
         { .name = "char",      .func = string_char       },

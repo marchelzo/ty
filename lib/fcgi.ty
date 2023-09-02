@@ -117,7 +117,7 @@ class FCGIParser {
                 }
             }
 
-            yield FCGIRequest(nil, body.str(), params, @fd)
+            yield FCGIRequest(nil, body.str!(), params, @fd)
         }
     }
 
@@ -281,10 +281,40 @@ class FCGIRequest {
 
     formData() {
         if self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/) {
+            let form = %{}
             let [_, delim] = self.body.match!(/^(.*)\r\n/)
-            let pattern = regex("{delim}\\r\\n.*name=\"([^\"]+)\"\\r\\n\\r\\n((?:.|\\n)+?)(?=\\r\\n{delim})")
-            let fields = self.body.matches(pattern)
-            return %{ k: v for [_, k, v] in fields }
+            let offset = 0
+
+            while let $i = self.body.bsearch(delim, offset) {
+                let j = self.body.bsearch('\r\n\r\n', i)
+                let headers = self.body.bsplice(i + #delim + 2, j).split(/\r\n/)
+                let k = self.body.bsearch(delim, j)
+                let content = self.body.bsplice(j + 4, k - 2)
+
+                offset = k + #delim + 2
+
+                let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
+                let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
+                let name = disposition['name']
+                let filename = disposition['filename']
+
+                if filename != nil {
+                    let f = {
+                        name: filename,
+                        type: headers['content-type'],
+                        content: Blob(content)
+                    }
+                    if let $fs = form[name] {
+                        fs.push(f)
+                    } else {
+                        form[name] = [f]
+                    }
+                } else {
+                    form[disposition['name']] = content
+                }
+            }
+
+            return form
         } else if self.params['CONTENT_TYPE'].match?(/^application\/x-www-form-urlencoded/) {
             return urlDecode(self.body)
         } else {

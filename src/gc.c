@@ -79,8 +79,10 @@ GCForget(AllocList *allocs, size_t *used)
         size_t n = 0;
 
         for (size_t i = 0; i < allocs->count;) {
+                if (allocs->items[i] == NULL) {
+                        abort();
+                }
                 if (!atomic_load(&allocs->items[i]->mark) && atomic_load(&allocs->items[i]->hard) == 0) {
-                        atomic_store(&allocs->items[i]->mark, false);
                         allocs->items[n++] = allocs->items[i++];
                 } else {
                         *used -= min(allocs->items[i]->size, *used);
@@ -93,7 +95,8 @@ GCForget(AllocList *allocs, size_t *used)
 void
 GCSweep(AllocList *allocs, size_t *used)
 {
-        int n = 0;
+        size_t n = 0;
+
         for (int i = 0; i < allocs->count; ++i) {
                 if (!atomic_load(&allocs->items[i]->mark) && atomic_load(&allocs->items[i]->hard) == 0) {
                         *used -= min(allocs->items[i]->size, *used);

@@ -351,6 +351,14 @@ class String : Iterable {
         return @match?(/^\d+(?:\.\d+)?$/)
     }
 
+    splice(i, j) {
+        self.slice(i, j - i)
+    }
+
+    bsplice(i, j) {
+        self.bslice(i, j - i)
+    }
+
     lower?() {
         return self == @lower()
     }

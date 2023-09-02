@@ -8,6 +8,7 @@
 #define XLOG(...) do { \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \
+                        fprintf(stderr, "(%14llu) ", TID), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
                         funlockfile(stderr); \
