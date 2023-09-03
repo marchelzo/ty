@@ -272,7 +272,8 @@ class FCGIRequest {
         @stream.write(buffer)
 
         @stream.flush()
-        os.write(@app.death.1, Blob(@fd >> 8, @fd .&. 0xFF))
+
+        @app.death.push(@stream)
     }
 
     queryParams() {
@@ -296,9 +297,8 @@ class FCGIRequest {
                 let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
                 let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
                 let name = disposition['name']
-                let filename = disposition['filename']
 
-                if filename != nil {
+                if let $filename = disposition['filename'] {
                     let f = {
                         name: filename,
                         type: headers['content-type'],
@@ -326,15 +326,18 @@ class FCGIRequest {
 class FCGIApp {
     init(socket) {
         self.socket = socket
-        @death = os.pipe()
+        @death = Sync([])
         @clients = %{}
     }
 
     run*() {
         while true {
+            while #@death > 0 {
+                @death.pop().close()
+            }
+
             let pollFds = [
-                (fd: @socket, events: os.POLLIN),
-                (fd: @death.0, events: os.POLLIN)
+                (fd: @socket, events: os.POLLIN)
             ]
 
             for client in @clients {
@@ -351,13 +354,7 @@ class FCGIApp {
                 @clients[conn] = FCGIParser(conn)
             }
 
-            if pollFds[1].revents .&. os.POLLIN {
-                let b = os.read(@death.0, 2)
-                let fd = (b[0] << 8) + b[1]
-                os.close(fd)
-            }
-
-            for {fd, events, revents} in pollFds.drop(2) {
+            for {fd, events, revents} in pollFds.drop(1) {
                 if revents .&. os.POLLIN {
                     if let $data = os.read(fd, 4096) {
                         if let $request = @clients[fd].push(data) {
