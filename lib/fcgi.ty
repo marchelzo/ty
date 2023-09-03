@@ -287,13 +287,12 @@ class FCGIRequest {
             let offset = 0
 
             while let $i = self.body.bsearch(delim, offset) {
-                let j = self.body.bsearch('\r\n\r\n', i)
+                if not let $j = self.body.bsearch('\r\n\r\n', i) {
+                    break
+                }
                 let headers = self.body.bsplice(i + #delim + 2, j).split(/\r\n/)
-                let k = self.body.bsearch(delim, j)
-                let content = self.body.bsplice(j + 4, k - 2)
-
-                offset = k + #delim + 2
-
+                offset = self.body.bsearch(delim, j)
+                let content = self.body.bsplice(j + 4, offset - 2)
                 let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
                 let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
                 let name = disposition['name']
