@@ -76,6 +76,7 @@
 { .module = "os",     .name = "close",             .value = BUILTIN(builtin_os_close)                      },
 { .module = "os",     .name = "mktemp",            .value = BUILTIN(builtin_os_mktemp)                     },
 { .module = "os",     .name = "unlink",            .value = BUILTIN(builtin_os_unlink)                     },
+{ .module = "os",     .name = "rename",            .value = BUILTIN(builtin_os_rename)                     },
 { .module = "os",     .name = "getcwd",            .value = BUILTIN(builtin_os_getcwd)                     },
 { .module = "os",     .name = "mkdir",             .value = BUILTIN(builtin_os_mkdir)                      },
 { .module = "os",     .name = "rmdir",             .value = BUILTIN(builtin_os_rmdir)                      },

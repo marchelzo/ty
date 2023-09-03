@@ -250,6 +250,9 @@ struct value
 builtin_os_unlink(int argc, struct value *kwargs);
 
 struct value
+builtin_os_rename(int argc, struct value *kwargs);
+
+struct value
 builtin_os_read(int argc, struct value *kwargs);
 
 struct value

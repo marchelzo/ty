@@ -1549,6 +1549,36 @@ builtin_os_unlink(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_rename(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.rename()", 2);
+
+        struct value old = ARG(0);
+        struct value new = ARG(1);
+
+        if (old.type != VALUE_STRING) {
+                vm_panic("os.rename(): expected string but got: %s", value_show(&old));
+        }
+
+        if (new.type != VALUE_STRING) {
+                vm_panic("os.rename(): expected string but got: %s", value_show(&new));
+        }
+        
+        if (old.bytes + new.bytes + 2 > sizeof buffer) {
+                errno = ENAMETOOLONG;
+                return INTEGER(-1);
+        }
+
+        memcpy(buffer, old.string, old.bytes);
+        buffer[old.bytes] = '\0';
+
+        memcpy(buffer + old.bytes + 1, new.string, new.bytes);
+        buffer[old.bytes + 1 + new.bytes] = '\0';
+
+        return INTEGER(rename(buffer, buffer + old.bytes + 1));
+}
+
+struct value
 builtin_os_mkdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.mkdir()", 1, 2);
