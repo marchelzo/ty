@@ -1086,6 +1086,26 @@ builtin_json_encode(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_sha256(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("sha256", 1);
+
+        struct value s = ARG(0);
+        unsigned char digest[SHA256_DIGEST_LENGTH];
+
+        if (s.type == VALUE_STRING) {
+                SHA256((unsigned char const *)s.string, s.bytes, digest);
+        } else if (s.type == VALUE_BLOB) {
+                SHA256(s.blob->items, s.blob->count, digest);
+        }
+
+        struct blob *b = value_blob_new();
+        vec_push_n(*b, digest, sizeof digest);
+
+        return BLOB(b);
+}
+
+struct value
 builtin_sha1(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("sha1", 1);

@@ -193,6 +193,9 @@ struct value
 builtin_sha1(int argc, struct value *kwargs);
 
 struct value
+builtin_sha256(int argc, struct value *kwargs);
+
+struct value
 builtin_base64_encode(int argc, struct value *kwargs);
 
 struct value
