@@ -749,6 +749,14 @@ class Tuple {
         true
     }
 
+    __drop__() {
+        try {
+            for i in 0.count() {
+                self[i].?__drop__()
+            }
+        } catch _ :: IndexError;
+    }
+
     __match__(t) {
         let myMembers = members(self)
         let tMembers = members(t)
@@ -1532,9 +1540,11 @@ class Sync {
     }
 
     static get(x) {
-        with x.mtx.lock() {
-            x.x
-        }
+        x.x
+    }
+
+    static lock(x) {
+        x.mtx.lock()
     }
 
     __missing__(name, *args) {
@@ -1920,11 +1930,62 @@ macro lock! {
     let mtx = parse.expr(0)
     let stmt = parse.stmt(0)
     ty.With(
-        ty.Let(
+        [ty.Let(
             ty.Id(name: '_'),
             ty.MethodCall(object: mtx, method: 'lock', args: [])
-        ),
+        )],
         stmt
+    )
+}
+
+macro sync! {
+    // (
+    lex.next()
+
+    let names = []
+
+    while lex.peek().type != ')' {
+        names.push(lex.next().id)
+        if lex.peek().type == ',' {
+            lex.next()
+        }
+    }
+
+    // )
+    lex.next()
+
+    let body = parse.stmt(0)
+
+    let locks = []
+    let defs = []
+
+    for name in names {
+        locks.push(
+            ty.Let(
+                ty.Id(name: '_'),
+                ty.Call(
+                    func: ty.Value(Sync.lock),
+                    args: [ty.Arg(arg: ty.Id(name: name))]
+                )
+            )
+        )
+        defs.push(
+            ty.Let(
+                ty.Id(name: name),
+                ty.Call(
+                    func: ty.Value(Sync.get),
+                    args: [ty.Arg(arg: ty.Id(name: name))]
+                )
+            )
+        )
+    }
+
+    ty.With(
+        locks,
+        ty.Block([
+            *defs,
+            body
+        ])
     )
 }
 
