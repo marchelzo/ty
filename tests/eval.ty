@@ -1,0 +1,13 @@
+function e() {
+    let n = 21
+    __eval__('''
+        let x = 40;
+        x + n
+    ''')
+}
+
+if e() == 61 {
+    print('PASS')
+} else {
+    print('FAIL')
+}

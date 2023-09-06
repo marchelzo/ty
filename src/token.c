@@ -49,6 +49,7 @@ static struct {
         { "Next",      KEYWORD_NEXT      },
         { "generator", KEYWORD_GENERATOR },
         { "static",    KEYWORD_STATIC    },
+        { "__eval__",  KEYWORD_EVAL      },
 };
 
 static struct {

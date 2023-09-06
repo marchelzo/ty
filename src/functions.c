@@ -4965,11 +4965,39 @@ builtin_ty_gensym(int argc, struct value *kwargs)
 struct value
 builtin_eval(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("ty.eval()", 1);
+        ASSERT_ARGC_2("ty.eval()", 1, 2);
 
-        struct expression *expr = cexpr(&ARG(0));
+        struct scope *scope = NULL;
 
-        return tyeval(expr);
+        if (argc == 2) {
+                scope = ARG(1).ptr;
+        }
+
+        if (ARG(0).type == VALUE_STRING) {
+                B.count = 0;
+                vec_push_unchecked(B, '\0');
+                vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
+                vec_push_unchecked(B, '\0');
+                struct statement **prog = parse(B.items + 1, "(eval)");
+                struct expression *e = gc_alloc(sizeof *e);
+                *e = (struct expression){0};
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = gc_alloc(sizeof *e);
+                e->statement->type = STATEMENT_BLOCK;
+                vec_init(e->statement->statements);
+                while (*prog != NULL) {
+                        vec_push_unchecked(e->statement->statements, *prog);
+                        prog += 1;
+                }
+
+                if (!compiler_symbolize_expression(e, scope)) {
+                        return NIL;
+                }
+
+                return tyeval(e);
+        } else {
+                return tyeval(cexpr(&ARG(0)));
+        }
 }
 
 struct value

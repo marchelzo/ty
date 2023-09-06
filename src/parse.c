@@ -828,6 +828,19 @@ prefix_identifier(void)
 }
 
 static struct expression *
+prefix_eval(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_EVAL;
+        next();
+        consume('(');
+        e->operand = parse_expr(0);
+        consume(')');
+        e->end = End;
+        return e;
+}
+
+static struct expression *
 prefix_function(void)
 {
         struct expression *e = mkfunc();
@@ -1514,6 +1527,8 @@ prefix_parenthesis(void)
                         vec_push(list->tconds, NULL);
                         return list;
                 } else {
+                        e->start = start;
+                        e->end = End;
                         return e;
                 }
         }
@@ -2680,6 +2695,7 @@ Keyword:
         case KEYWORD_MATCH:     return prefix_match;
         case KEYWORD_FUNCTION:  return prefix_function;
         case KEYWORD_GENERATOR: return prefix_function;
+        case KEYWORD_EVAL:      return prefix_eval;
         case KEYWORD_TRUE:      return prefix_true;
         case KEYWORD_FALSE:     return prefix_false;
         case KEYWORD_SELF:      return prefix_self;
@@ -4241,7 +4257,7 @@ parse_get_expr(int prec, bool resolve)
                 if (!resolve) {
                         v = tyexpr(e);
                 } else {
-                        compiler_symbolize_expression(e);
+                        compiler_symbolize_expression(e, NULL);
                         v = PTR(e);
                         v.type |= VALUE_TAGGED;
                         v.tags = tags_push(0, TyExpr);

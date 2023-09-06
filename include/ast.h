@@ -218,6 +218,8 @@ struct expression {
                 EXPRESSION_PREFIX_DEC,
                 EXPRESSION_POSTFIX_INC,
                 EXPRESSION_POSTFIX_DEC,
+				EXPRESSION_PTR,
+                EXPRESSION_EVAL,
 
                 EXPRESSION_MACRO_INVOCATION,
                 EXPRESSION_VALUE,
@@ -236,8 +238,12 @@ struct expression {
                 char *string;
                 float real;
                 struct statement *statement;
-                struct expression *operand;
                 struct value *v;
+				void *p;
+                struct {
+                        struct expression *operand;
+                        struct scope *escope;
+                };
                 struct {
                         struct symbol *atmp;
                         expression_vector elements;

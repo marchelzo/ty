@@ -1046,7 +1046,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
                 if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
                         e->type = EXPRESSION_INTEGER;
-                        e->integer = e->start.line;
+                        e->integer = state.start.line;
                         break;
                 }
                 // This turned out to be cringe
@@ -1142,6 +1142,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->left);
                 symbolize_expression(scope, e->right);
                 break;
+        case EXPRESSION_EVAL:
+                e->escope = scope;
+                scope_capture_all(scope);
         case EXPRESSION_PREFIX_HASH:
         case EXPRESSION_PREFIX_BANG:
         case EXPRESSION_PREFIX_QUESTION:
@@ -3735,13 +3738,18 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_SPECIAL_STRING:
                 emit_special_string(e);
                 break;
+        case EXPRESSION_EVAL:
+                emit_expression(e->operand);
+                emit_instr(INSTR_EVAL);
+                emit_symbol((uintptr_t)e->escope);
+                break;
         case EXPRESSION_TAG:
                 emit_instr(INSTR_TAG);
                 emit_int(e->symbol->tag);
                 break;
         case EXPRESSION_REGEX:
                 emit_instr(INSTR_REGEX);
-                emit_symbol((uintptr_t) e->regex);
+                emit_symbol((uintptr_t)e->regex);
                 break;
         case EXPRESSION_ARRAY:
                 emit_instr(INSTR_SAVE_STACK_POS);
@@ -5155,9 +5163,13 @@ tyexpr(struct expression const *e)
                 v.tags = tags_push(0, TyMemberAccess);
                 break;
         case EXPRESSION_WITH:
+                v = ARRAY(value_array_new());
+                for (int i = 0; i < e->with.defs.count; ++i) {
+                        value_array_push(v.array, tystmt(e->with.defs.items[i]));
+                }
                 v = tagged(
                         TyWith,
-                        tystmt(e->with.defs.items[0]),
+                        v,
                         tystmt(e->with.block->statements.items[1]->try.s),
                         NONE
                 );
@@ -5684,8 +5696,11 @@ cexpr(struct value *v)
                 e->object = cexpr(&v->items[0]);
                 e->member_name = mkcstr(&v->items[1]);
         } else if (tags_first(v->tags) == TyWith) {
+                struct value *lets = &v->items[0];
                 statement_vector defs = {0};
-                vec_push(defs, cstmt(&v->items[0]));
+                for (int i = 0; i < lets->array->count; ++i) {
+                        vec_push(defs, cstmt(&lets->array->items[i]));
+                }
                 make_with(e, defs, cstmt(&v->items[1]));
         } else if (tags_first(v->tags) == TyCond) {
                 e->type = EXPRESSION_CONDITIONAL;
@@ -5803,7 +5818,8 @@ cexpr(struct value *v)
 struct value
 tyeval(struct expression *e)
 {
-        symbolize_expression(state.macro_scope, e);
+        if (!e->symbolized)
+                symbolize_expression(state.macro_scope, e);
 
         byte_vector code_save = state.code;
         vec_init(state.code);
@@ -5811,10 +5827,7 @@ tyeval(struct expression *e)
         emit_expression(e);
         emit_instr(INSTR_HALT);
 
-        vm_exec(state.code.items);
-
-        struct value v = *vm_get(0);
-        vm_pop();
+        struct value v = vm_exec_or_nil(state.code.items);
 
         state.code = code_save;
 
@@ -5935,9 +5948,21 @@ is_macro(struct expression const *e)
         return s != NULL && s->macro;
 }
 
-void
-compiler_symbolize_expression(struct expression *e)
+bool
+compiler_symbolize_expression(struct expression *e, struct scope *scope)
 {
-        symbolize_expression(state.global, e);
+        if (setjmp(jb) != 0) {
+                return false;
+        }
+
+        if (scope == NULL) {
+                symbolize_expression(state.global, e);
+        } else {
+                state.fscope = scope->function;
+                symbolize_expression(scope, e);
+        }
+
         e->symbolized = true;
+
+        return true;
 }

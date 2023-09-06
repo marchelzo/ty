@@ -1360,6 +1360,21 @@ DoAssign(void)
         }
 }
 
+struct value
+vm_exec_or_nil(char *ip)
+{
+        jmp_buf jb_;
+        memcpy(&jb_, &jb, sizeof jb_);
+
+        if (setjmp(jb) != 0) {
+                return NIL;
+        }
+
+        vm_exec(ip);
+
+        return pop();
+}
+
 void
 vm_exec(char *code)
 {
@@ -1412,6 +1427,9 @@ vm_exec(char *code)
                 CASE(LOAD_CAPTURED)
                         READVALUE(n);
                         LOG("Loading capture %d of %s", n, value_show(&vec_last(frames)->f));
+                        if (vec_last(frames)->f.env == NULL) {
+                            puts(value_show(&vec_last(frames)->f));
+                        }
                         push(*vec_last(frames)->f.env[n]);
                         break;
                 CASE(LOAD_GLOBAL)
@@ -2114,6 +2132,14 @@ Throw:
                 CASE(VALUE)
                         READVALUE(s);
                         push(*(struct value *)s);
+                        break;
+                CASE(EVAL)
+                        READVALUE(s);
+                        push(PTR((void *)s));
+                        v = builtin_eval(2, NULL);
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(FUCK)
                 CASE(FUCK2)

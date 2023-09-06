@@ -94,6 +94,8 @@ scope_lookup(struct scope const *s, char const *id)
                 for (int i = scopes.count - 1; i >= 0; --i) {
                         parent_index = scope_capture(scopes.items[i], sym, parent_index);
                 }
+
+                vec_empty(scopes);
         }
 
         return sym;
@@ -201,6 +203,36 @@ scope_is_subscope(struct scope const *sub, struct scope const *scope)
         }
 
         return false;
+}
+
+void
+scope_capture_all(struct scope *scope)
+{
+        if (scope->function->parent == NULL)
+                return;
+
+        for (struct scope *s = scope->function->parent; s->parent->function->parent != NULL; s = s->parent) {
+                for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                        for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+                                vec(struct scope *) scopes = {0};
+
+                                struct scope *fscope = scope->function;
+
+                                while (fscope->parent->function != sym->scope->function) {
+                                        vec_push(scopes, fscope);
+                                        fscope = fscope->parent->function;
+                                }
+
+                                int parent_index = scope_capture(fscope, sym, -1);
+
+                                for (int i = scopes.count - 1; i >= 0; --i) {
+                                        parent_index = scope_capture(scopes.items[i], sym, parent_index);
+                                }
+
+                                vec_empty(scopes);
+                        }
+                }
+        }
 }
 
 int

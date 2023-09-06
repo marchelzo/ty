@@ -117,6 +117,7 @@ enum instruction {
         INSTR_FUCK3,
 
         INSTR_VALUE,
+        INSTR_EVAL,
 
         INSTR_SAVE_STACK_POS,
         INSTR_RESTORE_STACK_POS,
@@ -247,6 +248,9 @@ vm_load_c_module(char const *name, void *p);
 
 void
 vm_exec(char *ip);
+
+struct value
+vm_exec_or_nil(char *ip);
 
 struct value
 GetMember(struct value v, char const *member, unsigned long h, bool b);

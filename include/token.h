@@ -114,6 +114,7 @@ struct token {
                         KEYWORD_DEFER,
                         KEYWORD_WITH,
 						KEYWORD_STATIC,
+						KEYWORD_EVAL,
                 } keyword;
                 struct expression *e;
                 struct regex const *regex;
