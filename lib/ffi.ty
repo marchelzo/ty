@@ -81,6 +81,14 @@ function fun() {
     ty.Let(ty.Id(name: name), ty.Call(func: ty.Value(wrap), args: args), public: public)
 }
 
+/*
+ * C! struct Foo {
+ *      c.int a;
+ *      c.ptr p;
+ *      c.u8 data[10];
+ *
+ * }
+ */
 function strct() {
     // struct
     next()
@@ -158,8 +166,7 @@ function strct() {
                                 )
                             ),
                             ty.Call(
-                                ty.Value(memcpy),
-                                //func: ty.Id(name: 'memcpy', module: 'c'),
+                                func: ty.Value(memcpy),
                                 args: [
                                     ty.Arg(
                                         arg: ty.Call(
