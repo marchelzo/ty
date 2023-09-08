@@ -53,6 +53,16 @@ let cmark_node_get_fence_info = wrap(cmark, 'cmark_node_get_fence_info', c.ptr, 
 let cmark_node_get_url = wrap(cmark, 'cmark_node_get_url', c.ptr, c.ptr)
 let cmark_node_get_title = wrap(cmark, 'cmark_node_get_title', c.ptr, c.ptr)
 
+let CMARK_NO_LIST      = 0
+let CMARK_BULLET_LIST  = 1
+let CMARK_ORDERED_LIST = 2
+
+let ListType = {
+    None: CMARK_NO_LIST,
+    Bullet: CMARK_BULLET_LIST,
+    Ordered: CMARK_ORDERED_LIST
+}
+
 let NodeType = {
   None: CMARK_NODE_NONE,
   Document: CMARK_NODE_DOCUMENT,
@@ -92,19 +102,19 @@ class MarkdownNode {
   }
 
   headingLevel() {
-    if let n = cmark_node_get_heading_level(@node) and n > 0 {
+    if let $n = cmark_node_get_heading_level(@node) and n > 0 {
       n
     }
   }
 
   listType() {
-    if let t = cmark_node_get_list_type(@node) and t > 0 {
+    if let $t = cmark_node_get_list_type(@node) and t > 0 {
       t
     }
   }
 
   infoString() {
-    if let p = cmark_node_get_fence_info(@node) {
+    if let $p = cmark_node_get_fence_info(@node) {
       c.as_str(p)
     }
   }
@@ -155,7 +165,7 @@ class MarkdownNode {
       NodeType.Code      => "<code>{@text()}</code>",
       NodeType.CodeBlock => "<pre>{@codeTag()}{@text()}</code></pre>",
       NodeType.Paragraph => "<p>{@childrenHtml()}</p>",
-      NodeType.List      => "<ul>{@childrenHtml()}</ul>",
+      NodeType.List      => @listType() == ListType.Bullet ? "<ul>{@childrenHtml()}</ul>" : "<ol>{@childrenHtml()}</ol>",
       NodeType.Item      => "<li>{@childrenHtml()}</li>"
     }
   }
