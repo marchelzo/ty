@@ -207,6 +207,7 @@ _Thread_local pthread_mutex_t *MyLock;
 static _Thread_local _Atomic bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
 static _Thread_local ThreadGroup *MyGroup;
+static _Thread_local bool GCInProgress;
 
 void
 MarkStorage(ThreadStorage const *storage);
@@ -273,6 +274,9 @@ NewThreadGroup(void)
 static void
 WaitGC()
 {
+        if (GCInProgress)
+                return;
+
         GCLOG("Waiting for GC on thread %llu", TID);
 
         ReleaseLock(false);
@@ -313,6 +317,8 @@ DoGC()
                 WaitGC();
                 return;
         }
+
+        GCInProgress = true;
 
         pthread_mutex_lock(&MyGroup->Lock);
 
@@ -411,6 +417,8 @@ DoGC()
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
         pthread_barrier_wait(&MyGroup->GCBarrierDone);
+
+        GCInProgress = false;
 }
 
 static struct {
@@ -1367,10 +1375,13 @@ vm_exec_or_nil(char *ip)
         memcpy(&jb_, &jb, sizeof jb_);
 
         if (setjmp(jb) != 0) {
+                memcpy(&jb, &jb_, sizeof jb_);
                 return NIL;
         }
 
         vm_exec(ip);
+
+        memcpy(&jb, &jb_, sizeof jb_);
 
         return pop();
 }

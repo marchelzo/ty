@@ -1,7 +1,7 @@
 import ffi as c
 import cutil (wrap, cfun!)
 
-if not let $curses = c.dlopen('libncursesw.so.5') ?? c.dlopen('libncursesw.so.6') {
+if not let $curses = c.dlopen('libncursesw.so.5') ?? c.dlopen('libncursesw.so.6') ?? c.dlopen('libncurses.dylib') {
 	throw 'Failed to load curses'
 }
 
@@ -36,6 +36,7 @@ pub waddnstr = wrap(curses, 'waddnstr', c.int, c.ptr, c.ptr, c.int)
 pub refresh = wrap(curses, 'refresh', c.int)
 pub wrefresh = wrap(curses, 'wrefresh', c.int, c.ptr)
 pub wclear = wrap(curses, 'wclear', c.int, c.ptr)
+pub erase = wrap(curses, 'erase', c.int)
 pub werase = wrap(curses, 'werase', c.int, c.ptr)
 pub getch = wrap(curses, 'getch', c.int)
 pub curs_set = wrap(curses, 'curs_set', c.int, c.int)
@@ -61,6 +62,7 @@ pub scrollok = wrap(curses, 'scrollok', c.int, c.ptr, c.u8)
 pub immedok = wrap(curses, 'immedok', c.void, c.ptr, c.u8)
 pub idlok = wrap(curses, 'idlok', c.int, c.ptr, c.u8)
 pub wsetscrreg = wrap(curses, 'idlok', c.int, c.ptr, c.int, c.int)
+pub newterm = wrap(curses, 'newterm', c.ptr, c.ptr, c.ptr, c.ptr)
 
 pub stdscr = nil
 

@@ -1539,8 +1539,20 @@ class Sync {
         @mtx = Mutex()
     }
 
+    static read(x) {
+        with x.mtx.lock() {
+            x.x
+        }
+    }
+
     static get(x) {
         x.x
+    }
+
+    static set(x, y) {
+        with x.mtx.lock() {
+            x.x = y
+        }
     }
 
     static lock(x) {
