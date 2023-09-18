@@ -1539,6 +1539,14 @@ class Sync {
         @mtx = Mutex()
     }
 
+    static swap(x, y) {
+        with x.mtx.lock() {
+            let old = x.x
+            x.x = y
+            old
+        }
+    }
+
     static read(x) {
         with x.mtx.lock() {
             x.x
