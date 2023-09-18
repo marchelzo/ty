@@ -1,0 +1,619 @@
+import os (..)
+import errno
+import time
+import locale (..)
+import base64
+import termkey (..)
+import curses (..)
+import ffi as c
+import zlib
+import clap (clap!)
+import io
+
+clap! Args {
+    // Include warehouse message metadata
+    meta: Bool
+
+    // Port number of Warehouse server
+    port: Int
+
+    // Hostname of Warehouse server
+    host: String
+
+    slots: [String]
+}
+
+let args = Args().parse()
+
+if args.help {
+    exit(0)
+}
+
+//let ADDR = 'localhost'
+let ADDR = args.host ?? 'bgaragan-msi.mshome.net'
+let PORT = args.port ?? 25699
+let OLOSS = 0
+let ILOSS = 0
+let REGISTER_MSG = 'REGISTER,TyWHC,0.0.1,Based,10'
+let MAX_MSG_SIZE = 1 << 16
+let PROMPT = 'TyWHC> '
+let META = args.meta ?? false
+
+class AckedSet {
+    init() {
+        @n = -1
+        @ns = []
+    }
+
+    add(n) {
+        @ns.push(n)
+        @ns.sort!(desc: true)
+        while #@ns > 0 && @ns[-1] == @n + 1 {
+            @n = @ns.pop()
+        }
+    }
+
+    contains?(n) {
+        (n <= @n) || (n in @ns)
+    }
+}
+
+let Color = {
+    default: 1,
+    prompt: 2,
+    msg: 3,
+    warn: 4,
+    send: 5,
+    recv: 6,
+    time: 7,
+    slots: 8,
+    data: 9,
+    darkGray: 10,
+    lightGray: 11,
+    brightRed: 12,
+    brightYellow: 13,
+    brightGreen: 14,
+    paleRed: 15,
+    paleOrange: 16,
+    brightOrange: 17
+}
+
+let whSocket = socket(AF_INET, SOCK_DGRAM, 0)
+let Ok([warehouseEndpoint]) = getaddrinfo(ADDR, PORT, AF_INET, SOCK_DGRAM, 0)
+
+let needAck = []
+let nPacket = 0
+let lastKA = 0
+let acked = AckedSet()
+let myID = nil
+let tryingToRegister = true
+
+let log = io.open('wh.log', 'w+')
+
+function whSend(msg, log, pkt = true) {
+    let data = if !META || !pkt {
+        "{msg}"
+    } else if myID == nil {
+        Blob(":SEQ1,PKT{nPacket}:", msg)
+    } else {
+        Blob(":SEQ1,CLI{myID},PKT{nPacket}:", msg)
+    }
+
+    if myID != nil && log {
+        puts("SEND {data.str()}", color: Color.send)
+    }
+
+    if (pkt && META) needAck.push({
+        n: nPacket++,
+        t: time.utime() + 500000,
+        d: data
+    })
+
+    if rand() < OLOSS return 0
+
+    let r = sendto(whSocket, data, 0, warehouseEndpoint.address)
+
+    if r == -1 {
+        puts("sendto(): {errno.str()}")
+    }
+
+    return r
+}
+
+let ntfsEpoch = time.time(time.strptime('1601-01-01', '%Y-%m-%d'), utc: true)
+
+function windowsTime() {
+    (time.utime() / 1000) - (ntfsEpoch * 1000)
+}
+
+function timeString(t = time.utime() / 1000) {
+    let sec = t / 1000
+    let ms = t % 1000
+    time.strftime('%H:%M:%S.', sec) + str(ms).padLeft(3, '0')
+}
+
+function fitSlots(slots, W) {
+    function widths(cols) {
+            slots.map(&len).groupsOf(#slots / cols).map(&max)
+    }
+
+    let (cols, ws) = for cols in 1..#slots {
+            let ws = widths(cols + 1)
+            if ws.sum() + 2 * cols > W {
+                    break (cols, widths(cols))
+            }
+    } ?? (#slots, widths(#slots))
+
+    let cols = slots.groupsOf(#slots / cols)
+    let rows = cols.map(&len).max()
+
+    let result = []
+
+    for i in ..rows {
+            result.push(cols.map(c -> #c > i ? c[i] : '').zip(ws, (f, w) -> f.padRight(w)).join('  '))
+    }
+
+    result
+}
+
+let e = epoll_create(0)
+epoll_ctl(e, EPOLL_CTL_ADD, whSocket, EPOLLIN)
+epoll_ctl(e, EPOLL_CTL_ADD, 0, EPOLLIN)
+
+let mySlots = []
+let slotList = []
+let WH = %{*:[]}
+let filters = []
+
+whSend(REGISTER_MSG)
+print('Sent')
+
+setlocale(LC_ALL, '')
+
+let tk = termkey_new(0, TERMKEY_FLAG_CTRLC)
+let keyPtr = c.new(TermKeyKey)
+let keyName = c.alloc(100)
+let lastKey = nil
+let scroll = 0
+
+initscr()
+start_color()
+use_default_colors()
+//mousemask(0xFFFFFFFF)
+
+raw()
+noecho()
+
+init_pair(Color.default, -1, -1)
+init_pair(Color.prompt, 4, -1)
+init_pair(Color.msg, 5, -1)
+init_pair(Color.warn, 13, -1)
+init_pair(Color.send, 14, -1)
+init_pair(Color.recv, 11, -1)
+init_pair(Color.time, 6, -1)
+init_pair(Color.slots, 130, -1)
+init_pair(Color.data, 211, -1)
+init_pair(Color.darkGray, 238, -1)
+init_pair(Color.lightGray, 248, -1)
+init_pair(Color.brightRed, 197, -1)
+init_pair(Color.brightYellow, 226, -1)
+init_pair(Color.brightGreen, 47, -1)
+init_pair(Color.paleRed, 13, -1)
+init_pair(Color.paleOrange, 136, -1)
+init_pair(Color.brightOrange, 220, -1)
+
+let (H, W) = getmaxyx()
+let outputWindow = newpad(1000, W)
+let promptWindow = newwin(1, W, H - 1, 0)
+scrollok(outputWindow, true)
+
+let inputBuffer = []
+let cursor = 0
+
+let MSG = '👑'
+
+function draw() {
+    let (y, x) = getyx(outputWindow)
+    prefresh(outputWindow, max(0, y - H + 1 - scroll), 0, 0, 0, H - 1, W)
+    drawPrompt()
+}
+
+function puts(s, color = Color.default, time = time.utime() / 1000, doColors = false) {
+    wcolor_set(outputWindow, Color.time)
+    if time {
+        waddstr(outputWindow, timeString(time) + '  ')
+    } else {
+        waddstr(outputWindow, ' '.repeat(#timeString() + 2))
+    }
+
+    wcolor_set(outputWindow, color)
+
+    if !doColors {
+        waddstr(outputWindow, s)
+    } else {
+        let parts = s.matches(/\s+|\S+/)
+        for part in parts {
+            if part.match?(/\s/) {
+                waddstr(outputWindow, part)
+            } else {
+                let [int ~> c, s] = part.split(':', 1)
+                wcolor_set(outputWindow, c)
+                waddstr(outputWindow, s)
+                wcolor_set(outputWindow, color)
+            }
+        }
+    }
+
+    wcolor_set(outputWindow, Color.default)
+    waddstr(outputWindow, '\n')
+
+    draw()
+}
+
+function drawPrompt() {
+    wcolor_set(promptWindow, Color.prompt)
+    mvwaddstr(promptWindow, 0, 0, "{PROMPT}")
+    wcolor_set(promptWindow, Color.default)
+    waddstr(promptWindow, inputBuffer.str() ?? '')
+    if MSG {
+        wcolor_set(promptWindow, Color.msg)
+        waddstr(promptWindow, "  [{MSG}][{myID}]")
+        wcolor_set(promptWindow, Color.default)
+    }
+    wclrtoeol(promptWindow)
+    wmove(promptWindow, 0, #PROMPT + cursor)
+    wrefresh(promptWindow)
+}
+
+function lastRecvTime(slot) {
+    if let [(t, _, _), *] = WH[slot] {
+        t
+    }
+}
+
+function printItems(items, title) {
+    puts("|======= {title} =========|", Color.paleOrange)
+    if #items > 0 {
+        for line in fitSlots(items, W - 24) {
+            puts(line, Color.brightGreen, time: false)
+        }
+    }
+    puts("|========{'='.repeat(#title)}==========|", Color.paleOrange, time: false)
+}
+
+function printSlots(slots, title) {
+    puts("|======= {title} =========|", Color.slots)
+    if #slots > 0 {
+        for line in fitSlots(slots, W - 24) {
+            let parts = line.matches(/\s+|\S+/)
+            for part, i in parts {
+                if part.match?(/\s/) continue
+                parts[i] = if let $t = lastRecvTime(part) {
+                    let age = time.utime() - 1000 * t
+                    if age < 1000000 * 5 {
+                        "{Color.brightOrange}:{part}"
+                    } else if age < 1000000 * 3 * 60 {
+                        "{Color.paleOrange}:{part}"
+                    } else {
+                        "{Color.lightGray}:{part}"
+                    }
+                } else {
+                    "{Color.darkGray}:{part}"
+                }
+            }
+            puts(parts.str(), Color.slots, time: false, doColors: true)
+        }
+    }
+    puts("|========{'='.repeat(#title)}==========|", Color.slots, time: false)
+}
+
+let historyIndex = 0
+
+function doStdin() {
+    termkey_waitkey(tk, keyPtr)
+    termkey_strfkey(tk, keyName, 100, keyPtr, TERMKEY_FORMAT_VIM)
+    let key = c.as_str(keyName).clone()
+
+    let history = static!([])
+
+    if key == '<Enter>' {
+        let line = (inputBuffer.str() ?? '').strip()
+
+        if !line {
+            return
+        }
+
+        history.push(line)
+        historyIndex = 0
+        
+        inputBuffer = []
+        cursor = 0
+
+        let [cmd, ?rest] = line.strip().split(' ', 1)
+
+        match cmd.lower() {
+            _ :: ('add' | 'push') & rest != nil => {
+                let [slot, ?rest] = rest.split(' ', 1)
+                let data = rest ? ",{rest}" : ''
+                whSend("{cmd.upper()},{slot},{windowsTime()}{data}", true)
+            },
+
+            'reg' => {
+                whSend(REGISTER_MSG)
+            },
+
+            'raw' :: rest != nil => {
+                whSend(rest.sub(',T,', windowsTime()), true, pkt: false)
+            },
+
+            'sub' :: rest != nil => {
+                for slot in rest.words() {
+                    whSend("SUBSCRIBE,{myID},{slot}:1", true)
+                    mySlots.push(slot)
+                }
+            },
+
+            'rep' :: rest != nil => {
+                for slot in rest.words() {
+                    whSend("REPLICATE,{myID},{slot}:1", true)
+                    mySlots.push(slot)
+                }
+            },
+
+            'addn' => {
+                let [int ~> n, slot, ?rest] = rest.split(' ', 2)
+                let data = rest ? ",{rest}" : ''
+                for i in ..(n ?? 0) {
+                    whSend("ADD,{slot},{windowsTime()},{i}{data}", true)
+                }
+            },
+
+            'subs' => {
+                let search = (rest ?? '').lower()
+                let slots = mySlots.filter(&lower |> [search in]).sort()
+                printSlots(mySlots, 'Subscribed Slots')
+            },
+
+            'reload-faults' => {
+                let body = base64.encode(zlib.compress(slurp(rest ?? 'Faults.xml')))
+                whSend("PUSH,FaultManager-VCC-FaultConfig-Set,{windowsTime()},{body}")
+            },
+
+            'slots' => {
+                let search = (rest ?? '').lower()
+                let slots = slotList.filter(&lower |> [search in]).sort()
+                printSlots(slots, 'Warehouse Slots')
+            },
+
+            'filter' => {
+                if rest {
+                    if let $re = regex(rest) {
+                        filters.push((rest, re))
+                    }
+                } else {
+                    let fs = filters.map(&0).enumerate().map(p -> "{p.0 + 1}. /{p.1}/").list()
+                    printItems(fs, 'Active Filters')
+                }
+            },
+
+            _ :: ('del' | 'delete') => {
+                if let $i = int(rest) and i > 0 && i <= #filters {
+                    filters.pop(i - 1)
+                } else {
+                    puts("Invalid filter index: {rest}", Color.warn)
+                }
+            },
+
+            'colors' => {
+                if let [$lo, $hi] = rest.words().map(int) {
+                    for i in lo...hi {
+                        init_pair(25 + i, i, -1)
+                        puts("{i} => xxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 25 + i)
+                    }
+                }
+            },
+
+            'show' :: rest != nil => {
+                if let $slot = slotList.find(s -> s.lower() == rest.lower()) {
+                    puts("====== {slot} ========", Color.data)
+                    for (_, ts, data) in WH[slot] {
+                        puts("({timeString(ts)})   {data}", Color.data, time: false)
+                    }
+                    puts("======={'='.repeat(#slot)}=========", Color.data, time: false)
+                } else {
+                    puts("Unknown slot: {rest}", Color.warn)
+                }
+            },
+
+            'help' => {
+                puts('Help? Figure it out bro', Color.warn)
+            },
+
+            _ => {
+                puts("Not a command: {cmd}", color: Color.warn)
+            }
+        }
+    } else if key == '<Up>' {
+        if historyIndex + 1 <= #history {
+            historyIndex += 1
+            inputBuffer = history[-historyIndex].chars()
+            cursor = #inputBuffer
+        }
+    } else if key == '<Down>' {
+        if historyIndex > 1 {
+            historyIndex -= 1
+            inputBuffer = history[-historyIndex].chars()
+            cursor = #inputBuffer
+        } else {
+            inputBuffer = []
+            historyIndex = 0
+            cursor = 0
+        }
+    } else if key == '<DEL>' || key == '<Backspace>' {
+        if cursor > 0 {
+            inputBuffer.pop(--cursor)
+        }
+    } else if key == '<Left>' {
+        if cursor > 0 {
+            cursor -= 1
+        }
+    } else if key == '<Right>' {
+        if cursor < #inputBuffer {
+            cursor += 1
+        }
+    } else if key == '<C-a>' {
+        cursor = 0
+    } else if key == '<C-e>' {
+        cursor = #inputBuffer
+    } else if key == '<C-k>' {
+        cursor = 0
+        inputBuffer = []
+    } else if key == '<Tab>' {
+        let prefix = (inputBuffer.take(cursor).str() ?? '').split(/\s+/)[-1]
+        let slots = slotList.filter(slot -> slot.search(prefix) == 0)
+        let completions = slots.map(&slice(#prefix))
+
+        if #completions == 0 {
+            return
+        }
+
+        let n = 0
+        while completions.all?(s -> #s > n && s[n] == completions[0][n]) {
+            n += 1
+        }
+
+        // No common prefix -- if Tab is pressed twice then print all possible completions
+        if n == 0 && lastKey == '<Tab>' {
+            printSlots(slots, 'Possible completions')
+        }
+
+        for c in completions[0].slice(0, n) {
+            inputBuffer.insert(cursor++, c)
+        }
+    } else if key == '<C-l>' {
+        werase(outputWindow)
+        wmove(outputWindow, 0, 0)
+        prefresh(outputWindow, 0, 0, 0, 0, H - 2, W)
+        drawPrompt()
+    } else if key == '<MousePress(5)>' {
+        scroll = max(0, scroll - 5)
+        draw()
+    } else if key == '<MousePress(4)>' {
+        scroll = min(1000, scroll + 5)
+        draw()
+    } else if key == '<PageDown>' {
+        scroll = 0
+        draw()
+    } else if key == '<C-c>' {
+        delwin(outputWindow)
+        delwin(promptWindow)
+        endwin()
+        termkey_destroy(tk)
+        exit(0)
+    } else {
+        inputBuffer.insert(cursor++, key)
+    }
+
+    lastKey = key
+
+    drawPrompt()
+}
+
+function doRecv() {
+    let (&str ~> msg, sender) = recvfrom(whSocket, MAX_MSG_SIZE, 0)
+
+    log.print(msg)
+    log.flush()
+
+    if rand() < ILOSS return
+
+    if !filters.any?(&1 |> msg.match?) && !msg.match?(/KA-SERVER,\d+,\d+$/) {
+        puts("RECV {msg}", color: Color.recv)
+    }
+
+    if let [_, meta, int ~> n, rest] = msg.match!(/^:(?:SEQ\d+,)?(\D+)(\d+):(.*)$/) {
+        if meta == 'ACK' {
+            needAck.filter!(pkt -> pkt.n != n)
+            msg = rest
+        } else if meta == 'PKT' && myID != nil {
+            whSend(":CLI{myID},ACK{n}:", pkt: false)
+            if n in acked return
+            acked.add(n)
+        }
+    }
+
+    msg = msg.comb(/^::/)
+
+    if let [_, t] = msg.match!(/KA-SERVER,(\d+)/) {
+        whSend("KA-CLIENT,{t},{myID}", false, pkt: false)
+        tryingToRegister = false
+        lastKA = time.utime()
+    } else if let [_, id] = msg.match!(/REGISTERED,(\d+)/) {
+        myID = id
+        puts("My ID = {id}")
+        for slot in ['Warehouse-Slots', *(args.slots ?? [])] {
+            whSend("SUBSCRIBE,{myID},{slot}:1", true)
+            mySlots.push(slot)
+        }
+    } else if let [_, &split(';') ~> slots] = msg.match!(/PUSH,Warehouse-Slots,\d+,(.*)$/) {
+        slotList = slots
+        for slot in slots {
+            if slot not in mySlots {
+                //whSend("SUBSCRIBE,{myID},{slot}:1")
+                //mySlots.push(slot)
+            }
+        }
+    } else {
+        let parts = msg.split(',')
+        match parts {
+            ['PUSH', slot, int ~> $ts, *tokens] => {
+                let data = tokens.join(',') ?? ''
+                let msgs = WH[slot]
+                msgs.insert(0, (time.utime() / 1000, ts + ntfsEpoch * 1000, data))
+                msgs.take!(5)
+
+                if slot.match?(/FaultConfig-(?:FB|Set)$/) {
+                    let compressed = base64.decode(tokens[0])
+                    let uncompressed = compressed; // zlib.uncompress2(compressed)
+                    puts(uncompressed.str().comb('\r').sub('\n', ' '))
+                }
+            },
+
+            _ => ;
+        }
+    }
+}
+
+function msToNextRetry() {
+    if #needAck > 0 {
+        max(0, needAck.map(&.t).min() - time.utime()) / 1000
+    }
+}
+
+print('Starting...')
+
+while let $fds = epoll_wait(e, msToNextRetry() ?? 5000) {
+    if !tryingToRegister && time.utime() - lastKA > 5000000 {
+        puts('No warehouse connection... trying to register.', Color.brightRed)
+        whSend(REGISTER_MSG)
+        tryingToRegister = true
+    }
+
+    for (fd, _) in fds {
+        if fd == 0 {
+            doStdin()
+        } else {
+            doRecv()
+        }
+    }
+
+    let now = time.utime()
+
+    if let [pkt, *] = needAck and pkt.t <= now {
+        puts("RETRY {pkt.d.str()}", Color.send)
+        if rand() > OLOSS {
+            sendto(whSocket, pkt.d, 0, warehouseEndpoint.address)
+        }
+        pkt.t = now + 500000
+    }
+}
