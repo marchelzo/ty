@@ -170,7 +170,7 @@ static void
 symbolize_statement(struct scope *scope, struct statement *s);
 
 static void
-symbolize_pattern(struct scope *scope, struct expression *e, bool def);
+symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse, bool def);
 
 static void
 symbolize_expression(struct scope *scope, struct expression *e);
@@ -929,7 +929,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
 }
 
 static void
-symbolize_pattern(struct scope *scope, struct expression *e, bool def)
+symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse, bool def)
 {
         if (e == NULL)
                 return;
@@ -945,6 +945,8 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
         state.start = e->start;
         state.end = e->end;
 
+        struct symbol *existing;
+
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(e->identifier, "_") != 0 && (is_const(scope, e->identifier) || scope_locally_defined(scope, e->identifier) || e->module != NULL)) {
@@ -953,31 +955,35 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
                         e->symbol = getsymbol(s, e->identifier, NULL);
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
-                        e->symbol = def ? addsymbol(scope, e->identifier) : getsymbol(scope, e->identifier, NULL);
+                        if (reuse != NULL && e->module == NULL && (existing = scope_local_lookup(reuse, e->identifier)) != NULL) {
+                                e->symbol = existing;
+                        } else {
+                                e->symbol = def ? addsymbol(scope, e->identifier) : getsymbol(scope, e->identifier, NULL);
+                        }
                         symbolize_expression(scope, e->constraint);
                 }
                 e->local = true;
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < e->elements.count; ++i)
-                        symbolize_pattern(scope, e->elements.items[i], def);
+                        symbolize_pattern(scope, e->elements.items[i], reuse, def);
                 break;
         case EXPRESSION_DICT:
                 for (int i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(scope, e->keys.items[i]);
-                        symbolize_pattern(scope, e->values.items[i], def);
+                        symbolize_pattern(scope, e->values.items[i], reuse, def);
                 }
                 break;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
-                        symbolize_pattern(scope, e->es.items[i], def);
+                        symbolize_pattern(scope, e->es.items[i], reuse, def);
                 }
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_expression(scope, e->left);
-                symbolize_pattern(scope, e->right, def);
+                symbolize_pattern(scope, e->right, reuse, def);
                 break;
         case EXPRESSION_SPREAD:
                 assert(e->value->type == EXPRESSION_IDENTIFIER);
@@ -987,14 +993,14 @@ symbolize_pattern(struct scope *scope, struct expression *e, bool def)
                 e->symbol = addsymbol(scope, e->identifier);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                symbolize_pattern(scope, e->tagged, def);
+                symbolize_pattern(scope, e->tagged, reuse, def);
                 break;
         Tag:
                 symbolize_expression(scope, e);
                 e->type = EXPRESSION_MUST_EQUAL;
                 break;
         case EXPRESSION_CHECK_MATCH:
-                symbolize_pattern(scope, e->left, def);
+                symbolize_pattern(scope, e->left, reuse, def);
                 symbolize_expression(scope, e->right);
                 break;
         case EXPRESSION_REGEX:
@@ -1108,8 +1114,18 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_MATCH:
                 symbolize_expression(scope, e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
-                        subscope = scope_new(scope, false);
-                        symbolize_pattern(subscope, e->patterns.items[i], true);
+                        struct scope *shared = scope_new(scope, false);
+                        if (e->patterns.items[i]->type == EXPRESSION_LIST) {
+                                for (int j = 0; j < e->patterns.items[i]->es.count; ++j) {
+                                        subscope = scope_new(scope, false);
+                                        symbolize_pattern(subscope, e->patterns.items[i]->es.items[j], shared, true);
+                                        scope_copy(shared, subscope);
+                                }
+                                subscope = shared;
+                        } else {
+                                subscope = scope_new(scope, false);
+                                symbolize_pattern(subscope, e->patterns.items[i], NULL, true);
+                        }
                         symbolize_expression(subscope, e->thens.items[i]);
                 }
                 break;
@@ -1449,7 +1465,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
 
                 for (int i = 0; i < s->try.patterns.count; ++i) {
                         struct scope *catch = scope_new(scope, false);
-                        symbolize_pattern(catch, s->try.patterns.items[i], true);
+                        symbolize_pattern(catch, s->try.patterns.items[i], NULL, true);
                         symbolize_statement(catch, s->try.handlers.items[i]);
                 }
 
@@ -1463,7 +1479,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
                         subscope = scope_new(scope, false);
-                        symbolize_pattern(subscope, s->match.patterns.items[i], true);
+                        symbolize_pattern(subscope, s->match.patterns.items[i], NULL, true);
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }
                 break;
@@ -1472,7 +1488,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 for (int i = 0; i < s->While.parts.count; ++i) {
                         struct condpart *p = s->While.parts.items[i];
                         symbolize_expression(subscope, p->e);
-                        symbolize_pattern(subscope, p->target, p->def);
+                        symbolize_pattern(subscope, p->target, NULL, p->def);
                 }
                 symbolize_statement(subscope, s->While.block);
                 break;
@@ -1483,7 +1499,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_statement(scope, s->iff.then);
                         for (int i = 0; i < s->iff.parts.count; ++i) {
                                 struct condpart *p = s->iff.parts.items[i];
-                                symbolize_pattern(scope, p->target, p->def);
+                                symbolize_pattern(scope, p->target, NULL, p->def);
                                 symbolize_expression(subscope, p->e);
                         }
                         symbolize_statement(subscope, s->iff.otherwise);
@@ -1492,7 +1508,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         for (int i = 0; i < s->iff.parts.count; ++i) {
                                 struct condpart *p = s->iff.parts.items[i];
                                 symbolize_expression(subscope, p->e);
-                                symbolize_pattern(subscope, p->target, p->def);
+                                symbolize_pattern(subscope, p->target, NULL, p->def);
 
                         }
                         symbolize_statement(subscope, s->iff.then);
@@ -2565,6 +2581,14 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
 static bool
 emit_case(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result)
 {
+        if (pattern->type == EXPRESSION_LIST) {
+                bool returns = false;
+                for (int i = 0; i < pattern->es.count; ++i) {
+                        returns = emit_case(pattern->es.items[i], NULL, s, want_result);
+                }
+                return returns;
+        }
+
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
 
@@ -2604,6 +2628,13 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
 static void
 emit_expression_case(struct expression const *pattern, struct expression const *e)
 {
+        if (pattern->type == EXPRESSION_LIST) {
+                for (int i = 0; i < pattern->es.count; ++i) {
+                        emit_expression_case(pattern->es.items[i], e);
+                }
+                return;
+        }
+
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
 
@@ -5966,3 +5997,4 @@ compiler_symbolize_expression(struct expression *e, struct scope *scope)
 
         return true;
 }
+/* vim: set sw=8 sts=8 expandtab: */

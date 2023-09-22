@@ -108,6 +108,12 @@ scope_locally_defined(struct scope const *s, char const *id)
 }
 
 struct symbol *
+scope_local_lookup(struct scope const *s, char const *id)
+{
+        return local_lookup(s, id);
+}
+
+struct symbol *
 scope_add(struct scope *s, char const *id)
 {
         uint64_t h = strhash(id);
@@ -169,6 +175,26 @@ scope_insert(struct scope *s, struct symbol *sym)
         s->table[i] = newsym;
 
         return newsym;
+}
+
+char const *
+scope_copy(struct scope *dst, struct scope const *src)
+{
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
+                        struct symbol *conflict = scope_lookup(dst, s->identifier);
+                        if (conflict != NULL && conflict->scope != src && conflict->public)
+                                return conflict->identifier;
+                }
+        }
+
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
+                        scope_insert(dst, s);
+                }
+        }
+
+        return NULL;
 }
 
 char const *

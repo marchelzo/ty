@@ -29,7 +29,7 @@ cfun! pub curses c.ptr newpad(c.int, c.int)
 cfun! pub curses c.int prefresh(c.ptr, c.int, c.int, c.int, c.int, c.int, c.int)
 cfun! pub curses c.u32 mousemask(c.u32, c.ptr)
 
-pub initscr = wrap(curses, 'initscr', c.ptr)
+let initscr = wrap(curses, 'initscr', c.ptr)
 pub endwin = wrap(curses, 'endwin', c.int)
 pub mvaddnstr = wrap(curses, 'mvaddnstr', c.int, c.int, c.int, c.ptr, c.int)
 pub mvwaddnstr = wrap(curses, 'mvwaddnstr', c.int, c.ptr, c.int, c.int, c.ptr, c.int)

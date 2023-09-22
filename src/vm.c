@@ -1446,6 +1446,8 @@ vm_exec(char *code)
                 CASE(LOAD_GLOBAL)
                         READVALUE(n);
                         LOG("Loading global: %d", n);
+                        while (Globals.count <= n)
+                                vec_push(Globals, NIL);
                         push(Globals.items[n]);
                         break;
                 CASE(EXEC_CODE)

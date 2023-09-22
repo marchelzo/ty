@@ -21,17 +21,9 @@ match [3, ('foo', 'bar'), {a: 1, b: 2, c: 3}, 9, 9, 9] {
 	_ => print('FAIL')
 }
 
-match 1, 2, 3 {
-	a, b: String, c => {
-		print('FAIL')
-	},
-
-	a: Int, b, c: c > 3 => {
-		print('FAIL')
-	},
-
-	a, b, c => {
-		if (a, b, c) == (1, 2, 3) {
+match Ok(10) {
+	Ok(x), [x, y, z] => {
+		if (x, y, z) == (10, nil, nil) {
 			print('PASS')
 		}
 	}
