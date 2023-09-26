@@ -1260,6 +1260,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 vec_init(e->param_symbols);
 
                 for (size_t i = 0; i < e->params.count; ++i) {
+                        symbolize_expression(scope, e->dflts.items[i]);
                         vec_push(e->param_symbols, addsymbol(scope, e->params.items[i]));
                 }
 
@@ -1269,11 +1270,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 if (e->is_method) {
                         addsymbol(scope, "self");
                 }
-
-                for (size_t i = 0; i < e->params.count; ++i) {
-                        symbolize_expression(scope, e->dflts.items[i]);
-                }
-
 
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(scope, e->constraints.items[i]);

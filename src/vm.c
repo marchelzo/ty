@@ -1921,11 +1921,9 @@ Throw:
                 CASE(TRY_TAG_POP)
                         READVALUE(tag);
                         READVALUE(n);
-                        if (!tags_same(top()->tags, tag)) {
-                                //LOG("failed tag pop");
+                        if (!(top()->type & VALUE_TAGGED) || tags_first(top()->tags) != tag) {
                                 ip += n;
                         } else {
-                                //LOG("tag pop successful");
                                 top()->tags = tags_pop(top()->tags);
                                 if (top()->tags == 0) {
                                         top()->type &= ~VALUE_TAGGED;

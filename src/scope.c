@@ -237,7 +237,7 @@ scope_capture_all(struct scope *scope)
         if (scope->function->parent == NULL)
                 return;
 
-        for (struct scope *s = scope->function->parent; s->parent->function->parent != NULL; s = s->parent) {
+        for (struct scope *s = scope->function->parent; s->function->parent != NULL && s->function->parent->parent != NULL; s = s->parent) {
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
                                 vec(struct scope *) scopes = {0};
