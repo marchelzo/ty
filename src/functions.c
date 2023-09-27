@@ -4973,11 +4973,15 @@ builtin_eval(int argc, struct value *kwargs)
                 scope = ARG(1).ptr;
         }
 
+#define PRE  "(function () {"
+#define POST "})()"
+
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
                 vec_push_unchecked(B, '\0');
+                vec_push_n_unchecked(B, PRE, strlen(PRE));
                 vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-                vec_push_unchecked(B, '\0');
+                vec_push_n_unchecked(B, POST, (sizeof POST));
                 struct statement **prog = parse(B.items + 1, "(eval)");
                 struct expression *e = gc_alloc(sizeof *e);
                 *e = (struct expression){0};
@@ -4998,6 +5002,9 @@ builtin_eval(int argc, struct value *kwargs)
         } else {
                 return tyeval(cexpr(&ARG(0)));
         }
+
+#undef PRE
+#undef POST
 }
 
 struct value
@@ -5176,3 +5183,5 @@ builtin_ptr_typed(int argc, struct value *kwargs)
 
         return TGCPTR(ARG(0).ptr, ARG(1).ptr, ARG(0).gcptr);
 }
+
+/* vim: set sw=8 sts=8 expandtab: */

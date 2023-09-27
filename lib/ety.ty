@@ -1,0 +1,43 @@
+tag Code, Text, Expr;
+
+pub function parse(s) {
+    let ts = []
+
+    function go(i, j) {
+        if j == #s {
+            ts.push(Text(s.splice(i, j)))
+        } else if let [_, code] = s.slice(j).match!(/^<%=((?:(?!%>).)+)%>/) {
+            ts.push(Text(s.splice(i, j)))
+            ts.push(Expr(code))
+            go(j + #code + 5, j + #code + 5)
+        } else if let [_, code] = s.slice(j).match!(/^<%((?:(?!%>).)+)%>/) {
+            ts.push(Text(s.splice(i, j)))
+            ts.push(Code(code))
+            go(j + #code + 4, j + #code + 4)
+        } else {
+            go(i, j + 1)
+        }
+    }
+
+    go(0, 0)
+
+    return ts.filter!(${it != Text('')}).map(${
+        match it {
+            Text(s) => ";print('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\')}', end: '');",
+            Code(s) => s,
+            Expr(s) => ";print({s}, end: '');"
+        }
+    }).str()
+}
+
+pub function eval(s, env) {
+    let bindings = []
+
+    for k, v in env {
+        bindings.push("let {k} = env['{k}']")
+    }
+
+    let preamble = bindings.unlines()
+
+    __eval__("{preamble};{s}")
+}

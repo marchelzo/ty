@@ -3893,3 +3893,5 @@ vm_mark(void)
                 value_mark(&frames.items[i].f);
         }
 }
+
+/* vim: set sts=8 sw=8 expandtab: */
