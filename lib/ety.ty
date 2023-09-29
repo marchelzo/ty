@@ -1,4 +1,4 @@
-tag Code, Text, Expr;
+tag Code, Text, Expr, Embed;
 
 pub function parse(s) {
     let ts = []
@@ -9,6 +9,10 @@ pub function parse(s) {
         } else if let [_, code] = s.slice(j).match!(/^<%=((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
             ts.push(Expr(code))
+            go(j + #code + 5, j + #code + 5)
+        } else if let [_, code] = s.slice(j).match!(/^<%@((?:(?!%>).)+)%>/) {
+            ts.push(Text(s.splice(i, j)))
+            ts.push(Embed(code))
             go(j + #code + 5, j + #code + 5)
         } else if let [_, code] = s.slice(j).match!(/^<%((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
@@ -23,9 +27,10 @@ pub function parse(s) {
 
     return ts.filter!(${it != Text('')}).map(${
         match it {
-            Text(s) => ";print('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\')}', end: '');",
-            Code(s) => s,
-            Expr(s) => ";print({s}, end: '');"
+            Text(s)  => ";print('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\')}', end: '');",
+            Code(s)  => s,
+            Expr(s)  => ";print({s}, end: '');",
+            Embed(s) => parse(slurp(s.strip()))
         }
     }).str()
 }
