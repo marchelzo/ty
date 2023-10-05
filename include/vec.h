@@ -91,3 +91,30 @@ gc_resize(void *p, size_t n);
                         ((v).count += (n)))) \
         : ((memcpy((v).items + (v).count, (elements), ((n) * (sizeof (*(v).items))))), \
                 ((v).count += (n))))
+
+#define VPush(v, item) \
+          (((v).count == (v).capacity) \
+        ? ((Resize((v).items, (((v).capacity == 0 ? 4 : ((v).capacity * 2)) * (sizeof (*(v).items))), ((v).capacity * sizeof (*(v).items))), \
+                        ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))), \
+                        ((v).items[(v).count++] = (item)), \
+                        ((v).items + (v).count - 1))) \
+        : (((v).items[(v).count++] = (item)), \
+                ((v).items + (v).count - 1)))
+
+#define VPushN(v, elements, n) \
+          (((v).count + (n) >= (v).capacity) \
+        ? ((Resize((v).items, (((v).capacity + ((n) + 16)) * (sizeof (*(v).items))), ((v).capacity * sizeof (*(v).items))), \
+                        (((v).capacity = (v).capacity + (n) + 16)), \
+                        (memcpy((v).items + (v).count, (elements), ((n) * (sizeof (*(v).items))))), \
+                        ((v).count += (n)))) \
+        : ((memcpy((v).items + (v).count, (elements), ((n) * (sizeof (*(v).items))))), \
+                ((v).count += (n))))
+
+#define VReserve(v, n) \
+        (((v).capacity < (n)) && (Resize((v).items, ((v).capacity + (n)) * (sizeof (*(v).items)), ((v).capacity * sizeof (*(v).items))), ((v).capacity += (n))))
+
+#define VInsert(v, item, i) \
+        ((VReserve((v), (v).count + 1)), memmove((v).items + (i) + 1, (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), ++(v).count, ((v).items[(i)] = (item)))
+
+#define VInsertN(v, elems, n, i) \
+        ((VReserve((v), (v).count + (n))), memmove((v).items + (i) + (n), (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), memcpy((v).items + (i), (elems), (n) * (sizeof (*(v).items))), (v).count += (n))

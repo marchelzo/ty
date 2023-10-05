@@ -178,3 +178,5 @@ void *GCRootSet(void)
 {
         return &RootSet;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

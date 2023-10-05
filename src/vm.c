@@ -3455,6 +3455,8 @@ vm_init(int ac, char **av)
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
+        NewArena(1 << 28);
+
         curl_global_init(CURL_GLOBAL_ALL);
 
         srandom(time(NULL));

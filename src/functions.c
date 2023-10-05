@@ -4982,15 +4982,16 @@ builtin_eval(int argc, struct value *kwargs)
                 vec_push_n_unchecked(B, PRE, strlen(PRE));
                 vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
                 vec_push_n_unchecked(B, POST, (sizeof POST));
+                Arena old = NewArena(1 << 22);
                 struct statement **prog = parse(B.items + 1, "(eval)");
-                struct expression *e = gc_alloc(sizeof *e);
+                struct expression *e = Allocate(sizeof *e);
                 *e = (struct expression){0};
                 e->type = EXPRESSION_STATEMENT;
-                e->statement = gc_alloc(sizeof *e);
+                e->statement = Allocate(sizeof *e);
                 e->statement->type = STATEMENT_BLOCK;
                 vec_init(e->statement->statements);
                 while (*prog != NULL) {
-                        vec_push_unchecked(e->statement->statements, *prog);
+                        VPush(e->statement->statements, *prog);
                         prog += 1;
                 }
 
@@ -4998,7 +4999,11 @@ builtin_eval(int argc, struct value *kwargs)
                         return NIL;
                 }
 
-                return tyeval(e);
+                struct value v = tyeval(e);
+
+                DestroyArena(old);
+
+                return v;
         } else {
                 return tyeval(cexpr(&ARG(0)));
         }

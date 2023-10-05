@@ -49,6 +49,9 @@ char *
 sclone(char const *s);
 
 char *
+sclonea(char const *s);
+
+char *
 sclone_malloc(char const *s);
 
 bool

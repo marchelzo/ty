@@ -9,8 +9,6 @@
 static int GLOBAL;
 static int SYMBOL;
 
-static vec(char const *) names;
-
 inline static struct symbol *
 local_lookup(struct scope const *s, char const *id)
 {
@@ -27,7 +25,7 @@ local_lookup(struct scope const *s, char const *id)
 struct scope *
 scope_new(struct scope *parent, bool is_function)
 {
-        struct scope *s = gc_alloc(sizeof *s);
+        struct scope *s = Allocate(sizeof *s);
 
         s->parent = parent;
         s->function = (is_function || parent == NULL) ? s : parent->function;
@@ -54,8 +52,8 @@ scope_capture(struct scope *s, struct symbol *sym, int parent_index)
 
                 sym->captured = true;
 
-                vec_push(s->captured, sym);
-                vec_push(s->cap_indices, parent_index);
+                VPush(s->captured, sym);
+                VPush(s->cap_indices, parent_index);
 
                 return s->captured.count - 1;
 }
@@ -85,7 +83,7 @@ scope_lookup(struct scope const *s, char const *id)
                 struct scope *scope = s->function;
 
                 while (scope->parent->function != sym->scope->function) {
-                        vec_push(scopes, scope);
+                        VPush(scopes, scope);
                         scope = scope->parent->function;
                 }
 
@@ -94,8 +92,6 @@ scope_lookup(struct scope const *s, char const *id)
                 for (int i = scopes.count - 1; i >= 0; --i) {
                         parent_index = scope_capture(scopes.items[i], sym, parent_index);
                 }
-
-                vec_empty(scopes);
         }
 
         return sym;
@@ -119,9 +115,7 @@ scope_add(struct scope *s, char const *id)
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
 
-        vec_push(names, id);
-
-        struct symbol *sym = gc_alloc(sizeof *sym);
+        struct symbol *sym = Allocate(sizeof *sym);
 
         sym->identifier = id;
         sym->symbol = SYMBOL++;
@@ -154,7 +148,7 @@ scope_add(struct scope *s, char const *id)
 
         LOG("Symbol %d (%s) is getting i = %d", sym->symbol, id, sym->i);
 
-        vec_push(owner->owned, sym);
+        VPush(owner->owned, sym);
 
         s->table[i] = sym;
 
@@ -164,7 +158,7 @@ scope_add(struct scope *s, char const *id)
 struct symbol *
 scope_insert(struct scope *s, struct symbol *sym)
 {
-        struct symbol *newsym = gc_alloc(sizeof *newsym);
+        struct symbol *newsym = Allocate(sizeof *newsym);
         *newsym = *sym;
 
         newsym->scope = s;
@@ -245,7 +239,7 @@ scope_capture_all(struct scope *scope)
                                 struct scope *fscope = scope->function;
 
                                 while (fscope->parent->function != sym->scope->function) {
-                                        vec_push(scopes, fscope);
+                                        VPush(scopes, fscope);
                                         fscope = fscope->parent->function;
                                 }
 
@@ -254,8 +248,6 @@ scope_capture_all(struct scope *scope)
                                 for (int i = scopes.count - 1; i >= 0; --i) {
                                         parent_index = scope_capture(scopes.items[i], sym, parent_index);
                                 }
-
-                                vec_empty(scopes);
                         }
                 }
         }
@@ -271,12 +263,6 @@ void
 scope_set_symbol(int s)
 {
         SYMBOL = s;
-}
-
-char const *
-scope_symbol_name(int s)
-{
-        return names.items[s];
 }
 
 int

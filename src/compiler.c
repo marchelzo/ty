@@ -324,7 +324,7 @@ fail(char const *fmt, ...)
 inline static void
 _emit_instr(char c)
 {
-        vec_push(state.code, c);
+        VPush(state.code, c);
 }
 
 static char *
@@ -366,7 +366,7 @@ add_location(struct expression const *e, size_t start_off, size_t end_off)
 
         //printf("Location: (%zu, %zu) (%d) '%.*s'\n", start_off, end_off, e->type, (int)(e->end.s - e->start.s), e->start.s);
 
-        vec_push(
+        VPush(
                 state.expression_locations,
                 ((struct eloc) {
                         .start_off = start_off,
@@ -462,7 +462,7 @@ addsymbol(struct scope *scope, char const *name)
         s->loc = state.start;
 
         if ((scope == global || scope == state.global) && isupper(name[0])) {
-                vec_push(state.exports, name);
+                VPush(state.exports, name);
         }
 
         LOG("adding symbol: %s -> %d\n", name, s->symbol);
@@ -498,12 +498,12 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
                 int n = name[1] - '0';
                 for (int i = state.implicit_func->params.count + 1; i <= n; ++i) {
                         char b[] = { '_', i + '0', '\0' };
-                        char *id = sclone(b);
+                        char *id = sclonea(b);
                         struct symbol *sym = addsymbol(state.implicit_fscope, id);
-                        vec_push(state.implicit_func->params, id);
-                        vec_push(state.implicit_func->param_symbols, sym);
-                        vec_push(state.implicit_func->dflts, NULL);
-                        vec_push(state.implicit_func->constraints, NULL);
+                        VPush(state.implicit_func->params, id);
+                        VPush(state.implicit_func->param_symbols, sym);
+                        VPush(state.implicit_func->dflts, NULL);
+                        VPush(state.implicit_func->constraints, NULL);
                 }
         }
 
@@ -539,7 +539,7 @@ tmpsymbol(struct scope *scope)
 
         sprintf(idbuf, "%d", i++);
 
-        return scope_add(scope, sclone(idbuf));
+        return scope_add(scope, sclonea(idbuf));
 }
 
 static struct state
@@ -607,7 +607,7 @@ to_module_access(struct scope const *scope, struct expression const *e)
         static vec(char) mod = {0};
         mod.count = 0;
 
-        vec_push(mod, '\0');
+        VPush(mod, '\0');
 
         char const *name = (e->type == EXPRESSION_MEMBER_ACCESS) ? e->member_name : e->method_name;
         struct location start = e->start;
@@ -616,8 +616,8 @@ to_module_access(struct scope const *scope, struct expression const *e)
         e = e->object;
 
         while (e->type == EXPRESSION_MEMBER_ACCESS) {
-                vec_insert_n(mod, e->member_name, strlen(e->member_name), 0);
-                vec_insert(mod, '/', 0);
+                VInsertN(mod, e->member_name, strlen(e->member_name), 0);
+                VInsert(mod, '/', 0);
                 e = e->object;
         }
 
@@ -629,7 +629,7 @@ to_module_access(struct scope const *scope, struct expression const *e)
                 return NULL;
         }
 
-        struct expression *id = gc_alloc(sizeof *id);
+        struct expression *id = Allocate(sizeof *id);
         *id = (struct expression){0};
 
         id->start = start;
@@ -637,16 +637,15 @@ to_module_access(struct scope const *scope, struct expression const *e)
         id->identifier = (char *)name;
         id->type = EXPRESSION_IDENTIFIER;
 
-        vec_insert_n(mod, e->identifier, strlen(e->identifier), 0);
+        VInsertN(mod, e->identifier, strlen(e->identifier), 0);
 
         struct scope *mod_scope = search_import_scope(mod.items);
 
         if (mod_scope != NULL) {
-                id->module = sclone(mod.items);
+                id->module = sclonea(mod.items);
                 id->symbol = getsymbol(mod_scope, name, &id->local);
                 return id;
         } else {
-                gc_free(id);
                 return NULL;
         }
 }
@@ -740,7 +739,7 @@ add_captures(struct expression *pattern, struct scope *scope)
                  */
                 char id[16];
                 sprintf(id, "_%d", i);
-                addsymbol(scope, sclone(id));
+                addsymbol(scope, sclonea(id));
         NextCapture:
                 ;
         }
@@ -781,7 +780,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                         if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
                                 e->tagged = tagged[0];
                         } else {
-                                struct expression *items = gc_alloc(sizeof *items);
+                                struct expression *items = Allocate(sizeof *items);
                                 *items = (struct expression){0};
                                 items->type = EXPRESSION_TUPLE;
                                 items->start = tagged[0]->start;
@@ -791,16 +790,16 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 vec_init(items->required);
                                 vec_init(items->names);
                                 for (int i = 0; i < tagc; ++i) {
-                                        vec_push(items->es, tagged[i]);
-                                        vec_push(items->tconds, NULL);
-                                        vec_push(items->required, true);
-                                        vec_push(items->names, NULL);
+                                        VPush(items->es, tagged[i]);
+                                        VPush(items->tconds, NULL);
+                                        VPush(items->required, true);
+                                        VPush(items->names, NULL);
                                 }
                                 for (int i = 0; i < f.kws.count; ++i) {
-                                        vec_push(items->es, f.kwargs.items[i]);
-                                        vec_push(items->tconds, f.fkwconds.items[i]);
-                                        vec_push(items->required, true);
-                                        vec_push(items->names, f.kws.items[i]);
+                                        VPush(items->es, f.kwargs.items[i]);
+                                        VPush(items->tconds, f.fkwconds.items[i]);
+                                        VPush(items->required, true);
+                                        VPush(items->names, f.kws.items[i]);
                                 }
                                 e->tagged = items;
                         }
@@ -841,7 +840,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                         symbolize_expression(scope, target->constraint);
                         if (pub) {
                                 target->symbol->public = true;
-                                //vec_push(state.exports, target->identifier);
+                                //VPush(state.exports, target->identifier);
                         }
                 } else {
                         if (target->constraint != NULL) {
@@ -908,7 +907,6 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 mod_access = to_module_access(scope, target);
                 if (mod_access != NULL) {
                         *target = *mod_access;
-                        gc_free(mod_access);
                         goto ConstAssignment;
                 } else {
                         symbolize_expression(scope, target->object);
@@ -1064,7 +1062,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                                         e->type = EXPRESSION_SELF_ACCESS;
                                         e->member_name = id;
                                         e->maybe = false;
-                                        e->object = gc_alloc(sizeof *e->object);
+                                        e->object = Allocate(sizeof *e->object);
                                         *e->object = (struct expression){0};
                                         e->object->type = EXPRESSION_IDENTIFIER;
                                         e->object->identifier = "self";
@@ -1197,7 +1195,6 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 mod_access = to_module_access(scope, e);
                 if (mod_access != NULL) {
                         *e = *mod_access;
-                        gc_free(mod_access);
                 } else {
                         symbolize_expression(scope, e->object);
                 }
@@ -1261,7 +1258,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(scope, e->dflts.items[i]);
-                        vec_push(e->param_symbols, addsymbol(scope, e->params.items[i]));
+                        VPush(e->param_symbols, addsymbol(scope, e->params.items[i]));
                 }
 
                 /*
@@ -1295,7 +1292,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         for (struct symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
                                 // Make sure it's not a tmpsymbol() symbol
                                 if (!isdigit(sym->identifier[0])) {
-                                        vec_push(vec_last(e->with.block->statements)[0]->try.finally->drop, sym);
+                                        VPush(vec_last(e->with.block->statements)[0]->try.finally->drop, sym);
                                 }
                         }
                 }
@@ -1380,7 +1377,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 import_module(s);
                 break;
         case STATEMENT_EXPORT:
-                vec_push_n(state.exports, s->exports.items, s->exports.count);
+                VPushN(state.exports, s->exports.items, s->exports.count);
                 break;
         case STATEMENT_DEFER:
                 if (state.func == NULL) {
@@ -1565,6 +1562,8 @@ invoke_macro(struct expression *e, struct scope *scope)
         struct scope *macro_scope_save = state.macro_scope;
         state.macro_scope = scope;
 
+        Arena old = NewArena(1 << 20);
+
         symbolize_expression(scope, e->macro.m);
 
         byte_vector code_save = state.code;
@@ -1579,7 +1578,6 @@ invoke_macro(struct expression *e, struct scope *scope)
         struct value m = *vm_get(0);
         vm_pop();
 
-        gc_free(state.code.items);
         state.code = code_save;
 
         struct value node = tyexpr(e->macro.e);
@@ -1591,11 +1589,11 @@ invoke_macro(struct expression *e, struct scope *scope)
 
         struct expression *result = cexpr(&node);
 
+        DestroyArena(old);
+
         symbolize_expression(scope, result);
 
         *e = *result;
-
-        gc_free(result);
 }
 
 inline static void
@@ -1626,7 +1624,7 @@ emit_int(int k)
         LOG("emitting int: %d", k);
         char const *s = (char *) &k;
         for (int i = 0; i < sizeof (int); ++i)
-                vec_push(state.code, s[i]);
+                VPush(state.code, s[i]);
 }
 
 inline static void
@@ -1635,7 +1633,7 @@ emit_int16(int16_t k)
         LOG("emitting int16_t: %d", (int)k);
         char const *s = (char *) &k;
         for (int i = 0; i < sizeof (int16_t); ++i)
-                vec_push(state.code, s[i]);
+                VPush(state.code, s[i]);
 }
 
 inline static void
@@ -1644,7 +1642,7 @@ emit_ulong(unsigned long k)
         LOG("emitting ulong: %lu", k);
         char const *s = (char *) &k;
         for (int i = 0; i < sizeof (unsigned long); ++i)
-                vec_push(state.code, s[i]);
+                VPush(state.code, s[i]);
 }
 
 inline static void
@@ -1653,7 +1651,7 @@ emit_symbol(uintptr_t sym)
         LOG("emitting symbol: %"PRIuPTR, sym);
         char const *s = (char *) &sym;
         for (int i = 0; i < sizeof (uintptr_t); ++i)
-                vec_push(state.code, s[i]);
+                VPush(state.code, s[i]);
 }
 
 inline static void
@@ -1661,7 +1659,7 @@ emit_integer(intmax_t k)
 {
 
         LOG("emitting integer: %"PRIiMAX, k);
-        vec_push_n(state.code, (char const *)&k, sizeof k);
+        VPushN(state.code, (char const *)&k, sizeof k);
 }
 
 inline static void
@@ -1671,7 +1669,7 @@ emit_boolean(bool b)
         LOG("emitting boolean: %s", b ? "true" : "false");
         char const *s = (char *) &b;
         for (int i = 0; i < sizeof (bool); ++i)
-                vec_push(state.code, s[i]);
+                VPush(state.code, s[i]);
 }
 
 inline static void
@@ -1679,7 +1677,7 @@ emit_float(float f)
 {
 
         LOG("emitting float: %f", f);
-        vec_push_n(state.code, (char const *)&f, sizeof f);
+        VPushN(state.code, (char const *)&f, sizeof f);
 }
 
 inline static void
@@ -1687,7 +1685,7 @@ emit_string(char const *s)
 {
 
         LOG("emitting string: %s", s);
-        vec_push_n(state.code, s, strlen(s) + 1);
+        VPushN(state.code, s, strlen(s) + 1);
 }
 
 inline static void
@@ -1841,8 +1839,8 @@ emit_function(struct expression const *e, int class)
         emit_instr(INSTR_FUNCTION);
 
         while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
-                vec_push(state.code, 0x00);
-        vec_push(state.code, 0xFF);
+                VPush(state.code, 0x00);
+        VPush(state.code, 0xFF);
 
         int bound = e->scope->owned.count;
 
@@ -1859,7 +1857,7 @@ emit_function(struct expression const *e, int class)
         emit_int16(e->ikwargs);
 
         for (int i = 0; i < sizeof (int) - 2 * sizeof (int16_t); ++i) {
-                vec_push(state.code, 0x00);
+                VPush(state.code, 0x00);
         }
 
         emit_int(class);
@@ -1975,7 +1973,7 @@ emit_function(struct expression const *e, int class)
         }
 
         while ((state.code.count - start_offset) % P_ALIGN != 0) {
-                vec_push(state.code, 0x00);
+                VPush(state.code, 0x00);
         }
 
         int bytes = state.code.count - start_offset;
@@ -2060,9 +2058,9 @@ emit_special_string(struct expression const *e)
                 emit_expression(e->expressions.items[i]);
                 emit_instr(INSTR_TO_STRING);
                 if (e->fmts.items[i] != NULL) {
-                        vec_push_n(state.code, e->fmts.items[i], strcspn(e->fmts.items[i], "{"));
+                        VPushN(state.code, e->fmts.items[i], strcspn(e->fmts.items[i], "{"));
                 }
-                vec_push(state.code, '\0');
+                VPush(state.code, '\0');
                 emit_instr(INSTR_STRING);
                 emit_string(e->strings.items[i + 1]);
         }
@@ -2315,7 +2313,7 @@ emit_try_match(struct expression const *pattern)
                         emit_instr(INSTR_DUP);
                         emit_constraint(pattern->constraint);
                         emit_instr(INSTR_JUMP_IF_NOT);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                 }
                 break;
@@ -2324,26 +2322,26 @@ emit_try_match(struct expression const *pattern)
                 emit_instr(INSTR_DUP);
                 emit_constraint(pattern->right);
                 emit_instr(INSTR_JUMP_IF_NOT);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_tgt(pattern->symbol, state.fscope, true);
                 emit_instr(INSTR_TRY_ASSIGN_NON_NIL);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
                 break;
         case EXPRESSION_MUST_EQUAL:
                 emit_load(pattern->symbol, state.fscope);
                 emit_instr(INSTR_ENSURE_EQUALS_VAR);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
                 need_loc = true;
                 break;
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 emit_instr(INSTR_DUP);
                 emit_instr(INSTR_JUMP_IF_NIL);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
                 // Fallthrough
         case EXPRESSION_VIEW_PATTERN:
@@ -2370,7 +2368,7 @@ emit_try_match(struct expression const *pattern)
                                 emit_instr(INSTR_ARRAY_REST);
                                 emit_int(i);
                                 emit_int(pattern->elements.count - i - 1);
-                                vec_push(state.match_fails, state.code.count);
+                                VPush(state.match_fails, state.code.count);
                                 emit_int(0);
                         } else {
                                 emit_instr(INSTR_TRY_INDEX);
@@ -2385,7 +2383,7 @@ emit_try_match(struct expression const *pattern)
                                         emit_int(i);
                                 }
                                 emit_boolean(!pattern->optional.items[i]);
-                                vec_push(state.match_fails, state.code.count);
+                                VPush(state.match_fails, state.code.count);
                                 emit_int(0);
 
                                 emit_try_match(pattern->elements.items[i]);
@@ -2398,7 +2396,7 @@ emit_try_match(struct expression const *pattern)
                     pattern->elements.items[pattern->elements.count - 1]->type != EXPRESSION_MATCH_REST) {
                         emit_instr(INSTR_ENSURE_LEN);
                         emit_int(pattern->elements.count);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                 }
 
@@ -2425,11 +2423,11 @@ emit_try_match(struct expression const *pattern)
                 if (set) {
                         emit_expression(pattern);
                         emit_instr(INSTR_ENSURE_SAME_KEYS);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                 } else {
                         emit_instr(INSTR_ENSURE_DICT);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                         for (int i = 0; i < pattern->keys.count; ++i) {
                                 if (pattern->values.items[i] != NULL) {
@@ -2441,7 +2439,7 @@ emit_try_match(struct expression const *pattern)
                                 } else {
                                         emit_expression(pattern->keys.items[i]);
                                         emit_instr(INSTR_ENSURE_CONTAINS);
-                                        vec_push(state.match_fails, state.code.count);
+                                        VPush(state.match_fails, state.code.count);
                                         emit_int(0);
                                 }
                         }
@@ -2451,7 +2449,7 @@ emit_try_match(struct expression const *pattern)
                 emit_instr(INSTR_DUP);
                 emit_instr(INSTR_TRY_TAG_POP);
                 emit_int(pattern->symbol->tag);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
 
                 emit_try_match(pattern->tagged);
@@ -2462,7 +2460,7 @@ emit_try_match(struct expression const *pattern)
                 emit_tgt(pattern->match_symbol, state.fscope, true);
                 emit_instr(INSTR_TRY_REGEX);
                 emit_symbol((uintptr_t) pattern->regex);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
                 need_loc = true;
                 break;
@@ -2472,7 +2470,7 @@ emit_try_match(struct expression const *pattern)
                                 emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
                                 emit_instr(INSTR_TUPLE_REST);
                                 emit_int(i);
-                                vec_push(state.match_fails, state.code.count);
+                                VPush(state.match_fails, state.code.count);
                                 emit_int(0);
 
                                 if (i + 1 != pattern->es.count)
@@ -2481,14 +2479,14 @@ emit_try_match(struct expression const *pattern)
                                 emit_instr(INSTR_TRY_TUPLE_MEMBER);
                                 emit_boolean(pattern->required.items[i]);
                                 emit_string(pattern->names.items[i]);
-                                vec_push(state.match_fails, state.code.count);
+                                VPush(state.match_fails, state.code.count);
                                 emit_int(0);
                                 emit_try_match(pattern->es.items[i]);
                                 emit_instr(INSTR_POP);
                         } else {
                                 emit_instr(INSTR_TRY_INDEX_TUPLE);
                                 emit_int(i);
-                                vec_push(state.match_fails, state.code.count);
+                                VPush(state.match_fails, state.code.count);
                                 emit_int(0);
                                 emit_try_match(pattern->es.items[i]);
                                 emit_instr(INSTR_POP);
@@ -2498,7 +2496,7 @@ emit_try_match(struct expression const *pattern)
                 if (pattern->es.count == 0 || pattern->es.items[pattern->es.count - 1]->type != EXPRESSION_MATCH_REST) {
                         emit_instr(INSTR_ENSURE_LEN_TUPLE);
                         emit_int(pattern->es.count);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                 }
 
@@ -2508,7 +2506,7 @@ emit_try_match(struct expression const *pattern)
                         emit_instr(INSTR_PUSH_NTH);
                         emit_int(i);
                         emit_instr(INSTR_JUMP_IF_SENTINEL);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                         emit_try_match(pattern->es.items[i]);
                         emit_instr(INSTR_POP);
@@ -2523,7 +2521,7 @@ emit_try_match(struct expression const *pattern)
                 //emit_instr(INSTR_CHECK_MATCH);
                 emit_instr(INSTR_EQ);
                 emit_instr(INSTR_JUMP_IF_NOT);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
                 need_loc = true;
         }
@@ -2544,7 +2542,7 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
         if (cond != NULL) {
                 emit_expression(cond);
                 emit_instr(INSTR_JUMP_IF_NOT);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
         }
 
@@ -2563,7 +2561,7 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
         }
 
         emit_instr(INSTR_JUMP);
-        vec_push(state.match_successes, state.code.count);
+        VPush(state.match_successes, state.code.count);
         emit_int(0);
 
         patch_jumps_to(&state.match_fails, state.code.count);
@@ -2594,7 +2592,7 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
         if (cond != NULL) {
                 emit_expression(cond);
                 emit_instr(INSTR_JUMP_IF_NOT);
-                vec_push(state.match_fails, state.code.count);
+                VPush(state.match_fails, state.code.count);
                 emit_int(0);
         }
 
@@ -2610,7 +2608,7 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
         }
 
         emit_instr(INSTR_JUMP);
-        vec_push(state.match_successes, state.code.count);
+        VPush(state.match_successes, state.code.count);
         emit_int(0);
 
         patch_jumps_to(&state.match_fails, state.code.count);
@@ -2650,7 +2648,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
          * to the end of the match expression. i.e., there is no fallthrough.
          */
         emit_instr(INSTR_JUMP);
-        vec_push(state.match_successes, state.code.count);
+        VPush(state.match_successes, state.code.count);
         emit_int(0);
 
         patch_jumps_to(&state.match_fails, state.code.count);
@@ -2775,7 +2773,7 @@ emit_while(struct statement const *s, bool want_result)
                         emit_instr(INSTR_SAVE_STACK_POS);
                         emit_expression(p->e);
                         emit_instr(INSTR_JUMP_IF_NOT);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                         emit_instr(INSTR_RESTORE_STACK_POS);
                 } else {
@@ -2827,7 +2825,7 @@ emit_if_not(struct statement const *s, bool want_result)
                         emit_instr(INSTR_SAVE_STACK_POS);
                         emit_expression(p->e);
                         emit_instr(INSTR_JUMP_IF);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                         emit_instr(INSTR_RESTORE_STACK_POS);
                 } else {
@@ -2894,7 +2892,7 @@ emit_if(struct statement const *s, bool want_result)
                         emit_instr(INSTR_SAVE_STACK_POS);
                         emit_expression(p->e);
                         emit_instr(INSTR_JUMP_IF_NOT);
-                        vec_push(state.match_fails, state.code.count);
+                        VPush(state.match_fails, state.code.count);
                         emit_int(0);
                         emit_instr(INSTR_RESTORE_STACK_POS);
                 } else {
@@ -4143,7 +4141,7 @@ emit_expr(struct expression const *e, bool need_loc)
                         if (e->names.items[i] != NULL) {
                                 emit_string(e->names.items[i]);
                         } else {
-                                vec_push(state.code, 0);
+                                VPush(state.code, 0);
                         }
                 }
                 break;
@@ -4291,7 +4289,7 @@ emit_statement(struct statement const *s, bool want_result)
         case STATEMENT_GENERATOR_RETURN:
                 emit_yield(s->returns.items, s->returns.count, false);
                 emit_instr(INSTR_JUMP);
-                vec_push(state.generator_returns, state.code.count);
+                VPush(state.generator_returns, state.code.count);
                 emit_int(0);
                 break;
         case STATEMENT_BREAK:
@@ -4319,7 +4317,7 @@ emit_statement(struct statement const *s, bool want_result)
                 }
 
                 emit_instr(INSTR_JUMP);
-                vec_push(state.breaks, state.code.count);
+                VPush(state.breaks, state.code.count);
                 emit_int(0);
                 break;
         case STATEMENT_CONTINUE:
@@ -4328,7 +4326,7 @@ emit_statement(struct statement const *s, bool want_result)
                 if (state.try > state.loop)
                         emit_instr(INSTR_FINALLY);
                 emit_instr(INSTR_JUMP);
-                vec_push(state.continues, state.code.count);
+                VPush(state.continues, state.code.count);
                 emit_int(0);
                 break;
         case STATEMENT_DROP:
@@ -4421,7 +4419,7 @@ declare_classes(struct statement *s)
                 s->class.symbol = sym->class;
 
                 if (s->class.pub) {
-                        vec_push(state.exports, s->class.name);
+                        VPush(state.exports, s->class.name);
                 }
         }
 }
@@ -4500,7 +4498,7 @@ compile(char const *source)
         //struct location end = { 0 };
         //add_location(end, end, state);
         patch_location_info();
-        vec_push(location_lists, state.expression_locations);
+        VPush(location_lists, state.expression_locations);
 
         state.generator_returns.count = 0;
         state.breaks.count = 0;
@@ -4542,7 +4540,7 @@ load_module(char const *name, struct scope *scope)
                         .scope = module_scope
                 };
 
-                vec_push(modules, m);
+                VPush(modules, m);
         }
 
         state = save;
@@ -4605,7 +4603,7 @@ import_module(struct statement const *s)
                 scope_insert(state.global, s);
         }
 
-        vec_push(state.imports, ((struct import){ .name = as, .scope = module_scope }));
+        VPush(state.imports, ((struct import){ .name = as, .scope = module_scope }));
 }
 
 char const *
@@ -4648,7 +4646,7 @@ compiler_load_prelude(void)
 
         state.global = scope_new(state.global, false);
 
-        vec_empty(state.imports);
+        state.imports.count = 0;
 
         return state.code.items;
 }
@@ -4693,7 +4691,7 @@ compiler_introduce_symbol(char const *module, char const *name)
                 if (s == NULL) {
                         ++builtin_modules;
                         s = scope_new(global, false);
-                        vec_push(modules, ((struct module){
+                        VPush(modules, ((struct module){
                                 .path = module,
                                 .code = NULL,
                                 .scope = s
@@ -4720,7 +4718,7 @@ compiler_introduce_tag(char const *module, char const *name)
                 if (s == NULL) {
                         ++builtin_modules;
                         s = scope_new(NULL, false);
-                        vec_push(modules, ((struct module){
+                        VPush(modules, ((struct module){
                                 .path = module,
                                 .code = NULL,
                                 .scope = s
@@ -4937,7 +4935,7 @@ compiler_has_module(char const *name)
 inline static char *
 mkcstr(struct value const *v)
 {
-        char *s = gc_alloc(v->bytes + 1);
+        char *s = Allocate(v->bytes + 1);
 
         memcpy(s, v->string, v->bytes);
         s[v->bytes] = '\0';
@@ -4961,10 +4959,10 @@ tagged(int tag, struct value v, ...)
                 goto TagAndReturn;
         }
 
-        vec_push(vs, v);
+        VPush(vs, v);
 
         while (next.type != VALUE_NONE) {
-                vec_push(vs, next);
+                VPush(vs, next);
                 next = va_arg(ap, struct value);
         }
 
@@ -5408,7 +5406,7 @@ tystmt(struct statement *s)
 struct statement *
 cstmt(struct value *v)
 {
-        struct statement *s = gc_alloc(sizeof *s);
+        struct statement *s = Allocate(sizeof *s);
         *s = (struct statement){0};
 
         s->start = state.mstart;
@@ -5427,7 +5425,7 @@ cstmt(struct value *v)
                 f.tags = tags_push(0, TyFunc);
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(&f);
-                s->target = gc_alloc(sizeof *s->target);
+                s->target = Allocate(sizeof *s->target);
                 *s->target = (struct expression){0};
                 s->target->type = EXPRESSION_IDENTIFIER;
                 s->target->identifier = mkcstr(tuple_get(v, "name"));
@@ -5445,7 +5443,7 @@ cstmt(struct value *v)
                 vec_init(s->class.setters);
                 vec_init(s->class.statics);
                 for (int i = 0; i < methods->array->count; ++i) {
-                        vec_push(s->class.methods, cexpr(&methods->array->items[i]));
+                        VPush(s->class.methods, cexpr(&methods->array->items[i]));
                 }
         } else if (tags_first(v->tags) == TyIf ||
                    tags_first(v->tags) == TyIfNot) {
@@ -5456,7 +5454,7 @@ cstmt(struct value *v)
                 struct value *parts = &v->items[0];
                 for (int i = 0; i < parts->array->count; ++i) {
                         struct value *part = &parts->array->items[i];
-                        struct condpart *cp = gc_alloc(sizeof *cp);
+                        struct condpart *cp = Allocate(sizeof *cp);
                         if (tags_first(part->tags) == TyLet) {
                                 cp->def = true;
                                 cp->target = cexpr(&part->items[0]);
@@ -5470,7 +5468,7 @@ cstmt(struct value *v)
                                 cp->target = NULL;
                                 cp->e = cexpr(part);
                         }
-                        vec_push(s->iff.parts, cp);
+                        VPush(s->iff.parts, cp);
                 }
                 s->iff.then = cstmt(&v->items[1]);
                 if (v->count > 2 && v->items[2].type != VALUE_NIL) {
@@ -5491,9 +5489,9 @@ cstmt(struct value *v)
                 struct value *cases = &v->items[1];
                 for (int i = 0; i < cases->array->count; ++i) {
                         struct value *_case = &cases->array->items[i];
-                        vec_push(s->match.patterns, cexpr(&_case->items[0]));
-                        vec_push(s->match.statements, cstmt(&_case->items[1]));
-                        vec_push(s->match.conds, NULL);
+                        VPush(s->match.patterns, cexpr(&_case->items[0]));
+                        VPush(s->match.statements, cstmt(&_case->items[1]));
+                        VPush(s->match.conds, NULL);
                 }
         } else if (tags_first(v->tags) == TyEach) {
                 s->type = STATEMENT_EACH_LOOP;
@@ -5509,23 +5507,23 @@ cstmt(struct value *v)
                 vec_init(s->returns);
                 if (v->type == VALUE_TUPLE) {
                         for (int i = 0; i < v->count; ++i) {
-                                vec_push(s->returns, cexpr(&v->items[i]));
+                                VPush(s->returns, cexpr(&v->items[i]));
                         }
                 } else {
                         v->tags = tags_pop(v->tags);
-                        vec_push(s->returns, cexpr(v));
+                        VPush(s->returns, cexpr(v));
                 }
         } else if (tags_first(v->tags) == TyBlock) {
                 s->type = STATEMENT_BLOCK;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
-                        vec_push(s->statements, cstmt(&v->array->items[i]));
+                        VPush(s->statements, cstmt(&v->array->items[i]));
                 }
         } else if (tags_first(v->tags) == TyMulti) {
                 s->type = STATEMENT_MULTI;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
-                        vec_push(s->statements, cstmt(&v->array->items[i]));
+                        VPush(s->statements, cstmt(&v->array->items[i]));
                 }
         } else if (v->type == VALUE_TAG && v->tag == TyNull) {
                 s->type = STATEMENT_NULL;
@@ -5540,7 +5538,7 @@ cstmt(struct value *v)
 struct expression *
 cexpr(struct value *v)
 {
-        struct expression *e = gc_alloc(sizeof *e);
+        struct expression *e = Allocate(sizeof *e);
         *e = (struct expression){0};
 
         e->start = state.mstart;
@@ -5549,7 +5547,7 @@ cexpr(struct value *v)
         if (tags_first(v->tags) == TyExpr) {
                 return v->ptr;
         } else if (tags_first(v->tags) == TyValue) {
-                struct value *value = gc_alloc(sizeof *value);
+                struct value *value = Allocate(sizeof *value);
                 *value = *v;
                 value->tags = tags_pop(value->tags);
                 if (value->tags == 0) {
@@ -5586,9 +5584,9 @@ cexpr(struct value *v)
                         struct value *entry = &v->array->items[i];
                         struct value *optional = tuple_get(entry, "optional");
                         struct value *cond = tuple_get(entry, "cond");
-                        vec_push(e->elements, cexpr(tuple_get(entry, "item")));
-                        vec_push(e->optional, optional != NULL ? optional->boolean : false);
-                        vec_push(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
+                        VPush(e->elements, cexpr(tuple_get(entry, "item")));
+                        VPush(e->optional, optional != NULL ? optional->boolean : false);
+                        VPush(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
                 }
         } else if (tags_first(v->tags) == TyRecord) {
                 e->type = EXPRESSION_TUPLE;
@@ -5602,10 +5600,10 @@ cexpr(struct value *v)
                         struct value *name = tuple_get(entry, "name");
                         struct value *optional = tuple_get(entry, "optional");
                         struct value *cond = tuple_get(entry, "cond");
-                        vec_push(e->es, cexpr(item));
-                        vec_push(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(name) : NULL);
-                        vec_push(e->required, optional != NULL ? !optional->boolean : true);
-                        vec_push(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(cond) : NULL);
+                        VPush(e->es, cexpr(item));
+                        VPush(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(name) : NULL);
+                        VPush(e->required, optional != NULL ? !optional->boolean : true);
+                        VPush(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(cond) : NULL);
                 }
         } else if (tags_first(v->tags) == TyDict) {
                 e->type = EXPRESSION_DICT;
@@ -5619,8 +5617,8 @@ cexpr(struct value *v)
                 e->dflt = (dflt != NULL && dflt->type != VALUE_NIL) ? cexpr(dflt) : NULL;
 
                 for (int i = 0; i < items->array->count; ++i) {
-                        vec_push(e->keys, cexpr(&items->array->items[i].items[0]));
-                        vec_push(e->values, cexpr(&items->array->items[i].items[1]));
+                        VPush(e->keys, cexpr(&items->array->items[i].items[0]));
+                        VPush(e->values, cexpr(&items->array->items[i].items[1]));
                 }
         } else if (tags_first(v->tags) == TyCall) {
                 e->type = EXPRESSION_FUNCTION_CALL;
@@ -5643,12 +5641,12 @@ cexpr(struct value *v)
                                 cond = NULL;
                         }
                         if (name == NULL || name->type == VALUE_NIL) {
-                                vec_push(e->args, cexpr(tuple_get(arg, "arg")));
-                                vec_push(e->fconds, cond != NULL ? cexpr(cond) : NULL);
+                                VPush(e->args, cexpr(tuple_get(arg, "arg")));
+                                VPush(e->fconds, cond != NULL ? cexpr(cond) : NULL);
                         } else {
-                                vec_push(e->kwargs, cexpr(tuple_get(arg, "arg")));
-                                vec_push(e->kws, mkcstr(name));
-                                vec_push(e->fkwconds, cond != NULL ? cexpr(cond) : NULL);
+                                VPush(e->kwargs, cexpr(tuple_get(arg, "arg")));
+                                VPush(e->kws, mkcstr(name));
+                                VPush(e->fkwconds, cond != NULL ? cexpr(cond) : NULL);
                         }
                 }
         } else if (tags_first(v->tags) == TyMethodCall) {
@@ -5677,11 +5675,11 @@ cexpr(struct value *v)
                                 cond = NULL;
                         }
                         if (name == NULL || name->type == VALUE_NIL) {
-                                vec_push(e->method_args, cexpr(tuple_get(arg, "arg")));
-                                vec_push(e->mconds, cond != NULL ? cexpr(cond) : NULL);
+                                VPush(e->method_args, cexpr(tuple_get(arg, "arg")));
+                                VPush(e->mconds, cond != NULL ? cexpr(cond) : NULL);
                         } else {
-                                vec_push(e->method_kwargs, cexpr(tuple_get(arg, "arg")));
-                                vec_push(e->method_kws, mkcstr(name));
+                                VPush(e->method_kwargs, cexpr(tuple_get(arg, "arg")));
+                                VPush(e->method_kws, mkcstr(name));
                         }
                 }
         } else if (tags_first(v->tags) == TyFunc || tags_first(v->tags) == TyImplicitFunc) {
@@ -5700,20 +5698,20 @@ cexpr(struct value *v)
                 for (int i = 0; i < params->array->count; ++i) {
                         struct value *p = &params->array->items[i];
                         if (tags_first(p->tags) == TyParam) {
-                                vec_push(e->params, mkcstr(tuple_get(p, "name")));
+                                VPush(e->params, mkcstr(tuple_get(p, "name")));
                                 struct value *c = tuple_get(p, "constraint");
                                 struct value *d = tuple_get(p, "default");
-                                vec_push(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(c) : NULL);
-                                vec_push(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(d) : NULL);
+                                VPush(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(c) : NULL);
+                                VPush(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(d) : NULL);
                         } else if (tags_first(p->tags) == TyGather) {
-                                vec_push(e->params, mkcstr(p));
-                                vec_push(e->constraints, NULL);
-                                vec_push(e->dflts, NULL);
+                                VPush(e->params, mkcstr(p));
+                                VPush(e->constraints, NULL);
+                                VPush(e->dflts, NULL);
                                 e->rest = i;
                         } else if (tags_first(p->tags) == TyKwargs) {
-                                vec_push(e->params, mkcstr(p));
-                                vec_push(e->constraints, NULL);
-                                vec_push(e->dflts, NULL);
+                                VPush(e->params, mkcstr(p));
+                                VPush(e->constraints, NULL);
+                                VPush(e->dflts, NULL);
                                 e->ikwargs = i;
                         }
                 }
@@ -5726,7 +5724,7 @@ cexpr(struct value *v)
                 struct value *lets = &v->items[0];
                 statement_vector defs = {0};
                 for (int i = 0; i < lets->array->count; ++i) {
-                        vec_push(defs, cstmt(&lets->array->items[i]));
+                        VPush(defs, cstmt(&lets->array->items[i]));
                 }
                 make_with(e, defs, cstmt(&v->items[1]));
         } else if (tags_first(v->tags) == TyCond) {
@@ -5851,12 +5849,15 @@ tyeval(struct expression *e)
         byte_vector code_save = state.code;
         vec_init(state.code);
 
+        size_t loc_count_save = state.expression_locations.count;
+
         emit_expression(e);
         emit_instr(INSTR_HALT);
 
         struct value v = vm_exec_or_nil(state.code.items);
 
         state.code = code_save;
+        state.expression_locations.count = loc_count_save;
 
         return v;
 }
@@ -5926,7 +5927,7 @@ define_class(struct statement *s)
         }
 
         if (s->class.pub) {
-                vec_push(state.exports, s->class.name);
+                VPush(state.exports, s->class.name);
         }
 }
 

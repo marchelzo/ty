@@ -64,6 +64,15 @@ sclone(char const *s)
         return new;
 }
 
+char *
+sclonea(char const *s)
+{
+        size_t n = strlen(s);
+        char *new = Allocate(n + 1);
+        memcpy(new, s, n + 1);
+        return new;
+}
+
 bool
 contains(char const *s, char c)
 {

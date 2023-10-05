@@ -172,7 +172,7 @@ mkregex(char const *pat, int flags)
         if (JITStack != NULL)
                 pcre_assign_jit_stack(extra, NULL, JITStack);
 
-        struct regex *r = gc_alloc(sizeof *r);
+        struct regex *r = Allocate(sizeof *r);
         r->pattern = pat;
         r->pcre = re;
         r->extra = extra;
@@ -291,17 +291,17 @@ lexword(void)
 
         for (;;) {
                 while (isalnum(C(0)) || C(0) == '_' || (C(0) & 0x80))
-                        vec_push(word, nextchar());
+                        VPush(word, nextchar());
 
                 if (C(0) == ':' && C(1) == ':' && ++has_module) {
                         nextchar();
                         nextchar();
 
                         if (module.count != 0)
-                                vec_push(module, '/');
+                                VPush(module, '/');
 
                         if (word.count != 0)
-                                vec_push_n(module, word.items, word.count);
+                                VPushN(module, word.items, word.count);
                         word.count = 0;
 
                         if (!isalpha(C(0)) && C(0) != '_') {
@@ -321,12 +321,12 @@ lexword(void)
          * Also, macro names end in $
          */
         if (C(0) == '!' || C(0) == '?' || C(0) == '$')
-                vec_push(word, nextchar());
+                VPush(word, nextchar());
 
-        if (has_module != 0)
-                vec_push(module, '\0');
+        if (has_module)
+                VPush(module, '\0');
 
-        vec_push(word, '\0');
+        VPush(word, '\0');
 
         char *w = word.items;
         char *m = module.items;
@@ -392,11 +392,11 @@ lexdocstring(void)
 
         while (!end_of_docstring('\'', ndelim) && C(0) != '\0') {
                 if (eat_line_ending()) {
-                        vec_push(line, '\0');
-                        vec_push(lines, line.items);
+                        VPush(line, '\0');
+                        VPush(lines, line.items);
                         vec_init(line);
                 } else {
-                        vec_push(line, nextchar());
+                        VPush(line, nextchar());
                 }
         }
 
@@ -416,7 +416,6 @@ lexdocstring(void)
         }
 
         int nstrip = line.count;
-        vec_empty(line);
 
         vec(char) s;
         vec_init(s);
@@ -427,15 +426,14 @@ lexdocstring(void)
                         off += 1;
                 }
                 while (lines.items[i][off] != '\0') {
-                        vec_push(s, lines.items[i][off++]);
+                        VPush(s, lines.items[i][off++]);
                 }
                 if (i + 1 != lines.count) {
-                        vec_push(s, '\n');
+                        VPush(s, '\n');
                 }
-                gc_free(lines.items[i]);
         }
 
-        vec_push(s, '\0');
+        VPush(s, '\0');
 
         return mkstring(s.items);
 }
@@ -460,26 +458,26 @@ lexrawstr(void)
                                 goto Unterminated;
                         case 'n':
                                 nextchar();
-                                vec_push(str, '\n');
+                                VPush(str, '\n');
                                 continue;
                         case 'r':
                                 nextchar();
-                                vec_push(str, '\r');
+                                VPush(str, '\r');
                                 continue;
                         case 't':
                                 nextchar();
-                                vec_push(str, '\t');
+                                VPush(str, '\t');
                                 continue;
                         }
                         // fallthrough
                 default:
-                           vec_push(str, nextchar());
+                           VPush(str, nextchar());
                 }
         }
 
         assert(nextchar() == '\'');
 
-        vec_push(str, '\0');
+        VPush(str, '\0');
 
         return mkstring(str.items);
 }
@@ -552,7 +550,7 @@ lexspecialdocstring(void)
         vec(char) str;
         vec_init(str);
 
-        vec_push(lines, (struct SDSLine){0});
+        VPush(lines, (struct SDSLine){0});
 
         char *fmt = NULL;
 
@@ -566,21 +564,21 @@ lexspecialdocstring(void)
 
         while (!end_of_docstring('"', ndelim) && C(0) != '\0') {
                 if (eat_line_ending()) {
-                        vec_push(str, '\n');
-                        vec_push(str, '\0');
-                        vec_push(vec_last(lines)->strs, str.items);
+                        VPush(str, '\n');
+                        VPush(str, '\0');
+                        VPush(vec_last(lines)->strs, str.items);
                         vec_init(str);
-                        vec_push(lines, (struct SDSLine){0});
+                        VPush(lines, (struct SDSLine){0});
                 } else if (C(0) == '{') {
-                        vec_push(str, '\0');
-                        vec_push(vec_last(lines)->strs, str.items);
+                        VPush(str, '\0');
+                        VPush(vec_last(lines)->strs, str.items);
                         vec_init(str);
                         nextchar();
                         LexState st = state;
                         st.end = lexexpr();
                         nextchar();
-                        vec_push(vec_last(lines)->fmts, NULL);
-                        vec_push(vec_last(lines)->exprs, st);
+                        VPush(vec_last(lines)->fmts, NULL);
+                        VPush(vec_last(lines)->exprs, st);
                 } else switch (C(0)) {
                         case '\0': goto Unterminated;
                         case '%':
@@ -594,7 +592,7 @@ lexspecialdocstring(void)
                                                 error("unterminated format specifier");
                                         }
                                 } else {
-                                        vec_push(str, nextchar());
+                                        VPush(str, nextchar());
                                 }
                                 break;
                         case '\\':
@@ -604,16 +602,16 @@ lexspecialdocstring(void)
                                         goto Unterminated;
                                 case 'n':
                                         nextchar();
-                                        vec_push(str, '\n');
+                                        VPush(str, '\n');
                                         continue;
                                 case 'r':
                                         printf("Appending \\r\n");
                                         nextchar();
-                                        vec_push(str, '\r');
+                                        VPush(str, '\r');
                                         continue;
                                 case 't':
                                         nextchar();
-                                        vec_push(str, '\t');
+                                        VPush(str, '\t');
                                         continue;
                                 case 'x':
                                         {
@@ -625,7 +623,7 @@ lexspecialdocstring(void)
                                                         error("invalid hexadecimal byte value in string: \\x%.2s", SRC);
                                                 }
 
-                                                vec_push(str, b);
+                                                VPush(str, b);
 
                                                 continue;
                                         }
@@ -648,13 +646,13 @@ lexspecialdocstring(void)
 
                                                 unsigned char bytes[4];
                                                 int n = utf8proc_encode_char(codepoint, bytes);
-                                                vec_push_n(str, (char *)bytes, n);
+                                                VPushN(str, (char *)bytes, n);
 
                                                 continue;
                                         }
                                 }
                         default:
-                                vec_push(str, nextchar());
+                                VPush(str, nextchar());
                 }
         }
 
@@ -674,7 +672,6 @@ lexspecialdocstring(void)
         }
 
         int nstrip = str.count;
-        vec_empty(str);
 
         struct token special = mktoken(TOKEN_SPECIAL_STRING);
         vec_init(special.strings);
@@ -690,20 +687,18 @@ lexspecialdocstring(void)
                 while (off < nstrip && isspace(lines.items[i].strs.items[0][off])) {
                         off += 1;
                 }
-                printf("Adding str of len %zu\n", strlen(lines.items[i].strs.items[0] + off));
                 if (i == 0) {
-                        vec_push(special.strings, lines.items[i].strs.items[0] + off);
+                        VPush(special.strings, lines.items[i].strs.items[0] + off);
                 } else {
-                        char const *s = gc_alloc(strlen(*vec_last(special.strings)) + strlen(lines.items[i].strs.items[0] + off) + 1);
+                        char *s = Allocate(strlen(*vec_last(special.strings)) + strlen(lines.items[i].strs.items[0] + off) + 1);
                         strcpy(s, *vec_last(special.strings));
                         strcat(s, lines.items[i].strs.items[0] + off);
                         *vec_last(special.strings) = s;
                 }
                 for (int j = 0; j < lines.items[i].exprs.count; ++j) {
-                        vec_push(special.expressions, lines.items[i].exprs.items[j]);
-                        vec_push(special.fmts, lines.items[i].fmts.items[j]);
-                        vec_push(special.strings, lines.items[i].strs.items[j + 1]);
-                        printf("Adding str of len %zu\n", strlen(lines.items[i].strs.items[j + 1]));
+                        VPush(special.expressions, lines.items[i].exprs.items[j]);
+                        VPush(special.fmts, lines.items[i].fmts.items[j]);
+                        VPush(special.strings, lines.items[i].strs.items[j + 1]);
                 }
         }
 
@@ -749,7 +744,7 @@ Start:
                                         error("unterminated format specifier");
                                 }
                         } else {
-                                vec_push(str, nextchar());
+                                VPush(str, nextchar());
                         }
                         break;
                 case '\\':
@@ -759,15 +754,15 @@ Start:
                                 goto Unterminated;
                         case 'n':
                                 nextchar();
-                                vec_push(str, '\n');
+                                VPush(str, '\n');
                                 continue;
                         case 'r':
                                 nextchar();
-                                vec_push(str, '\r');
+                                VPush(str, '\r');
                                 continue;
                         case 't':
                                 nextchar();
-                                vec_push(str, '\t');
+                                VPush(str, '\t');
                                 continue;
                         case 'x':
                                 {
@@ -779,7 +774,7 @@ Start:
                                                 error("invalid hexadecimal byte value in string: \\x%.2s", SRC);
                                         }
 
-                                        vec_push(str, b);
+                                        VPush(str, b);
 
                                         continue;
                                 }
@@ -802,30 +797,30 @@ Start:
 
                                         unsigned char bytes[4];
                                         int n = utf8proc_encode_char(codepoint, bytes);
-                                        vec_push_n(str, (char *)bytes, n);
+                                        VPushN(str, (char *)bytes, n);
 
                                         continue;
                                 }
                         }
                 default:
-                           vec_push(str, nextchar());
+                           VPush(str, nextchar());
                 }
         }
 
         assert(nextchar() == '"');
 
-        vec_push(str, '\0');
-        vec_push(special.strings, str.items);
+        VPush(str, '\0');
+        VPush(special.strings, str.items);
 
         special.end = state.loc;
         return special;
 
 Expr:
-        vec_push(str, '\0');
-        vec_push(special.strings, str.items);
+        VPush(str, '\0');
+        VPush(special.strings, str.items);
         vec_init(str);
 
-        vec_push(special.fmts, fmt);
+        VPush(special.fmts, fmt);
         fmt = NULL;
 
         /* Eat the initial { */
@@ -837,7 +832,7 @@ Expr:
         /* Eat the terminating } */
         nextchar();
 
-        vec_push(special.expressions, st);
+        VPush(special.expressions, st);
 
         goto Start;
 
@@ -861,13 +856,13 @@ lexregex(void)
                                 goto Unterminated;
                         }
                         if (C(1) == '\\') {
-                                vec_push(pat, nextchar());
+                                VPush(pat, nextchar());
                         } else if (C(1) == '/') {
                                 nextchar();
                         }
                         /* fallthrough */
                 default:
-                           vec_push(pat, nextchar());
+                           VPush(pat, nextchar());
                 }
         }
 
@@ -885,12 +880,12 @@ lexregex(void)
                 nextchar();
         }
 
-        vec_push(pat, '\0');
+        VPush(pat, '\0');
 
         return mkregex(pat.items, flags);
 
 Unterminated:
-        vec_push(pat, '\0');
+        VPush(pat, '\0');
         error("unterminated regular expression: %s/%.20s%s...", TERM(36), pat.items, TERM(39));
 }
 
@@ -1017,7 +1012,7 @@ lexop(void)
         int toktype = operator_get_token_type(op);
         if (toktype == -1) {
                 struct token t = mktoken(TOKEN_USER_OP);
-                t.identifier = sclone(op);
+                t.identifier = sclonea(op);
                 return t;
         }
 
@@ -1039,14 +1034,14 @@ lexlinecomment(void)
         vec_init(comment);
 
         while (C(0) != '\n' && C(0) != '\0') {
-                vec_push(comment, nextchar());
+                VPush(comment, nextchar());
         }
 
         while (comment.count > 0 && isspace(*vec_last(comment))) {
                 vec_pop(comment);
         }
 
-        vec_push(comment, '\0');
+        VPush(comment, '\0');
 
         struct token t = mktoken(TOKEN_COMMENT);
         t.comment = comment.items;
@@ -1210,7 +1205,7 @@ lex_init(char const *file, char const *src)
 void
 lex_start(LexState const *st)
 {
-        vec_push(states, state);
+        VPush(states, state);
         state = *st;
 }
 

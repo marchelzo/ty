@@ -215,7 +215,7 @@ mksym(int s)
         char b[32];
 
         snprintf(b, sizeof b - 1, ":%d", s);
-        return sclone(b);
+        return sclonea(b);
 }
 
 /*
@@ -232,7 +232,7 @@ gensym(void)
 inline static struct expression *
 mkexpr(void)
 {
-        struct expression *e = gc_alloc(sizeof *e);
+        struct expression *e = Allocate(sizeof *e);
         e->constraint = NULL;
         e->is_method = false;
         e->symbolized = false;
@@ -266,7 +266,7 @@ mkfunc(void)
 inline static struct statement *
 mkstmt(void)
 {
-        struct statement *s = gc_alloc(sizeof *s);
+        struct statement *s = Allocate(sizeof *s);
         s->start = tok()->start;
         s->end = tok()->start;
         return s;
@@ -278,7 +278,7 @@ mkret(struct expression *value)
         struct statement *s = mkstmt();
         s->type = STATEMENT_RETURN;
         vec_init(s->returns);
-        vec_push(s->returns, value);
+        VPush(s->returns, value);
         return s;
 }
 
@@ -309,7 +309,7 @@ token(int i)
                 }
                 t = lex_token(lctx);
                 LOG("Adding tokens[%d] = %s", (int)tokens.count, token_show(&t));
-                vec_push(tokens, t);
+                VPush(tokens, t);
         }
 
         LOG("tokens[%d] = %s", TokenIndex + i, token_show(&tokens.items[TokenIndex + i]));
@@ -437,7 +437,7 @@ unconsume(int type)
 
         logctx();
 
-        vec_insert(tokens, t, TokenIndex);
+        VInsert(tokens, t, TokenIndex);
 }
 
 noreturn static void
@@ -712,14 +712,13 @@ prefix_special_string(void)
                 vec_init(tokens);
                 lex_start(&exprs[i]);
                 lex_save(&CtxCheckpoint);
-                vec_push(e->expressions, parse_expr(0));
+                VPush(e->expressions, parse_expr(0));
                 (*vec_last(e->expressions))->end = End;
                 if (tok()->type != TOKEN_END) {
                         error("expression in interpolated string has trailing tokens");
                 }
                 consume(TOKEN_END);
                 lex_end();
-                gc_free(tokens.items);
         }
 
         TokenIndex = ti;
@@ -794,7 +793,7 @@ prefix_identifier(void)
 
         // Is this a macro invocation?
         if (strchr(e->identifier, '$') != NULL) {
-                e->identifier = sclone(e->identifier);
+                e->identifier = sclonea(e->identifier);
                 *strchr(e->identifier, '$') = '\0';
                 struct expression *macro = mkexpr();
                 macro->type = EXPRESSION_MACRO_INVOCATION;
@@ -888,23 +887,23 @@ prefix_function(void)
                 }
 
                 expect(TOKEN_IDENTIFIER);
-                vec_push(e->params, tok()->identifier);
+                VPush(e->params, tok()->identifier);
                 next();
 
                 if (!special && tok()->type == ':') {
                         next();
-                        vec_push(e->constraints, parse_expr(0));
+                        VPush(e->constraints, parse_expr(0));
                         (*vec_last(e->constraints))->end = End;
                 } else {
-                        vec_push(e->constraints, NULL);
+                        VPush(e->constraints, NULL);
                 }
 
                 if (!special && tok()->type == TOKEN_EQ) {
                         next();
-                        vec_push(e->dflts, parse_expr(0));
+                        VPush(e->dflts, parse_expr(0));
                         (*vec_last(e->dflts))->end = End;
                 } else {
-                        vec_push(e->dflts, NULL);
+                        VPush(e->dflts, NULL);
                 }
 
                 if (tok()->type == ',') {
@@ -1057,9 +1056,9 @@ prefix_record(void)
 
                 if (tok()->type == TOKEN_QUESTION) {
                         next();
-                        vec_push(e->required, false);
+                        VPush(e->required, false);
                 } else {
-                        vec_push(e->required, true);
+                        VPush(e->required, true);
                 }
 
                 if (tok()->type == TOKEN_STAR) {
@@ -1074,13 +1073,13 @@ prefix_record(void)
                                 item->value = parse_expr(0);
                                 item->end = End;
                         }
-                        vec_push(e->names, "*");
-                        vec_push(e->es, item);
+                        VPush(e->names, "*");
+                        VPush(e->es, item);
                         goto Next;
                 }
 
                 expect(TOKEN_IDENTIFIER);
-                vec_push(e->names, tok()->identifier);
+                VPush(e->names, tok()->identifier);
 
                 if (token(1)->type == ':') {
                         next();
@@ -1094,14 +1093,14 @@ prefix_record(void)
                         expect(':');
                 }
 
-                vec_push(e->es, parse_expr(0));
+                VPush(e->es, parse_expr(0));
 
 Next:
                 if (have_keyword(KEYWORD_IF)) {
                         next();
-                        vec_push(e->tconds, parse_expr(0));
+                        VPush(e->tconds, parse_expr(0));
                 } else {
-                        vec_push(e->tconds, NULL);
+                        VPush(e->tconds, NULL);
                 }
                 if (tok()->type == ',') {
                         next();
@@ -1144,11 +1143,11 @@ parse_pattern(void)
                 p->start = pattern->start;
 
                 vec_init(p->es);
-                vec_push(p->es, pattern);
+                VPush(p->es, pattern);
 
                 while (tok()->type == ',') {
                         next();
-                        vec_push(p->es, next_pattern());
+                        VPush(p->es, next_pattern());
                 }
 
                 p->end = (*vec_last(p->es))->end;
@@ -1194,8 +1193,8 @@ make_with(struct expression *e, statement_vector defs, struct statement *body)
         struct statement *s = mkstmt();
         s->type = STATEMENT_MULTI;
         vec_init(s->statements);
-        vec_push_n(s->statements, defs.items, defs.count);
-        vec_push(s->statements, try);
+        VPushN(s->statements, defs.items, defs.count);
+        VPush(s->statements, try);
         e->with.block = s;
 }
 
@@ -1230,7 +1229,7 @@ prefix_with(void)
                     def->value = e;
             }
 
-            vec_push(defs, def);
+            VPush(defs, def);
 
             if (tok()->type == ',') {
                     next();
@@ -1257,10 +1256,10 @@ prefix_yield(void)
 
         consume_keyword(KEYWORD_YIELD);
 
-        vec_push(e->es, parse_expr(1));
+        VPush(e->es, parse_expr(1));
         while (tok()->type == ',') {
                 next();
-                vec_push(e->es, parse_expr(1));
+                VPush(e->es, parse_expr(1));
         }
 
         e->end = End;
@@ -1284,13 +1283,13 @@ prefix_match(void)
         vec_init(e->patterns);
         vec_init(e->thens);
 
-        vec_push(e->patterns, parse_pattern());
+        VPush(e->patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
         if (tok()->type == '{') {
-                vec_push(e->thens, parse_block_expr());
+                VPush(e->thens, parse_block_expr());
         } else {
-                vec_push(e->thens, parse_expr(0));
+                VPush(e->thens, parse_expr(0));
         }
 
         while (tok()->type == ',') {
@@ -1301,12 +1300,12 @@ prefix_match(void)
                         break;
                 }
 
-                vec_push(e->patterns, parse_pattern());
+                VPush(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
                 if (tok()->type == '{') {
-                        vec_push(e->thens, parse_block_expr());
+                        VPush(e->thens, parse_block_expr());
                 } else {
-                        vec_push(e->thens, parse_expr(0));
+                        VPush(e->thens, parse_expr(0));
                 }
         }
 
@@ -1346,7 +1345,7 @@ gencompr(struct expression *e)
         g->body->each.body->expression = mkexpr();
         g->body->each.body->expression->type = EXPRESSION_YIELD;
         vec_init(g->body->each.body->expression->es);
-        vec_push(g->body->each.body->expression->es, e);
+        VPush(g->body->each.body->expression->es, e);
         g->end = End;
         return g;
 }
@@ -1386,9 +1385,9 @@ prefix_parenthesis(void)
          */
         if (get_infix_parser() != NULL && get_prefix_parser() == NULL) {
                 e = mkfunc();
-                vec_push(e->params, gensym());
-                vec_push(e->dflts, NULL);
-                vec_push(e->constraints, NULL);
+                VPush(e->params, gensym());
+                VPush(e->dflts, NULL);
+                VPush(e->constraints, NULL);
 
                 struct expression *t = mkexpr();
                 t->type = EXPRESSION_IDENTIFIER;
@@ -1441,21 +1440,21 @@ prefix_parenthesis(void)
 
                 if (e->type == EXPRESSION_IDENTIFIER && tok()->type == ':') {
                         next();
-                        vec_push(list->names, e->identifier);
+                        VPush(list->names, e->identifier);
                         e = parse_expr(0);
                 } else {
-                        vec_push(list->names, NULL);
+                        VPush(list->names, NULL);
                 }
 
                 e->end = End;
-                vec_push(list->es, e);
-                vec_push(list->required, true);
+                VPush(list->es, e);
+                VPush(list->required, true);
 
                 if (have_keyword(KEYWORD_IF)) {
                         next();
-                        vec_push(list->tconds, parse_expr(0));
+                        VPush(list->tconds, parse_expr(0));
                 } else {
-                        vec_push(list->tconds, NULL);
+                        VPush(list->tconds, NULL);
                 }
 
                 while (tok()->type == ',') {
@@ -1469,17 +1468,17 @@ prefix_parenthesis(void)
 
                         if (tok()->type == TOKEN_QUESTION) {
                                 next();
-                                vec_push(list->required, false);
+                                VPush(list->required, false);
                         } else {
-                                vec_push(list->required, true);
+                                VPush(list->required, true);
                         }
 
                         if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                                vec_push(list->names, tok()->identifier);
+                                VPush(list->names, tok()->identifier);
                                 next();
                                 next();
                         } else {
-                                vec_push(list->names, NULL);
+                                VPush(list->names, NULL);
                         }
 
                         struct expression *e = parse_expr(0);
@@ -1490,13 +1489,13 @@ prefix_parenthesis(void)
                                 list->only_identifiers = false;
                         }
 
-                        vec_push(list->es, e);
+                        VPush(list->es, e);
 
                         if (have_keyword(KEYWORD_IF)) {
                                 next();
-                                vec_push(list->tconds, parse_expr(0));
+                                VPush(list->tconds, parse_expr(0));
                         } else {
-                                vec_push(list->tconds, NULL);
+                                VPush(list->tconds, NULL);
                         }
                 }
 
@@ -1521,10 +1520,10 @@ prefix_parenthesis(void)
                         vec_init(list->es);
                         vec_init(list->tconds);
                         vec_init(list->required);
-                        vec_push(list->names, NULL);
-                        vec_push(list->required, true);
-                        vec_push(list->es, e);
-                        vec_push(list->tconds, NULL);
+                        VPush(list->names, NULL);
+                        VPush(list->required, true);
+                        VPush(list->es, e);
+                        VPush(list->tconds, NULL);
                         return list;
                 } else {
                         e->start = start;
@@ -1640,9 +1639,9 @@ prefix_array(void)
                 e = parse_expr(0);
                 consume(']');
                 f = mkfunc();
-                vec_push(f->params, gensym());
-                vec_push(f->dflts, NULL);
-                vec_push(f->constraints, NULL);
+                VPush(f->params, gensym());
+                VPush(f->dflts, NULL);
+                VPush(f->constraints, NULL);
                 f->body = mkstmt();
                 f->body->type = STATEMENT_EXPRESSION;
                 f->body->expression = mkexpr();
@@ -1686,23 +1685,23 @@ prefix_array(void)
                                 item->value = parse_expr(0);
                                 item->end = End;
                         }
-                        vec_push(e->elements, item);
-                        vec_push(e->optional, false);
+                        VPush(e->elements, item);
+                        VPush(e->optional, false);
                 } else {
                         if (tok()->type == TOKEN_QUESTION) {
                                 next();
-                                vec_push(e->optional, true);
+                                VPush(e->optional, true);
                         } else {
-                                vec_push(e->optional, false);
+                                VPush(e->optional, false);
                         }
-                        vec_push(e->elements, parse_expr(0));
+                        VPush(e->elements, parse_expr(0));
                 }
 
                 if (have_keyword(KEYWORD_IF)) {
                         next();
-                        vec_push(e->aconds, parse_expr(0));
+                        VPush(e->aconds, parse_expr(0));
                 } else {
-                        vec_push(e->aconds, NULL);
+                        VPush(e->aconds, NULL);
                 }
 
                 if (have_keyword(KEYWORD_FOR)) {
@@ -1726,9 +1725,9 @@ prefix_array(void)
                         (token(1)->type == ']' || (have_not_in() && token(2)->type == ']'))
                 ) {
                         f = mkfunc();
-                        vec_push(f->params, gensym());
-                        vec_push(f->dflts, NULL);
-                        vec_push(f->constraints, NULL);
+                        VPush(f->params, gensym());
+                        VPush(f->dflts, NULL);
+                        VPush(f->constraints, NULL);
                         struct token t = *tok();
                         next();
                         struct token t2 = *tok();
@@ -1840,9 +1839,9 @@ implicit_subscript(struct expression *o)
         struct expression *f = mkfunc();
         f->body = mkret(e);
 
-        vec_push(f->params, o->identifier);
-        vec_push(f->dflts, NULL);
-        vec_push(f->constraints, NULL);
+        VPush(f->params, o->identifier);
+        VPush(f->dflts, NULL);
+        VPush(f->constraints, NULL);
 
         return f;
 }
@@ -1923,14 +1922,14 @@ prefix_implicit_method(void)
                                 next();
                                 return e;
                         } else {
-                                vec_push(e->method_args, parse_expr(0));
-                                vec_push(e->mconds, try_cond());
+                                VPush(e->method_args, parse_expr(0));
+                                VPush(e->mconds, try_cond());
                         }
 
                         while (tok()->type == ',') {
                                 next();
-                                vec_push(e->method_args, parse_expr(0));
-                                vec_push(e->mconds, try_cond());
+                                VPush(e->method_args, parse_expr(0));
+                                VPush(e->mconds, try_cond());
                         }
 
                         consume(')');
@@ -1940,9 +1939,9 @@ prefix_implicit_method(void)
         struct expression *f = mkfunc();
         f->body = mkret(e);
 
-        vec_push(f->params, o->identifier);
-        vec_push(f->dflts, NULL);
-        vec_push(f->constraints, NULL);
+        VPush(f->params, o->identifier);
+        VPush(f->dflts, NULL);
+        VPush(f->constraints, NULL);
 
         return f;
 }
@@ -1982,7 +1981,7 @@ prefix_bit_or(void)
         for (int i = 0; tok()->type != '|'; ++i) {
                 struct expression *item = parse_expr(1);
                 e->only_identifiers &= (item->type == EXPRESSION_IDENTIFIER);
-                vec_push(e->es, item);
+                VPush(e->es, item);
                 if (tok()->type != '|')
                         consume(',');
         }
@@ -2044,16 +2043,16 @@ prefix_dict(void)
                         spread->type = EXPRESSION_SPREAD;
                         spread->value = parse_expr(0);
                         spread->start = spread->value->start;
-                        vec_push(e->keys, spread);
-                        vec_push(e->values, NULL);
+                        VPush(e->keys, spread);
+                        VPush(e->values, NULL);
                 } else {
                         struct expression *key = parse_expr(0);
-                        vec_push(e->keys, key);
+                        VPush(e->keys, key);
                         if (key->type == EXPRESSION_IDENTIFIER) {
-                                vec_push(e->values, key->constraint);
+                                VPush(e->values, key->constraint);
                                 key->constraint = NULL;
                         } else {
-                                vec_push(e->values, NULL);
+                                VPush(e->values, NULL);
                         }
                         if (tok()->type == ':') {
                                 next();
@@ -2130,21 +2129,21 @@ infix_function_call(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         if (arg->type == EXPRESSION_SPLAT) {
-                                vec_push(e->kwargs, arg);
-                                vec_push(e->kws, "*");
+                                VPush(e->kwargs, arg);
+                                VPush(e->kws, "*");
                         } else {
-                                vec_push(e->args, arg);
-                                vec_push(e->fconds, try_cond());
+                                VPush(e->args, arg);
+                                VPush(e->fconds, try_cond());
                         }
                 } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                        vec_push(e->kws, tok()->identifier);
+                        VPush(e->kws, tok()->identifier);
                         next();
                         next();
-                        vec_push(e->kwargs, parse_expr(0));
-                        vec_push(e->fkwconds, NULL);
+                        VPush(e->kwargs, parse_expr(0));
+                        VPush(e->fkwconds, NULL);
                 } else {
-                        vec_push(e->args, parse_expr(0));
-                        vec_push(e->fconds, try_cond());
+                        VPush(e->args, parse_expr(0));
+                        VPush(e->fconds, try_cond());
                 }
                 if (have_keyword(KEYWORD_FOR)) {
                         *vec_last(e->args) = gencompr(*vec_last(e->args));
@@ -2166,21 +2165,21 @@ infix_function_call(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         if (arg->type == EXPRESSION_SPLAT) {
-                                vec_push(e->kwargs, arg);
-                                vec_push(e->kws, "*");
+                                VPush(e->kwargs, arg);
+                                VPush(e->kws, "*");
                         } else {
-                                vec_push(e->args, arg);
-                                vec_push(e->fconds, try_cond());
+                                VPush(e->args, arg);
+                                VPush(e->fconds, try_cond());
                         }
                 } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                        vec_push(e->kws, tok()->identifier);
+                        VPush(e->kws, tok()->identifier);
                         next();
                         next();
-                        vec_push(e->kwargs, parse_expr(0));
-                        vec_push(e->fkwconds, NULL);
+                        VPush(e->kwargs, parse_expr(0));
+                        VPush(e->fkwconds, NULL);
                 } else {
-                        vec_push(e->args, parse_expr(0));
-                        vec_push(e->fconds, try_cond());
+                        VPush(e->args, parse_expr(0));
+                        VPush(e->fconds, try_cond());
                 }
         }
 
@@ -2258,14 +2257,14 @@ infix_list(struct expression *left)
         e->start = left->start;
         e->type = EXPRESSION_LIST;
         vec_init(e->es);
-        vec_push(e->es, left);
+        VPush(e->es, left);
 
         bool ne = NoEquals;
         NoEquals = true;
 
         while (tok()->type == ',') {
                 next();
-                vec_push(e->es, parse_expr(1));
+                VPush(e->es, parse_expr(1));
         }
 
         NoEquals = ne;
@@ -2358,20 +2357,20 @@ infix_member_access(struct expression *left)
                 arg->value = parse_expr(0);
                 arg->start = arg->value->start;
                 if (arg->type == EXPRESSION_SPLAT) {
-                        vec_push(e->method_kwargs, arg);
-                        vec_push(e->method_kws, "*");
+                        VPush(e->method_kwargs, arg);
+                        VPush(e->method_kws, "*");
                 } else {
-                        vec_push(e->method_args, arg);
-                        vec_push(e->mconds, try_cond());
+                        VPush(e->method_args, arg);
+                        VPush(e->mconds, try_cond());
                 }
         } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                vec_push(e->method_kws, tok()->identifier);
+                VPush(e->method_kws, tok()->identifier);
                 next();
                 next();
-                vec_push(e->method_kwargs, parse_expr(0));
+                VPush(e->method_kwargs, parse_expr(0));
         } else {
-                vec_push(e->method_args, parse_expr(0));
-                vec_push(e->mconds, try_cond());
+                VPush(e->method_args, parse_expr(0));
+                VPush(e->mconds, try_cond());
         }
 
         if (have_keyword(KEYWORD_FOR)) {
@@ -2393,20 +2392,20 @@ infix_member_access(struct expression *left)
                         arg->value = parse_expr(0);
                         arg->start = arg->value->start;
                         if (arg->type == EXPRESSION_SPLAT) {
-                                vec_push(e->method_kwargs, arg);
-                                vec_push(e->method_kws, "*");
+                                VPush(e->method_kwargs, arg);
+                                VPush(e->method_kws, "*");
                         } else {
-                                vec_push(e->method_args, arg);
-                                vec_push(e->mconds, try_cond());
+                                VPush(e->method_args, arg);
+                                VPush(e->mconds, try_cond());
                         }
                 } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                        vec_push(e->method_kws, tok()->identifier);
+                        VPush(e->method_kws, tok()->identifier);
                         next();
                         next();
-                        vec_push(e->method_kwargs, parse_expr(0));
+                        VPush(e->method_kwargs, parse_expr(0));
                 } else {
-                        vec_push(e->method_args, parse_expr(0));
-                        vec_push(e->mconds, try_cond());
+                        VPush(e->method_args, parse_expr(0));
+                        VPush(e->mconds, try_cond());
                 }
         }
 
@@ -2470,7 +2469,7 @@ infix_arrow_function(struct expression *left)
                 struct expression *l = mkexpr();
                 l->type = EXPRESSION_LIST;
                 vec_init(l->es);
-                vec_push(l->es, left);
+                VPush(l->es, left);
                 left = l;
         } else {
                 left->type = EXPRESSION_LIST;
@@ -2483,26 +2482,25 @@ infix_arrow_function(struct expression *left)
         for (int i = 0; i < left->es.count; ++i) {
                 struct expression *p = left->es.items[i];
                 if (p->type == EXPRESSION_IDENTIFIER) {
-                        vec_push(e->params, p->identifier);
+                        VPush(e->params, p->identifier);
                 } else if (p->type == EXPRESSION_MATCH_REST) {
-                        vec_push(e->params, p->identifier);
+                        VPush(e->params, p->identifier);
                         e->rest = i;
                 } else {
                         char *name = gensym();
-                        vec_push(e->params, name);
-                        vec_push(body->statements, mkdef(definition_lvalue(p), name));
+                        VPush(e->params, name);
+                        VPush(body->statements, mkdef(definition_lvalue(p), name));
                 }
-                vec_push(e->dflts, NULL);
-                vec_push(e->constraints, NULL);
+                VPush(e->dflts, NULL);
+                VPush(e->constraints, NULL);
         }
 
         struct statement *ret = mkret((tok()->type == '{') ? parse_block_expr() : parse_expr(0));
 
         if (body->statements.count == 0) {
-                gc_free(body);
                 e->body = ret;
         } else {
-                vec_push(body->statements, ret);
+                VPush(body->statements, ret);
                 e->body = body;
         }
 
@@ -2948,7 +2946,6 @@ assignment_lvalue(struct expression *e)
                 //assert(v->type == EXPRESSION_IDENTIFIER);
                 v->type = EXPRESSION_MATCH_REST;
                 v->start = e->start;
-                gc_free(e);
                 return v;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i)
@@ -2998,14 +2995,14 @@ parse_definition_lvalue(int context)
                 struct expression *l = mkexpr();
                 l->type = EXPRESSION_LIST;
                 vec_init(l->es);
-                vec_push(l->es, e);
+                VPush(l->es, e);
                 while (tok()->type == ',') {
                         next();
                         struct expression *e = parse_definition_lvalue(LV_SUB);
                         if (e == NULL) {
                                 error("expected lvalue but found %s", token_show(tok()));
                         }
-                        vec_push(l->es, e);
+                        VPush(l->es, e);
                 }
                 e = l;
         }
@@ -3031,7 +3028,6 @@ parse_definition_lvalue(int context)
         return e;
 
 Error:
-        gc_free(e);
         seek(save);
         return NULL;
 }
@@ -3042,7 +3038,7 @@ parse_target_list(void)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_LIST;
         vec_init(e->es);
-        vec_push(e->es, parse_definition_lvalue(LV_EACH));
+        VPush(e->es, parse_definition_lvalue(LV_EACH));
 
         if (e->es.items[0] == NULL) {
         Error:
@@ -3058,7 +3054,7 @@ parse_target_list(void)
                 )
         ) {
                 next();
-                vec_push(e->es, parse_definition_lvalue(LV_EACH));
+                VPush(e->es, parse_definition_lvalue(LV_EACH));
                 if (vec_last(e->es) == NULL) {
                         goto Error;
                 }
@@ -3173,7 +3169,7 @@ parse_for_loop(void)
 static struct condpart *
 parse_condpart(void)
 {
-        struct condpart *p = gc_alloc(sizeof *p);
+        struct condpart *p = Allocate(sizeof *p);
         p->e = NULL;
         p->target = NULL;
         p->def = false;
@@ -3208,7 +3204,7 @@ parse_condparts(bool neg)
         condpart_vector parts;
         vec_init(parts);
 
-        vec_push(parts, parse_condpart());
+        VPush(parts, parse_condpart());
 
         while ((!neg && have_keyword(KEYWORD_AND)) ||
                (neg && have_keyword(KEYWORD_OR))) {
@@ -3233,7 +3229,7 @@ parse_condparts(bool neg)
                         part->e = not;
                 }
 
-                vec_push(parts, part);
+                VPush(parts, part);
         }
 
         return parts;
@@ -3258,11 +3254,11 @@ parse_while(void)
 
         vec_init(s->While.parts);
 
-        vec_push(s->While.parts, parse_condpart());
+        VPush(s->While.parts, parse_condpart());
 
         while (have_keyword(KEYWORD_AND)) {
                 next();
-                vec_push(s->While.parts, parse_condpart());
+                VPush(s->While.parts, parse_condpart());
         }
 
         s->While.block = parse_block();
@@ -3312,10 +3308,10 @@ parse_match_statement(void)
         vec_init(s->match.patterns);
         vec_init(s->match.statements);
 
-        vec_push(s->match.patterns, parse_pattern());
+        VPush(s->match.patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
-        vec_push(s->match.statements, parse_statement(0));
+        VPush(s->match.statements, parse_statement(0));
 
         while (tok()->type == ',') {
                 next();
@@ -3324,9 +3320,9 @@ parse_match_statement(void)
                         break;
                 }
 
-                vec_push(s->match.patterns, parse_pattern());
+                VPush(s->match.patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
-                vec_push(s->match.statements, parse_statement(0));
+                VPush(s->match.statements, parse_statement(0));
         }
 
         consume('}');
@@ -3425,11 +3421,11 @@ parse_return_statement(void)
                 return s;
         }
 
-        vec_push(s->returns, parse_expr(0));
+        VPush(s->returns, parse_expr(0));
 
         while (tok()->type == ',') {
                 next();
-                vec_push(s->returns, parse_expr(0));
+                VPush(s->returns, parse_expr(0));
         }
 
         if (tok()->type == ';')
@@ -3592,7 +3588,7 @@ parse_block(void)
         while (tok()->type != '}') {
                 struct statement *s = parse_statement(-1);
                 s->end = End;
-                vec_push(block->statements, s);
+                VPush(block->statements, s);
         }
 
         consume('}');
@@ -3686,7 +3682,7 @@ parse_class_definition(void)
                                 expect(TOKEN_IDENTIFIER);
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
-                                vec_push(s->tag.statics, prefix_function());
+                                VPush(s->tag.statics, prefix_function());
                                 (*vec_last(s->tag.statics))->start = start;
                                 (*vec_last(s->tag.statics))->start = End;
                         } else if (token(1)->type == TOKEN_EQ) {
@@ -3696,7 +3692,7 @@ parse_class_definition(void)
                                 *tok() = t;
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
-                                vec_push(s->tag.setters, prefix_function());
+                                VPush(s->tag.setters, prefix_function());
                                 (*vec_last(s->tag.setters))->start = start;
                                 (*vec_last(s->tag.setters))->start = End;
 
@@ -3709,13 +3705,13 @@ parse_class_definition(void)
                                 *tok() = t;
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
-                                vec_push(s->tag.getters, prefix_function());
+                                VPush(s->tag.getters, prefix_function());
                                 (*vec_last(s->tag.getters))->start = start;
                                 (*vec_last(s->tag.getters))->start = End;
                         } else {
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
-                                vec_push(s->tag.methods, prefix_function());
+                                VPush(s->tag.methods, prefix_function());
                                 (*vec_last(s->tag.methods))->start = start;
                                 (*vec_last(s->tag.methods))->start = End;
                         }
@@ -3764,8 +3760,8 @@ parse_try(void)
 
                 while (have_keyword(KEYWORD_CATCH)) {
                         next();
-                        vec_push(s->try.patterns, parse_expr(0));
-                        vec_push(s->try.handlers, parse_statement(-1));
+                        VPush(s->try.patterns, parse_expr(0));
+                        VPush(s->try.handlers, parse_statement(-1));
                 }
 
                 struct statement *otherwise;
@@ -3781,8 +3777,8 @@ parse_try(void)
                 s->try.s->iff.then = otherwise;
                 s->try.s->iff.otherwise = NULL;
 
-                vec_push(s->try.patterns, &WildCard);
-                vec_push(s->try.handlers, otherwise);
+                VPush(s->try.patterns, &WildCard);
+                VPush(s->try.handlers, otherwise);
 
                 s->try.finally = NULL;
 
@@ -3793,8 +3789,8 @@ parse_try(void)
 
         while (have_keyword(KEYWORD_CATCH)) {
                 next();
-                vec_push(s->try.patterns, parse_expr(0));
-                vec_push(s->try.handlers, parse_statement(-1));
+                VPush(s->try.patterns, parse_expr(0));
+                VPush(s->try.handlers, parse_statement(-1));
         }
 
         if (have_keyword(KEYWORD_FINALLY)) {
@@ -3818,7 +3814,7 @@ parse_export(void)
         vec_init(s->exports);
 
         while (tok()->type == TOKEN_IDENTIFIER || tok()->type == TOKEN_USER_OP) {
-                vec_push(s->exports, tok()->identifier);
+                VPush(s->exports, tok()->identifier);
                 next();
                 if (tok()->type == ',') {
                         next();
@@ -3849,23 +3845,23 @@ parse_import(void)
         module.count = 0;
 
         if (mod != NULL) {
-                vec_push_n(module, mod, strlen(mod));
-                vec_push(module, '/');
+                VPushN(module, mod, strlen(mod));
+                VPush(module, '/');
         }
 
-        vec_push_n(module, id, strlen(id));
+        VPushN(module, id, strlen(id));
 
         while (tok()->type == '.') {
                 next();
                 expect(TOKEN_IDENTIFIER);
-                vec_push(module, '/');
-                vec_push_n(module, tok()->identifier, strlen(tok()->identifier));
+                VPush(module, '/');
+                VPushN(module, tok()->identifier, strlen(tok()->identifier));
                 next();
         }
 
-        vec_push(module, '\0');
+        VPush(module, '\0');
 
-        s->import.module = sclone(module.items);
+        s->import.module = sclonea(module.items);
 
         if (tok()->type == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "as") == 0) {
                 next();
@@ -3884,9 +3880,9 @@ parse_import(void)
                 next();
                 if (tok()->type == TOKEN_DOT_DOT) {
                         next();
-                        vec_push(s->import.identifiers, "..");
+                        VPush(s->import.identifiers, "..");
                 } else while (tok()->type == TOKEN_IDENTIFIER) {
-                        vec_push(s->import.identifiers, tok()->identifier);
+                        VPush(s->import.identifiers, tok()->identifier);
                         next();
                         if (tok()->type == ',')
                                 next();
@@ -3947,9 +3943,7 @@ Expression:
         s->end = s->expression->end;
 
         if (s->expression->type == EXPRESSION_STATEMENT) {
-                struct statement *inner = s->expression->statement;
-                gc_free(s);
-                s = inner;
+                s = s->expression->statement;
         }
 
         if (tok()->type == ';') {
@@ -4006,7 +4000,6 @@ parse(char const *source, char const *file)
         setctx(LEX_PREFIX);
 
         if (setjmp(jb) != 0) {
-                vec_empty(program);
                 return NULL;
         }
 
@@ -4015,7 +4008,10 @@ parse(char const *source, char const *file)
         }
 
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT) {
-                vec_push(program, parse_import());
+                VPush(program, parse_import());
+                if (vec_last(program)[0]->type != STATEMENT_IMPORT) {
+                        puts("Oh no!!");
+                }
         }
 
         int TokenIndex_ = TokenIndex;
@@ -4050,7 +4046,7 @@ parse(char const *source, char const *file)
         program.count = 0;
 
         while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT) {
-                vec_push(program, parse_export());
+                VPush(program, parse_export());
         }
 
         while (tok()->type != TOKEN_END) {
@@ -4081,7 +4077,7 @@ parse(char const *source, char const *file)
                 s->end = End;
 
                 if (s->type != STATEMENT_MACRO_DEFINITION) {
-                        vec_push(program, s);
+                        VPush(program, s);
                 }
 
                 if (pub) switch (s->type) {
@@ -4101,7 +4097,7 @@ parse(char const *source, char const *file)
                 define_top(s);
         }
 
-        vec_push(program, NULL);
+        VPush(program, NULL);
 
         return program.items;
 }
@@ -4114,7 +4110,7 @@ parse_get_token(int i)
 
         if (lex_pos().s > vec_last(tokens)->end.s) {
                 tokens.count = TokenIndex;
-                vec_push(tokens, ((struct token) {
+                VPush(tokens, ((struct token) {
                         .ctx = lctx,
                         .type = TOKEN_EXPRESSION,
                         .start = lex_pos(),
@@ -4219,7 +4215,7 @@ parse_get_token(int i)
 #undef T
 
         if (type == NULL) {
-                type = sclone((char const []){(char)t->type, '\0'});
+                type = sclonea((char const []){(char)t->type, '\0'});
         }
 
         return value_named_tuple(
