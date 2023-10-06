@@ -1423,11 +1423,18 @@ vm_exec(char *code)
                         continue;
                 CASE(LOAD_LOCAL)
                         READVALUE(n);
-                        LOG("Loading %d", n);
+#ifndef TY_NO_LOG
+                        LOG("Loading local: %s (%d)", ip, n);
+                        ip += strlen(ip) + 1;
+#endif
                         push(*local(n));
                         break;
                 CASE(LOAD_REF)
                         READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading ref: %s (%d)", ip, n);
+                        ip += strlen(ip) + 1;
+#endif
                         vp = local(n);
                         if (vp->type == VALUE_REF) {
                                 push(*(struct value *)vp->ptr);
@@ -1437,7 +1444,10 @@ vm_exec(char *code)
                         break;
                 CASE(LOAD_CAPTURED)
                         READVALUE(n);
-                        LOG("Loading capture %d of %s", n, value_show(&vec_last(frames)->f));
+#ifndef TY_NO_LOG
+                        LOG("Loading capture: %s (%d) of %s", ip, n, value_show(&vec_last(frames)->f));
+                        ip += strlen(ip) + 1;
+#endif
                         if (vec_last(frames)->f.env == NULL) {
                             puts(value_show(&vec_last(frames)->f));
                         }
@@ -1445,7 +1455,10 @@ vm_exec(char *code)
                         break;
                 CASE(LOAD_GLOBAL)
                         READVALUE(n);
-                        LOG("Loading global: %d", n);
+#ifndef TY_NO_LOG
+                        LOG("Loading global: %s (%d)", ip, n);
+                        ip += strlen(ip) + 1;
+#endif
                         while (Globals.count <= n)
                                 vec_push(Globals, NIL);
                         push(Globals.items[n]);

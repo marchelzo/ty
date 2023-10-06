@@ -231,14 +231,16 @@ scope_capture_all(struct scope *scope)
         if (scope->function->parent == NULL)
                 return;
 
-        for (struct scope *s = scope->function->parent; s->function->parent != NULL && s->function->parent->parent != NULL; s = s->parent) {
+        for (struct scope *s = scope; s->function->parent != NULL && s->function->parent->parent != NULL; s = s->parent) {
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+                                LOG("scope_capture_all: capturing %s", sym->identifier);
+
                                 vec(struct scope *) scopes = {0};
 
-                                struct scope *fscope = scope->function;
+                                struct scope *fscope = scope->function->parent->function;
 
-                                while (fscope->parent->function != sym->scope->function) {
+                                while (fscope->parent != NULL && fscope->parent->function != sym->scope->function) {
                                         VPush(scopes, fscope);
                                         fscope = fscope->parent->function;
                                 }
@@ -281,3 +283,5 @@ scope_get_completions(struct scope *scope, char const *prefix, char **out, int m
 
         return n;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

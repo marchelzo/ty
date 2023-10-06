@@ -4984,16 +4984,7 @@ builtin_eval(int argc, struct value *kwargs)
                 vec_push_n_unchecked(B, POST, (sizeof POST));
                 Arena old = NewArena(1 << 22);
                 struct statement **prog = parse(B.items + 1, "(eval)");
-                struct expression *e = Allocate(sizeof *e);
-                *e = (struct expression){0};
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = Allocate(sizeof *e);
-                e->statement->type = STATEMENT_BLOCK;
-                vec_init(e->statement->statements);
-                while (*prog != NULL) {
-                        VPush(e->statement->statements, *prog);
-                        prog += 1;
-                }
+                struct expression *e = prog[0]->expression;
 
                 if (!compiler_symbolize_expression(e, scope)) {
                         return NIL;

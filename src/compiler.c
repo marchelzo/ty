@@ -1688,6 +1688,21 @@ emit_string(char const *s)
         VPushN(state.code, s, strlen(s) + 1);
 }
 
+#ifndef TY_NO_LOG
+#define emit_load_instr(id, inst, i) \
+        do { \
+                emit_instr(inst); \
+                emit_int(i); \
+                emit_string(id); \
+        } while (0)
+#else
+#define emit_load_instr(id, inst, i) \
+        do { \
+                emit_instr(inst); \
+                emit_int(i); \
+        } while (0)
+#endif
+
 inline static void
 emit_load(struct symbol const *s, struct scope const *scope)
 {
@@ -1696,23 +1711,18 @@ emit_load(struct symbol const *s, struct scope const *scope)
         LOG("Emitting LOAD for %s", s->identifier);
 
         if (s->global) {
-                emit_instr(INSTR_LOAD_GLOBAL);
-                emit_int(s->i);
+                emit_load_instr(s->identifier, INSTR_LOAD_GLOBAL, s->i);
         } else if (local && !s->captured) {
-                emit_instr(INSTR_LOAD_LOCAL);
-                emit_int(s->i);
+                emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
         } else if (!local && s->captured) {
                 LOG("It is captured and not owned by us");
                 int i = 0;
                 while (scope->function->captured.items[i] != s) {
-                        LOG("Checking against %s", scope->function->captured.items[i]->identifier);
                         i += 1;
                 }
-                emit_instr(INSTR_LOAD_CAPTURED);
-                emit_int(i);
+                emit_load_instr(s->identifier, INSTR_LOAD_CAPTURED, i);
         } else {
-                emit_instr(INSTR_LOAD_REF);
-                emit_int(s->i);
+                emit_load_instr(s->identifier, INSTR_LOAD_REF, s->i);
         }
 }
 
@@ -1886,8 +1896,7 @@ emit_function(struct expression const *e, int class)
                 if (e->dflts.items[i] == NULL)
                         continue;
                 struct symbol const *s = e->param_symbols.items[i];
-                emit_instr(INSTR_LOAD_LOCAL);
-                emit_int(s->i);
+                emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t need_dflt);
                 PLACEHOLDER_JUMP(INSTR_JUMP, size_t skip_dflt);
                 PATCH_JUMP(need_dflt);
@@ -1904,12 +1913,10 @@ emit_function(struct expression const *e, int class)
                         continue;
                 struct symbol const *s = e->param_symbols.items[i];
                 size_t start = state.code.count;
-                emit_instr(INSTR_LOAD_LOCAL);
-                emit_int(s->i);
+                emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
                 emit_constraint(e->constraints.items[i]);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
-                emit_instr(INSTR_LOAD_LOCAL);
-                emit_int(s->i);
+                emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
                 emit_instr(INSTR_BAD_CALL);
                 if (e->name != NULL)
                         emit_string(e->name);
@@ -5849,7 +5856,8 @@ tyeval(struct expression *e)
         byte_vector code_save = state.code;
         vec_init(state.code);
 
-        size_t loc_count_save = state.expression_locations.count;
+        location_vector locations_save = state.expression_locations;
+        vec_init(state.expression_locations);
 
         emit_expression(e);
         emit_instr(INSTR_HALT);
@@ -5857,7 +5865,7 @@ tyeval(struct expression *e)
         struct value v = vm_exec_or_nil(state.code.items);
 
         state.code = code_save;
-        state.expression_locations.count = loc_count_save;
+        state.expression_locations = locations_save;
 
         return v;
 }
