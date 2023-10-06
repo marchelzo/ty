@@ -95,7 +95,8 @@ binary_operator_multiplication(struct value const *left, struct value const *rig
                 struct value const *f = class_method(left->class, "*");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function(f, left, right, NULL);
+                struct value method = METHOD("*", f, left);
+                return vm_eval_function(&method, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -142,7 +143,8 @@ binary_operator_division(struct value const *left, struct value const *right)
                 struct value const *f = class_method(left->class, "/");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function(f, left, right, NULL);
+                struct value method = METHOD("/", f, left);
+                return vm_eval_function(&method, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -170,7 +172,8 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
                 struct value const *f = class_method(left->class, "-");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function(f, left, right, NULL);
+                struct value method = METHOD("-", f, left);
+                return vm_eval_function(&method, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -217,7 +220,8 @@ binary_operator_remainder(struct value const *left, struct value const *right)
                 struct value const *f = class_method(left->class, "%");
                 if (f == NULL)
                         goto Fail;
-                return vm_eval_function(f, left, right, NULL);
+                struct value method = METHOD("%", f, left);
+                return vm_eval_function(&method, right, NULL);
         }
 
         struct value L = *left;
