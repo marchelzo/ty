@@ -205,6 +205,9 @@ search_import_scope(char const *);
 void
 import_module(struct statement const *s);
 
+static struct scope *
+get_module_scope(char const *name);
+
 static void
 invoke_macro(struct expression *e, struct scope *scope);
 
@@ -473,9 +476,6 @@ addsymbol(struct scope *scope, char const *name)
 inline static struct symbol *
 getsymbol(struct scope const *scope, char const *name, bool *local)
 {
-        /*
-         * _ can never be used as anything but an lvalue.
-         */
         if (strcmp(name, "_") == 0) {
                 fail(
                         "the special identifier %s'_'%s can only be used as an lvalue",
@@ -1013,6 +1013,15 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
 }
 
 static void
+comptime(struct scope *scope, struct expression *e)
+{
+        symbolize_expression(scope, e->operand);
+        struct value v = tyeval(e->operand);
+        *e = *cexpr(&v);
+        symbolize_expression(scope, e);
+}
+
+static void
 symbolize_expression(struct scope *scope, struct expression *e)
 {
         if (e == NULL)
@@ -1090,6 +1099,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         );
                 }
                 break;
+        case EXPRESSION_COMPILE_TIME:
+                comptime(scope, e);
+                break;
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i)
                         symbolize_expression(scope, e->expressions.items[i]);
@@ -1155,6 +1167,35 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_NOT_IN:
                 symbolize_expression(scope, e->left);
                 symbolize_expression(scope, e->right);
+                break;
+        case EXPRESSION_DEFINED:
+                e->type = EXPRESSION_BOOLEAN;
+                if (e->module != NULL) {
+                        struct scope *mscope = search_import_scope(e->module);
+                        e->boolean = mscope != NULL && scope_lookup(mscope, e->identifier) != NULL;
+                } else {
+                        e->boolean = scope_lookup(scope, e->identifier) != NULL;
+                }
+                break;
+        case EXPRESSION_IFDEF:
+                if (e->module != NULL) {
+                        struct scope *mscope = search_import_scope(e->module);
+                        if (mscope != NULL && scope_lookup(mscope, e->identifier) != NULL) {
+                                e->type = EXPRESSION_IDENTIFIER;
+                                symbolize_expression(scope, e);
+                                e->type = EXPRESSION_IFDEF;
+                        } else {
+                                e->type = EXPRESSION_NIL;
+                        }
+                } else {
+                        if (scope_lookup(scope, e->identifier) != NULL) {
+                                e->type = EXPRESSION_IDENTIFIER;
+                                symbolize_expression(scope, e);
+                                e->type = EXPRESSION_IFDEF;
+                        } else {
+                                e->type = EXPRESSION_NONE;
+                        }
+                }
                 break;
         case EXPRESSION_EVAL:
                 e->escope = scope;
@@ -3723,6 +3764,15 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_IDENTIFIER:
                 emit_load(e->symbol, state.fscope);
                 break;
+        case EXPRESSION_IFDEF:
+                emit_load(e->symbol, state.fscope);
+                emit_instr(INSTR_TAG_PUSH);
+                emit_int(TAG_SOME);
+                break;
+        case EXPRESSION_NONE:
+                emit_instr(INSTR_TAG);
+                emit_int(TAG_NONE);
+                break;
         case EXPRESSION_VALUE:
                 emit_instr(INSTR_VALUE);
                 emit_symbol((uintptr_t)e->v);
@@ -5282,6 +5332,28 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(v.tags, TyCount);
                 break;
+        case EXPRESSION_DEFINED:
+                v = tagged(
+                        TyDefined,
+                        value_named_tuple(
+                                "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
+                                "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                                NULL
+                        ),
+                        NONE
+                );
+                break;
+        case EXPRESSION_IFDEF:
+                v = tagged(
+                        TyIfDef,
+                        value_named_tuple(
+                                "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
+                                "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                                NULL
+                        ),
+                        NONE
+                );
+                break;
         case EXPRESSION_STATEMENT:
                 return tystmt(e->statement);
         default:
@@ -5813,6 +5885,21 @@ cexpr(struct value *v)
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_PREFIX_HASH;
                 e->operand = cexpr(&v_);
+        } else if (tags_first(v->tags) == TyCompileTime) {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_COMPILE_TIME;
+                e->operand = cexpr(&v_);
+        } else if (tags_first(v->tags) == TyIfDef) {
+                e->type = EXPRESSION_IFDEF;
+                e->identifier = mkcstr(tuple_get(v, "name"));
+                struct value *mod = tuple_get(v, "module");
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+        } else if (tags_first(v->tags) == TyDefined) {
+                e->type = EXPRESSION_DEFINED;
+                e->identifier = mkcstr(tuple_get(v, "name"));
+                struct value *mod = tuple_get(v, "module");
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
         } else if (tags_first(v->tags) == TyLet) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
@@ -5820,6 +5907,12 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == TyEach) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == TyIf) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == TyIfNot) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else if (tags_first(v->tags) == TyStmt) {

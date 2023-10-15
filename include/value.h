@@ -128,7 +128,10 @@ struct value;
         X(Wtf) \
         X(GT) \
         X(LT) \
-        X(Count)
+        X(Count) \
+        X(IfDef) \
+        X(CompileTime) \
+        X(Defined)
 
 #define X(x) Ty ## x,
 enum {
@@ -550,3 +553,5 @@ Some(struct value v)
 }
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

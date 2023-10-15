@@ -2014,6 +2014,34 @@ macro sync! {
     )
 }
 
+macro static_if {
+    let cond = parse.expr(0)
+
+    let then = parse.stmt(0)
+
+    dbg!(cond, then)
+
+    let otherwise = if lex.peek().type == 'else' {
+        lex.next()
+        parse.stmt(0)
+    }
+
+    ty.CompileTime(ty.If([cond], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
+}
+
+macro ifdef {
+    let v = lex.next()
+
+    let then = parse.stmt(0)
+
+    let otherwise = if lex.peek().type == 'else' {
+        lex.next()
+        parse.stmt(0)
+    }
+
+    ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
+}
+
 operator **   10 right
 operator <<   7  left
 operator >>   7  left

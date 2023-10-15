@@ -845,6 +845,32 @@ prefix_eval(void)
 }
 
 static struct expression *
+prefix_defined(void)
+{
+        struct expression *e;
+        struct location start = tok()->start;
+
+        next();
+        consume('(');
+
+        if (tok()->type != TOKEN_IDENTIFIER || token(1)->type != ')') {
+                consume(TOKEN_IDENTIFIER);
+                consume(')');
+                // unreachable
+        }
+
+        e = parse_expr(0);
+        e->type = EXPRESSION_DEFINED;
+
+        consume(')');
+
+        e->start = start;
+        e->end = End;
+
+        return e;
+}
+
+static struct expression *
 prefix_function(void)
 {
         struct expression *e = mkfunc();
@@ -1770,20 +1796,24 @@ prefix_array(void)
 static struct expression *
 prefix_tick(void)
 {
-        consume('`');
-
-        expect(TOKEN_IDENTIFIER);
-
-        if (tok()->module != NULL)
-                error("unexpected module qualifier in ` pattern");
-
-        struct expression *e = mkexpr();
-
-        e->type = EXPRESSION_TICK;
-        e->identifier = tok()->identifier;
-        e->module = NULL;
+        struct expression *e;
+        struct location start = tok()->start;
 
         next();
+
+        if (tok()->type != TOKEN_IDENTIFIER || token(1)->type != '`') {
+                consume(TOKEN_IDENTIFIER);
+                consume('`');
+                // unreachable
+        }
+
+        e = parse_expr(0);
+        e->type = EXPRESSION_IFDEF;
+
+        consume('`');
+
+        e->start = start;
+        e->end = End;
 
         return e;
 }
@@ -2699,6 +2729,7 @@ Keyword:
         case KEYWORD_FUNCTION:  return prefix_function;
         case KEYWORD_GENERATOR: return prefix_function;
         case KEYWORD_EVAL:      return prefix_eval;
+        case KEYWORD_DEFINED:   return prefix_defined;
         case KEYWORD_TRUE:      return prefix_true;
         case KEYWORD_FALSE:     return prefix_false;
         case KEYWORD_SELF:      return prefix_self;
@@ -4139,6 +4170,7 @@ parse_get_token(int i)
                 return value_named_tuple(
                         "type", T(id),
                         "id", STRING_NOGC(t->identifier, strlen(t->identifier)),
+                        "module", t->module == NULL ? NIL : STRING_NOGC(t->module, strlen(t->module)),
                         NULL
                 );
         case TOKEN_INTEGER:

@@ -151,6 +151,7 @@ struct expression {
                 EXPRESSION_DICT_COMPR,
                 EXPRESSION_TAG,
                 EXPRESSION_CONDITIONAL,
+				EXPRESSION_COMPILE_TIME,
                 EXPRESSION_EQ,
                 EXPRESSION_MAYBE_EQ,
                 EXPRESSION_TICK,
@@ -166,6 +167,7 @@ struct expression {
                 EXPRESSION_KEEP_LOC,
 
                 EXPRESSION_IDENTIFIER,
+				EXPRESSION_DEFINED,
                 EXPRESSION_WITH,
                 EXPRESSION_YIELD,
                 EXPRESSION_TAG_APPLICATION,
@@ -220,6 +222,8 @@ struct expression {
                 EXPRESSION_POSTFIX_DEC,
 				EXPRESSION_PTR,
                 EXPRESSION_EVAL,
+                EXPRESSION_IFDEF,
+				EXPRESSION_NONE,
 
                 EXPRESSION_MACRO_INVOCATION,
                 EXPRESSION_VALUE,

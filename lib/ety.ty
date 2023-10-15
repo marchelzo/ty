@@ -1,6 +1,6 @@
 import ty
 
-tag Code, Text, Expr, Embed;
+tag Code, Text, Expr, Embed, IfDef;
 
 pub function parse(s) {
     let ts = []
@@ -16,6 +16,10 @@ pub function parse(s) {
             ts.push(Text(s.splice(i, j)))
             ts.push(Embed(code))
             go(j + #code + 5, j + #code + 5)
+        } else if let [_, var, code] = s.slice(j).match!(/^<%\?(\w+)((?:(?!%>).)+)%>/) {
+            ts.push(Text(s.splice(i, j)))
+            ts.push(IfDef(var, code))
+            go(j + #code + #var + 5, j + #code + #var + 5)
         } else if let [_, code] = s.slice(j).match!(/^<%((?:(?!%>).)+)%>/) {
             ts.push(Text(s.splice(i, j)))
             ts.push(Code(code))
@@ -29,10 +33,11 @@ pub function parse(s) {
 
     return ts.filter!(${it != Text('')}).map(${
         match it {
-            Text(s)  => ";_ety_push('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\')}');",
-            Code(s)  => s,
-            Expr(s)  => ";_ety_push(str({s}));",
-            Embed(s) => parse(slurp(s.strip()))
+            Text(s)     => ";_ety_push('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\')}');",
+            Code(s)     => s,
+            Expr(s)     => ";_ety_push(str({s}));",
+            Embed(s)    => parse(slurp(s.strip())),
+            IfDef(v, s) => "ifdef {v} {s}"
         }
     }).str()
 }
