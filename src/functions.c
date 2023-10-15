@@ -723,15 +723,15 @@ builtin_fmt(int argc, struct value *kwargs)
                                 continue;
                         }
 
-                        if (argc <= ai) {
-                                vm_panic("fmt(): expected");
-                        }
-
-                        struct value arg = ARG(ai);
-
                         char const *start = fmt + i;
                         int t = getfmt(&start, fmt + n, spec, spec + sizeof spec);
                         i = start - fmt - 1;
+
+                        if (argc <= ai) {
+                                vm_panic("fmt(): missing argument %d for format specifier %s", ai, spec);
+                        }
+
+                        struct value arg = ARG(ai);
 
                         switch (t) {
                         case 'i':
