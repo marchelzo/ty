@@ -1075,6 +1075,22 @@ lexcomment(void)
         Start = state.loc;
 }
 
+static struct token
+lexfmt(void)
+{
+        nextchar();
+
+        vec(char) fmt = {0};
+
+        while (C(0) != '\0') {
+                VPush(fmt, nextchar());
+        }
+
+        VPush(fmt, '\0');
+
+        return mkstring(fmt.items);
+}
+
 struct token
 lex_token(LexContext ctx)
 {
@@ -1103,6 +1119,8 @@ lex_token(LexContext ctx)
                         } else if (skipspace()) {
                                 return mktoken(TOKEN_NEWLINE);
                         }
+                } else if (ctx == LEX_FMT && C(0) == '#') {
+                        return lexfmt();
                 } else if (ctx == LEX_PREFIX && C(0) == '/') {
                         return lexregex();
                 } else if (haveid()) {
@@ -1317,3 +1335,5 @@ lex(char const *s)
 
         return t;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

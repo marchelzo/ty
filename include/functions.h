@@ -76,6 +76,9 @@ struct value
 builtin_str(int argc, struct value *kwargs);
 
 struct value
+builtin_fmt(int argc, struct value *kwargs);
+
+struct value
 builtin_bool(int argc, struct value *kwargs);
 
 struct value

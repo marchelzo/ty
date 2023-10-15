@@ -697,6 +697,7 @@ prefix_special_string(void)
 
         e->fmts.items = tok()->fmts.items;
         e->fmts.count = tok()->fmts.count;
+        vec_init(e->fmts);
 
         LexState *exprs = tok()->expressions.items;
         int count = tok()->expressions.count;
@@ -714,8 +715,12 @@ prefix_special_string(void)
                 lex_save(&CtxCheckpoint);
                 VPush(e->expressions, parse_expr(0));
                 (*vec_last(e->expressions))->end = End;
-                if (tok()->type != TOKEN_END) {
-                        error("expression in interpolated string has trailing tokens");
+                setctx(LEX_FMT);
+                if (tok()->type == TOKEN_STRING) {
+                        VPush(e->fmts, tok()->string);
+                        next();
+                } else {
+                        VPush(e->fmts, NULL);
                 }
                 consume(TOKEN_END);
                 lex_end();
@@ -4314,3 +4319,5 @@ parse_fail(char const *s, size_t n)
 {
         error("%.*s", (int)n, s);
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

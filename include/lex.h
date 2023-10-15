@@ -8,6 +8,7 @@
 typedef enum LexContext {
         LEX_PREFIX = 1,
         LEX_INFIX  = 2,
+		LEX_FMT    = 3,
         LEX_FAKE   = 4
 } LexContext;
 

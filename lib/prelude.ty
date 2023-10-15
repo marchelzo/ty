@@ -582,11 +582,8 @@ class Int {
         Float.clamp.bind(self)(*args)
     }
 
-    __fmt__(fmt) {
-        match fmt {
-            /^(0?)(\d+)/ => "{self}".padLeft(int(_2), _1 || ' '),
-            /^-(\d+)/ => "{self}".padRight(int(_1))
-        }
+    __fmt__(spec) {
+        fmt("%%{spec}d", self)
     }
 }
 
@@ -634,6 +631,14 @@ class Float {
             [range] => {
                 @clamp(range.low(), range.high())
             }
+        }
+    }
+
+    __fmt__(spec) {
+        if spec[-1] in 'eEfFgG' {
+            fmt("%%{spec}", self)
+        } else {
+            fmt("%%{spec}f", self)
         }
     }
 

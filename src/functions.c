@@ -6,6 +6,7 @@
 #include <stdnoreturn.h>
 #include <time.h>
 #include <locale.h>
+#include <ctype.h>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -606,6 +607,234 @@ builtin_str(int argc, struct value *kwargs)
                 gc_free(str);
                 return result;
         }
+}
+
+inline static bool
+isflag(int c)
+{
+        return c == '0' ||
+               c == '-' ||
+               c == ' ' ||
+               c == '+' ||
+               c == '\'';
+}
+
+static int
+getfmt(char const **s, char const *end, char *out, char const *oend)
+{
+        // %
+        *out++ = *(*s)++;
+        *out = '\0';
+
+        while (*s < end && isflag(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
+        }
+
+        while (*s < end && isdigit(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
+        }
+
+        if (*s < end && **s == '.') {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
+        }
+
+        while (*s < end && isdigit(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
+        }
+        
+        if (*s < end) {
+                int c = *(*s)++;
+                switch (c) {
+                case 'i':
+                case 'd':
+                case 'u':
+                case 'x':
+                case 'X':
+                        if (out + 2 >= oend)
+                                return -1;
+                        *out++ = 'j';
+                        break;
+                case 'f':
+                case 'F':
+                case 'g':
+                case 'G':
+                case 'e':
+                case 'E':
+                case 'a':
+                case 'A':
+                        if (out + 2 >= oend)
+                                return -1;
+                        *out++ = 'l';
+                        break;
+                case 's':
+                case 'p':
+                        if (out + 1 >= oend)
+                                return -1;
+                        break;
+                default:
+                        return -1;
+                }
+
+                *out++ = c;
+                *out++ = '\0';
+
+                return c;
+        } else {
+                return -1;
+        }
+}
+
+struct value
+builtin_fmt(int argc, struct value *kwargs)
+{
+        if (argc == 0)
+                return STRING_EMPTY;
+
+        if (ARG(0).type != VALUE_STRING) {
+                vm_panic("fmt(): expected string but got: %s", value_show(&ARG(0)));
+        }
+
+        char const *fmt = ARG(0).string;
+        size_t n = ARG(0).bytes;
+        int ai = 1;
+
+        char spec[64];
+
+        vec(char) cs = {0};
+        vec(char) sb = {0};
+
+        for (size_t i = 0; i < n; ++i) {
+                if (fmt[i] == '%') {
+                        if (i + 1 < n && fmt[i + 1] == '%') {
+                                vec_push(cs, '%');
+                                i += 1;
+                                continue;
+                        }
+
+                        if (argc <= ai) {
+                                vm_panic("fmt(): expected");
+                        }
+
+                        struct value arg = ARG(ai);
+
+                        char const *start = fmt + i;
+                        int t = getfmt(&start, fmt + n, spec, spec + sizeof spec);
+                        i = start - fmt - 1;
+
+                        switch (t) {
+                        case 'i':
+                        case 'd':
+                        case 'u':
+                        case 'x':
+                        case 'X':
+                                switch (arg.type) {
+                                case VALUE_INTEGER:
+                                        snprintf(buffer, sizeof buffer - 1, spec, arg.integer);
+                                        break;
+                                case VALUE_REAL:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (intmax_t)arg.real);
+                                        break;
+                                default:
+                                BadFmt:
+                                        vm_panic("fmt(): format specifier %s doesn't match value provided: %s", spec, value_show(&arg));
+                                }
+                                break;
+                        case 'f':
+                        case 'F':
+                        case 'g':
+                        case 'G':
+                        case 'e':
+                        case 'E':
+                        case 'a':
+                        case 'A':
+                                switch (arg.type) {
+                                case VALUE_INTEGER:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (double)arg.integer);
+                                        break;
+                                case VALUE_REAL:
+                                        snprintf(buffer, sizeof buffer - 1, spec, arg.real);
+                                        break;
+                                default:
+                                        goto BadFmt;
+                                }
+                                break;
+                        case 's':
+                                sb.count = 0;
+                                switch (arg.type) {
+                                case VALUE_STRING:
+                                        vec_push_n(sb, arg.string, arg.bytes);
+                                        vec_push(sb, '\0');
+                                        snprintf(buffer, sizeof buffer - 1, spec, sb.items);
+                                        break;
+                                case VALUE_BLOB:
+                                        vec_push_n(sb, arg.blob->items, arg.blob->count);
+                                        vec_push(sb, '\0');
+                                        snprintf(buffer, sizeof buffer - 1, spec, sb.items);
+                                        break;
+                                case VALUE_PTR:
+                                        snprintf(buffer, sizeof buffer - 1, spec, arg.ptr);
+                                        break;
+                                default:
+                                        goto BadFmt;
+                                }
+                                break;
+                        case 'p':
+                                switch (arg.type) {
+                                case VALUE_STRING:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.string);
+                                        break;
+                                case VALUE_BLOB:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.blob);
+                                        break;
+                                case VALUE_OBJECT:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.object);
+                                        break;
+                                case VALUE_PTR:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.ptr);
+                                        break;
+                                case VALUE_DICT:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.dict);
+                                        break;
+                                case VALUE_ARRAY:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.array);
+                                        break;
+                                case VALUE_FUNCTION:
+                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.info);
+                                        break;
+                                default:
+                                        goto BadFmt;
+                                }
+                                break;
+                        default:
+                                vm_panic("fmt(): invalid format specifier: %s", spec);
+
+                        }
+
+                        vec_push_n(cs, buffer, strlen(buffer));
+
+                        ai += 1;
+                } else {
+                        vec_push(cs, fmt[i]);
+                }
+        }
+
+        struct value s = STRING_CLONE(cs.items, cs.count);
+
+        gc_free(cs.items);
+
+        return s;
 }
 
 struct value

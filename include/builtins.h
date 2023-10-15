@@ -17,6 +17,7 @@
 { .module = NULL,     .name = "int",               .value = BUILTIN(builtin_int)                           },
 { .module = NULL,     .name = "float",             .value = BUILTIN(builtin_float)                         },
 { .module = NULL,     .name = "str",               .value = BUILTIN(builtin_str)                           },
+{ .module = NULL,     .name = "fmt",               .value = BUILTIN(builtin_fmt)                           },
 { .module = NULL,     .name = "bool",              .value = BUILTIN(builtin_bool)                          },
 { .module = NULL,     .name = "regex",             .value = BUILTIN(builtin_regex)                         },
 { .module = NULL,     .name = "tuple",             .value = BUILTIN(builtin_tuple)                         },
