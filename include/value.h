@@ -131,7 +131,8 @@ struct value;
         X(Count) \
         X(IfDef) \
         X(CompileTime) \
-        X(Defined)
+        X(Defined) \
+        X(Throw)
 
 #define X(x) Ty ## x,
 enum {
@@ -386,6 +387,9 @@ value_apply_callable(struct value *f, struct value *v);
 
 char *
 value_show(struct value const *v);
+
+char *
+value_show_color(struct value const *v);
 
 char *
 value_string_alloc(int n);

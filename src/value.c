@@ -182,7 +182,7 @@ value_hash(struct value const *val)
 }
 
 char *
-show_dict(struct value const *d)
+show_dict(struct value const *d, bool color)
 {
         static _Thread_local vec(struct dict *) show_dicts;
 
@@ -209,11 +209,11 @@ show_dict(struct value const *d)
 
         for (size_t i = 0, j = 0; i < d->dict->size; ++i) {
                 if (d->dict->keys[i].type == 0) continue;
-                char *key = value_show(&d->dict->keys[i]);
-                char *val = value_show(&d->dict->values[i]);
+                char *key = color ? value_show_color(&d->dict->keys[i]) : value_show(&d->dict->keys[i]);
+                char *val = color ? value_show_color(&d->dict->values[i]) : value_show(&d->dict->values[i]);
                 add(j == 0 ? "" : ", ");
                 add(key);
-                if (strcmp(val, "nil") != 0) {
+                if (d->dict->values[i].type != VALUE_NIL) {
                         add(": ");
                         add(val);
                 }
@@ -231,7 +231,7 @@ show_dict(struct value const *d)
 }
 
 char *
-show_array(struct value const *a)
+show_array(struct value const *a, bool color)
 {
         static _Thread_local vec(struct array *) show_arrays;
 
@@ -257,7 +257,7 @@ show_array(struct value const *a)
                 len += n;
 
         for (size_t i = 0; i < a->array->count; ++i) {
-                char *val = value_show(&a->array->items[i]);
+                char *val = color ? value_show_color(&a->array->items[i]) : value_show(&a->array->items[i]);
                 add(i == 0 ? "" : ", ");
                 add(val);
                 gc_free(val);
@@ -272,7 +272,7 @@ show_array(struct value const *a)
 }
 
 char *
-show_tuple(struct value const *v)
+show_tuple(struct value const *v, bool color)
 {
         static _Thread_local vec(struct value *) show_tuples;
 
@@ -303,11 +303,18 @@ show_tuple(struct value const *v)
                 add(i == 0 ? "" : ", ");
 
                 if (v->names != NULL && v->names[i] != NULL) {
-                        add(v->names[i]);
-                        add(": ");
+                        if (color) {
+                                add(TERM(34));
+                                add(v->names[i]);
+                                add(TERM(0));
+                                add(": ");
+                        } else {
+                                add(v->names[i]);
+                                add(": ");
+                        }
                 }
 
-                char *val = value_show(&v->items[i]);
+                char *val = color ? value_show_color(&v->items[i]) : value_show(&v->items[i]);
                 add(val);
                 gc_free(val);
         }
@@ -323,10 +330,13 @@ show_tuple(struct value const *v)
 }
 
 static char *
-show_string(char const *s, size_t n)
+show_string(char const *s, size_t n, bool color)
 {
         vec(char) v;
         vec_init(v);
+
+        if (color)
+                vec_push_n(v, TERM(92), strlen(TERM(92)));
 
         vec_push(v, '\'');
 
@@ -350,6 +360,10 @@ show_string(char const *s, size_t n)
         }
 
         vec_push(v, '\'');
+
+        if (color)
+                vec_push_n(v, TERM(0), strlen(TERM(0)));
+
         vec_push(v, '\0');
 
         return v.items;
@@ -369,7 +383,7 @@ value_show(struct value const *v)
                 snprintf(buffer, 1024, "%g", v->real);
                 break;
         case VALUE_STRING:
-                s = show_string(v->string, v->bytes);
+                s = show_string(v->string, v->bytes, false);
                 break;
         case VALUE_BOOLEAN:
                 snprintf(buffer, 1024, "%s", v->boolean ? "true" : "false");
@@ -378,16 +392,16 @@ value_show(struct value const *v)
                 snprintf(buffer, 1024, "%s", "nil");
                 break;
         case VALUE_ARRAY:
-                s = show_array(v);
+                s = show_array(v, false);
                 break;
         case VALUE_TUPLE:
-                s = show_tuple(v);
+                s = show_tuple(v, false);
                 break;
         case VALUE_REGEX:
                 snprintf(buffer, 1024, "/%s/", v->regex->pattern);
                 break;
         case VALUE_DICT:
-                s = show_dict(v);
+                s = show_dict(v, false);
                 break;
         case VALUE_FUNCTION:
                 if (v->info[6] == -1) {
@@ -463,7 +477,210 @@ value_show(struct value const *v)
                 return sclone("< !!! >");
         }
 
-        char *result = tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0);
+        char *result = tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0, false);
+        gc_free(s);
+
+        return result;
+}
+
+char *
+value_show_color(struct value const *v)
+{
+        char buffer[4096];
+        char *s = NULL;
+
+        switch (v->type & ~VALUE_TAGGED) {
+        case VALUE_INTEGER:
+                snprintf(buffer, sizeof buffer, "%s%"PRIiMAX"%s", TERM(93), v->integer, TERM(0));
+                break;
+        case VALUE_REAL:
+                snprintf(buffer, sizeof buffer, "%s%g%s", TERM(93), v->real, TERM(0));
+                break;
+        case VALUE_STRING:
+                s = show_string(v->string, v->bytes, true);
+                break;
+        case VALUE_BOOLEAN:
+                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
+                break;
+        case VALUE_NIL:
+                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(95), "nil", TERM(0));
+                break;
+        case VALUE_ARRAY:
+                s = show_array(v, true);
+                break;
+        case VALUE_TUPLE:
+                s = show_tuple(v, true);
+                break;
+        case VALUE_REGEX:
+                snprintf(buffer, sizeof buffer, "%s/%s/%s", TERM(96), v->regex->pattern, TERM(0));
+                break;
+        case VALUE_DICT:
+                s = show_dict(v, true);
+                break;
+        case VALUE_FUNCTION:
+                if (v->info[6] == -1) {
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<function %s'%s'%s at %s%p%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                (char *)(v->info + 7),
+                                TERM(96),
+                                TERM(94),
+                                (void *)((char *)v->info + v->info[0]),
+                                TERM(96),
+                                TERM(0)
+                        );
+                } else {
+                        char const *class = class_name(v->info[6]);
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<function %s'%s.%s'%s at %s%p%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                class,
+                                (char *)(v->info + 7),
+                                TERM(96),
+                                TERM(94),
+                                (void *)((char *)v->info + v->info[0]),
+                                TERM(96),
+                                TERM(0)
+                        );
+                }
+                break;
+        case VALUE_METHOD:
+                if (v->this == NULL) {
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<method %s'%s'%s at %s%p%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                v->name,
+                                TERM(96),
+                                TERM(94),
+                                (void *)v->method,
+                                TERM(96),
+                                TERM(0)
+                        );
+                } else {
+                        char *vs = value_show_color(v->this);
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<method %s'%s'%s at %s%p%s bound to %s%s%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                v->name,
+                                TERM(96),
+                                TERM(94),
+                                (void *)v->method,
+                                TERM(96),
+                                TERM(0),
+                                vs,
+                                TERM(96),
+                                TERM(0)
+                        );
+                        gc_free(vs);
+                }
+                break;
+        case VALUE_BUILTIN_METHOD:
+                snprintf(
+                        buffer,
+                        sizeof buffer,
+                        "%s<bound builtin method %s'%s'%s>%s",
+                        TERM(96),
+                        TERM(92),
+                        v->name,
+                        TERM(96),
+                        TERM(0)
+                );
+                break;
+        case VALUE_BUILTIN_FUNCTION:
+                if (v->name == NULL)
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<builtin function>%s",
+                                TERM(96),
+                                TERM(0)
+                        );
+                else if (v->module == NULL)
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<builtin function %s'%s'%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                v->name,
+                                TERM(96),
+                                TERM(0)
+                        );
+                else
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<builtin function %s'%s::%s'%s>%s",
+                                TERM(96),
+                                TERM(92),
+                                v->module,
+                                v->name,
+                                TERM(96),
+                                TERM(0)
+                        );
+                break;
+        case VALUE_CLASS:
+                snprintf(buffer, sizeof buffer, "<class %s>", class_name(v->class));
+                break;
+        case VALUE_TAG:
+                snprintf(buffer, sizeof buffer, "%s", tags_name(v->tag));
+                break;
+        case VALUE_BLOB:
+                snprintf(buffer, sizeof buffer, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
+                break;
+        case VALUE_PTR:
+                snprintf(buffer, sizeof buffer, "<pointer at %p>", v->ptr);
+                break;
+        case VALUE_GENERATOR:
+                snprintf(buffer, sizeof buffer, "<generator at %p>", v->gen);
+                break;
+        case VALUE_THREAD:
+                snprintf(buffer, sizeof buffer, "<thread %"PRIu64">", v->thread->i);
+                break;
+        case VALUE_SENTINEL:
+                return sclone("<sentinel>");
+        case VALUE_REF:
+                snprintf(buffer, sizeof buffer, "<reference to %p>", v->ptr);
+                break;
+        case VALUE_NONE:
+                return sclone("<none>");
+        case VALUE_INDEX:
+                snprintf(buffer, sizeof buffer, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
+                break;
+        case VALUE_OBJECT:;
+#ifdef TY_NO_LOG
+                struct value *fp = class_method(v->class, "__str__");
+#else
+                struct value *fp = NULL;
+#endif
+                if (fp != NULL && fp != class_method(CLASS_OBJECT, "__str__")) {
+                        struct value str = vm_eval_function(fp, v, NULL);
+                        if (str.type != VALUE_STRING)
+                                vm_panic("%s.__str__() returned non-string", class_name(v->class));
+                        s = gc_alloc(str.bytes + 1);
+                        memcpy(s, str.string, str.bytes);
+                        s[str.bytes] = '\0';
+                } else {
+                        snprintf(buffer, sizeof buffer, "<%s object at %p>", class_name(v->class), (void *)v->object);
+                }
+                break;
+        default:
+                return sclone("< !!! >");
+        }
+
+        char *result = tags_wrap(s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0, true);
         gc_free(s);
 
         return result;
@@ -977,3 +1194,5 @@ tuple_get_completions(struct value const *v, char const *prefix, char **out, int
 
         return n;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

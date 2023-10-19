@@ -584,7 +584,7 @@ lexspecialdocstring(void)
                         case '%':
                                 nextchar();
                                 if (C(0) != '%') {
-                                        fmt = SRC;
+                                        fmt = (char *)SRC;
                                         while (C(0) != '\0' && C(0) != '{' && C(0) != '"') {
                                                 nextchar();
                                         }
@@ -605,7 +605,6 @@ lexspecialdocstring(void)
                                         VPush(str, '\n');
                                         continue;
                                 case 'r':
-                                        printf("Appending \\r\n");
                                         nextchar();
                                         VPush(str, '\r');
                                         continue;
@@ -684,7 +683,7 @@ lexspecialdocstring(void)
 
         for (int i = 0; i < lines.count; ++i) {
                 int off = 0;
-                while (off < nstrip && isspace(lines.items[i].strs.items[0][off])) {
+                while (off < nstrip && strchr("\t ", (lines.items[i].strs.items[0][off])) != NULL) {
                         off += 1;
                 }
                 if (i == 0) {

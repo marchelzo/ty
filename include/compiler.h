@@ -29,6 +29,9 @@ compiler_introduce_tag(char const *module, char const *name);
 bool
 compiler_symbolize_expression(struct expression *e, struct scope *scope);
 
+void
+compiler_clear_location(void);
+
 char *
 compiler_compile_source(char const *source, char const *filename);
 

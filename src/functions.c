@@ -116,7 +116,7 @@ builtin_print(int argc, struct value *kwargs)
                 if (v->type == VALUE_STRING) {
                         fwrite(v->string, 1, v->bytes, stdout);
                 } else {
-                        char *s = value_show(&ARG(i));
+                        char *s = value_show_color(&ARG(i));
                         fputs(s, stdout);
                         gc_free(s);
                 }
@@ -5216,6 +5216,7 @@ builtin_eval(int argc, struct value *kwargs)
                 struct expression *e = prog[0]->expression;
 
                 if (!compiler_symbolize_expression(e, scope)) {
+                        DestroyArena(old);
                         return NIL;
                 }
 
@@ -5225,11 +5226,68 @@ builtin_eval(int argc, struct value *kwargs)
 
                 return v;
         } else {
-                return tyeval(cexpr(&ARG(0)));
+                compiler_clear_location();
+                struct expression *e = cexpr(&ARG(0));
+                if (!compiler_symbolize_expression(e, scope)) {
+                        return NIL;
+                }
+                return tyeval(e);
         }
 
 #undef PRE
 #undef POST
+}
+
+struct value
+builtin_ty_parse(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.parse()", 1);
+
+        struct scope *scope = NULL;
+
+
+        if (ARG(0).type != VALUE_STRING) {
+                vm_panic("ty.parse(): expected string but got: %s", value_show_color(&ARG(0)));
+        }
+
+        B.count = 0;
+        vec_push_unchecked(B, '\0');
+        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
+        vec_push_unchecked(B, '\0');
+
+        Arena old = NewArena(1 << 22);
+
+        struct statement **prog = parse(B.items + 1, "(eval)");
+
+        if (prog == NULL) {
+                DestroyArena(old);
+                return NIL;
+        }
+
+        if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
+                struct value v = tyexpr(prog[0]->expression);
+                DestroyArena(old);
+                return v;
+        }
+
+        if (prog[1] == NULL) {
+                struct value v = tystmt(prog[0]);
+                DestroyArena(old);
+                return v;
+        }
+
+        struct statement *multi = Allocate(sizeof *multi);
+        vec_init(multi->statements);
+
+        for (int i = 0; prog[i] != NULL; ++i) {
+                VPush(multi->statements, prog[i]);
+        }
+
+        struct value v = tystmt(multi);
+
+        DestroyArena(old);
+
+        return v;
 }
 
 struct value

@@ -5030,7 +5030,7 @@ tagged(int tag, struct value v, ...)
 
 TagAndReturn:
         v.type |= VALUE_TAGGED;
-        v.tags = tags_push(0, tag);
+        v.tags = tags_push(v.tags, tag);
         return v;
 }
 
@@ -5470,6 +5470,9 @@ tystmt(struct statement *s)
         case STATEMENT_NULL:
                 v = TAG(TyNull);
                 break;
+        case STATEMENT_THROW:
+                v = tagged(TyThrow, tyexpr(s->throw), NONE);
+                break;
         case STATEMENT_EXPRESSION:
                 v = tyexpr(s->expression);
                 break;
@@ -5581,6 +5584,11 @@ cstmt(struct value *v)
                 s->each.cond = (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL;
                 struct value *stop = tuple_get(v, "stop");
                 s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(stop) : NULL;
+        } else if (tags_first(v->tags) == TyThrow) {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                s->type = STATEMENT_THROW;
+                s->throw = cexpr(&v_);
         } else if (tags_first(v->tags) == TyReturn) {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
@@ -5933,6 +5941,9 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == TyClass) {
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
+        } else if (tags_first(v->tags) == TyThrow) {
+                e->type = EXPRESSION_STATEMENT;
+                e->statement = cstmt(v);
         } else {
                 fail("invalid value passed to cexpr(): %s", value_show(v));
         }
@@ -6095,4 +6106,11 @@ compiler_symbolize_expression(struct expression *e, struct scope *scope)
 
         return true;
 }
+
+void
+compiler_clear_location(void)
+{
+        state.start = state.end = state.mstart = state.mend = Nowhere;
+}
+
 /* vim: set sw=8 sts=8 expandtab: */

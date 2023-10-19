@@ -617,6 +617,7 @@
 {.module = "ffi", .name = "as_str", .value = BUILTIN(cffi_as_str)},
 {.module = "ty", .name = "gensym", .value = BUILTIN(builtin_ty_gensym)},
 {.module = "ty", .name = "eval", .value = BUILTIN(builtin_eval)},
+{.module = "ty", .name = "parse", .value = BUILTIN(builtin_ty_parse)},
 {.module = "ty", .name = "lock", .value = BUILTIN(builtin_ty_lock)},
 {.module = "ty", .name = "unlock", .value = BUILTIN(builtin_ty_unlock)},
 {.module = "ty", .name = "gc", .value = BUILTIN(builtin_ty_gc)},

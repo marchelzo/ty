@@ -1369,19 +1369,33 @@ DoAssign(void)
 }
 
 struct value
-vm_exec_or_nil(char *ip)
+vm_exec_or_nil(char *code)
 {
         jmp_buf jb_;
         memcpy(&jb_, &jb, sizeof jb_);
 
+        size_t nframes = frames.count;
+        frames.count = 0;
+
+        size_t ntry = try_stack.count;
+        try_stack.count = 0;
+
+        char *save = ip;
+
         if (setjmp(jb) != 0) {
                 memcpy(&jb, &jb_, sizeof jb_);
+                frames.count = nframes;
+                try_stack.count = ntry;
+                ip = save;
                 return NIL;
         }
 
-        vm_exec(ip);
+        vm_exec(code);
 
         memcpy(&jb, &jb_, sizeof jb_);
+        frames.count = nframes;
+        try_stack.count = ntry;
+        ip = save;
 
         return pop();
 }
@@ -3150,6 +3164,7 @@ BadContainer:
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
+                                gc_push(&v);
                                 if (nkw > 0) {
                                         container = pop();
                                         gc_push(&container);
@@ -3160,6 +3175,7 @@ BadContainer:
                                         k = stack.count - n;
                                         v = v.builtin_method(v.this, n, NULL);
                                 }
+                                gc_pop();
                                 stack.count = k;
                                 push(v);
                                 break;

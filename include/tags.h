@@ -24,7 +24,7 @@ int
 tags_first(int tags);
 
 char *
-tags_wrap(char const *s, int tags);
+tags_wrap(char const *s, int tags, bool color);
 
 char const *
 tags_name(int tag);
