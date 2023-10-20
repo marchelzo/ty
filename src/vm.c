@@ -1375,8 +1375,6 @@ vm_exec_or_nil(char *code)
         memcpy(&jb_, &jb, sizeof jb_);
 
         size_t nframes = frames.count;
-        frames.count = 0;
-
         size_t ntry = try_stack.count;
         try_stack.count = 0;
 
@@ -2987,6 +2985,7 @@ BadContainer:
                                         } else {
                                                 v.env[i] = p;
                                         }
+                                        LOG("env[%d] = %s", i, value_show(v.env[i]));
                                 }
 
                                 --GC_OFF_COUNT;

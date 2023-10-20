@@ -574,8 +574,7 @@ freshstate(void)
         s.each_loop = false;
         s.loop_want_result = false;
 
-        s.finally = false;
-
+        s.finally = 0;
         s.try = 0;
         s.loop = 0;
 
@@ -1856,11 +1855,11 @@ emit_function(struct expression const *e, int class)
         ++state.function_depth;
         int loop_save = state.loop;
         int try_save = state.try;
-        bool finally_save = state.finally;
+        int finally_save = state.finally;
         bool each_loop_save = state.each_loop;
         int t_save = t;
-        state.loop = state.try = t = 0;
-        state.each_loop = state.finally = false;
+        state.loop = state.try = state.finally = t = 0;
+        state.each_loop = false;
 
         struct scope *fs_save = state.fscope;
         state.fscope = e->scope;
@@ -2183,7 +2182,7 @@ emit_return_check(struct expression const *f)
 static bool
 emit_return(struct statement const *s)
 {
-        if (state.finally) {
+        if (state.finally > 0) {
                 fail("invalid return statement (occurs in a finally block)");
         }
 
@@ -2238,8 +2237,8 @@ emit_try(struct statement const *s, bool want_result)
         int try_save = state.try;
         state.try = ++t;
 
-        bool finally_save = state.finally;
-        state.finally = false;
+        int finally_save = state.finally;
+        state.finally = 0;
 
         if (s->type == STATEMENT_TRY_CLEAN) {
                 emit_instr(INSTR_PUSH_DEFER_GROUP);
@@ -2273,9 +2272,9 @@ emit_try(struct statement const *s, bool want_result)
 
         if (s->try.finally != NULL) {
                 PATCH_JUMP(finally_offset);
-                state.finally = true;
+                state.finally += 1;
                 returns &= emit_statement(s->try.finally, false);
-                state.finally = false;
+                state.finally -= 1;
                 PATCH_JUMP(end_offset);
                 emit_instr(INSTR_NOP);
         } else {
@@ -2599,7 +2598,6 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
 
         bool returns = false;
 
-        emit_instr(INSTR_POP_TRY);
         emit_instr(INSTR_POP_THROW);
 
         if (s != NULL) {
@@ -4335,7 +4333,7 @@ emit_statement(struct statement const *s, bool want_result)
                 want_result = false;
                 break;
         case STATEMENT_THROW:
-                if (state.finally) {
+                if (state.finally > 0) {
                         fail("invalid 'throw' statement (occurs in a finally block)");
                 }
                 returns |= emit_throw(s);

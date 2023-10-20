@@ -35,7 +35,7 @@ binary_operator_addition(struct value const *left, struct value const *right)
 
         if (left->type == VALUE_PTR) {
                 if (right->type != VALUE_INTEGER) {
-                        vm_panic("attempt to add non-integer to pointer: %s", value_show(right));
+                        vm_panic("attempt to add non-integer to pointer: %s", value_show_color(right));
                 }
 
                 ffi_type *t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
@@ -50,7 +50,7 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 return REAL(left->integer + right->real);
 
         if (left->type != right->type)
-                vm_panic("the operands to + must have the same type");
+                vm_panic("incompatible operands to +: %s and %s", value_show_color(left), value_show_color(right));
 
         struct value v;
 

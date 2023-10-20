@@ -1,4 +1,4 @@
-tag CancelledError;
+tag CanceledError;
 
 class ThreadPool {
   init(n, f, setup) {
@@ -47,7 +47,7 @@ class ThreadPool {
 
       future.mtx.lock()
 
-      if future.cancelled {
+      if future.canceled {
         future.mtx.unlock()
         continue
       } else {
@@ -84,14 +84,14 @@ class Future {
     @mtx = Mutex()
     @box = []
     @running = false
-    @cancelled = false
+    @canceled = false
   }
 
   wait() {
     @mtx.lock()
 
-    if @cancelled {
-      throw CancelledError
+    if @canceled {
+      throw CanceledError
     }
 
     while #@box == 0 {
@@ -110,7 +110,7 @@ class Future {
       if @running {
         return false
       } else {
-        @cancelled = true
+        @canceled = true
         return true
       }
     }
@@ -126,5 +126,19 @@ class Future {
     with _ = @mtx.lock() {
       #@box == 1
     }
+  }
+
+  static all(fs) {
+    let xs = []
+
+    try {
+        for f in fs {
+            xs.push(f.wait())
+        }
+    } catch CanceledError {
+        return None
+    }
+
+    return Some(xs)
   }
 }
