@@ -2019,8 +2019,6 @@ macro static_if {
 
     let then = parse.stmt(0)
 
-    dbg!(cond, then)
-
     let otherwise = if lex.peek().type == 'else' {
         lex.next()
         parse.stmt(0)
