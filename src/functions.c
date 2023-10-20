@@ -72,8 +72,8 @@ static _Atomic uint64_t tid = 1;
                 vm_panic(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
 
-struct value
-builtin_print(int argc, struct value *kwargs)
+static void
+doprint(int argc, struct value *kwargs, FILE *f)
 {
         struct value *sep = NAMED("sep");
 
@@ -101,40 +101,52 @@ builtin_print(int argc, struct value *kwargs)
         bool do_flush = flush != NULL && value_truthy(flush);
 
         ReleaseLock(true);
-        flockfile(stdout);
+        flockfile(f);
         TakeLock();
 
         for (int i = 0; i < argc; ++i) {
                 struct value *v = &ARG(i);
                 if (i > 0) {
                         if (sep != NULL) {
-                                fwrite(sep->string, 1, sep->bytes, stdout);
+                                fwrite(sep->string, 1, sep->bytes, f);
                         } else {
                                 fputs(", ", stdout);
                         }
                 }
                 if (v->type == VALUE_STRING) {
-                        fwrite(v->string, 1, v->bytes, stdout);
+                        fwrite(v->string, 1, v->bytes, f);
                 } else {
                         char *s = value_show_color(&ARG(i));
-                        fputs(s, stdout);
+                        fputs(s, f);
                         gc_free(s);
                 }
         }
 
 
         if (end != NULL) {
-                fwrite(end->string, 1, end->bytes, stdout);
+                fwrite(end->string, 1, end->bytes, f);
         } else {
-                putchar('\n');
+                fputc('\n', f);
         }
 
         if (do_flush) {
-                fflush(stdout);
+                fflush(f);
         }
 
-        funlockfile(stdout);
+        funlockfile(f);
+}
 
+struct value
+builtin_print(int argc, struct value *kwargs)
+{
+        doprint(argc, kwargs, stdout);
+        return NIL;
+}
+
+struct value
+builtin_eprint(int argc, struct value *kwargs)
+{
+        doprint(argc, kwargs, stderr);
         return NIL;
 }
 

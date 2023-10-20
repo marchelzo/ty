@@ -3164,7 +3164,6 @@ BadContainer:
                                 *top() = v;
                                 break;
                         case VALUE_BUILTIN_METHOD:
-                                gc_push(&v);
                                 if (nkw > 0) {
                                         container = pop();
                                         gc_push(&container);
@@ -3175,7 +3174,6 @@ BadContainer:
                                         k = stack.count - n;
                                         v = v.builtin_method(v.this, n, NULL);
                                 }
-                                gc_pop();
                                 stack.count = k;
                                 push(v);
                                 break;

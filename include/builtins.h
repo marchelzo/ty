@@ -3,6 +3,7 @@
 #define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
 
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
+{ .module = NULL,     .name = "eprint",            .value = BUILTIN(builtin_eprint)                        },
 { .module = NULL,     .name = "slurp",             .value = BUILTIN(builtin_slurp)                         },
 { .module = NULL,     .name = "die",               .value = BUILTIN(builtin_die)                           },
 { .module = NULL,     .name = "readLine",          .value = BUILTIN(builtin_read)                          },
