@@ -33,17 +33,29 @@ enum {
         JIT_STACK_MAX   = 1 << 22
 };
 
-uintmax_t
-umax(uintmax_t a, uintmax_t b);
+static inline uintmax_t
+umax(uintmax_t a, uintmax_t b)
+{
+        return (a > b) ? a : b;
+}
 
-uintmax_t
-umin(uintmax_t a, uintmax_t b);
+static inline uintmax_t
+umin(uintmax_t a, uintmax_t b)
+{
+        return (a < b) ? a : b;
+}
 
-intmax_t
-max(intmax_t a, intmax_t b);
+static inline intmax_t
+max(intmax_t a, intmax_t b)
+{
+        return (a > b) ? a : b;
+}
 
-intmax_t
-min(intmax_t a, intmax_t b);
+static inline intmax_t
+min(intmax_t a, intmax_t b)
+{
+        return (a < b) ? a : b;
+}
 
 char *
 sclone(char const *s);

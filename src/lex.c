@@ -277,6 +277,12 @@ skipspace(void)
         return nl;
 }
 
+inline static bool
+idchar(int c)
+{
+        return isalnum(c) || c == '_' || (c & 0x80);
+}
+
 /* lexes an identifier or a keyword */
 static struct token
 lexword(void)
@@ -290,8 +296,16 @@ lexword(void)
         bool has_module = false;
 
         for (;;) {
-                while (isalnum(C(0)) || C(0) == '_' || (C(0) & 0x80))
-                        VPush(word, nextchar());
+                for (;;) {
+                        if (idchar(C(0))) {
+                                VPush(word, nextchar());
+                        } else if (C(0) == '-' && idchar(C(1))) {
+                                nextchar();
+                                VPush(word, toupper(nextchar()));
+                        } else {
+                                break;
+                        }
+                }
 
                 if (C(0) == ':' && C(1) == ':' && ++has_module) {
                         nextchar();

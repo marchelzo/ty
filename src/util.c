@@ -16,30 +16,6 @@
 
 _Thread_local char ERR[ERR_SIZE];
 
-uintmax_t
-umax(uintmax_t a, uintmax_t b)
-{
-        return (a > b) ? a : b;
-}
-
-uintmax_t
-umin(uintmax_t a, uintmax_t b)
-{
-        return (a < b) ? a : b;
-}
-
-intmax_t
-max(intmax_t a, intmax_t b)
-{
-        return (a > b) ? a : b;
-}
-
-intmax_t
-min(intmax_t a, intmax_t b)
-{
-        return (a < b) ? a : b;
-}
-
 char *
 sclone_malloc(char const *s)
 {

@@ -115,7 +115,7 @@ void
 GCTakeOwnership(AllocList *new)
 {
         for (size_t i = 0; i < new->count; ++i) {
-                vec_push(allocs, new->items[i]);
+                vec_nogc_push(allocs, new->items[i]);
                 MemoryUsed += new->items[i]->size;
         }
 }
@@ -129,7 +129,7 @@ gc(void)
 void
 gc_register(void *p)
 {
-        vec_push(allocs, ALLOC_OF(p));
+        vec_nogc_push(allocs, ALLOC_OF(p));
 }
 
 void
