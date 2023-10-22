@@ -3902,27 +3902,4 @@ MarkStorage(ThreadStorage const *storage)
         }
 }
 
-void
-vm_mark(void)
-{
-        for (int i = 0; i < Globals.count; ++i)
-                value_mark(&Globals.items[i]);
-
-        for (int i = 0; i < stack.count; ++i)
-                value_mark(&stack.items[i]);
-
-        for (int i = 0; i < defer_stack.count; ++i)
-                value_mark(&defer_stack.items[i]);
-
-        for (int i = 0; i < targets.count; ++i)
-                value_mark(targets.items[i].t);
-
-        for (int i = 0; i < sigfns.count; ++i)
-                value_mark(&sigfns.items[i].f);
-
-        for (int i = 0; i < frames.count; ++i) {
-                value_mark(&frames.items[i].f);
-        }
-}
-
 /* vim: set sts=8 sw=8 expandtab: */
