@@ -2,7 +2,7 @@ import ffi as c
 import cutil (wrap)
 import os (exit)
 
-let SDL2 = c.dlopen('libSDL2-2.0.so.0')
+let SDL2 = c.dlopen('libSDL2-2.0.so.0') ?? c.dlopen('libSDL2.dylib')
 
 let SDL_Init = wrap(SDL2, 'SDL_Init', c.int, c.int)
 let SDL_CreateWindow = wrap(SDL2, 'SDL_CreateWindow', c.ptr, c.ptr, c.int, c.int, c.int, c.int, c.int)

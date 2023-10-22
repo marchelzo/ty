@@ -5,7 +5,6 @@ let request = "HTTP/1.1 GET /\r\nHost: www.facebook.com\r\nConnection: close\r\n
 if let $conn = os::connect('www.facebook.com', 80) {
      os::write(conn, request);
      let b = blob();
-     while (os::read(conn, b, 1024) > 0)
-          ;
+     while os::read(conn, b, 1024) > 0 { }
      os::write(1, b);
 }
