@@ -25,7 +25,6 @@ void DoGC(void);
 
 #define MARKED(v) atomic_load(&(ALLOC_OF(v))->mark)
 #define MARK(v)   atomic_store(&(ALLOC_OF(v))->mark, 1)
-#define UNMARK(v) atomic_store(&(ALLOC_OF(v))->mark, 0)
 
 #define NOGC(v)   atomic_fetch_add(&(ALLOC_OF(v))->hard, 1)
 #define OKGC(v)   atomic_fetch_sub(&(ALLOC_OF(v))->hard, 1)
@@ -66,12 +65,6 @@ enum {
         GC_THREAD,
         GC_REGEX,
         GC_ANY
-};
-
-enum {
-        GC_NONE = 1 << 0,
-        GC_MARK = 1 << 1,
-        GC_HARD = 1 << 2,
 };
 
 void
@@ -259,3 +252,5 @@ void GCTakeOwnership(AllocList *new);
 void *GCRootSet(void);
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

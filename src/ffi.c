@@ -562,7 +562,7 @@ cffi_clone(int argc, struct value *kwargs)
         }
 
         size_t n = ARG(1).integer;
-        void *clone = gc_alloc_object(n, GC_NONE);
+        void *clone = gc_alloc_object(n, GC_ANY);
 
         memcpy(clone, p, n);
 

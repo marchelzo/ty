@@ -331,11 +331,14 @@ DoGC()
 
         static int *blockedThreads;
         static int *runningThreads;
+        static size_t capacity;
 
-        if (blockedThreads == NULL) {
-                blockedThreads = malloc(4096 * sizeof *blockedThreads);
-                runningThreads = malloc(4096 * sizeof *runningThreads);
-                if (blockedThreads == NULL) abort();
+        if (MyGroup->ThreadList.count > capacity) {
+                blockedThreads = realloc(blockedThreads, MyGroup->ThreadList.count * sizeof *blockedThreads);
+                runningThreads = realloc(runningThreads, MyGroup->ThreadList.count * sizeof *runningThreads);
+                if (blockedThreads == NULL || runningThreads == NULL)
+                        panic("Out of memory!");
+                capacity = MyGroup->ThreadList.count;
         }
 
         int nBlocked = 0;
@@ -3893,7 +3896,7 @@ MarkStorage(ThreadStorage const *storage)
 
         GCLOG("Marking finalizers");
         for (int i = 0; i < storage->allocs->count; ++i) {
-                if (storage->allocs->items[i]->mark == GC_NONE && storage->allocs->items[i]->type == GC_OBJECT) {
+                if (storage->allocs->items[i]->type == GC_OBJECT) {
                         value_mark(&((struct table *)storage->allocs->items[i]->data)->finalizer);
                 }
         }

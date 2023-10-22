@@ -58,22 +58,6 @@ collect(struct alloc *a)
 }
 
 void
-GCMark(void)
-{
-        vm_mark();
-
-        for (int i = 0; i < RootSet.count; ++i) {
-                value_mark(RootSet.items[i]);
-        }
-
-        for (int i = 0; i < allocs.count; ++i) {
-                if (allocs.items[i]->mark == GC_NONE && allocs.items[i]->type == GC_OBJECT) {
-                        value_mark(&((struct table *)allocs.items[i]->data)->finalizer);
-                }
-        }
-}
-
-void
 GCForget(AllocList *allocs, size_t *used)
 {
         size_t n = 0;
