@@ -4926,7 +4926,7 @@ builtin_object(int argc, struct value *kwargs)
         if (class.type != VALUE_CLASS)
                 vm_panic("the argument to object() must be a class");
 
-        return OBJECT(object_new(), class.class);
+        return OBJECT(object_new(class.class), class.class);
 }
 
 struct value

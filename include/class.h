@@ -18,6 +18,9 @@ class_name(int class);
 void
 class_add_method(int class, char const *name, struct value f);
 
+struct value
+class_get_finalizer(int class);
+
 void
 class_add_static(int class, char const *name, struct value f);
 

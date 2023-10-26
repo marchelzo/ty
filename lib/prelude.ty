@@ -77,10 +77,6 @@ class Object {
         member(self, *args)
     }
 
-    setFinalizer(*args) {
-        setFinalizer(self, *args)
-    }
-
     |(other) {
         c -> (c :: self) || (c :: other)
     }
@@ -1487,7 +1483,6 @@ function uuid4() {
 class Mutex {
     init() {
         @mtx = thread.mutex()
-        @setFinalizer(@destroy)
     }
 
     inner() {
@@ -1511,6 +1506,10 @@ class Mutex {
 
     destroy() {
         thread.destroyMutex(@mtx)
+    }
+
+    __free__() {
+        @destroy()
     }
 }
 
@@ -1672,7 +1671,6 @@ class Sync {
 class CondVar {
     init() {
         @var = thread.cond()
-        @setFinalizer(@destroy)
     }
 
     destroy() {
@@ -1689,6 +1687,10 @@ class CondVar {
 
     broadcast() {
         thread.broadcastCond(@var)
+    }
+
+    __free__() {
+        @destroy()
     }
 }
 

@@ -17,6 +17,7 @@ struct bucket {
 struct table {
         struct bucket buckets[TABLE_SIZE];
         struct value finalizer;
+        int class;
 };
 
 void
@@ -59,3 +60,5 @@ void
 table_release(struct table *t);
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

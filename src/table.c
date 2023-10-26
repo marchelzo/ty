@@ -13,6 +13,7 @@ table_init(struct table *t)
         }
 
         t->finalizer = NIL;
+		t->class = -1;
 }
 
 struct value *
