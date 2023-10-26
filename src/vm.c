@@ -2474,7 +2474,7 @@ Throw:
                                 vm_panic("failed to load Range class. was prelude loaded correctly?");
                         }
 
-                        v = OBJECT(object_new(), i);
+                        v = OBJECT(object_new(i), i);
                         NOGC(v.object);
                         call(vp, &v, 2, 0, true);
                         *top() = v;
@@ -2486,7 +2486,7 @@ Throw:
                                 vm_panic("failed to load InclusiveRange class. was prelude loaded correctly?");
                         }
 
-                        v = OBJECT(object_new(), i);
+                        v = OBJECT(object_new(i), i);
                         NOGC(v.object);
                         call(vp, &v, 2, 0, true);
                         *top() = v;
@@ -3134,7 +3134,7 @@ BadContainer:
                                                 vm_panic("primitive class has no init method. was prelude loaded?");
                                         }
                                 } else {
-                                        value = OBJECT(object_new(), v.class);
+                                        value = OBJECT(object_new(v.class), v.class);
                                         NOGC(value.object);
                                         if (vp != NULL) {
                                                 call(vp, &value, n, nkw, true);
@@ -3773,6 +3773,13 @@ vm_call2(struct value const *f, int argc)
 }
 
 struct value
+vm_call_method(struct value const *self, struct value const *f, int argc)
+{
+        call(f, self, argc, 0, true);
+        return pop();
+}
+
+struct value
 vm_call(struct value const *f, int argc)
 {
         struct value r, *init;
@@ -3808,7 +3815,7 @@ vm_call(struct value const *f, int argc)
                                 vm_panic("Couldn't find init method for built-in class. Was prelude loaded?");
                         }
                 } else {
-                        r = OBJECT(object_new(), f->class);
+                        r = OBJECT(object_new(f->class), f->class);
                         if (init != NULL) {
                                 call(init, &r, argc, 0, true);
                                 pop();
@@ -3893,6 +3900,9 @@ MarkStorage(ThreadStorage const *storage)
         for (int i = 0; i < storage->frames->count; ++i) {
                 value_mark(&storage->frames->items[i].f);
         }
+
+        // FIXME: should finalizers be allowed to keep things alive?
+        return;
 
         GCLOG("Marking finalizers");
         for (int i = 0; i < storage->allocs->count; ++i) {

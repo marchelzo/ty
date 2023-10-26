@@ -27,7 +27,7 @@ convert_text(GumboText const *t)
 inline static struct value
 convert_attr(GumboAttribute const *a)
 {
-        struct table *t = object_new();
+        struct table *t = object_new(0);
         NOGC(t);
 
         table_put(t, "name", S(a->name));
@@ -41,7 +41,7 @@ convert_attr(GumboAttribute const *a)
 static struct value
 convert_elem(GumboElement const *e, struct table *n)
 {
-        struct table *t = object_new();
+        struct table *t = object_new(0);
         NOGC(t);
 
         struct array *cs = value_array_new();
@@ -74,7 +74,7 @@ convert_elem(GumboElement const *e, struct table *n)
 static struct value
 convert_doc(GumboDocument const *d)
 {
-        struct table *t = object_new();
+        struct table *t = object_new(0);
         NOGC(t);
 
         table_put(t, "has_doctype", BOOLEAN(!!d->has_doctype));
@@ -89,7 +89,7 @@ convert_doc(GumboDocument const *d)
 static struct value
 convert_node(GumboNode const *n, struct table *p)
 {
-        struct table *t = object_new();
+        struct table *t = object_new(0);
         NOGC(t);
         table_put(t, "type", INTEGER(n->type));
         table_put(t, "parent", (p == NULL) ? NIL : OBJECT(p, 0));
@@ -113,7 +113,7 @@ convert_node(GumboNode const *n, struct table *p)
 static struct value
 convert(GumboOutput const *out)
 {
-        struct table *t = object_new();
+        struct table *t = object_new(0);
         NOGC(t);
 
         table_put(t, "root", convert_node(out->root, NULL));

@@ -11,10 +11,11 @@
 #include "gc.h"
 
 struct table *
-object_new(void)
+object_new(int class)
 {
         struct table *t =  gc_alloc_object(sizeof *t, GC_OBJECT);
         table_init(t);
+        t->class = class;
         return t;
 }
 
@@ -29,5 +30,10 @@ object_mark(struct table *o)
                 for (int v = 0; v < o->buckets[i].values.count; ++v)
                         value_mark(&o->buckets[i].values.items[v]);
 
+        // FIXME: hmm?
+        return;
+
         value_mark(&o->finalizer);
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

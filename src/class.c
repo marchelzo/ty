@@ -11,6 +11,7 @@
 static int class = 0;
 static vec(char const *) names;
 static vec(int) supers;
+static vec(struct value) finalizers;
 static vec(struct table) mtables;
 static vec(struct table) gtables;
 static vec(struct table) stables;
@@ -21,6 +22,7 @@ class_new(char const *name)
 {
         vec_push(names, name);
         vec_push(supers, -1);
+        vec_push(finalizers, NONE);
 
         struct table t;
         table_init(&t);
@@ -70,6 +72,10 @@ void
 class_add_method(int class, char const *name, struct value f)
 {
         table_put(&mtables.items[class], name, f);
+
+        if (strcmp(name, "__free__") == 0) {
+                finalizers.items[class] = f;
+        }
 }
 
 void
@@ -149,6 +155,19 @@ class_lookup_immediate(int class, char const *name, unsigned long h)
 {
         struct table const *t = &mtables.items[class];
         return table_lookup(t, name, h);
+}
+
+struct value
+class_get_finalizer(int class)
+{
+        while (class != -1) {
+                if (finalizers.items[class].type != VALUE_NONE) {
+                        return finalizers.items[class];
+                }
+                class = supers.items[class];
+        }
+
+        return NONE;
 }
 
 bool

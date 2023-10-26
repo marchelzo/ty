@@ -5,7 +5,7 @@
 #include "table.h"
 
 struct table *
-object_new(void);
+object_new(int class);
 
 void
 object_mark(struct table *obj);

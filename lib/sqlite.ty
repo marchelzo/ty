@@ -22,7 +22,6 @@ class SQLiteRowIter : Iter {
 class SQLiteStatement : Iterable {
     init(p) {
         self.p = p
-        self.setFinalizer(@finalize)
     }
 
     exec() {
@@ -82,6 +81,10 @@ class SQLiteStatement : Iterable {
     }
 
     __drop__() {
+        self.finalize()
+    }
+
+    __free__() {
         self.finalize()
     }
 

@@ -7,6 +7,7 @@
 #include "vm.h"
 #include "log.h"
 #include "token.h"
+#include "class.h"
 
 _Thread_local AllocList allocs;
 _Thread_local size_t MemoryUsed = 0;
@@ -21,7 +22,8 @@ collect(struct alloc *a)
 {
         void *p = a->data;
 
-        struct value *finalizer;
+        struct value o;
+        struct value finalizer;
         struct regex *re;
 
         switch (a->type) {
@@ -41,10 +43,11 @@ collect(struct alloc *a)
                 }
                 break;
         case GC_OBJECT:
-                finalizer = &((struct table *)p)->finalizer;
-                if (finalizer->type != VALUE_NIL) {
-                        GCLOG("Calling finalizer %p", (void *)finalizer);
-                        vm_call(finalizer, 0);
+                o = OBJECT((struct table *)p, ((struct table *)p)->class);
+                finalizer = class_get_finalizer(o.class);
+                if (finalizer.type != VALUE_NONE) {
+                        GCLOG("Calling finalizer for: %s", value_show(&o));
+                        vm_call_method(&o, &finalizer, 0);
                 }
                 table_release(p);
                 break;

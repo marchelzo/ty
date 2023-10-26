@@ -241,6 +241,9 @@ struct value
 vm_call(struct value const *f, int argc);
 
 struct value
+vm_call_method(struct value const *self, struct value const *f, int argc);
+
+struct value
 vm_eval_function(struct value const *f, ...);
 
 void
