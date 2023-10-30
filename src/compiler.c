@@ -58,6 +58,13 @@
 
 #define EXPR(...) ((struct expression){ .start = { -1, -1 }, __VA_ARGS__ })
 
+#define SAVE_JB \
+        jmp_buf jb_; \
+        memcpy(&jb_, &jb, sizeof jb);
+
+#define RESTORE_JB \
+        memcpy(&jb, &jb_, sizeof jb);
+
 #if 0
   #define INSTR_SAVE_STACK_POS INSTR_SAVE_STACK_POS), emit_int(__LINE__
   #define INSTR_RESTORE_STACK_POS INSTR_RESTORE_STACK_POS), emit_int(__LINE__
@@ -5943,7 +5950,7 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
         } else {
-                fail("invalid value passed to cexpr(): %s", value_show(v));
+                fail("invalid value passed to cexpr(): %s", value_show_color(v));
         }
 
         return e;
@@ -6089,7 +6096,10 @@ is_macro(struct expression const *e)
 bool
 compiler_symbolize_expression(struct expression *e, struct scope *scope)
 {
+        SAVE_JB;
+
         if (setjmp(jb) != 0) {
+                RESTORE_JB;
                 return false;
         }
 
@@ -6101,6 +6111,8 @@ compiler_symbolize_expression(struct expression *e, struct scope *scope)
         }
 
         e->symbolized = true;
+
+        RESTORE_JB;
 
         return true;
 }
