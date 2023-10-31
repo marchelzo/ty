@@ -23,5 +23,5 @@ RUN apt-get update \
     wget \
  && apt clean \
  && rm -rf /var/lib/apt/lists/*
-RUN ["sh", "-c", "git clone https://github.com/google/gumbo-parser.git && cd gumbo-parser/ && ./autogen.sh && ./configure && make && make install"]
+RUN ["sh", "-c", "git clone https://github.com/google/gumbo-parser.git && cd gumbo-parser/ && ./autogen.sh && ./configure && make && make install && rm /etc/ld.so.cache && ldconfig"]
 RUN ["sh", "-c", "cd /usr/src/ty/ && make clean && make && make install"]
