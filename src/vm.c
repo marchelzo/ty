@@ -1058,7 +1058,7 @@ GetMember(struct value v, char const *member, unsigned long h, bool b)
                         n = CLASS_DICT;
                         goto ClassLookup;
                 }
-                v.type = VALUE_ARRAY;
+                v.type = VALUE_DICT;
                 v.tags = 0;
                 this = gc_alloc_object(sizeof *this, GC_VALUE);
                 *this = v;
@@ -1334,7 +1334,6 @@ DoMutAdd(void)
         case 2:
                 c = (uintptr_t)poptarget();
                 o = targets.items[targets.count].gc;
-                printf("o: %p\n", o);
                 vp = poptarget();
                 call(vp, &OBJECT(o, c), 0, 0, true);
                 top()[-1] = binary_operator_addition(top(), top() - 1);
