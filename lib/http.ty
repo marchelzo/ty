@@ -1,0 +1,185 @@
+#!/usr/bin/env ty
+
+import llhttp2 (..)
+import os (..)
+import json
+
+function urlDecode(s) {
+    s.sub('+', ' ')
+     .sub(/%../, s -> chr(int(s.slice(1), 16)))
+     .sub("\r\n", "\n")
+     .sub("\r", "\n")
+}
+
+class HttpResponse {
+    init() {
+        @statusCode = HTTP_STATUS_OK
+        @body = Blob()
+        @headers = %{'Content-Type': 'text/html'}
+    }
+
+    header(k, v) {
+        if v == nil {
+            @headers[k]
+        } else {
+            @headers[k] = "{v}"
+        }
+    }
+
+    status(c) {
+        @statusCode = (c ?? @statusCode)
+    }
+
+    write(s) {
+        @body.push(s)
+    }
+
+    json(x) {
+        @body.push(json.encode(x))
+        self.header('Content-Type', 'application/json')
+    }
+
+    send(c) {
+        let response = Blob([
+            "HTTP/1.1 {@statusCode} {statusName(@statusCode)}",
+            "Content-Length: {#@body}",
+            *["{k}: {v}" for k, v in @headers],
+            '',
+            ''
+        ].join('\r\n'))
+
+        response.push(@body)
+
+        write(c, response, all: true)
+    }
+}
+
+class HttpServer {
+    init(addr, port, backlog=64) {
+        @addr = addr
+        @port = port
+        @sock = socket(AF_INET, SOCK_STREAM, 0)
+        @handlers = %{*:[]}
+        @conns = []
+
+        dbg!(setsockopt(@sock, SOL_SOCKET, SO_REUSEADDR, 1))
+
+        let Ok([addr]) = getaddrinfo(addr, port, AF_INET, SOCK_STREAM, 0)
+
+        dbg!(bind(@sock, addr))
+        dbg!(listen(@sock, backlog))
+    }
+
+    findHandler(method, url) {
+        if not let $hs = @handlers[method] {
+            return nil
+        }
+
+        for (p, f) in hs {
+            if let $m = url.match!(p) {
+                return (f, m)
+            }
+        }
+    }
+
+    handleConnection(conn) {
+        let p = HttpParser(HTTP_REQUEST)
+        let b = Blob()
+
+        while read(conn, b, 4096) > 0 {
+            p.push(b)
+            print(b.str())
+            b.clear()
+
+            for req in dbg!(p.takeMessages()) {
+                let rsp = HttpResponse()
+
+                if let (f, m) = self.findHandler(req.method, req.url) {
+                    f(req, rsp, m)
+                } else {
+                    rsp.status(404)
+                }
+
+                rsp.send(conn)
+            }
+        }
+
+        close(conn)
+    }
+
+    get(pattern, f) {
+        @handlers['GET'].push((pattern, f))
+    }
+
+    post(pattern, f) {
+        @handlers['POST'].push((pattern, f))
+    }
+
+    delete(pattern, f) {
+        @handlers['DELETE'].push((pattern, f))
+    }
+
+    put(pattern, f) {
+        @handlers['PUT'].push((pattern, f))
+    }
+
+    run() {
+        let b = Blob()
+
+        while true {
+            let pollFds = [(fd: @sock, events: POLLIN)]
+
+            for conn in @conns {
+                pollFds.push((fd: conn.fd, events: POLLIN))
+            }
+
+            dbg!(poll(pollFds, -1))
+            dbg!(pollFds)
+
+            for {fd, events, revents} in pollFds {
+                if fd == @sock {
+                    if revents .&. POLLIN {
+                        let (conn, addr) = accept(fd)
+                        @conns.push({fd: conn, addr, p: HttpParser(HTTP_REQUEST)})
+                    }
+                } else {
+                    let c = @conns.find(${it.fd == fd})
+                    if (revents .&. POLLIN) && read(fd, b, 4096) > 0 {
+                        c.p.push(b)
+                        b.clear()
+
+                        for req in dbg!(c.p.takeMessages()) {
+                            let rsp = HttpResponse()
+
+                            let [url, query] = req.url.split('?', 1)
+                            let params = %{}
+
+                            for [k, ?v] in query.split('&').map(&split('=') |> &map(urlDecode)) {
+                                if let $p = params[k] {
+                                    if p :: Array {
+                                        p.push(v)
+                                    } else {
+                                        params[k] = [p, v]
+                                    }
+                                } else {
+                                    params[k] = v
+                                }
+                            }
+
+                            if let (f, m) = self.findHandler(req.method, url) {
+                                rsp.status(f({*req, url, params, addr: c.addr}, rsp, m) ?? 200)
+                            } else {
+                                rsp.status(404)
+                            }
+
+                            rsp.send(fd)
+                        }
+                    } else {
+                        close(fd)
+                        @conns.filter!(${it.fd != fd})
+                    }
+                }
+            }
+        }
+    }
+}
