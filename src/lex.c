@@ -274,6 +274,8 @@ skipspace(void)
         nl &= state.need_nl;
         state.need_nl &= !nl;
 
+        Start = state.loc;
+
         return nl;
 }
 
@@ -1059,6 +1061,8 @@ lexlinecomment(void)
         struct token t = mktoken(TOKEN_COMMENT);
         t.comment = comment.items;
 
+        Start = state.loc;
+
         return t;
 }
 
@@ -1116,7 +1120,6 @@ lex_token(LexContext ctx)
                 return mktoken(TOKEN_NEWLINE);
         }
 
-        Start = state.loc;
         state.ctx = ctx;
 
         while (SRC < END) {
