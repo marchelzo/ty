@@ -176,6 +176,7 @@ token_show_type(int type)
         case TOKEN_NEWLINE:        return "newline";
         case TOKEN_KEYWORD:        return "keyword";
         case TOKEN_END:            return "end of input";
+        case TOKEN_COMMENT:        return "comment";
         case TOKEN_ERROR:          return "ERROR";
         default:                   snprintf(token_show_buffer, 512, "token '%c'", type); return sclone(token_show_buffer);
         }
