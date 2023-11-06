@@ -1,7 +1,7 @@
 function e() {
     let n = 21
     __eval__('''
-        let x = 40;
+        let x = 40
         n += 5
         x + n
     ''') + n
