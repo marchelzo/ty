@@ -442,7 +442,7 @@ is_variadic(struct expression const *e)
         }
 
         for (int i = 0; i < n; ++i) {
-                if (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL) {
+                if (args[i] != NULL && (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL)) {
                         return true;
                 }
         }
@@ -1282,6 +1282,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
         case EXPRESSION_FUNCTION:
+                for (int i = 0; i < e->decorators.count; ++i) {
+                        symbolize_expression(scope, e->decorators.items[i]);
+                }
+
                 state.func = e;
 
                 if (e->name != NULL) {
@@ -2055,6 +2059,18 @@ emit_function(struct expression const *e, int class)
         }
 
         state.func = func_save;
+
+        for (int i = 0; i < e->decorators.count; ++i) {
+                struct expression *c = e->decorators.items[i];
+                if (c->type == EXPRESSION_FUNCTION_CALL) {
+                        vec_insert(c->args, NULL, 0);
+                        vec_insert(c->fconds, NULL, 0);
+                } else {
+                        vec_insert(c->method_args, NULL, 0);
+                        vec_insert(c->mconds, NULL, 0);
+                }
+                emit_expression(c);
+        }
 }
 
 static void
@@ -3915,7 +3931,9 @@ emit_expr(struct expression const *e, bool need_loc)
                         emit_instr(INSTR_SAVE_STACK_POS);
                 }
                 for (size_t i = 0; i < e->args.count; ++i) {
-                        if (e->fconds.items[i] != NULL) {
+                        if (e->args.items[i] == NULL) {
+                                continue;
+                        } else if (e->fconds.items[i] != NULL) {
                                 emit_expression(e->fconds.items[i]);
                                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
                                 emit_expression(e->args.items[i]);
@@ -3944,7 +3962,9 @@ emit_expr(struct expression const *e, bool need_loc)
                         emit_instr(INSTR_SAVE_STACK_POS);
                 }
                 for (size_t i = 0; i < e->method_args.count; ++i) {
-                        if (e->mconds.items[i] != NULL) {
+                        if (e->method_args.items[i] == NULL) {
+                                continue;
+                        } else if (e->mconds.items[i] != NULL) {
                                 emit_expression(e->mconds.items[i]);
                                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
                                 emit_expression(e->method_args.items[i]);
@@ -5971,7 +5991,7 @@ tyeval(struct expression *e)
         emit_expression(e);
         emit_instr(INSTR_HALT);
 
-        struct value v = vm_exec_or_nil(state.code.items);
+        struct value v = vm_try_exec(state.code.items);
 
         state.code = code_save;
         state.expression_locations = locations_save;

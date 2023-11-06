@@ -237,6 +237,9 @@ vm_pop(void);
 struct value *
 vm_get(int i);
 
+_Noreturn void
+vm_throw(struct value const *);
+
 struct value
 vm_call(struct value const *f, int argc);
 
@@ -253,7 +256,7 @@ void
 vm_exec(char *ip);
 
 struct value
-vm_exec_or_nil(char *ip);
+vm_try_exec(char *ip);
 
 struct value
 GetMember(struct value v, char const *member, unsigned long h, bool b);

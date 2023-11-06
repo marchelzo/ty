@@ -11,6 +11,30 @@ function urlDecode(s) {
      .sub("\r", "\n")
 }
 
+function decodeQuery(query) {
+    let params = %{}
+
+    for [k, ?v] in query.split('&').map(&split('=') |> &map(urlDecode)) {
+        if let $p = params[k] {
+            if p :: Array {
+                p.push(v)
+            } else {
+                params[k] = [p, v]
+            }
+        } else {
+            params[k] = v
+        }
+    }
+
+    return params
+}
+
+function makePattern(route) {
+    let route = route.sub(/<(\w+)>/, [_, name] -> "<{name}:\\w+>")
+    let params = route.matches(/<(\w+):/).map(&1)
+    return (params, regex('^' + route.sub(/<\w+:(.*?)>/, [_, pattern] -> "({pattern})") + '/?$'))
+}
+
 class HttpResponse {
     init() {
         @statusCode = HTTP_STATUS_OK
@@ -55,19 +79,26 @@ class HttpResponse {
 }
 
 class HttpServer {
-    init(addr, port, backlog=64) {
-        @addr = addr
-        @port = port
-        @sock = socket(AF_INET, SOCK_STREAM, 0)
+    init(*args, backlog=64) {
         @handlers = %{*:[]}
         @conns = []
+        match args {
+            [addr, port] => {
+                @sock = socket(AF_INET, SOCK_STREAM, 0)
 
-        dbg!(setsockopt(@sock, SOL_SOCKET, SO_REUSEADDR, 1))
+                dbg!(setsockopt(@sock, SOL_SOCKET, SO_REUSEADDR, 1))
 
-        let Ok([addr]) = getaddrinfo(addr, port, AF_INET, SOCK_STREAM, 0)
+                let Ok([addr]) = getaddrinfo(addr, port, AF_INET, SOCK_STREAM, 0)
 
-        dbg!(bind(@sock, addr))
-        dbg!(listen(@sock, backlog))
+                dbg!(bind(@sock, addr))
+                dbg!(listen(@sock, backlog))
+            },
+
+            [sock] => {
+                @sock = sock
+                dbg!(listen(@sock, backlog))
+            }
+        }
     }
 
     findHandler(method, url) {
@@ -75,9 +106,9 @@ class HttpServer {
             return nil
         }
 
-        for (p, f) in hs {
-            if let $m = url.match!(p) {
-                return (f, m)
+        for (ps, pattern, f) in hs {
+            if let $m = url.match!(pattern) {
+                return (f, %{ps[i]: m[i+1] for i in ..#ps})
             }
         }
     }
@@ -94,8 +125,8 @@ class HttpServer {
             for req in dbg!(p.takeMessages()) {
                 let rsp = HttpResponse()
 
-                if let (f, m) = self.findHandler(req.method, req.url) {
-                    f(req, rsp, m)
+                if let (f, ps) = self.findHandler(req.method, req.url) {
+                    f(req, rsp, **ps)
                 } else {
                     rsp.status(404)
                 }
@@ -107,20 +138,20 @@ class HttpServer {
         close(conn)
     }
 
-    get(pattern, f) {
-        @handlers['GET'].push((pattern, f))
+    get(route, f) {
+        @handlers['GET'].push({*makePattern(route), f})
     }
 
-    post(pattern, f) {
-        @handlers['POST'].push((pattern, f))
+    post(route, f) {
+        @handlers['POST'].push({*makePattern(route), f})
     }
 
-    delete(pattern, f) {
-        @handlers['DELETE'].push((pattern, f))
+    delete(route, f) {
+        @handlers['DELETE'].push({*makePattern(route), f})
     }
 
-    put(pattern, f) {
-        @handlers['PUT'].push((pattern, f))
+    put(route, f) {
+        @handlers['PUT'].push({*makePattern(route), f})
     }
 
     run() {
@@ -151,23 +182,53 @@ class HttpServer {
                         for req in dbg!(c.p.takeMessages()) {
                             let rsp = HttpResponse()
 
-                            let [url, query] = req.url.split('?', 1)
+                            let [url, ?query] = req.url.split('?', 1)
                             let params = %{}
 
-                            for [k, ?v] in query.split('&').map(&split('=') |> &map(urlDecode)) {
-                                if let $p = params[k] {
-                                    if p :: Array {
-                                        p.push(v)
-                                    } else {
-                                        params[k] = [p, v]
-                                    }
-                                } else {
-                                    params[k] = v
-                                }
+                            if query != nil {
+                                params.update(decodeQuery(query))
                             }
 
-                            if let (f, m) = self.findHandler(req.method, url) {
-                                rsp.status(f({*req, url, params, addr: c.addr}, rsp, m) ?? 200)
+                            let body = req.body.str!()
+
+                            if req.headers['Content-Type'].match?(/^multipart\/form-data/) {
+                                let form = %{}
+                                let [_, delim] = body.match!(/^(.*)\r\n/)
+                                let offset = 0
+
+                                while let $i = body.bsearch(delim, offset) {
+                                    if not let $j = body.bsearch('\r\n\r\n', i) {
+                                        break
+                                    }
+                                    let headers = body.bsplice(i + #delim + 2, j).split(/\r\n/)
+                                    offset = body.bsearch(delim, j)
+                                    let content = body.bsplice(j + 4, offset - 2)
+                                    let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
+                                    let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
+                                    let name = disposition['name']
+
+                                    if let $filename = disposition['filename'] {
+                                        let f = {
+                                            name: filename,
+                                            type: headers['content-type'],
+                                            content: Blob(content)
+                                        }
+                                        if let $fs = form[name] {
+                                            fs.push(f)
+                                        } else {
+                                            form[name] = [f]
+                                        }
+                                    } else {
+                                        form[disposition['name']] = content
+                                    }
+                                }
+                                params.update(form)
+                            } else if req.headers['Content-Type'].match?(/^application\/x-www-form-urlencoded/) {
+                                params.update(decodeQuery(req.body.str!()))
+                            }
+
+                            if let (f, ps) = dbg!(self.findHandler(req.method, url)) {
+                                rsp.status(f({*req, url, params, addr: c.addr}, rsp, **ps) ?? 200)
                             } else {
                                 rsp.status(404)
                             }

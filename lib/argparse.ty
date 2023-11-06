@@ -84,7 +84,7 @@ function make(*opts, version) {
                     break
                 },
 
-                _ :: ('-h' | '--help') => {
+                '-h', '--help' => {
                     let [flags, opts] = opts.partition(o -> o.type == 'f')
 
                     if version {
@@ -100,11 +100,11 @@ function make(*opts, version) {
                         print()
 
                         let optStrings = [
-							match (opt.short, opt.long) {
-								(nil, l) => "    --{l}",
-								(s, nil) => "-{s}",
-								(s, l)   => "-{s}, --{l}"
-							}
+                            match (opt.short, opt.long) {
+                                (nil, l) => "    --{l}",
+                                (s, nil) => "-{s}",
+                                (s, l)   => "-{s}, --{l}"
+                            }
                             for opt in opts
                         ]
 
@@ -147,6 +147,7 @@ function make(*opts, version) {
                         unrecognized(_1)
                     }
                 },
+
                 /^--([^=]+)=(.+)/ => {
                     if let $opt = getopt(_1) {
                         if !(_2 :: opt.pre) {
@@ -169,6 +170,7 @@ function make(*opts, version) {
                         unrecognized(_1)
                     }
                 },
+
                 /^-(.+)/ => {
                     if not let $opt = opts.find(&.short |> (== _1[0])) {
                         throw "Unrecognized option: {_0}"
@@ -205,6 +207,7 @@ function make(*opts, version) {
                 },
 
                 _ => {
+                    i -= 1
                     break
                 }
             }

@@ -5225,11 +5225,25 @@ builtin_eval(int argc, struct value *kwargs)
                 vec_push_n_unchecked(B, POST, (sizeof POST));
                 Arena old = NewArena(1 << 22);
                 struct statement **prog = parse(B.items + 1, "(eval)");
+
+                if (prog == NULL) {
+                        char const *msg = parse_error();
+                        struct value e = STRING_CLONE(msg, strlen(msg));
+                        e.tags = tags_push(0, gettag(NULL, "Err"));
+                        e.type |= VALUE_TAGGED;
+                        DestroyArena(old);
+                        vm_throw(&e);
+                }
+
                 struct expression *e = prog[0]->expression;
 
                 if (!compiler_symbolize_expression(e, scope)) {
+                        char const *msg = compiler_error();
+                        struct value e = STRING_CLONE(msg, strlen(msg));
+                        e.tags = tags_push(0, gettag(NULL, "Err"));
+                        e.type |= VALUE_TAGGED;
                         DestroyArena(old);
-                        return NIL;
+                        vm_throw(&e);
                 }
 
                 struct value v = tyeval(e);
