@@ -320,6 +320,7 @@ struct expression {
                         vec(char *) params;
                         expression_vector dflts;
                         expression_vector constraints;
+                        expression_vector decorators;
                         struct expression *return_type;
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;

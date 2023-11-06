@@ -59,12 +59,15 @@ class Args {
             }
         }
 
-        tuple(**%{
-            o.name:
-                (o.constraint == Bool) ? ((o.short in result) || (o.long in result))
-                                       : (result[o.short] ?? result[o.long])
-            for o in opts
-        } + %{ 'help': 'help' in result })
+        (
+            tuple(**%{
+                o.name:
+                    (o.constraint == Bool) ? ((o.short in result) || (o.long in result))
+                                           : (result[o.short] ?? result[o.long])
+                for o in opts
+            } + %{ 'help': 'help' in result }),
+            argv
+        )
     }
 }
 

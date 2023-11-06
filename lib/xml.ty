@@ -1,11 +1,8 @@
-import ffi as c
-import cutil (wrap, cfun!, struct!)
+import ffi as c (wrap, cfun!, struct!, C!)
 import os (args)
 
-let path = 'libxml2.so'
-
-if not let $lib = c.dlopen(path) {
-    throw "Failed to load {path}"
+if not let $lib = c.dlopen('libxml2.so') ?? c.dlopen('libxml2.dylib') {
+    throw "Failed to load libxml2"
 }
 
 let XML_MAX_TEXT_LENGTH = 10000000
@@ -1436,9 +1433,10 @@ class XMLNode : CXMLNode {
     }
 }
 
-cfun! lib c.ptr xmlParseFile(c.ptr)
-cfun! lib c.ptr xmlXPathNewContext(c.ptr)
-cfun! lib c.ptr xmlXPathEvalExpression(c.ptr, c.ptr)
+
+C! pub lib function xmlParseFile(c.ptr) -> c.ptr
+C! pub lib function xmlXPathNewContext(c.ptr) -> c.ptr
+C! pub lib function xmlXPathEvalExpression(c.ptr, c.ptr) -> c.ptr
 
 function test() {
     let [_, file, expr] = args

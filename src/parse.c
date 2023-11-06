@@ -198,6 +198,9 @@ static struct expression *
 prefix_parenthesis(void);
 
 static struct expression *
+prefix_function(void);
+
+static struct expression *
 prefix_dict(void);
 
 static struct expression *
@@ -259,6 +262,7 @@ mkfunc(void)
         vec_init(f->params);
         vec_init(f->dflts);
         vec_init(f->constraints);
+        vec_init(f->decorators);
 
         return f;
 }
@@ -875,6 +879,46 @@ prefix_function(void)
 {
         struct expression *e = mkfunc();
 
+        if (tok()->type == TOKEN_AT) {
+                consume(TOKEN_AT);
+                consume('[');
+
+                while (tok()->type != ']') {
+                        struct expression *f = parse_expr(0);
+                        if (f->type != EXPRESSION_FUNCTION_CALL && f->type != EXPRESSION_METHOD_CALL) {
+                                struct expression *call = mkexpr();
+                                if (f->type == EXPRESSION_MEMBER_ACCESS) {
+                                        call->type = EXPRESSION_METHOD_CALL;
+                                        call->sc = NULL;
+                                        call->maybe = false;
+                                        call->object = f->object;
+                                        call->method_name = f->method_name;
+                                        vec_init(call->method_args);
+                                        vec_init(call->mconds);
+                                        vec_init(call->method_kwargs);
+                                        vec_init(call->method_kws);
+                                } else {
+                                        call->type = EXPRESSION_FUNCTION_CALL;
+                                        call->function = f;
+                                        vec_init(call->args);
+                                        vec_init(call->kws);
+                                        vec_init(call->kwargs);
+                                        vec_init(call->fconds);
+                                        vec_init(call->fkwconds);
+                                }
+                                vec_push(e->decorators, call);
+                        } else {
+                                vec_push(e->decorators, f);
+                        }
+
+                        if (tok()->type == ',') {
+                                next();
+                        }
+                }
+
+                consume(']');
+        }
+
         if (tok()->keyword == KEYWORD_GENERATOR) {
                 e->type = EXPRESSION_GENERATOR;
         } else {
@@ -1018,6 +1062,9 @@ opfunc(void)
 static struct expression *
 prefix_me(void)
 {
+        if (token(1)->type == '[')
+                return prefix_function();
+
         next();
 
         unconsume('.');
@@ -3386,6 +3433,7 @@ parse_function_definition(void)
                 *tok() = kw;
         } else {
                 s->type = STATEMENT_FUNCTION_DEFINITION;
+
         }
 
         struct expression *f = prefix_function();
@@ -3943,6 +3991,11 @@ parse_statement(int prec)
         setctx(LEX_PREFIX);
 
         switch (tok()->type) {
+        case TOKEN_AT:
+                if (token(1)->type == '[')
+                        return parse_function_definition();
+                else
+                        goto Expression;
         case '{':            return parse_block();
         case ';':            return parse_null_statement();
         case TOKEN_KEYWORD:  goto Keyword;

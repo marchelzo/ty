@@ -1260,14 +1260,14 @@ DoMutSub(void)
                                 vm_panic("attempt to subtract non-dict from dict");
                         dict_subtract(vp, 1, NULL);
                         pop();
-                } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "+=")) != NULL) {
+                } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(vp->class, "-=")) != NULL) {
                         gc_push(vp);
                         call(vp2, vp, 1, 0, true);
                         gc_pop();
                         pop();
                 } else {
                         x = pop();
-                        *vp = binary_operator_addition(vp, &x);
+                        *vp = binary_operator_subtraction(vp, &x);
                 }
                 push(*vp);
                 break;
@@ -1371,7 +1371,7 @@ DoAssign(void)
 }
 
 struct value
-vm_exec_or_nil(char *code)
+vm_try_exec(char *code)
 {
         jmp_buf jb_;
         memcpy(&jb_, &jb, sizeof jb_);
@@ -1387,7 +1387,11 @@ vm_exec_or_nil(char *code)
                 frames.count = nframes;
                 try_stack.count = ntry;
                 ip = save;
-                return NIL;
+                push(STRING_CLONE(ERR, strlen(ERR)));
+                top()->tags = tags_push(0, gettag(NULL, "Err"));
+                top()->type |= VALUE_TAGGED;
+                vm_exec((char[]){INSTR_THROW});
+                // unreachable
         }
 
         vm_exec(code);
@@ -3731,6 +3735,15 @@ struct value *
 vm_get(int i)
 {
         return top() - i;
+}
+
+_Noreturn void
+vm_throw(struct value const *v)
+{
+        push(*v);
+        vm_exec((char[]){INSTR_THROW});
+        // unreachable
+        abort();
 }
 
 struct value
