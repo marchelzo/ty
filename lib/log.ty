@@ -66,8 +66,8 @@ function threadPen() {
         if let $p = pens[thread.id()] {
             return p
         } else {
-            let (r, g, b) = hslToRgb(rand(), 0.4 + rand()*0.6, 0.4 + rand()*0.3)
-            return pens[thread.id()] = chalk.fg("#{r.str(16)}{g.str(16)}{b.str(16)}")
+            let (r, g, b) = hslToRgb(rand(), 0.4 + rand()*0.6, 0.6 + rand()*0.15)
+            return pens[thread.id()] = chalk.fg("#{r#02x}{g#02x}{b#02x}")
         }
     }
 }

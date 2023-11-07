@@ -579,7 +579,11 @@ class Int {
     }
 
     __fmt__(spec) {
-        fmt("%%{spec}d", self)
+        if spec[-1] in 'uxd' {
+            fmt("%%{spec}", self)
+        } else {
+            fmt("%%{spec}d", self)
+        }
     }
 }
 
