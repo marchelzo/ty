@@ -5229,6 +5229,7 @@ builtin_eval(int argc, struct value *kwargs)
                 struct statement **prog = parse(B.items + 1, "(eval)");
 
                 if (prog == NULL) {
+                        puts("prog is NULL");
                         char const *msg = parse_error();
                         struct value e = STRING_CLONE(msg, strlen(msg));
                         e.tags = tags_push(0, gettag(NULL, "Err"));
@@ -5239,7 +5240,9 @@ builtin_eval(int argc, struct value *kwargs)
 
                 struct expression *e = prog[0]->expression;
 
-                if (!compiler_symbolize_expression(e, scope)) {
+                if (!compiler_symbolize_expression(e, scope))
+                CompileError:
+                {
                         char const *msg = compiler_error();
                         struct value e = STRING_CLONE(msg, strlen(msg));
                         e.tags = tags_push(0, gettag(NULL, "Err"));
@@ -5249,6 +5252,9 @@ builtin_eval(int argc, struct value *kwargs)
                 }
 
                 struct value v = tyeval(e);
+                if (v.type == VALUE_NONE) {
+                        goto CompileError;
+                }
 
                 DestroyArena(old);
 
@@ -5259,7 +5265,11 @@ builtin_eval(int argc, struct value *kwargs)
                 if (!compiler_symbolize_expression(e, scope)) {
                         return NIL;
                 }
-                return tyeval(e);
+                struct value v = tyeval(e);
+                if (v.type == VALUE_NONE) {
+                        goto CompileError;
+                }
+                return v;
         }
 
 #undef PRE

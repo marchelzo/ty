@@ -2628,6 +2628,8 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
                 emit_instr(INSTR_NIL);
         }
 
+        emit_instr(INSTR_RESUME_TRY);
+
         emit_instr(INSTR_JUMP);
         VPush(state.match_successes, state.code.count);
         emit_int(0);
@@ -5978,6 +5980,13 @@ cexpr(struct value *v)
 struct value
 tyeval(struct expression *e)
 {
+        SAVE_JB;
+
+        if (setjmp(jb) != 0) {
+                RESTORE_JB;
+                return NONE;
+        }
+
         if (!e->symbolized)
                 symbolize_expression(state.macro_scope, e);
 
@@ -5989,6 +5998,8 @@ tyeval(struct expression *e)
 
         emit_expression(e);
         emit_instr(INSTR_HALT);
+
+        RESTORE_JB;
 
         struct value v = vm_try_exec(state.code.items);
 
