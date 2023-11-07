@@ -3148,7 +3148,9 @@ builtin_os_accept(int argc, struct value *kwargs)
                 return NIL;
 
         struct blob *b = value_blob_new();
+        NOGC(b);
         vec_push_n(*b, (char *)&a, n);
+        OKGC(b);
 
         return value_named_tuple(
                 "fd",   INTEGER(r),

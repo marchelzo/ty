@@ -405,10 +405,10 @@ cffi_load(int argc, struct value *kwargs)
                 return cffi_load_n(argc, kwargs);
         }
 
-		if (argc == 1) {
-			ffi_type *t = (ARG(0).extra == NULL) ? &ffi_type_uint8 : ARG(0).extra;
-			return load(t, ARG(0).ptr);
-		}
+        if (argc == 1) {
+                ffi_type *t = (ARG(0).extra == NULL) ? &ffi_type_uint8 : ARG(0).extra;
+                return load(t, ARG(0).ptr);
+        }
 
         return load(ARG(0).ptr, ARG(1).ptr);
 }
@@ -709,11 +709,15 @@ cffi_closure(int argc, struct value *kwargs)
         }
 
         struct value *data = gc_alloc_object(sizeof *data, GC_VALUE);
+        NOGC(data);
+
         *data = f;
 
         void **pointers = gc_alloc(sizeof (void *[2]));
         pointers[0] = closure;
         pointers[1] = cif.ptr;
+
+        OKGC(data);
 
         if (ffi_prep_closure_loc(closure, cif.ptr, closure_func, data, code) == FFI_OK) {
                 return EPTR(code, data, pointers);
