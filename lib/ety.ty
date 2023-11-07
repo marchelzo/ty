@@ -33,7 +33,7 @@ pub function parse(s) {
 
     return ts.filter!(${it != Text('')}).map(${
         match it {
-            Text(s)     => ";_ety_push('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\')}');",
+            Text(s)     => ";_ety_push('{s.sub(/\\/, '\\\\').sub('\n', '\\n').sub('\'', '\\\'')}');",
             Code(s)     => s,
             Expr(s)     => ";_ety_push(str({s}));",
             Embed(s)    => parse(slurp(s.strip())),
