@@ -227,7 +227,13 @@ class HttpServer {
                             }
 
                             if let (f, ps) = self.findHandler(req.method, url) {
-                                rsp.status(f({*req, url, params, addr: c.addr}, rsp, **ps) ?? 200)
+                                try {
+                                    rsp.status(f({*req, url, params, addr: c.addr}, rsp, **ps) ?? 200)
+                                } catch e {
+                                    rsp.header('Content-Type', 'text/plain')
+                                    rsp.write("Exception: {e}")
+                                    rsp.status(500)
+                                }
                             } else {
                                 rsp.status(404)
                             }
