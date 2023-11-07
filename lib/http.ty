@@ -3,7 +3,6 @@
 import llhttp2 (..)
 import os (..)
 import json
-import log (..)
 
 function urlDecode(s) {
     s.sub('+', ' ')
@@ -171,13 +170,11 @@ class HttpServer {
                 if fd == @sock {
                     if revents .&. POLLIN {
                         let (conn, addr) = accept(fd)
-                        warn!("Accepted fd: {conn}")
                         @conns.push({fd: conn, addr, p: HttpParser(HTTP_REQUEST)})
                     }
                 } else {
                     let c = @conns.find(${it.fd == fd})
-                    warn!("Read on fd: {fd}")
-                    if (revents .&. POLLIN) && dbg!(read(fd, b, 4096)) > 0 {
+                    if (revents .&. POLLIN) && read(fd, b, 4096) > 0 {
                         c.p.push(b)
                         b.clear()
 
@@ -235,11 +232,9 @@ class HttpServer {
                                 rsp.status(404)
                             }
 
-                            warn!("Send on fd: {fd}")
                             rsp.send(fd)
                         }
                     } else if revents .&. POLLHUP {
-                        warn!("Close fd: {fd}")
                         close(fd)
                         @conns.filter!(${it.fd != fd})
                     }
