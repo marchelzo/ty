@@ -3,6 +3,7 @@
 import llhttp2 (..)
 import os (..)
 import json
+import log (..)
 
 function urlDecode(s) {
     s.sub('+', ' ')
@@ -74,7 +75,7 @@ class HttpResponse {
 
         response.push(@body)
 
-        write(c, response, all: true)
+        dbg!(write(c, response, all: true))
     }
 }
 
@@ -122,7 +123,7 @@ class HttpServer {
             print(b.str())
             b.clear()
 
-            for req in dbg!(p.takeMessages()) {
+            for req in p.takeMessages() {
                 let rsp = HttpResponse()
 
                 if let (f, ps) = self.findHandler(req.method, req.url) {
@@ -164,22 +165,23 @@ class HttpServer {
                 pollFds.push((fd: conn.fd, events: POLLIN))
             }
 
-            dbg!(poll(pollFds, -1))
-            dbg!(pollFds)
+            poll(pollFds, -1)
 
             for {fd, events, revents} in pollFds {
                 if fd == @sock {
                     if revents .&. POLLIN {
                         let (conn, addr) = accept(fd)
+                        warn!("Accepted fd: {conn}")
                         @conns.push({fd: conn, addr, p: HttpParser(HTTP_REQUEST)})
                     }
                 } else {
                     let c = @conns.find(${it.fd == fd})
-                    if (revents .&. POLLIN) && read(fd, b, 4096) > 0 {
+                    warn!("Read on fd: {fd}")
+                    if (revents .&. POLLIN) && dbg!(read(fd, b, 4096)) > 0 {
                         c.p.push(b)
                         b.clear()
 
-                        for req in dbg!(c.p.takeMessages()) {
+                        for req in c.p.takeMessages() {
                             let rsp = HttpResponse()
 
                             let [url, ?query] = req.url.split('?', 1)
@@ -227,15 +229,17 @@ class HttpServer {
                                 params.update(decodeQuery(req.body.str!()))
                             }
 
-                            if let (f, ps) = dbg!(self.findHandler(req.method, url)) {
+                            if let (f, ps) = self.findHandler(req.method, url) {
                                 rsp.status(f({*req, url, params, addr: c.addr}, rsp, **ps) ?? 200)
                             } else {
                                 rsp.status(404)
                             }
 
+                            warn!("Send on fd: {fd}")
                             rsp.send(fd)
                         }
-                    } else {
+                    } else if revents .&. POLLHUP {
+                        warn!("Close fd: {fd}")
                         close(fd)
                         @conns.filter!(${it.fd != fd})
                     }

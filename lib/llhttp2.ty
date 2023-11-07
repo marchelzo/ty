@@ -4,6 +4,8 @@ import os
 
 let libName = 'libllhttp.so'
 
+let TY_NO_DBG = true
+
 let HTTP_BOTH      = 0
 let HTTP_REQUEST   = 1
 let HTTP_RESPONSE  = 2
