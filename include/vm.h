@@ -131,6 +131,7 @@ enum instruction {
         INSTR_TRY,
 		INSTR_CATCH,
         INSTR_POP_TRY,
+        INSTR_RESUME_TRY,
         INSTR_FINALLY,
 
         INSTR_PUSH_DEFER_GROUP,
