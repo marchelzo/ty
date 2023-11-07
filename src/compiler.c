@@ -2620,7 +2620,7 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
 
         bool returns = false;
 
-        emit_instr(INSTR_POP_THROW);
+        emit_instr(INSTR_CATCH);
 
         if (s != NULL) {
                 returns = emit_statement(s, want_result);
