@@ -1789,8 +1789,9 @@ Throw:
                 CASE(POP_TRY)
                         --try_stack.count;
                         break;
-                CASE(POP_THROW)
+                CASE(CATCH)
                         --throw_stack.count;
+                        vec_last(try_stack)->executing = false;
                         break;
                 CASE(TRY)
                 {

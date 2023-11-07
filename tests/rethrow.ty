@@ -1,0 +1,13 @@
+function f() {
+    try {
+        throw 'FAIL'
+    } catch 'FAIL' {
+        throw 'PASS'
+    }
+}
+
+try {
+    f()
+} catch e {
+    print(e)
+}
