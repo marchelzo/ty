@@ -104,7 +104,7 @@ CheckUsed(void)
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC();
                 GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
-                while ((MemoryUsed << 1) >= MemoryLimit) {
+                while (MemoryUsed >= MemoryLimit) {
                         MemoryLimit <<= 1;
                         GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
                 }

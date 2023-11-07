@@ -2056,8 +2056,6 @@ Throw:
                                 }
                         }
 
-                        stack.count -= n;
-
                         k = values.count;
                         vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
 
@@ -2072,6 +2070,8 @@ Throw:
                                         OKGC(vp);
                                 }
                         }
+
+                        stack.count -= n;
 
                         push(v);
 
@@ -3138,7 +3138,6 @@ BadContainer:
                                         }
                                 } else {
                                         value = OBJECT(object_new(v.class), v.class);
-                                        NOGC(value.object);
                                         if (vp != NULL) {
                                                 call(vp, &value, n, nkw, true);
                                                 pop();
@@ -3146,7 +3145,6 @@ BadContainer:
                                                 stack.count -= n;
                                         }
                                         push(value);
-                                        OKGC(value.object);
                                 }
                                 break;
                         case VALUE_METHOD:
