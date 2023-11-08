@@ -67,8 +67,9 @@ class SQLiteStatement : Iterable {
 
     finalize() {
         if @p {
-            finalize(@p)
-            @p = nil
+            if let r = finalize(@p) and r != SQLITE_OK {
+                throw SQLiteError(r)
+            }
         }
     }
 
@@ -81,10 +82,6 @@ class SQLiteStatement : Iterable {
     }
 
     __drop__() {
-        self.finalize()
-    }
-
-    __free__() {
         self.finalize()
     }
 
@@ -110,6 +107,14 @@ class SQLite {
         if self.db {
             close(self.db)
             self.db = nil
+        }
+    }
+
+    fetchOne(*args, assoc=true) {
+        with q = self.query(*args) {
+            if let $row = q.nextRow(assoc: assoc) {
+                row
+            }
         }
     }
 
