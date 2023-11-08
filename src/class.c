@@ -10,6 +10,7 @@
 
 static int class = 0;
 static vec(char const *) names;
+static vec(char const *) docs;
 static vec(int) supers;
 static vec(struct value) finalizers;
 static vec(struct table) mtables;
@@ -18,9 +19,10 @@ static vec(struct table) stables;
 static vec(struct table) ctables;
 
 int
-class_new(char const *name)
+class_new(char const *name, char const *doc)
 {
         vec_push(names, name);
+        vec_push(docs, doc);
         vec_push(supers, -1);
         vec_push(finalizers, NONE);
 
@@ -203,3 +205,35 @@ class_method_name(int class, char const *name)
 
         return NULL;
 }
+
+struct table *
+class_methods(int class)
+{
+        return &mtables.items[class];
+}
+
+struct table *
+class_static_methods(int class)
+{
+        return &ctables.items[class];
+}
+
+struct table *
+class_getters(int class)
+{
+        return &gtables.items[class];
+}
+
+struct table *
+class_setters(int class)
+{
+        return &stables.items[class];
+}
+
+char const *
+class_doc(int class)
+{
+        return docs.items[class];
+}
+
+/* vim: set sts=8 sw=8 expandtab: */

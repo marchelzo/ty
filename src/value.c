@@ -405,10 +405,10 @@ value_show(struct value const *v)
                 break;
         case VALUE_FUNCTION:
                 if (v->info[6] == -1) {
-                        snprintf(buffer, 1024, "<function '%s' at %p>", (char *)(v->info + 7), (void *)((char *)v->info + v->info[0]));
+                        snprintf(buffer, 1024, "<function '%s' at %p>", name_of(v), (void *)((char *)v->info + v->info[0]));
                 } else {
                         char const *class = class_name(v->info[6]);
-                        snprintf(buffer, 1024, "<function '%s.%s' at %p>", class, (char *)(v->info + 7), (void *)((char *)v->info + v->info[0]));
+                        snprintf(buffer, 1024, "<function '%s.%s' at %p>", class, name_of(v), (void *)((char *)v->info + v->info[0]));
                 }
                 break;
         case VALUE_METHOD:
@@ -525,7 +525,7 @@ value_show_color(struct value const *v)
                                 "%s<function %s'%s'%s at %s%p%s>%s",
                                 TERM(96),
                                 TERM(92),
-                                (char *)(v->info + 7),
+                                name_of(v),
                                 TERM(96),
                                 TERM(94),
                                 (void *)((char *)v->info + v->info[0]),
@@ -541,7 +541,7 @@ value_show_color(struct value const *v)
                                 TERM(96),
                                 TERM(92),
                                 class,
-                                (char *)(v->info + 7),
+                                name_of(v),
                                 TERM(96),
                                 TERM(94),
                                 (void *)((char *)v->info + v->info[0]),

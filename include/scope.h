@@ -12,6 +12,7 @@ enum {
 
 struct symbol {
         char const *identifier;
+		char const *doc;
         int symbol;
         int tag;
         int class;

@@ -538,12 +538,6 @@ TRIPLE(struct value a, struct value b, struct value c)
         return v;
 }
 
-inline static char *
-code_of(struct value const *v)
-{
-        return ((char *)v->info) + v->info[0];
-}
-
 #define None                     TAG(TAG_NONE)
 
 int tags_push(int, int);
@@ -554,6 +548,34 @@ Some(struct value v)
         v.type |= VALUE_TAGGED;
         v.tags = tags_push(v.tags, TAG_SOME);
         return v;
+}
+
+inline static char *
+code_of(struct value const *v)
+{
+        return (char *)v->info + v->info[0];
+}
+
+inline static char const *
+proto_of(struct value const *f)
+{
+        uintptr_t p;
+        memcpy(&p, f->info + 7, sizeof p);
+        return (char const *)p;
+}
+
+inline static char const *
+doc_of(struct value const *f)
+{
+        uintptr_t p;
+        memcpy(&p, (char *)(f->info + 7) + sizeof (uintptr_t), sizeof p);
+        return (char const *)p;
+}
+
+inline static char const *
+name_of(struct value const *f)
+{
+        return (char *)(f->info + 7) + 2 * sizeof (uintptr_t);
 }
 
 #endif
