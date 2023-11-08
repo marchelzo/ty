@@ -616,6 +616,9 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 
                 for (int i = irest; i < argc; ++i) {
                         value_array_push(extra, stack.items[fp + i]);
+                }
+
+                for (int i = irest; i < argc; ++i) {
                         stack.items[fp + i] = NIL;
                 }
 
