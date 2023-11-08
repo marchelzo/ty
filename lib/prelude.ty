@@ -2081,9 +2081,10 @@ function help(x) {
 
         (name, proto, doc) => {
             if doc != nil {
-                print("Help for {name ?? ''}{proto}:")
+                print("{name}{proto}:")
                 print()
                 pdoc(doc, 4)
+                print()
             } else {
                 print("{name}{proto}")
             }
