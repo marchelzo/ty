@@ -579,7 +579,7 @@ class Int {
     }
 
     __fmt__(spec) {
-        if spec[-1] in 'uxd' {
+        if spec[-1].match?(/[A-z]/) {
             fmt("%%{spec}", self)
         } else {
             fmt("%%{spec}d", self)
@@ -635,7 +635,7 @@ class Float {
     }
 
     __fmt__(spec) {
-        if spec[-1] in 'eEfFgG' {
+        if spec[-1].match?(/[A-z]/) {
             fmt("%%{spec}", self)
         } else {
             fmt("%%{spec}f", self)
@@ -643,12 +643,9 @@ class Float {
     }
 
     str(prec: ?Int) {
-        if prec == nil {
-            str(self)
-        } else {
-            let p10 = math.pow(10, prec)
-            let [whole, ?frac] = str(iround(self * p10) / p10).split('.')
-            return "{whole}.{(frac ?? '').padRight(prec, '0')}"
+        match prec {
+            nil => "{self}",
+            n   => fmt("%.{n}", self)
         }
     }
 }

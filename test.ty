@@ -15,8 +15,6 @@ let r = pen(bold, red)
 let m = pen(bold, brightMagenta)
 let b = pen(bold, blue)
 
-let r2 = x -> round(x * 100) / 100
-
 function doTest(name) {
     let testStart = time.utime()
 
@@ -30,8 +28,8 @@ function doTest(name) {
             passed += 1
             let elapsedMs = (time.utime() - testStart) / 1000.0
             let elapsed = match elapsedMs <=> 100.0 {
-                -1 => "({round(elapsedMs)}ms)",
-                _  => "({r2(elapsedMs / 1000.0)}s)"
+                1 => "({elapsedMs / 1000.0#.2g}s)",
+                _ => "({elapsedMs#d}ms)",
             }
 
             "{g('PASS')} {yellow(elapsed)}"
