@@ -3149,14 +3149,18 @@ builtin_os_accept(int argc, struct value *kwargs)
 
         struct blob *b = value_blob_new();
         NOGC(b);
-        vec_push_n(*b, (char *)&a, n);
-        OKGC(b);
 
-        return value_named_tuple(
+        vec_push_n(*b, (char *)&a, n);
+
+        struct value v = value_named_tuple(
                 "fd",   INTEGER(r),
                 "addr", BLOB(b),
                 NULL
         );
+
+        OKGC(b);
+
+        return v;
 }
 
 struct value
