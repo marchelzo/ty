@@ -19,6 +19,7 @@ struct class_definition {
         int symbol;
         bool pub;
         char *name;
+		char const *doc;
         struct expression *super;
         vec(struct expression *) methods;
         vec(struct expression *) getters;
@@ -129,6 +130,7 @@ struct statement {
                 struct {
                         struct expression *target;
                         struct expression *value;
+						char const *doc;
                         bool pub;
                 };
         };
@@ -315,6 +317,8 @@ struct expression {
                 };
                 struct {
                         char *name;
+						char const *doc;
+						char const *proto;
                         struct symbol *function_symbol;
                         struct scope *scope;
                         vec(char *) params;

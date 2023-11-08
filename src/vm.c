@@ -650,7 +650,7 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
-                char const *name = (char const *)(f->info + 7);
+                char const *name = name_of(f);
                 for (int i = 0; i < np; ++i) {
                         name += strlen(name) + 1;
                         if (i == irest || i == ikwargs) {

@@ -255,9 +255,10 @@ mkfunc(void)
         f->return_type = NULL;
         f->ftype = FT_NONE;
         f->name = NULL;
+        f->doc = NULL;
+        f->proto = NULL;
         f->body = NULL;
         f->has_defer = false;
-        f->ftype = FT_NONE;
 
         vec_init(f->params);
         vec_init(f->dflts);
@@ -352,7 +353,7 @@ seek(int i)
 void
 parse_sync_lex(void)
 {
-        if (TokenIndex < tokens.count) {
+        if (TokenIndex > 0 && TokenIndex < tokens.count) {
                 tokens.count = TokenIndex;
                 lex_rewind(&token(-1)->end);
         }
@@ -942,6 +943,8 @@ prefix_function(void)
                 next();
         }
 
+        char const *proto_start = tok()->start.s;
+
         consume('(');
 
         SAVE_NE(true);
@@ -995,6 +998,13 @@ prefix_function(void)
                 next();
                 e->return_type = parse_expr(0);
         }
+
+        char const *proto_end = End.s;
+        size_t proto_len = proto_end - proto_start;
+        char *proto = Allocate(proto_len + 1);
+        memcpy(proto, proto_start, proto_len);
+        proto[proto_len] = '\0';
+        e->proto = proto;
 
         if (sugared_generator) {
                 unconsume(TOKEN_KEYWORD);
@@ -2213,6 +2223,7 @@ infix_function_call(struct expression *left)
                         if (arg->type == EXPRESSION_SPLAT) {
                                 VPush(e->kwargs, arg);
                                 VPush(e->kws, "*");
+                                VPush(e->fkwconds, NULL);
                         } else {
                                 VPush(e->args, arg);
                                 VPush(e->fconds, try_cond());
@@ -2249,6 +2260,7 @@ infix_function_call(struct expression *left)
                         if (arg->type == EXPRESSION_SPLAT) {
                                 VPush(e->kwargs, arg);
                                 VPush(e->kws, "*");
+                                VPush(e->fkwconds, NULL);
                         } else {
                                 VPush(e->args, arg);
                                 VPush(e->fconds, try_cond());
@@ -3736,6 +3748,16 @@ parse_class_definition(void)
                 consume('{');
                 setctx(LEX_INFIX);
                 while (tok()->type != '}') {
+                        parse_sync_lex();
+
+                        char const *doc = NULL;
+                        lex_keep_comments(true);
+                        if (tok()->type == TOKEN_COMMENT) {
+                                doc = tok()->comment;
+                                next();
+                        }
+                        lex_keep_comments(false);
+
                         /*
                          * Lol.
                          */
@@ -3767,6 +3789,7 @@ parse_class_definition(void)
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
                                 VPush(s->tag.statics, prefix_function());
+                                (*vec_last(s->tag.statics))->doc = doc;
                                 (*vec_last(s->tag.statics))->start = start;
                                 (*vec_last(s->tag.statics))->start = End;
                         } else if (token(1)->type == TOKEN_EQ) {
@@ -3777,6 +3800,7 @@ parse_class_definition(void)
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
                                 VPush(s->tag.setters, prefix_function());
+                                (*vec_last(s->tag.setters))->doc = doc;
                                 (*vec_last(s->tag.setters))->start = start;
                                 (*vec_last(s->tag.setters))->start = End;
 
@@ -3790,12 +3814,14 @@ parse_class_definition(void)
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
                                 VPush(s->tag.getters, prefix_function());
+                                (*vec_last(s->tag.getters))->doc = doc;
                                 (*vec_last(s->tag.getters))->start = start;
                                 (*vec_last(s->tag.getters))->start = End;
                         } else {
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
                                 VPush(s->tag.methods, prefix_function());
+                                (*vec_last(s->tag.methods))->doc = doc;
                                 (*vec_last(s->tag.methods))->start = start;
                                 (*vec_last(s->tag.methods))->start = End;
                         }
@@ -4049,22 +4075,29 @@ parse_error(void)
 }
 
 static void
-define_top(struct statement *s)
+define_top(struct statement *s, char const *doc)
 {
         switch (s->type) {
         case STATEMENT_MACRO_DEFINITION:
+                s->doc = doc;
                 define_macro(s);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
+                s->doc = doc;
+                s->value->doc = doc;
                 define_function(s);
                 break;
         case STATEMENT_CLASS_DEFINITION:
+                s->class.doc = doc;
                 define_class(s);
                 break;
         case STATEMENT_MULTI:
                 for (int i = 0; i < s->statements.count; ++i) {
-                        define_top(s->statements.items[i]);
+                        define_top(s->statements.items[i], doc);
                 }
+                break;
+        case STATEMENT_DEFINITION:
+                s->doc = doc;
                 break;
         default:
                 break;
@@ -4084,6 +4117,7 @@ parse(char const *source, char const *file)
         vec_init(tokens);
 
         lex_init(file, source);
+        lex_keep_comments(true);
 
         lex_save(&CtxCheckpoint);
         setctx(LEX_PREFIX);
@@ -4096,10 +4130,14 @@ parse(char const *source, char const *file)
                 next();
         }
 
-        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IMPORT) {
-                VPush(program, parse_import());
-                if (vec_last(program)[0]->type != STATEMENT_IMPORT) {
-                        puts("Oh no!!");
+        while (have_keyword(KEYWORD_IMPORT) || tok()->type == TOKEN_COMMENT) {
+                if (tok()->type == TOKEN_COMMENT) {
+                        next();
+                } else {
+                        VPush(program, parse_import());
+                        if (vec_last(program)[0]->type != STATEMENT_IMPORT) {
+                                puts("Oh no!!");
+                        }
                 }
         }
 
@@ -4134,11 +4172,28 @@ parse(char const *source, char const *file)
 
         program.count = 0;
 
-        while (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_EXPORT) {
-                VPush(program, parse_export());
+        while (have_keyword(KEYWORD_EXPORT) || tok()->type == TOKEN_COMMENT) {
+                if (tok()->type == TOKEN_COMMENT)
+                        next();
+                else
+                        VPush(program, parse_export());
+        }
+
+        while (TokenIndex > 0 && token(-1)->type == TOKEN_COMMENT) {
+                TokenIndex -= 1;
         }
 
         while (tok()->type != TOKEN_END) {
+                char const *doc = NULL;
+
+                parse_sync_lex();
+                lex_keep_comments(true);
+
+                if (tok()->type == TOKEN_COMMENT) {
+                        doc = tok()->comment;
+                        next();
+                }
+
                 bool pub = have_keyword(KEYWORD_PUB);
 
                 if (pub) {
@@ -4153,10 +4208,12 @@ parse(char const *source, char const *file)
                         }
                 }
 
+                lex_keep_comments(false);
                 struct statement *s = parse_statement(-1);
                 if (s == NULL) {
                         break;
                 }
+
 
                 // TODO: figure out if this is necessary
                 while (s->type == STATEMENT_EXPRESSION && s->expression->type == EXPRESSION_STATEMENT) {
@@ -4183,7 +4240,7 @@ parse(char const *source, char const *file)
                         error("This shouldn't happen.");
                 }
 
-                define_top(s);
+                define_top(s, doc);
         }
 
         VPush(program, NULL);

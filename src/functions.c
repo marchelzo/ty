@@ -5177,6 +5177,105 @@ builtin_finalizer(int argc, struct value *kwargs)
         return NIL;
 }
 
+static struct value
+fdoc(struct value const *f)
+{
+        char name_buf[512] = {0};
+
+        char const *s = doc_of(f);
+        char const *name = name_of(f);
+        char const *proto = proto_of(f);
+
+        GC_OFF_COUNT += 1;
+
+        struct value n;
+        if (f->info[6] != -1) {
+                snprintf(name_buf, sizeof name_buf, "%s.%s", class_name(f->info[6]), name);
+                n = STRING_CLONE(name_buf, strlen(name_buf));
+        } else if (name != NULL) {
+                n = STRING_CLONE(name, strlen(name));
+        } else {
+                n = NIL;
+        }
+        struct value p = (proto == NULL) ? NIL : STRING_CLONE(proto, strlen(proto));
+        struct value doc = (s == NULL) ? NIL : STRING_CLONE(s, strlen(s));
+        struct value v = value_tuple(3);
+        v.items[0] = n;
+        v.items[1] = p;
+        v.items[2] = doc;
+
+        GC_OFF_COUNT -= 1;
+
+        return v;
+}
+
+static void
+mdocs(struct table const *t, struct array *a)
+{
+        for (int i = 0; i < TABLE_SIZE; ++i) {
+                for (int j = 0; j < t->buckets[i].values.count; ++j) {
+                        value_array_push(a, fdoc(&t->buckets[i].values.items[j]));
+                }
+        }
+}
+
+struct value
+builtin_doc(int argc, struct value *kwargs)
+{
+        char mod[256];
+        char id[256];
+
+        if (argc == 0 || argc > 2) {
+                vm_panic("ty.doc(): expected 1 or 2 arguments but got: %d", argc);
+        }
+
+        if (ARG(0).type == VALUE_FUNCTION) {
+                return fdoc(&ARG(0));
+        }
+
+        if (ARG(0).type == VALUE_CLASS) {
+                GC_OFF_COUNT += 1;
+
+                char const *s = class_doc(ARG(0).class);
+                char const *name = class_name(ARG(0).class);
+                struct value v = value_tuple(3);
+                v.items[0] = STRING_NOGC(name, strlen(name));
+                v.items[1] = (s == NULL) ? NIL : STRING_CLONE(s, strlen(s));
+                v.items[2] = ARRAY(value_array_new());
+                mdocs(class_methods(ARG(0).class), v.items[2].array);
+                mdocs(class_static_methods(ARG(0).class), v.items[2].array);
+                mdocs(class_getters(ARG(0).class), v.items[2].array);
+                mdocs(class_setters(ARG(0).class), v.items[2].array);
+
+                GC_OFF_COUNT -= 1;
+
+                return v;
+        }
+
+        if (ARG(0).type != VALUE_STRING) {
+                vm_panic("ty.doc(): expected Class, Function, or String but got: %s", value_show_color(&ARG(0)));
+        }
+
+        snprintf(id, sizeof id, "%s", ARG(0).string);
+
+        struct symbol *s;
+
+        if (argc == 2) {
+                if (ARG(1).type != VALUE_STRING) {
+                        vm_panic("ty.doc(): expected function or string but got: %s", value_show_color(&ARG(1)));
+                }
+                snprintf(mod, sizeof mod, "%s", ARG(1).string);
+                s = compiler_lookup(id, mod);
+        } else {
+                s = compiler_lookup(NULL, id);
+        }
+
+        if (s == NULL || s->doc == NULL)
+                return NIL;
+
+        return STRING_CLONE(s->doc, strlen(s->doc));
+}
+
 struct value
 builtin_ty_gc(int argc, struct value *kwargs)
 {

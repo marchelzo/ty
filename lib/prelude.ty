@@ -579,11 +579,7 @@ class Int {
     }
 
     __fmt__(spec) {
-        if spec[-1].match?(/[A-z]/) {
-            fmt("%%{spec}", self)
-        } else {
-            fmt("%%{spec}d", self)
-        }
+        fmt("%%{spec}d", self)
     }
 }
 
@@ -635,7 +631,7 @@ class Float {
     }
 
     __fmt__(spec) {
-        if spec[-1].match?(/[A-z]/) {
+        if spec[-1] in 'eEfFgG' {
             fmt("%%{spec}", self)
         } else {
             fmt("%%{spec}f", self)
@@ -643,9 +639,12 @@ class Float {
     }
 
     str(prec: ?Int) {
-        match prec {
-            nil => "{self}",
-            n   => fmt("%.{n}", self)
+        if prec == nil {
+            str(self)
+        } else {
+            let p10 = math.pow(10, prec)
+            let [whole, ?frac] = str(iround(self * p10) / p10).split('.')
+            return "{whole}.{(frac ?? '').padRight(prec, '0')}"
         }
     }
 }
@@ -1757,23 +1756,19 @@ macro dbg! {
     ty.Block([
         *[
             ty.Let(ty.Id(name: tmp), e),
-            ty.If(
-                [ty.Defined(name: 'TY_NO_DBG')],
-                ty.Null,
-                ty.Call(
-                    func: ty.Id(name: 'print'),
-                    args: [
-                        ty.Arg(arg: ty.Id(name: '__module__')),
-                        ty.Arg(arg: ty.String(':')),
-                        ty.Arg(arg: ty.Id(name: '__line__')),
-                        ty.Arg(arg: ty.String(': ')),
-                        ty.Arg(arg: ty.String(parse.show(p))),
-                        ty.Arg(arg: ty.String(' = ')),
-                        ty.Arg(arg: ty.Id(name: tmp)),
-                        ty.Arg(name: 'sep', arg: ty.String('')),
-                        ty.Arg(name: 'flush', arg: ty.Bool(true))
-                    ]
-                )
+            ty.Call(
+                func: ty.Id(name: 'print'),
+                args: [
+                    ty.Arg(arg: ty.Id(name: '__module__')),
+                    ty.Arg(arg: ty.String(':')),
+                    ty.Arg(arg: ty.Id(name: '__line__')),
+                    ty.Arg(arg: ty.String(': ')),
+                    ty.Arg(arg: ty.String(parse.show(p))),
+                    ty.Arg(arg: ty.String(' = ')),
+                    ty.Arg(arg: ty.Id(name: tmp)),
+                    ty.Arg(name: 'sep', arg: ty.String('')),
+                    ty.Arg(name: 'flush', arg: ty.Bool(true))
+                ]
             )
             for (p, e) in args
         ],
@@ -2045,6 +2040,55 @@ macro ifdef {
     }
 
     ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
+}
+
+function help(x) {
+    function pdoc(s, indent) {
+        let lines = s.lines().dropWhile!(/^\s*$/)
+
+        // Remove trailing empty lines at the end.
+        while #lines > 0 && lines[-1].match?(/^\s*$/) {
+            lines.pop()
+        }
+
+        // Find the leading whitespace length common to all lines
+        let leading = lines.map(&match!(/^\s*/) |> &len).min()
+
+        for line in lines.map!(&slice(leading)) {
+            print(''.padLeft(indent), line, sep: '')
+        }
+    }
+
+    match doc(x) {
+        (name, doc, [*ms]) => {
+            print("class {name}:")
+            if doc != nil {
+                print()
+                pdoc(doc, 4)
+            }
+            for (name, proto, doc) in ms {
+                print()
+                if doc != nil {
+                    print("    {name.comb(/^\w+\./)}{proto}:")
+                    print()
+                    pdoc(doc, 6)
+                } else {
+                    print("    {name.comb(/^\w+\./)}{proto}")
+                }
+            }
+            print()
+        },
+
+        (name, proto, doc) => {
+            if doc != nil {
+                print("Help for {name ?? ''}{proto}:")
+                print()
+                pdoc(doc, 4)
+            } else {
+                print("{name}{proto}")
+            }
+        }
+    }
 }
 
 operator **   10 right

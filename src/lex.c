@@ -1066,7 +1066,7 @@ lexlinecomment(void)
         return t;
 }
 
-static void
+static struct token
 lexcomment(void)
 {
         // skip the /*
@@ -1075,21 +1075,33 @@ lexcomment(void)
 
         int level = 1;
 
+        vec(char) comment;
+        vec_init(comment);
+
         while (C(0) != '\0' && level != 0) {
                 if (C(0) == '/' && C(1) == '*')
                         ++level;
-                if (C(0) == '*' && C(1) == '/')
+                else if (C(0) == '*' && C(1) == '/')
                         --level;
-                nextchar();
+                char c = nextchar();
+                if (level != 0)
+                        VPush(comment, c);
         }
 
         if (level != 0)
                 error("unterminated comment");
 
+        VPush(comment, '\0');
+
         // skip the final /
         nextchar();
 
+        struct token t = mktoken(TOKEN_COMMENT);
+        t.comment = comment.items;
+
         Start = state.loc;
+
+        return t;
 }
 
 static struct token
@@ -1124,8 +1136,10 @@ lex_token(LexContext ctx)
 
         while (SRC < END) {
                 if (C(0) == '/' && C(1) == '*') {
-                        lexcomment();
-                        if (skipspace()) {
+                        struct token t = lexcomment();
+                        if (state.keep_comments) {
+                                return t;
+                        } else if (skipspace()) {
                                 return mktoken(TOKEN_NEWLINE);
                         }
                 } else if (C(0) == '/' && C(1) == '/') {
@@ -1222,7 +1236,7 @@ lex_init(char const *file, char const *src)
                 },
                 .end = src + strlen(src),
                 .need_nl = false,
-                .keep_comments = false,
+                .keep_comments = true,
                 .ctx = LEX_PREFIX
         };
 

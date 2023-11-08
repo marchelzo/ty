@@ -118,6 +118,7 @@ scope_add(struct scope *s, char const *id)
         struct symbol *sym = Allocate(sizeof *sym);
 
         sym->identifier = id;
+        sym->doc = NULL;
         sym->symbol = SYMBOL++;
         sym->public = false;
         sym->cnst = false;

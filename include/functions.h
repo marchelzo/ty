@@ -7,6 +7,9 @@ struct value
 builtin_print(int argc, struct value *kwargs);
 
 struct value
+builtin_doc(int argc, struct value *kwargs);
+
+struct value
 builtin_eprint(int argc, struct value *kwargs);
 
 struct value

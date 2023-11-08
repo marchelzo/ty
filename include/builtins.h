@@ -6,6 +6,7 @@
 { .module = NULL,     .name = "eprint",            .value = BUILTIN(builtin_eprint)                        },
 { .module = NULL,     .name = "slurp",             .value = BUILTIN(builtin_slurp)                         },
 { .module = NULL,     .name = "die",               .value = BUILTIN(builtin_die)                           },
+{ .module = NULL,     .name = "doc",               .value = BUILTIN(builtin_doc)                           },
 { .module = NULL,     .name = "readLine",          .value = BUILTIN(builtin_read)                          },
 { .module = NULL,     .name = "rand",              .value = BUILTIN(builtin_rand)                          },
 { .module = NULL,     .name = "abs",               .value = BUILTIN(builtin_abs)                           },

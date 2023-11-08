@@ -7,7 +7,7 @@
 #include "util.h"
 
 int
-class_new(char const *name);
+class_new(char const *name, char const *doc);
 
 int
 class_lookup(char const *name);
@@ -57,6 +57,9 @@ class_method(int class, char const *name)
 char const *
 class_method_name(int class, char const *name);
 
+char const *
+class_doc(int class);
+
 void
 class_set_super(int class, int super);
 
@@ -65,5 +68,17 @@ class_is_subclass(int sub, int super);
 
 int
 class_get_completions(int class, char const *prefix, char **out, int max);
+
+struct table *
+class_methods(int class);
+
+struct table *
+class_static_methods(int class);
+
+struct table *
+class_getters(int class);
+
+struct table *
+class_setters(int class);
 
 #endif

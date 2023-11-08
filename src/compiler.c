@@ -1923,6 +1923,9 @@ emit_function(struct expression const *e, int class)
 
         emit_int(class);
 
+        emit_symbol((uintptr_t)e->proto);
+        emit_symbol((uintptr_t)e->doc);
+
         emit_string(e->name == NULL ? "(anonymous function)" : e->name);
         LOG("COMPILING FUNCTION: %s.%s", class == -1 ? "TOP" : class_name(class), (e->name == NULL ? "(anonymous function)" : e->name));
 
@@ -4497,7 +4500,7 @@ declare_classes(struct statement *s)
                         );
                 }
                 struct symbol *sym = addsymbol(state.global, s->class.name);
-                sym->class = class_new(s->class.name);
+                sym->class = class_new(s->class.name, s->class.doc);
                 sym->cnst = true;
                 s->class.symbol = sym->class;
 
@@ -4529,6 +4532,7 @@ compile(char const *source)
         }
 
         for (size_t i = 0; p[i] != NULL; ++i) {
+                struct value v = tystmt(p[i]);
                 symbolize_statement(state.global, p[i]);
         }
 
@@ -5533,6 +5537,7 @@ cstmt(struct value *v)
                 f.tags = tags_push(0, TyFunc);
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(&f);
+                s->doc = NULL;
                 s->target = Allocate(sizeof *s->target);
                 *s->target = (struct expression){0};
                 s->target->type = EXPRESSION_IDENTIFIER;
@@ -5543,6 +5548,7 @@ cstmt(struct value *v)
         } else if (tags_first(v->tags) == TyClass) {
                 s->type = STATEMENT_CLASS_DEFINITION;
                 s->class.name = mkcstr(tuple_get(v, "name"));
+                s->class.doc = NULL;
                 struct value *super = tuple_get(v, "super");
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(super) : NULL;
                 struct value *methods = tuple_get(v, "methods");
@@ -5804,6 +5810,8 @@ cexpr(struct value *v)
                 struct value *params = tuple_get(v, "params");
                 struct value *rt = tuple_get(v, "rt");
                 e->name = (name != NULL && name->type != VALUE_NIL) ? mkcstr(name) : NULL;
+                e->doc = NULL;
+                e->proto = NULL;
                 e->return_type = (rt != NULL && rt->type != VALUE_NIL) ? cexpr(rt) : NULL;
                 vec_init(e->params);
                 vec_init(e->constraints);
@@ -6065,7 +6073,8 @@ define_class(struct statement *s)
         }
 
         struct symbol *sym = addsymbol(state.global, s->class.name);
-        sym->class = class_new(s->class.name);
+        sym->class = class_new(s->class.name, s->class.doc);
+        sym->doc = s->class.doc;
         sym->cnst = true;
         s->class.symbol = sym->class;
 
@@ -6082,6 +6091,7 @@ void
 define_function(struct statement *s)
 {
         symbolize_lvalue(state.global, s->target, true, s->pub);
+        s->target->symbol->doc = s->doc;
 }
 
 void
@@ -6089,6 +6099,7 @@ define_macro(struct statement *s)
 {
         symbolize_statement(state.global, s);
         s->target->symbol->macro = true;
+        s->target->symbol->doc = s->doc;
 
         s->type = STATEMENT_FUNCTION_DEFINITION;
 
