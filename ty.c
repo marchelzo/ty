@@ -69,6 +69,10 @@ execln(char *line)
                 }
                 goto End;
 
+        } else if (strncmp(line, "help ", 5) == 0) {
+                snprintf(buffer + 1, sizeof buffer - 2, "help(%s);", line + 5);
+                vm_execute(buffer + 1);
+                goto End;
         }
 
         snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
