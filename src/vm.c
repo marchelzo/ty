@@ -3146,7 +3146,9 @@ BadContainer:
                                 } else {
                                         value = OBJECT(object_new(v.class), v.class);
                                         if (vp != NULL) {
+                                                gc_push(&value);
                                                 call(vp, &value, n, nkw, true);
+                                                gc_pop();
                                                 pop();
                                         } else {
                                                 stack.count -= n;
