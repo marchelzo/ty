@@ -1,12 +1,11 @@
+#!/usr/bin/env ty
+
 import io (stdin)
 import json
 import sh (sh)
 
 let log = io.open('tyd.log', 'w+')
 let i = 0
-
-let path = '/home/brad/ty/tyd.ty'
-print(sh("./ty -c '{path}'", combineOutput: true))
 
 while let &words ~> &[-1] ~> int ~> $n = stdin.nextLine() {
     // Skip empty line
