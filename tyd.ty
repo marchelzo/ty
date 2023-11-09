@@ -1,0 +1,73 @@
+import io (stdin)
+import json
+import sh (sh)
+
+let log = io.open('tyd.log', 'w+')
+let i = 0
+
+let path = '/home/brad/ty/tyd.ty'
+print(sh("./ty -c '{path}'", combineOutput: true))
+
+while let &words ~> &[-1] ~> int ~> $n = stdin.nextLine() {
+    // Skip empty line
+    stdin.nextLine()
+
+    let msg = json.parse(stdin.next(n).str())
+
+    log.print(msg)
+    log.flush()
+
+    let s = json.encode({
+        id: 1,
+        result: {
+            capabilities: {
+                definitionProvider: true
+            },
+
+            serverInfo: {
+                name: 'tyd',
+                version: '0.0.1'
+            }
+        }
+    })
+
+    match msg['method'] {
+        'initialize' => {
+            io.stdout.write("Content-Length: {#s}\r\n\r\n{s}")
+            io.stdout.flush()
+        },
+
+        'textDocument/didSave' => {
+            let path = msg['params']['textDocument']['uri'].slice(7)
+            log.print("path = {path}")
+            log.flush()
+            let out, status = sh("./ty -c '{path}'", combineOutput: true)
+            log.print("out = {out}")
+            log.print("status = {status}")
+            log.flush()
+            let diagnostics = if status != 0 and let [_, text, int ~> line, int ~> char] = out.match!(/^([^\n]+)(?:.|\n)*at[^:]+:(\d+):(\d+)/) {[{
+                range: {
+                    start: { line: line - 1, character: char - 1 },
+                    end: { line: line - 1, character: char - 1 }
+                },
+                message: text,
+                severity: 1
+            }]} else {
+                []
+            }
+
+            let s = json.encode({
+                method: 'textDocument/publishDiagnostics',
+                params: {
+                    uri: "file://{path}",
+                    diagnostics
+                },
+            })
+
+            io.stdout.write("Content-Length: {#s}\r\n\r\n{s}")
+            io.stdout.flush()
+        },
+
+        _ => { }
+    }
+}
