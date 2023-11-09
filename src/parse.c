@@ -3693,6 +3693,20 @@ parse_block(void)
 }
 
 static struct statement *
+mktagdef(char *name)
+{
+        struct statement *s = mkstmt();
+        s->type = STATEMENT_TAG_DEFINITION;
+        s->tag.pub = false;
+        s->tag.name = name;
+        vec_init(s->tag.methods);
+        vec_init(s->tag.getters);
+        vec_init(s->tag.setters);
+        vec_init(s->tag.statics);
+        return s;
+}
+
+static struct statement *
 parse_class_definition(void)
 {
         bool tag = tok()->keyword == KEYWORD_TAG;
@@ -3701,14 +3715,9 @@ parse_class_definition(void)
 
         expect(TOKEN_IDENTIFIER);
 
-        struct statement *s = mkstmt();
-        s->type = tag ? STATEMENT_TAG_DEFINITION : STATEMENT_CLASS_DEFINITION;
-        s->tag.pub = false;
-        s->tag.name = tok()->identifier;
-        vec_init(s->tag.methods);
-        vec_init(s->tag.getters);
-        vec_init(s->tag.setters);
-        vec_init(s->tag.statics);
+        struct statement *s = mktagdef(tok()->identifier);
+        if (!tag)
+                s->type = STATEMENT_CLASS_DEFINITION;
 
         next();
 
@@ -3735,11 +3744,18 @@ parse_class_definition(void)
         }
 
         /* Hack to allow comma-separated tag declarations */
-        if (tag && tok()->type == ',' && token(1)->type == TOKEN_IDENTIFIER) {
-                next();
-                unconsume(TOKEN_KEYWORD);
-                tok()->keyword = KEYWORD_TAG;
-                unconsume(';');
+        if (tag && tok()->type == ',') {
+                struct statement *tags = mkstmt();
+                tags->type = STATEMENT_MULTI;
+                vec_init(tags->statements);
+                VPush(tags->statements, s);
+                while (tok()->type == ',') {
+                        next();
+                        expect(TOKEN_IDENTIFIER);
+                        VPush(tags->statements, mktagdef(tok()->identifier));
+                        next();
+                }
+                s = tags;
         }
 
         if (tag && tok()->type == ';') {
