@@ -8,14 +8,11 @@ function walk*(path) {
     let fs = []
     let ds = []
 
-    // Skip . and ..
-    readdir(d)
-    readdir(d)
-
     while let $entry = readdir(d) {
-        match entry.d_type {
-            ::DT_DIR => ds.push(entry.d_name),
-            _        => fs.push(entry.d_name)
+        match (entry.d_type, entry.d_name) {
+            (_, '.'), (_, '..') => { },
+            (::DT_DIR, name)    => ds.push(entry.d_name),
+            (_,        name)    => fs.push(entry.d_name)
         }
     }
 

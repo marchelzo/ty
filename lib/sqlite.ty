@@ -67,7 +67,9 @@ class SQLiteStatement : Iterable {
 
     finalize() {
         if @p {
-            if let r = finalize(@p) and r != SQLITE_OK {
+            let r = finalize(@p)
+            @p = nil
+            if r != SQLITE_OK {
                 throw SQLiteError(r)
             }
         }
