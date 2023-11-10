@@ -275,6 +275,14 @@ class Array : Iterable {
         return i
     }
 
+    popWhile(p) {
+        while #self > 0 && p(self[-1]) {
+            self.pop()
+        }
+
+        return self
+    }
+
     __iter__*() {
         for x in self { yield x }
     }
