@@ -579,7 +579,11 @@ class Int {
     }
 
     __fmt__(spec) {
-        fmt("%%{spec}d", self)
+        if spec[-1].match?(/[A-z]/) {
+            fmt("%%{spec}", self)
+        } else {
+            fmt("%%{spec}d", self)
+        }
     }
 }
 
@@ -631,10 +635,10 @@ class Float {
     }
 
     __fmt__(spec) {
-        if spec[-1] in 'eEfFgG' {
+        if spec[-1].match?(/[A-z]/) {
             fmt("%%{spec}", self)
         } else {
-            fmt("%%{spec}f", self)
+            fmt("%%{spec}d", self)
         }
     }
 
