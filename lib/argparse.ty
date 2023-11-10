@@ -11,7 +11,7 @@ let bools = %{
     'no': false
 }
 
-function opt(short, long, pre=true, post=true, convert=id, multi=false, help='') {
+function opt(short, long, pre=true, post=true, convert=id, multi=false, default=nil, help='') {
     return {
         short,
         long,
@@ -20,6 +20,7 @@ function opt(short, long, pre=true, post=true, convert=id, multi=false, help='')
         convert,
         multi,
         help,
+        default,
         type: 'o',
     }
 }
@@ -44,10 +45,16 @@ function add(opt, result, value) {
     }
 }
 
-function make(*opts, version) {
+function make(*opts, version, help) {
     return function (argv) {
         let result = %{}
         let i = 1
+
+        for opt in opts {
+            if opt.type == 'o' && opt.default != nil {
+                add(opt, result, opt.default.val)
+            }
+        }
 
         function next() {
             if i == #argv {
@@ -95,6 +102,11 @@ function make(*opts, version) {
 
                     print("USAGE: {argv[0]} [OPTIONS]\n")
 
+                    if help != nil {
+                        print(help)
+                        print()
+                    }
+
                     if #opts > 0 {
                         print('Options')
                         print()
@@ -111,7 +123,11 @@ function make(*opts, version) {
                         let maxWidth = optStrings.map(&len).max()
 
                         for (opt, s) in opts.zip(optStrings) {
-                            print("  {s.padRight(maxWidth)}    {opt.help}")
+                            if opt.default != nil {
+                                print("  {s.padRight(maxWidth)}    {opt.help} (default: {opt.default.show})")
+                            } else {
+                                print("  {s.padRight(maxWidth)}    {opt.help}")
+                            }
                         }
 
                         print()

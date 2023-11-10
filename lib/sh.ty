@@ -64,8 +64,15 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
 
     let (_, s) = os.waitpid(p.pid)
 
+    let out = out.str!()
+
     if !timedOut {
-        return out.str(), os.WEXITSTATUS(s), out
+        return out, {
+            signal: os.WIFSIGNALED(s) ? os.WTERMSIG(s) : nil,
+            stdout: out,
+            status: os.WEXITSTATUS(s),
+            stderr: err.str!()
+        }
     }
 }
 

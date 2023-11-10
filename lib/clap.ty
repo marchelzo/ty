@@ -1,7 +1,7 @@
 import ty
 import ty.token (next, peek)
 import ty.lex (peekc, getc)
-import ty.parse (expr)
+import ty.parse (expr, stmt, show)
 import argparse (opt, flag)
 import os
 
@@ -18,24 +18,31 @@ function camelCase(s) {
 }
 
 class Args {
-    parse(argv = os.args) {
+    static parse(argv = os.args) {
         let opts = self.info()
         let cmds = self.cmds()
         let args = []
 
         let version = self.version()
 
+        let doc = if let (_, $d, _) = doc(self) {
+            let empty = &match?(/^\s*$/)
+            let lines = d.lines().dropWhile!(empty).popWhile(empty)
+            let leading = lines.filter(empty |> &not).map(&match!(/^\s*/) |> &len).min() ?? 0
+            lines.map(&slice(leading)).join('\n')
+        }
+
         for o in opts {
             if o.constraint == Bool {
                 args.push(flag(short: o.short, long: o.long, help: o.help))
             } else if let [c] = o.constraint {
-                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: c, multi: true))
+                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: c, multi: true, default: o.default))
             } else {
-                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: o.constraint))
+                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: o.constraint, default: o.default))
             }
         }
 
-        let result = argparse.make(*args, version: version)(argv)
+        let result = argparse.make(*args, version: version, help: doc)(argv)
 
         if #argv > 0 {
             let sub = camelCase(argv[0])
@@ -127,6 +134,7 @@ pub macro clap! {
         let conv = constraint
         let short = name[0]
         let long = lispCase(name)
+        let default = nil
 
         while peek(0).type == ',' {
             next()
@@ -148,11 +156,29 @@ pub macro clap! {
                 'long' => {
                     next()
                     long = match ty.eval(expr(0)) { None => nil, x => x }
+                },
+
+                'default' => {
+                    next()
+                    if peek().?id == 'literal' {
+                        next()
+                        next()
+                        let (p, s) = stmt(0, raw: true)
+                        default = (val: ty.eval(s), show: show(p))
+                        next()
+                    } else {
+                        let e = ty.eval(expr(0))
+                        default = (val: e, show: "{e}")
+                    }
+                },
+
+                id => {
+                    eprint("Invalid attribute in clap! macro invocation: {id}")
                 }
             }
         }
 
-        args.push({name, constraint, help, conv, short, long})
+        args.push({name, constraint, help, conv, short, long, default})
     }
 
     let getCmds = ty.Func(name: 'cmds', params: [], body: ty.Return(ty.Value(cmds)))
