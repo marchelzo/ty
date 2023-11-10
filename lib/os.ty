@@ -28,6 +28,8 @@ function walk*(path) {
 }
 
 cfun! nil c.int isatty(c.int)
+cfun! nil c.ptr strsignal(c.int)
 
 let os::walk = walk
 let os::isatty = isatty
+let os::strsignal = strsignal |> c.str
