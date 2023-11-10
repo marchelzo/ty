@@ -3100,17 +3100,10 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
 
                 freeaddrinfo(res);
 
-                results.tags = gettag(NULL, "Ok");
-                results.type |= VALUE_TAGGED;
-
-                return results;
+                return Ok(results);
 
         } else {
-                return (struct value) {
-                        .type = VALUE_INTEGER | VALUE_TAGGED,
-                        .integer = r,
-                        .tags = gettag(NULL, "Err")
-                };
+                return Err(INTEGER(r));
         }
 }
 
@@ -5334,9 +5327,7 @@ builtin_eval(int argc, struct value *kwargs)
                 if (prog == NULL) {
                         puts("prog is NULL");
                         char const *msg = parse_error();
-                        struct value e = STRING_CLONE(msg, strlen(msg));
-                        e.tags = tags_push(0, gettag(NULL, "Err"));
-                        e.type |= VALUE_TAGGED;
+                        struct value e = Err(STRING_CLONE(msg, strlen(msg)));
                         DestroyArena(old);
                         vm_throw(&e);
                 }
@@ -5347,9 +5338,7 @@ builtin_eval(int argc, struct value *kwargs)
                 CompileError:
                 {
                         char const *msg = compiler_error();
-                        struct value e = STRING_CLONE(msg, strlen(msg));
-                        e.tags = tags_push(0, gettag(NULL, "Err"));
-                        e.type |= VALUE_TAGGED;
+                        struct value e = Err(STRING_CLONE(msg, strlen(msg)));
                         DestroyArena(old);
                         vm_throw(&e);
                 }
