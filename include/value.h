@@ -146,7 +146,9 @@ enum {
         TAG_MATCH_ERR = TyMaxNode,
         TAG_INDEX_ERR,
         TAG_NONE,
-        TAG_SOME
+        TAG_SOME,
+        TAG_OK,
+        TAG_ERR
 };
 
 #define DEFINE_METHOD_TABLE(...) \
@@ -541,6 +543,23 @@ TRIPLE(struct value a, struct value b, struct value c)
 #define None                     TAG(TAG_NONE)
 
 int tags_push(int, int);
+
+inline static struct value
+Ok(struct value v)
+{
+        v.type |= VALUE_TAGGED;
+        v.tags = tags_push(v.tags, TAG_OK);
+        v.tags = tags_push(v.tags, TAG_ERR);
+        return v;
+}
+
+inline static struct value
+Err(struct value v)
+{
+        v.type |= VALUE_TAGGED;
+        v.tags = tags_push(v.tags, TAG_ERR);
+        return v;
+}
 
 inline static struct value
 Some(struct value v)
