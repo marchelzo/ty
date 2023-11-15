@@ -549,7 +549,6 @@ Ok(struct value v)
 {
         v.type |= VALUE_TAGGED;
         v.tags = tags_push(v.tags, TAG_OK);
-        v.tags = tags_push(v.tags, TAG_ERR);
         return v;
 }
 
