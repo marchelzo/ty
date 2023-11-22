@@ -120,6 +120,16 @@ class SQLite {
         }
     }
 
+    fetchAll(*args, assoc=true) {
+        let xs = []
+        with q = self.query(*args) {
+            while let $row = q.nextRow(assoc: assoc) {
+                xs.push(q)
+            }
+        }
+        xs
+    }
+
     query(sql, *ps) {
         if not let $s  = prepare(self.db, sql) {
             throw SQLiteError(error(self.db))

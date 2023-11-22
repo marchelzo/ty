@@ -361,7 +361,7 @@ class HttpParser {
     }
 
     onHeaderFieldComplete(parser) {
-        dbg!(@headerField = @b.str())
+        @headerField = @b.str()
         @b.clear()
         HPE_OK
     }
@@ -380,7 +380,7 @@ class HttpParser {
     }
 
     onURLComplete(parser) {
-        dbg!(@url = @b.str())
+        @url = @b.str()
         @b.clear()
         HPE_OK
     }
@@ -396,13 +396,13 @@ class HttpParser {
     }
 
     onStatusComplete(parser) {
-        dbg!(@status = @b.str())
+        @status = @b.str()
         @b.clear()
         HPE_OK
     }
 
     onData(parser, data, len) {
-        @b.push(dbg!(c.as_str(data, len)))
+        @b.push(c.as_str(data, len))
         return HPE_OK
     }
 
