@@ -2705,39 +2705,46 @@ BadContainer:
                         }
                         break;
                 CASE(ADD)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_addition(&left, &right));
+                        v = binary_operator_addition(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(SUB)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_subtraction(&left, &right));
+                        v = binary_operator_subtraction(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(MUL)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_multiplication(&left, &right));
+                        v = binary_operator_multiplication(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(DIV)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_division(&left, &right));
+                        v = binary_operator_division(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(MOD)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_remainder(&left, &right));
+                        v = binary_operator_remainder(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(EQ)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_equality(&left, &right));
+                        v = binary_operator_equality(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(NEQ)
-                        right = pop();
-                        left = pop();
-                        push(binary_operator_equality(&left, &right));
+                        v = binary_operator_equality(top() - 1, top());
+                        pop();
+                        pop();
+                        push(v);
                         --top()->boolean;
                         break;
                 CASE(CHECK_MATCH)
@@ -2778,29 +2785,33 @@ BadContainer:
                         }
                         break;
                 CASE(LT)
-                        right = pop();
-                        left = pop();
-                        push(BOOLEAN(value_compare(&left, &right) < 0));
+                        v = BOOLEAN(value_compare(top() - 1, top()) < 0);
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(GT)
-                        right = pop();
-                        left = pop();
-                        push(BOOLEAN(value_compare(&left, &right) > 0));
+                        v = BOOLEAN(value_compare(top() - 1, top()) > 0);
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(LEQ)
-                        right = pop();
-                        left = pop();
-                        push(BOOLEAN(value_compare(&left, &right) <= 0));
+                        v = BOOLEAN(value_compare(top() - 1, top()) <= 0);
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(GEQ)
-                        right = pop();
-                        left = pop();
-                        push(BOOLEAN(value_compare(&left, &right) >= 0));
+                        v = BOOLEAN(value_compare(top() - 1, top()) >= 0);
+                        pop();
+                        pop();
+                        push(v);
                         break;
                 CASE(CMP)
-                        right = pop();
-                        left = pop();
-                        i = value_compare(&left, &right);
+                        i = value_compare(top() - 1, top());
+                        pop();
+                        pop();
                         if (i < 0)
                                 push(INTEGER(-1));
                         else if (i > 0)
