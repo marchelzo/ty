@@ -40,7 +40,7 @@ binary_operator_addition(struct value const *left, struct value const *right)
 
                 ffi_type *t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
 
-                return PTR((char *)left->ptr + right->integer * t->size);
+                return TPTR(left->extra, (char *)left->ptr + right->integer * t->size);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -184,7 +184,7 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
 
         if (left->type == VALUE_PTR && right->type == VALUE_INTEGER) {
                 ffi_type *t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
-                return PTR(((char *)left->ptr) - right->integer * t->size);
+                return TPTR(left->extra, ((char *)left->ptr) - right->integer * t->size);
         }
 
         if (left->type != right->type)

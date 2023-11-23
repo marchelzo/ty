@@ -5597,4 +5597,18 @@ builtin_ptr_typed(int argc, struct value *kwargs)
         return TGCPTR(ARG(0).ptr, ARG(1).ptr, ARG(0).gcptr);
 }
 
+struct value
+builtin_ptr_untyped(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ptr.untyped()", 1);
+
+        struct value p = ARG(0);
+
+        if (p.type != VALUE_PTR) {
+                vm_panic("ptr.untyped(): expected pointer as first argument but got: %s", value_show_color(&p));
+        }
+
+        return GCPTR(p.ptr, p.gcptr);
+}
+
 /* vim: set sw=8 sts=8 expandtab: */

@@ -295,7 +295,7 @@ cffi_new(int argc, struct value *kwargs)
         unsigned size = max(t->size, sizeof (void *));
         size += (size % align);
 
-        struct value p = PTR(aligned_alloc(align, size));
+        struct value p = TPTR(t, aligned_alloc(align, size));
 
         if (argc == 2) {
                 struct value v = ARG(1);
@@ -436,25 +436,36 @@ cffi_load_n(int argc, struct value *kwargs)
 struct value
 cffi_store(int argc, struct value *kwargs)
 {
-        if (argc != 3) {
-                vm_panic("ffi.store(): expected 3 arguments but got %d", argc);
+        struct value vType;
+        struct value vPtr;
+        struct value vVal;
+
+        switch (argc) {
+        case 3:
+                vType = ARG(0);
+                vPtr = ARG(1);
+                vVal = ARG(2);
+                break;
+        case 2:
+                vType = NONE;
+                vPtr = ARG(0);
+                vVal = ARG(1);
+                break;
+        default:
+                vm_panic("ffi.store(): expected 2 or 3 arguments but got %d", argc);
         }
 
-        if (ARG(0).type != VALUE_PTR) {
-                vm_panic("ffi.store(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
+        if (vPtr.type != VALUE_PTR) {
+                vm_panic("ffi.store(): expected pointer but got: %s", value_show_color(&vPtr));
         }
 
-        ffi_type *t = ARG(0).ptr;
-
-        if (ARG(1).type != VALUE_PTR) {
-                vm_panic("ffi.store(): expected pointer as second argument but got: %s", value_show(&ARG(1)));
+        if (vType.type == VALUE_NONE) {
+                vType = PTR(vPtr.extra == NULL ? &ffi_type_uint8 : (ffi_type *)vPtr.extra);
+        } else if (vType.type != VALUE_PTR) {
+                vm_panic("ffi.store(): expected pointer but got: %s", value_show_color(&vType));
         }
 
-        void *p = ARG(1).ptr;
-
-        struct value v = ARG(2);
-
-        store(t, p, &v);
+        store(vType.ptr, vPtr.ptr, &vVal);
 
         return NIL;
 }
@@ -745,3 +756,5 @@ cffi_closure_free(int argc, struct value *kwargs)
 
         return NIL;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */
