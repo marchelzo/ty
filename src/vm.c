@@ -1623,6 +1623,20 @@ vm_exec(char *code)
                                         vm_panic("blob index out of range in subscript expression");
                                 }
                                 pushtarget((struct value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
+                        } else if (container.type == VALUE_PTR && ip[0] == INSTR_ASSIGN) {
+                                if (subscript.type != VALUE_INTEGER) {
+                                        vm_panic("non-integer pointer offset used in subscript assignment: %s", value_show_color(&subscript));
+                                }
+                                struct value p = binary_operator_addition(&container, &subscript);
+                                pop();
+                                pop();
+                                v = pop();
+                                push(PTR(p.extra == NULL ? &ffi_type_uint8 : (ffi_type *)p.extra));
+                                push(p);
+                                push(v);
+                                *top() = cffi_store(3, NULL);
+                                ip += 1;
+                                break;
                         } else {
                                 vm_panic("attempt to perform subscript assignment on something other than an object or array");
                         }
