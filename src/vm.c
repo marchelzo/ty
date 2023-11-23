@@ -1631,10 +1631,12 @@ vm_exec(char *code)
                                 pop();
                                 pop();
                                 v = pop();
-                                push(PTR(p.extra == NULL ? &ffi_type_uint8 : (ffi_type *)p.extra));
                                 push(p);
                                 push(v);
-                                *top() = cffi_store(3, NULL);
+                                v = cffi_store(2, NULL);
+                                pop();
+                                pop();
+                                push(v);
                                 ip += 1;
                                 break;
                         } else {
