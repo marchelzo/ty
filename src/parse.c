@@ -3960,6 +3960,13 @@ parse_import(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_IMPORT;
 
+        if (have_keyword(KEYWORD_PUB)) {
+                s->pub = true;
+                next();
+        } else {
+                s->pub = false;
+        }
+
         consume_keyword(KEYWORD_IMPORT);
 
         expect(TOKEN_IDENTIFIER);
@@ -4146,7 +4153,11 @@ parse(char const *source, char const *file)
                 next();
         }
 
-        while (have_keyword(KEYWORD_IMPORT) || tok()->type == TOKEN_COMMENT) {
+        while (
+                have_keywords(KEYWORD_PUB, KEYWORD_IMPORT)
+             || have_keyword(KEYWORD_IMPORT)
+             || tok()->type == TOKEN_COMMENT
+        ) {
                 if (tok()->type == TOKEN_COMMENT) {
                         next();
                 } else {

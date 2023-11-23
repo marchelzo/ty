@@ -85,18 +85,21 @@ struct eloc {
         struct expression const *e;
 };
 
-struct module {
-        char const *path;
-        char *code;
-        struct scope *scope;
-};
-
 struct import {
+        bool pub;
         char const *name;
         struct scope *scope;
 };
 
 typedef vec(struct import)    import_vector;
+
+struct module {
+        char const *path;
+        char *code;
+        struct scope *scope;
+        import_vector imports;
+};
+
 typedef vec(struct eloc)      location_vector;
 typedef vec(struct symbol *)  symbol_vector;
 typedef vec(size_t)           offset_vector;
@@ -4471,6 +4474,16 @@ emit_new_globals(void)
         GlobalCount = global->owned.count;
 }
 
+static import_vector
+get_module_public_imports(char const *name)
+{
+        for (int i = 0; i < modules.count; ++i)
+                if (strcmp(name, modules.items[i].path) == 0)
+                        return modules.items[i].imports;
+
+        return (import_vector){0};
+}
+
 static struct scope *
 get_module_scope(char const *name)
 {
@@ -4627,6 +4640,8 @@ load_module(char const *name, struct scope *scope)
                         .scope = module_scope
                 };
 
+                VPushN(m.imports, state.imports.items, state.imports.count);
+
                 VPush(modules, m);
         }
 
@@ -4644,6 +4659,7 @@ import_module(struct statement const *s)
 {
         char const *name = s->import.module;
         char const *as = s->import.as;
+        bool pub = s->pub;
 
         struct scope *module_scope = get_module_scope(name);
 
@@ -4678,7 +4694,7 @@ import_module(struct statement const *s)
         bool everything = n == 1 && strcmp(identifiers[0], "..") == 0;
 
         if (everything) {
-                char const *id = scope_copy_public(state.global, module_scope, false);
+                char const *id = scope_copy_public(state.global, module_scope, pub);
                 if (id != NULL)
                         fail("module '%s' exports conflcting name '%s'", name, id);
         } else for (int i = 0; i < n; ++i) {
@@ -4687,10 +4703,12 @@ import_module(struct statement const *s)
                         fail("module '%s' does not export '%s'", name, identifiers[i]);
                 if (scope_lookup(state.global, identifiers[i]) != NULL)
                         fail("module '%s' exports conflicting name '%s'", name, identifiers[i]);
-                scope_insert(state.global, s);
+                scope_insert(state.global, s)->public = pub;
         }
 
-        VPush(state.imports, ((struct import){ .name = as, .scope = module_scope }));
+        VPush(state.imports, ((struct import){ .name = as, .scope = module_scope, .pub = pub }));
+
+        import_vector pubs = get_module_public_imports(name);
 }
 
 char const *

@@ -87,6 +87,7 @@ struct statement {
                         char *module;
                         char *as;
                         vec(char *) identifiers;
+						bool pub;
                 } import;
                 union {
                         struct class_definition tag;
