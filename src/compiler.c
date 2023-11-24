@@ -5431,10 +5431,22 @@ tystmt(struct statement *s)
                         "name", STRING_CLONE(s->class.name, strlen(s->class.name)),
                         "super", s->class.super != NULL ? tyexpr(s->class.super) : NIL,
                         "methods", ARRAY(value_array_new()),
+                        "getters", ARRAY(value_array_new()),
+                        "setters", ARRAY(value_array_new()),
+                        "statics", ARRAY(value_array_new()),
                         NULL
                 );
                 for (int i = 0; i < s->class.methods.count; ++i) {
                         value_array_push(v.items[2].array, tyexpr(s->class.methods.items[i]));
+                }
+                for (int i = 0; i < s->class.getters.count; ++i) {
+                        value_array_push(v.items[3].array, tyexpr(s->class.getters.items[i]));
+                }
+                for (int i = 0; i < s->class.setters.count; ++i) {
+                        value_array_push(v.items[4].array, tyexpr(s->class.setters.items[i]));
+                }
+                for (int i = 0; i < s->class.statics.count; ++i) {
+                        value_array_push(v.items[5].array, tyexpr(s->class.statics.items[i]));
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyClass);
@@ -5570,12 +5582,24 @@ cstmt(struct value *v)
                 struct value *super = tuple_get(v, "super");
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(super) : NULL;
                 struct value *methods = tuple_get(v, "methods");
+                struct value *getters = tuple_get(v, "getters");
+                struct value *setters = tuple_get(v, "setters");
+                struct value *statics = tuple_get(v, "statics");
                 vec_init(s->class.methods);
                 vec_init(s->class.getters);
                 vec_init(s->class.setters);
                 vec_init(s->class.statics);
-                for (int i = 0; i < methods->array->count; ++i) {
+                if (methods != NULL) for (int i = 0; i < methods->array->count; ++i) {
                         VPush(s->class.methods, cexpr(&methods->array->items[i]));
+                }
+                if (getters != NULL) for (int i = 0; i < getters->array->count; ++i) {
+                        VPush(s->class.getters, cexpr(&getters->array->items[i]));
+                }
+                if (setters != NULL) for (int i = 0; i < setters->array->count; ++i) {
+                        VPush(s->class.setters, cexpr(&setters->array->items[i]));
+                }
+                if (statics != NULL) for (int i = 0; i < statics->array->count; ++i) {
+                        VPush(s->class.statics, cexpr(&statics->array->items[i]));
                 }
         } else if (tags_first(v->tags) == TyIf ||
                    tags_first(v->tags) == TyIfNot) {
