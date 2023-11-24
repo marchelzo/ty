@@ -1,0 +1,36 @@
+import ty
+
+macro based {
+    ty.Class(
+        name: 'King',
+        setters: [
+            ty.Func(
+                name: 'x',
+                params: [ty.Param(name: 'q')],
+                body: ty.Assign(
+                    ty.MemberAccess(ty.Id(name: 'self'), '_x'),
+                    ty.MethodCall(
+                        object: ty.Id(name: 'q'),
+                        method: 'upper',
+                        args: []
+                    )
+                )
+            )
+        ],
+        getters: [
+            ty.Func(
+                name: 'x',
+                params: [],
+                body: ty.MemberAccess(ty.Id(name: 'self'), '_x')
+            )
+        ]
+    )
+}
+
+based
+
+let o = King()
+
+o.x = 'pass'
+
+print(o.x)
