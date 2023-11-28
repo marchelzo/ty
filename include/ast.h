@@ -19,7 +19,7 @@ struct class_definition {
         int symbol;
         bool pub;
         char *name;
-		char const *doc;
+        char const *doc;
         struct expression *super;
         vec(struct expression *) methods;
         vec(struct expression *) getters;
@@ -87,7 +87,7 @@ struct statement {
                         char *module;
                         char *as;
                         vec(char *) identifiers;
-						bool pub;
+                        bool pub;
                 } import;
                 union {
                         struct class_definition tag;
@@ -131,7 +131,7 @@ struct statement {
                 struct {
                         struct expression *target;
                         struct expression *value;
-						char const *doc;
+                        char const *doc;
                         bool pub;
                 };
         };
@@ -154,7 +154,7 @@ struct expression {
                 EXPRESSION_DICT_COMPR,
                 EXPRESSION_TAG,
                 EXPRESSION_CONDITIONAL,
-				EXPRESSION_COMPILE_TIME,
+                EXPRESSION_COMPILE_TIME,
                 EXPRESSION_EQ,
                 EXPRESSION_MAYBE_EQ,
                 EXPRESSION_TICK,
@@ -170,7 +170,7 @@ struct expression {
                 EXPRESSION_KEEP_LOC,
 
                 EXPRESSION_IDENTIFIER,
-				EXPRESSION_DEFINED,
+                EXPRESSION_DEFINED,
                 EXPRESSION_WITH,
                 EXPRESSION_YIELD,
                 EXPRESSION_TAG_APPLICATION,
@@ -223,10 +223,10 @@ struct expression {
                 EXPRESSION_PREFIX_DEC,
                 EXPRESSION_POSTFIX_INC,
                 EXPRESSION_POSTFIX_DEC,
-				EXPRESSION_PTR,
+                EXPRESSION_PTR,
                 EXPRESSION_EVAL,
                 EXPRESSION_IFDEF,
-				EXPRESSION_NONE,
+                EXPRESSION_NONE,
 
                 EXPRESSION_MACRO_INVOCATION,
                 EXPRESSION_VALUE,
@@ -246,7 +246,7 @@ struct expression {
                 float real;
                 struct statement *statement;
                 struct value *v;
-				void *p;
+                void *p;
                 struct {
                         struct expression *operand;
                         struct scope *escope;
@@ -318,8 +318,8 @@ struct expression {
                 };
                 struct {
                         char *name;
-						char const *doc;
-						char const *proto;
+                        char const *doc;
+                        char const *proto;
                         struct symbol *function_symbol;
                         struct scope *scope;
                         vec(char *) params;
@@ -377,3 +377,5 @@ struct expression {
 };
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */
