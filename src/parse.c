@@ -3961,7 +3961,6 @@ parse_import(void)
         s->type = STATEMENT_IMPORT;
 
         if (have_keyword(KEYWORD_PUB)) {
-                printf("import is public: %s\n", token(2)->identifier);
                 s->import.pub = true;
                 next();
         } else {

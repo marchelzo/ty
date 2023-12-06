@@ -4663,8 +4663,6 @@ import_module(struct statement const *s)
 
         struct scope *module_scope = get_module_scope(name);
 
-        printf("Importing %s: pub=%d\n", name, (int)pub);
-
         /* First make sure we haven't already imported this module, or imported another module
          * with the same local alias.
          *

@@ -2,7 +2,7 @@ import ty
 import ffi as c
 import cutil (wrap)
 
-if not let $lib = c.dlopen('libtermkey.so.1') {
+if not let $lib = c.dlopen('libtermkey.so.1') ?? c.dlopen('libtermkey.dylib') {
 	throw 'Failed to open libtermkey.so'
 }
 
