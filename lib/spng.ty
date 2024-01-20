@@ -165,7 +165,7 @@ let spng_ihdr = c.struct(
     c.u8   // interlace method
 )
 
-let $LIB = c.dlopen('libspng.so')
+let $LIB = c.dlopen('libspng.so') ?? c.dlopen('libspng.dylib')
 
 function w(*args) {
   cutil.wrap(LIB, *args)
