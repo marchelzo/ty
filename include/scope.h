@@ -86,7 +86,7 @@ char const *
 scope_symbol_name(int s);
 
 void
-scope_capture_all(struct scope *scope);
+scope_capture_all(struct scope *scope, struct scope const *stop);
 
 int
 scope_get_completions(struct scope *scope, char const *prefix, char **out, int max);

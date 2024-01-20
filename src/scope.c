@@ -55,6 +55,8 @@ scope_capture(struct scope *s, struct symbol *sym, int parent_index)
                 VPush(s->captured, sym);
                 VPush(s->cap_indices, parent_index);
 
+                LOG("scope_capture(sym=%s, scope=%p, scope->function=%p, sym->function=%p, sym->function->parent=%p, cap_index = %d)", sym->identifier, s, s->function, sym->scope->function, sym->scope->function->parent, parent_index);
+
                 return s->captured.count - 1;
 }
 
@@ -227,21 +229,21 @@ scope_is_subscope(struct scope const *sub, struct scope const *scope)
 }
 
 void
-scope_capture_all(struct scope *scope)
+scope_capture_all(struct scope *scope, struct scope const *stop)
 {
         if (scope->function->parent == NULL)
                 return;
 
-        for (struct scope *s = scope; s->function->parent != NULL && s->function->parent->parent != NULL; s = s->parent) {
+        for (struct scope *s = scope; s->function != stop->function; s = s->parent) {
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
-                                LOG("scope_capture_all: capturing %s", sym->identifier);
+                                LOG("scope_capture_all(scope=%p, scope->function=%p): capturing %s", scope, scope->function, sym->identifier);
 
                                 vec(struct scope *) scopes = {0};
 
-                                struct scope *fscope = scope->function->parent->function;
+                                struct scope *fscope = scope->function;
 
-                                while (fscope->parent != NULL && fscope->parent->function != sym->scope->function) {
+                                while (fscope != stop->function && fscope->parent->function != stop->function && fscope->parent->function != sym->scope->function) {
                                         VPush(scopes, fscope);
                                         fscope = fscope->parent->function;
                                 }
@@ -251,6 +253,8 @@ scope_capture_all(struct scope *scope)
                                 for (int i = scopes.count - 1; i >= 0; --i) {
                                         parent_index = scope_capture(scopes.items[i], sym, parent_index);
                                 }
+
+                                LOG("scope_capture_all: DONE capturing %s", sym->identifier);
                         }
                 }
         }

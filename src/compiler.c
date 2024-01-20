@@ -478,7 +478,7 @@ addsymbol(struct scope *scope, char const *name)
                 VPush(state.exports, name);
         }
 
-        LOG("adding symbol: %s -> %d\n", name, s->symbol);
+        LOG("adding symbol: %s -> %d", name, s->symbol);
 
         return s;
 }
@@ -1208,7 +1208,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_EVAL:
                 e->escope = scope;
-                scope_capture_all(scope);
+                scope_capture_all(scope, global);
         case EXPRESSION_PREFIX_HASH:
         case EXPRESSION_PREFIX_BANG:
         case EXPRESSION_PREFIX_QUESTION:
@@ -1301,6 +1301,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
 
                 scope = scope_new(scope, true);
+                LOG("%s got scope %p (global=%p, state.global=%p)", e->name == NULL ? "(anon)" : e->name, scope, global, state.global);
 
                 if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {
                         state.implicit_fscope = scope;
@@ -1758,6 +1759,20 @@ emit_string(char const *s)
 #endif
 
 inline static void
+target_captured(struct scope const *scope, struct symbol const *s)
+{
+        int i = 0;
+        while (scope->function->captured.items[i] != s) {
+                i += 1;
+        }
+        emit_instr(INSTR_TARGET_CAPTURED);
+        emit_int(i);
+#ifndef TY_NO_LOG
+        emit_string(s->identifier);
+#endif
+}
+
+inline static void
 emit_load(struct symbol const *s, struct scope const *scope)
 {
         bool local = !s->global && (s->scope->function == scope->function);
@@ -1792,12 +1807,7 @@ emit_tgt(struct symbol const *s, struct scope const *scope, bool def)
                 emit_instr(INSTR_TARGET_LOCAL);
                 emit_int(s->i);
         } else if (!local && s->captured) {
-                int i = 0;
-                while (scope->function->captured.items[i] != s) {
-                        i += 1;
-                }
-                emit_instr(INSTR_TARGET_CAPTURED);
-                emit_int(i);
+                target_captured(scope, s);
         } else {
                 emit_instr(INSTR_TARGET_REF);
                 emit_int(s->i);
@@ -1885,6 +1895,8 @@ emit_function(struct expression const *e, int class)
         int *cap_indices = e->scope->cap_indices.items;
         int ncaps = e->scope->captured.count;
 
+        LOG("Compiling %s. scope=%p", e->name == NULL ? "(anon)" : e->name, e->scope);
+
         for (int i = ncaps - 1; i >= 0; --i) {
                 if (cap_indices[i] == -1) {
                         /*
@@ -1895,8 +1907,12 @@ emit_function(struct expression const *e, int class)
                         emit_int(caps[i]->i);
                 } else {
                         // FIXME: should just use same allocated variable
+                        LOG("%s: Using TARGET_CAPTURED for %s: %d", e->name == NULL ? "(anon)" : e->name, caps[i]->identifier, cap_indices[i]);
                         emit_instr(INSTR_TARGET_CAPTURED);
                         emit_int(cap_indices[i]);
+#ifndef TY_NO_LOG
+                        emit_string(caps[i]->identifier);
+#endif
                 }
         }
 
@@ -2046,6 +2062,8 @@ emit_function(struct expression const *e, int class)
 
         for (int i = 0; i < ncaps; ++i) {
                 bool local = caps[i]->scope->function == fs_save;
+                LOG("local(%s, %s): %d", e->name == NULL ? "(anon)" : e->name, caps[i]->identifier, local);
+                LOG("  fscope(%s) = %p, fs_save = %p", caps[i]->identifier, caps[i]->scope->function, fs_save);
                 emit_boolean(local);
         }
 
