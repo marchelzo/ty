@@ -1548,6 +1548,10 @@ vm_exec(char *code)
                         break;
                 CASE(TARGET_CAPTURED)
                         READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading capture: %s (%d) of %s", ip, n, value_show(&vec_last(frames)->f));
+                        ip += strlen(ip) + 1;
+#endif
                         pushtarget(vec_last(frames)->f.env[n], NULL);
                         break;
                 CASE(TARGET_MEMBER)
@@ -2207,6 +2211,8 @@ Throw:
                         push(v);
                         break;
                 CASE(FUCK)
+                        printf("Build: %s\n", ip);
+                        ip += strlen(ip) + 1;
                 CASE(FUCK2)
                 CASE(FUCK3)
                         break;
@@ -3697,7 +3703,7 @@ vm_execute_file(char const *path)
         bool success = vm_execute(source);
 
         GCLOG("Allocs before: %zu", allocs.count);
-        DoGC();
+        //DoGC();
         GCLOG("Allocs after: %zu", allocs.count);
 
         /*
