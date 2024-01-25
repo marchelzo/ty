@@ -69,6 +69,8 @@ struct token {
                 TOKEN_MAYBE_EQ,
                 TOKEN_WTF,
                 TOKEN_CHECK_MATCH,
+                TOKEN_TEMPLATE_BEGIN,
+                TOKEN_TEMPLATE_END,
                 TOKEN_EXPRESSION,
                 TOKEN_COMMENT,
                 TOKEN_ERROR,

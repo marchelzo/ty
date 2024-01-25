@@ -56,6 +56,9 @@ compiler_get_location(char const *code, struct location *start, struct location 
 bool
 compiler_has_module(char const *path);
 
+struct value
+compiler_render_template(struct expression *);
+
 void
 import_module(struct statement const *);
 

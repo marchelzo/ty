@@ -174,6 +174,8 @@ struct expression {
                 EXPRESSION_WITH,
                 EXPRESSION_YIELD,
                 EXPRESSION_TAG_APPLICATION,
+                EXPRESSION_TEMPLATE,
+                EXPRESSION_TEMPLATE_HOLE,
                 EXPRESSION_SPREAD,
                 EXPRESSION_SPLAT,
                 EXPRESSION_MUST_EQUAL,
@@ -251,6 +253,10 @@ struct expression {
                         struct expression *operand;
                         struct scope *escope;
                 };
+                struct {
+                        statement_vector stmts;
+                        expression_vector exprs;
+                } template;
                 struct {
                         struct symbol *atmp;
                         expression_vector elements;

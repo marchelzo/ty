@@ -1178,6 +1178,20 @@ lex_token(LexContext ctx)
                 } else if (C(0) == '!' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken(TOKEN_BANG);
+                } else if (C(0) == '$' && C(1) == '$' && C(2) == '[') {
+                        nextchar();
+                        nextchar();
+                        nextchar();
+                        return mktoken(TOKEN_TEMPLATE_BEGIN);
+                } else if (C(0) == '$' && C(1) == '$' && C(2) == ']') {
+                        nextchar();
+                        nextchar();
+                        nextchar();
+                        return mktoken(TOKEN_TEMPLATE_END);
+                } else if (C(0) == '$' && C(1) == '$') {
+                        nextchar();
+                        nextchar();
+                        return mktoken('$$');
                 } else if (C(0) == '?' && ctx == LEX_PREFIX) {
                         nextchar();
                         return mktoken(TOKEN_QUESTION);

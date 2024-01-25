@@ -1767,21 +1767,20 @@ macro dbg! {
 
     ty.Block([
         *[
-            ty.Let(ty.Id(name: tmp), e),
-            ty.Call(
-                func: ty.Id(name: 'print'),
-                args: [
-                    ty.Arg(arg: ty.Id(name: '__module__')),
-                    ty.Arg(arg: ty.String(':')),
-                    ty.Arg(arg: ty.Id(name: '__line__')),
-                    ty.Arg(arg: ty.String(': ')),
-                    ty.Arg(arg: ty.String(parse.show(p))),
-                    ty.Arg(arg: ty.String(' = ')),
-                    ty.Arg(arg: ty.Id(name: tmp)),
-                    ty.Arg(name: 'sep', arg: ty.String('')),
-                    ty.Arg(name: 'flush', arg: ty.Bool(true))
-                ]
-            )
+            $$[
+                let $$(ty.Id(name: tmp)) = $$(e)
+                print(
+                    __module__,
+                    ':',
+                    __line__,
+                    ': ',
+                    $$(ty.String(parse.show(p))),
+                    ' = ',
+                    $$(ty.Id(name: tmp)),
+                    sep: '',
+                    flush: true
+                )
+            $$]
             for (p, e) in args
         ],
         ty.Id(name: tmp)
@@ -1797,37 +1796,24 @@ macro time! {
     // )
     lex.next()
 
-    ty.Block([
-        ty.Let(
-            ty.Array([
-                ty.ArrayItem(item: ty.Id(name: 's')),
-                ty.ArrayItem(item: ty.Id(name: 'x')),
-                ty.ArrayItem(item: ty.Id(name: 'e'))
-            ]),
-            ty.Array([
-                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: [])),
-                ty.ArrayItem(item: e),
-                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: []))
-            ])
-        ),
-        ty.Multi([
-            ty.Call(
-                func: ty.Id(name: 'print'),
-                args: [
-                    ty.Arg(arg: ty.Id(name: '__module__')),
-                    ty.Arg(arg: ty.String(':')),
-                    ty.Arg(arg: ty.Id(name: '__line__')),
-                    ty.Arg(arg: ty.String(': ')),
-                    ty.Arg(arg: ty.String(parse.show(p))),
-                    ty.Arg(arg: ty.String(': ')),
-                    ty.Arg(arg: ty.Div(ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's')), ty.Value(1.0e6))),
-                    ty.Arg(arg: ty.String('s')),
-                    ty.Arg(name: 'sep', arg: ty.String(''))
-                ]
-            ),
-            ty.Id(name: 'x')
-        ])
-    ])
+    $$[{
+        let now = $$(ty.Value(time.utime))
+        let (s, x, e) = (now(), $$(e), now())
+
+        print(
+            __module__,
+            ':',
+            __line__,
+            ': ',
+            $$(ty.String(parse.show(p))),
+            ': ',
+            (e - s) / 1.0e6,
+            's',
+            sep: ''
+        )
+
+        x
+    }$$]
 }
 
 macro timed! {

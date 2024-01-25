@@ -2210,6 +2210,10 @@ Throw:
                         pop();
                         push(v);
                         break;
+                CASE(RENDER_TEMPLATE)
+                        READVALUE(s);
+                        push(compiler_render_template((struct expression *)s));
+                        break;
                 CASE(FUCK)
                         printf("Build: %s\n", ip);
                         ip += strlen(ip) + 1;

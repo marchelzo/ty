@@ -101,6 +101,8 @@ static struct table uopcs;
 static LexState CtxCheckpoint;
 static TokenVector tokens;
 
+static expression_vector TemplateExprs;
+
 static int TokenIndex = 0;
 LexContext lctx = LEX_PREFIX;
 
@@ -1851,6 +1853,51 @@ prefix_array(void)
 }
 
 static struct expression *
+prefix_template(void)
+{
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_TEMPLATE;
+
+        next();
+
+        expression_vector TESave = TemplateExprs;
+        vec_init(TemplateExprs);
+        vec_init(e->template.stmts);
+
+        while (tok()->type != TOKEN_TEMPLATE_END) {
+                VPush(e->template.stmts, parse_statement(0));
+        }
+
+        next();
+
+        e->end = End;
+
+        e->template.exprs = TemplateExprs;
+        TemplateExprs = TESave;
+
+        return e;
+}
+
+static struct expression *
+prefix_template_expr(void)
+{
+        next();
+        consume('(');
+
+        struct expression *e = mkexpr();
+        e->type = EXPRESSION_TEMPLATE_HOLE;
+        e->integer = TemplateExprs.count;
+
+        VPush(TemplateExprs, parse_expr(0));
+
+        e->end = vec_last(TemplateExprs)[0]->end;
+
+        consume(')');
+
+        return e;
+}
+
+static struct expression *
 prefix_tick(void)
 {
         struct expression *e;
@@ -2758,6 +2805,9 @@ get_prefix_parser(void)
         case '$':                  return prefix_dollar;
         case '`':                  return prefix_tick;
 
+        case TOKEN_TEMPLATE_BEGIN: return prefix_template;
+        case '$$':                 return prefix_template_expr;
+
         case TOKEN_DOT_DOT:        return prefix_range;
         case TOKEN_DOT_DOT_DOT:    return prefix_incrange;
 
@@ -2968,6 +3018,7 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
+        case EXPRESSION_TEMPLATE_HOLE:
                 return e;
         case EXPRESSION_FUNCTION_CALL:
                 for (int i = 0; i < e->args.count; ++i) {
