@@ -199,8 +199,6 @@ function ReadPNG(path: String, fmt=SPNG_FMT_PNG) {
     let hdr = c.new(spng_ihdr)
     spng_get_ihdr(ctx, hdr)
 
-    print('fmt', fmt)
-
     let w = c.member(spng_ihdr, hdr, 0)
     let h = c.member(spng_ihdr, hdr, 1)
     let bitDepth = c.member(spng_ihdr, hdr, 2)
@@ -250,8 +248,6 @@ function WritePNG(
 
     let ctx = spng_ctx_new(SPNG_CTX_ENCODER)
 
-    print(spng_set_png_file(ctx, f))
-
     let hdr = c.new(spng_ihdr)
     c.member(spng_ihdr, hdr, 0, w)
     c.member(spng_ihdr, hdr, 1, h)
@@ -259,8 +255,6 @@ function WritePNG(
     c.member(spng_ihdr, hdr, 3, colorType)
 
     let fmt = if raw { SPNG_FMT_RAW } else { SPNG_FMT_PNG }
-
-    print(spng_set_ihdr(ctx, hdr))
 
     spng_encode_image(ctx, buffer, size, fmt, SPNG_ENCODE_FINALIZE)
 }
