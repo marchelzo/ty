@@ -5796,7 +5796,11 @@ cexpr(struct value *v)
                                 VPush(e->strings, mkcstr(x));
                         } else {
                                 VPush(e->expressions, cexpr(x));
+                                VPush(e->fmts, NULL);
                         }
+                }
+                if (v->array->count == 0 || vec_last(*v->array)->type != VALUE_STRING) {
+                        VPush(e->strings, "");
                 }
         } else if (tags_first(v->tags) == TyArray) {
                 e->type = EXPRESSION_ARRAY;
