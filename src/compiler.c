@@ -1228,6 +1228,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_STATEMENT:
                 symbolize_statement(scope, e->statement);
                 break;
+        case EXPRESSION_TEMPLATE:
+                for (size_t i = 0; i < e->template.exprs.count; ++i) {
+                        symbolize_expression(scope, e->template.exprs.items[i]);
+                }
+                break;
         case EXPRESSION_FUNCTION_CALL:
                 symbolize_expression(scope, e->function);
                 for (size_t i = 0;  i < e->args.count; ++i)
@@ -4252,6 +4257,13 @@ emit_expr(struct expression const *e, bool need_loc)
                         }
                 }
                 break;
+        case EXPRESSION_TEMPLATE:
+                for (int i = e->template.exprs.count - 1; i >= 0; --i) {
+                        emit_expression(e->template.exprs.items[i]);
+                }
+                emit_instr(INSTR_RENDER_TEMPLATE);
+                emit_symbol((uintptr_t)e);
+                break;
         default:
                 fail("expression unexpected in this context: %d", (int)e->type);
         }
@@ -5420,6 +5432,9 @@ tyexpr(struct expression const *e)
                         NONE
                 );
                 break;
+        case EXPRESSION_TEMPLATE_HOLE:
+                v = *vm_get(e->integer);
+                return v;
         case EXPRESSION_STATEMENT:
                 return tystmt(e->statement);
         default:
@@ -6222,6 +6237,26 @@ void
 compiler_clear_location(void)
 {
         state.start = state.end = state.mstart = state.mend = Nowhere;
+}
+
+struct value
+compiler_render_template(struct expression *e)
+{
+        if (e->template.stmts.count == 1) {
+                return tystmt(e->template.stmts.items[0]);
+        }
+
+        struct array *a = value_array_new();
+
+        for (size_t i = 0; i < e->template.stmts.count; ++i) {
+                value_array_push(a, tystmt(e->template.stmts.items[i]));
+        }
+
+        for (size_t i = 0; i < e->template.exprs.count; ++i) {
+                vm_pop();
+        }
+
+        return tagged(TyMulti, ARRAY(a), NONE);
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

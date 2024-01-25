@@ -129,7 +129,7 @@ enum instruction {
         INSTR_THROW,
         INSTR_RETHROW,
         INSTR_TRY,
-		INSTR_CATCH,
+        INSTR_CATCH,
         INSTR_POP_TRY,
         INSTR_RESUME_TRY,
         INSTR_FINALLY,
@@ -158,6 +158,8 @@ enum instruction {
         INSTR_ENSURE_DICT,
         INSTR_ENSURE_CONTAINS,
         INSTR_ENSURE_SAME_KEYS,
+
+        INSTR_RENDER_TEMPLATE,
 
         // binary operators
         INSTR_ADD,
