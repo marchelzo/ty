@@ -110,6 +110,7 @@ struct value;
         X(Array) \
         X(Dict) \
         X(String) \
+        X(SpecialString) \
         X(Int) \
         X(Bool) \
         X(Float) \

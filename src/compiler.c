@@ -5366,6 +5366,23 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyString);
                 break;
+        case EXPRESSION_SPECIAL_STRING:
+                v = ARRAY(value_array_new());
+                gc_push(&v);
+
+                value_array_push(v.array, STRING_CLONE(e->strings.items[0], strlen(e->strings.items[0])));
+
+                for (int i = 0; i < e->expressions.count; ++i) {
+                        value_array_push(v.array, tyexpr(e->expressions.items[i]));
+                        value_array_push(v.array, STRING_CLONE(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
+                }
+
+                gc_pop();
+
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TySpecialString);
+
+                break;
         case EXPRESSION_EQ:
                 v = tagged(TyAssign, tyexpr(e->target), tyexpr(e->value), NONE);
                 break;
@@ -5769,6 +5786,18 @@ cexpr(struct value *v)
         } else if (tags_first(v->tags) == TyString) {
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(v);
+        } else if (tags_first(v->tags) == TySpecialString) {
+                e->type = EXPRESSION_SPECIAL_STRING;
+                vec_init(e->strings);
+                vec_init(e->expressions);
+                for (int i = 0; i < v->array->count; ++i) {
+                        struct value *x = &v->array->items[i];
+                        if (x->type == VALUE_STRING) {
+                                VPush(e->strings, mkcstr(x));
+                        } else {
+                                VPush(e->expressions, cexpr(x));
+                        }
+                }
         } else if (tags_first(v->tags) == TyArray) {
                 e->type = EXPRESSION_ARRAY;
                 vec_init(e->elements);
