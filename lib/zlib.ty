@@ -1,4 +1,4 @@
-import ffi as c
+import ffi as c (C!)
 import cutil (..)
 
 let Z_OK            = 0
@@ -60,6 +60,8 @@ let cUncompress = wrap(lib, 'uncompress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
 cfun! lib c.int inflateInit2_(c.ptr, c.int, c.ptr, c.int)
 cfun! lib c.int inflate(c.ptr, c.int)
 cfun! lib c.int inflateEnd(c.ptr)
+
+C! lib function crc32(c.u32, c.ptr, c.u64) -> c.u32
 
 pub function compress(s: String | Blob) {
   let bound = cCompressBound(s.size())
@@ -148,6 +150,10 @@ pub function uncompress2(s: String | Blob, maxSize) {
   }
 
   return blob
+}
+
+pub crc32 = function (s: String | Blob) {
+    crc32(0, s, s.size())
 }
 
 function test() {
