@@ -302,6 +302,7 @@ mkdef(struct expression *lvalue, char *name)
         s->pub = false;
         s->target = lvalue;
         s->value = value;
+        s->value = value;
 
         return s;
 }
@@ -3482,14 +3483,18 @@ parse_function_definition(void)
         struct statement *s = mkstmt();
 
         if (tok()->keyword == KEYWORD_MACRO) {
-                s->type = STATEMENT_MACRO_DEFINITION;
                 struct token kw = *token(0);
                 kw.keyword = KEYWORD_FUNCTION;
                 struct token name = *token(1);
                 next();
                 next();
-                unconsume(')');
-                unconsume('(');
+                if (tok()->type == '(') {
+                        s->type = STATEMENT_FUN_MACRO_DEFINITION;
+                } else {
+                        s->type = STATEMENT_MACRO_DEFINITION;
+                        unconsume(')');
+                        unconsume('(');
+                }
                 unconsume(TOKEN_IDENTIFIER);
                 *tok() = name;
                 unconsume(TOKEN_KEYWORD);
@@ -3502,6 +3507,18 @@ parse_function_definition(void)
         struct expression *f = prefix_function();
         if (f->name == NULL)
                 error("anonymous function definition used in statement context");
+
+        if (s->type == STATEMENT_FUN_MACRO_DEFINITION) {
+                VInsert(f->params, "raw", 0);
+                VInsert(f->dflts, NULL, 0);
+                VInsert(f->constraints, NULL, 0);
+                if (f->rest != -1) {
+                        f->rest += 1;
+                }
+                if (f->ikwargs != -1) {
+                        f->ikwargs += 1;
+                }
+        }
 
         struct expression *target = mkexpr();
         target->type = EXPRESSION_IDENTIFIER;
@@ -4152,9 +4169,10 @@ static void
 define_top(struct statement *s, char const *doc)
 {
         switch (s->type) {
+        case STATEMENT_FUN_MACRO_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
                 s->doc = doc;
-                define_macro(s);
+                define_macro(s, s->type == STATEMENT_FUN_MACRO_DEFINITION);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
                 s->doc = doc;

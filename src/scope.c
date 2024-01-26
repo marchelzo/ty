@@ -125,6 +125,7 @@ scope_add(struct scope *s, char const *id)
         sym->public = false;
         sym->cnst = false;
         sym->macro = false;
+        sym->fun_macro = false;
         sym->tag = -1;
         sym->class = -1;
         sym->scope = s;

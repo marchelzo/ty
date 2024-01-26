@@ -19,6 +19,7 @@ struct symbol {
         bool public;
         bool cnst;
         bool macro;
+		bool fun_macro;
         bool captured;
         int i;
         int ci;

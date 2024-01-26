@@ -1747,43 +1747,28 @@ macro showCode {
     e
 }
 
-macro dbg! {
-    // (
-    lex.next()
-
-    let args = []
-
-    while lex.peek().type != ')' {
-        args.push(parse.stmt(0, raw: true))
-        if lex.peek().type == ',' {
-            lex.next()
-        }
-    }
-
-    // )
-    lex.next()
-
-    let tmp = ty.gensym()
+macro dbg!(*args) {
+    let tmp = ty.Id(name: ty.gensym())
 
     ty.Block([
         *[
             $$[
-                let $$(ty.Id(name: tmp)) = $$(e)
+                let $$(tmp) = $$(e)
                 print(
                     __module__,
                     ':',
                     __line__,
                     ': ',
-                    $$(ty.String(parse.show(p))),
+                    $$(ty.String(parse.show(raw[i]))),
                     ' = ',
-                    $$(ty.Id(name: tmp)),
+                    $$(tmp),
                     sep: '',
                     flush: true
                 )
             $$]
-            for (p, e) in args
+            for e, i in args
         ],
-        ty.Id(name: tmp)
+        tmp
     ])
 }
 

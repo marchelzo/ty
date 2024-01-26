@@ -1,0 +1,12 @@
+import ty
+
+macro fun(e) {
+    let ty.Id((name: n)) = e
+    $$[ $$(ty.String(n)).upper() $$]
+}
+
+let p = fun(ssap)
+
+let fun = &reverse
+
+print(fun(p))

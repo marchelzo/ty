@@ -63,7 +63,7 @@ void
 import_module(struct statement const *);
 
 void
-define_macro(struct statement *);
+define_macro(struct statement *, bool fun);
 
 void
 define_class(struct statement *);
