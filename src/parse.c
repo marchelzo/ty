@@ -2440,7 +2440,7 @@ infix_member_access(struct expression *left)
 {
         struct expression *e = mkexpr();
 
-        e->start = tok()->start;
+        e->start = left->start;
         e->maybe = tok()->type == TOKEN_DOT_MAYBE;
 
         next();

@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dlfcn.h>
+#include <getopt.h>
 
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -29,7 +30,7 @@
 
 #define MAX_COMPLETIONS 200
 
-static bool use_readline = true;
+static bool use_readline;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
 
@@ -219,28 +220,45 @@ main(int argc, char **argv)
         if (argc <= 1)
                 repl();
 
-        int i = 1;
+        char SymbolLocation[512] = {0};
 
-        if (i < argc && strcmp(argv[i], "-q") == 0) {
-                CheckConstraints = false;
-                i += 1;
+        for (int ch; (ch = getopt_long(argc, argv, "qcpm:t:e:", NULL, NULL)) != -1;) {
+                switch (ch) {
+                case 'q':
+                        CheckConstraints = false;
+                        break;
+                case 'c':
+                        CompileOnly = true;
+                        break;
+                case 'p':
+                        PrintResult = true;
+                        break;
+                case 'm':
+                        snprintf(buffer, sizeof buffer, "import %s\n", optarg);
+                        if (!execln(buffer))
+                                return -1;
+                        break;
+                case 't':
+                        strcpy(SymbolLocation, optarg);
+                        break;
+                case 'e':
+                        return (int)execln(optarg);
+                }
         }
 
-        if (i < argc && strcmp(argv[i], "-c") == 0) {
-                CompileOnly = true;
-                i += 1;
-        }
+        argc -= optind;
+        argv += optind;
 
-        if (i < argc && strcmp(argv[i], "-p") == 0) {
-                PrintResult = true;
-                i += 1;
-        }
+        char const *file = (argv[0] != NULL && strcmp(argv[0], "-") != 0) ? argv[0] : "/dev/stdin";
 
-        if (i + 2 < argc && strcmp(argv[i], "-t") == 0) {
-                char const *f = argv[++i];
-                int line = atoi(argv[++i]) - 1;
-                int col = atoi(argv[++i]) - 1;
-                struct location loc = compiler_find_definition(f, line, col);
+        if (*SymbolLocation != '\0') {
+                char *colon = strchr(SymbolLocation, ':');
+                if (colon == NULL)
+                        return -1;
+                *colon = '\0';
+                int line = atoi(SymbolLocation);
+                int col = atoi(colon + 1);
+                struct location loc = compiler_find_definition(file, line, col);
                 if (loc.s == NULL) {
                         return -1;
                 } else {
@@ -249,24 +267,12 @@ main(int argc, char **argv)
                 }
         }
 
-        if (i < argc && strcmp(argv[i], "-e") == 0) {
-                if (argc < i + 1) {
-                        fputs("error: -e with no program specified", stderr);
-                        return -1;
-                }
-                char buffer[8192] = {0};
-                strncpy(buffer, argv[i + 1], sizeof buffer - 1);
-
-                if (!execln(buffer)) {
-                        return -1;
-                }
-        } else {
-                char const *file = (i < argc && strcmp(argv[i], "-") != 0) ? argv[i] : "/dev/stdin";
-                if (!vm_execute_file(file)) {
-                        fprintf(stderr, "%s\n", vm_error());
-                        return -1;
-                }
+        if (!vm_execute_file(file)) {
+                fprintf(stderr, "%s\n", vm_error());
+                return -1;
         }
 
         return 0;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */
