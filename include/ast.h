@@ -48,6 +48,7 @@ struct statement {
                 STATEMENT_DEFINITION,
                 STATEMENT_FUNCTION_DEFINITION,
                 STATEMENT_MACRO_DEFINITION,
+                STATEMENT_FUN_MACRO_DEFINITION,
                 STATEMENT_TAG_DEFINITION,
                 STATEMENT_CLASS_DEFINITION,
                 STATEMENT_WHILE,

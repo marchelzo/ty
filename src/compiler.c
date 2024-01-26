@@ -768,6 +768,10 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                 fc.kws = e->method_kws;
                 fc.fconds = e->mconds;
 
+                vec_init(fc.fkwconds);
+                for (size_t i = 0; i < fc.kws.count; ++i)
+                        VPush(fc.fkwconds, NULL);
+
                 fc.function = mod_access;
 
                 *e = fc;
@@ -1031,6 +1035,42 @@ comptime(struct scope *scope, struct expression *e)
 }
 
 static void
+invoke_fun_macro(struct expression *e)
+{
+        symbolize_expression(state.global, e->function);
+
+        byte_vector code_save = state.code;
+        vec_init(state.code);
+
+        emit_expression(e->function);
+        emit_instr(INSTR_HALT);
+
+        vm_exec(state.code.items);
+        state.code = code_save;
+
+        struct value m = *vm_get(0);
+        vm_pop();
+
+        struct value raw = ARRAY(value_array_new());
+
+        NOGC(raw.array);
+
+        vm_push(&raw);
+
+        for (size_t i = 0;  i < e->args.count; ++i) {
+                value_array_push(raw.array, PTR(e->args.items[i]));
+                struct value v = tyexpr(e->args.items[i]);
+                vm_push(&v);
+        }
+
+        OKGC(raw.array);
+
+        struct value v = vm_call(&m, e->args.count + 1);
+
+        *e = *cexpr(&v);
+}
+
+static void
 symbolize_expression(struct scope *scope, struct expression *e)
 {
         if (e == NULL)
@@ -1235,6 +1275,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_FUNCTION_CALL:
                 symbolize_expression(scope, e->function);
+                if (e->function->type == EXPRESSION_IDENTIFIER && e->function->symbol->fun_macro) {
+                        invoke_fun_macro(e);
+                        symbolize_expression(scope, e);
+                        break;
+                }
                 for (size_t i = 0;  i < e->args.count; ++i)
                         symbolize_expression(scope, e->args.items[i]);
                 for (size_t i = 0;  i < e->args.count; ++i)
@@ -1264,6 +1309,10 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         fc.kwargs = e->method_kwargs;
                         fc.kws = e->method_kws;
                         fc.fconds = e->mconds;
+
+                        vec_init(fc.fkwconds);
+                        for (size_t i = 0; i < fc.kws.count; ++i)
+                                VPush(fc.fkwconds, NULL);
 
                         fc.function = mod_access;
 
@@ -1609,6 +1658,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_FUNCTION_DEFINITION:
                 if (scope != state.global) {
         case STATEMENT_MACRO_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
                         symbolize_lvalue(scope, s->target, true, s->pub);
                 }
                 symbolize_expression(scope, s->value);
@@ -4332,6 +4382,7 @@ emit_statement(struct statement const *s, bool want_result)
         case STATEMENT_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
                 emit_assignment(s->target, s->value, false, true);
                 emit_instr(INSTR_POP);
                 break;
@@ -6203,10 +6254,13 @@ define_function(struct statement *s)
 }
 
 void
-define_macro(struct statement *s)
+define_macro(struct statement *s, bool fun)
 {
         symbolize_statement(state.global, s);
-        s->target->symbol->macro = true;
+        if (fun)
+                s->target->symbol->fun_macro = true;
+        else
+                s->target->symbol->macro = true;
         s->target->symbol->doc = s->doc;
 
         s->type = STATEMENT_FUNCTION_DEFINITION;
