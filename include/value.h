@@ -123,6 +123,7 @@ struct value;
         X(Call) \
         X(MethodCall) \
         X(MemberAccess) \
+        X(Subscript) \
         X(Cond) \
         X(UserOp) \
         X(Return) \
