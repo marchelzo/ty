@@ -589,7 +589,7 @@ freshstate(void)
         s.loop = 0;
 
         s.filename = NULL;
-        s.start = s.end = Nowhere;
+        s.start = s.end = s.mstart = s.mend = Nowhere;
 
         vec_init(s.expression_locations);
 
@@ -1067,7 +1067,16 @@ invoke_fun_macro(struct expression *e)
 
         struct value v = vm_call(&m, e->args.count + 1);
 
+        struct location const mstart = state.mstart;
+        struct location const mend = state.mend;
+
+        state.mstart = e->start;
+        state.mend = e->end;
+
         *e = *cexpr(&v);
+
+        state.mstart = mstart;
+        state.mend = mend;
 }
 
 static void
@@ -1108,7 +1117,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 }
                 if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
                         e->type = EXPRESSION_INTEGER;
-                        e->integer = state.start.line;
+                        e->integer = state.start.line + 1;
                         break;
                 }
                 // This turned out to be cringe
