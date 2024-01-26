@@ -1830,9 +1830,9 @@ target_captured(struct scope const *scope, struct symbol const *s)
 inline static void
 emit_load(struct symbol const *s, struct scope const *scope)
 {
-        bool local = !s->global && (s->scope->function == scope->function);
-
         LOG("Emitting LOAD for %s", s->identifier);
+
+        bool local = !s->global && (s->scope->function == scope->function);
 
         if (s->global) {
                 emit_load_instr(s->identifier, INSTR_LOAD_GLOBAL, s->i);
@@ -5373,6 +5373,13 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyMemberAccess);
                 break;
+        case EXPRESSION_SUBSCRIPT:
+                v = value_tuple(2);
+                v.items[0] = tyexpr(e->container);
+                v.items[1] = tyexpr(e->subscript);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TySubscript);
+                break;
         case EXPRESSION_WITH:
                 v = ARRAY(value_array_new());
                 for (int i = 0; i < e->with.defs.count; ++i) {
@@ -6000,6 +6007,10 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->object = cexpr(&v->items[0]);
                 e->member_name = mkcstr(&v->items[1]);
+        } else if (tags_first(v->tags) == TySubscript) {
+                e->type = EXPRESSION_SUBSCRIPT;
+                e->container = cexpr(&v->items[0]);
+                e->subscript = cexpr(&v->items[1]);
         } else if (tags_first(v->tags) == TyWith) {
                 struct value *lets = &v->items[0];
                 statement_vector defs = {0};
