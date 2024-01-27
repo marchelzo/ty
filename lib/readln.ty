@@ -9,6 +9,8 @@ let defaultPrompt = nil
 let defaultComplete = nil
 let termFd = nil
 
+let history = []
+
 tag ListCompletions, ReplaceLine, Insert;
 
 pub function init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
@@ -18,9 +20,6 @@ pub function init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
     if !(tk = termkey_new(fd, ctrl_c ? TERMKEY_FLAG_CTRLC : 0)) {
         throw Err(errno.get())
     }
-}
-
-function remember(line, i) {
 }
 
 function completeFile(before, after) {
@@ -76,16 +75,43 @@ pub function readln(prompt=nil, complete=nil) {
     let line = []
     let i = 0
 
+    function getBefore() {
+        line.slice(0, i).str() ?? ''
+    }
+
+    function getAfter() {
+        line.slice(i).str() ?? ''
+    }
+
+    function getText() {
+        line.str() ?? ''
+    }
+
     let pKey = c.new(TermKeyKey)
     let keyBuffer = Blob()
     
     keyBuffer.reserve(256)
+
+    termkey_start(tk)
+
+    defer termkey_stop(tk)
+
+    let hi = 0
+    let hPrefix = nil
+    let hSuffix = nil
+
+    function hMatch?(i) {
+        if #history < i { return false }
+        let text = history[-i].0.str() ?? ''
+        text.starts?(hPrefix) && text.ends?(hSuffix)
+    }
 
     while true {
         let before = line.slice(0, i).str() ?? ''
         let all = line.str() ?? ''
         let erase = "\x1b[2K"
 
+        let prompt = "[{hi#4}] {prompt}"
         write(1, "{erase}\r{prompt}{all}\r{prompt}{before}")
 
         termkey_waitkey(tk, pKey)
@@ -93,11 +119,19 @@ pub function readln(prompt=nil, complete=nil) {
 
         let key = c.as_str(keyBuffer.ptr())
 
+        let hiStart = hi
+
         match key {
             '<Enter>' => {
-                remember(line, i)
+                let text = getText()
+
+                if text != '' && (history == [] || (line, i) != history[-1]) {
+                    history.push((line, i))
+                }
+
                 write(1, "{erase}\r")
-                return line.str() ?? ''
+
+                return text
             },
 
             '<C-d>' => {
@@ -129,6 +163,34 @@ pub function readln(prompt=nil, complete=nil) {
             '<Right>' => {
                 if i < #line {
                     i += 1
+                }
+            },
+
+            '<Up>' => {
+                hPrefix ?= getBefore()
+                hSuffix ?= getAfter()
+
+                while hi < #history {
+                    hi += 1
+                    if hMatch?(hi) {
+                        break
+                    }
+                }
+
+                if !hMatch?(hi) {
+                    hi = hiStart
+                }
+            },
+
+            '<Down>' => {
+                hi -= 1
+
+                while hi > 0 && !hMatch?(hi) {
+                    hi -= 1
+                }
+
+                if (hi < 0) || (hi > 0 && !hMatch?(hi)) {
+                    hi = 0
                 }
             },
 
@@ -166,6 +228,21 @@ pub function readln(prompt=nil, complete=nil) {
             ch => {
                 line.insert(i++, ch.clone())
             }
+        }
+
+        if hi != hiStart {
+            if hi == 0 {
+                line = []
+                i = 0
+                hi = 0
+            } else {
+                (line, i) = history[-hi]
+                line = line.clone()
+            }
+        } else if key != '<Up>' {
+            hi = 0
+            hPrefix = nil
+            hSuffix = nil
         }
     }
 }
