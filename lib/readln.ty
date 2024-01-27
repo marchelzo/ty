@@ -1,0 +1,171 @@
+import termkey (..)
+import errno
+import ffi as c
+import os (..)
+import sh (sh)
+
+let tk = nil
+let defaultPrompt = nil
+let defaultComplete = nil
+let termFd = nil
+
+tag ListCompletions, ReplaceLine, Insert;
+
+pub function init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
+    termFd = fd
+    defaultPrompt = prompt
+    defaultComplete = complete
+    if !(tk = termkey_new(fd, ctrl_c ? TERMKEY_FLAG_CTRLC : 0)) {
+        throw Err(errno.get())
+    }
+}
+
+function remember(line, i) {
+}
+
+function completeFile(before, after) {
+    let parts = (before.match!(/'[^']*$/) ?? before.match!(/\S*$/)).comb(/'/).split('/')
+
+    let (dir, prefix) = match parts {
+        [prefix] => ('.', prefix),
+        [*parts, prefix] => (parts.join('/'), prefix)
+    }
+
+    let names = sh("find -s '{dir}' -maxdepth 1 -name '{prefix}*'").lines().filter(${#it > 0}).map!(&comb(/^\.\//))
+
+    let chop = &slice(#"{dir}/{prefix}".comb(/^\.\//))
+
+    return match names {
+        []       => None,
+        [unique] => Insert(chop(unique)),
+        _        => ListCompletions(names)
+    }
+
+}
+
+function fitItems(items, W) {
+    function widths(cols) {
+            items.map(&len).groupsOf(#items / cols).map(&max)
+    }
+
+    let (cols, ws) = for cols in 1..#items {
+            let ws = widths(cols + 1)
+            if ws.sum() + 2 * cols > W {
+                    break (cols, widths(cols))
+            }
+    } ?? (#items, widths(#items))
+
+    let cols = items.groupsOf(#items / cols)
+    let rows = cols.map(&len).max()
+
+    let result = []
+
+    for i in ..rows {
+            result.push(cols.map(c -> #c > i ? c[i] : '').zip(ws, (f, w) -> f.padRight(w)).join('  '))
+    }
+
+    result
+}
+
+pub function readln(prompt=nil, complete=nil) {
+    if tk == nil {
+        init()
+    }
+
+    let prompt = prompt ?? defaultPrompt
+    let line = []
+    let i = 0
+
+    let pKey = c.new(TermKeyKey)
+    let keyBuffer = Blob()
+    
+    keyBuffer.reserve(256)
+
+    while true {
+        let before = line.slice(0, i).str() ?? ''
+        let all = line.str() ?? ''
+        let erase = "\x1b[2K"
+
+        write(1, "{erase}\r{prompt}{all}\r{prompt}{before}")
+
+        termkey_waitkey(tk, pKey)
+        termkey_strfkey(tk, keyBuffer, 256, pKey, TERMKEY_FORMAT_VIM)
+
+        let key = c.as_str(keyBuffer.ptr())
+
+        match key {
+            '<Enter>' => {
+                remember(line, i)
+                write(1, "{erase}\r")
+                return line.str() ?? ''
+            },
+
+            '<C-d>' => {
+                return nil
+            },
+
+            '<C-a>' => {
+                i = 0
+            },
+
+            '<C-e>' => {
+                i = #line
+            },
+
+            '<C-k>' => {
+                line.take!(i)
+            },
+
+            '<C-l>' => {
+                write(1, "\x1b[2J\x1b[H")
+            },
+
+            '<Left>' => {
+                if i > 0 {
+                    i -= 1
+                }
+            },
+
+            '<Right>' => {
+                if i < #line {
+                    i += 1
+                }
+            },
+
+            '<DEL>', '<Backspace>' => {
+                if i > 0 {
+                    line.pop(--i)
+                }
+            },
+
+            '<Tab>' => {
+                let (before, after) = line.split(i)
+                let result = (complete ?? defaultComplete ?? completeFile)(before.str() ?? '', after.str() ?? '')
+                match result {
+                    Insert(s) => {
+                        line.insert(i++, s)
+                    },
+
+                    None => {
+                    },
+
+                    ReplaceLine(s) => {
+                        line = s.chars()
+                        i = #line
+                    },
+
+                    ListCompletions(cs) => {
+                        write(1, "{erase}\r")
+                        for line in fitItems(cs, 120) {
+                            print(line)
+                        }
+                    }
+                }
+            },
+
+            ch => {
+                line.insert(i++, ch.clone())
+            }
+        }
+    }
+}

@@ -132,7 +132,10 @@ scope_add(struct scope *s, char const *id)
         sym->captured = false;
         sym->ci = -1;
 
-        sym->global = (s->function->parent == NULL || s->function->parent->parent == NULL);
+                      // s->function == global, or
+        sym->global = s->function->parent == NULL ||
+                      // s->function == state.global
+                      (s->function->parent->parent == NULL && s->function != s);
 
         sym->hash = h;
         sym->next = s->table[i];
@@ -150,7 +153,7 @@ scope_add(struct scope *s, char const *id)
                 sym->i = owner->owned.count;
         }
 
-        LOG("Symbol %d (%s) is getting i = %d", sym->symbol, id, sym->i);
+        LOG("Symbol %d (%s) is getting i = %d in scope %p", sym->symbol, id, sym->i, s);
 
         VPush(owner->owned, sym);
 

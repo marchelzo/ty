@@ -7,6 +7,7 @@ import ffi as c
 import ty
 import ty.parse as parse
 import ty.token as lex
+import os
 
 tag MatchError;
 tag IndexError;
@@ -353,6 +354,14 @@ class String : Iterable {
 
     num?() {
         return @match?(/^\d+(?:\.\d+)?$/)
+    }
+
+    ends?(s) {
+        s in ['', self.slice(-#s)]
+    }
+
+    starts?(s) {
+        s == self.slice(0, #s)
     }
 
     splice(i, j) {
@@ -2023,56 +2032,6 @@ macro ifdef {
     }
 
     ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
-}
-
-function help(x) {
-    function pdoc(s, indent) {
-        let lines = s.lines().dropWhile!(/^\s*$/)
-
-        // Remove trailing empty lines at the end.
-        while #lines > 0 && lines[-1].match?(/^\s*$/) {
-            lines.pop()
-        }
-
-        // Find the leading whitespace length common to all lines
-        let leading = lines.map(&match!(/^\s*/) |> &len).min()
-
-        for line in lines.map!(&slice(leading)) {
-            print(''.padLeft(indent), line, sep: '')
-        }
-    }
-
-    match doc(x) {
-        (name, doc, [*ms]) => {
-            print("class {name}:")
-            if doc != nil {
-                print()
-                pdoc(doc, 4)
-            }
-            for (name, proto, doc) in ms {
-                print()
-                if doc != nil {
-                    print("    {name.comb(/^\w+\./)}{proto}:")
-                    print()
-                    pdoc(doc, 6)
-                } else {
-                    print("    {name.comb(/^\w+\./)}{proto}")
-                }
-            }
-            print()
-        },
-
-        (name, proto, doc) => {
-            if doc != nil {
-                print("{name}{proto}:")
-                print()
-                pdoc(doc, 4)
-                print()
-            } else {
-                print("{name}{proto}")
-            }
-        }
-    }
 }
 
 operator **   10 right

@@ -1,0 +1,142 @@
+import os
+import ty
+import ty.lex as lex
+import ty.parse as parse
+import ty.token as tok
+
+let table = %{}
+
+macro doc! {
+    let (parse.show ~> name, func) = parse.stmt(0, raw: true)
+    let (parse.show ~> proto, _) = parse.stmt(0, raw: true)
+    let help = tok.next().str
+    $$[
+        table[$$(func)] = (
+            $$(ty.String(name)),
+            $$(ty.String(proto)),
+            $$(ty.String(help))
+        )
+    $$]
+}
+
+doc! print
+(*args, sep: String = ', ', end: String = '\n', flush: Bool)
+'''
+    Print each argument to stdout.
+'''
+
+doc! os::getaddrinfo
+(
+    hostname: String,
+    service: String | Int,
+    family: Int,
+    socktype: Int,
+    protocol: Int,
+    flags: ?Int
+) -> Ok([{family: Int, type: Int, protocol: Int, address: Blob, canonname: ?String}]) | Err(Int)
+'''
+    See getaddrinfo(3).
+
+    Example
+    -------
+
+        let addr = match getaddrinfo('www.google.com', 80, AF_INET, SOCK_STREAM, 0) {
+            Ok([a, *]) => a,
+            Err(e) => {
+                eprint("getaddrinfo(): {gai_strerror(e)}")
+                exit(1)
+            }
+        }
+'''
+
+doc! os::sendto
+(socket: Int, data: Blob | String, flags: Int, address: Blob) -> Int
+'''
+    See sendto(2).
+
+    Example
+    -------
+
+
+        let sock = socket(AF_INET, SOCK_DGRAM, 0)
+
+        let Ok([&.address ~> addr]) = getaddrinfo(...)
+
+        if sendto(sock, "Hello!", 0, addr) < 0 {
+            eprint(...)
+            return -1
+        }
+'''
+
+doc! os::recvfrom
+[
+    (socket: Int, buffer: Blob, n: Int, flags: Int) -> Int,
+    (socket: Int, n: Int, flags: Int) -> Int
+]
+'''
+    See recvfrom(2).
+
+    Example
+    -------
+
+    let b = Blob()
+
+    while recvfrom(sock, b, 4096, 0) > 0 {
+        print("Got a message: {b.str()}")
+        b.clear()
+    }
+'''
+
+pub function help(x) {
+    let doc = function (x) {
+        return table[x] ?? doc(x)
+    }
+
+    function pdoc(s, indent) {
+        let lines = s.lines().dropWhile!(/^\s*$/)
+
+        // Remove trailing empty lines at the end.
+        while #lines > 0 && lines[-1].match?(/^\s*$/) {
+            lines.pop()
+        }
+
+        // Find the leading whitespace length common to all lines
+        let leading = lines.map(&match!(/^\s*/) |> &len).min()
+
+        for line in lines.map!(&slice(leading)) {
+            print(''.padLeft(indent), line, sep: '')
+        }
+    }
+
+    match doc(x) {
+        (name, doc, [*ms]) => {
+            print("class {name}:")
+            if doc != nil {
+                print()
+                pdoc(doc, 4)
+            }
+            for (name, proto, doc) in ms {
+                print()
+                if doc != nil {
+                    print("    {name.comb(/^\w+\./)}{proto}:")
+                    print()
+                    pdoc(doc, 6)
+                } else {
+                    print("    {name.comb(/^\w+\./)}{proto}")
+                }
+            }
+            print()
+        },
+
+        (name, proto, doc) => {
+            if doc != nil {
+                print("{name}{proto}:")
+                print()
+                pdoc(doc, 4)
+                print()
+            } else {
+                print("{name}{proto}")
+            }
+        }
+    }
+}
