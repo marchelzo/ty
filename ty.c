@@ -34,6 +34,9 @@ static bool use_readline;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
 
+static char **
+complete(char const *s, int start, int end);
+
 static char *
 readln(void)
 {
@@ -107,8 +110,14 @@ sigint(int signal)
 noreturn static void
 repl(void)
 {
+        rl_attempted_completion_function = complete;
+        rl_basic_word_break_characters = ".\t\n\r ";
 
         signal(SIGINT, sigint);
+
+        execln("import help (..)");
+
+        use_readline = true;
 
         for (;;) {
                 (void)setjmp(InterruptJB);
@@ -209,13 +218,6 @@ int
 main(int argc, char **argv)
 {
         vm_init(argc, argv);
-
-        use_readline = isatty(0) && argc < 2;
-
-        if (use_readline) {
-                rl_attempted_completion_function = complete;
-                rl_basic_word_break_characters = ".\t\n\r ";
-        }
 
         if (argc <= 1)
                 repl();

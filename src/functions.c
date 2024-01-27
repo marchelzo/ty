@@ -3297,7 +3297,7 @@ builtin_os_poll(int argc, struct value *kwargs)
         int ret = poll(pfds.items, pfds.count, timeout.integer);
         TakeLock();
 
-        if (ret <= 0)
+        if (ret < 0)
                 return INTEGER(ret);
 
         for (int i = 0; i < fds.array->count; ++i) {
@@ -5219,7 +5219,7 @@ builtin_doc(int argc, struct value *kwargs)
         char id[256];
 
         if (argc == 0 || argc > 2) {
-                vm_panic("ty.doc(): expected 1 or 2 arguments but got: %d", argc);
+                vm_panic("doc(): expected 1 or 2 arguments but got: %d", argc);
         }
 
         if (ARG(0).type == VALUE_FUNCTION) {
@@ -5246,19 +5246,19 @@ builtin_doc(int argc, struct value *kwargs)
         }
 
         if (ARG(0).type != VALUE_STRING) {
-                vm_panic("ty.doc(): expected Class, Function, or String but got: %s", value_show_color(&ARG(0)));
+                vm_panic("doc(): expected class, function, or string but got: %s", value_show_color(&ARG(0)));
         }
 
-        snprintf(id, sizeof id, "%s", ARG(0).string);
+        snprintf(id, sizeof id, "%.*s", (int)ARG(0).bytes, ARG(0).string);
 
         struct symbol *s;
 
         if (argc == 2) {
                 if (ARG(1).type != VALUE_STRING) {
-                        vm_panic("ty.doc(): expected function or string but got: %s", value_show_color(&ARG(1)));
+                        vm_panic("doc(): expected function or string but got: %s", value_show_color(&ARG(1)));
                 }
-                snprintf(mod, sizeof mod, "%s", ARG(1).string);
-                s = compiler_lookup(id, mod);
+                snprintf(mod, sizeof mod, "%.*s", (int)ARG(1).bytes, ARG(1).string);
+                s = compiler_lookup(mod, id);
         } else {
                 s = compiler_lookup(NULL, id);
         }
