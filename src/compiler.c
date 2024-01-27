@@ -5172,6 +5172,31 @@ TagAndReturn:
         return v;
 }
 
+static struct value
+typarts(condpart_vector const *parts)
+{
+        struct value v = ARRAY(value_array_new());
+
+        for (int i = 0; i < parts->count; ++i) {
+                struct condpart *part = parts->items[i];
+                if (part->target != NULL) {
+                        value_array_push(
+                                v.array,
+                                tagged(
+                                        part->def ? TyLet : TyAssign,
+                                        tyexpr(part->target),
+                                        tyexpr(part->e),
+                                        NONE
+                                )
+                        );
+                } else {
+                        value_array_push(v.array, tyexpr(part->e));
+                }
+        }
+
+        return v;
+}
+
 struct value
 tyexpr(struct expression const *e)
 {
@@ -5616,25 +5641,16 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyMulti);
                 break;
+        case STATEMENT_WHILE:
+                v = value_tuple(2);
+                v.items[0] = typarts(&s->While.parts);
+                v.items[1] = tystmt(s->While.block);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyWhile);
+                break;
         case STATEMENT_IF:
                 v = value_tuple(3);
-                v.items[0] = ARRAY(value_array_new());
-                for (int i = 0; i < s->iff.parts.count; ++i) {
-                        struct condpart *part = s->iff.parts.items[i];
-                        if (part->target != NULL) {
-                                value_array_push(
-                                        v.items[0].array,
-                                        tagged(
-                                                part->def ? TyLet : TyAssign,
-                                                tyexpr(part->target),
-                                                tyexpr(part->e),
-                                                NONE
-                                        )
-                                );
-                        } else {
-                                value_array_push(v.items[0].array, tyexpr(part->e));
-                        }
-                }
+                v.items[0] = typarts(&s->iff.parts);
                 v.items[1] = tystmt(s->iff.then);
                 v.items[2] = s->iff.otherwise != NULL ? tystmt(s->iff.otherwise) : NIL;
                 v.type |= VALUE_TAGGED;
@@ -5662,6 +5678,34 @@ tystmt(struct statement *s)
         return v;
 }
 
+condpart_vector
+cparts(struct value *v)
+{
+        condpart_vector parts = {0};
+
+        for (int i = 0; i < v->array->count; ++i) {
+                struct value *part = &v->array->items[i];
+                struct condpart *cp = Allocate(sizeof *cp);
+                int tag = tags_first(part->tags);
+                if (tag == TyLet) {
+                        cp->def = true;
+                        cp->target = cexpr(&part->items[0]);
+                        cp->e = cexpr(&part->items[1]);
+                } else if (tag == TyAssign) {
+                        cp->def = false;
+                        cp->target = cexpr(&part->items[0]);
+                        cp->e = cexpr(&part->items[1]);
+                } else {
+                        cp->def = false;
+                        cp->target = NULL;
+                        cp->e = cexpr(part);
+                }
+                VPush(parts, cp);
+        }
+
+        return parts;
+}
+
 struct statement *
 cstmt(struct value *v)
 {
@@ -5671,15 +5715,22 @@ cstmt(struct value *v)
         s->start = state.mstart;
         s->end = state.mend;
 
-        if (tags_first(v->tags) == TyStmt) {
+        int tag = tags_first(v->tags);
+
+        switch (tag) {
+        case TyStmt:
                 return v->ptr;
-        } else if (tags_first(v->tags) == TyLet) {
+        case TyLet:
+        {
                 struct value *pub = tuple_get(v, "public");
                 s->type = STATEMENT_DEFINITION;
                 s->pub = pub != NULL && value_truthy(pub);
                 s->target = cexpr(&v->items[0]);
                 s->value = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyFuncDef) {
+                break;
+        }
+        case TyFuncDef:
+        {
                 struct value f = *v;
                 f.tags = tags_push(0, TyFunc);
                 s->type = STATEMENT_FUNCTION_DEFINITION;
@@ -5692,7 +5743,10 @@ cstmt(struct value *v)
                 s->target->module = NULL;
                 s->target->constraint = NULL;
                 s->target->symbolized = false;
-        } else if (tags_first(v->tags) == TyClass) {
+                break;
+        }
+        case TyClass:
+        {
                 s->type = STATEMENT_CLASS_DEFINITION;
                 s->class.name = mkcstr(tuple_get(v, "name"));
                 s->class.doc = NULL;
@@ -5718,42 +5772,30 @@ cstmt(struct value *v)
                 if (statics != NULL) for (int i = 0; i < statics->array->count; ++i) {
                         VPush(s->class.statics, cexpr(&statics->array->items[i]));
                 }
-        } else if (tags_first(v->tags) == TyIf ||
-                   tags_first(v->tags) == TyIfNot) {
+                break;
+        }
+        case TyIfNot:
+                s->iff.neg =  true;
+                goto If;
+        case TyIf:
+                s->iff.neg = false;
+        If:
                 s->type = STATEMENT_IF;
-                s->iff.neg = tags_first(v->tags) == TyIfNot;
-                vec_init(s->iff.parts);
-
-                struct value *parts = &v->items[0];
-                for (int i = 0; i < parts->array->count; ++i) {
-                        struct value *part = &parts->array->items[i];
-                        struct condpart *cp = Allocate(sizeof *cp);
-                        if (tags_first(part->tags) == TyLet) {
-                                cp->def = true;
-                                cp->target = cexpr(&part->items[0]);
-                                cp->e = cexpr(&part->items[1]);
-                        } else if (tags_first(part->tags) == TyAssign) {
-                                cp->def = false;
-                                cp->target = cexpr(&part->items[0]);
-                                cp->e = cexpr(&part->items[1]);
-                        } else {
-                                cp->def = false;
-                                cp->target = NULL;
-                                cp->e = cexpr(part);
-                        }
-                        VPush(s->iff.parts, cp);
-                }
+                s->iff.parts = cparts(&v->items[0]);
                 s->iff.then = cstmt(&v->items[1]);
                 if (v->count > 2 && v->items[2].type != VALUE_NIL) {
                         s->iff.otherwise = cstmt(&v->items[2]);
                 } else {
                         s->iff.otherwise = NULL;
                 }
-        } else if (tags_first(v->tags) == TyDefer) {
+                break;
+        case TyDefer:
                 v->tags = tags_pop(v->tags);
                 s->type = STATEMENT_DEFER;
                 s->expression = cexpr(v);
-        } else if (tags_first(v->tags) == TyMatch) {
+                break;
+        case TyMatch:
+        {
                 s->type = STATEMENT_MATCH;
                 s->match.e = cexpr(&v->items[0]);
                 vec_init(s->match.patterns);
@@ -5766,7 +5808,15 @@ cstmt(struct value *v)
                         VPush(s->match.statements, cstmt(&_case->items[1]));
                         VPush(s->match.conds, NULL);
                 }
-        } else if (tags_first(v->tags) == TyEach) {
+                break;
+        }
+        case TyWhile:
+                s->type = STATEMENT_WHILE;
+                s->While.parts = cparts(&v->items[0]);
+                s->While.block = cstmt(&v->items[1]);
+                break;
+        case TyEach:
+        {
                 s->type = STATEMENT_EACH_LOOP;
                 s->each.target = cexpr(tuple_get(v, "pattern"));
                 s->each.array = cexpr(tuple_get(v, "iter"));
@@ -5775,12 +5825,18 @@ cstmt(struct value *v)
                 s->each.cond = (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL;
                 struct value *stop = tuple_get(v, "stop");
                 s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(stop) : NULL;
-        } else if (tags_first(v->tags) == TyThrow) {
+                break;
+        }
+        case TyThrow:
+        {
                 struct value v_ = *v;
                 v_.tags = tags_pop(v_.tags);
                 s->type = STATEMENT_THROW;
                 s->throw = cexpr(&v_);
-        } else if (tags_first(v->tags) == TyReturn) {
+                break;
+        }
+        case TyReturn:
+        {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
                 if (v->type == VALUE_TUPLE) {
@@ -5791,23 +5847,29 @@ cstmt(struct value *v)
                         v->tags = tags_pop(v->tags);
                         VPush(s->returns, cexpr(v));
                 }
-        } else if (tags_first(v->tags) == TyBlock) {
+                break;
+        }
+        case TyBlock:
                 s->type = STATEMENT_BLOCK;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         VPush(s->statements, cstmt(&v->array->items[i]));
                 }
-        } else if (tags_first(v->tags) == TyMulti) {
+                break;
+        case TyMulti:
                 s->type = STATEMENT_MULTI;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
                         VPush(s->statements, cstmt(&v->array->items[i]));
                 }
-        } else if (v->type == VALUE_TAG && v->tag == TyNull) {
+                break;
+        case TyNull:
                 s->type = STATEMENT_NULL;
-        } else {
+                break;
+        default:
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(v);
+                break;
         }
 
         return s;
@@ -5822,9 +5884,19 @@ cexpr(struct value *v)
         e->start = state.mstart;
         e->end = state.mend;
 
-        if (tags_first(v->tags) == TyExpr) {
+        if (v->type == VALUE_TAG && v->tag == TyNil) {
+                e->type = EXPRESSION_NIL;
+                return e;
+        }
+
+
+        int tag = tags_first(v->tags);
+
+        switch (tag) {
+        case TyExpr:
                 return v->ptr;
-        } else if (tags_first(v->tags) == TyValue) {
+        case TyValue:
+        {
                 struct value *value = Allocate(sizeof *value);
                 *value = *v;
                 value->tags = tags_pop(value->tags);
@@ -5834,26 +5906,38 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
                 gc_push(value);
-        } else if (tags_first(v->tags) == TyInt) {
+                break;
+        }
+        case TyInt:
                 e->type = EXPRESSION_INTEGER;
                 e->integer = v->integer;
-        } else if (tags_first(v->tags) == TyFloat) {
+                break;
+        case TyFloat:
                 e->type = EXPRESSION_REAL;
                 e->real = v->real;
-        } else if (tags_first(v->tags) == TyId) {
+                break;
+        case TyId:
+        {
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
-        } else if (tags_first(v->tags) == TySpread) {
+                break;
+        }
+        case TySpread:
+        {
                 struct value v_ = *v;
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_SPREAD;
                 e->value = cexpr(&v_);
-        } else if (tags_first(v->tags) == TyString) {
+                break;
+        }
+        case TyString:
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(v);
-        } else if (tags_first(v->tags) == TySpecialString) {
+                break;
+        case TySpecialString:
+        {
                 e->type = EXPRESSION_SPECIAL_STRING;
                 vec_init(e->strings);
                 vec_init(e->expressions);
@@ -5869,11 +5953,17 @@ cexpr(struct value *v)
                 if (v->array->count == 0 || vec_last(*v->array)->type != VALUE_STRING) {
                         VPush(e->strings, "");
                 }
-        } else if (tags_first(v->tags) == TyArray) {
+
+                break;
+        }
+        case TyArray:
+        {
                 e->type = EXPRESSION_ARRAY;
+
                 vec_init(e->elements);
                 vec_init(e->aconds);
                 vec_init(e->optional);
+
                 for (int i = 0; i < v->array->count; ++i) {
                         struct value *entry = &v->array->items[i];
                         struct value *optional = tuple_get(entry, "optional");
@@ -5882,7 +5972,11 @@ cexpr(struct value *v)
                         VPush(e->optional, optional != NULL ? optional->boolean : false);
                         VPush(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
                 }
-        } else if (tags_first(v->tags) == TyRecord) {
+
+                break;
+        }
+        case TyRecord:
+        {
                 e->type = EXPRESSION_TUPLE;
                 vec_init(e->es);
                 vec_init(e->names);
@@ -5899,7 +5993,11 @@ cexpr(struct value *v)
                         VPush(e->required, optional != NULL ? !optional->boolean : true);
                         VPush(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(cond) : NULL);
                 }
-        } else if (tags_first(v->tags) == TyDict) {
+
+                break;
+        }
+        case TyDict:
+        {
                 e->type = EXPRESSION_DICT;
                 e->dtmp = NULL;
                 vec_init(e->keys);
@@ -5914,7 +6012,11 @@ cexpr(struct value *v)
                         VPush(e->keys, cexpr(&items->array->items[i].items[0]));
                         VPush(e->values, cexpr(&items->array->items[i].items[1]));
                 }
-        } else if (tags_first(v->tags) == TyCall) {
+
+                break;
+        }
+        case TyCall:
+        {
                 e->type = EXPRESSION_FUNCTION_CALL;
                 vec_init(e->args);
                 vec_init(e->fconds);
@@ -5943,7 +6045,11 @@ cexpr(struct value *v)
                                 VPush(e->fkwconds, cond != NULL ? cexpr(cond) : NULL);
                         }
                 }
-        } else if (tags_first(v->tags) == TyMethodCall) {
+
+                break;
+        }
+        case TyMethodCall:
+        {
                 e->type = EXPRESSION_METHOD_CALL;
                 vec_init(e->method_args);
                 vec_init(e->method_kws);
@@ -5976,8 +6082,12 @@ cexpr(struct value *v)
                                 VPush(e->method_kws, mkcstr(name));
                         }
                 }
-        } else if (tags_first(v->tags) == TyFunc || tags_first(v->tags) == TyImplicitFunc) {
-                e->type = tags_first(v->tags) == TyFunc ? EXPRESSION_FUNCTION : EXPRESSION_IMPLICIT_FUNCTION;
+                break;
+        }
+        case TyFunc:
+        case TyImplicitFunc:
+        {
+                e->type = tag == TyFunc ? EXPRESSION_FUNCTION : EXPRESSION_IMPLICIT_FUNCTION;
                 e->ikwargs = -1;
                 e->rest = -1;
                 e->ftype = FT_NONE;
@@ -5993,171 +6103,195 @@ cexpr(struct value *v)
                 vec_init(e->dflts);
                 for (int i = 0; i < params->array->count; ++i) {
                         struct value *p = &params->array->items[i];
-                        if (tags_first(p->tags) == TyParam) {
+                        switch (tags_first(p->tags)) {
+                        case TyParam:
+                        {
                                 VPush(e->params, mkcstr(tuple_get(p, "name")));
                                 struct value *c = tuple_get(p, "constraint");
                                 struct value *d = tuple_get(p, "default");
                                 VPush(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(c) : NULL);
                                 VPush(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(d) : NULL);
-                        } else if (tags_first(p->tags) == TyGather) {
+                                break;
+                        }
+                        case TyGather:
                                 VPush(e->params, mkcstr(p));
                                 VPush(e->constraints, NULL);
                                 VPush(e->dflts, NULL);
                                 e->rest = i;
-                        } else if (tags_first(p->tags) == TyKwargs) {
+                                break;
+                        case TyKwargs:
                                 VPush(e->params, mkcstr(p));
                                 VPush(e->constraints, NULL);
                                 VPush(e->dflts, NULL);
                                 e->ikwargs = i;
+                                break;
                         }
                 }
                 e->body = cstmt(tuple_get(v, "body"));
-        } else if (tags_first(v->tags) == TyMemberAccess) {
+                break;
+        }
+        case TyMemberAccess:
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->object = cexpr(&v->items[0]);
                 e->member_name = mkcstr(&v->items[1]);
-        } else if (tags_first(v->tags) == TySubscript) {
+                break;
+        case TySubscript:
                 e->type = EXPRESSION_SUBSCRIPT;
                 e->container = cexpr(&v->items[0]);
                 e->subscript = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyWith) {
+                break;
+        case TyWith:
+        {
                 struct value *lets = &v->items[0];
                 statement_vector defs = {0};
+
                 for (int i = 0; i < lets->array->count; ++i) {
                         VPush(defs, cstmt(&lets->array->items[i]));
                 }
+
                 make_with(e, defs, cstmt(&v->items[1]));
-        } else if (tags_first(v->tags) == TyCond) {
+
+                break;
+        }
+        case TyCond:
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(&v->items[0]);
                 e->then = cexpr(&v->items[1]);
                 e->otherwise = cexpr(&v->items[2]);
-        } else if (v->type == VALUE_TAG && v->tag == TyNil) {
-                e->type = EXPRESSION_NIL;
-        } else if (tags_first(v->tags) == TyBool) {
+                break;
+        case TyBool:
                 e->type = EXPRESSION_BOOLEAN;
                 e->boolean = v->boolean;
-        } else if (tags_first(v->tags) == TyAssign) {
+                break;
+        case TyAssign:
                 e->type = EXPRESSION_EQ;
                 e->target = cexpr(&v->items[0]);
                 e->value = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyWtf) {
+                break;
+        case TyWtf:
                 e->type = EXPRESSION_WTF;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyAdd) {
+                break;
+        case TyAdd:
                 e->type = EXPRESSION_PLUS;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TySub) {
+                break;
+        case TySub:
                 e->type = EXPRESSION_MINUS;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyMod) {
+                break;
+        case TyMod:
                 e->type = EXPRESSION_PERCENT;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyDiv) {
+                break;
+        case TyDiv:
                 e->type = EXPRESSION_DIV;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyMul) {
+                break;
+        case TyMul:
                 e->type = EXPRESSION_STAR;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyEq) {
+                break;
+        case TyEq:
                 e->type = EXPRESSION_DBL_EQ;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyNotEq) {
+                break;
+        case TyNotEq:
                 e->type = EXPRESSION_NOT_EQ;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyGT) {
+                break;
+        case TyGT:
                 e->type = EXPRESSION_GT;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyLT) {
+                break;
+        case TyLT:
                 e->type = EXPRESSION_LT;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyIn) {
+                break;
+        case TyIn:
                 e->type = EXPRESSION_IN;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyNotIn) {
+                break;
+        case TyNotIn:
                 e->type = EXPRESSION_NOT_IN;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyOr) {
+                break;
+        case TyOr:
                 e->type = EXPRESSION_OR;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyAnd) {
+                break;
+        case TyAnd:
                 e->type = EXPRESSION_AND;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyUserOp) {
+                break;
+        case TyUserOp:
                 e->type = EXPRESSION_USER_OP;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
-        } else if (tags_first(v->tags) == TyCount) {
+                break;
+        case TyCount:
+        {
                 struct value v_ = *v;
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_PREFIX_HASH;
                 e->operand = cexpr(&v_);
-        } else if (tags_first(v->tags) == TyCompileTime) {
+                break;
+        }
+        case TyCompileTime:
+        {
                 struct value v_ = *v;
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_COMPILE_TIME;
                 e->operand = cexpr(&v_);
-        } else if (tags_first(v->tags) == TyIfDef) {
+                break;
+        }
+        case TyIfDef:
+        {
                 e->type = EXPRESSION_IFDEF;
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
-        } else if (tags_first(v->tags) == TyDefined) {
+                break;
+        }
+        case TyDefined:
+        {
                 e->type = EXPRESSION_DEFINED;
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
-        } else if (tags_first(v->tags) == TyLet) {
+                break;
+        }
+        case TyLet:
+        case TyMatch:
+        case TyEach:
+        case TyWhile:
+        case TyIf:
+        case TyIfNot:
+        case TyStmt:
+        case TyBlock:
+        case TyNull:
+        case TyMulti:
+        case TyFuncDef:
+        case TyClass:
+        case TyThrow:
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyMatch) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyEach) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyIf) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyIfNot) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyStmt) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyBlock) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (v->type == VALUE_TAG && v->tag == TyNull) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyMulti) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyFuncDef) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyClass) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else if (tags_first(v->tags) == TyThrow) {
-                e->type = EXPRESSION_STATEMENT;
-                e->statement = cstmt(v);
-        } else {
+                break;
+        default:
                 fail("invalid value passed to cexpr(): %s", value_show_color(v));
         }
 
