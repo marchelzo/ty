@@ -1,5 +1,5 @@
 import ty
-import ffi as c
+import ffi as c (C!)
 import cutil (wrap)
 
 if not let $lib = c.dlopen('libtermkey.so.1') ?? c.dlopen('libtermkey.dylib') {
@@ -127,6 +127,9 @@ pub termkey_new = wrap(lib, 'termkey_new', c.ptr, c.int, c.int)
 let waitkey = wrap(lib, 'termkey_waitkey', c.int, c.ptr, c.ptr)
 pub termkey_strfkey = wrap(lib, 'termkey_strfkey', c.u64, c.ptr, c.ptr, c.u64, c.ptr, c.int)
 pub termkey_destroy = wrap(lib, 'termkey_destroy', c.void, c.ptr)
+
+C! pub lib function termkey_start(c.ptr) -> c.int
+C! pub lib function termkey_stop(c.ptr) -> c.int
 
 pub function termkey_keytype(key) {
 	c.member(TermKeyKey, key, 0)
