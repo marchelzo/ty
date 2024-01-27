@@ -111,7 +111,6 @@ pub function readln(prompt=nil, complete=nil) {
         let all = line.str() ?? ''
         let erase = "\x1b[2K"
 
-        let prompt = "[{hi#4}] {prompt}"
         write(1, "{erase}\r{prompt}{all}\r{prompt}{before}")
 
         termkey_waitkey(tk, pKey)
