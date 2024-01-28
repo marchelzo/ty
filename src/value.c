@@ -996,6 +996,8 @@ mark_function(struct value const *v)
         MARK(v->env);
 
         for (size_t i = 0; i < n; ++i) {
+                if (v->env[i] == NULL)
+                        continue;
                 MARK(v->env[i]);
                 value_mark(v->env[i]);
         }

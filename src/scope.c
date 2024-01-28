@@ -243,9 +243,8 @@ scope_capture_all(struct scope *scope, struct scope const *stop)
                         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
                                 LOG("scope_capture_all(scope=%p, scope->function=%p): capturing %s", scope, scope->function, sym->identifier);
 
-                                vec(struct scope *) scopes = {0};
-
                                 struct scope *fscope = scope->function;
+                                vec(struct scope *) scopes = {0};
 
                                 while (fscope != stop->function && fscope->parent->function != stop->function && fscope->parent->function != sym->scope->function) {
                                         VPush(scopes, fscope);

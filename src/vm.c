@@ -1496,6 +1496,14 @@ vm_exec(char *code)
 #endif
                         push(Globals.items[n]);
                         break;
+                CASE(CAPTURE)
+                        READVALUE(i);
+                        READVALUE(j);
+                        vp = gc_alloc_object(sizeof (struct value), GC_VALUE);
+                        *vp = *local(i);
+                        *local(i) = REF(vp);
+                        vec_last(frames)->f.env[j] = vp;
+                        break;
                 CASE(EXEC_CODE)
                         READVALUE(s);
                         vm_exec((char *) s);
@@ -1538,6 +1546,8 @@ vm_exec(char *code)
                 TargetGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
+                        while (Globals.count <= n)
+                                vec_push_unchecked(Globals, NIL);
                         pushtarget(&Globals.items[n], NULL);
                         break;
                 CASE(TARGET_LOCAL)
@@ -3003,6 +3013,8 @@ BadContainer:
                 }
                 CASE(FUNCTION)
                 {
+                        READVALUE(b);
+
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
 
@@ -3014,8 +3026,10 @@ BadContainer:
 
                         int hs = v.info[0];
                         int size  = v.info[1];
-                        int ncaps = v.info[2];
+                        int nEnv = v.info[2];
                         int bound = v.info[3];
+
+                        int ncaps = b ? nEnv - bound : nEnv;
 
                         LOG("Header size: %d", hs);
                         LOG("Code size: %d", size);
@@ -3025,38 +3039,43 @@ BadContainer:
 
                         ip += size + hs;
 
-                        if (ncaps > 0) {
-                                LOG("Allocating ENV for %d caps", ncaps);
-                                v.env = gc_alloc_object(ncaps * sizeof (struct value *), GC_ENV);
-                                ++GC_OFF_COUNT;
+                        if (nEnv > 0) {
+                                LOG("Allocating ENV for %d caps", nEnv);
+                                v.env = gc_alloc_object(nEnv * sizeof (struct value *), GC_ENV);
+                                memset(v.env, 0, nEnv * sizeof (struct value *));
+                        } else {
+                                v.env = NULL;
+                        }
 
+                        ++GC_OFF_COUNT;
+
+                        if (ncaps > 0) {
                                 for (int i = 0; i < ncaps; ++i) {
                                         READVALUE(b);
+                                        READVALUE(j);
                                         struct value *p = poptarget();
                                         if (b) {
                                                 if (p->type == VALUE_REF) {
                                                         /* This variable was already captured, just refer to the same object */
-                                                        v.env[i] = p->ptr;
+                                                        v.env[j] = p->ptr;
                                                 } else {
                                                         // TODO: figure out if this is getting freed too early
                                                         struct value *new = gc_alloc_object(sizeof (struct value), GC_VALUE);
                                                         *new = *p;
                                                         *p = REF(new);
-                                                        v.env[i] = new;
+                                                        v.env[j] = new;
                                                 }
                                         } else {
-                                                v.env[i] = p;
+                                                v.env[j] = p;
                                         }
-                                        LOG("env[%d] = %s", i, value_show(v.env[i]));
+                                        LOG("env[%d] = %s", j, value_show(v.env[j]));
                                 }
-
-                                --GC_OFF_COUNT;
-                        } else {
-                                LOG("Setting ENV to NULL");
-                                v.env = NULL;
                         }
 
                         push(v);
+
+                        --GC_OFF_COUNT;
+
                         break;
                 }
                 CASE(TAIL_CALL)

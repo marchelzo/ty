@@ -5,6 +5,8 @@ import os (..)
 import sh (sh)
 import ioctls (..)
 
+let ERASE_LINE = "\x1b[2K"
+
 let tk = nil
 let defaultPrompt = nil
 let defaultComplete = nil
@@ -124,9 +126,8 @@ pub function readln(prompt=nil, complete=nil) {
     while true {
         let before = line.slice(0, i).str() ?? ''
         let all = line.str() ?? ''
-        let erase = "\x1b[2K"
 
-        write(1, "{erase}\r{prompt}{all}\r{prompt}{before}")
+        write(1, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
 
         termkey_waitkey(tk, pKey)
         termkey_strfkey(tk, keyBuffer, 256, pKey, TERMKEY_FORMAT_VIM)
@@ -143,7 +144,7 @@ pub function readln(prompt=nil, complete=nil) {
                     history.push((line, i))
                 }
 
-                write(1, "{erase}\r")
+                write(1, "{ERASE_LINE}\r")
 
                 return text
             },
@@ -231,7 +232,7 @@ pub function readln(prompt=nil, complete=nil) {
                     },
 
                     ListCompletions(cs) => {
-                        write(1, "{erase}\r")
+                        write(1, "{ERASE_LINE}\r")
 
                         let (h, w) = termDimensions()
 
@@ -278,13 +279,17 @@ function progressString(progress: Float, width: Int) {
     return "[{'█'.repeat(wholeWidth)}{partChar}{' '.repeat(width - wholeWidth - 1)}]"
 }
 
-pub function progress(work, prefix, width) {
+pub function progress(work, prefix, width, effects=id, cleanup=false) {
     if tk == nil {
         init()
     }
 
     for p in work {
         let w = width ?? (termDimensions().1 - 8).clamp(0, 70)
-        write(termFd, "\r{prefix ?? ''}{progressString(p, w)} {p * 100#.1f}%%")
+        write(termFd, "\r{prefix ?? ''}{effects(progressString(p, w))} {p * 100#.1f}%%")
+    }
+
+    if cleanup {
+        write(termFd, "{ERASE_LINE}\r")
     }
 }
