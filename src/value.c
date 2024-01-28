@@ -169,6 +169,7 @@ hash(struct value const *val)
         case VALUE_FUNCTION:          return ptr_hash(val->builtin_function);
         case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->info) ^ ptr_hash(val->env);
         case VALUE_REGEX:             return ptr_hash(val->regex);
+        case VALUE_PTR:               return ptr_hash(val->ptr);
         case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
         case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
         default:                      vm_panic("attempt to hash invalid value: %s", value_show(val));
