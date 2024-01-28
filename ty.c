@@ -226,7 +226,7 @@ main(int argc, char **argv)
 
         char SymbolLocation[512] = {0};
 
-        for (int ch; (ch = getopt_long(argc, argv, "qcpLm:t:e:", NULL, NULL)) != -1;) {
+        for (int ch; (ch = getopt_long(argc, argv, "+qcpLm:t:e:", NULL, NULL)) != -1;) {
                 switch (ch) {
                 case 'q':
                         CheckConstraints = false;
