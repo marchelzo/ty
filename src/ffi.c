@@ -3,6 +3,7 @@
 
 #include "value.h"
 #include "alloc.h"
+#include "dict.h"
 #include "util.h"
 #include "vm.h"
 #include "cffi.h"
@@ -178,7 +179,18 @@ Bad:
 
         ffi_cif *cif = gc_alloc(sizeof *cif);
 
-        if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, max(0, argc - 1), rt, ats.items) != FFI_OK) {
+        struct value *nFixed = NAMED("nFixed");
+
+        if (nFixed != NULL && nFixed->type != VALUE_NIL) {
+                if (nFixed->type != VALUE_INTEGER) {
+                        vm_panic("ffi.cif(): expected nFixed to be an integer but got: %s", value_show_color(nFixed));
+                }
+                if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->integer, max(0, argc - 1), rt, ats.items) != FFI_OK) {
+                        vec_empty(ats);
+                        gc_free(cif);
+                        return NIL;
+                }
+        } else if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, max(0, argc - 1), rt, ats.items) != FFI_OK) {
                 vec_empty(ats);
                 gc_free(cif);
                 return NIL;
