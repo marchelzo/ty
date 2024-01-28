@@ -8,21 +8,25 @@
 extern _Bool EnableLogging;
 
 #define XLOG(...) if (EnableLogging) do { \
+                        GC_OFF_COUNT += 1; \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \
                         fprintf(stderr, "(%14llu) ", TID), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
                         funlockfile(stderr); \
+                        GC_OFF_COUNT -= 1; \
                 } while (0)
 
 #if !defined(TY_NO_LOG)
-#define LOG(...) if (EnableLogging && false) do { \
+#define LOG(...) if (EnableLogging) do { \
+                        GC_OFF_COUNT += 1; \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
                         funlockfile(stderr); \
+                        GC_OFF_COUNT -= 1; \
                 } while (0)
 #else
 #define LOG(...) ;
@@ -43,3 +47,5 @@ extern _Bool EnableLogging;
 #endif
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

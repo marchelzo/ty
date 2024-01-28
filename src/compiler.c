@@ -1803,7 +1803,6 @@ emit_float(float f)
 inline static void
 emit_string(char const *s)
 {
-
         LOG("emitting string: %s", s);
         VPushN(state.code, s, strlen(s) + 1);
 }
@@ -1959,11 +1958,14 @@ emit_function(struct expression const *e, int class)
         struct symbol **caps = e->scope->captured.items;
         int *cap_indices = e->scope->cap_indices.items;
         int ncaps = e->scope->captured.count;
+        int bound_caps = 0;
 
         LOG("Compiling %s. scope=%p", e->name == NULL ? "(anon)" : e->name, e->scope);
 
         for (int i = ncaps - 1; i >= 0; --i) {
-                if (cap_indices[i] == -1) {
+                if (caps[i]->scope->function == e->scope) {
+                        bound_caps += 1;
+                } else if (cap_indices[i] == -1) {
                         /*
                          * Don't call emit_tgt because despite these being captured,
                          * we need to use TARGET_LOCAL to avoid following the reference.
@@ -1982,6 +1984,7 @@ emit_function(struct expression const *e, int class)
         }
 
         emit_instr(INSTR_FUNCTION);
+        emit_boolean(bound_caps > 0);
 
         while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
                 VPush(state.code, 0x00);
@@ -2110,6 +2113,13 @@ emit_function(struct expression const *e, int class)
                 vec_init(empty.returns);
                 emit_statement(&empty, false);
         } else {
+                for (int i = ncaps - 1; i >= 0; --i) {
+                        if (caps[i]->scope->function == e->scope) {
+                                emit_instr(INSTR_CAPTURE);
+                                emit_int(caps[i]->i);
+                                emit_int(i);
+                        }
+                }
                 emit_statement(body, true);
                 if (CheckConstraints && e->return_type != NULL) {
                         emit_return_check(e);
@@ -2126,10 +2136,13 @@ emit_function(struct expression const *e, int class)
         LOG("bytes in func = %d", bytes);
 
         for (int i = 0; i < ncaps; ++i) {
+                if (caps[i]->scope->function == e->scope)
+                        continue;
                 bool local = caps[i]->scope->function == fs_save;
                 LOG("local(%s, %s): %d", e->name == NULL ? "(anon)" : e->name, caps[i]->identifier, local);
                 LOG("  fscope(%s) = %p, fs_save = %p", caps[i]->identifier, caps[i]->scope->function, fs_save);
                 emit_boolean(local);
+                emit_int(i);
         }
 
         state.fscope = fs_save;
