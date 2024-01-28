@@ -5341,7 +5341,6 @@ builtin_eval(int argc, struct value *kwargs)
                 struct statement **prog = parse(B.items + 1, "(eval)");
 
                 if (prog == NULL) {
-                        puts("prog is NULL");
                         char const *msg = parse_error();
                         struct value e = Err(STRING_CLONE(msg, strlen(msg)));
                         DestroyArena(old);
