@@ -100,7 +100,12 @@ gc_resize_unchecked(void *p, size_t n) {
 inline static void
 CheckUsed(void)
 {
-        if (GC_OFF_COUNT == 0 && MemoryUsed > MemoryLimit) {
+        if (
+                GC_OFF_COUNT == 0
+#ifdef TY_RELEASE
+                && MemoryUsed > MemoryLimit
+#endif
+        ) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC();
                 GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);

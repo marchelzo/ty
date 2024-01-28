@@ -30,14 +30,15 @@ static vec(struct table) tables;
 static struct tags *
 mklist(int tag, struct tags *next)
 {
-        struct tags *t = gc_alloc(sizeof *t);
+        struct tags *t = NULL;
+		resize_nogc(t, sizeof *t);
 
         vec_init(t->links);
         t->n = lists.count;
         t->tag = tag;
         t->next = next;
 
-        vec_push(lists, t);
+        vec_nogc_push(lists, t);
 
         return t;
 }
@@ -53,11 +54,11 @@ tags_new(char const *tag)
 {
         LOG("making new tag: %s -> %d", tag, tagcount);
 
-        vec_push(names, tag);
+        vec_nogc_push(names, tag);
 
         struct table table;
         table_init(&table);
-        vec_push(tables, table);
+        vec_nogc_push(tables, table);
 
         mklist(tagcount, lists.items[0]);
         return tagcount++;
@@ -82,7 +83,7 @@ tags_push(int n, int tag)
                         return t->links.items[i].t->n;
 
         struct tags *new = mklist(tag, t);
-        vec_push(t->links, ((struct link){ .t = new, .tag = tag }));
+        vec_nogc_push(t->links, ((struct link){ .t = new, .tag = tag }));
 
         return new->n;
 }

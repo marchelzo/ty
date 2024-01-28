@@ -122,7 +122,7 @@ gc_register(void *p)
 void
 _gc_push(struct value *v)
 {
-        vec_push_unchecked(RootSet, v);
+        vec_nogc_push(RootSet, v);
 }
 
 void

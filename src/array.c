@@ -70,7 +70,7 @@ shrink(struct value *array)
                 if (array->array->count == 0)
                         gc_free(array->array->items), array->array->items = NULL;
                 else
-                        resize(array->array->items, array->array->count * sizeof (struct value));
+                        resize_unchecked(array->array->items, array->array->count * sizeof (struct value));
         }
 }
 
