@@ -33,3 +33,4 @@ cfun! nil c.ptr strsignal(c.int)
 let os::walk = walk
 let os::isatty = isatty
 let os::strsignal = strsignal |> c.str
+let os::ioctl = c.wrapVar(nil, 'ioctl', 2, c.int, c.int, c.ulong)

@@ -34,6 +34,8 @@ static bool use_readline;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
 
+bool EnableLogging = false;
+
 static char **
 complete(char const *s, int start, int end);
 
@@ -224,13 +226,16 @@ main(int argc, char **argv)
 
         char SymbolLocation[512] = {0};
 
-        for (int ch; (ch = getopt_long(argc, argv, "qcpm:t:e:", NULL, NULL)) != -1;) {
+        for (int ch; (ch = getopt_long(argc, argv, "qcpLm:t:e:", NULL, NULL)) != -1;) {
                 switch (ch) {
                 case 'q':
                         CheckConstraints = false;
                         break;
                 case 'c':
                         CompileOnly = true;
+                        break;
+                case 'L':
+                        EnableLogging = true;
                         break;
                 case 'p':
                         PrintResult = true;

@@ -5,7 +5,9 @@
 #include <sys/file.h>
 #include <stdio.h>
 
-#define XLOG(...) do { \
+extern _Bool EnableLogging;
+
+#define XLOG(...) if (EnableLogging) do { \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \
                         fprintf(stderr, "(%14llu) ", TID), \
@@ -14,8 +16,8 @@
                         funlockfile(stderr); \
                 } while (0)
 
-#if !defined(TY_NO_LOG) || 0
-#define LOG(...) do { \
+#if !defined(TY_NO_LOG)
+#define LOG(...) if (EnableLogging && false) do { \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \
                         fprintf(stderr, __VA_ARGS__), \
@@ -29,7 +31,7 @@
 #define TID ((unsigned long long)pthread_self())
 
 #if 0
-#define GCLOG(...) do { \
+#define GCLOG(...) if (EnableLogging) do { \
                         flockfile(stderr), \
                         fprintf(stderr, "(%14llu) ", TID), \
                         fprintf(stderr, __VA_ARGS__), \

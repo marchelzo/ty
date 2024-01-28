@@ -4,7 +4,6 @@
 #include "value.h"
 
 extern bool CheckConstraints;
-
 struct location;
 struct expression;
 
@@ -55,6 +54,9 @@ compiler_get_location(char const *code, struct location *start, struct location 
 
 bool
 compiler_has_module(char const *path);
+
+int
+compiler_global_count(void);
 
 struct value
 compiler_render_template(struct expression *);

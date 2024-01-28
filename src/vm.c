@@ -67,7 +67,7 @@
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
-  #define CASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); LOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
+  #define CASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); XLOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
 #else
   #define CASE(i) case INSTR_ ## i:
 #endif
@@ -436,11 +436,16 @@ static int builtin_count = sizeof builtins / sizeof builtins[0];
 
 pcre_jit_stack *JITStack = NULL;
 
-/*
- * This relies on no other symbols being introduced to the compiler
- * up until the point that this is called. i.e., it assumes that the
- * first built-in function should have symbol 0. I think this is ok.
- */
+inline static void
+PopulateGlobals(void)
+{
+        int n = compiler_global_count();
+
+        while (Globals.count < n) {
+                vec_push_unchecked(Globals, NIL);
+        }
+}
+
 static void
 add_builtins(int ac, char **av)
 {
@@ -580,7 +585,12 @@ SpecialTarget(void)
         return (((uintptr_t)targets.items[targets.count - 1].t) & 0x07) != 0;
 }
 
-inline static void
+#ifdef TY_RELEASE
+inline
+#else
+__attribute__((optnone, noinline))
+#endif
+static void
 call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
 {
         int bound = f->info[3];
@@ -606,13 +616,14 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 n += 1;
         }
 
+        GC_OFF_COUNT += 1;
+
         /*
          * If the function was declared with the form f(..., *extra) then we
          * create an array and add any extra arguments to it.
          */
         if (irest != -1) {
                 struct array *extra = value_array_new();
-                NOGC(extra);
 
                 for (int i = irest; i < argc; ++i) {
                         value_array_push(extra, stack.items[fp + i]);
@@ -623,12 +634,13 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 }
 
                 stack.items[fp + irest] = ARRAY(extra);
-                OKGC(extra);
         }
 
         if (ikwargs != -1) {
                 stack.items[fp + ikwargs] = (nkw > 0) ? kwargs : DICT(dict_new());
         }
+
+        GC_OFF_COUNT -= 1;
 
         /*
          * Throw away extra arguments.
@@ -646,7 +658,7 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 stack.items[fp + np] = *self;
         }
 
-        vec_push(frames, FRAME(fp, *f, ip));
+        vec_push_unchecked(frames, FRAME(fp, *f, ip));
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
@@ -667,12 +679,12 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
         print_stack(max(bound + 2, 5));
 
         if (exec) {
-                vec_push(calls, &halt);
+                vec_push_unchecked(calls, &halt);
                 gc_push(f);
                 vm_exec(code);
                 gc_pop();
         } else {
-                vec_push(calls, ip);
+                vec_push_unchecked(calls, ip);
                 ip = code;
         }
 }
@@ -682,7 +694,7 @@ call_co(struct value *v, int n)
 {
         if (v->gen->ip != code_of(&v->gen->f)) {
                 if (n == 0) {
-                        vec_nogc_push(v->gen->frame, NIL);
+                        vec_push_unchecked(v->gen->frame, NIL);
                 } else {
                         vec_nogc_push_n(v->gen->frame, top() - (n - 1), n);
                         stack.count -= n;
@@ -863,7 +875,7 @@ CleanupThread(void *ctx)
         free(allocs.items);
 
         vec(struct value const *) *root_set = GCRootSet();
-        gc_free(root_set->items);
+        free(root_set->items);
 
         if (MyGroup->ThreadList.count == 0) {
                 pthread_mutex_destroy(&MyGroup->Lock);
@@ -1433,6 +1445,8 @@ vm_exec(char *code)
         char const *fname;
 #endif
 
+        PopulateGlobals();
+
         for (;;) {
         if (GC_OFF_COUNT == 0 && atomic_load(&MyGroup->WantGC)) {
                 WaitGC();
@@ -1480,8 +1494,6 @@ vm_exec(char *code)
                         LOG("Loading global: %s (%d)", ip, n);
                         ip += strlen(ip) + 1;
 #endif
-                        while (Globals.count <= n)
-                                vec_push(Globals, NIL);
                         push(Globals.items[n]);
                         break;
                 CASE(EXEC_CODE)
@@ -1526,8 +1538,6 @@ vm_exec(char *code)
                 TargetGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
-                        while (Globals.count <= n)
-                                vec_push(Globals, NIL);
                         pushtarget(&Globals.items[n], NULL);
                         break;
                 CASE(TARGET_LOCAL)
@@ -1668,14 +1678,13 @@ vm_exec(char *code)
                         READVALUE(i);
                         READVALUE(j);
                         READVALUE(n);
-                        vp = poptarget();
                         if (top()->type != VALUE_ARRAY || top()->array->count < i + j) {
                                 ip += n;
                         } else {
                                 struct array *rest = value_array_new();
                                 NOGC(rest);
                                 vec_push_n(*rest, top()->array->items + i, top()->array->count - (i + j));
-                                *vp = ARRAY(rest);
+                                *poptarget() = ARRAY(rest);
                                 OKGC(rest);
                         }
                         break;
@@ -2088,19 +2097,21 @@ Throw:
 
                         v = TUPLE(vp, NULL, k, false);
 
+                        GC_OFF_COUNT += 1;
+
                         if (k > 0) {
                                 memcpy(vp, values.items, sizeof (struct value[k]));
                                 if (have_names) {
-                                        NOGC(vp);
                                         v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
                                         memcpy(v.names, names.items, sizeof (char *[k]));
-                                        OKGC(vp);
                                 }
                         }
 
                         stack.count -= n;
 
                         push(v);
+
+                        GC_OFF_COUNT -= 1;
 
                         break;
                 }
@@ -2252,7 +2263,7 @@ Throw:
                         case VALUE_OBJECT:
                                 if ((vp = class_method(v.class, "__next__")) != NULL) {
                                         push(INTEGER(i));
-                                        vec_push(calls, ip);
+                                        vec_push_unchecked(calls, ip);
                                         call(vp, &v, 1, 0, false);
                                         *vec_last(calls) = next_fix;
                                 } else if ((vp = class_method(v.class, "__iter__")) != NULL) {
@@ -2260,7 +2271,7 @@ Throw:
                                         pop();
                                         --top()->i;
                                         /* Have to repeat this instruction */
-                                        vec_push(calls, ip - 1);
+                                        vec_push_unchecked(calls, ip - 1);
                                         call(vp, &v, 0, 0, false);
                                         *vec_last(calls) = iter_fix;
                                         continue;
@@ -2285,12 +2296,13 @@ Throw:
                                 }
                                 break;
                         case VALUE_GENERATOR:
-                                vec_push(calls, ip);
+                                vec_push_unchecked(calls, ip);
                                 call_co(&v, 0);
                                 *vec_last(v.gen->calls) = next_fix;
                                 break;
                         default:
                         NoIter:
+                                GC_OFF_COUNT += 1;
                                 vm_panic("for-each loop on non-iterable value: %s", value_show(&v));
                         }
                         break;
@@ -3077,8 +3089,8 @@ BadContainer:
                                         gc_push(v.this);
                                         AutoThis = false;
                                 }
+                                GC_OFF_COUNT += 1;
                                 container = DICT(dict_new());
-                                NOGC(container.dict);
                                 for (int i = 0; i < nkw; ++i) {
                                         if (ip[0] == '*') {
                                                 if (top()->type == VALUE_DICT) {
@@ -3111,7 +3123,7 @@ BadContainer:
                                         ip += strlen(ip) + 1;
                                 }
                                 push(container);
-                                OKGC(container.dict);
+                                GC_OFF_COUNT -= 1;
                         } else {
                                 container = NIL;
         Call:
@@ -3156,20 +3168,22 @@ BadContainer:
                                         top()->tags = tags_push(top()->tags, v.tag);
                                         top()->type |= VALUE_TAGGED;
                                 } else if (nkw > 0) {
+                                        GC_OFF_COUNT += 1;
                                         container = pop();
-                                        gc_push(&container);
                                         value = builtin_tuple(n, &container);
-                                        gc_pop();
                                         stack.count -= n;
                                         value.type |= VALUE_TAGGED;
                                         value.tags = tags_push(value.tags, v.tag);
                                         push(value);
+                                        GC_OFF_COUNT -= 1;
                                 } else {
+                                        GC_OFF_COUNT += 1;
                                         value = builtin_tuple(n, NULL);
                                         stack.count -= n;
                                         value.type |= VALUE_TAGGED;
                                         value.tags = tags_push(value.tags, v.tag);
                                         push(value);
+                                        GC_OFF_COUNT -= 1;
                                 }
                                 break;
                         case VALUE_CLASS:

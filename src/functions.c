@@ -1660,8 +1660,12 @@ builtin_os_mktemp(int argc, struct value *kwargs)
 
         struct value pair = value_tuple(2);
 
+        NOGC(pair.items);
+
         pair.items[0] = INTEGER(fd);
         pair.items[1] = STRING_CLONE(template, strlen(template));
+
+        OKGC(pair.items);
 
         return pair;
 }
@@ -2166,13 +2170,14 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 vec_init(args);
 
                 for (int i = 0; i < cmd.array->count; ++i) {
-                        char *arg = gc_alloc(cmd.array->items[i].bytes + 1);
+                        char *arg = NULL;
+                        resize_nogc(arg, cmd.array->items[i].bytes + 1);
                         memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
                         arg[cmd.array->items[i].bytes] = '\0';
-                        vec_push(args, arg);
+                        vec_nogc_push(args, arg);
                 }
 
-                vec_push(args, NULL);
+                vec_nogc_push(args, NULL);
 
                 if (execvp(args.items[0], args.items) == -1) {
                         write(exc[1], &errno, sizeof errno);
@@ -3779,6 +3784,9 @@ builtin_os_listdir(int argc, struct value *kwargs)
 
 
         struct array *files = value_array_new();
+        struct value vFiles = ARRAY(files);
+
+        gc_push(&vFiles);
 
         struct dirent *e;
 
@@ -3788,7 +3796,9 @@ builtin_os_listdir(int argc, struct value *kwargs)
 
         closedir(d);
 
-        return ARRAY(files);
+        gc_pop();
+
+        return vFiles;
 }
 
 struct value
@@ -4947,9 +4957,11 @@ builtin_bind(int argc, struct value *kwargs)
 
         if (f.type == VALUE_FUNCTION) {
                 this = gc_alloc_object(sizeof x, GC_VALUE);
+                NOGC(this);
                 *this = x;
                 fp = gc_alloc_object(sizeof x, GC_VALUE);
                 *fp = f;
+                OKGC(this);
                 return METHOD(f.name, fp, this);
         }
 
@@ -5079,8 +5091,9 @@ builtin_members(int argc, struct value *kwargs)
         struct value o = ARG(0);
 
         struct dict *members = dict_new();
+        struct value vMembers = DICT(members);
 
-        NOGC(members);
+        gc_push(&vMembers);
 
         switch (o.type) {
         case VALUE_OBJECT:
@@ -5095,7 +5108,10 @@ builtin_members(int argc, struct value *kwargs)
         case VALUE_TUPLE:
                 for (int i = 0; i < o.count; ++i) {
                         if (o.names != NULL && o.names[i] != NULL) {
-                                dict_put_value(members, STRING_CLONE(o.names[i], strlen(o.names[i])), o.items[i]);
+                                struct value key = STRING_CLONE(o.names[i], strlen(o.names[i]));
+                                NOGC(key.string);
+                                dict_put_value(members, key, o.items[i]);
+                                OKGC(key.string);
                         } else {
                                 dict_put_value(members, INTEGER(i), o.items[i]);
                         }
@@ -5103,11 +5119,11 @@ builtin_members(int argc, struct value *kwargs)
 
                 break;
         default:
-                OKGC(members);
+                gc_pop();
                 return NIL;
         }
 
-        OKGC(members);
+        gc_pop();
 
         return DICT(members);
 }

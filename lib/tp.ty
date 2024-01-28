@@ -8,7 +8,7 @@ class ThreadPool {
     @mtx = Mutex()
     @cv = CondVar()
     @stop = false
-    @threads = [Thread(@runThread) for _ in ..n]
+    @threads = [Thread(@runThread, @mtx, @cv, f, @setup) for _ in ..n]
   }
 
   submit(*args, %kwargs) {
@@ -24,26 +24,26 @@ class ThreadPool {
     return future
   }
 
-  runThread() {
-    let state = if @setup != nil {
-        (@setup)()
+  runThread(mtx, cv, f, setup) {
+    let state = if setup != nil {
+        (setup)()
     }
 
     while true {
-      @mtx.lock()
+      mtx.lock()
 
       while !@stop && #@queue == 0 {
-        @cv.wait(@mtx)
+        cv.wait(mtx)
       }
 
       if @stop && #@queue == 0 {
-        @mtx.unlock()
+        mtx.unlock()
         break
       }
 
       let (args, kwargs, future) = @queue.pop(0)
 
-      @mtx.unlock()
+      mtx.unlock()
 
       future.mtx.lock()
 
@@ -55,7 +55,7 @@ class ThreadPool {
         future.mtx.unlock()
       }
 
-      let x = (self.f)(*args, state if state != nil, **kwargs)
+      let x = f(*args, state if state != nil, **kwargs)
 
       future.mtx.lock()
       future.box.push(x)

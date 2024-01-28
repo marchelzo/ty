@@ -156,6 +156,7 @@ struct state {
 };
 
 bool CheckConstraints = true;
+size_t GlobalCount = 0;
 
 static jmp_buf jb;
 static char const *Error;
@@ -2821,8 +2822,10 @@ emit_match_statement(struct statement const *s, bool want_result)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        emit_list(s->match.e);
-        emit_instr(INSTR_FIX_EXTRA);
+        /* FIXME: Why do we need a sentinel here? */
+        emit_instr(INSTR_SENTINEL);
+        emit_instr(INSTR_CLEAR_RC);
+        emit_expression(s->match.e);
 
         bool returns = true;
 
@@ -3091,8 +3094,19 @@ emit_match_expression(struct expression const *e)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        emit_list(e->subject);
-        emit_instr(INSTR_FIX_EXTRA);
+        /*
+         * FIXME:
+         *
+         * We used to use emit_list here, but matching on multiple return values
+         * was never used and could cause some problems for the GC.
+         *
+         * However, I don't know if/why SENTINEL is really needed here still.
+         *
+         * This applies to emit_match_statement() as well.
+         */
+        emit_instr(INSTR_SENTINEL);
+        emit_instr(INSTR_CLEAR_RC);
+        emit_expression(e->subject);
 
         for (int i = 0; i < e->patterns.count; ++i) {
                 LOG("emitting case %d", i + 1);
@@ -4538,9 +4552,7 @@ emit_statement(struct statement const *s, bool want_result)
 static void
 emit_new_globals(void)
 {
-        static int GlobalCount = 0;
-
-        for (int i = GlobalCount; i < global->owned.count; ++i) {
+        for (size_t i = GlobalCount; i < global->owned.count; ++i) {
                 struct symbol *s = global->owned.items[i];
                 if (s->i < BuiltinCount)
                         continue;
@@ -4635,7 +4647,6 @@ compile(char const *source)
         }
 
         for (size_t i = 0; p[i] != NULL; ++i) {
-                struct value v = tystmt(p[i]);
                 symbolize_statement(state.global, p[i]);
         }
 
@@ -5127,6 +5138,12 @@ compiler_has_module(char const *name)
         return false;
 }
 
+int
+compiler_global_count(void)
+{
+        return (int)global->owned.count;
+}
+
 inline static char *
 mkcstr(struct value const *v)
 {
@@ -5201,6 +5218,8 @@ struct value
 tyexpr(struct expression const *e)
 {
         struct value v;
+
+        GC_OFF_COUNT += 1;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -5549,6 +5568,8 @@ tyexpr(struct expression const *e)
         default:
                 v = tagged(TyExpr, PTR((void *)e), NONE);
         }
+
+        GC_OFF_COUNT -= 1;
 
         return v;
 }

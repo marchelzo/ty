@@ -1,8 +1,9 @@
 import termkey (..)
 import errno
-import ffi as c
+import ffi as c (C!)
 import os (..)
 import sh (sh)
+import ioctls (..)
 
 let tk = nil
 let defaultPrompt = nil
@@ -13,6 +14,15 @@ let history = []
 
 tag ListCompletions, ReplaceLine, Insert;
 
+C! struct WinSize {
+    c.short lines;
+    c.short cols;
+    c.short xpix;
+    c.short ypix;
+}
+
+let winSize = WinSize()
+
 pub function init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
     termFd = fd
     defaultPrompt = prompt
@@ -20,6 +30,11 @@ pub function init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
     if !(tk = termkey_new(fd, ctrl_c ? TERMKEY_FLAG_CTRLC : 0)) {
         throw Err(errno.get())
     }
+}
+
+function termDimensions() {
+    ioctl(termFd, TIOCGWINSZ, (c.ptr, winSize.get()))
+    return (winSize.lines(), winSize.cols())
 }
 
 function completeFile(before, after) {
@@ -176,7 +191,7 @@ pub function readln(prompt=nil, complete=nil) {
                     }
                 }
 
-                if !hMatch?(hi) {
+                if hi < #history && !hMatch?(hi) {
                     hi = hiStart
                 }
             },
@@ -217,7 +232,10 @@ pub function readln(prompt=nil, complete=nil) {
 
                     ListCompletions(cs) => {
                         write(1, "{erase}\r")
-                        for line in fitItems(cs, 120) {
+
+                        let (h, w) = termDimensions()
+
+                        for line in fitItems(cs, w) {
                             print(line)
                         }
                     }
@@ -243,5 +261,30 @@ pub function readln(prompt=nil, complete=nil) {
             hPrefix = nil
             hSuffix = nil
         }
+    }
+}
+
+function progressString(progress: Float, width: Int) {
+    let progress = min(1.0, max(0.0, progress))
+    let wholeWidth = floor(progress * width)
+    let remainderWidth = (progress * width) - wholeWidth
+    let partWidth = floor(remainderWidth * 8)
+    let partChar = [' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉'][partWidth]
+
+    if width - wholeWidth - 1 < 0 {
+        partChar = ''
+    }
+
+    return "[{'█'.repeat(wholeWidth)}{partChar}{' '.repeat(width - wholeWidth - 1)}]"
+}
+
+pub function progress(work, prefix, width) {
+    if tk == nil {
+        init()
+    }
+
+    for p in work {
+        let w = width ?? (termDimensions().1 - 8).clamp(0, 70)
+        write(termFd, "\r{prefix ?? ''}{progressString(p, w)} {p * 100#.1f}%%")
     }
 }
