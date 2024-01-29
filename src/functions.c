@@ -2073,7 +2073,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 if (cmd.array->items[i].type != VALUE_STRING)
                         vm_panic("non-string in array passed to os.spawn()");
 
-        struct value *detached = NAMED("detached");
+        struct value *detached = NAMED("detach");
         struct value *combine = NAMED("combineOutput");
         struct value *share_stderr = NAMED("shareStderr");
 
@@ -3684,7 +3684,9 @@ builtin_os_sleep(int argc, struct value *kwargs)
                 vm_panic("the argument to os.sleep() must be an integer or a float");
         }
 
+        ReleaseLock(true);
         int ret = clock_nanosleep(clk, flags, &dur, &rem);
+        TakeLock();
 
         switch (ret) {
         case 0:
@@ -3735,7 +3737,9 @@ builtin_os_sleep(int argc, struct value *kwargs)
                 vm_panic("the argument to os.sleep() must be an integer or a float");
         }
 
+        ReleaseLock(true);
         int ret = nanosleep(&dur, &rem);
+        TakeLock();
 
         switch (ret) {
         case 0:
