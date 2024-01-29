@@ -69,6 +69,7 @@
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
   #define CASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); XLOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
 #else
+  #define XCASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); XLOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
@@ -1859,17 +1860,18 @@ Throw:
                         break;
                 }
                 CASE(PUSH_DEFER_GROUP)
-                        vec_push(defer_stack, ARRAY(value_array_new()));
+                        vec_push_unchecked(defer_stack, ARRAY(value_array_new()));
                         break;
                 CASE(DEFER)
                         v = pop();
                         value_array_push(vec_last(defer_stack)->array, v);
                         break;
                 CASE(CLEANUP)
-                        v = *vec_pop(defer_stack);
+                        v = *vec_last(defer_stack);
                         for (int i = 0; i < v.array->count; ++i) {
                                 vm_call(&v.array->items[i], 0);
                         }
+                        vec_pop(defer_stack);
                         break;
                 CASE(ENSURE_LEN)
                         READVALUE(n);
