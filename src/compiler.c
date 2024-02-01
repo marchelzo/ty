@@ -5497,7 +5497,13 @@ tyexpr(struct expression const *e)
                 value_array_push(v.array, STRING_CLONE(e->strings.items[0], strlen(e->strings.items[0])));
 
                 for (int i = 0; i < e->expressions.count; ++i) {
-                        value_array_push(v.array, tyexpr(e->expressions.items[i]));
+                        struct value expr = tyexpr(e->expressions.items[i]);
+                        if (e->fmts.items[i] == NULL) {
+                                value_array_push(v.array, expr);
+                        } else {
+                                struct value s = STRING_CLONE(e->fmts.items[i], strlen(e->fmts.items[i]));
+                                value_array_push(v.array, PAIR(expr, s));
+                        }
                         value_array_push(v.array, STRING_CLONE(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
                 }
 
@@ -5975,10 +5981,14 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_SPECIAL_STRING;
                 vec_init(e->strings);
                 vec_init(e->expressions);
+                vec_init(e->fmts);
                 for (int i = 0; i < v->array->count; ++i) {
                         struct value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
                                 VPush(e->strings, mkcstr(x));
+                        } else if (x->type == VALUE_TUPLE) {
+                                VPush(e->expressions, cexpr(&x->items[0]));
+                                VPush(e->fmts, mkcstr(&x->items[1]));
                         } else {
                                 VPush(e->expressions, cexpr(x));
                                 VPush(e->fmts, NULL);
