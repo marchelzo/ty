@@ -89,6 +89,9 @@ struct expression *
 cexpr(struct value *);
 
 struct expression *
+TyToCExpr(struct value *v);
+
+struct expression *
 typarse(struct expression *, struct location const *start, struct location const *end);
 
 struct statement *
