@@ -6342,6 +6342,23 @@ cexpr(struct value *v)
         return e;
 }
 
+struct expression *
+TyToCExpr(struct value *v)
+{
+        SAVE_JB;
+
+        if (setjmp(jb) != 0) {
+                RESTORE_JB;
+                return NULL;
+        }
+
+        struct expression *e = cexpr(v);
+
+        RESTORE_JB;
+
+        return e;
+}
+
 struct value
 tyeval(struct expression *e)
 {

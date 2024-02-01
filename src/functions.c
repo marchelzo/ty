@@ -5354,7 +5354,7 @@ builtin_eval(int argc, struct value *kwargs)
                 struct expression *e = prog[0]->expression;
 
                 if (!compiler_symbolize_expression(e, scope))
-                CompileError:
+                Err1:
                 {
                         char const *msg = compiler_error();
                         struct value e = Err(STRING_CLONE(msg, strlen(msg)));
@@ -5364,7 +5364,7 @@ builtin_eval(int argc, struct value *kwargs)
 
                 struct value v = tyeval(e);
                 if (v.type == VALUE_NONE) {
-                        goto CompileError;
+                        goto Err1;
                 }
 
                 DestroyArena(old);
@@ -5372,13 +5372,17 @@ builtin_eval(int argc, struct value *kwargs)
                 return v;
         } else {
                 compiler_clear_location();
-                struct expression *e = cexpr(&ARG(0));
-                if (!compiler_symbolize_expression(e, scope)) {
-                        return NIL;
+                struct expression *e = TyToCExpr(&ARG(0));
+                if (e == NULL || !compiler_symbolize_expression(e, scope))
+                Err2:
+                {
+                        char const *msg = compiler_error();
+                        struct value e = Err(STRING_CLONE(msg, strlen(msg)));
+                        vm_throw(&e);
                 }
                 struct value v = tyeval(e);
                 if (v.type == VALUE_NONE) {
-                        goto CompileError;
+                        goto Err2;
                 }
                 return v;
         }
