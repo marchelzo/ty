@@ -655,7 +655,7 @@ class Float {
         if spec[-1].match?(/[A-z]/) {
             fmt("%%{spec}", self)
         } else {
-            fmt("%%{spec}d", self)
+            fmt("%%{spec}f", self)
         }
     }
 

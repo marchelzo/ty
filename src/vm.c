@@ -592,7 +592,7 @@ inline
 __attribute__((optnone, noinline))
 #endif
 static void
-call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
+call(struct value const *f, struct value const *pSelf, int n, int nkw, bool exec)
 {
         int bound = f->info[3];
         int np = f->info[4];
@@ -601,6 +601,8 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
         int class = f->info[6];
         char *code = code_of(f);
         int argc = n;
+
+        struct value self = (pSelf == NULL) ? NONE : *pSelf;
 
         struct value kwargs = (nkw > 0) ? pop() : NIL;
 
@@ -654,9 +656,9 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
         /*
          * Fill in 'self' as an implicit additional parameter.
          */
-        if (self != NULL && class != -1) {
-                LOG("setting self = %s", value_show(self));
-                stack.items[fp + np] = *self;
+        if (self.type != VALUE_NONE && class != -1) {
+                LOG("setting self = %s", value_show(&self));
+                stack.items[fp + np] = self;
         }
 
         vec_push_unchecked(frames, FRAME(fp, *f, ip));
@@ -676,7 +678,7 @@ call(struct value const *f, struct value const *self, int n, int nkw, bool exec)
                 }
         }
 
-        LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", value_show(f), argc, bound, self ? value_show(self) : "none", f->info[2]);
+        LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", value_show(f), argc, bound, value_show(&self), f->info[2]);
         print_stack(max(bound + 2, 5));
 
         if (exec) {
