@@ -85,7 +85,6 @@ static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
 static char const *MISSING = "__missing__";
 static int iExitHooks = -1;
-static bool Exited = false;
 
 static _Thread_local jmp_buf jb;
 
@@ -3561,21 +3560,33 @@ vm_error(void)
 static void
 RunExitHooks(int status, void *ctx)
 {
-        Exited = true;
-
         if (iExitHooks == -1 || Globals.items[iExitHooks].type != VALUE_ARRAY)
                 return;
 
         struct array *hooks = Globals.items[iExitHooks].array;
         struct value vStatus = INTEGER(status);
 
+        vec(char *) msgs = {0};
+        char *first = (Error == NULL) ? NULL : sclone_malloc(Error);
+
+        bool bReprintFirst = false;
+
         for (size_t i = 0; i < hooks->count; ++i) {
                 if (setjmp(jb) != 0) {
-                        fprintf(stderr, "Exit hook failed with error: %s\n", ERR);
+                        vec_push(msgs, sclone_malloc(ERR));
                 } else {
                         vm_push(&vStatus);
-                        vm_call(&hooks->items[i], 1);
+                        struct value v = vm_call(&hooks->items[i], 1);
+                        bReprintFirst = bReprintFirst || value_truthy(&v);
                 }
+        }
+
+        if (first != NULL && bReprintFirst) {
+                fprintf(stderr, "%s\n", first);
+        }
+
+        for (size_t i = 0; i < msgs.count; ++i) {
+                fprintf(stderr, "Exit hook failed with error: %s\n", msgs.items[i]);
         }
 }
 
@@ -3756,7 +3767,7 @@ Next:
 
         LOG("VM Error: %s", ERR);
 
-         longjmp(jb, 1);
+        longjmp(jb, 1);
 }
 
 bool
