@@ -84,6 +84,8 @@ static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
 static char const *MISSING = "__missing__";
+static int iExitHooks = -1;
+static bool Exited = false;
 
 static _Thread_local jmp_buf jb;
 
@@ -467,6 +469,10 @@ add_builtins(int ac, char **av)
 
         compiler_introduce_symbol("os", "args");
         vec_push(Globals, ARRAY(args));
+
+        compiler_introduce_symbol(NULL, "__EXIT_HOOKS__");
+        iExitHooks = (int)Globals.count;
+        vec_push(Globals, ARRAY(value_array_new()));
 
 #ifdef SIGRTMIN
         /* Add this here because SIGRTMIN doesn't expand to a constant */
@@ -3552,6 +3558,27 @@ vm_error(void)
         return Error;
 }
 
+static void
+RunExitHooks(int status, void *ctx)
+{
+        Exited = true;
+
+        if (iExitHooks == -1 || Globals.items[iExitHooks].type != VALUE_ARRAY)
+                return;
+
+        struct array *hooks = Globals.items[iExitHooks].array;
+        struct value vStatus = INTEGER(status);
+
+        for (size_t i = 0; i < hooks->count; ++i) {
+                if (setjmp(jb) != 0) {
+                        fprintf(stderr, "Exit hook failed with error: %s\n", ERR);
+                } else {
+                        vm_push(&vStatus);
+                        vm_call(&hooks->items[i], 1);
+                }
+        }
+}
+
 bool
 vm_init(int ac, char **av)
 {
@@ -3600,6 +3627,8 @@ vm_init(int ac, char **av)
 //        if (e = pthread_create(&BuiltinRunner, NULL, run_builtin_thread, NULL), e != 0) {
 //                vm_panic("Failed to create thread: %s", strerror(e));
 //        }
+
+        on_exit(RunExitHooks, NULL);
 
         vm_exec(prelude);
 
@@ -3727,7 +3756,7 @@ Next:
 
         LOG("VM Error: %s", ERR);
 
-        longjmp(jb, 1);
+         longjmp(jb, 1);
 }
 
 bool
@@ -3918,7 +3947,7 @@ vm_call(struct value const *f, int argc)
                         return r;
                 }
         default:
-                abort();
+                vm_panic("Non-callable value passed to vm_call(): %s", value_show_color(f));
         }
 }
 
