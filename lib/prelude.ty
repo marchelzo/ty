@@ -1760,8 +1760,12 @@ macro showCode {
     e
 }
 
-macro dbg!(*args) {
+function __dbg(args, raw) {
     let tmp = ty.Id(name: ty.gensym())
+
+    if #args == 0 {
+        return $$[ nil $$]
+    }
 
     ty.Block([
         *[
@@ -1769,6 +1773,8 @@ macro dbg!(*args) {
                 let $$(tmp) = $$(e)
                 print(
                     __module__,
+                    ':',
+                    __func__ ?? '(top)',
                     ':',
                     __line__,
                     ': ',
@@ -1784,6 +1790,9 @@ macro dbg!(*args) {
         tmp
     ])
 }
+
+macro dbg!(*args) { __dbg(args, raw) }
+macro dbg(*args) { __dbg(args, raw) }
 
 macro time! {
     // (

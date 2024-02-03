@@ -200,17 +200,17 @@ enum {
 //#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 #define value_mark _value_mark
 
-struct array {
+typedef struct array {
         struct value *items;
         size_t count;
         size_t capacity;
-};
+} Array;
 
-struct blob {
+typedef struct blob {
         unsigned char *items;
         size_t count;
         size_t capacity;
-};
+} Blob;
 
 struct target {
         struct {
@@ -327,6 +327,8 @@ struct value {
                 Generator *gen;
         };
 };
+
+typedef struct value Value;
 
 struct frame {
         size_t fp;

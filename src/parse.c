@@ -2222,6 +2222,8 @@ prefix_dict(void)
 
         next();
 
+        e->end = End;
+
         return e;
 }
 

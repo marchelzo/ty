@@ -5298,6 +5298,41 @@ builtin_ty_gc(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_ty_bt(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.gc()", 0);
+
+        FrameStack *frames = vm_get_frames();
+        Array *avFrames = value_array_new();
+
+        ++GC_OFF_COUNT;
+
+        for (size_t i = 0; i < frames->count; ++i) {
+                Value *f = &frames->items[i].f;
+                char const *name = name_of(f);
+                char const *ip = frames->items[i].ip;
+                Location start;
+                Location end;
+
+                char const *file = compiler_get_location(ip, &start, &end);
+
+                Value entry = value_tuple(5);
+
+                entry.items[0] = *f;
+                entry.items[1] = STRING_NOGC(name, strlen(name));
+                entry.items[2] = (file == NULL) ? NIL : STRING_NOGC(file, strlen(file));
+                entry.items[3] = (start.line == -1) ? NIL : INTEGER(start.line);
+                entry.items[4] = (start.col == -1) ? NIL : INTEGER(start.col);
+
+                value_array_push(avFrames, entry);
+        }
+
+        --GC_OFF_COUNT;
+
+        return ARRAY(avFrames);
+}
+
+struct value
 builtin_ty_unlock(int argc, struct value *kwargs)
 {
         ReleaseLock(true);

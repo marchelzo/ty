@@ -259,6 +259,9 @@ vm_exec(char *ip);
 struct value
 vm_try_exec(char *ip);
 
+FrameStack *
+vm_get_frames(void);
+
 struct value
 GetMember(struct value v, char const *member, unsigned long h, bool b);
 
