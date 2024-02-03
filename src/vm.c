@@ -3558,13 +3558,12 @@ vm_error(void)
 }
 
 static void
-RunExitHooks(int status, void *ctx)
+RunExitHooks(void)
 {
         if (iExitHooks == -1 || Globals.items[iExitHooks].type != VALUE_ARRAY)
                 return;
 
         struct array *hooks = Globals.items[iExitHooks].array;
-        struct value vStatus = INTEGER(status);
 
         vec(char *) msgs = {0};
         char *first = (Error == NULL) ? NULL : sclone_malloc(Error);
@@ -3575,8 +3574,7 @@ RunExitHooks(int status, void *ctx)
                 if (setjmp(jb) != 0) {
                         vec_push(msgs, sclone_malloc(ERR));
                 } else {
-                        vm_push(&vStatus);
-                        struct value v = vm_call(&hooks->items[i], 1);
+                        struct value v = vm_call(&hooks->items[i], 0);
                         bReprintFirst = bReprintFirst || value_truthy(&v);
                 }
         }
@@ -3639,7 +3637,7 @@ vm_init(int ac, char **av)
 //                vm_panic("Failed to create thread: %s", strerror(e));
 //        }
 
-        on_exit(RunExitHooks, NULL);
+        atexit(RunExitHooks);
 
         vm_exec(prelude);
 
@@ -3865,6 +3863,12 @@ vm_throw(struct value const *v)
         vm_exec((char[]){INSTR_THROW});
         // unreachable
         abort();
+}
+
+FrameStack *
+vm_get_frames(void)
+{
+        return &frames;
 }
 
 struct value
