@@ -12,14 +12,14 @@ enum {
 
 struct symbol {
         char const *identifier;
-		char const *doc;
+        char const *doc;
         int symbol;
         int tag;
         int class;
         bool public;
         bool cnst;
         bool macro;
-		bool fun_macro;
+        bool fun_macro;
         bool captured;
         int i;
         int ci;
@@ -45,10 +45,26 @@ struct scope {
 
         struct scope *parent;
         struct scope *function;
+
+#ifndef TY_RELEASE
+        char const *name;
+#endif
 };
 
 struct scope *
-scope_new(struct scope *parent, bool function);
+_scope_new(
+#ifndef TY_RELEASE
+        char const *name,
+#endif
+        struct scope *parent,
+        bool function
+);
+
+#ifdef TY_RELEASE
+  #define scope_new(n, p, f) _scope_new(p, f)
+#else
+  #define scope_new(n, p, f) _scope_new(n, p, f)
+#endif
 
 struct symbol *
 scope_add(struct scope *s, char const *id);
@@ -92,4 +108,11 @@ scope_capture_all(struct scope *scope, struct scope const *stop);
 int
 scope_get_completions(struct scope *scope, char const *prefix, char **out, int max);
 
+#ifndef TY_RELEASE
+char const *
+scope_name(struct scope const *s);
 #endif
+
+#endif
+
+/* vim: set sts=8 sw=8 expandtab: */

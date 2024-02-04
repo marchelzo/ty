@@ -4328,6 +4328,7 @@ parse(char const *source, char const *file)
                 case STATEMENT_DEFINITION:
                 case STATEMENT_FUNCTION_DEFINITION:
                 case STATEMENT_MACRO_DEFINITION:
+                case STATEMENT_FUN_MACRO_DEFINITION:
                         s->pub = true;
                         break;
                 case STATEMENT_TAG_DEFINITION:

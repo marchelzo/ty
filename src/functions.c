@@ -5300,7 +5300,7 @@ builtin_ty_gc(int argc, struct value *kwargs)
 struct value
 builtin_ty_bt(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("ty.gc()", 0);
+        ASSERT_ARGC("ty.bt()", 0);
 
         FrameStack *frames = vm_get_frames();
         Array *avFrames = value_array_new();

@@ -9,6 +9,37 @@
 static int GLOBAL;
 static int SYMBOL;
 
+#ifndef TY_RELEASE
+char const *
+scope_name(struct scope const *s)
+{
+        _Thread_local static char b[4096];
+
+        vec(struct scope *) stack = {0};
+
+        while (s != NULL) {
+                vec_nogc_push(stack, s);
+                s = s->parent;
+        }
+
+        b[0] = '\0';
+
+        int remaining = sizeof b - 1;
+
+        for (int i = stack.count - 1; i >= 0; --i) {
+                s = stack.items[i];
+                int n = strlen(s->name) + (i != 0);
+                if (n > remaining)
+                        break;
+                strcat(b, s->name);
+                strcat(b, "." + (i == 0));
+                remaining -= n;
+        }
+
+        return b;
+}
+#endif
+
 inline static struct symbol *
 local_lookup(struct scope const *s, char const *id)
 {
@@ -23,7 +54,13 @@ local_lookup(struct scope const *s, char const *id)
 }
 
 struct scope *
-scope_new(struct scope *parent, bool is_function)
+_scope_new(
+#ifndef TY_RELEASE
+        char const *name,
+#endif
+        struct scope *parent,
+        bool is_function
+)
 {
         struct scope *s = Allocate(sizeof *s);
 
@@ -37,6 +74,10 @@ scope_new(struct scope *parent, bool is_function)
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i)
                 s->table[i] = NULL;
+
+#ifndef TY_RELEASE
+        s->name = name;
+#endif
 
         return s;
 }
