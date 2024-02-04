@@ -459,6 +459,8 @@ addsymbol(struct scope *scope, char const *name)
 {
         assert(name != NULL);
 
+        LOG("Declaring %s in scope %s", name, scope_name(scope));
+
         if (scope_locally_defined(scope, name) && is_const(scope, name) &&
             (scope == state.global || scope == global) && strcmp(name, "_") != 0) {
                 fail(
@@ -571,7 +573,7 @@ freshstate(void)
         vec_init(s.exports);
 
         s.method = NULL;
-        s.global = scope_new(global, false);
+        s.global = scope_new("(global)", global, false);
         s.fscope = NULL;
         s.class = -1;
 
@@ -1038,8 +1040,6 @@ comptime(struct scope *scope, struct expression *e)
 static void
 invoke_fun_macro(struct expression *e)
 {
-        symbolize_expression(state.global, e->function);
-
         byte_vector code_save = state.code;
         vec_init(state.code);
 
@@ -1052,9 +1052,9 @@ invoke_fun_macro(struct expression *e)
         struct value m = *vm_get(0);
         vm_pop();
 
-        struct value raw = ARRAY(value_array_new());
+        ++GC_OFF_COUNT;
 
-        NOGC(raw.array);
+        struct value raw = ARRAY(value_array_new());
 
         vm_push(&raw);
 
@@ -1064,7 +1064,6 @@ invoke_fun_macro(struct expression *e)
                 vm_push(&v);
         }
 
-        OKGC(raw.array);
 
         struct value v = vm_call(&m, e->args.count + 1);
 
@@ -1078,6 +1077,8 @@ invoke_fun_macro(struct expression *e)
 
         state.mstart = mstart;
         state.mend = mend;
+
+        --GC_OFF_COUNT;
 }
 
 static void
@@ -1183,16 +1184,16 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_MATCH:
                 symbolize_expression(scope, e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
-                        struct scope *shared = scope_new(scope, false);
+                        struct scope *shared = scope_new("(match-shared)", scope, false);
                         if (e->patterns.items[i]->type == EXPRESSION_LIST) {
                                 for (int j = 0; j < e->patterns.items[i]->es.count; ++j) {
-                                        subscope = scope_new(scope, false);
+                                        subscope = scope_new("(match-branch)", scope, false);
                                         symbolize_pattern(subscope, e->patterns.items[i]->es.items[j], shared, true);
                                         scope_copy(shared, subscope);
                                 }
                                 subscope = shared;
                         } else {
-                                subscope = scope_new(scope, false);
+                                subscope = scope_new("(match-branch)", scope, false);
                                 symbolize_pattern(subscope, e->patterns.items[i], NULL, true);
                         }
                         symbolize_expression(subscope, e->thens.items[i]);
@@ -1356,7 +1357,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 state.func = e;
 
                 if (e->name != NULL) {
-                        scope = scope_new(scope, false);
+                        scope = scope_new("(function name)", scope, false);
                         e->function_symbol = addsymbol(scope, e->name);
                         LOG("== SYMBOLIZING %s ==", e->name);
                 } else {
@@ -1364,7 +1365,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         e->function_symbol = NULL;
                 }
 
-                scope = scope_new(scope, true);
+                scope = scope_new(e->name == NULL ? "(anon)" : e->name, scope, true);
                 LOG("%s got scope %p (global=%p, state.global=%p)", e->name == NULL ? "(anon)" : e->name, scope, global, state.global);
 
                 if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {
@@ -1405,7 +1406,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
                 break;
         case EXPRESSION_WITH:
-                subscope = scope_new(scope, false);
+                subscope = scope_new("(with)", scope, false);
                 symbolize_statement(subscope, e->with.block);
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
@@ -1429,7 +1430,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_ARRAY_COMPR:
                 symbolize_expression(scope, e->compr.iter);
-                subscope = scope_new(scope, false);
+                subscope = scope_new("(array compr)", scope, false);
                 symbolize_lvalue(subscope, e->compr.pattern, true, false);
                 symbolize_expression(subscope, e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
@@ -1446,7 +1447,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_DICT_COMPR:
                 symbolize_expression(scope, e->dcompr.iter);
-                subscope = scope_new(scope, false);
+                subscope = scope_new("(dict compr)", scope, false);
                 symbolize_lvalue(subscope, e->dcompr.pattern, true, false);
                 symbolize_expression(subscope, e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
@@ -1520,7 +1521,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 } else {
                         class_set_super(s->class.symbol, 0);
                 }
-                subscope = scope_new(scope, false);
+                subscope = scope_new(s->class.name, scope, false);
                 state.class = s->class.symbol;
                 for (int i = 0; i < s->class.methods.count; ++i) {
                         if (s->class.methods.items[i]->return_type == NULL && s->class.super != NULL) {
@@ -1552,11 +1553,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 sym->cnst = true;
                 sym->tag = tags_new(s->tag.name);
                 s->tag.symbol = sym->tag;
-                subscope = scope_new(scope, false);
+                subscope = scope_new(s->tag.name, scope, false);
                 symbolize_methods(subscope, s->tag.methods.items, s->tag.methods.count);
                 break;
         case STATEMENT_BLOCK:
-                scope = scope_new(scope, false);
+                scope = scope_new("(block)", scope, false);
 
                 for (size_t i = 0; i < s->statements.count; ++i) {
                         symbolize_statement(scope, s->statements.items[i]);
@@ -1576,7 +1577,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_statement(scope, s->try.s);
 
                 for (int i = 0; i < s->try.patterns.count; ++i) {
-                        struct scope *catch = scope_new(scope, false);
+                        struct scope *catch = scope_new("(catch)", scope, false);
                         symbolize_pattern(catch, s->try.patterns.items[i], NULL, true);
                         symbolize_statement(catch, s->try.handlers.items[i]);
                 }
@@ -1590,13 +1591,13 @@ symbolize_statement(struct scope *scope, struct statement *s)
         case STATEMENT_MATCH:
                 symbolize_expression(scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
-                        subscope = scope_new(scope, false);
+                        subscope = scope_new("(match)", scope, false);
                         symbolize_pattern(subscope, s->match.patterns.items[i], NULL, true);
                         symbolize_statement(subscope, s->match.statements.items[i]);
                 }
                 break;
         case STATEMENT_WHILE:
-                subscope = scope_new(scope, false);
+                subscope = scope_new("(while)", scope, false);
                 for (int i = 0; i < s->While.parts.count; ++i) {
                         struct condpart *p = s->While.parts.items[i];
                         symbolize_expression(subscope, p->e);
@@ -1606,7 +1607,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 break;
         case STATEMENT_IF:
                 // if not let Ok(x) = f() or not [y] = bar() {
-                subscope = scope_new(scope, false);
+                subscope = scope_new("(if)", scope, false);
                 if (s->iff.neg) {
                         symbolize_statement(scope, s->iff.then);
                         for (int i = 0; i < s->iff.parts.count; ++i) {
@@ -1627,7 +1628,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 }
                 break;
         case STATEMENT_FOR_LOOP:
-                scope = scope_new(scope, false);
+                scope = scope_new("(for)", scope, false);
                 symbolize_statement(scope, s->for_loop.init);
                 symbolize_expression(scope, s->for_loop.cond);
                 symbolize_expression(scope, s->for_loop.next);
@@ -1635,7 +1636,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 break;
         case STATEMENT_EACH_LOOP:
                 symbolize_expression(scope, s->each.array);
-                subscope = scope_new(scope, false);
+                subscope = scope_new("(for-each)", scope, false);
                 symbolize_lvalue(subscope, s->each.target, true, false);
                 symbolize_statement(subscope, s->each.body);
                 symbolize_expression(subscope, s->each.cond);
@@ -1862,6 +1863,8 @@ emit_load(struct symbol const *s, struct scope const *scope)
 inline static void
 emit_tgt(struct symbol const *s, struct scope const *scope, bool def)
 {
+        LOG("emit_tgt(%s, def=%d)", s->identifier, def);
+
         bool local = !s->global && (s->scope->function == scope->function);
 
         if (s->global) {
@@ -1960,7 +1963,7 @@ emit_function(struct expression const *e, int class)
         int ncaps = e->scope->captured.count;
         int bound_caps = 0;
 
-        LOG("Compiling %s. scope=%p", e->name == NULL ? "(anon)" : e->name, e->scope);
+        LOG("Compiling %s. scope=%s", e->name == NULL ? "(anon)" : e->name, scope_name(e->scope));
 
         for (int i = ncaps - 1; i >= 0; --i) {
                 if (caps[i]->scope->function == e->scope) {
@@ -2154,6 +2157,8 @@ emit_function(struct expression const *e, int class)
         state.finally = finally_save;
         state.each_loop = each_loop_save;
         t = t_save;
+
+        LOG("state.fscope: %s", scope_name(state.fscope));
 
         if (e->function_symbol != NULL) {
                 emit_tgt(e->function_symbol, e->scope->parent, false);
@@ -4863,7 +4868,7 @@ compiler_load_prelude(void)
         state.filename = "(prelude)";
         compile(slurp_module("prelude"));
 
-        state.global = scope_new(state.global, false);
+        state.global = scope_new("(prelude)", state.global, false);
 
         state.imports.count = 0;
 
@@ -4909,7 +4914,7 @@ compiler_introduce_symbol(char const *module, char const *name)
 
                 if (s == NULL) {
                         ++builtin_modules;
-                        s = scope_new(global, false);
+                        s = scope_new(module, global, false);
                         VPush(modules, ((struct module){
                                 .path = module,
                                 .code = NULL,
@@ -4936,7 +4941,7 @@ compiler_introduce_tag(char const *module, char const *name)
 
                 if (s == NULL) {
                         ++builtin_modules;
-                        s = scope_new(NULL, false);
+                        s = scope_new(module, NULL, false);
                         VPush(modules, ((struct module){
                                 .path = module,
                                 .code = NULL,
@@ -5227,6 +5232,21 @@ typarts(condpart_vector const *parts)
         return v;
 }
 
+inline static struct value
+tyaitem(struct expression const *e, int i)
+{
+        return tagged(
+                TyArrayItem,
+                value_named_tuple(
+                        "item", tyexpr(e->elements.items[i]),
+                        "cond", (e->aconds.items[i] == NULL) ? NIL : tyexpr(e->aconds.items[i]),
+                        "optional", BOOLEAN(e->optional.items[i]),
+                        NULL
+                ),
+                NONE
+        );
+}
+
 struct value
 tyexpr(struct expression const *e)
 {
@@ -5244,23 +5264,20 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyId);
                 break;
+        case EXPRESSION_MATCH_NOT_NIL:
+                v = value_named_tuple(
+                        "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
+                        "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                        NULL
+                );
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyNotNil);
+                break;
         case EXPRESSION_ARRAY:
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
                 for (int i = 0; i < e->elements.count; ++i) {
-                        value_array_push(
-                                v.array,
-                                tagged(
-                                        TyArrayItem,
-                                        value_named_tuple(
-                                                "item", tyexpr(e->elements.items[i]),
-                                                "cond", (e->aconds.items[i] == NULL) ? NIL : tyexpr(e->aconds.items[i]),
-                                                "optional", BOOLEAN(e->optional.items[i]),
-                                                NULL
-                                        ),
-                                        NONE
-                                )
-                        );
+                        value_array_push(v.array, tyaitem(e, i));
                 }
                 OKGC(v.array);
                 v.type |= VALUE_TAGGED;
@@ -5270,6 +5287,34 @@ tyexpr(struct expression const *e)
                 v = tyexpr(e->value);
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(v.tags, TySpread);
+                break;
+        case EXPRESSION_ARRAY_COMPR:
+        {
+                Array *avElems = value_array_new();
+
+                for (int i = 0; i < e->elements.count; ++i) {
+                        value_array_push(avElems, tyaitem(e, i));
+                }
+
+                v = value_named_tuple(
+                        "items", ARRAY(avElems),
+                        "pattern", tyexpr(e->compr.pattern),
+                        "iter", tyexpr(e->compr.iter),
+                        "cond", e->compr.cond == NULL ? NIL : tyexpr(e->compr.cond),
+                        NULL
+                );
+
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(v.tags, TyArrayCompr);
+
+                break;
+        }
+        case EXPRESSION_EVAL:
+                v = tagged(
+                        TyEval,
+                        tyexpr(e->operand),
+                        NONE
+                );
                 break;
         case EXPRESSION_FUNCTION:
                 v = value_named_tuple(
@@ -5317,6 +5362,29 @@ tyexpr(struct expression const *e)
                                                 "name", (e->names.items[i] == NULL) ? NIL : STRING_CLONE(e->names.items[i], strlen(e->names.items[i])),
                                                 "cond", (e->tconds.items[i] == NULL) ? NIL : tyexpr(e->tconds.items[i]),
                                                 "optional", BOOLEAN(!e->required.items[i]),
+                                                NULL
+                                        ),
+                                        NONE
+                                )
+                        );
+                }
+                OKGC(v.array);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyRecord);
+                break;
+        case EXPRESSION_LIST:
+                v = ARRAY(value_array_new());
+                NOGC(v.array);
+                for (int i = 0; i < e->es.count; ++i) {
+                        value_array_push(
+                                v.array,
+                                tagged(
+                                        TyRecordEntry,
+                                        value_named_tuple(
+                                                "item", tyexpr(e->es.items[i]),
+                                                "name", NIL,
+                                                "cond", NIL,
+                                                "optional", NIL,
                                                 NULL
                                         ),
                                         NONE
@@ -5581,9 +5649,9 @@ tyexpr(struct expression const *e)
                 break;
         case EXPRESSION_TEMPLATE_HOLE:
                 v = *vm_get(e->integer);
-                return v;
+                break;
         case EXPRESSION_STATEMENT:
-                return tystmt(e->statement);
+                v = tystmt(e->statement);
         default:
                 v = tagged(TyExpr, PTR((void *)e), NONE);
         }
@@ -5696,6 +5764,30 @@ tystmt(struct statement *s)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, s->iff.neg ? TyIfNot : TyIf);
                 break;
+        case STATEMENT_TRY:
+        {
+                Array *avCatches = value_array_new();
+
+                for (int i = 0; i < s->try.handlers.count; ++i) {
+                        Value catch = value_tuple(2);
+                        catch.items[0] = tyexpr(s->try.patterns.items[i]);
+                        catch.items[1] = tystmt(s->try.handlers.items[i]);
+                        value_array_push(avCatches, catch);
+                }
+
+                v = tagged(
+                        TyTry,
+                        value_named_tuple(
+                                "body", tystmt(s->try.s),
+                                "catches", ARRAY(avCatches),
+                                "always", (s->try.finally == NULL) ? NIL : tystmt(s->try.finally),
+                                NULL
+                        ),
+                        NONE
+                );
+
+                break;
+        }
         case STATEMENT_FUNCTION_DEFINITION:
                 v = tyexpr(s->value);
                 v.tags = tags_push(0, TyFuncDef);
@@ -5829,6 +5921,35 @@ cstmt(struct value *v)
                         s->iff.otherwise = NULL;
                 }
                 break;
+        case TyTry:
+        {
+                s->type = STATEMENT_TRY;
+
+                vec_init(s->try.handlers);
+                vec_init(s->try.patterns);
+
+                Value *vBody = tuple_get(v, "body");
+                Value *vCatches = tuple_get(v, "catches");
+                Value *vFinally = tuple_get(v, "cleanup");
+
+                if (vCatches->type != VALUE_ARRAY) {
+                        fail("non-array `catches` in ty.Try construction: %s", value_show_color(v));
+                }
+
+                s->try.s = cstmt(vBody);
+                s->try.finally = (vFinally == NULL || vFinally->type == VALUE_NIL) ? NULL : cstmt(vFinally);
+
+                for (int i = 0; i < vCatches->array->count; ++i) {
+                        Value *catch = &vCatches->array->items[i];
+                        if (catch->type != VALUE_TUPLE || catch->count != 2) {
+                                fail("invalid `catches` entry in ty.Try construction: %s", value_show_color(catch));
+                        }
+                        VPush(s->try.patterns, cexpr(&catch->items[0]));
+                        VPush(s->try.handlers, cstmt(&catch->items[1]));
+                }
+
+                break;
+        }
         case TyDefer:
                 v->tags = tags_pop(v->tags);
                 s->type = STATEMENT_DEFER;
@@ -5923,6 +6044,7 @@ cexpr(struct value *v)
 
         e->start = state.mstart;
         e->end = state.mend;
+        e->type = -1;
 
         if (v->type == VALUE_TAG && v->tag == TyNil) {
                 e->type = EXPRESSION_NIL;
@@ -5957,8 +6079,11 @@ cexpr(struct value *v)
                 e->real = v->real;
                 break;
         case TyId:
-        {
                 e->type = EXPRESSION_IDENTIFIER;
+        case TyNotNil:
+                if (e->type == -1)
+                        e->type = EXPRESSION_MATCH_NOT_NIL;
+        {
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
@@ -6174,6 +6299,36 @@ cexpr(struct value *v)
                 e->body = cstmt(tuple_get(v, "body"));
                 break;
         }
+        case TyArrayCompr:
+        {
+                Value *pattern = tuple_get(v, "pattern");
+                Value *iter = tuple_get(v, "iter");
+                Value *cond = tuple_get(v, "cond");
+                Value *items = tuple_get(v, "items");
+
+                if (pattern == NULL || iter == NULL)
+                        goto Bad;
+
+                e->type = EXPRESSION_ARRAY_COMPR;
+                e->compr.pattern = cexpr(pattern);
+                e->compr.iter = cexpr(iter);
+                e->compr.cond = (cond == NULL || cond->type == VALUE_NIL) ? NULL : cexpr(cond);
+
+                vec_init(e->elements);
+                vec_init(e->aconds);
+                vec_init(e->optional);
+
+                for (int i = 0; i < items->array->count; ++i) {
+                        struct value *entry = &items->array->items[i];
+                        struct value *optional = tuple_get(entry, "optional");
+                        struct value *cond = tuple_get(entry, "cond");
+                        VPush(e->elements, cexpr(tuple_get(entry, "item")));
+                        VPush(e->optional, optional != NULL ? optional->boolean : false);
+                        VPush(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL);
+                }
+
+                break;
+        }
         case TyMemberAccess:
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->object = cexpr(&v->items[0]);
@@ -6184,6 +6339,14 @@ cexpr(struct value *v)
                 e->container = cexpr(&v->items[0]);
                 e->subscript = cexpr(&v->items[1]);
                 break;
+        case TyEval:
+        {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_EVAL;
+                e->operand = cexpr(&v_);
+                break;
+        }
         case TyWith:
         {
                 struct value *lets = &v->items[0];
@@ -6336,6 +6499,7 @@ cexpr(struct value *v)
                 e->statement = cstmt(v);
                 break;
         default:
+        Bad:
                 fail("invalid value passed to cexpr(): %s", value_show_color(v));
         }
 

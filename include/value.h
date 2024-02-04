@@ -125,6 +125,10 @@ struct value;
         X(MethodCall) \
         X(MemberAccess) \
         X(Subscript) \
+        X(NotNil) \
+        X(ArrayCompr) \
+        X(Try) \
+        X(Eval) \
         X(Cond) \
         X(UserOp) \
         X(Return) \

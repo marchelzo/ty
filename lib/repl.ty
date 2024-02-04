@@ -1,0 +1,36 @@
+import readln (readln)
+import ty (bt)
+import ty.parse as parse
+
+pub macro repl(cond, *exprs) {
+    let prints = ty.Multi([
+        $$[ print($$(ty.Value(parse.show(p))), '=', $$(e), sep: ' ') $$]
+        for (e, p) in zip(exprs, raw.drop(1))
+    ])
+
+    $$[
+        if $$(cond ?? ty.Value(true)) {
+            let trace = $$(ty.Value(bt))()
+
+            if #trace > 0 {
+                print('Call stack:')
+                print(["  {func} at {file}:{line}" for (_, func, file, line, _) in trace].unlines())
+            }
+
+            let x = nil
+
+            $$(prints)
+
+            while let $line = ($$(ty.Value(readln)))('>>> ') {
+                try {
+                    x = __eval__(line)
+                    print(x)
+                } catch Err(msg) {
+                    print(msg)
+                }
+            }
+
+            x
+        }
+    $$]
+}

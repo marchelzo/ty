@@ -107,6 +107,7 @@ struct try {
         char *finally;
         char *end;
         bool executing;
+        enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY } state;
 };
 
 typedef struct ThrowCtx {
@@ -1393,6 +1394,19 @@ DoAssign(void)
         }
 }
 
+inline static struct try *
+GetCurrentTry(void)
+{
+        for (int i = 0; i < try_stack.count; ++i) {
+                struct try *t = vec_last(try_stack) - i;
+                if (t->state == TRY_TRY || t->state == TRY_FINALLY) {
+                        return t;
+                }
+        }
+
+        return NULL;
+}
+
 struct value
 vm_try_exec(char *code)
 {
@@ -1789,27 +1803,39 @@ Throw:
                         // Fallthrough
                 CASE(RETHROW)
                 {
-                        if (try_stack.count == 0) {
+                        struct try *t = GetCurrentTry();
+
+                        if (t == NULL) {
                                 ThrowCtx c = *vec_pop(throw_stack);
 
                                 frames.count = c.ctxs;
                                 ip = (char *)c.ip;
 
-                                vm_panic("uncaught exception: %s%s%s", TERM(31), value_show(top()), TERM(39));
+                                vm_panic("uncaught exception: %s%s%s", TERM(31), value_show_color(top()), TERM(39));
                         }
 
-                        struct try *t = vec_last(try_stack);
-
-                        FALSE_OR (t->executing) {
+                        if (t->state == TRY_FINALLY) {
                                 vm_panic(
                                         "an exception was thrown while handling another exception: %s%s%s",
-                                        TERM(31), value_show(top()), TERM(39)
+                                        TERM(31), value_show_color(top()), TERM(39)
                                 );
                         }
 
+                        t->state = TRY_THROW;
                         t->executing = true;
 
                         v = pop();
+
+                        for (struct try *t_ = vec_last(try_stack); t_ != t; --t_) {
+                                t_->state = TRY_FINALLY;
+                                if (t_->finally != NULL) {
+                                        *t_->end = INSTR_HALT;
+                                        vm_exec(t_->finally);
+                                        *t_->end = INSTR_NOP;
+                                }
+                        }
+
+                        try_stack.count -= vec_last(try_stack) - t;
 
                         stack.count = t->sp;
 
@@ -1829,6 +1855,7 @@ Throw:
                 CASE(FINALLY)
                 {
                         struct try *t = vec_pop(try_stack);
+                        t->state = TRY_FINALLY;
                         if (t->finally == NULL)
                                 break;
                         *t->end = INSTR_HALT;
@@ -1840,11 +1867,11 @@ Throw:
                         --try_stack.count;
                         break;
                 CASE(RESUME_TRY)
-                        vec_last(try_stack)->executing = true;
+                        vec_last(try_stack)->state = TRY_TRY;
                         break;
                 CASE(CATCH)
                         --throw_stack.count;
-                        vec_last(try_stack)->executing = false;
+                        vec_last(try_stack)->state = TRY_CATCH;
                         break;
                 CASE(TRY)
                 {
@@ -1863,6 +1890,7 @@ Throw:
                         t.ts = targets.count;
                         t.ctxs = frames.count;
                         t.executing = false;
+                        t.state = TRY_TRY;
                         vec_push(try_stack, t);
                         break;
                 }
