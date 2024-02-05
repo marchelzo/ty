@@ -1360,8 +1360,10 @@ builtin_sha1(int argc, struct value *kwargs)
                 SHA1(s.blob->items, s.blob->count, digest);
         }
 
+        ++GC_OFF_COUNT;
         struct blob *b = value_blob_new();
         vec_push_n(*b, digest, sizeof digest);
+        --GC_OFF_COUNT;
 
         return BLOB(b);
 }
@@ -2076,9 +2078,19 @@ builtin_os_spawn(int argc, struct value *kwargs)
         struct value *detached = NAMED("detach");
         struct value *combine = NAMED("combineOutput");
         struct value *share_stderr = NAMED("shareStderr");
+        struct value *share_stdout = NAMED("shareStdout");
+        struct value *share_stdin = NAMED("shareStdin");
 
         if (share_stderr != NULL && !value_truthy(share_stderr)) {
                 share_stderr = NULL;
+        }
+
+        if (share_stdout != NULL && !value_truthy(share_stdout)) {
+                share_stdout = NULL;
+        }
+
+        if (share_stdin != NULL && !value_truthy(share_stdin)) {
+                share_stdin = NULL;
         }
 
         if (detached != NULL && detached->type != VALUE_BOOLEAN) {
@@ -2095,53 +2107,62 @@ builtin_os_spawn(int argc, struct value *kwargs)
         int err[2];
         int exc[2];
 
-        if (pipe(in) == -1) {
-                return NIL;
+        int nToClose = 0;
+        int aToClose[8];
+
+#define CloseOnError(fd) do { aToClose[nToClose++] = (fd); } while (0)
+#define CleanupFDs() for (int i = 0; i < nToClose; ++i) close(aToClose[i]);
+
+        if (!share_stdin) {
+                if (pipe(in) == -1) {
+                        CleanupFDs();
+                        return NIL;
+                } else {
+                        CloseOnError(in[0]);
+                        CloseOnError(in[1]);
+                }
         }
 
-        if (pipe(out) == -1) {
-                close(in[0]);
-                close(in[1]);
-                return NIL;
+        if (!share_stdout) {
+                if (pipe(out) == -1) {
+                        CleanupFDs();
+                        return NIL;
+                } else {
+                        CloseOnError(out[0]);
+                        CloseOnError(out[1]);
+                }
         }
 
-        if (!share_stderr && pipe(err) == -1) {
-                close(in[0]);
-                close(in[1]);
-                close(out[0]);
-                close(out[1]);
-                return NIL;
+        if (!share_stderr) {
+                if (pipe(err) == -1) {
+                        CleanupFDs();
+                        return NIL;
+                } else {
+                        CloseOnError(err[0]);
+                        CloseOnError(err[1]);
+                }
         }
 
         if (pipe(exc) == -1) {
-                close(in[0]);
-                close(in[1]);
-                close(out[0]);
-                close(out[1]);
-                if (!share_stderr) {
-                        close(err[0]);
-                        close(err[1]);
-                }
+                CleanupFDs();
                 return NIL;
+        } else {
+                CloseOnError(exc[0]);
+                CloseOnError(exc[1]);
         }
 
         pid_t pid = fork();
         switch (pid) {
         case -1:
-                close(in[0]);
-                close(in[1]);
-                close(out[0]);
-                close(out[1]);
-                if (!share_stderr) {
-                        close(err[0]);
-                        close(err[1]);
-                }
-                close(exc[0]);
-                close(exc[1]);
+                CleanupFDs();
                 return NIL;
         case 0:
-                close(in[1]);
-                close(out[0]);
+                if (!share_stdin) {
+                        close(in[1]);
+                }
+                if (!share_stdout) {
+                        close(out[0]);
+                }
                 if (!share_stderr) {
                         close(err[0]);
                 }
@@ -2149,12 +2170,12 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 int errfd = err[1];
 
                 if (combine && combine->boolean) {
-                        errfd = out[1];
+                        errfd = share_stdout ? 1 : out[1];
                         close(err[1]);
                 }
 
-                if (dup2(in[0], STDIN_FILENO) == -1
-                ||  dup2(out[1], STDOUT_FILENO) == -1
+                if ((!share_stdin && dup2(in[0], STDIN_FILENO) == -1)
+                ||  (!share_stdout && dup2(out[1], STDOUT_FILENO) == -1)
                 ||  (!share_stderr && dup2(errfd, STDERR_FILENO) == -1)) {
                         write(exc[1], &errno, sizeof errno);
                         exit(EXIT_FAILURE);
@@ -2186,8 +2207,12 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
                 return NIL;
         default:
-                close(in[0]);
-                close(out[1]);
+                if (!share_stdin) {
+                        close(in[0]);
+                }
+                if (!share_stdout) {
+                        close(out[1]);
+                }
                 if (!share_stderr) {
                         close(err[1]);
                 }
@@ -2196,8 +2221,12 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 int status;
                 if (read(exc[0], &status, sizeof status) != 0) {
                         errno = status;
-                        close(in[1]);
-                        close(out[0]);
+                        if (!share_stdin) {
+                                close(in[1]);
+                        }
+                        if (!share_stdout) {
+                                close(out[0]);
+                        }
                         if (!share_stderr) {
                                 close(err[0]);
                         }
@@ -2207,23 +2236,22 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
                 close(exc[0]);
 
-                struct value stderrfd;
+                Value vStdin = share_stdin ? INTEGER(0) : INTEGER(in[1]);
+                Value vStdout = share_stdout ? INTEGER(1) : INTEGER(out[0]);
+                Value vStderr = share_stderr ? INTEGER(2) : ((combine && combine->boolean) ? vStdout : INTEGER(err[0]));
 
-                if (!share_stderr && (!combine || !combine->boolean)) {
-                        stderrfd = INTEGER(err[0]);
-                } else {
-                        stderrfd = NIL;
-                        close(err[0]);
-                }
+#undef CloseOnError
+#undef CleanupFDs
 
                 return value_named_tuple(
-                        "stdin",   INTEGER(in[1]),
-                        "stdout",  INTEGER(out[0]),
-                        "stderr",  stderrfd,
+                        "stdin",   vStdin,
+                        "stdout",  vStdout,
+                        "stderr",  vStderr,
                         "pid",     INTEGER(pid),
                         NULL
                 );
         }
+
 }
 
 struct value
@@ -3077,6 +3105,8 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
                 for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
                         struct blob *b = value_blob_new();
 
+                        NOGC(b);
+
                         struct value entry = value_named_tuple(
                                 "family",    INTEGER(it->ai_family),
                                 "type",      INTEGER(it->ai_socktype),
@@ -3093,6 +3123,7 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
 
                         OKGC(entry.items);
                         OKGC(entry.names);
+                        OKGC(b);
 
                         vec_push_n(*b, (char *)it->ai_addr, it->ai_addrlen);
 
