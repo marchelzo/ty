@@ -587,7 +587,7 @@ inline static char const *
 proto_of(struct value const *f)
 {
         uintptr_t p;
-        memcpy(&p, f->info + 7, sizeof p);
+        memcpy(&p, (char *)(f->info + 7) + 1, sizeof p);
         return (char const *)p;
 }
 
@@ -595,14 +595,20 @@ inline static char const *
 doc_of(struct value const *f)
 {
         uintptr_t p;
-        memcpy(&p, (char *)(f->info + 7) + sizeof (uintptr_t), sizeof p);
+        memcpy(&p, (char *)(f->info + 7) + 1 + sizeof (uintptr_t), sizeof p);
         return (char const *)p;
 }
 
 inline static char const *
 name_of(struct value const *f)
 {
-        return (char *)(f->info + 7) + 2 * sizeof (uintptr_t);
+        return (char *)(f->info + 7) + 1 + 2 * sizeof (uintptr_t);
+}
+
+inline static char *
+from_eval(struct value const *f)
+{
+        return (char *)(f->info + 7);
 }
 
 #endif

@@ -117,6 +117,8 @@ pub function readln(prompt=nil, complete=nil) {
     let hPrefix = nil
     let hSuffix = nil
 
+    let rSearch = nil
+
     function hMatch?(i) {
         if #history < i { return false }
         let text = history[-i].0.str() ?? ''
@@ -167,6 +169,15 @@ pub function readln(prompt=nil, complete=nil) {
 
             '<C-l>' => {
                 write(1, "\x1b[2J\x1b[H")
+            },
+
+            '<C-w>' => {
+                while i > 0 && line[i - 1].match?(/^\S*$/) {
+                    line.pop(--i)
+                }
+                while i > 0 && line[i - 1].match?(/^\s*$/) {
+                    line.pop(--i)
+                }
             },
 
             '<Left>' => {
@@ -241,6 +252,16 @@ pub function readln(prompt=nil, complete=nil) {
                         }
                     }
                 }
+            },
+
+            '<C-r>' => {
+                let fzf = spawn(['fzf'], shareStdin: true, shareStderr: true)
+
+                write(fzf.stdin, history.map(&0 |> &str).unlines())
+                close(fzf.stdin)
+
+                line = read(fzf.stdout, 4192).str().strip().chars()
+                i = #line
             },
 
             ch => {

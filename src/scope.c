@@ -96,7 +96,13 @@ scope_capture(struct scope *s, struct symbol *sym, int parent_index)
                 VPush(s->captured, sym);
                 VPush(s->cap_indices, parent_index);
 
-                LOG("scope_capture(sym=%s, scope=%p, scope->function=%p, sym->function=%p, sym->function->parent=%p, cap_index = %d)", sym->identifier, s, s->function, sym->scope->function, sym->scope->function->parent, parent_index);
+                LOG(
+                        "scope_capture(sym=%s, scope=%s (%p), cap_index=%d)",
+                        sym->identifier,
+                        scope_name(s),
+                        s,
+                        parent_index
+                );
 
                 return s->captured.count - 1;
 }
@@ -282,12 +288,22 @@ scope_capture_all(struct scope *scope, struct scope const *stop)
         for (struct scope *s = scope; s->function != stop->function; s = s->parent) {
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
-                                LOG("scope_capture_all(scope=%p, scope->function=%p): capturing %s", scope, scope->function, sym->identifier);
+                                LOG(
+                                        "scope_capture_all(scope=%s (%p)): capturing %s",
+                                        scope_name(scope),
+                                        scope,
+                                        sym->identifier
+                                );
 
                                 struct scope *fscope = scope->function;
                                 vec(struct scope *) scopes = {0};
 
-                                while (fscope != stop->function && fscope->parent->function != stop->function && fscope->parent->function != sym->scope->function) {
+                                while (
+                                        fscope != stop->function &&
+                                        fscope->parent->function != stop->function &&
+                                        fscope->function != sym->scope->function &&
+                                        fscope->parent->function != sym->scope->function
+                                ) {
                                         VPush(scopes, fscope);
                                         fscope = fscope->parent->function;
                                 }

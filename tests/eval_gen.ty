@@ -1,0 +1,9 @@
+class Foo {
+    foo*(x) {
+        yield __eval__(x)
+    }
+}
+
+for f in Foo().foo('&upper') {
+    print(f('pass'))
+}

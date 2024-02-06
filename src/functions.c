@@ -665,7 +665,7 @@ getfmt(char const **s, char const *end, char *out, char const *oend)
                 *out++ = *(*s)++;
                 *out = '\0';
         }
-        
+
         if (*s < end) {
                 int c = *(*s)++;
                 switch (c) {
@@ -1830,7 +1830,7 @@ builtin_os_rename(int argc, struct value *kwargs)
         if (new.type != VALUE_STRING) {
                 vm_panic("os.rename(): expected string but got: %s", value_show(&new));
         }
-        
+
         if (old.bytes + new.bytes + 2 > sizeof buffer) {
                 errno = ENAMETOOLONG;
                 return INTEGER(-1);
