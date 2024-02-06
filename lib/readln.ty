@@ -14,7 +14,32 @@ let termFd = nil
 
 let history = []
 
-tag ListCompletions, ReplaceLine, Insert;
+tag CycleCompletions, ListCompletions, ReplaceLine, Insert;
+
+class CompletionCycler {
+    init(cs, line, i) {
+        @i = i
+        @line = line
+        @cs = cs
+        @ci = -1
+    }
+
+    cycle() {
+        if #@cs == 0 || @ci + 1 == #@cs {
+            @ci = -1
+            return (@line, @i)
+        }
+
+        @ci = (@ci + 1) % #@cs
+
+        let c = @cs[@ci]
+
+        let line = @line.clone()
+        line.insert(@i, c)
+
+        return (line, @i + 1)
+    }
+}
 
 C! struct WinSize {
     c.short lines;
@@ -54,6 +79,7 @@ function completeFile(before, after) {
     return match names {
         []       => None,
         [unique] => Insert(chop(unique)),
+        _        => CycleCompletions(names.map(chop)),
         _        => ListCompletions(names)
     }
 
@@ -117,7 +143,7 @@ pub function readln(prompt=nil, complete=nil) {
     let hPrefix = nil
     let hSuffix = nil
 
-    let rSearch = nil
+    let completionCycler = nil
 
     function hMatch?(i) {
         if #history < i { return false }
@@ -137,6 +163,10 @@ pub function readln(prompt=nil, complete=nil) {
         let key = c.as_str(keyBuffer.ptr())
 
         let hiStart = hi
+
+        if key != '<Tab>' {
+            completionCycler = nil
+        }
 
         match key {
             '<Enter>' => {
@@ -227,41 +257,55 @@ pub function readln(prompt=nil, complete=nil) {
             },
 
             '<Tab>' => {
-                let (before, after) = line.split(i)
-                let result = (complete ?? defaultComplete ?? completeFile)(before.str() ?? '', after.str() ?? '')
-                match result {
-                    Insert(s) => {
-                        line.insert(i++, s)
-                    },
+                if completionCycler != nil {
+                    (line, i) = completionCycler.cycle()
+                } else {
+                    let (before, after) = line.split(i)
+                    let result = (complete ?? defaultComplete ?? completeFile)(before.str() ?? '', after.str() ?? '')
+                    match result {
+                        Insert(s) => {
+                            line.insert(i++, s)
+                        },
 
-                    None => {
-                    },
+                        None => {
+                        },
 
-                    ReplaceLine(s) => {
-                        line = s.chars()
-                        i = #line
-                    },
+                        ReplaceLine(s) => {
+                            line = s.chars()
+                            i = #line
+                        },
 
-                    ListCompletions(cs) => {
-                        write(1, "{ERASE_LINE}\r")
+                        CycleCompletions(cs) => {
+                            completionCycler = CompletionCycler(cs, line, i)
+                            (line, i) = completionCycler.cycle()
+                        },
 
-                        let (h, w) = termDimensions()
+                        ListCompletions(cs) => {
+                            write(1, "{ERASE_LINE}\r")
 
-                        for line in fitItems(cs, w) {
-                            print(line)
+                            let (h, w) = termDimensions()
+
+                            for line in fitItems(cs, w) {
+                                print(line)
+                            }
                         }
                     }
                 }
             },
 
             '<C-r>' => {
-                let fzf = spawn(['fzf'], shareStdin: true, shareStderr: true)
+                let fzf = spawn(['fzf', '--tac', '--no-sort', '-q', getText()], shareStdin: false, shareStderr: true)
 
                 write(fzf.stdin, history.map(&0 |> &str).unlines())
                 close(fzf.stdin)
 
-                line = read(fzf.stdout, 4192).str().strip().chars()
-                i = #line
+                let out = read(fzf.stdout, 8192).str().strip()
+                close(fzf.stdout)
+
+                if #out > 0 {
+                    line = out.chars()
+                    i = #line
+                }
             },
 
             ch => {
@@ -287,7 +331,7 @@ pub function readln(prompt=nil, complete=nil) {
 }
 
 function progressString(progress: Float, width: Int) {
-    let progress = min(1.0, max(0.0, progress))
+    let progress = progress.clamp(0.0, 1.0)
     let wholeWidth = floor(progress * width)
     let remainderWidth = (progress * width) - wholeWidth
     let partWidth = floor(remainderWidth * 8)
