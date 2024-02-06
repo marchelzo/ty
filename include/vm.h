@@ -14,6 +14,7 @@
 extern bool CompileOnly;
 extern bool PrintResult;
 extern pthread_t MainThread;
+extern _Thread_local int EvalDepth;
 
 enum instruction {
         INSTR_NOP,

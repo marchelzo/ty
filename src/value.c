@@ -990,6 +990,9 @@ mark_function(struct value const *v)
 {
         int n = v->info[2];
 
+        if (*from_eval(v))
+                MARK(v->info);
+
         if (n == 0 || MARKED(v->env))
                 return;
 
@@ -1046,6 +1049,16 @@ value_string_alloc(int n)
 void
 _value_mark(struct value const *v)
 {
+#ifndef TY_RELEASE
+        static _Thread_local int d;
+
+        ++GC_OFF_COUNT;
+        GCLOG("Marking: %s", value_show(v));
+        --GC_OFF_COUNT;
+
+        ++d;
+#endif
+
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;
         case VALUE_BUILTIN_METHOD:  if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;
@@ -1063,6 +1076,10 @@ _value_mark(struct value const *v)
         case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                             break;
         default:                                                                                  break;
         }
+
+#ifndef TY_RELEASE
+        --d;
+#endif
 }
 
 struct blob *

@@ -87,6 +87,20 @@ doc! os::recvfrom
     }
 '''
 
+doc! os::exec
+(argv: [String]) -> Int
+'''
+    See execvp(2).
+
+    Example
+    -------
+
+    if os.exec(['nc', '-u', '-p3000']) != 0 {
+        eprint("exec(): {errno.str()}")
+        os.exit(1)
+    }
+'''
+
 pub function help(x) {
     let doc = function (x) {
         return table[x] ?? doc(x)

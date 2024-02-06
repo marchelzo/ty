@@ -1987,11 +1987,12 @@ emit_function(struct expression const *e, int class)
         }
 
         emit_instr(INSTR_FUNCTION);
-        emit_boolean(bound_caps > 0);
 
         while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
                 VPush(state.code, 0x00);
         VPush(state.code, 0xFF);
+
+        emit_int(bound_caps);
 
         int bound = e->scope->owned.count;
 
@@ -2013,11 +2014,14 @@ emit_function(struct expression const *e, int class)
 
         emit_int(class);
 
+        // Need to GC code?
+        VPush(state.code, 0);
+
         emit_symbol((uintptr_t)e->proto);
         emit_symbol((uintptr_t)e->doc);
 
         emit_string(e->name == NULL ? "(anonymous function)" : e->name);
-        LOG("COMPILING FUNCTION: %s.%s", class == -1 ? "TOP" : class_name(class), (e->name == NULL ? "(anonymous function)" : e->name));
+        LOG("COMPILING FUNCTION: %s", scope_name(e->scope));
 
         for (int i = 0; i < ncaps; ++i) {
                 LOG(" => CAPTURES %s", caps[i]->identifier);
@@ -2170,11 +2174,11 @@ emit_function(struct expression const *e, int class)
         for (int i = 0; i < e->decorators.count; ++i) {
                 struct expression *c = e->decorators.items[i];
                 if (c->type == EXPRESSION_FUNCTION_CALL) {
-                        vec_insert(c->args, NULL, 0);
-                        vec_insert(c->fconds, NULL, 0);
+                        VInsert(c->args, NULL, 0);
+                        VInsert(c->fconds, NULL, 0);
                 } else {
-                        vec_insert(c->method_args, NULL, 0);
-                        vec_insert(c->mconds, NULL, 0);
+                        VInsert(c->method_args, NULL, 0);
+                        VInsert(c->mconds, NULL, 0);
                 }
                 emit_expression(c);
         }
@@ -6270,6 +6274,7 @@ cexpr(struct value *v)
                 vec_init(e->params);
                 vec_init(e->constraints);
                 vec_init(e->dflts);
+                vec_init(e->decorators);
                 for (int i = 0; i < params->array->count; ++i) {
                         struct value *p = &params->array->items[i];
                         switch (tags_first(p->tags)) {
@@ -6547,7 +6552,9 @@ tyeval(struct expression *e)
 
         RESTORE_JB;
 
+        EvalDepth += 1;
         struct value v = vm_try_exec(state.code.items);
+        EvalDepth -= 1;
 
         state.code = code_save;
         state.expression_locations = locations_save;

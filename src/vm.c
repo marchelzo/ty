@@ -88,6 +88,8 @@ static int iExitHooks = -1;
 
 static _Thread_local jmp_buf jb;
 
+_Thread_local int EvalDepth = 0;
+
 typedef struct {
         int argc;
         struct value *argv;
@@ -3050,14 +3052,15 @@ BadContainer:
                 }
                 CASE(FUNCTION)
                 {
-                        READVALUE(b);
-
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
 
                         while (*ip != ((char)0xFF))
                                 ++ip;
                         ++ip;
+
+                        // n: bound_caps
+                        READVALUE(n);
 
                         v.info = (int *) ip;
 
@@ -3066,13 +3069,20 @@ BadContainer:
                         int nEnv = v.info[2];
                         int bound = v.info[3];
 
-                        int ncaps = b ? nEnv - bound : nEnv;
+                        int ncaps = (n > 0) ? nEnv - n : nEnv;
 
                         LOG("Header size: %d", hs);
                         LOG("Code size: %d", size);
                         LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
                         LOG("Name: %s", value_show(&v));
+
+                        if (EvalDepth > 0) {
+                                v.info = gc_alloc_object(hs + size, GC_ANY);
+                                memcpy(v.info, ip, hs + size);
+                                *from_eval(&v) = true;
+                                NOGC(v.info);
+                        }
 
                         ip += size + hs;
 
@@ -3086,32 +3096,34 @@ BadContainer:
 
                         ++GC_OFF_COUNT;
 
-                        if (ncaps > 0) {
-                                for (int i = 0; i < ncaps; ++i) {
-                                        READVALUE(b);
-                                        READVALUE(j);
-                                        struct value *p = poptarget();
-                                        if (b) {
-                                                if (p->type == VALUE_REF) {
-                                                        /* This variable was already captured, just refer to the same object */
-                                                        v.env[j] = p->ptr;
-                                                } else {
-                                                        // TODO: figure out if this is getting freed too early
-                                                        struct value *new = gc_alloc_object(sizeof (struct value), GC_VALUE);
-                                                        *new = *p;
-                                                        *p = REF(new);
-                                                        v.env[j] = new;
-                                                }
+                        for (int i = 0; i < ncaps; ++i) {
+                                READVALUE(b);
+                                READVALUE(j);
+                                struct value *p = poptarget();
+                                if (b) {
+                                        if (p->type == VALUE_REF) {
+                                                /* This variable was already captured, just refer to the same object */
+                                                v.env[j] = p->ptr;
                                         } else {
-                                                v.env[j] = p;
+                                                // TODO: figure out if this is getting freed too early
+                                                struct value *new = gc_alloc_object(sizeof (struct value), GC_VALUE);
+                                                *new = *p;
+                                                *p = REF(new);
+                                                v.env[j] = new;
                                         }
-                                        LOG("env[%d] = %s", j, value_show(v.env[j]));
+                                } else {
+                                        v.env[j] = p;
                                 }
+                                LOG("env[%d] = %s", j, value_show(v.env[j]));
                         }
 
                         push(v);
 
                         --GC_OFF_COUNT;
+
+                        if (EvalDepth > 0) {
+                                OKGC(v.info);
+                        }
 
                         break;
                 }
