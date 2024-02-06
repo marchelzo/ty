@@ -612,6 +612,7 @@
 {.module = "ffi", .name = "freeClosure", .value = BUILTIN(cffi_closure_free)},
 {.module = "ffi", .name = "dlsym", .value = BUILTIN(cffi_dlsym)},
 {.module = "ffi", .name = "dlopen", .value = BUILTIN(cffi_dlopen)},
+{.module = "ffi", .name = "dlerror", .value = BUILTIN(cffi_dlerror)},
 {.module = "ffi", .name = "member", .value = BUILTIN(cffi_member)},
 {.module = "ffi", .name = "pmember", .value = BUILTIN(cffi_pmember)},
 {.module = "ffi", .name = "str", .value = BUILTIN(cffi_str)},

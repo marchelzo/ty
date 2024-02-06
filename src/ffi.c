@@ -641,6 +641,21 @@ cffi_as_str(int argc, struct value *kwargs)
 }
 
 struct value
+cffi_dlerror(int argc, struct value *kwargs)
+{
+        if (argc != 0) {
+                vm_panic("ffi.dlerror(): expected 0 arguments but got %d", argc);
+        }
+
+        char *error = dlerror();
+
+        if (error == NULL)
+                return NIL;
+
+        return STRING_CLONE(error, strlen(error));
+}
+
+struct value
 cffi_dlsym(int argc, struct value *kwargs)
 {
         if (argc == 0 || argc > 2) {

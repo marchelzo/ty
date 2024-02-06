@@ -54,6 +54,9 @@ struct value
 cffi_dlopen(int argc, struct value *kwargs);
 
 struct value
+cffi_dlerror(int argc, struct value *kwargs);
+
+struct value
 cffi_struct(int argc, struct value *kwargs);
 
 struct value
