@@ -2081,6 +2081,10 @@ builtin_os_spawn(int argc, struct value *kwargs)
         struct value *share_stdout = NAMED("shareStdout");
         struct value *share_stdin = NAMED("shareStdin");
 
+        if (combine != NULL && !value_truthy(combine)) {
+                combine = NULL;
+        }
+
         if (share_stderr != NULL && !value_truthy(share_stderr)) {
                 share_stderr = NULL;
         }
@@ -2169,7 +2173,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
                 int errfd = err[1];
 
-                if (combine && combine->boolean) {
+                if (combine) {
                         errfd = share_stdout ? 1 : out[1];
                         close(err[1]);
                 }
@@ -2238,7 +2242,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
                 Value vStdin = share_stdin ? INTEGER(0) : INTEGER(in[1]);
                 Value vStdout = share_stdout ? INTEGER(1) : INTEGER(out[0]);
-                Value vStderr = share_stderr ? INTEGER(2) : ((combine && combine->boolean) ? vStdout : INTEGER(err[0]));
+                Value vStderr = combine ? vStdout : (share_stderr ? INTEGER(2) : INTEGER(err[0]));
 
 #undef CloseOnError
 #undef CleanupFDs

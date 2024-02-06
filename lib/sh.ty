@@ -4,9 +4,9 @@ import errno (ETIMEDOUT)
 
 export ls, sh, expand
 
-function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareStderr=false) {
+function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareStderr=false, shell=os.getenv('SHELL')) {
     if not let $p = os.spawn(
-        ['bash', '-c', c],
+        [shell, '-c', c],
         detached: timeoutMs != nil,
         combineOutput: combineOutput,
         shareStderr: shareStderr
@@ -29,7 +29,7 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
     while timeoutMs == nil || timeoutMs > 0 {
         let pfds = [
             (fd: p.stdout, events: os.POLLIN),
-            (fd: p.stderr, events: os.POLLIN) if p.stderr !=  nil
+            (fd: p.stderr, events: os.POLLIN) if p.stderr !=  p.stdout
         ]
 
         let n = os.poll(pfds, timeoutMs ?? -1)
