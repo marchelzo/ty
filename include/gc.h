@@ -102,9 +102,9 @@ CheckUsed(void)
 {
         if (
                 GC_OFF_COUNT == 0
-//#ifdef TY_RELEASE
+#ifdef TY_RELEASE
                 && MemoryUsed > MemoryLimit
-//#endif
+#endif
         ) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC();
