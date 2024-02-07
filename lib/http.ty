@@ -74,7 +74,7 @@ class HttpResponse {
 
         response.push(@body)
 
-        dbg!(write(c, response, all: true))
+        write(c, response, all: true)
     }
 }
 
@@ -86,17 +86,17 @@ class HttpServer {
             [addr, port] => {
                 @sock = socket(AF_INET, SOCK_STREAM, 0)
 
-                dbg!(setsockopt(@sock, SOL_SOCKET, SO_REUSEADDR, 1))
+                setsockopt(@sock, SOL_SOCKET, SO_REUSEADDR, 1)
 
                 let Ok([addr]) = getaddrinfo(addr, port, AF_INET, SOCK_STREAM, 0)
 
-                dbg!(bind(@sock, addr))
-                dbg!(listen(@sock, backlog))
+                bind(@sock, addr)
+                listen(@sock, backlog)
             },
 
             [sock] => {
                 @sock = sock
-                dbg!(listen(@sock, backlog))
+                listen(@sock, backlog)
             }
         }
     }

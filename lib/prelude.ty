@@ -1760,7 +1760,7 @@ macro showCode {
     e
 }
 
-function __dbg(args, raw) {
+macro dbg(*args) {
     let tmp = ty.Id(name: ty.gensym())
 
     if #args == 0 {
@@ -1790,9 +1790,6 @@ function __dbg(args, raw) {
         tmp
     ])
 }
-
-macro dbg!(*args) { __dbg(args, raw) }
-macro dbg(*args) { __dbg(args, raw) }
 
 macro time! {
     // (
