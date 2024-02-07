@@ -85,6 +85,7 @@ struct token {
                         KEYWORD_LET,
                         KEYWORD_CONTINUE,
                         KEYWORD_IF,
+                        KEYWORD_DO,
                         KEYWORD_OR,
                         KEYWORD_AND,
                         KEYWORD_NOT,
