@@ -799,8 +799,8 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 struct expression *items = Allocate(sizeof *items);
                                 *items = (struct expression){0};
                                 items->type = EXPRESSION_TUPLE;
-                                items->start = tagged[0]->start;
-                                items->end = tagged[tagc - 1]->end;
+                                items->start = e->start;
+                                items->end = e->end;
                                 vec_init(items->es);
                                 vec_init(items->tconds);
                                 vec_init(items->required);
