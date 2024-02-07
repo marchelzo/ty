@@ -3,9 +3,13 @@ import ty (bt)
 import ty.parse as parse
 
 pub macro repl(cond, *exprs) {
+    let sourceStrings = raw.drop(1).map(parse.show)
+    let width = sourceStrings.map(&len).max() ?? 0
+    let formatString = "%%{width}s"
+
     let prints = ty.Multi([
-        $$[ print($$(ty.Value(parse.show(p))), '=', $$(e), sep: ' ') $$]
-        for (e, p) in zip(exprs, raw.drop(1))
+        $$[ print(fmt($$(ty.Value(formatString)), $$(ty.Value(s))), '=', $$(e), sep: ' ') $$]
+        for (e, s) in zip(exprs, sourceStrings)
     ])
 
     $$[
@@ -28,6 +32,7 @@ pub macro repl(cond, *exprs) {
                 } catch Err(msg) {
                     print(msg)
                 }
+                $$(prints)
             }
 
             x
