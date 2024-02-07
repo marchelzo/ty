@@ -597,20 +597,6 @@ lexspecialdocstring(void)
                         VPush(vec_last(lines)->exprs, st);
                 } else switch (C(0)) {
                         case '\0': goto Unterminated;
-                        case '%':
-                                nextchar();
-                                if (C(0) != '%') {
-                                        fmt = (char *)SRC;
-                                        while (C(0) != '\0' && C(0) != '{' && C(0) != '"') {
-                                                nextchar();
-                                        }
-                                        if (C(0) != '{') {
-                                                error("unterminated format specifier");
-                                        }
-                                } else {
-                                        VPush(str, nextchar());
-                                }
-                                break;
                         case '\\':
                                 nextchar();
                                 switch (C(0)) {
@@ -748,20 +734,6 @@ Start:
                 switch (C(0)) {
                 case '\0': goto Unterminated;
                 case '{':  goto Expr;
-                case '%':
-                        nextchar();
-                        if (C(0) != '%') {
-                                fmt = SRC;
-                                while (C(0) != '\0' && C(0) != '{' && C(0) != '"') {
-                                        nextchar();
-                                }
-                                if (C(0) != '{') {
-                                        error("unterminated format specifier");
-                                }
-                        } else {
-                                VPush(str, nextchar());
-                        }
-                        break;
                 case '\\':
                         nextchar();
                         switch (C(0)) {

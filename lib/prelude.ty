@@ -597,9 +597,9 @@ class Int {
 
     __fmt__(spec) {
         if spec[-1].match?(/[A-z]/) {
-            fmt("%%{spec}", self)
+            fmt("%{spec}", self)
         } else {
-            fmt("%%{spec}d", self)
+            fmt("%{spec}d", self)
         }
     }
 }
@@ -653,9 +653,9 @@ class Float {
 
     __fmt__(spec) {
         if spec[-1].match?(/[A-z]/) {
-            fmt("%%{spec}", self)
+            fmt("%{spec}", self)
         } else {
-            fmt("%%{spec}f", self)
+            fmt("%{spec}f", self)
         }
     }
 
