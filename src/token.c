@@ -23,6 +23,7 @@ static struct {
         { "for",         KEYWORD_FOR       },
         { "function",    KEYWORD_FUNCTION  },
         { "macro",       KEYWORD_MACRO     },
+        { "do",          KEYWORD_DO        },
         { "if",          KEYWORD_IF        },
         { "or",          KEYWORD_OR        },
         { "and",         KEYWORD_AND       },

@@ -41,7 +41,7 @@ function doTest(name) {
         }
     }
 
-    print("{b(name.comb(/\.ty$/).padLeft(14))} ... {result}")
+    print("{b(name.comb(/\.ty$/).padLeft(16))} ... {result}")
 }
 
 let pool = ThreadPool(16, doTest)

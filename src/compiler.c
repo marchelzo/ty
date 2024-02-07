@@ -1667,11 +1667,9 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_lvalue(scope, s->target, true, s->pub);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
-                if (scope != state.global) {
         case STATEMENT_MACRO_DEFINITION:
         case STATEMENT_FUN_MACRO_DEFINITION:
-                        symbolize_lvalue(scope, s->target, true, s->pub);
-                }
+                symbolize_lvalue(scope, s->target, true, s->pub);
                 symbolize_expression(scope, s->value);
                 break;
         }
@@ -6712,11 +6710,14 @@ compiler_clear_location(void)
         state.start = state.end = state.mstart = state.mend = Nowhere;
 }
 
-struct value
+Value
 compiler_render_template(struct expression *e)
 {
+        Value v;
+
         if (e->template.stmts.count == 1) {
-                return tystmt(e->template.stmts.items[0]);
+                v = tystmt(e->template.stmts.items[0]);
+                goto End;
         }
 
         struct array *a = value_array_new();
@@ -6725,11 +6726,14 @@ compiler_render_template(struct expression *e)
                 value_array_push(a, tystmt(e->template.stmts.items[i]));
         }
 
+        v = tagged(TyMulti, ARRAY(a), NONE);
+
+End:
         for (size_t i = 0; i < e->template.exprs.count; ++i) {
                 vm_pop();
         }
 
-        return tagged(TyMulti, ARRAY(a), NONE);
+        return v;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

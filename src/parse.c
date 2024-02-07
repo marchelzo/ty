@@ -1073,20 +1073,50 @@ opfunc(void)
 }
 
 static struct expression *
-prefix_me(void)
+prefix_at(void)
 {
         if (token(1)->type == '[')
                 return prefix_function();
 
         next();
 
-        unconsume('.');
+        if (tok()->type == '{') {
+                next();
 
-        unconsume(TOKEN_IDENTIFIER);
-        tok()->identifier = "self";
-        tok()->module = NULL;
+                if (token(1)->type == '}') {
+                        struct token id = *tok();
 
-        return prefix_identifier();
+                        next();
+                        unconsume(')');
+                        unconsume('(');
+
+                        unconsume(TOKEN_IDENTIFIER);
+                        *tok() = id;
+                }
+
+                struct expression *m = parse_expr(0);
+
+                if (m->type != EXPRESSION_FUNCTION_CALL) {
+                        EStart = m->start;
+                        EEnd = m->end;
+                        error("expected function-like macro invocation inside @{...}");
+                }
+
+                consume('}');
+
+                VPush(m->args, parse_expr(0));
+                VPush(m->aconds, NULL);
+
+                return m;
+        } else {
+                unconsume('.');
+
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->identifier = "self";
+                tok()->module = NULL;
+
+                return prefix_identifier();
+        }
 }
 
 
@@ -1287,6 +1317,14 @@ make_with(struct expression *e, statement_vector defs, struct statement *body)
         VPushN(s->statements, defs.items, defs.count);
         VPush(s->statements, try);
         e->with.block = s;
+}
+
+static struct expression *
+prefix_do(void)
+{
+        // do
+        next();
+        return prefix_statement();
 }
 
 static struct expression *
@@ -2816,8 +2854,8 @@ get_prefix_parser(void)
 
         case TOKEN_QUESTION:       return prefix_is_nil;
         case TOKEN_BANG:           return prefix_bang;
-        case TOKEN_AT:             return prefix_me;
-        case ':':                  return prefix_me;
+        case TOKEN_AT:             return prefix_at;
+        case ':':                  return prefix_at;
         case TOKEN_MINUS:          return prefix_minus;
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
@@ -2848,6 +2886,7 @@ Keyword:
         case KEYWORD_NIL:       return prefix_nil;
         case KEYWORD_YIELD:     return prefix_yield;
         case KEYWORD_WITH:      return prefix_with;
+        case KEYWORD_DO:        return prefix_do;
 
         case KEYWORD_IF:
         case KEYWORD_FOR:

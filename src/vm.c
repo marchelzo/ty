@@ -1371,7 +1371,12 @@ DoMutAdd(void)
         }
 }
 
-inline static void
+#ifndef TY_RELEASE
+__attribute__((noinline))
+#else
+inline
+#endif
+static void
 DoAssign(void)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
@@ -2275,8 +2280,6 @@ Throw:
                         push(compiler_render_template((struct expression *)s));
                         break;
                 CASE(FUCK)
-                        printf("Build: %s\n", ip);
-                        ip += strlen(ip) + 1;
                 CASE(FUCK2)
                 CASE(FUCK3)
                         break;
