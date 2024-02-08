@@ -24,26 +24,26 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
     os.close(p.stdin)
 
     let start = utime()
+    let remainingMs = timeoutMs ?? -1
+
     let timedOut = false
 
-    while timeoutMs == nil || timeoutMs > 0 {
-        let pfds = [
-            (fd: p.stdout, events: os.POLLIN),
-            (fd: p.stderr, events: os.POLLIN) if p.stderr !=  p.stdout
-        ]
-
-        let n = os.poll(pfds, timeoutMs ?? -1)
-
-        if n < 1 {
+    while true {
+        if timeoutMs != nil && remainingMs < 0 {
             os.kill(-p.pid, signal)
             timedOut = true
             break
         }
 
+        let pfds = [
+            (fd: p.stdout, events: os.POLLIN),
+            (fd: p.stderr, events: os.POLLIN) if p.stderr !=  p.stdout
+        ]
+
+        let n = os.poll(pfds, remainingMs)
+
         if timeoutMs != nil {
-            let now = utime()
-            timeoutMs -= (now - start) / 1000
-            start = now
+            remainingMs = timeoutMs - (utime() - start) / 1000
         }
 
         if pfds.len() > 1 && pfds[1].revents .&. os.POLLIN {
