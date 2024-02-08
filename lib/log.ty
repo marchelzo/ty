@@ -81,7 +81,7 @@ class Logger {
         @stack = []
         @prefix = function (level, color) {
             let t = time.utime()
-            let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.%03{(t % 1000000) / 1000}"
+            let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000#03}"
             let threadName = (Thread.getName() || 'main') + "({thread.id()})"
             if color {
                 let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
