@@ -7,7 +7,7 @@ export ls, sh, expand
 function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareStderr=false, shell=os.getenv('SHELL')) {
     if not let $p = os.spawn(
         [shell, '-c', c],
-        detached: timeoutMs != nil,
+        detach: timeoutMs != nil,
         combineOutput: combineOutput,
         shareStderr: shareStderr
     ) {
