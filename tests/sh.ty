@@ -4,9 +4,12 @@ if not let $out = sh('echo -n based 1>&2', combineOutput: true) or out != 'based
     print('FAIL')
 }
 
-if not let $out = sh('echo -n based') {
+if not let $out = sh('echo -n based') or out != 'based' {
 	print('FAIL')
-} else {
-	print(out == 'based' ? 'PASS' : 'FAIL')
 }
 
+if let $out = sh('sleep 0.25', timeoutMs: 100) {
+    print('FAIL')
+}
+
+print('PASS')

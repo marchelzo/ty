@@ -2635,17 +2635,7 @@ infix_arrow_function(struct expression *left)
 
         consume(TOKEN_ARROW);
 
-        struct expression *e = mkexpr();
-        e->type = EXPRESSION_FUNCTION;
-        e->rest = -1;
-        e->ikwargs = -1;
-        e->has_defer = false;
-        e->return_type = NULL;
-        e->ftype = FT_NONE;
-        e->name = NULL;
-        vec_init(e->params);
-        vec_init(e->dflts);
-        vec_init(e->constraints);
+        struct expression *e = mkfunc();
 
         if (left->type != EXPRESSION_LIST && (left->type != EXPRESSION_TUPLE || !left->only_identifiers)) {
                 struct expression *l = mkexpr();
