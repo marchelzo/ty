@@ -1,6 +1,7 @@
 import os (..)
 import ffi as c
 import cutil (cfun!)
+import errno (ENOTDIR)
 
 function walk*(path) {
     let d = opendir(path)
@@ -34,3 +35,34 @@ let os::walk = walk
 let os::isatty = isatty
 let os::strsignal = strsignal |> c.str
 let os::ioctl = c.wrapVar(nil, 'ioctl', 2, c.int, c.int, c.ulong)
+
+let os::rm = function rm(path, quiet=false) {
+    if not let $d = opendir(path) {
+        match errno.get() {
+            ::ENOTDIR => {
+                if unlink(path) == -1 && !quiet {
+                    throw Err(errno.get())
+                }
+            },
+
+            e => {
+                if !quiet throw Err(e)
+            }
+        }
+
+        return
+    }
+
+    try {
+        while let $entry = readdir(d) {
+            match (entry.d_type, entry.d_name) {
+                (_, '.'), (_, '..') => { },
+                (_, name)           => rm("{path}/{name}")
+            }
+        }
+    } finally {
+        closedir(d)
+    }
+
+    rmdir(path)
+}
