@@ -1488,6 +1488,10 @@ function onExit(f) {
     __EXIT_HOOKS__.push(f)
 }
 
+function printf(*args, %kwargs) {
+    print(fmt(*args), **kwargs)
+}
+
 function uuid4() {
     let b = Blob(*[rand(256) for _ in ..16])
 
