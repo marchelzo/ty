@@ -229,6 +229,9 @@ struct value
 builtin_os_mktemp(int argc, struct value *kwargs);
 
 struct value
+builtin_os_mkdtemp(int argc, struct value *kwargs);
+
+struct value
 builtin_os_opendir(int argc, struct value *kwargs);
 
 struct value

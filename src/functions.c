@@ -1625,6 +1625,34 @@ builtin_os_close(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_mkdtemp(int argc, struct value *kwargs)
+{
+        char template[PATH_MAX + 1] = {0};
+
+        if (argc > 1) {
+                vm_panic("os.mkdtemp() expects 0 or 1 arguments but got %d", argc);
+        }
+
+        if (argc == 1 && ARG(0).type != VALUE_NIL) {
+                struct value s = ARG(0);
+                if (s.type != VALUE_STRING)
+                        vm_panic("the first argument to os.mktemp() must be a string");
+                /* -8 to make room for the .XXXXXX suffix and NUL byte */
+                memcpy(template, s.string, min(s.bytes, sizeof template - 8));
+        } else {
+                strcpy(template, "tmp");
+        }
+
+        strcat(template, ".XXXXXX");
+
+        if (mkdtemp(template) == NULL) {
+                return NIL;
+        }
+
+        return STRING_CLONE(template, strlen(template));
+}
+
+struct value
 builtin_os_mktemp(int argc, struct value *kwargs)
 {
         char template[PATH_MAX + 1] = {0};
