@@ -245,7 +245,7 @@ struct expression {
         union {
                 intmax_t integer;
                 bool boolean;
-                char *string;
+                char const *string;
                 float real;
                 struct statement *statement;
                 struct value *v;

@@ -1108,6 +1108,15 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         e->string = state.filename;
                         break;
                 }
+                if (e->module == NULL && strcmp(e->identifier, "__class__") == 0) {
+                        if (state.class != -1) {
+                                e->type = EXPRESSION_STRING;
+                                e->string = class_name(state.class);
+                        } else {
+                                e->type = EXPRESSION_NIL;
+                        }
+                        break;
+                }
                 if (e->module == NULL && strcmp(e->identifier, "__func__") == 0) {
                         if (state.func && state.func->name != NULL) {
                                 e->type = EXPRESSION_STRING;
