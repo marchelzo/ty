@@ -5329,7 +5329,7 @@ builtin_doc(int argc, struct value *kwargs)
         }
 
         if (ARG(0).type != VALUE_STRING) {
-                vm_panic("doc(): expected class, function, or string but got: %s", value_show_color(&ARG(0)));
+                return NIL;
         }
 
         snprintf(id, sizeof id, "%.*s", (int)ARG(0).bytes, ARG(0).string);
