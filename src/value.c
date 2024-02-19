@@ -336,34 +336,44 @@ show_string(char const *s, size_t n, bool color)
         vec(char) v;
         vec_init(v);
 
-        if (color)
-                vec_push_n(v, TERM(92), strlen(TERM(92)));
+#define COLOR(i) if (color) vec_push_n(v, TERM(i), strlen(TERM(i)))
+
+        COLOR(92);
 
         vec_push(v, '\'');
 
         if (s != NULL) for (char const *c = s; c < s + n; ++c) switch (*c) {
         case '\t':
+                COLOR(93);
                 vec_push(v, '\\');
                 vec_push(v, 't');
+                COLOR(92);
                 break;
         case '\r':
+                COLOR(93);
                 vec_push(v, '\\');
                 vec_push(v, 'r');
+                COLOR(92);
                 break;
         case '\n':
+                COLOR(93);
                 vec_push(v, '\\');
                 vec_push(v, 'n');
+                COLOR(92);
                 break;
         case '\'':
+                COLOR(93);
                 vec_push(v, '\\');
+                COLOR(92);
         default:
                 vec_push(v, *c);
         }
 
         vec_push(v, '\'');
 
-        if (color)
-                vec_push_n(v, TERM(0), strlen(TERM(0)));
+        COLOR(0);
+
+#undef COLOR
 
         vec_push(v, '\0');
 
