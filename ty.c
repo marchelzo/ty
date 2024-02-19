@@ -77,8 +77,10 @@ execln(char *line)
 
         } else if (strncmp(line, "help ", 5) == 0) {
                 snprintf(buffer + 1, sizeof buffer - 2, "help(%s);", line + 5);
-                vm_execute(buffer + 1);
-                goto End;
+                if (vm_execute(buffer + 1))
+                        goto End;
+                else
+                        goto Bad;
         }
 
         snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
@@ -87,7 +89,7 @@ execln(char *line)
         snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
         if (strstr(vm_error(), "ParseError") != NULL && vm_execute(buffer + 1))
                 goto End;
-
+Bad:
         good = false;
         fprintf(stderr, "%s\n", vm_error());
 End:
