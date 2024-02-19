@@ -4375,7 +4375,7 @@ builtin_time_time(int argc, struct value *kwargs)
         struct value *utc = NAMED("utc");
 
         return INTEGER(
-                  utc != NULL && value_truthy(utc)
+                utc != NULL && value_truthy(utc)
                 ? timegm(&t)
                 : mktime(&t)
         );
