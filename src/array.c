@@ -280,7 +280,7 @@ array_window(struct value *array, int argc, struct value *kwargs)
         if (k.integer <= 0)
                 vm_panic("the first argument to array.window() must be positive");
 
-        int n = array->array->count - k.integer + 1;
+        int n = max((intmax_t)array->array->count - k.integer + 1, 0);
 
         if (argc == 2) {
                 struct value f = ARG(1);
