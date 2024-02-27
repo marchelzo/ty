@@ -3233,7 +3233,7 @@ parse_target_list(void)
         ) {
                 next();
                 VPush(e->es, parse_definition_lvalue(LV_EACH));
-                if (vec_last(e->es) == NULL) {
+                if (*vec_last(e->es) == NULL) {
                         goto Error;
                 }
         }

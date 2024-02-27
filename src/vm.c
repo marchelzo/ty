@@ -1480,7 +1480,7 @@ vm_exec(char *code)
         if (GC_OFF_COUNT == 0 && atomic_load(&MyGroup->WantGC)) {
                 WaitGC();
         }
-        for (int N = 0; N < 10; ++N) {
+        for (int N = 0; N < 32; ++N) {
         NextInstruction:
                 switch ((unsigned char)*ip++) {
                 CASE(NOP)
