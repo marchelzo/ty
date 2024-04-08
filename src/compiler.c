@@ -5858,6 +5858,10 @@ cstmt(struct value *v)
         s->start = state.mstart;
         s->end = state.mend;
 
+        if (v->type == VALUE_TAG && v->tag == TyNull) {
+                goto Null;
+        }
+
         int tag = tags_first(v->tags);
 
         switch (tag) {
@@ -6036,6 +6040,7 @@ cstmt(struct value *v)
                 }
                 break;
         case TyNull:
+        Null:
                 s->type = STATEMENT_NULL;
                 break;
         default:
@@ -6062,6 +6067,9 @@ cexpr(struct value *v)
                 return e;
         }
 
+        if (v->type == VALUE_TAG && v->tag == TyNull) {
+                goto Statement;
+        }
 
         int tag = tags_first(v->tags);
 
@@ -6507,6 +6515,7 @@ cexpr(struct value *v)
         case TyFuncDef:
         case TyClass:
         case TyThrow:
+        Statement:
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
                 break;
