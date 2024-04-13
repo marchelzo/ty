@@ -1,17 +1,26 @@
 import curl::mime as mime
 import curl::core (..)
 import curl.slist as slist
+import curl.url
 import ptr (null)
 
 export CURL
 
 class CURL {
-    init(url) {
+    init(url, params) {
         self.handle = init()
-        self.url = url
+        self.url = curl.url.new()
         self.headers = null
-        setopt(self.handle, CURLOPT_URL, url)
         setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
+
+        let rc = curl.url.set(@url, curl.url.PART_URL, url, 0)
+        if rc != 0 {
+            throw Err(curl.url.strerror(rc))
+        }
+
+        if params != nil {
+            self.params(params)
+        }
     }
 
     post(data) {
@@ -39,11 +48,39 @@ class CURL {
         return self
     }
 
+    params(d) {
+        for k, v in d {
+            if v :: Iter && v !:: String {
+                for e in v {
+                    curl.url.set(@url, curl.url.PART_QUERY, "{k}={e}", curl.url.APPENDQUERY .|. curl.url.URLENCODE)
+                }
+            } else {
+                curl.url.set(@url, curl.url.PART_QUERY, "{k}={v}", curl.url.APPENDQUERY .|. curl.url.URLENCODE)
+            }
+        }
+    }
+
     perform() {
-        return perform(self.handle)
+        match curl.url.get(@url, curl.url.PART_URL, 0) {
+            Ok(url) => {
+                dbg(url)
+                setopt(self.handle, CURLOPT_URL, url)
+                return perform(self.handle)
+            },
+
+            Err(rc) => {
+                throw Err(curl.url.strerror(rc))
+            }
+        }
     }
 
     responseCode() {
         getinfo(self.handle, CURLINFO_RESPONSE_CODE)
     }
+}
+
+pub function fetch(url, params = %{}, method='GET') {
+    let c = CURL(url)
+    c.params(params)
+    return c.perform()
 }
