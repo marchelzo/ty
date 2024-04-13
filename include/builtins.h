@@ -1,3 +1,4 @@
+#include <curl/urlapi.h>
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
@@ -361,6 +362,7 @@
 { .module = "curl/core",  .name = "getinfo",                .value = BUILTIN(builtin_curl_getinfo)                  },
 { .module = "curl/core",  .name = "perform",                .value = BUILTIN(builtin_curl_perform)                  },
 { .module = "curl/core",  .name = "strerror",               .value = BUILTIN(builtin_curl_strerror)                 },
+{ .module = "curl/core",  .name = "free",                   .value = BUILTIN(builtin_curl_free)                     },
 { .module = "curl/core",  .name = "CURLOPT_URL",            .value = INT(CURLOPT_URL)                               },
 { .module = "curl/core",  .name = "CURLOPT_MIMEPOST",       .value = INT(CURLOPT_MIMEPOST)                          },
 { .module = "curl/core",  .name = "CURLOPT_POST",           .value = INT(CURLOPT_POST)                              },
@@ -376,6 +378,34 @@
 { .module = "curl/mime",  .name = "name",                   .value = BUILTIN(builtin_curl_mime_name)                },
 { .module = "curl/slist", .name = "append",                 .value = BUILTIN(builtin_curl_slist_append)             },
 { .module = "curl/slist", .name = "free",                   .value = BUILTIN(builtin_curl_slist_free)               },
+{ .module = "curl/url",   .name = "new",                    .value = BUILTIN(builtin_curl_url)                      },
+{ .module = "curl/url",   .name = "cleanup",                .value = BUILTIN(builtin_curl_url_cleanup)              },
+{ .module = "curl/url",   .name = "set",                    .value = BUILTIN(builtin_curl_url_set)                  },
+{ .module = "curl/url",   .name = "get",                    .value = BUILTIN(builtin_curl_url_get)                  },
+{ .module = "curl/url",   .name = "strerror",               .value = BUILTIN(builtin_curl_url_strerror)             },
+
+{ .module = "curl/url",   .name = "PART_USER",              .value = INT(CURLUPART_USER) },
+{ .module = "curl/url",   .name = "PART_PASSWORD",          .value = INT(CURLUPART_PASSWORD) },
+{ .module = "curl/url",   .name = "PART_URL",               .value = INT(CURLUPART_URL) },
+{ .module = "curl/url",   .name = "PART_QUERY",             .value = INT(CURLUPART_QUERY) },
+{ .module = "curl/url",   .name = "PART_HOST",              .value = INT(CURLUPART_HOST) },
+{ .module = "curl/url",   .name = "PART_PORT",              .value = INT(CURLUPART_PORT) },
+{ .module = "curl/url",   .name = "PART_PATH",              .value = INT(CURLUPART_PATH) },
+{ .module = "curl/url",   .name = "PART_FRAGMENT",          .value = INT(CURLUPART_FRAGMENT) },
+{ .module = "curl/url",   .name = "PART_ZONEID",            .value = INT(CURLUPART_ZONEID) },
+{ .module = "curl/url",   .name = "PART_SCHEME",            .value = INT(CURLUPART_SCHEME) },
+{ .module = "curl/url",   .name = "PART_OPTIONS",           .value = INT(CURLUPART_OPTIONS) },
+{ .module = "curl/url",   .name = "APPENDQUERY",            .value = INT(CURLU_APPENDQUERY) },
+{ .module = "curl/url",   .name = "URLENCODE",              .value = INT(CURLU_URLENCODE) },
+
+#ifdef CURLU_PUNYCODE
+{ .module = "curl/url",   .name = "PUNYCODE",               .value = INT(CURLU_PUNYCODE) },
+#endif
+
+{ .module = "curl/url",   .name = "ALLOW_SPACE",            .value = INT(CURLU_ALLOW_SPACE) },
+{ .module = "curl/url",   .name = "PATH_AS_IS",             .value = INT(CURLU_PATH_AS_IS) },
+{ .module = "curl/url",   .name = "GUESS_SCHEME",           .value = INT(CURLU_GUESS_SCHEME) },
+{ .module = "curl/url",   .name = "DEFAULT_SCHEME",         .value = INT(CURLU_DEFAULT_SCHEME) },
 
 #ifdef SIGHUP
 { .module = "os",      .name = "SIGHUP",                 .value = INT(SIGHUP)                              },

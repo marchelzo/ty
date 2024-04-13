@@ -1,5 +1,6 @@
 #include <curl/curl.h>
 #include <curl/easy.h>
+#include <curl/urlapi.h>
 
 #include "value.h"
 #include "alloc.h"
@@ -19,6 +20,22 @@ write_function(char *ptr, size_t size, size_t nmemb, void *data)
         vec_push_n(Buffer, ptr, n);
 
         return n;
+}
+
+struct value
+builtin_curl_free(int argc, struct value *kwargs)
+{
+        if (argc != 0) {
+                vm_panic("curl.free(): expected 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("curl.free(): expected pointer but got: %s", value_show_color(&ARG(0)));
+        }
+
+        curl_free(ARG(0).ptr);
+
+        return NIL;
 }
 
 struct value
@@ -354,3 +371,125 @@ builtin_curl_strerror(int argc, struct value *kwargs)
 
         return STRING_NOGC(msg, strlen(msg));
 }
+
+struct value
+builtin_curl_url(int argc, struct value *kwargs)
+{
+        if (argc != 0) {
+                vm_panic("curl.url.new(): expected no arguments but got %d", argc);
+        }
+
+        return PTR(curl_url());
+}
+
+struct value
+builtin_curl_url_strerror(int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("curl.url.strerror(): expected 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_INTEGER) {
+                vm_panic("curl.url.strerror(): expected integer but got: %s", value_show_color(&ARG(0)));
+        }
+        
+        char const *s = curl_url_strerror(ARG(0).integer);
+
+        return (s == NULL) ? NIL : STRING_NOGC(s, strlen(s));
+}
+
+struct value
+builtin_curl_url_cleanup(int argc, struct value *kwargs)
+{
+        if (argc != 1) {
+                vm_panic("curl.url.cleanup(): expected 1 argument but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("curl.url.cleanup(): expected pointer but got: %s", value_show_color(&ARG(0)));
+        }
+
+        curl_url_cleanup(ARG(0).ptr);
+
+        return NIL;
+}
+
+struct value
+builtin_curl_url_get(int argc, struct value *kwargs)
+{
+        if (argc != 3) {
+                vm_panic("curl.url.get(): expected 4 arguments but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("curl.url.get(): expected pointer as argument 1 but got: %s", value_show_color(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("curl.url.get(): expected integer as argument 2 but got: %s", value_show_color(&ARG(1)));
+        }
+
+        if (ARG(2).type != VALUE_INTEGER) {
+                vm_panic("curl.url.get(): expected integer as argument 3 but got: %s", value_show_color(&ARG(2)));
+        }
+
+        char *content;
+
+        CURLUcode rc = curl_url_get(ARG(0).ptr, ARG(1).integer, &content, ARG(2).integer);
+
+        if (rc != CURLUE_OK) {
+                return Err(INTEGER(rc));
+        }
+
+        struct value v = STRING_CLONE(content, strlen(content));
+
+        curl_free(content);
+
+        return Ok(v);
+}
+
+struct value
+builtin_curl_url_set(int argc, struct value *kwargs)
+{
+        if (argc != 4) {
+                vm_panic("curl.url.set(): expected 4 arguments but got %d", argc);
+        }
+
+        if (ARG(0).type != VALUE_PTR) {
+                vm_panic("curl.url.set(): expected pointer as argument 1 but got: %s", value_show_color(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("curl.url.set(): expected integer as argument 2 but got: %s", value_show_color(&ARG(1)));
+        }
+
+        char const *content;
+
+        switch (ARG(2).type) {
+        case VALUE_STRING:
+                Buffer.count = 0;
+                vec_push_n(Buffer, ARG(2).string, ARG(2).bytes);
+                vec_push(Buffer, '\0');
+                content = Buffer.items;
+                break;
+        case VALUE_BLOB:
+                Buffer.count = 0;
+                vec_push_n(Buffer, ARG(2).blob->items, ARG(2).blob->count);
+                vec_push(Buffer, '\0');
+                content = Buffer.items;
+                break;
+        case VALUE_PTR:
+                content = ARG(2).ptr;
+                break;
+        default:
+                vm_panic("curl.url.set(): expected string, blob, or pointer as argument 3 but got: %s", value_show_color(&ARG(2)));
+        }
+
+        if (ARG(3).type != VALUE_INTEGER) {
+                vm_panic("curl.url.set(): expected integer as argument 4 but got: %s", value_show_color(&ARG(3)));
+        }
+
+        return INTEGER(curl_url_set(ARG(0).ptr, ARG(1).integer, content, ARG(3).integer));
+}
+
+/* vim: set sts=8 sw=8 expandtab: */
