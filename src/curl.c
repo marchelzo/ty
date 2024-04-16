@@ -393,7 +393,11 @@ builtin_curl_url_strerror(int argc, struct value *kwargs)
                 vm_panic("curl.url.strerror(): expected integer but got: %s", value_show_color(&ARG(0)));
         }
         
+#if LIBCURL_VERSION_NUM >= 0x075000
         char const *s = curl_url_strerror(ARG(0).integer);
+#else
+        char const *s = "[curl_url_strerror not implemented]";
+#endif
 
         return (s == NULL) ? NIL : STRING_NOGC(s, strlen(s));
 }

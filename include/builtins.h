@@ -402,7 +402,10 @@
 { .module = "curl/url",   .name = "PUNYCODE",               .value = INT(CURLU_PUNYCODE) },
 #endif
 
+#ifdef CURLU_ALLOW_SPACE
 { .module = "curl/url",   .name = "ALLOW_SPACE",            .value = INT(CURLU_ALLOW_SPACE) },
+#endif
+
 { .module = "curl/url",   .name = "PATH_AS_IS",             .value = INT(CURLU_PATH_AS_IS) },
 { .module = "curl/url",   .name = "GUESS_SCHEME",           .value = INT(CURLU_GUESS_SCHEME) },
 { .module = "curl/url",   .name = "DEFAULT_SCHEME",         .value = INT(CURLU_DEFAULT_SCHEME) },
