@@ -109,7 +109,7 @@ function fitItems(items, W) {
     result
 }
 
-pub function readln(prompt=nil, complete=nil) {
+pub function readln(prompt=nil, complete=nil, erase=true) {
     if tk == nil {
         init()
     }
@@ -176,7 +176,11 @@ pub function readln(prompt=nil, complete=nil) {
                     history.push((line, i))
                 }
 
-                write(1, "{ERASE_LINE}\r")
+                if erase {
+                    write(1, "{ERASE_LINE}\r")
+                } else {
+                    write(1, '\n')
+                }
 
                 return text
             },
