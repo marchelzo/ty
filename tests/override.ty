@@ -1,0 +1,33 @@
+class A {
+    foo(x: Int) -> Int {
+        x * 2
+    }
+
+    bar(x: Int) -> Int {
+        x * 3
+    }
+}
+
+class B : A {
+    foo(x: Int) {
+        str(x)
+    }
+
+    bar(x: Int) {
+        x * 5
+    }
+}
+
+if B().bar(4) != 20 {
+    print('FAIL')
+}
+
+try {
+    __eval__($$[
+        B().foo(12)
+    $$])
+} catch Err(msg) {
+    if 'return value' in msg {
+        print('PASS')
+    }
+}
