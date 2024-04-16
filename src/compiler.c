@@ -694,21 +694,8 @@ static void
 symbolize_methods(struct scope *scope, struct expression **ms, int n)
 {
         for (int i = 0; i < n; ++i) {
-                /*
-                 * Here we temporarily set the method names to NULL. Say for example there is
-                 * a method named 'print'. Within the method body, we don't want 'print' to refer
-                 * to the method. Methods should only be accessible through tags or tagged values.
-                 * That is, standalone identifiers should never resolve to methods. By setting the
-                 * name to NULL before passing it to symbolize_expression, we avoid adding it as an
-                 * identifier to the scope of the method body.
-                 */
-                char *name = ms[i]->name;
-                ms[i]->name = NULL;
-
                 ms[i]->is_method = true;
                 symbolize_expression(scope, ms[i]);
-
-                ms[i]->name = name;
         }
 }
 
@@ -1367,7 +1354,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
                 if (e->name != NULL) {
                         scope = scope_new("(function name)", scope, false);
-                        e->function_symbol = addsymbol(scope, e->name);
+                        e->function_symbol = e->is_method ? NULL : addsymbol(scope, e->name);
                         LOG("== SYMBOLIZING %s ==", e->name);
                 } else {
                         LOG("== SYMBOLIZING %s ==", "(anon)");
@@ -1522,29 +1509,31 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 if (!scope_locally_defined(state.global, s->class.name)) {
                         define_class(s);
                 }
+
                 if (s->class.super != NULL) {
                         symbolize_expression(scope, s->class.super);
+
                         if (s->class.super->symbol->class == -1)
                                 fail("attempt to extend non-class");
+
                         class_set_super(s->class.symbol, s->class.super->symbol->class);
+
+                        for (int i = 0; i < s->class.methods.count; ++i) {
+                                struct expression *m = s->class.methods.items[i];
+                                if (m->return_type == NULL) {
+                                        struct value *v = class_method(s->class.super->symbol->class, m->name);
+                                        if (v != NULL && v->type == VALUE_PTR) {
+                                                m->return_type = ((struct expression *)v->ptr)->return_type;
+                                        }
+                                }
+                        }
                 } else {
                         class_set_super(s->class.symbol, 0);
                 }
+
                 subscope = scope_new(s->class.name, scope, false);
                 state.class = s->class.symbol;
-                for (int i = 0; i < s->class.methods.count; ++i) {
-                        if (s->class.methods.items[i]->return_type == NULL && s->class.super != NULL) {
-                                struct value *m = class_method(s->class.super->symbol->class, s->class.methods.items[i]->name);
-                                if (m != NULL && m->type == VALUE_PTR) {
-                                        s->class.methods.items[i]->return_type = ((struct expression *)m->ptr)->return_type;
-                                }
-                        }
-                        char const *name = s->class.methods.items[i]->name;
-                        s->class.methods.items[i]->name = NULL;
-                        s->class.methods.items[i]->is_method = true;
-                        symbolize_expression(subscope, s->class.methods.items[i]);
-                        s->class.methods.items[i]->name = name;
-                }
+                symbolize_methods(subscope, s->class.methods.items, s->class.methods.count);
                 symbolize_methods(subscope, s->class.getters.items, s->class.getters.count);
                 symbolize_methods(subscope, s->class.setters.items, s->class.setters.count);
                 symbolize_methods(subscope, s->class.statics.items, s->class.statics.count);
@@ -6640,7 +6629,8 @@ define_class(struct statement *s)
         s->class.symbol = sym->class;
 
         for (int i = 0; i < s->class.methods.count; ++i) {
-                class_add_method(sym->class, s->class.methods.items[i]->name, PTR(s->class.methods.items[i]));
+                struct expression *m = s->class.methods.items[i];
+                class_add_method(sym->class, m->name, PTR(m));
         }
 
         if (s->class.pub) {
