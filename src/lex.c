@@ -151,11 +151,12 @@ mkregex(char const *pat, int flags)
         pcre *re = pcre_compile(pat, flags, &err, &offset, NULL);
         if (re == NULL) {
                 error(
-                        "error compiling regular expression: %s/%s/%s at position %d",
+                        "error compiling regular expression: %s/%s/%s at position %d: %s",
                         TERM(36),
-                        err,
+                        pat,
                         TERM(39),
-                        offset
+                        offset,
+                        err
                 );
         }
 
