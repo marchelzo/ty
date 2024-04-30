@@ -25,7 +25,7 @@ pub macro repl(cond, *exprs) {
 
             $$(prints)
 
-            while let $line = ($$(ty.Value(readln)))('>>> ') {
+            while let $line = ($$(ty.Value(readln)))('>>> ', erase: false) {
                 try {
                     x = __eval__(line)
                     print(x)
