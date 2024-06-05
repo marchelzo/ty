@@ -2,8 +2,10 @@ CFLAGS += -std=c11
 CFLAGS += -Wall
 CFLAGS += -Iinclude
 CFLAGS += -isystem/usr/local/include
+CFLAGS += $(shell pkg-config --cflags libffi)
 CFLAGS += $(shell pcre-config --cflags)
 CFLAGS += $(shell pkg-config --cflags libcurl)
+CFLAGS += $(shell pkg-config --cflags openssl)
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
@@ -15,11 +17,18 @@ LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
-LDFLAGS += -lcrypto
+LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
 LDFLAGS += $(shell pcre-config --libs)
 LDFLAGS += $(shell pkg-config --libs gumbo)
 LDFLAGS += $(shell pkg-config --libs libcurl)
+LDFLAGS += $(shell pkg-config --libs libcurl)
+
+ifdef JEMALLOC
+        LDFLAGS += -L$(shell jemalloc-config --libdir)
+        LDFLAGS += -Wl,-rpath,$(shell jemalloc-config --libdir)
+        LDFLAGS += -ljemalloc $(shell jemalloc-config --libs)
+endif
 
 TEST_FILTER ?= "."
 
@@ -32,23 +41,29 @@ ifndef LOG
         CFLAGS += -DTY_NO_LOG
 endif
 
+ifdef UNSAFE
+        CFLAGS += -DTY_UNSAFE
+endif
+
 ifdef RELEASE
         CFLAGS += -O3
-        CFLAGS += -march=native
         CFLAGS += -pipe
         CFLAGS += -DTY_RELEASE
+        CFLAGS += -march=native
+        CFLAGS += -mtune=native
+        CFLAGS += -g3
 else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=undefined
         CFLAGS += -fsanitize=address
-        CFLAGS += -fsanitize=leak
         CFLAGS += -ggdb3
 else ifdef TDEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=thread
         CFLAGS += -ggdb3
 else ifndef LOG
-        CFLAGS += -Og
+        CFLAGS += -O1
+        CFLAGS += -ggdb3
         CFLAGS += -DTY_RELEASE
 endif
 
@@ -73,20 +88,27 @@ ifdef WITHOUT_OS
 endif
 
 SOURCES := $(wildcard src/*.c)
-OBJECTS := $(patsubst %.c,%.o,$(SOURCES))
+OBJECTS := $(patsubst src/%.c,obj/%.o,$(SOURCES))
+ASSEMBLY := $(patsubst %.c,%.s,$(SOURCES))
 
 all: $(PROG)
 
-ty: $(OBJECTS) ty.c
+ty: ty.c $(OBJECTS)
 	@echo cc $^
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $< obj/* $(LDFLAGS)
 
-%.o: %.c
+asm: $(ASSEMBLY)
+
+%.s: src/%.c
+	@echo cc $<
+	$(CC) $(CFLAGS) -S -o asm/$@ -DFILENAME=$(patsubst %.c,%,$<) $<
+
+obj/%.o: src/%.c
 	@echo cc $<
 	$(CC) $(CFLAGS) -c -o $@ -DFILENAME=$(patsubst src/%.c,%,$<) $<
 
 clean:
-	rm -rf $(PROG) *.gcda $(wildcard src/*.o) $(wildcard src/*.gcda)
+	rm -rf $(PROG) *.gcda $(wildcard obj/*.o) $(wildcard asm/*.s) $(wildcard obj/*.gcda)
 
 test:
 	./ty test.ty
@@ -97,4 +119,4 @@ install: $(PROG)
 	install -m644 lib/* $(HOME)/.ty
 
 based: $(SOURCES)
-	cat $^ | gcc -c -x c -o $@ -
+	cat $^ | gcc-13 $(CFLAGS) -c -x c -o $@ -

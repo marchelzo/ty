@@ -69,6 +69,45 @@ Next:
 
 }
 
+inline static struct value
+mkmatch(struct value *s, int offset, int *ovec, int n, bool detailed)
+{
+        if (detailed) {
+                Array *groups = value_array_new();
+
+                NOGC(groups);
+
+                for (int i = 0, j = 0; i < n; ++i, j += 2) {
+                        Value group = value_tuple(2);
+                        group.items[0] = INTEGER(offset + ovec[j]);
+                        group.items[1] = INTEGER(ovec[j + 1] - ovec[j]);
+                        NOGC(group.items);
+                        value_array_push(groups, group);
+                        OKGC(group.items);
+                }
+
+                vm_push(s);
+                vm_push(&ARRAY(groups));
+
+                OKGC(groups);
+
+                return vm_call(&CLASS(CLASS_RE_MATCH), 2);
+        } else if (n == 1) {
+                return STRING_VIEW(*s, offset + ovec[0], ovec[1] - ovec[0]);
+        } else {
+                Value match = ARRAY(value_array_new());
+                NOGC(match.array);
+
+                for (int i = 0, j = 0; i < n; ++i, j += 2) {
+                        vec_push(*match.array, STRING_VIEW(*s, offset + ovec[j], ovec[j + 1] - ovec[j]));
+                }
+
+                OKGC(match.array);
+
+                return match;
+        }
+}
+
 static struct value
 string_length(struct value *string, int argc, struct value *kwargs)
 {
@@ -987,23 +1026,7 @@ string_match(struct value *string, int argc, struct value *kwargs)
         if (rc < 0)
                 return NIL;
 
-        struct value match;
-
-        if (rc == 1) {
-                match = STRING_VIEW(*string, ovec[0], ovec[1] - ovec[0]);
-        } else {
-                match = ARRAY(value_array_new());
-                NOGC(match.array);
-                value_array_reserve(match.array, rc);
-
-                int j = 0;
-                for (int i = 0; i < rc; ++i, j += 2)
-                        vec_push(*match.array, STRING_VIEW(*string, ovec[j], ovec[j + 1] - ovec[j]));
-
-                OKGC(match.array);
-        }
-
-        return match;
+        return mkmatch(string, 0, ovec, rc, pattern.regex->detailed);
 }
 
 static struct value
@@ -1026,7 +1049,8 @@ string_matches(struct value *string, int argc, struct value *kwargs)
         int offset = 0;
         int rc;
 
-        while ((rc = pcre_exec(
+        while (
+                (rc = pcre_exec(
                         pattern.regex->pcre,
                         pattern.regex->extra,
                         s,
@@ -1035,23 +1059,10 @@ string_matches(struct value *string, int argc, struct value *kwargs)
                         0,
                         ovec,
                         30
-                )) > 0) {
-
-                if (rc == 1) {
-                        value_array_push(result.array, STRING_VIEW(*string, offset + ovec[0], ovec[1] - ovec[0]));
-                } else {
-                        struct value match = ARRAY(value_array_new());
-                        NOGC(match.array);
-
-                        value_array_reserve(match.array, rc);
-
-                        int j = 0;
-                        for (int i = 0; i < rc; ++i, j += 2)
-                                value_array_push(match.array, STRING_VIEW(*string, ovec[j] + offset, ovec[j + 1] - ovec[j]));
-
-                        value_array_push(result.array, match);
-                        OKGC(match.array);
-                }
+                )) > 0
+        ) {
+                value_array_push(result.array, NIL);
+                *vec_last(*result.array) = mkmatch(string, offset, ovec, rc, pattern.regex->detailed);
 
                 s += ovec[1];
                 offset += ovec[1];
@@ -1350,3 +1361,5 @@ DEFINE_METHOD_TABLE(
 
 DEFINE_METHOD_LOOKUP(string)
 DEFINE_METHOD_COMPLETER(string)
+
+/* vim: set sw=8 sts=8 expandtab: */

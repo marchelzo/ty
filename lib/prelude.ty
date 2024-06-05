@@ -797,6 +797,38 @@ class Tuple {
     }
 }
 
+class RegexMatch {
+    init(s, groups) {
+        let [(start, size), *captures] = groups
+        @s_ = s
+        @s = s.bslice(start, size)
+        @start = #s.bslice(0, start)
+        @size = #@s
+        @captures = captures
+    }
+
+    pre {
+        @s_.bslice(0, @start)
+    }
+
+    post {
+        @s_.bslice(@start + @size)
+    }
+
+    __subscript__(i) {
+        if i == 0 {
+            @s
+        } else {
+            let (off, n) = @captures[i - 1]
+            @s_.bslice(off, n)
+        }
+    }
+
+    __len__() {
+        @size
+    }
+}
+
 class Iterable {
     map(f) {
         @__iter__().map(f)
@@ -1567,9 +1599,9 @@ class Channel {
 }
 
 class Sync {
-    init(x) {
+    init(x, mutex = Mutex()) {
         @x = x
-        @mtx = Mutex()
+        @mtx = mutex
     }
 
     static swap(x, y) {

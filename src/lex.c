@@ -143,7 +143,7 @@ mkstring(char *string)
 }
 
 static struct token
-mkregex(char const *pat, int flags)
+mkregex(char const *pat, int flags, bool detailed)
 {
         char const *err;
         int offset;
@@ -178,6 +178,7 @@ mkregex(char const *pat, int flags)
         r->pcre = re;
         r->extra = extra;
         r->gc = false;
+        r->detailed = detailed;
 
         return (struct token) {
                 .type = TOKEN_REGEX,
@@ -857,12 +858,14 @@ lexregex(void)
         assert(nextchar() == '/');
 
         int flags = 0;
+        bool detailed = false;
 
         while (isalpha(C(0))) {
                 switch (C(0)) {
                 case 'i': flags |= PCRE_CASELESS;  break;
                 case 'u': flags |= PCRE_UTF8;      break;
                 case 'm': flags |= PCRE_MULTILINE; break;
+                case 'v': detailed = true;         break;
                 default:  error("invalid regex flag: %s'%c'%s", TERM(36), C(0), TERM(39));
                 }
                 nextchar();
@@ -870,7 +873,7 @@ lexregex(void)
 
         VPush(pat, '\0');
 
-        return mkregex(pat.items, flags);
+        return mkregex(pat.items, flags, detailed);
 
 Unterminated:
         VPush(pat, '\0');
