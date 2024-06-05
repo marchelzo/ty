@@ -15,6 +15,7 @@ struct regex {
         pcre_extra *extra;
         char const *pattern;
         bool gc;
+        bool detailed;
 };
 
 struct token {
@@ -157,3 +158,5 @@ int
 operator_get_token_type(char const *s);
 
 #endif
+
+/* vim: set sw=8 sts=8 expandtab: */

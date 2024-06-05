@@ -10,7 +10,7 @@ class A {
     }
 }
 
-for i in ..10 {
+for i in ..100 {
      let o = %{c: [c.upper(), c.lower()] for c in 'hello'.chars().reverse()};
      let s = ('' + '' + '' + '').upper().slice(10);
      let a = (1 .. 1000).list().map(-> (1 .. 100).list().map(-> 'foo bar baz hello world'.split(' '))).groupBy(&len).sort();

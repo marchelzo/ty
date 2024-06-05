@@ -71,6 +71,7 @@ struct value;
 #define CLASS_TAG       12
 #define CLASS_TUPLE     13
 #define CLASS_PRIMITIVE 14
+#define CLASS_RE_MATCH  14
 
 #define TY_AST_NODES \
         X(Expr) \
