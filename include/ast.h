@@ -11,6 +11,7 @@
 #include "scope.h"
 
 typedef vec(int) int_vector;
+typedef vec(struct expression *) expression_vector;
 
 struct expression;
 struct value;
@@ -21,10 +22,10 @@ struct class_definition {
         char *name;
         char const *doc;
         struct expression *super;
-        vec(struct expression *) methods;
-        vec(struct expression *) getters;
-        vec(struct expression *) setters;
-        vec(struct expression *) statics;
+        expression_vector methods;
+        expression_vector getters;
+        expression_vector setters;
+        expression_vector statics;
 };
 
 struct condpart {
@@ -34,12 +35,12 @@ struct condpart {
 };
 
 typedef vec(struct condpart *) condpart_vector;
-typedef vec(struct expression *) expression_vector;
 typedef vec(struct statement *) statement_vector;
 typedef vec(char *) name_vector;
 typedef struct class_definition ClassDefinition;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
+enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
 
 struct statement {
         enum {
@@ -230,6 +231,7 @@ struct expression {
                 EXPRESSION_EVAL,
                 EXPRESSION_IFDEF,
                 EXPRESSION_NONE,
+                EXPRESSION_MULTI_FUNCTION,
 
                 EXPRESSION_MACRO_INVOCATION,
                 EXPRESSION_VALUE,
@@ -333,15 +335,19 @@ struct expression {
                         expression_vector dflts;
                         expression_vector constraints;
                         expression_vector decorators;
+                        expression_vector functions;
                         struct expression *return_type;
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;
                         bool is_method;
+                        bool is_overload;
                         bool has_defer;
                         int ikwargs;
                         int rest;
+                        int t;
                         unsigned char ftype;
+                        unsigned char mtype;
                 };
                 struct {
                         struct expression *function;

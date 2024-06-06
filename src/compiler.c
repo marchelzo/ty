@@ -223,6 +223,9 @@ static void
 invoke_macro(struct expression *e, struct scope *scope);
 
 static void
+emit_spread(struct expression const *e, bool nils);
+
+static void
 compile(char const *source);
 
 noreturn static void
@@ -339,6 +342,17 @@ inline static void
 _emit_instr(char c)
 {
         VPush(state.code, c);
+}
+
+static int
+method_cmp(void const *a_, void const *b_)
+{
+        struct expression const *a = *(struct expression const **)a_;
+        struct expression const *b = *(struct expression const **)b_;
+
+        int o = (a->name == NULL || b->name == NULL) ? 0 : strcmp(a->name, b->name);
+
+        return (o != 0) ? o : (a->t - b->t);
 }
 
 static char *
@@ -696,6 +710,52 @@ symbolize_methods(struct scope *scope, struct expression **ms, int n)
         for (int i = 0; i < n; ++i) {
                 ms[i]->is_method = true;
                 symbolize_expression(scope, ms[i]);
+        }
+}
+
+static struct expression *
+mkmulti(char *name, bool setters)
+{
+        struct expression *multi = Allocate(sizeof *multi);
+        *multi = (struct expression){0};
+
+        multi->type = EXPRESSION_MULTI_FUNCTION;
+        multi->name = name;
+        multi->rest = setters ? -1 : 0;
+        multi->ikwargs = -1;
+
+        VPush(multi->params, "@");
+        VPush(multi->constraints, NULL);
+        VPush(multi->dflts, NULL);
+
+        return multi;
+}
+
+static void
+aggregate_overloads(expression_vector *ms, bool setters)
+{
+        int n = ms->count;
+
+        qsort(ms->items, n, sizeof *ms->items, method_cmp);
+
+        for (int i = 0; i + 1 < n; ++i) {
+                if (strcmp(ms->items[i]->name, ms->items[i + 1]->name) != 0) {
+                        continue;
+                }
+
+                char buffer[1024];
+                struct expression *multi = mkmulti(ms->items[i]->name, setters);
+
+                int m = 0;
+                do {
+                        ms->items[i + m]->is_overload = true;
+                        snprintf(buffer, sizeof buffer - 1, "%s#%d", ms->items[i + m]->name, m + 1);
+                        ms->items[i + m]->name = sclonea(buffer);
+                        VPush(multi->functions, ms->items[i + m]);
+                        m += 1;
+                } while (i + m < n && strcmp(ms->items[i + m]->name, multi->name) == 0);
+
+                VPush(*ms, multi);
         }
 }
 
@@ -1345,6 +1405,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
+        case EXPRESSION_MULTI_FUNCTION:
         case EXPRESSION_FUNCTION:
                 for (int i = 0; i < e->decorators.count; ++i) {
                         symbolize_expression(scope, e->decorators.items[i]);
@@ -1533,6 +1594,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
 
                 subscope = scope_new(s->class.name, scope, false);
                 state.class = s->class.symbol;
+
+                aggregate_overloads(&s->class.methods, false);
+                aggregate_overloads(&s->class.setters, true);
+                aggregate_overloads(&s->class.statics, false);
+
                 symbolize_methods(subscope, s->class.methods.items, s->class.methods.count);
                 symbolize_methods(subscope, s->class.getters.items, s->class.getters.count);
                 symbolize_methods(subscope, s->class.setters.items, s->class.setters.count);
@@ -2053,21 +2119,27 @@ emit_function(struct expression const *e, int class)
         }
 
         for (int i = 0; i < e->param_symbols.count; ++i) {
-                if (!CheckConstraints || e->constraints.items[i] == NULL)
+                if (!e->is_overload && (!CheckConstraints || e->constraints.items[i] == NULL))
                         continue;
                 struct symbol const *s = e->param_symbols.items[i];
                 size_t start = state.code.count;
                 emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
                 emit_constraint(e->constraints.items[i]);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
-                emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
-                emit_instr(INSTR_BAD_CALL);
-                if (e->name != NULL)
-                        emit_string(e->name);
-                else
-                        emit_string("(anonymous function)");
-                emit_string(e->param_symbols.items[i]->identifier);
-                add_location(e->constraints.items[i], start, state.code.count);
+                if (e->is_overload) {
+                        emit_instr(INSTR_POP);
+                        emit_instr(INSTR_NONE);
+                        emit_instr(INSTR_RETURN);
+                } else {
+                        emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
+                        emit_instr(INSTR_BAD_CALL);
+                        if (e->name != NULL)
+                                emit_string(e->name);
+                        else
+                                emit_string("(anonymous function)");
+                        emit_string(e->param_symbols.items[i]->identifier);
+                        add_location(e->constraints.items[i], start, state.code.count);
+                }
                 emit_instr(INSTR_POP);
                 PATCH_JUMP(good);
         }
@@ -2115,6 +2187,32 @@ emit_function(struct expression const *e, int class)
                 };
                 vec_init(empty.returns);
                 emit_statement(&empty, false);
+        } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
+                for (int i = 0; i < e->functions.count; ++i) {
+                        if (e->mtype == MT_SET) {
+                                emit_load_instr("@", INSTR_LOAD_LOCAL, 0);
+                                emit_load_instr("self", INSTR_LOAD_LOCAL, 1);
+                                emit_instr(INSTR_TARGET_MEMBER);
+                                emit_string(e->functions.items[i]->name);
+                                emit_ulong(strhash(e->functions.items[i]->name));
+                                emit_instr(INSTR_ASSIGN);
+                                emit_instr(INSTR_RETURN_IF_NOT_NONE);
+                                emit_instr(INSTR_POP);
+                        } else {
+                                emit_instr(INSTR_SAVE_STACK_POS);
+                                emit_load_instr("@", INSTR_LOAD_LOCAL, 0);
+                                emit_spread(NULL, false);
+                                emit_load_instr("self", INSTR_LOAD_LOCAL, 1);
+                                emit_instr(INSTR_CALL_METHOD);
+                                emit_int(-1);
+                                emit_string(e->functions.items[i]->name);
+                                emit_ulong(strhash(e->functions.items[i]->name));
+                                emit_int(0);
+                                emit_instr(INSTR_RETURN_IF_NOT_NONE);
+                                emit_instr(INSTR_POP);
+                        }
+                }
+                emit_instr(INSTR_BAD_DISPATCH);
         } else {
                 for (int i = ncaps - 1; i >= 0; --i) {
                         if (caps[i]->scope->function == e->scope) {
@@ -3513,7 +3611,11 @@ emit_spread(struct expression const *e, bool nils)
         emit_instr(INSTR_PUSH_INDEX);
         emit_int(1);
 
-        emit_expression(e->value);
+        if (e != NULL) {
+                emit_expression(e);
+        } else {
+                emit_instr(INSTR_SWAP);
+        }
 
         size_t start = state.code.count;
         emit_instr(INSTR_SENTINEL);
@@ -4002,7 +4104,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_instr(INSTR_SAVE_STACK_POS);
                 for (int i = e->keys.count - 1; i >= 0; --i) {
                         if (e->keys.items[i]->type == EXPRESSION_SPREAD) {
-                                emit_spread(e->keys.items[i], true);
+                                emit_spread(e->keys.items[i]->value, true);
                         } else {
                                 emit_expression(e->keys.items[i]);
                                 if (e->values.items[i] == NULL)
@@ -4122,7 +4224,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_yield(e->es.items, e->es.count, true);
                 break;
         case EXPRESSION_SPREAD:
-                emit_spread(e, false);
+                emit_spread(e->value, false);
                 break;
         case EXPRESSION_USER_OP:
                 emit_expression(e->left);
@@ -4444,18 +4546,22 @@ emit_statement(struct statement const *s, bool want_result)
         case STATEMENT_CLASS_DEFINITION:
                 for (int i = 0; i < s->class.setters.count; ++i) {
                         state.method = s->class.setters.items[i]->scope;
+                        s->class.setters.items[i]->mtype = MT_SET;
                         emit_function(s->class.setters.items[i], s->class.symbol);
                 }
                 for (int i = 0; i < s->class.getters.count; ++i) {
                         state.method = s->class.getters.items[i]->scope;
+                        s->class.getters.items[i]->mtype = MT_GET;
                         emit_function(s->class.getters.items[i], s->class.symbol);
                 }
                 for (int i = 0; i < s->class.methods.count; ++i) {
                         state.method = s->class.methods.items[i]->scope;
+                        s->class.methods.items[i]->mtype = MT_INSTANCE;
                         emit_function(s->class.methods.items[i], s->class.symbol);
                 }
                 for (int i = 0; i < s->class.statics.count; ++i) {
                         state.method = s->class.statics.items[i]->scope;
+                        s->class.statics.items[i]->mtype = MT_STATIC;
                         emit_function(s->class.statics.items[i], s->class.symbol);
                 }
 

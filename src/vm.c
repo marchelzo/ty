@@ -1611,7 +1611,16 @@ vm_exec(char *code)
                         if (v.type == VALUE_OBJECT) {
                                 vp = class_lookup_setter(v.class, member, h);
                                 if (vp != NULL) {
-                                        vp2 = class_lookup_getter(v.class, member, h);
+                                        char const *pound = strchr(member, '#');
+                                        if (pound == NULL) {
+                                                vp2 = class_lookup_getter(v.class, member, h);
+                                        } else {
+                                                char buffer[128];
+                                                int n = min(pound - member, 127);
+                                                memcpy(buffer, member, n);
+                                                buffer[n] = '\0';
+                                                vp2 = class_lookup_getter(v.class, buffer, strhash(buffer));
+                                        }
                                         FALSE_OR (vp2 == NULL) {
                                                 vm_panic(
                                                         "class %s%s%s needs a getter for %s%s%s!",
@@ -1756,6 +1765,11 @@ vm_exec(char *code)
                         break;
                 CASE(BAD_MATCH)
                         MatchError;
+                CASE(BAD_DISPATCH);
+                        push(TAG(gettag(NULL, "DispatchError")));
+                        vec_pop(frames);
+                        ip = *vec_pop(calls);
+                        goto Throw;
                 CASE(BAD_CALL)
                         v = pop();
                         str = ip;
@@ -3503,6 +3517,11 @@ BadContainer:
                 CASE(RESTORE_STACK_POS)
                         stack.count = *vec_pop(sp_stack);
                         break;
+                CASE(RETURN_IF_NOT_NONE)
+                        if (top()->type != VALUE_NONE) {
+                                goto Return;
+                        }
+                        break;
                 CASE(MULTI_RETURN)
                 CASE(RETURN)
                 Return:
@@ -3527,38 +3546,6 @@ BadContainer:
                         ip = save;
                         LOG("halting: ip = %p", ip);
                         return;
-                }
-        }
-
-        while (q1.n != 0) {
-                ;
-        }
-
-        continue;
-
-        TyThread *current = &Threads.items[ThreadIndex];
-
-        for (int i = 1; i < Threads.count; ++i) {
-                int j = (i + ThreadIndex) % Threads.count;
-
-                TyThread *t = &Threads.items[j];
-
-                if (!t->waiting) {
-                        current->stack = stack;
-                        current->calls = calls;
-                        current->frames = frames;
-                        current->targets = targets;
-                        current->try_stack = try_stack;
-                        current->sp_stack = sp_stack;
-                        current->ip = ip;
-
-                        stack = t->stack;
-                        calls = t->calls;
-                        frames = t->frames;
-                        targets = t->targets;
-                        try_stack = t->try_stack;
-                        sp_stack = t->sp_stack;
-                        ip = t->ip;
                 }
         }
 

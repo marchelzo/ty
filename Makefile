@@ -51,7 +51,6 @@ ifdef RELEASE
         CFLAGS += -DTY_RELEASE
         CFLAGS += -march=native
         CFLAGS += -mtune=native
-        CFLAGS += -g3
 else ifdef DEBUG
         CFLAGS += -O0
         CFLAGS += -fsanitize=undefined

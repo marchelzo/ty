@@ -92,6 +92,7 @@ enum instruction {
         INSTR_HALT,
 
         INSTR_MULTI_RETURN,
+        INSTR_RETURN_IF_NOT_NONE,
         INSTR_SENTINEL,
         INSTR_FIX_TO,
         INSTR_REVERSE,
@@ -149,6 +150,7 @@ enum instruction {
         INSTR_TRY_ASSIGN_NON_NIL,
         INSTR_BAD_MATCH,
         INSTR_BAD_CALL,
+        INSTR_BAD_DISPATCH,
         INSTR_BAD_ASSIGN,
         INSTR_UNTAG_OR_DIE,
         INSTR_ENSURE_LEN,
@@ -278,3 +280,5 @@ void
 RemoveFromRootSet(struct value *v);
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

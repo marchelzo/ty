@@ -484,12 +484,12 @@ class Int {
     <<(b)   { bit.shiftLeft(self, b)  }
     >>(b)   { bit.shiftRight(self, b) }
 
-    **(b) {
-        if b :: Int {
-            int(math.pow(self, b))
-        } else {
-            math.pow(self, b)
-        }
+    **(k: Int) {
+        int(math.pow(self, k))
+    }
+
+    **(x: Float) {
+        math.pow(self, x)
     }
 
     upto*(b: Int) {

@@ -251,6 +251,8 @@ mkfunc(void)
 {
         struct expression *f = mkexpr();
 
+        static _Thread_local int t = -1;
+
         f->type = EXPRESSION_FUNCTION;
         f->rest = -1;
         f->ikwargs = -1;
@@ -261,11 +263,13 @@ mkfunc(void)
         f->proto = NULL;
         f->body = NULL;
         f->has_defer = false;
+        f->t = ++t;
 
         vec_init(f->params);
         vec_init(f->dflts);
         vec_init(f->constraints);
         vec_init(f->decorators);
+        vec_init(f->functions);
 
         return f;
 }
