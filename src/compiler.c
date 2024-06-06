@@ -2119,7 +2119,7 @@ emit_function(struct expression const *e, int class)
         }
 
         for (int i = 0; i < e->param_symbols.count; ++i) {
-                if (!e->is_overload && (!CheckConstraints || e->constraints.items[i] == NULL))
+                if (e->constraints.items[i] == NULL || (!e->is_overload && !CheckConstraints))
                         continue;
                 struct symbol const *s = e->param_symbols.items[i];
                 size_t start = state.code.count;
