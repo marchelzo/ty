@@ -2189,7 +2189,17 @@ emit_function(struct expression const *e, int class)
                 emit_statement(&empty, false);
         } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
                 for (int i = 0; i < e->functions.count; ++i) {
-                        if (e->mtype == MT_SET) {
+                        if (!e->is_method) {
+                                emit_instr(INSTR_SAVE_STACK_POS);
+                                emit_load_instr("@", INSTR_LOAD_LOCAL, 0);
+                                emit_spread(NULL, false);
+                                emit_load_instr("", INSTR_LOAD_GLOBAL, ((struct statement *)e->functions.items[i])->target->symbol->i);
+                                emit_instr(INSTR_CALL);
+                                emit_int(-1);
+                                emit_int(0);
+                                emit_instr(INSTR_RETURN_IF_NOT_NONE);
+                                emit_instr(INSTR_POP);
+                        } else if (e->mtype == MT_SET) {
                                 emit_load_instr("@", INSTR_LOAD_LOCAL, 0);
                                 emit_load_instr("self", INSTR_LOAD_LOCAL, 1);
                                 emit_instr(INSTR_TARGET_MEMBER);
@@ -4283,6 +4293,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_int(0);
                 break;
         case EXPRESSION_FUNCTION:
+        case EXPRESSION_MULTI_FUNCTION:
                 emit_function(e, -1);
                 break;
         case EXPRESSION_PLUS:
@@ -4758,17 +4769,53 @@ compile(char const *source)
                 longjmp(jb, 1);
         }
 
-        for (size_t i = 0; false && p[i] != NULL; ++i) {
-                if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
-                        //symbolize_lvalue(state.global, p[i]->target, true, p[i]->pub);
-                        /*
-                         * TODO: figure out why this was ever here
-                         *
-                         * p[i]->value->name = NULL;
-                         */
+        statement_vector p_with_multis = {0};
+
+        for (size_t i = 0; p[i] != NULL; ++i) {
+                VPush(p_with_multis, p[i]);
+                if (
+                        p[i + 1] != NULL &&
+                        p[i    ]->type == STATEMENT_FUNCTION_DEFINITION &&
+                        p[i + 1]->type == STATEMENT_FUNCTION_DEFINITION &&
+                        strcmp(p[i]->target->identifier, p[i + 1]->target->identifier) == 0
+                ) {
+                        char buffer[1024];
+                        struct expression *multi = mkmulti(p[i]->target->identifier, false);
+                        bool pub = p[i]->pub;
+
+                        int m = 0;
+                        do {
+                                p[i + m]->pub = false;
+                                p[i + m]->value->is_overload = true;
+                                snprintf(buffer, sizeof buffer - 1, "%s#%d", multi->name, m + 1);
+                                p[i + m]->target->identifier = p[i + m]->value->name = sclonea(buffer);
+                                VPush(multi->functions, (struct expression *)p[i + m]);
+                                define_function(p[i + m]);
+                                m += 1;
+                        } while (
+                                p[i + m] != NULL &&
+                                p[i + m]->type == STATEMENT_FUNCTION_DEFINITION &&
+                                strcmp(multi->name, p[i + m]->target->identifier) == 0
+                        );
+
+                        struct statement *def = Allocate(sizeof *def);
+                        *def = (struct statement){0};
+                        def->type = STATEMENT_FUNCTION_DEFINITION;
+                        def->target = Allocate(sizeof *def->target);
+                        *def->target = (struct expression) {
+                                .type = EXPRESSION_IDENTIFIER,
+                                .identifier = multi->name
+                        };
+                        def->value = multi;
+                        def->pub = pub;
+
+                        define_function(def);
+                        VPush(p_with_multis, def);
                 }
-                declare_classes(p[i]);
         }
+
+        VPush(p_with_multis, NULL);
+        p = p_with_multis.items;
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(state.global, p[i]);
