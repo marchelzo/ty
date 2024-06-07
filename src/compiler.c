@@ -4769,10 +4769,9 @@ compile(char const *source)
                 longjmp(jb, 1);
         }
 
-        statement_vector p_with_multis = {0};
+        statement_vector multi_functions = {0};
 
         for (size_t i = 0; p[i] != NULL; ++i) {
-                VPush(p_with_multis, p[i]);
                 if (
                         p[i + 1] != NULL &&
                         p[i    ]->type == STATEMENT_FUNCTION_DEFINITION &&
@@ -4791,6 +4790,7 @@ compile(char const *source)
                                 p[i + m]->target->identifier = p[i + m]->value->name = sclonea(buffer);
                                 VPush(multi->functions, (struct expression *)p[i + m]);
                                 define_function(p[i + m]);
+                                symbolize_statement(state.global, p[i + m]);
                                 m += 1;
                         } while (
                                 p[i + m] != NULL &&
@@ -4810,12 +4810,10 @@ compile(char const *source)
                         def->pub = pub;
 
                         define_function(def);
-                        VPush(p_with_multis, def);
+                        symbolize_statement(state.global, def);
+                        VPush(multi_functions, def);
                 }
         }
-
-        VPush(p_with_multis, NULL);
-        p = p_with_multis.items;
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(state.global, p[i]);
@@ -4856,6 +4854,10 @@ compile(char const *source)
                                 p[j + 1] = s;
                         }
                 }
+        }
+
+        for (int i = 0; i < multi_functions.count; ++i) {
+                emit_statement(multi_functions.items[i], false);
         }
 
         for (int i = 0; p[i] != NULL; ++i) {
