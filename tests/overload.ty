@@ -1,0 +1,35 @@
+class A {
+    static foo(x: Float) {
+        1
+    }
+
+    static foo(x: Array[Int]) {
+        2
+    }
+
+    static foo(x: Array[Int | Float]) {
+        3
+    }
+
+    static foo(x: Array) {
+        4
+    }
+}
+
+function bar(s: String) {
+    1
+}
+
+function bar(a: Int, b: Int) {
+    2
+}
+
+if [A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] != [1, 2, 3, 4] {
+    print('FAIL')
+}
+
+if (bar('x'), bar(4, 5)) != (1, 2) {
+    print('FAIL')
+}
+
+print('PASS')
