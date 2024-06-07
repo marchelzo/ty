@@ -263,6 +263,7 @@ mkfunc(void)
         f->proto = NULL;
         f->body = NULL;
         f->has_defer = false;
+        f->is_overload = false;
         f->t = ++t;
 
         vec_init(f->params);

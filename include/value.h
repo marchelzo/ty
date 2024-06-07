@@ -153,6 +153,7 @@ enum {
 enum {
         TAG_MATCH_ERR = TyMaxNode,
         TAG_INDEX_ERR,
+        TAG_DISPATCH_ERR,
         TAG_NONE,
         TAG_SOME,
         TAG_OK,

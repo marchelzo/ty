@@ -11,6 +11,7 @@ import os
 
 tag MatchError;
 tag IndexError;
+tag DispatchError;
 
 tag None {
      map()     { None }
