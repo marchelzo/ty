@@ -1882,6 +1882,10 @@ Throw:
                                 }
                         }
 
+                        while (drop_stack.count > t->ds) {
+                                DoDrop();
+                        }
+
                         try_stack.count -= vec_last(try_stack) - t;
 
                         stack.count = t->sp;

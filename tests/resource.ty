@@ -12,18 +12,27 @@ class A {
 
 class B {
     __drop__() {
-        if dropped == [1, 10, 2, 3, 4, 5] {
+        if dropped == [1, 2, 2, 3, 4, 5, 6, 7] {
             print('PASS')
         }
     }
 }
 
-let ^a = B()
+let ^b = B()
 
-if let Some(^a, ^_) = Some(A(10), A(2)) {
+if let Some(^a, ^_) = Some(A(2), A(2)) {
     let ^_ = A(1)
 }
 
 for ^a in [3, 4, 5].map(A) {
     ;
+}
+
+try {
+    let ^_ = A(7)
+    {
+        let ^_ = A(6)
+        throw nil
+    }
+} catch _ {
 }
