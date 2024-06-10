@@ -104,6 +104,7 @@ struct try {
         int gc;
         int cs;
         int ts;
+        int ds;
         int ctxs;
         char *catch;
         char *finally;
@@ -141,6 +142,7 @@ static _Thread_local TargetStack targets;
 static _Thread_local TryStack try_stack;
 static _Thread_local vec(ThrowCtx) throw_stack;
 static _Thread_local ValueStack defer_stack;
+static _Thread_local ValueStack drop_stack;
 static _Thread_local char *ip;
 
 typedef struct {
@@ -159,6 +161,7 @@ typedef struct {
         FrameStack *frames;
         TargetStack *targets;
         ValueStack *defer_stack;
+        ValueStack *drop_stack;
         void *root_set;
         AllocList *allocs;
         size_t *MemoryUsed;
@@ -816,6 +819,7 @@ AddThread(void)
                 .stack = &stack,
                 .frames = &frames,
                 .defer_stack = &defer_stack,
+                .drop_stack = &drop_stack,
                 .targets = &targets,
                 .root_set = GCRootSet(),
                 .allocs = &allocs,
@@ -883,6 +887,7 @@ CleanupThread(void *ctx)
         gc_free(try_stack.items);
         gc_free(throw_stack.items);
         gc_free(defer_stack.items);
+        gc_free(drop_stack.items);
         free(allocs.items);
 
         vec(struct value const *) *root_set = GCRootSet();
@@ -1401,6 +1406,24 @@ DoAssign(void)
         }
 }
 
+static void
+DoDrop(void)
+{
+        Value group = *vec_last(drop_stack);
+
+        for (int i = 0; i < group.array->count; ++i) {
+                Value v = group.array->items[i];
+                if (v.type != VALUE_OBJECT)
+                        continue;
+                Value *f = class_method(v.class, "__drop__");
+                if (f == NULL)
+                        continue;
+                vm_call_method(&v, f, 0);
+        }
+
+        vec_pop(drop_stack);
+}
+
 inline static struct try *
 GetCurrentTry(void)
 {
@@ -1771,7 +1794,7 @@ vm_exec(char *code)
                         ip = *vec_pop(calls);
                         goto Throw;
                 CASE(BAD_CALL)
-                        v = pop();
+                        v = peek();
                         str = ip;
                         ip += strlen(ip) + 1;
                         vm_panic(
@@ -1797,7 +1820,7 @@ vm_exec(char *code)
                         );
                         break;
                 CASE(BAD_ASSIGN)
-                        v = pop();
+                        v = peek();
                         str = ip;
                         vm_panic(
                                 "constraint on %s%s%s%s%s violated in assignment: %s%s%s = %s%s%s",
@@ -1854,6 +1877,9 @@ Throw:
                                         vm_exec(t_->finally);
                                         *t_->end = INSTR_NOP;
                                 }
+                                while (drop_stack.count > t_->ds) {
+                                        DoDrop();
+                                }
                         }
 
                         try_stack.count -= vec_last(try_stack) - t;
@@ -1909,12 +1935,22 @@ Throw:
                         t.gc = gc_root_set_count();
                         t.cs = calls.count;
                         t.ts = targets.count;
+                        t.ds = drop_stack.count;
                         t.ctxs = frames.count;
                         t.executing = false;
                         t.state = TRY_TRY;
                         vec_push(try_stack, t);
                         break;
                 }
+                CASE(DROP)
+                        DoDrop();
+                        break;
+                CASE(PUSH_DROP_GROUP)
+                        vec_push_unchecked(drop_stack, ARRAY(value_array_new()));
+                        break;
+                CASE(PUSH_DROP)
+                        vec_push_unchecked(*vec_last(drop_stack)->array, peek());
+                        break;
                 CASE(PUSH_DEFER_GROUP)
                         vec_push_unchecked(defer_stack, ARRAY(value_array_new()));
                         break;
@@ -4054,6 +4090,11 @@ MarkStorage(ThreadStorage const *storage)
         GCLOG("Marking defer_stack");
         for (int i = 0; i < storage->defer_stack->count; ++i) {
                 value_mark(&storage->defer_stack->items[i]);
+        }
+
+        GCLOG("Marking drop stack");
+        for (int i = 0; i < storage->drop_stack->count; ++i) {
+                value_mark(&storage->drop_stack->items[i]);
         }
 
         GCLOG("Marking targets");

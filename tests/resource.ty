@@ -1,0 +1,29 @@
+let dropped = []
+
+class A {
+    init(k) {
+        @k = k
+    }
+
+    __drop__() {
+        dropped.push(@k)
+    }
+}
+
+class B {
+    __drop__() {
+        if dropped == [1, 10, 2, 3, 4, 5] {
+            print('PASS')
+        }
+    }
+}
+
+let ^a = B()
+
+if let Some(^a, ^_) = Some(A(10), A(2)) {
+    let ^_ = A(1)
+}
+
+for ^a in [3, 4, 5].map(A) {
+    ;
+}

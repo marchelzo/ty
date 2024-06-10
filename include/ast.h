@@ -172,6 +172,7 @@ struct expression {
                 EXPRESSION_KEEP_LOC,
 
                 EXPRESSION_IDENTIFIER,
+                EXPRESSION_RESOURCE_BINDING,
                 EXPRESSION_DEFINED,
                 EXPRESSION_WITH,
                 EXPRESSION_YIELD,
@@ -243,6 +244,7 @@ struct expression {
         char const *filename;
 
         bool symbolized;
+        bool has_resources;
 
         union {
                 intmax_t integer;

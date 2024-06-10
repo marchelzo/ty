@@ -138,6 +138,8 @@ enum instruction {
         INSTR_DEFER,
         INSTR_CLEANUP,
         INSTR_DROP,
+        INSTR_PUSH_DROP,
+        INSTR_PUSH_DROP_GROUP,
 
         INSTR_TAG_PUSH,
         INSTR_DEFINE_TAG,
