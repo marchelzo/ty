@@ -121,7 +121,9 @@ struct state {
 
         symbol_vector bound_symbols;
 
-        symbol_vector resources;
+        int function_resources;
+        int loop_resources;
+        int resources;
 
         struct scope *method;
         struct scope *fscope;
@@ -587,7 +589,10 @@ freshstate(void)
         vec_init(s.breaks);
         vec_init(s.continues);
         vec_init(s.generator_returns);
-        vec_init(s.resources);
+
+        s.resources = 0;
+        s.function_resources = 0;
+        s.loop_resources = 0;
 
         vec_init(s.imports);
         vec_init(s.exports);
@@ -942,7 +947,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                         }
                 }
                 if (target->type == EXPRESSION_RESOURCE_BINDING) {
-                        VPush(state.resources, target->symbol);
+                        state.resources += 1;
                 }
                 break;
         case EXPRESSION_VIEW_PATTERN:
@@ -1007,9 +1012,9 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
 {
         symbolize_lvalue_(scope, target, decl, pub);
 
-        if (state.resources.count > 0) {
+        if (state.resources > 0) {
                 target->has_resources = true;
-                state.resources.count = 0;
+                state.resources = 0;
         }
 }
 
@@ -1052,7 +1057,7 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
                         symbolize_expression(scope, e->constraint);
                 }
                 if (e->type == EXPRESSION_RESOURCE_BINDING) {
-                        VPush(state.resources, e->symbol);
+                        state.resources += 1;
                 }
                 e->local = true;
                 break;
@@ -1111,9 +1116,9 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
 {
         symbolize_pattern_(scope, e, reuse, def);
 
-        if (state.resources.count > 0) {
+        if (state.resources > 0) {
                 e->has_resources = true;
-                state.resources.count = 0;
+                state.resources = 0;
         }
 }
 
@@ -2186,6 +2191,9 @@ emit_function(struct expression const *e, int class)
                 PATCH_JUMP(good);
         }
 
+        int function_resources = state.function_resources;
+        state.function_resources = state.resources;
+
         struct statement *body = e->body;
         struct statement try;
         struct statement cleanup;
@@ -2279,6 +2287,8 @@ emit_function(struct expression const *e, int class)
                 }
                 emit_instr(INSTR_RETURN);
         }
+
+        state.function_resources = function_resources;
 
         while ((state.code.count - start_offset) % P_ALIGN != 0) {
                 VPush(state.code, 0x00);
@@ -2484,6 +2494,10 @@ emit_return(struct statement const *s)
 
         if (state.try) {
                 emit_instr(INSTR_FINALLY);
+        }
+
+        for (int i = state.function_resources; i < state.resources; ++i) {
+                emit_instr(INSTR_DROP);
         }
 
         if (CheckConstraints && state.func->return_type != NULL) {
@@ -2923,6 +2937,7 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
 
         if (pattern->has_resources) {
                 emit_instr(INSTR_PUSH_DROP_GROUP);
+                state.resources += 1;
         }
 
         emit_instr(INSTR_SAVE_STACK_POS);
@@ -2948,6 +2963,7 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
 
         if (pattern->has_resources) {
                 emit_instr(INSTR_DROP);
+                state.resources -= 1;
         }
 
         emit_instr(INSTR_JUMP);
@@ -2977,6 +2993,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
 
         if (pattern->has_resources) {
                 emit_instr(INSTR_PUSH_DROP_GROUP);
+                state.resources += 1;
         }
 
         emit_instr(INSTR_SAVE_STACK_POS);
@@ -2991,6 +3008,7 @@ emit_expression_case(struct expression const *pattern, struct expression const *
         emit_expression(e);
         if (pattern->has_resources) {
                 emit_instr(INSTR_DROP);
+                state.resources -= 1;
         }
 
         /*
@@ -3133,6 +3151,7 @@ emit_while(struct statement const *s, bool want_result)
                 } else {
                         if (p->target->has_resources && !has_resources) {
                                 emit_instr(INSTR_PUSH_DROP_GROUP);
+                                state.resources += 1;
                                 has_resources = true;
                         }
                         emit_instr(INSTR_SAVE_STACK_POS);
@@ -3147,6 +3166,7 @@ emit_while(struct statement const *s, bool want_result)
 
         if (has_resources) {
                 emit_instr(INSTR_DROP);
+                state.resources -= 1;
         }
 
         JUMP(start);
@@ -3193,6 +3213,7 @@ emit_if_not(struct statement const *s, bool want_result)
 
         if (has_resources) {
                 emit_instr(INSTR_PUSH_DROP_GROUP);
+                state.resources += 1;
         }
 
         for (int i = 0; i < s->iff.parts.count; ++i) {
@@ -3232,6 +3253,7 @@ emit_if_not(struct statement const *s, bool want_result)
 
         if (has_resources) {
                 emit_instr(INSTR_DROP);
+                state.resources -= 1;
         }
 
         state.match_successes = successes_save;
@@ -3278,6 +3300,7 @@ emit_if(struct statement const *s, bool want_result)
 
         if (has_resources) {
                 emit_instr(INSTR_PUSH_DROP_GROUP);
+                state.resources += 1;
         }
 
         for (int i = 0; i < s->iff.parts.count; ++i) {
@@ -3317,6 +3340,7 @@ emit_if(struct statement const *s, bool want_result)
 
         if (has_resources) {
                 emit_instr(INSTR_DROP);
+                state.resources -= 1;
         }
 
         state.match_successes = successes_save;
@@ -3800,6 +3824,9 @@ emit_for_each2(struct statement const *s, bool want_result)
         bool loop_wr_save = state.loop_want_result;
         state.loop_want_result = want_result;
 
+        int loop_resources = state.loop_resources;
+        state.loop_resources = state.resources;
+
         int loop_save = state.loop;
         state.loop = ++t;
 
@@ -3834,6 +3861,7 @@ emit_for_each2(struct statement const *s, bool want_result)
 
         if (s->each.target->has_resources) {
                 emit_instr(INSTR_PUSH_DROP_GROUP);
+                state.resources += 1;
         }
 
         for (int i = 0; i < s->each.target->es.count; ++i) {
@@ -3874,7 +3902,10 @@ emit_for_each2(struct statement const *s, bool want_result)
 
         if (s->each.target->has_resources) {
                 emit_instr(INSTR_DROP);
+                state.resources -= 1;
         }
+
+        state.loop_resources = loop_resources;
 
         JUMP(start);
 
@@ -4097,7 +4128,7 @@ emit_assignment(struct expression *target, struct expression const *e, bool mayb
 {
         if (target->has_resources) {
                 emit_instr(INSTR_PUSH_DROP_GROUP);
-                VPush(state.resources, target->symbol);
+                state.resources += 1;
         }
 
         if (target->type == EXPRESSION_LIST) {
@@ -4616,7 +4647,7 @@ emit_statement(struct statement const *s, bool want_result)
 
         bool returns = false;
 
-        int resources = state.resources.count;
+        int resources = state.resources;
 
         switch (s->type) {
         case STATEMENT_BLOCK:
@@ -4628,9 +4659,9 @@ emit_statement(struct statement const *s, bool want_result)
                 if (s->statements.count > 0) {
                         want_result = false;
                 }
-                while (state.resources.count > resources) {
+                while (state.resources > resources) {
                         emit_instr(INSTR_DROP);
-                        vec_pop(state.resources);
+                        state.resources -= 1;
                 }
                 break;
         case STATEMENT_MATCH:
@@ -4761,6 +4792,10 @@ emit_statement(struct statement const *s, bool want_result)
                         emit_instr(INSTR_FINALLY);
                 }
 
+                for (int i = state.loop_resources; i < state.resources; ++i) {
+                        emit_instr(INSTR_DROP);
+                }
+
                 if (state.each_loop) {
                         emit_instr(INSTR_POP);
                         emit_instr(INSTR_POP);
@@ -4783,8 +4818,14 @@ emit_statement(struct statement const *s, bool want_result)
         case STATEMENT_CONTINUE:
                 if (state.loop == 0)
                         fail("invalid continue statement (not inside a loop)");
+
                 if (state.try > state.loop)
                         emit_instr(INSTR_FINALLY);
+
+                for (int i = state.loop_resources; i < state.resources; ++i) {
+                        emit_instr(INSTR_DROP);
+                }
+
                 emit_instr(INSTR_JUMP);
                 VPush(state.continues, state.code.count);
                 emit_int(0);
@@ -4997,9 +5038,9 @@ compile(char const *source)
                 emit_statement(p[i], false);
         }
 
-        while (state.resources.count > 0) {
+        while (state.resources > 0) {
                 emit_instr(INSTR_DROP);
-                vec_pop(state.resources);
+                state.resources -= 1;
         }
 
         emit_instr(INSTR_HALT);
