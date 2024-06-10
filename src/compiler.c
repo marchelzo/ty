@@ -4914,6 +4914,20 @@ compile(char const *source)
                         struct expression *multi = mkmulti(p[i]->target->identifier, false);
                         bool pub = p[i]->pub;
 
+                        struct statement *def = Allocate(sizeof *def);
+                        *def = (struct statement){0};
+                        def->type = STATEMENT_FUNCTION_DEFINITION;
+                        def->target = Allocate(sizeof *def->target);
+                        *def->target = (struct expression) {
+                                .type = EXPRESSION_IDENTIFIER,
+                                .identifier = multi->name
+                        };
+                        def->value = multi;
+                        def->pub = pub;
+
+                        define_function(def);
+                        symbolize_statement(state.global, def);
+
                         int m = 0;
                         do {
                                 p[i + m]->pub = false;
@@ -4930,19 +4944,6 @@ compile(char const *source)
                                 strcmp(multi->name, p[i + m]->target->identifier) == 0
                         );
 
-                        struct statement *def = Allocate(sizeof *def);
-                        *def = (struct statement){0};
-                        def->type = STATEMENT_FUNCTION_DEFINITION;
-                        def->target = Allocate(sizeof *def->target);
-                        *def->target = (struct expression) {
-                                .type = EXPRESSION_IDENTIFIER,
-                                .identifier = multi->name
-                        };
-                        def->value = multi;
-                        def->pub = pub;
-
-                        define_function(def);
-                        symbolize_statement(state.global, def);
                         VPush(multi_functions, def);
                 }
         }
