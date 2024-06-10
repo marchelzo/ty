@@ -241,6 +241,7 @@ mkexpr(void)
         e->constraint = NULL;
         e->is_method = false;
         e->symbolized = false;
+        e->has_resources = false;
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -824,11 +825,6 @@ prefix_identifier(void)
                 return macro;
         }
 
-        // Based
-        if (tok()->type == '`') {
-
-        }
-
         // TODO: maybe get rid of this
         if (NoEquals && tok()->type == ':') {
                 SAVE_NE(true);
@@ -1333,12 +1329,12 @@ prefix_do(void)
 }
 
 static struct expression *
-prefix_with(void)
+parse_with(bool implicit_body)
 {
         struct expression *with = mkexpr();
         statement_vector defs = {0};
 
-        // with
+        // with / use
         next();
 
         for (;;) {
@@ -1372,13 +1368,37 @@ prefix_with(void)
             }
         }
 
-        struct statement *body = parse_statement(0);
+        struct statement *body;
+
+        if (implicit_body) {
+                body = mkstmt();
+                body->type = STATEMENT_BLOCK;
+                vec_init(body->statements);
+
+                while (tok()->type != '}' && tok()->type != TOKEN_END) {
+                        VPush(body->statements, parse_statement(0));
+                }
+        } else {
+                body = parse_statement(0);
+        }
 
         make_with(with, defs, body);
 
         with->end = End;
 
         return with;
+}
+
+static struct expression *
+prefix_use(void)
+{
+        return parse_with(true);
+}
+
+static struct expression *
+prefix_with(void)
+{
+        return parse_with(false);
 }
 
 static struct expression *
@@ -1926,19 +1946,31 @@ static struct expression *
 prefix_template_expr(void)
 {
         next();
-        consume('(');
 
         struct expression *e = mkexpr();
         e->type = EXPRESSION_TEMPLATE_HOLE;
         e->integer = TemplateExprs.count;
 
-        VPush(TemplateExprs, parse_expr(0));
+        if (tok()->type == '(') {
+                next();
+                VPush(TemplateExprs, parse_expr(0));
+                consume(')');
+        } else {
+                VPush(TemplateExprs, parse_expr(99));
+        }
 
         e->end = vec_last(TemplateExprs)[0]->end;
 
-        consume(')');
-
         return e;
+}
+
+static struct expression *
+prefix_carat(void)
+{
+        consume('^');
+        struct expression *id = prefix_identifier();
+        id->type = EXPRESSION_RESOURCE_BINDING;
+        return id;
 }
 
 static struct expression *
@@ -2840,6 +2872,7 @@ get_prefix_parser(void)
 
         case '$':                  return prefix_dollar;
         case '`':                  return prefix_tick;
+        case '^':                  return prefix_carat;
 
         case TOKEN_TEMPLATE_BEGIN: return prefix_template;
         case '$$':                 return prefix_template_expr;
@@ -2881,6 +2914,7 @@ Keyword:
         case KEYWORD_NIL:       return prefix_nil;
         case KEYWORD_YIELD:     return prefix_yield;
         case KEYWORD_WITH:      return prefix_with;
+        case KEYWORD_USE:       return prefix_use;
         case KEYWORD_DO:        return prefix_do;
 
         case KEYWORD_IF:
@@ -3050,6 +3084,7 @@ definition_lvalue(struct expression *e)
 {
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_RESOURCE_BINDING:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
@@ -3897,6 +3932,7 @@ parse_class_definition(void)
                         case TOKEN_DIV_EQ:      tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "/=";   break;
                         case '&':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "&";    break;
                         case '|':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "|";    break;
+                        case '^':               tok()->type = TOKEN_IDENTIFIER; tok()->identifier = "^";    break;
                         case TOKEN_USER_OP:     tok()->type = TOKEN_IDENTIFIER;                             break;
                         case '~':               next();
                         case TOKEN_IDENTIFIER:                                                              break;

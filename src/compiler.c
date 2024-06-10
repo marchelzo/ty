@@ -121,6 +121,8 @@ struct state {
 
         symbol_vector bound_symbols;
 
+        symbol_vector resources;
+
         struct scope *method;
         struct scope *fscope;
 
@@ -203,6 +205,9 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
 
 static bool
 emit_catch(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
+
+inline static void
+emit_tgt(struct symbol const *s, struct scope const *scope, bool def);
 
 static bool
 emit_return_check(struct expression const *f);
@@ -582,6 +587,7 @@ freshstate(void)
         vec_init(s.breaks);
         vec_init(s.continues);
         vec_init(s.generator_returns);
+        vec_init(s.resources);
 
         vec_init(s.imports);
         vec_init(s.exports);
@@ -877,7 +883,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
 }
 
 static void
-symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool pub)
+symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, bool pub)
 {
         state.start = target->start;
         state.end = target->end;
@@ -890,6 +896,10 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
         try_symbolize_application(scope, target);
 
         switch (target->type) {
+        case EXPRESSION_RESOURCE_BINDING:
+                if (strcmp(target->identifier, "_")) {
+                        target->identifier = gensym();
+                }
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
@@ -931,14 +941,17 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                                 );
                         }
                 }
+                if (target->type == EXPRESSION_RESOURCE_BINDING) {
+                        VPush(state.resources, target->symbol);
+                }
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_expression(scope, target->left);
-                symbolize_lvalue(scope, target->right, decl, pub);
+                symbolize_lvalue_(scope, target->right, decl, pub);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                symbolize_lvalue(scope, target->tagged, decl, pub);
+                symbolize_lvalue_(scope, target->tagged, decl, pub);
                 target->symbol = getsymbol(
                         ((target->module == NULL || *target->module == '\0') ? state.global : get_import_scope(target->module)),
                         target->identifier,
@@ -947,7 +960,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < target->elements.count; ++i)
-                        symbolize_lvalue(scope, target->elements.items[i], decl, pub);
+                        symbolize_lvalue_(scope, target->elements.items[i], decl, pub);
                 target->atmp = tmpsymbol(scope);
                 break;
         case EXPRESSION_DICT:
@@ -958,7 +971,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 }
                 for (int i = 0; i < target->keys.count; ++i) {
                         symbolize_expression(scope, target->keys.items[i]);
-                        symbolize_lvalue(scope, target->values.items[i], decl, pub);
+                        symbolize_lvalue_(scope, target->values.items[i], decl, pub);
                 }
                 target->dtmp = tmpsymbol(scope);
                 break;
@@ -979,7 +992,7 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
                 target->ltmp = tmpsymbol(scope);
         case EXPRESSION_LIST:
                 for (int i = 0; i < target->es.count; ++i) {
-                        symbolize_lvalue(scope, target->es.items[i], decl, pub);
+                        symbolize_lvalue_(scope, target->es.items[i], decl, pub);
                 }
                 break;
         default:
@@ -990,7 +1003,18 @@ symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool
 }
 
 static void
-symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse, bool def)
+symbolize_lvalue(struct scope *scope, struct expression *target, bool decl, bool pub)
+{
+        symbolize_lvalue_(scope, target, decl, pub);
+
+        if (state.resources.count > 0) {
+                target->has_resources = true;
+                state.resources.count = 0;
+        }
+}
+
+static void
+symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reuse, bool def)
 {
         if (e == NULL)
                 return;
@@ -1009,6 +1033,10 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
         struct symbol *existing;
 
         switch (e->type) {
+        case EXPRESSION_RESOURCE_BINDING:
+                if (strcmp(e->identifier, "_") == 0) {
+                        e->identifier = gensym();
+                }
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(e->identifier, "_") != 0 && (is_const(scope, e->identifier) || scope_locally_defined(scope, e->identifier) || e->module != NULL)) {
                         e->type = EXPRESSION_MUST_EQUAL;
@@ -1023,28 +1051,31 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
                         }
                         symbolize_expression(scope, e->constraint);
                 }
+                if (e->type == EXPRESSION_RESOURCE_BINDING) {
+                        VPush(state.resources, e->symbol);
+                }
                 e->local = true;
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < e->elements.count; ++i)
-                        symbolize_pattern(scope, e->elements.items[i], reuse, def);
+                        symbolize_pattern_(scope, e->elements.items[i], reuse, def);
                 break;
         case EXPRESSION_DICT:
                 for (int i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(scope, e->keys.items[i]);
-                        symbolize_pattern(scope, e->values.items[i], reuse, def);
+                        symbolize_pattern_(scope, e->values.items[i], reuse, def);
                 }
                 break;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
-                        symbolize_pattern(scope, e->es.items[i], reuse, def);
+                        symbolize_pattern_(scope, e->es.items[i], reuse, def);
                 }
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 symbolize_expression(scope, e->left);
-                symbolize_pattern(scope, e->right, reuse, def);
+                symbolize_pattern_(scope, e->right, reuse, def);
                 break;
         case EXPRESSION_SPREAD:
                 assert(e->value->type == EXPRESSION_IDENTIFIER);
@@ -1054,14 +1085,14 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
                 e->symbol = addsymbol(scope, e->identifier);
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                symbolize_pattern(scope, e->tagged, reuse, def);
+                symbolize_pattern_(scope, e->tagged, reuse, def);
                 break;
         Tag:
                 symbolize_expression(scope, e);
                 e->type = EXPRESSION_MUST_EQUAL;
                 break;
         case EXPRESSION_CHECK_MATCH:
-                symbolize_pattern(scope, e->left, reuse, def);
+                symbolize_pattern_(scope, e->left, reuse, def);
                 symbolize_expression(scope, e->right);
                 break;
         case EXPRESSION_REGEX:
@@ -1073,6 +1104,17 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
         }
 
         e->symbolized = true;
+}
+
+static void
+symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse, bool def)
+{
+        symbolize_pattern_(scope, e, reuse, def);
+
+        if (state.resources.count > 0) {
+                e->has_resources = true;
+                state.resources.count = 0;
+        }
 }
 
 static void
@@ -2579,7 +2621,7 @@ emit_for_loop(struct statement const *s, bool want_result)
 }
 
 static void
-emit_try_match(struct expression const *pattern)
+emit_try_match_(struct expression const *pattern)
 {
         size_t start = state.code.count;
         bool need_loc = false;
@@ -2587,6 +2629,8 @@ emit_try_match(struct expression const *pattern)
         bool after = false;
 
         switch (pattern->type) {
+        case EXPRESSION_RESOURCE_BINDING:
+                emit_instr(INSTR_PUSH_DROP);
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(pattern->identifier, "_") == 0) {
                         /* nothing to do */
@@ -2603,7 +2647,7 @@ emit_try_match(struct expression const *pattern)
                 }
                 break;
         case EXPRESSION_CHECK_MATCH:
-                emit_try_match(pattern->left);
+                emit_try_match_(pattern->left);
                 emit_instr(INSTR_DUP);
                 emit_constraint(pattern->right);
                 emit_instr(INSTR_JUMP_IF_NOT);
@@ -2636,7 +2680,7 @@ emit_try_match(struct expression const *pattern)
                 emit_int(1);
                 emit_int(0);
                 add_location(pattern->left, start, state.code.count);
-                emit_try_match(pattern->right);
+                emit_try_match_(pattern->right);
                 emit_instr(INSTR_POP);
                 break;
         case EXPRESSION_ARRAY:
@@ -2671,7 +2715,7 @@ emit_try_match(struct expression const *pattern)
                                 VPush(state.match_fails, state.code.count);
                                 emit_int(0);
 
-                                emit_try_match(pattern->elements.items[i]);
+                                emit_try_match_(pattern->elements.items[i]);
 
                                 emit_instr(INSTR_POP);
                         }
@@ -2718,7 +2762,7 @@ emit_try_match(struct expression const *pattern)
                                         emit_instr(INSTR_DUP);
                                         emit_expression(pattern->keys.items[i]);
                                         emit_instr(INSTR_SUBSCRIPT);
-                                        emit_try_match(pattern->values.items[i]);
+                                        emit_try_match_(pattern->values.items[i]);
                                         emit_instr(INSTR_POP);
                                 } else {
                                         emit_expression(pattern->keys.items[i]);
@@ -2736,7 +2780,7 @@ emit_try_match(struct expression const *pattern)
                 VPush(state.match_fails, state.code.count);
                 emit_int(0);
 
-                emit_try_match(pattern->tagged);
+                emit_try_match_(pattern->tagged);
 
                 emit_instr(INSTR_POP);
                 break;
@@ -2765,14 +2809,14 @@ emit_try_match(struct expression const *pattern)
                                 emit_string(pattern->names.items[i]);
                                 VPush(state.match_fails, state.code.count);
                                 emit_int(0);
-                                emit_try_match(pattern->es.items[i]);
+                                emit_try_match_(pattern->es.items[i]);
                                 emit_instr(INSTR_POP);
                         } else {
                                 emit_instr(INSTR_TRY_INDEX_TUPLE);
                                 emit_int(i);
                                 VPush(state.match_fails, state.code.count);
                                 emit_int(0);
-                                emit_try_match(pattern->es.items[i]);
+                                emit_try_match_(pattern->es.items[i]);
                                 emit_instr(INSTR_POP);
                         }
                 }
@@ -2792,7 +2836,7 @@ emit_try_match(struct expression const *pattern)
                         emit_instr(INSTR_JUMP_IF_SENTINEL);
                         VPush(state.match_fails, state.code.count);
                         emit_int(0);
-                        emit_try_match(pattern->es.items[i]);
+                        emit_try_match_(pattern->es.items[i]);
                         emit_instr(INSTR_POP);
                 }
                 break;
@@ -2812,6 +2856,12 @@ emit_try_match(struct expression const *pattern)
 
         if (pattern->type > EXPRESSION_KEEP_LOC || need_loc)
                 add_location(pattern, start, state.code.count);
+}
+
+static void
+emit_try_match(struct expression const *pattern)
+{
+        emit_try_match_(pattern);
 }
 
 static bool
@@ -2871,6 +2921,10 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
 
+        if (pattern->has_resources) {
+                emit_instr(INSTR_PUSH_DROP_GROUP);
+        }
+
         emit_instr(INSTR_SAVE_STACK_POS);
         emit_try_match(pattern);
 
@@ -2890,6 +2944,10 @@ emit_case(struct expression const *pattern, struct expression const *cond, struc
                 returns = emit_statement(s, want_result);
         } else if (want_result) {
                 emit_instr(INSTR_NIL);
+        }
+
+        if (pattern->has_resources) {
+                emit_instr(INSTR_DROP);
         }
 
         emit_instr(INSTR_JUMP);
@@ -2917,6 +2975,10 @@ emit_expression_case(struct expression const *pattern, struct expression const *
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
 
+        if (pattern->has_resources) {
+                emit_instr(INSTR_PUSH_DROP_GROUP);
+        }
+
         emit_instr(INSTR_SAVE_STACK_POS);
         emit_try_match(pattern);
 
@@ -2927,6 +2989,9 @@ emit_expression_case(struct expression const *pattern, struct expression const *
         emit_instr(INSTR_RESTORE_STACK_POS);
         emit_instr(INSTR_CLEAR_EXTRA);
         emit_expression(e);
+        if (pattern->has_resources) {
+                emit_instr(INSTR_DROP);
+        }
 
         /*
          * We've successfully matched a pattern+condition and produced a result, so we jump
@@ -3054,6 +3119,8 @@ emit_while(struct statement const *s, bool want_result)
 
         size_t start = state.code.count;
 
+        bool has_resources = false;
+
         for (int i = 0; i < s->While.parts.count; ++i) {
                 struct condpart *p = s->While.parts.items[i];
                 if (p->target == NULL) {
@@ -3064,6 +3131,10 @@ emit_while(struct statement const *s, bool want_result)
                         emit_int(0);
                         emit_instr(INSTR_RESTORE_STACK_POS);
                 } else {
+                        if (p->target->has_resources && !has_resources) {
+                                emit_instr(INSTR_PUSH_DROP_GROUP);
+                                has_resources = true;
+                        }
                         emit_instr(INSTR_SAVE_STACK_POS);
                         emit_list(p->e);
                         emit_instr(INSTR_FIX_EXTRA);
@@ -3073,6 +3144,10 @@ emit_while(struct statement const *s, bool want_result)
         }
 
         emit_statement(s->While.block, false);
+
+        if (has_resources) {
+                emit_instr(INSTR_DROP);
+        }
 
         JUMP(start);
 
@@ -3105,6 +3180,20 @@ emit_if_not(struct statement const *s, bool want_result)
 
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
+
+        bool has_resources = false;
+
+        for (int i = 0; i < s->iff.parts.count; ++i) {
+                struct condpart *p = s->iff.parts.items[i];
+                if (p->target != NULL && p->target->has_resources) {
+                        has_resources = true;
+                        break;
+                }
+        }
+
+        if (has_resources) {
+                emit_instr(INSTR_PUSH_DROP_GROUP);
+        }
 
         for (int i = 0; i < s->iff.parts.count; ++i) {
                 struct condpart *p = s->iff.parts.items[i];
@@ -3141,6 +3230,10 @@ emit_if_not(struct statement const *s, bool want_result)
 
         PATCH_JUMP(done);
 
+        if (has_resources) {
+                emit_instr(INSTR_DROP);
+        }
+
         state.match_successes = successes_save;
         state.match_fails = fails_save;
 
@@ -3172,6 +3265,20 @@ emit_if(struct statement const *s, bool want_result)
 
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
+
+        bool has_resources = false;
+
+        for (int i = 0; i < s->iff.parts.count; ++i) {
+                struct condpart *p = s->iff.parts.items[i];
+                if (p->target != NULL && p->target->has_resources) {
+                        has_resources = true;
+                        break;
+                }
+        }
+
+        if (has_resources) {
+                emit_instr(INSTR_PUSH_DROP_GROUP);
+        }
 
         for (int i = 0; i < s->iff.parts.count; ++i) {
                 struct condpart *p = s->iff.parts.items[i];
@@ -3207,6 +3314,10 @@ emit_if(struct statement const *s, bool want_result)
         }
 
         PATCH_JUMP(done);
+
+        if (has_resources) {
+                emit_instr(INSTR_DROP);
+        }
 
         state.match_successes = successes_save;
         state.match_fails = fails_save;
@@ -3261,6 +3372,8 @@ emit_target(struct expression *target, bool def)
         bool need_loc = true;
 
         switch (target->type) {
+        case EXPRESSION_RESOURCE_BINDING:
+                emit_instr(INSTR_PUSH_DROP);
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_REST:
                 need_loc = false;
@@ -3719,6 +3832,10 @@ emit_for_each2(struct statement const *s, bool want_result)
         emit_instr(INSTR_FIX_TO);
         emit_int((int)s->each.target->es.count);
 
+        if (s->each.target->has_resources) {
+                emit_instr(INSTR_PUSH_DROP_GROUP);
+        }
+
         for (int i = 0; i < s->each.target->es.count; ++i) {
                 emit_instr(INSTR_SAVE_STACK_POS);
                 emit_try_match(s->each.target->es.items[i]);
@@ -3754,6 +3871,10 @@ emit_for_each2(struct statement const *s, bool want_result)
         }
 
         emit_statement(s->each.body, false);
+
+        if (s->each.target->has_resources) {
+                emit_instr(INSTR_DROP);
+        }
 
         JUMP(start);
 
@@ -3974,6 +4095,11 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
 static void
 emit_assignment(struct expression *target, struct expression const *e, bool maybe, bool def)
 {
+        if (target->has_resources) {
+                emit_instr(INSTR_PUSH_DROP_GROUP);
+                VPush(state.resources, target->symbol);
+        }
+
         if (target->type == EXPRESSION_LIST) {
                 emit_list(e);
                 emit_instr(INSTR_FIX_TO);
@@ -4490,6 +4616,8 @@ emit_statement(struct statement const *s, bool want_result)
 
         bool returns = false;
 
+        int resources = state.resources.count;
+
         switch (s->type) {
         case STATEMENT_BLOCK:
         case STATEMENT_MULTI:
@@ -4499,6 +4627,10 @@ emit_statement(struct statement const *s, bool want_result)
                 }
                 if (s->statements.count > 0) {
                         want_result = false;
+                }
+                while (state.resources.count > resources) {
+                        emit_instr(INSTR_DROP);
+                        vec_pop(state.resources);
                 }
                 break;
         case STATEMENT_MATCH:
@@ -4862,6 +4994,11 @@ compile(char const *source)
 
         for (int i = 0; p[i] != NULL; ++i) {
                 emit_statement(p[i], false);
+        }
+
+        while (state.resources.count > 0) {
+                emit_instr(INSTR_DROP);
+                vec_pop(state.resources);
         }
 
         emit_instr(INSTR_HALT);

@@ -1,0 +1,13 @@
+import ty
+
+macro upper(e) {
+    let ty.Func(f) = e
+    ty.FuncDef({*f, body: $$[ $$(f.body).upper() $$]})
+}
+
+@{upper}
+function f() {
+    'pass'
+}
+
+print(f())

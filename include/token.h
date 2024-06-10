@@ -84,6 +84,7 @@ struct token {
                         KEYWORD_RETURN,
                         KEYWORD_BREAK,
                         KEYWORD_LET,
+                        KEYWORD_USE,
                         KEYWORD_CONTINUE,
                         KEYWORD_IF,
                         KEYWORD_DO,

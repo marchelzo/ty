@@ -1,0 +1,7 @@
+import os (..)
+
+(function () {
+    for c in 'PASS\n' {
+        onExit(-> write(1, c))
+    }
+})()
