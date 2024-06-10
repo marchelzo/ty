@@ -902,7 +902,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
 
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
-                if (strcmp(target->identifier, "_")) {
+                if (strcmp(target->identifier, "_") == 0) {
                         target->identifier = gensym();
                 }
         case EXPRESSION_IDENTIFIER:
