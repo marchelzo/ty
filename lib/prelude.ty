@@ -2081,6 +2081,14 @@ macro ifdef {
     ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
 }
 
+function memoized(f) {
+    let memo = %{*: f(*it.0, **%{k: v for (k, v) in it.1})}
+    return function (*args, %kwargs) {
+        let kwargs = kwargs.list().sort(by: &0)
+        memo[(args, kwargs)]
+    }
+}
+
 operator **   10 right
 operator <<   7  left
 operator >>   7  left

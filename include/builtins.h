@@ -141,6 +141,7 @@
 { .module = "os",     .name = "NI_NUMERICSERV",    .value = INT(NI_NUMERICSERV)                            },
 { .module = "os",     .name = "SOL_SOCKET",        .value = INT(SOL_SOCKET)                                },
 { .module = "os",     .name = "SO_REUSEADDR",      .value = INT(SO_REUSEADDR)                              },
+{ .module = "os",     .name = "SO_LINGER",         .value = INT(SO_LINGER)                                 },
 { .module = "os",     .name = "SHUT_RD",           .value = INT(SHUT_RD)                                   },
 { .module = "os",     .name = "SHUT_WR",           .value = INT(SHUT_WR)                                   },
 { .module = "os",     .name = "SHUT_RDWR",         .value = INT(SHUT_RDWR)                                 },
