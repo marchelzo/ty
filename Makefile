@@ -49,7 +49,7 @@ ifdef RELEASE
         CFLAGS += -O3
         CFLAGS += -pipe
         CFLAGS += -DTY_RELEASE
-        CFLAGS += -march=native
+        CFLAGS += -mcpu=native
         CFLAGS += -mtune=native
 else ifdef DEBUG
         CFLAGS += -O0

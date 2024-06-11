@@ -915,9 +915,9 @@ lexnum(void)
         intmax_t integer;
         // Allow integer constants like 0b10100010
         if (C(0) == '0' && C(1) == 'b') {
-                integer = uatou(SRC + 2, &end, 2);
+                integer = uatou(SRC + 2, (char const **)&end, 2);
         } else {
-                integer = uatou(SRC, &end, 0);
+                integer = uatou(SRC, (char const **)&end, 0);
         }
 
         int n = end - SRC;

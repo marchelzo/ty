@@ -2521,7 +2521,7 @@ builtin_thread_send(int argc, struct value *kwargs)
         Channel *chan = ARG(0).ptr;
         ChanVal cv = { .v = ARG(1) };
 
-        Forget(&cv.v, &cv.as);
+        Forget(&cv.v, (AllocList *)&cv.as);
 
         ReleaseLock(true);
         pthread_mutex_lock(&chan->m);
