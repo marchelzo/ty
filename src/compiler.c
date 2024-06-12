@@ -5337,7 +5337,6 @@ compiler_find_definition(char const *file, int line, int col)
                 return (struct location) {0};
         }
 
-
         for (int i = 0; i < locs->count; ++i) {
                 if (locs->items[i].e->type == EXPRESSION_IDENTIFIER &&
                     locs->items[i].start.line == line &&

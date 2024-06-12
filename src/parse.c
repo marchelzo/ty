@@ -3575,6 +3575,17 @@ parse_function_definition(void)
 
         }
 
+        Location target_start = tok()->start;
+        Location target_end = tok()->end;
+
+        for (int i = 0; i < 128; ++i) { 
+                if (token(i)->type == TOKEN_KEYWORD && token(i)->keyword == KEYWORD_FUNCTION) {
+                        target_start = token(i + 1)->start;
+                        target_end = token(i + 1)->end;
+                        break;
+                }
+        }
+
         struct expression *f = prefix_function();
         if (f->name == NULL)
                 error("anonymous function definition used in statement context");
@@ -3595,6 +3606,8 @@ parse_function_definition(void)
         target->type = EXPRESSION_IDENTIFIER;
         target->identifier = f->name;
         target->module = NULL;
+        target->start = target_start;
+        target->end = target_end;
 
         s->target = target;
         s->value = f;
