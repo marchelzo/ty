@@ -267,7 +267,14 @@ main(int argc, char **argv)
                 *colon = '\0';
                 int line = atoi(SymbolLocation);
                 int col = atoi(colon + 1);
-                struct location loc = compiler_find_definition(file, line, col);
+
+                CompileOnly = true;
+                if (!vm_execute_file(file)) {
+                        return 1;
+                }
+
+                struct location loc = compiler_find_definition(file, line - 1, col - 1);
+
                 if (loc.s == NULL) {
                         return -1;
                 } else {
