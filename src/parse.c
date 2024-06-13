@@ -829,10 +829,8 @@ prefix_identifier(void)
 
         // TODO: maybe get rid of this
         if (NoEquals && tok()->type == ':') {
-                SAVE_NE(true);
                 next();
                 e->constraint = parse_expr(0);
-                LOAD_NE();
         } else {
                 e->constraint = NULL;
         }
@@ -4051,7 +4049,9 @@ parse_try(void)
 
                 while (have_keyword(KEYWORD_CATCH)) {
                         next();
+                        SAVE_NE(true);
                         VPush(s->try.patterns, parse_expr(0));
+                        LOAD_NE();
                         VPush(s->try.handlers, parse_statement(-1));
                 }
 
@@ -4080,7 +4080,9 @@ parse_try(void)
 
         while (have_keyword(KEYWORD_CATCH)) {
                 next();
+                SAVE_NE(true);
                 VPush(s->try.patterns, parse_expr(0));
+                LOAD_NE();
                 VPush(s->try.handlers, parse_statement(-1));
         }
 
