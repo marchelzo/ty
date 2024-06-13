@@ -4590,11 +4590,11 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_int(0);
                 break;
         case STATEMENT_BREAK:
-                if (state.loops.count < s->depth) {
+                loop = get_loop(s->depth - 1);
+
+                if (loop == NULL) {
                         fail("invalid break statement (not inside a loop)");
                 }
-
-                loop = get_loop(s->depth - 1);
                 
                 for (int i = 0; i < s->depth; ++i) {
                         if (get_loop(i)->each) {
@@ -4626,11 +4626,21 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_int(0);
                 break;
         case STATEMENT_CONTINUE:
+                loop = get_loop(s->depth - 1);
+
                 if (loop == NULL)
                         fail("invalid continue statement (not inside a loop)");
 
-                if (try != NULL && try->t > loop->t)
+                for (int i = 0; i < s->depth - 1; ++i) {
+                        if (get_loop(i)->each) {
+                                emit_instr(INSTR_POP);
+                                emit_instr(INSTR_POP);
+                        }
+                }
+
+                for (int i = 0; get_try(i) != NULL && get_try(i)->t > loop->t; ++i) {
                         emit_instr(INSTR_FINALLY);
+                }
 
                 for (int i = loop->resources; i < state.resources; ++i) {
                         emit_instr(INSTR_DROP);

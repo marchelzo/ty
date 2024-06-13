@@ -1,0 +1,28 @@
+let n = 0
+
+class A {
+    __drop__() {
+        print('PASS')
+    }
+}
+
+class B {
+    __drop__() {
+        n += 1
+    }
+}
+
+for i in ..5 {
+    let ^b = B()
+    break if i == 1
+    for j in ..5 {
+        let ^a = A()
+        continue continue
+        print('FAIL')
+    }
+    print('FAIL')
+}
+
+if n != 2 {
+    print('FAIL')
+}

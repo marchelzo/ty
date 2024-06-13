@@ -3748,8 +3748,12 @@ parse_continue_statement(void)
 {
         struct statement *s = mkstmt();
         s->type = STATEMENT_CONTINUE;
+        s->depth = 0;
 
-        consume_keyword(KEYWORD_CONTINUE);
+        while (have_keyword(KEYWORD_CONTINUE)) {
+                next();
+                s->depth += 1;
+        }
 
         if (tok()->type == ';')
                 next();
