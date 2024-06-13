@@ -1406,6 +1406,11 @@ DoAssign(void)
         }
 }
 
+#ifndef TY_RELEASE
+__attribute__((noinline))
+#else
+inline
+#endif
 static void
 DoDrop(void)
 {

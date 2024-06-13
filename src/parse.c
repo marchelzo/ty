@@ -3700,6 +3700,30 @@ parse_defer_statement(void)
         return s;
 }
 
+inline static struct statement *
+try_conditional_from(struct statement *s)
+{
+        if (tok()->start.line == End.line && have_keyword(KEYWORD_IF)) {
+                next();
+
+                struct statement *if_ = mkstmt();
+                if_->type = STATEMENT_IF;
+                if_->iff.neg = have_keyword(KEYWORD_NOT);
+
+                if (if_->iff.neg) {
+                        next();
+                }
+
+                if_->iff.parts = parse_condparts(if_->iff.neg);
+                if_->iff.then = s;
+                if_->iff.otherwise = NULL;
+
+                s = if_;
+        }
+
+        return s;
+}
+
 static struct statement *
 parse_break_statement(void)
 {
@@ -3719,23 +3743,7 @@ parse_break_statement(void)
                 s->expression = NULL;
         }
 
-        if (tok()->start.line == s->start.line && have_keyword(KEYWORD_IF)) {
-                next();
-
-                struct statement *if_ = mkstmt();
-                if_->type = STATEMENT_IF;
-                if_->iff.neg = have_keyword(KEYWORD_NOT);
-
-                if (if_->iff.neg) {
-                        next();
-                }
-
-                if_->iff.parts = parse_condparts(if_->iff.neg);
-                if_->iff.then = s;
-                if_->iff.otherwise = NULL;
-
-                s = if_;
-        }
+        s = try_conditional_from(s);
 
         if (tok()->type == ';')
                 consume(';');
@@ -3754,6 +3762,8 @@ parse_continue_statement(void)
                 next();
                 s->depth += 1;
         }
+
+        s = try_conditional_from(s);
 
         if (tok()->type == ';')
                 next();
