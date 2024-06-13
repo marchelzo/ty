@@ -79,7 +79,10 @@ struct statement {
         struct location start;
         struct location end;
         union {
-                struct expression *expression;
+                struct {
+                        struct expression *expression;
+                        int depth;
+                };
                 struct expression *throw;
                 vec(struct statement *) statements;
                 expression_vector returns;

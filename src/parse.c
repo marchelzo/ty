@@ -413,14 +413,16 @@ static void
 logctx(void)
 {
 #if 0
+        tok();
+
         int lo = max(0, TokenIndex - 3);
         int hi = tokens.count - 1;
 
-        fprintf(stderr, "Lex context: %s    ", lctx == LEX_PREFIX ? "prefix" : "infix");
+        fprintf(stderr, "Lex context: %-6s    ", lctx == LEX_PREFIX ? "prefix" : "infix");
 
         for (int i = lo; i <= hi; ++i) {
                 if (i == TokenIndex) {
-                        fprintf(stderr, "  %s[%s]%s", TERM(34), token_show(&tokens.items[i]), TERM(39));
+                        fprintf(stderr, "  %s[%s]%s", TERM(92), token_show(&tokens.items[i]), TERM(0));
                 } else {
                         fprintf(stderr, "  [%s]", token_show(&tokens.items[i]));
                 }
@@ -1329,7 +1331,7 @@ prefix_do(void)
 }
 
 static struct expression *
-parse_with(bool implicit_body)
+prefix_with(void)
 {
         struct expression *with = mkexpr();
         statement_vector defs = {0};
@@ -1368,37 +1370,11 @@ parse_with(bool implicit_body)
             }
         }
 
-        struct statement *body;
-
-        if (implicit_body) {
-                body = mkstmt();
-                body->type = STATEMENT_BLOCK;
-                vec_init(body->statements);
-
-                while (tok()->type != '}' && tok()->type != TOKEN_END) {
-                        VPush(body->statements, parse_statement(0));
-                }
-        } else {
-                body = parse_statement(0);
-        }
-
-        make_with(with, defs, body);
+        make_with(with, defs, parse_statement(0));
 
         with->end = End;
 
         return with;
-}
-
-static struct expression *
-prefix_use(void)
-{
-        return parse_with(true);
-}
-
-static struct expression *
-prefix_with(void)
-{
-        return parse_with(false);
 }
 
 static struct expression *
@@ -2914,7 +2890,6 @@ Keyword:
         case KEYWORD_NIL:       return prefix_nil;
         case KEYWORD_YIELD:     return prefix_yield;
         case KEYWORD_WITH:      return prefix_with;
-        case KEYWORD_USE:       return prefix_use;
         case KEYWORD_DO:        return prefix_do;
 
         case KEYWORD_IF:
@@ -3731,12 +3706,35 @@ parse_break_statement(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_BREAK;
 
-        consume_keyword(KEYWORD_BREAK);
+        s->depth = 0;
 
-        if (tok()->start.line == s->start.line && get_prefix_parser() != NULL) {
+        while (have_keyword(KEYWORD_BREAK)) {
+                next();
+                s->depth += 1;
+        }
+
+        if (tok()->start.line == s->start.line && tok()->type == '(') {
                 s->expression = parse_expr(0);
         } else {
                 s->expression = NULL;
+        }
+
+        if (tok()->start.line == s->start.line && have_keyword(KEYWORD_IF)) {
+                next();
+
+                struct statement *if_ = mkstmt();
+                if_->type = STATEMENT_IF;
+                if_->iff.neg = have_keyword(KEYWORD_NOT);
+
+                if (if_->iff.neg) {
+                        next();
+                }
+
+                if_->iff.parts = parse_condparts(if_->iff.neg);
+                if_->iff.then = s;
+                if_->iff.otherwise = NULL;
+
+                s = if_;
         }
 
         if (tok()->type == ';')

@@ -25,7 +25,7 @@ let libraryNames = ['libz.so.1', 'libz.dylib']
 
 if not let $lib = for name in libraryNames {
     if let $lib = c.dlopen(name) {
-        break lib
+        break (lib)
     }
 } {
   throw "Failed to load {libraryNames}"
