@@ -32,7 +32,6 @@ static struct {
         { "in",          KEYWORD_IN        },
         { "let",         KEYWORD_LET       },
         { "pub",         KEYWORD_PUB       },
-        { "use",         KEYWORD_USE       },
         { "match",       KEYWORD_MATCH     },
         { "nil",         KEYWORD_NIL       },
         { "return",      KEYWORD_RETURN    },

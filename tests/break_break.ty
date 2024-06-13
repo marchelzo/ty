@@ -1,0 +1,19 @@
+class A {
+    __drop__() {
+        print('PASS')
+    }
+}
+
+let x = for i in ..10 {
+    let ^a = A()
+
+    for j in ..10 {
+        break break (42)
+    }
+
+    print('FAIL')
+}
+
+if x != 42 {
+    print("FAIL: {x} != 42")
+}
