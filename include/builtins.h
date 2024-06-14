@@ -83,6 +83,8 @@
 { .module = "os",     .name = "mkdtemp",           .value = BUILTIN(builtin_os_mkdtemp)                    },
 { .module = "os",     .name = "unlink",            .value = BUILTIN(builtin_os_unlink)                     },
 { .module = "os",     .name = "rename",            .value = BUILTIN(builtin_os_rename)                     },
+{ .module = "os",     .name = "symlink",           .value = BUILTIN(builtin_os_symlink)                    },
+{ .module = "os",     .name = "link",              .value = BUILTIN(builtin_os_link)                       },
 { .module = "os",     .name = "getcwd",            .value = BUILTIN(builtin_os_getcwd)                     },
 { .module = "os",     .name = "mkdir",             .value = BUILTIN(builtin_os_mkdir)                      },
 { .module = "os",     .name = "rmdir",             .value = BUILTIN(builtin_os_rmdir)                      },
@@ -100,6 +102,7 @@
 { .module = "os",     .name = "umask",             .value = BUILTIN(builtin_os_umask)                      },
 { .module = "os",     .name = "listdir",           .value = BUILTIN(builtin_os_listdir)                    },
 { .module = "os",     .name = "fcntl",             .value = BUILTIN(builtin_os_fcntl)                      },
+{ .module = "os",     .name = "flock",             .value = BUILTIN(builtin_os_flock)                      },
 { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
 { .module = "os",     .name = "stat",              .value = BUILTIN(builtin_os_stat)                       },
 { .module = "os",     .name = "truncate",          .value = BUILTIN(builtin_os_truncate)                   },
@@ -239,6 +242,11 @@
 { .module = "os",     .name = "F_SETSIG",          .value = INT(F_SETSIG)                                  },
 #endif
 #endif
+
+{ .module = "os",     .name = "LOCK_SH", .value = INT(LOCK_SH) },
+{ .module = "os",     .name = "LOCK_EX", .value = INT(LOCK_EX) },
+{ .module = "os",     .name = "LOCK_NB", .value = INT(LOCK_NB) },
+{ .module = "os",     .name = "LOCK_UN", .value = INT(LOCK_UN) },
 
 { .module = "thread", .name = "create",            .value = BUILTIN(builtin_thread_create)                 },
 { .module = "thread", .name = "join",              .value = BUILTIN(builtin_thread_join)                   },

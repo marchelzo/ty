@@ -17,6 +17,9 @@ static _Thread_local vec(struct value const *) RootSet;
 
 _Thread_local int GC_OFF_COUNT = 0;
 
+#define A_LOAD(p)     atomic_load_explicit((p), memory_order_relaxed)
+#define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
+
 inline static void
 collect(struct alloc *a)
 {
@@ -69,7 +72,7 @@ GCForget(AllocList *allocs, size_t *used)
                 if (allocs->items[i] == NULL) {
                         abort();
                 }
-                if (!atomic_load(&allocs->items[i]->mark) && atomic_load(&allocs->items[i]->hard) == 0) {
+                if (!A_LOAD(&allocs->items[i]->mark) && A_LOAD(&allocs->items[i]->hard) == 0) {
                         allocs->items[n++] = allocs->items[i++];
                 } else {
                         *used -= min(allocs->items[i]->size, *used);
@@ -85,12 +88,12 @@ GCSweep(AllocList *allocs, size_t *used)
         size_t n = 0;
 
         for (int i = 0; i < allocs->count; ++i) {
-                if (!atomic_load(&allocs->items[i]->mark) && atomic_load(&allocs->items[i]->hard) == 0) {
+                if (!A_LOAD(&allocs->items[i]->mark) && A_LOAD(&allocs->items[i]->hard) == 0) {
                         *used -= min(allocs->items[i]->size, *used);
                         collect(allocs->items[i]);
                         free(allocs->items[i]);
                 } else {
-                        atomic_store(&allocs->items[i]->mark, false);
+                        A_STORE(&allocs->items[i]->mark, false);
                         allocs->items[n++] = allocs->items[i];
                 }
         }

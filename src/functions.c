@@ -1844,6 +1844,104 @@ builtin_os_unlink(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_link(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.symlink()", 2);
+
+        struct value old = ARG(0);
+        struct value new = ARG(1);
+
+        switch (old.type) {
+        case VALUE_STRING:
+                break;
+        case VALUE_BLOB:
+                old = STRING_NOGC((char *)old.blob->items, old.blob->count);
+                break;
+        case VALUE_PTR:
+                old = STRING_NOGC(old.ptr, strlen(old.ptr));
+                break;
+        default:
+                vm_panic("os.link(): invalid argument: %s", value_show(&old));
+        }
+
+        switch (new.type) {
+        case VALUE_STRING:
+                break;
+        case VALUE_BLOB:
+                new = STRING_NOGC((char *)new.blob->items, new.blob->count);
+                break;
+        case VALUE_PTR:
+                new = STRING_NOGC(new.ptr, strlen(new.ptr));
+                break;
+        default:
+                vm_panic("os.link(): invalid argument: %s", value_show(&new));
+        }
+
+
+        if (old.bytes + new.bytes + 2 > sizeof buffer) {
+                errno = ENAMETOOLONG;
+                return INTEGER(-1);
+        }
+
+        memcpy(buffer, old.string, old.bytes);
+        buffer[old.bytes] = '\0';
+
+        memcpy(buffer + old.bytes + 1, new.string, new.bytes);
+        buffer[old.bytes + 1 + new.bytes] = '\0';
+
+        return INTEGER(link(buffer, buffer + old.bytes + 1));
+}
+
+struct value
+builtin_os_symlink(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.symlink()", 2);
+
+        struct value old = ARG(0);
+        struct value new = ARG(1);
+
+        switch (old.type) {
+        case VALUE_STRING:
+                break;
+        case VALUE_BLOB:
+                old = STRING_NOGC((char *)old.blob->items, old.blob->count);
+                break;
+        case VALUE_PTR:
+                old = STRING_NOGC(old.ptr, strlen(old.ptr));
+                break;
+        default:
+                vm_panic("os.symlink(): invalid argument: %s", value_show(&old));
+        }
+
+        switch (new.type) {
+        case VALUE_STRING:
+                break;
+        case VALUE_BLOB:
+                new = STRING_NOGC((char *)new.blob->items, new.blob->count);
+                break;
+        case VALUE_PTR:
+                new = STRING_NOGC(new.ptr, strlen(new.ptr));
+                break;
+        default:
+                vm_panic("os.symlink(): invalid argument: %s", value_show(&new));
+        }
+
+
+        if (old.bytes + new.bytes + 2 > sizeof buffer) {
+                errno = ENAMETOOLONG;
+                return INTEGER(-1);
+        }
+
+        memcpy(buffer, old.string, old.bytes);
+        buffer[old.bytes] = '\0';
+
+        memcpy(buffer + old.bytes + 1, new.string, new.bytes);
+        buffer[old.bytes + 1 + new.bytes] = '\0';
+
+        return INTEGER(symlink(buffer, buffer + old.bytes + 1));
+}
+
+struct value
 builtin_os_rename(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.rename()", 2);
@@ -3975,6 +4073,22 @@ builtin_os_stat(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_flock(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.flock()", 2);
+
+        struct value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER)
+                vm_panic("the first argument to os.fcntl() must be an integer");
+
+        struct value cmd = ARG(1);
+        if (cmd.type != VALUE_INTEGER)
+                vm_panic("the second argument to os.fcntl() must be an integer");
+
+        return INTEGER(flock(fd.integer, cmd.integer));
+}
+
+struct value
 builtin_os_fcntl(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.fcntl()", 2, 3);
@@ -3984,7 +4098,7 @@ builtin_os_fcntl(int argc, struct value *kwargs)
                 vm_panic("the first argument to os.fcntl() must be an integer");
 
         struct value cmd = ARG(1);
-        if (fd.type != VALUE_INTEGER)
+        if (cmd.type != VALUE_INTEGER)
                 vm_panic("the second argument to os.fcntl() must be an integer");
 
         if (argc == 2)
