@@ -268,6 +268,12 @@ struct value
 builtin_os_rename(int argc, struct value *kwargs);
 
 struct value
+builtin_os_link(int argc, struct value *kwargs);
+
+struct value
+builtin_os_symlink(int argc, struct value *kwargs);
+
+struct value
 builtin_os_read(int argc, struct value *kwargs);
 
 struct value
@@ -290,6 +296,9 @@ builtin_os_sleep(int argc, struct value *kwargs);
 
 struct value
 builtin_os_fcntl(int argc, struct value *kwargs);
+
+struct value
+builtin_os_flock(int argc, struct value *kwargs);
 
 struct value
 builtin_os_spawn(int argc, struct value *kwargs);

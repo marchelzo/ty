@@ -23,11 +23,11 @@ void DoGC(void);
 //#define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
 //#define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
 
-#define MARKED(v) atomic_load(&(ALLOC_OF(v))->mark)
-#define MARK(v)   atomic_store(&(ALLOC_OF(v))->mark, 1)
+#define MARKED(v) atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed)
+#define MARK(v)   atomic_store_explicit(&(ALLOC_OF(v))->mark, true, memory_order_relaxed)
 
-#define NOGC(v)   atomic_fetch_add(&(ALLOC_OF(v))->hard, 1)
-#define OKGC(v)   atomic_fetch_sub(&(ALLOC_OF(v))->hard, 1)
+#define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
+#define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 
 #define GC_INITIAL_LIMIT (1ULL << 22)
 

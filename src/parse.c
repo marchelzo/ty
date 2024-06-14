@@ -3735,7 +3735,8 @@ parse_break_statement(void)
                 s->depth += 1;
         }
 
-        if (tok()->start.line == s->start.line && tok()->type == '(') {
+        if (tok()->start.line == s->start.line &&
+            (!have_keyword(KEYWORD_IF) || tok()->type == '(')) {
                 s->expression = parse_expr(0);
         } else {
                 s->expression = NULL;
