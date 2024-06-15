@@ -133,6 +133,8 @@ struct value;
         X(Cond) \
         X(UserOp) \
         X(Return) \
+        X(Break) \
+        X(Continue) \
         X(Wtf) \
         X(GT) \
         X(LT) \

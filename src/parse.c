@@ -3736,6 +3736,7 @@ parse_break_statement(void)
         }
 
         if (tok()->start.line == s->start.line &&
+            get_prefix_parser() != NULL &&
             (!have_keyword(KEYWORD_IF) || tok()->type == '(')) {
                 s->expression = parse_expr(0);
         } else {
