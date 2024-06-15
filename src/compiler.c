@@ -5858,6 +5858,32 @@ tystmt(struct statement *s)
                 v = tyexpr(s->expression);
                 v.tags = tags_push(v.tags, TyDefer);
                 break;
+        case STATEMENT_RETURN:
+                v = value_tuple(s->returns.count);
+                for (int i = 0; i < s->returns.count; ++i) {
+                        v.items[i] = tyexpr(s->returns.items[i]);
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyReturn);
+                break;
+        case STATEMENT_BREAK:
+                v = tagged(
+                        TyBreak,
+                        value_named_tuple(
+                                "value", (s->expression == NULL) ? NIL : tyexpr(s->expression),
+                                "depth", INTEGER(s->depth),
+                                NULL
+                        ),
+                        NONE
+                );
+                break;
+        case STATEMENT_CONTINUE:
+                v = tagged(
+                        TyContinue,
+                        INTEGER(s->depth),
+                        NONE
+                );
+                break;
         case STATEMENT_MATCH:
                 v = value_tuple(2);
                 v.items[0] = tyexpr(s->match.e);
@@ -6000,8 +6026,13 @@ cstmt(struct value *v)
         s->start = state.mstart;
         s->end = state.mend;
 
-        if (v->type == VALUE_TAG && v->tag == TyNull) {
+        if (v->type == VALUE_TAG) switch (v->tag) {
+        case TyNull:
                 goto Null;
+        case TyContinue:
+                goto Continue;
+        case TyBreak:
+                goto Break;
         }
 
         int tag = tags_first(v->tags);
@@ -6157,13 +6188,42 @@ cstmt(struct value *v)
         {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
-                if (v->type == VALUE_TUPLE) {
+                if ((v->type & ~VALUE_TAGGED)  == VALUE_TUPLE) {
                         for (int i = 0; i < v->count; ++i) {
                                 VPush(s->returns, cexpr(&v->items[i]));
                         }
                 } else {
                         v->tags = tags_pop(v->tags);
                         VPush(s->returns, cexpr(v));
+                }
+                break;
+        }
+        case TyBreak:
+        Break:
+        {
+                s->type = STATEMENT_BREAK;
+                if (v->type == VALUE_TAG) {
+                        s->depth = 1;
+                        s->expression = NULL;
+                } else {
+                        Value *expr = tuple_get(v, "value");
+                        Value *depth = tuple_get(v, "depth");
+                        s->depth = (depth == NULL) ? 1 : max(1, depth->integer);
+                        s->expression = (expr == NULL) ? NULL : cexpr(expr);
+                }
+                break;
+        }
+        case TyContinue:
+        Continue:
+        {
+                s->type = STATEMENT_CONTINUE;
+                if (v->type == VALUE_TAG) {
+                        s->depth = 1;
+                } else if ((v->type & ~VALUE_TAGGED) == VALUE_INTEGER) {
+                        s->depth = max(1, v->integer);
+                } else {
+                        Value *depth = tuple_get(v, "depth");
+                        s->depth = (depth == NULL) ? 1 : max(1, depth->integer);
                 }
                 break;
         }
@@ -6204,12 +6264,13 @@ cexpr(struct value *v)
         e->end = state.mend;
         e->type = -1;
 
-        if (v->type == VALUE_TAG && v->tag == TyNil) {
+        if (v->type == VALUE_TAG) switch (v->tag) {
+        case TyNil:
                 e->type = EXPRESSION_NIL;
                 return e;
-        }
-
-        if (v->type == VALUE_TAG && v->tag == TyNull) {
+        case TyNull:
+        case TyBreak:
+        case TyContinue:
                 goto Statement;
         }
 
@@ -6657,6 +6718,9 @@ cexpr(struct value *v)
         case TyFuncDef:
         case TyClass:
         case TyThrow:
+        case TyBreak:
+        case TyContinue:
+        case TyReturn:
         Statement:
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
