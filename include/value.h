@@ -83,6 +83,7 @@ struct value;
         X(Func) \
         X(FuncDef) \
         X(ImplicitFunc) \
+        X(Generator) \
         X(Param) \
         X(Arg) \
         X(Null) \
@@ -133,6 +134,7 @@ struct value;
         X(Cond) \
         X(UserOp) \
         X(Return) \
+        X(Yield) \
         X(Break) \
         X(Continue) \
         X(Wtf) \

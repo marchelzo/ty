@@ -520,7 +520,7 @@ top(void)
         return &stack.items[stack.count] - 1;
 }
 
-static void
+inline static void
 print_stack(int n)
 {
 #ifndef TY_NO_LOG
@@ -2702,8 +2702,37 @@ Throw:
 
                         switch (container.type) {
                         case VALUE_ARRAY:
-                                if (subscript.type == VALUE_OBJECT) {
-ObjectSubscript:
+                        ObjectSubscript:
+                                if (subscript.type == VALUE_GENERATOR) {
+                                        gc_push(&subscript);
+                                        gc_push(&container);
+                                        struct array *a = value_array_new();
+                                        NOGC(a);
+                                        str = ip;
+                                        for (;;) {
+                                                call_co(&subscript, 0);
+                                                *vec_last(subscript.gen->calls) = &halt;
+                                                vec_push_unchecked(subscript.gen->calls, next_fix);
+                                                vm_exec(ip);
+                                                struct value r = pop();
+                                                if (r.type == VALUE_NONE)
+                                                        break;
+                                                FALSE_OR (r.type != VALUE_INTEGER)
+                                                        vm_panic("iterator yielded non-integer array index in subscript expression");
+                                                if (r.integer < 0)
+                                                        r.integer += container.array->count;
+                                                if (r.integer < 0 || r.integer >= container.array->count)
+                                                        goto OutOfRange;
+                                                value_array_push(a, container.array->items[r.integer]);
+                                        }
+                                        push(ARRAY(a));
+                                        OKGC(a);
+                                        gc_pop();
+                                        gc_pop();
+                                        ip = str;
+                                } else if (subscript.type == VALUE_OBJECT) {
+                                        gc_push(&subscript);
+                                        gc_push(&container);
                                         vp = class_method(subscript.class, "__next__");
                                         if (vp == NULL) {
                                                 vp = class_method(subscript.class, "__iter__");
@@ -2712,6 +2741,8 @@ ObjectSubscript:
                                                 }
                                                 call(vp, &subscript, 0, 0, true);
                                                 subscript = pop();
+                                                gc_pop();
+                                                gc_pop();
                                                 goto ObjectSubscript;
                                         }
                                         struct array *a = value_array_new();
@@ -2732,6 +2763,8 @@ ObjectSubscript:
                                         }
                                         push(ARRAY(a));
                                         OKGC(a);
+                                        gc_pop();
+                                        gc_pop();
                                 } else if (subscript.type == VALUE_INTEGER) {
                                         if (subscript.integer < 0) {
                                                 subscript.integer += container.array->count;

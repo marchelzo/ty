@@ -5469,6 +5469,10 @@ tyexpr(struct expression const *e)
                         NONE
                 );
                 break;
+        case EXPRESSION_GENERATOR:
+                v = tystmt(e->body);
+                v.tags = tags_push(v.tags, TyGenerator);
+                break;
         case EXPRESSION_FUNCTION:
                 v = value_named_tuple(
                         "name", e->name != NULL ? STRING_CLONE(e->name, strlen(e->name)) : NIL,
@@ -5506,13 +5510,16 @@ tyexpr(struct expression const *e)
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
                 for (int i = 0; i < e->es.count; ++i) {
+                        Value name = (e->names.items[i] == NULL)
+                                   ? NIL
+                                   : STRING_CLONE(e->names.items[i], strlen(e->names.items[i]));
                         value_array_push(
                                 v.array,
                                 tagged(
                                         TyRecordEntry,
                                         value_named_tuple(
                                                 "item", tyexpr(e->es.items[i]),
-                                                "name", (e->names.items[i] == NULL) ? NIL : STRING_CLONE(e->names.items[i], strlen(e->names.items[i])),
+                                                "name", name,
                                                 "cond", (e->tconds.items[i] == NULL) ? NIL : tyexpr(e->tconds.items[i]),
                                                 "optional", BOOLEAN(!e->required.items[i]),
                                                 NULL
@@ -5547,6 +5554,14 @@ tyexpr(struct expression const *e)
                 OKGC(v.array);
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyRecord);
+                break;
+        case EXPRESSION_YIELD:
+                v = ARRAY(value_array_new());
+                for (int i = 0; i < e->es.count; ++i) {
+                        value_array_push(v.array, tyexpr(e->es.items[i]));
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyYield);
                 break;
         case EXPRESSION_DICT:
                 v = tagged(
@@ -5901,17 +5916,27 @@ tystmt(struct statement *s)
                 v.tags = tags_push(0, TyMatch);
                 break;
         case STATEMENT_EACH_LOOP:
+        {
+                Array *ps = value_array_new();
+
                 v = value_named_tuple(
-                        "pattern", tyexpr(s->each.target),
+                        "pattern", ARRAY(ps),
                         "iter", tyexpr(s->each.array),
                         "expr", tystmt(s->each.body),
                         "cond", s->each.cond != NULL ? tyexpr(s->each.cond) : NIL,
                         "stop", s->each.stop != NULL ? tyexpr(s->each.stop) : NIL,
                         NULL
                 );
+
+                for (int i = 0; i < s->each.target->es.count; ++i) {
+                       value_array_push(ps, tyexpr(s->each.target->es.items[i]));
+                }
+
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyEach);
+
                 break;
+        }
         case STATEMENT_BLOCK:
                 v = ARRAY(value_array_new());
                 for (int i = 0; i < s->statements.count; ++i) {
@@ -6167,7 +6192,19 @@ cstmt(struct value *v)
         case TyEach:
         {
                 s->type = STATEMENT_EACH_LOOP;
-                s->each.target = cexpr(tuple_get(v, "pattern"));
+                s->each.target = Allocate(sizeof (struct expression));
+                s->each.target->type = EXPRESSION_LIST;
+                vec_init(s->each.target->es);
+
+                Value *ps = tuple_get(v, "pattern");
+                if (ps->type == VALUE_ARRAY) {
+                        for (int i = 0; i < ps->array->count; ++i) {
+                                VPush(s->each.target->es, cexpr(&ps->array->items[i]));
+                        }
+                } else {
+                        VPush(s->each.target->es, cexpr(ps));
+                }
+
                 s->each.array = cexpr(tuple_get(v, "iter"));
                 s->each.body = cstmt(tuple_get(v, "expr"));
                 struct value *cond = tuple_get(v, "cond");
@@ -6475,6 +6512,25 @@ cexpr(struct value *v)
                 }
                 break;
         }
+        case TyGenerator:
+        {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_GENERATOR;
+                e->ikwargs = -1;
+                e->rest = -1;
+                e->ftype = FT_GEN;
+                e->name = NULL;
+                e->doc = NULL;
+                e->proto = NULL;
+                e->return_type = NULL;
+                vec_init(e->params);
+                vec_init(e->constraints);
+                vec_init(e->dflts);
+                vec_init(e->decorators);
+                e->body = cstmt(&v_);
+                break;
+        }
         case TyFunc:
         case TyImplicitFunc:
         {
@@ -6570,6 +6626,19 @@ cexpr(struct value *v)
                 e->operand = cexpr(&v_);
                 break;
         }
+        case TyYield:
+                e->type = EXPRESSION_YIELD;
+                vec_init(e->es);
+                if ((v->type & ~VALUE_TAGGED) == VALUE_ARRAY) {
+                        for (int i = 0; i < v->array->count; ++i) {
+                                VPush(e->es, cexpr(&v->array->items[i]));
+                        }
+                } else {
+                        struct value v_ = *v;
+                        v_.tags = tags_pop(v_.tags);
+                        VPush(e->es, cexpr(&v_));
+                }
+                break;
         case TyWith:
         {
                 struct value *lets = &v->items[0];

@@ -86,6 +86,8 @@
 { .module = "os",     .name = "symlink",           .value = BUILTIN(builtin_os_symlink)                    },
 { .module = "os",     .name = "link",              .value = BUILTIN(builtin_os_link)                       },
 { .module = "os",     .name = "getcwd",            .value = BUILTIN(builtin_os_getcwd)                     },
+{ .module = "os",     .name = "chmod",             .value = BUILTIN(builtin_os_chmod)                      },
+{ .module = "os",     .name = "chown",             .value = BUILTIN(builtin_os_chown)                      },
 { .module = "os",     .name = "mkdir",             .value = BUILTIN(builtin_os_mkdir)                      },
 { .module = "os",     .name = "rmdir",             .value = BUILTIN(builtin_os_rmdir)                      },
 { .module = "os",     .name = "chdir",             .value = BUILTIN(builtin_os_chdir)                      },
