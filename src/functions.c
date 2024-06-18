@@ -2018,6 +2018,90 @@ builtin_os_rmdir(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_os_chown(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.chown()", 3);
+
+        size_t n;
+        char const *path;
+
+        switch (ARG(0).type) {
+        case VALUE_STRING:
+                n = ARG(0).bytes;
+                path = ARG(0).string;
+                break;
+        case VALUE_BLOB:
+                n = ARG(0).blob->count;
+                path = (char const *)ARG(0).blob->items;
+                break;
+        case VALUE_PTR:
+                n = strlen(ARG(0).ptr);
+                path = ARG(0).ptr;
+                break;
+        default:
+                vm_panic("os.chown(): expected path but got: %s", value_show_color(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("os.chown(): expected integer but got: %s", value_show_color(&ARG(1)));
+        }
+
+        if (ARG(2).type != VALUE_INTEGER) {
+                vm_panic("os.chown(): expected integer but got: %s", value_show_color(&ARG(2)));
+        }
+
+        if (n >= sizeof buffer) {
+                errno = ENOENT;
+                return INTEGER(-1);
+        }
+
+        memcpy(buffer, path, n);
+        buffer[n] = '\0';
+
+        return INTEGER(chown(buffer, ARG(1).integer, ARG(2).integer));
+}
+
+struct value
+builtin_os_chmod(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.chown()", 2);
+
+        size_t n;
+        char const *path;
+
+        switch (ARG(0).type) {
+        case VALUE_STRING:
+                n = ARG(0).bytes;
+                path = ARG(0).string;
+                break;
+        case VALUE_BLOB:
+                n = ARG(0).blob->count;
+                path = (char const *)ARG(0).blob->items;
+                break;
+        case VALUE_PTR:
+                n = strlen(ARG(0).ptr);
+                path = ARG(0).ptr;
+                break;
+        default:
+                vm_panic("os.chmod(): expected path but got: %s", value_show_color(&ARG(0)));
+        }
+
+        if (ARG(1).type != VALUE_INTEGER) {
+                vm_panic("os.chmod(): expected integer but got: %s", value_show_color(&ARG(1)));
+        }
+
+        if (n >= sizeof buffer) {
+                errno = ENOENT;
+                return INTEGER(-1);
+        }
+
+        memcpy(buffer, path, n);
+        buffer[n] = '\0';
+
+        return INTEGER(chmod(buffer, ARG(1).integer));
+}
+
+struct value
 builtin_os_chdir(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.chdir()", 1);
