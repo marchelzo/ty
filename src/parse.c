@@ -4174,8 +4174,6 @@ parse_import(void)
                 s->import.as = s->import.module;
         }
 
-        s->start = tok()->start;
-
         vec_init(s->import.identifiers);
 
         if (tok()->type == '(') {

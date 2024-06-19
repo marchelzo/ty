@@ -4934,6 +4934,9 @@ import_module(struct statement const *s)
         char const *as = s->import.as;
         bool pub = s->import.pub;
 
+        state.start = s->start;
+        state.end = s->end;
+
         struct scope *module_scope = get_module_scope(name);
 
         /* First make sure we haven't already imported this module, or imported another module
