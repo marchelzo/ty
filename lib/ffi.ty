@@ -25,14 +25,33 @@ function wrap(lib, name, rType, *aTypes) {
         throw Err("Failed to load symbol '{name}'")
     }
 
-    let interface = getCif(rType, *aTypes)
-    let argStorage = [c.new(t) for t in aTypes]
+    aTypes.map!(t -> type(t) == ptr.null ? t : t.ctype())
 
-    return function (*args) {
-        for arg, i in args {
-            c.store(aTypes[i], argStorage[i], arg)
+    if type(rType) != ptr.null {
+        let interface = getCif(rType.ctype(), *aTypes)
+        let argStorage = [c.new(t) for t in aTypes]
+
+        print("Using out param for {name}")
+
+        return function (*args, out = rType()) {
+            for arg, i in args {
+                c.store(aTypes[i], argStorage[i], arg)
+            }
+
+            c.call(interface, fp, *argStorage, out: out.get())
+
+            return out
         }
-        c.call(interface, fp, *argStorage)
+    } else {
+        let interface = getCif(rType, *aTypes)
+        let argStorage = [c.new(t) for t in aTypes]
+
+        return function (*args) {
+            for arg, i in args {
+                c.store(aTypes[i], argStorage[i], arg)
+            }
+            c.call(interface, fp, *argStorage)
+        }
     }
 }
 
@@ -102,7 +121,7 @@ function fun() {
 
     // function
     next()
-    
+
     let name = next().id
 
     // (
@@ -111,8 +130,8 @@ function fun() {
     let ps = []
     while peek().type != ')' {
         ps.push(expr(0))
-        if peek().type == ',' {
-            next()
+        while peek().type == ',' || peek().type == 'comment' || peek().type == 'id' {
+            break if next().type == ','
         }
     }
 
@@ -138,6 +157,23 @@ function fun() {
  * }
  */
 function strct() {
+    let peek_ = peek
+    let next_ = next
+
+    let next = function () {
+        while peek_().type == 'comment' {
+            next_()
+        }
+        next_()
+    }
+
+    let peek = function() {
+        while peek_().type == 'comment' {
+            next_()
+        }
+        peek_()
+    }
+
     // struct
     next()
 
@@ -150,32 +186,54 @@ function strct() {
 
     while peek().type != '}' {
         let t = expr(0)
-        let name = next().id
-        let count = if peek().type == '[' {
-            next() // [
-            let n = expr(0)
-            next() // ]
-            n
+        let names = []
+        let getName = -> do {
+            let name = next().id
+            let count = if peek().type == '[' {
+                next() // [
+                let n = expr(0)
+                next() // ]
+                n
+            }
+            members.push({t, name, count})
         }
-        members.push({t, name, count})
+        getName()
+        while peek().type == ',' {
+            next()
+            getName()
+        }
         next() // ;
     }
 
     next() // }
 
+    let ctype = ty.Id(name: "{structName}_C")
+
     let init = ty.Func(
         name: 'init',
-        params: [ty.Param(name: '<p>')],
-        body: ty.Assign(
-            ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
-            ty.Wtf(
-                ty.Id(name: '<p>'),
-                ty.Call(
-                    func: ty.Value(c.new),
-                    args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))]
+        params: [ty.Param(name: '<p>'), ty.Kwargs('kws')],
+        body: ty.Multi([
+            ty.Assign(
+                ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
+                ty.Wtf(
+                    ty.Id(name: '<p>'),
+                    ty.Call(
+                        func: ty.Value(c.new),
+                        args: [ty.Arg(arg: ctype)]
+                    )
                 )
-            )
-        )
+            ),
+            *[
+                ty.If(
+                    [ty.In(ty.String(name), $$[ kws $$])],
+                    ty.Assign(
+                        ty.MemberAccess(ty.Id(name: 'self'), name),
+                        $$[kws[$$(ty.String(name))]$$]
+                    ),
+                    nil
+                ) for {t, name, count} in members
+            ]
+        ])
     )
 
     let get = ty.Func(
@@ -185,13 +243,27 @@ function strct() {
             func: ty.Value(typed),
             args: [
                 ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
-                ty.Arg(arg: ty.Id(name: "{structName}_C"))
+                ty.Arg(arg: ctype)
+            ]
+        )
+    )
+
+    let __ptr__ = ty.Func(
+        name: '__ptr__',
+        params: [],
+        body: ty.Call(
+            func: ty.Value(typed),
+            args: [
+                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
+                ty.Arg(arg: ctype)
             ]
         )
     )
 
     let structArgs = []
     let methods = []
+    let getters = []
+    let setters = []
 
     for {name, t, count}, i in members {
         if count != nil {
@@ -220,7 +292,7 @@ function strct() {
                                         arg: ty.Call(
                                             func: ty.Value(c.pmember),
                                             args: [
-                                                ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                                ty.Arg(arg: ctype),
                                                 ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
                                                 ty.Arg(arg: ty.Int(i)),
                                             ]
@@ -237,7 +309,7 @@ function strct() {
                                 ty.Arg(arg: ty.Call(
                                     func: ty.Value(c.pmember),
                                     args: [
-                                        ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                                        ty.Arg(arg: ctype),
                                         ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
                                         ty.Arg(arg: ty.Int(i)),
                                     ]
@@ -257,12 +329,31 @@ function strct() {
                     body: ty.Call(
                         func: ty.Value(c.member),
                         args: [
-                            ty.Arg(arg: ty.Id(name: "{structName}_C")),
+                            ty.Arg(arg: ctype),
                             ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
                             ty.Arg(arg: ty.Int(i)),
                             ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
                         ]
                     )
+                )
+            )
+            methods.pop()
+            getters.push(
+                ty.Func(
+                    name: name,
+                    params: [],
+                    body: $$[
+                        c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i)))
+                    $$]
+                )
+            )
+            setters.push(
+                ty.Func(
+                    name: name,
+                    params: [ty.Param(name: 'x')],
+                    body: $$[
+                        c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i)), x)
+                    $$]
                 )
             )
         }
@@ -278,10 +369,9 @@ function strct() {
                     arg: ty.Record([
                         ty.RecordEntry(
                             name: e.name,
-                            item: ty.MethodCall(
-                                object: ty.Id(name: 'self'),
-                                method: e.name,
-                                args: []
+                            item: ty.MemberAccess(
+                                ty.Id(name: 'self'),
+                                e.name
                             )
                         )
                         for e in members
@@ -294,12 +384,18 @@ function strct() {
     let size = ty.Func(
         name: '__len__',
         params: [],
-        body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ty.Id(name: "{structName}_C"))])
+        body: ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: ctype)])
+    )
+
+    let ctypeFunction = ty.Func(
+        name: 'ctype',
+        params: [],
+        body: ctype
     )
 
     ty.Multi([
         ty.Let(
-            ty.Id(name: "{structName}_C"),
+            ctype,
             ty.Call(
                 func: ty.Value(c.struct),
                 args: structArgs
@@ -307,7 +403,10 @@ function strct() {
         ),
         ty.Class(
             name: structName,
-            methods: [get, init, size, show, *methods]
+            methods: [get, __ptr__, init, size, show, *methods],
+            getters: getters,
+            setters: setters,
+            statics: [ctypeFunction]
         )
     ])
 }
