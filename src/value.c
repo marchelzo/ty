@@ -678,9 +678,11 @@ value_show_color(struct value const *v)
 #endif
                 if (fp != NULL && fp != class_method(CLASS_OBJECT, "__str__")) {
                         struct value str = vm_eval_function(fp, v, NULL);
+                        gc_push(&str);
                         if (str.type != VALUE_STRING)
                                 vm_panic("%s.__str__() returned non-string", class_name(v->class));
                         s = gc_alloc(str.bytes + 1);
+                        gc_pop();
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';
                 } else {

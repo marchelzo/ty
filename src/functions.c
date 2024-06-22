@@ -5327,7 +5327,9 @@ builtin_type(int argc, struct value *kwargs)
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
         case VALUE_BUILTIN_FUNCTION:
-        case VALUE_FUNCTION: return (struct value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION };
+        case VALUE_FUNCTION:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION  };
+        case VALUE_GENERATOR: return (struct value) { .type = VALUE_CLASS, .class = CLASS_GENERATOR };
+        case VALUE_PTR:       return PTR(NULL);
         default:
         case VALUE_NIL:      return NIL;
         }

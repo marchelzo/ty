@@ -4307,6 +4307,10 @@ parse(char const *source, char const *file)
         TokenIndex = 0;
         vec_init(tokens);
 
+        NoEquals = false;
+        NoIn = false;
+        NoPipe = false;
+
         lex_init(file, source);
         lex_keep_comments(true);
 
