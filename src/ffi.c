@@ -7,45 +7,59 @@
 #include "util.h"
 #include "vm.h"
 #include "cffi.h"
+#include "class.h"
+
+inline static double
+float_from(Value *v)
+{
+        return (v->type == VALUE_INTEGER) ? v->integer : v->real;
+}
+
+inline static intmax_t
+int_from(Value *v)
+{
+        return (v->type == VALUE_INTEGER) ? v->integer : v->real;
+}
 
 static void
 store(ffi_type *t, void *p, struct value const *v)
 {
         size_t offsets[64];
+        Value *f, ptr;
 
         switch (t->type) {
         case FFI_TYPE_INT:
-                *(int *)p = v->integer;
+                *(int *)p = int_from(v);
                 break;
         case FFI_TYPE_UINT32:
-                *(uint32_t *)p = v->integer;
+                *(uint32_t *)p = int_from(v);
                 break;
         case FFI_TYPE_UINT16:
-                *(uint16_t *)p = v->integer;
+                *(uint16_t *)p = int_from(v);
                 break;
         case FFI_TYPE_UINT64:
-                *(uint64_t *)p = v->integer;
+                *(uint64_t *)p = int_from(v);
                 break;
         case FFI_TYPE_UINT8:
-                *(uint8_t *)p = v->integer;
+                *(uint8_t *)p = int_from(v);
                 break;
         case FFI_TYPE_SINT32:
-                *(int32_t *)p = v->integer;
+                *(int32_t *)p = int_from(v);
                 break;
         case FFI_TYPE_SINT16:
-                *(int16_t *)p = v->integer;
+                *(int16_t *)p = int_from(v);
                 break;
         case FFI_TYPE_SINT64:
-                *(int64_t *)p = v->integer;
+                *(int64_t *)p = int_from(v);
                 break;
         case FFI_TYPE_SINT8:
-                *(int8_t *)p = v->integer;
+                *(int8_t *)p = int_from(v);
                 break;
         case FFI_TYPE_FLOAT:
-                *(float *)p = v->real;
+                *(float *)p = float_from(v);
                 break;
         case FFI_TYPE_DOUBLE:
-                *(double *)p = v->real;
+                *(double *)p = float_from(v);
                 break;
         case FFI_TYPE_POINTER:
                 switch (v->type) {
@@ -61,18 +75,39 @@ store(ffi_type *t, void *p, struct value const *v)
                 case VALUE_BLOB:
                         *(void **)p = (void *)v->blob->items;
                         break;
+                case VALUE_OBJECT:
+                        f = class_method(v->class, "__ptr__");
+                        if (f != NULL)
+                                *(void **)p = vm_call_method(v, f, 0).ptr;
+                        else
+                                *(void **)p = NULL;
+                        break;
                 }
                 break;
         case FFI_TYPE_STRUCT:
-                if (v->type == VALUE_TUPLE) {
+                switch (v->type) {
+                case VALUE_TUPLE:
                         ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
 
                         for (int i = 0; i < v->count; ++i) {
                                 store(t->elements[i], (char *)p + offsets[i], &v->items[i]);
                         }
-                } else if (v->type == VALUE_PTR) {
+
+                        break;
+
+                case VALUE_PTR:
                         memcpy(p, v->ptr, t->size);
+                        break;
+
+                case VALUE_OBJECT:
+                        f = class_method(v->class, "__ptr__");
+                        if (f != NULL)
+                                memcpy(p, vm_call_method(v, f, 0).ptr, t->size);
+                        else
+                                vm_panic("attempt to dereference null-pointer: %s.__ptr__()", value_show_color(v));
+                        break;
                 }
+                break;
         }
 }
 
@@ -513,13 +548,28 @@ cffi_call(int argc, struct value *kwargs)
                 }
         }
 
-        char ret[sizeof (ffi_arg)] __attribute__((aligned (_Alignof (max_align_t))));
+        char buf[4096] __attribute__((aligned (_Alignof (max_align_t))));
+        Value *out = NAMED("out");
+        void *ret;
+
+        if (out == NULL) {
+                ret = buf;
+        } else switch (out->type) {
+        case VALUE_PTR:
+                ret = out->ptr;
+                break;
+        case VALUE_BLOB:
+                ret = out->blob->items;
+                break;
+        default:
+                vm_panic("invalid `out` argument to ffi.call(): %s", value_show_color(out));
+        }
 
         ffi_call(cif, func, ret, args.items);
 
         vec_empty(args);
 
-        return load(cif->rtype, ret);
+        return (out == NULL) ? load(cif->rtype, ret) : PTR(ret);
 }
 
 struct value

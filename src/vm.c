@@ -2397,6 +2397,13 @@ Throw:
                                         push(NONE);
                                 }
                                 break;
+                        case VALUE_TUPLE:
+                                if (i < v.count) {
+                                        push(v.items[i]);
+                                } else {
+                                        push(NONE);
+                                }
+                                break;
                         case VALUE_STRING:
                                 vp = top() - 2;
                                 if ((off = vp->off) < v.bytes) {
@@ -2702,7 +2709,7 @@ Throw:
 
                         switch (container.type) {
                         case VALUE_ARRAY:
-                        ObjectSubscript:
+                        ArraySubscript:
                                 if (subscript.type == VALUE_GENERATOR) {
                                         gc_push(&subscript);
                                         gc_push(&container);
@@ -2743,7 +2750,7 @@ Throw:
                                                 subscript = pop();
                                                 gc_pop();
                                                 gc_pop();
-                                                goto ObjectSubscript;
+                                                goto ArraySubscript;
                                         }
                                         struct array *a = value_array_new();
                                         NOGC(a);
