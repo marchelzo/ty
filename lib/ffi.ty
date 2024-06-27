@@ -31,8 +31,6 @@ function wrap(lib, name, rType, *aTypes) {
         let interface = getCif(rType.ctype(), *aTypes)
         let argStorage = [c.new(t) for t in aTypes]
 
-        print("Using out param for {name}")
-
         return function (*args, out = rType()) {
             for arg, i in args {
                 c.store(aTypes[i], argStorage[i], arg)
@@ -53,6 +51,16 @@ function wrap(lib, name, rType, *aTypes) {
             c.call(interface, fp, *argStorage)
         }
     }
+}
+
+pub function array(type, xs) {
+    let buffer = typed(c.alloc(c.size(type) * #xs), type)
+
+    for x, i in xs {
+        buffer[i] = x
+    }
+
+    return buffer
 }
 
 pub function wrapVar(lib, name, nFixed, rType, *aTypes) {
@@ -322,22 +330,6 @@ function strct() {
             )
         } else {
             structArgs.push(ty.Arg(arg: t))
-            methods.push(
-                ty.Func(
-                    name: name,
-                    params: [ty.Gather('args')],
-                    body: ty.Call(
-                        func: ty.Value(c.member),
-                        args: [
-                            ty.Arg(arg: ctype),
-                            ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
-                            ty.Arg(arg: ty.Int(i)),
-                            ty.Arg(arg: ty.Spread(ty.Id(name: 'args')))
-                        ]
-                    )
-                )
-            )
-            methods.pop()
             getters.push(
                 ty.Func(
                     name: name,
@@ -374,7 +366,7 @@ function strct() {
                                 e.name
                             )
                         )
-                        for e in members
+                        for e in getters
                     ])
                 )
             ]
@@ -594,7 +586,7 @@ pub macro struct! {
                 )
             },
             _ => {
-                structArgs.push(ty.Arg(arg: item))
+                structArgs.push(ty.Arg(arg: $$[ do { let t = $$item; (type(t) == ptr.null) ? t : t.ctype() } $$]))
                 methods.push(
                     ty.Func(
                         name: name,

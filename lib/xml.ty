@@ -1,5 +1,6 @@
 import ffi as c (wrap, cfun!, struct!, C!)
 import os (args)
+import ptr
 
 if not let $lib = c.dlopen('libxml2.so') ?? c.dlopen('libxml2.dylib') {
     throw "Failed to load libxml2"
@@ -1395,11 +1396,27 @@ struct! CXMLNode {
     extra: c.ushort    /* extra data for XPath/XSLT */
 }
 
-class XMLNode : CXMLNode {
-    children() {
-        if let $p = CXMLNode.children.apply(self) {
-            XMLNode(p)
+class XMLNode {
+    init(p) {
+        @node = CXMLNode(p)
+    }
+
+    children {
+        let children = []
+
+        for let child = @node.children(); child != nil; child = CXMLNode(child).next() {
+            children.push(XMLNode(child))
         }
+
+        return children
+    }
+
+    content {
+        c.str(CXMLNode(@node.children()).content())
+    }
+
+    name {
+        c.str(@node.name())
     }
 
     parent() {
@@ -1409,7 +1426,7 @@ class XMLNode : CXMLNode {
     }
 
     next() {
-        if let $p = CXMLNode.next.apply(self) {
+        if let $p = @node.next() {
             XMLNode(p)
         }
     }
@@ -1426,9 +1443,17 @@ class XMLNode : CXMLNode {
         }
     }
 
-    properties() {
-        if let $p = CXMLNode.properties.apply(self) {
-            XMLNode(p)
+    properties {
+        if let $props = @node.properties() {
+            let propMap = %{}
+
+            for let child = XMLNode(props); child != nil; child = child.next() {
+                propMap[c.str(child.node.name())] = c.str(CXMLNode(child.node.children()).content())
+            }
+
+            return propMap
+        } else {
+            return %{}
         }
     }
 }
