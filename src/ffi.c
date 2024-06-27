@@ -142,7 +142,7 @@ load(ffi_type *t, void const *p)
                 }
 
                 v = value_tuple(n);
-                NOGC(v.items);
+                gc_push(&v);
 
                 size_t offsets[64];
                 ffi_get_struct_offsets(FFI_DEFAULT_ABI, t, offsets);
@@ -151,7 +151,7 @@ load(ffi_type *t, void const *p)
                         v.items[i] = load(t->elements[i], (char *)p + offsets[i]);
                 }
 
-                OKGC(v.items);
+                gc_pop();
 
                 return v;
         }
