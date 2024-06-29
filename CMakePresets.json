@@ -1,0 +1,99 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 25,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/_build/${presetName}",
+            "installDir": "${sourceDir}/_install/${presetName}",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "VCPKG_MANIFEST_MODE": true,
+                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "base-windows",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-windows"
+            }
+        },
+        {
+            "name": "msvc2022",
+            "inherits": "base-windows",
+            "displayName": "Visual Studio Community 2022 - amd64 - Release",
+            "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
+            "generator": "Visual Studio 17 2022",
+            "toolset": "host=x64",
+            "architecture": "x64",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "cl.exe",
+                "CMAKE_CXX_COMPILER": "cl.exe"
+            }
+        },
+        {
+            "name": "msvc2022-debug",
+            "inherits": "msvc2022",
+            "displayName": "Visual Studio Community 2022 - amd64 - Debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "base-build",
+            "hidden": true,
+            "targets": "install",
+            "jobs": 4
+        },
+        {
+            "name": "msvc2022",
+            "displayName": "Visual Studio Community 2022 - amd64 - Release",
+            "configurePreset": "msvc2022",
+            "configuration": "Release"
+        },
+        {
+            "name": "msvc2022-debug",
+            "displayName": "Visual Studio Community 2022 - amd64 - Debug",
+            "configurePreset": "msvc2022-debug",
+            "configuration": "Debug"
+        }
+    ],
+    "workflowPresets": [
+        {
+            "name": "msvc2022",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "msvc2022"
+                },
+                {
+                    "type": "build",
+                    "name": "msvc2022"
+                }
+            ]
+        },
+        {
+            "name": "msvc2022-debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "msvc2022-debug"
+                },
+                {
+                    "type": "build",
+                    "name": "msvc2022-debug"
+                }
+            ]
+        }
+    ]
+}
