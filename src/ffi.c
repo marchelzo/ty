@@ -733,14 +733,16 @@ cffi_dlsym(int argc, struct value *kwargs)
         memcpy(b, ARG(0).string, n);
         b[n] = '\0';
 
-        void *handle = GetModuleHandle(NULL);
+        void *handle;
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 if (ARG(1).type != VALUE_PTR) {
                         vm_panic("the second argument to ffi.dlsym() must be a pointer, instead got: %s", value_show(&ARG(1)));
                 }
                 handle = ARG(1).ptr;
-#ifndef _WIN32
         } else {
+#ifdef _WIN32
+                handle = GetModuleHandleA("ucrtbase.dll");
+#else
                 handle = RTLD_DEFAULT;
 #endif
         }

@@ -220,7 +220,10 @@ complete(char const *s, int start, int end)
 int
 main(int argc, char **argv)
 {
-        vm_init(argc, argv);
+        if (!vm_init(argc, argv)) {
+                fprintf(stderr, "%s\n", vm_error());
+                return -1;
+        }
 
         if (argc <= 1)
                 repl();

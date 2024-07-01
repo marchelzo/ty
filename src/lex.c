@@ -493,7 +493,7 @@ lexrawstr(void)
                 }
         }
 
-        assert(nextchar() == '\'');
+        nextchar();
 
         VPush(str, '\0');
 
@@ -796,7 +796,7 @@ Start:
                 }
         }
 
-        assert(nextchar() == '"');
+        nextchar() == '"';
 
         VPush(str, '\0');
         VPush(special.strings, str.items);
@@ -855,7 +855,7 @@ lexregex(void)
                 }
         }
 
-        assert(nextchar() == '/');
+        nextchar() == '/';
 
         int flags = 0;
         bool detailed = false;
