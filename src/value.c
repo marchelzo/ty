@@ -643,10 +643,20 @@ value_show_color(struct value const *v)
                         );
                 break;
         case VALUE_CLASS:
-                snprintf(buffer, sizeof buffer, "<class %s>", class_name(v->class));
+                snprintf(
+                        buffer,
+                        sizeof buffer,
+                        "%s<%sclass %s%s%s>%s",
+                        TERM(96),
+                        TERM(92),
+                        TERM(94),
+                        class_name(v->class),
+                        TERM(96),
+                        TERM(0)
+                );
                 break;
         case VALUE_TAG:
-                snprintf(buffer, sizeof buffer, "%s", tags_name(v->tag));
+                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(97), tags_name(v->tag), TERM(0));
                 break;
         case VALUE_BLOB:
                 snprintf(buffer, sizeof buffer, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
