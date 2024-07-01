@@ -1794,7 +1794,7 @@ vm_exec(char *code)
                                 ip += 1;
                                 break;
                         } else {
-                                vm_panic("attempt to perform subscript assignment on something other than an object or array");
+                                vm_panic("attempt to perform subscript assignment on something other than an object or array: %s", value_show_color(&container));
                         }
 
                         pop();
@@ -2998,7 +2998,7 @@ BadContainer:
                         pop();
                         pop();
                         push(v);
-                        --top()->boolean;
+                        top()->boolean = !top()->boolean;
                         break;
                 CASE(CHECK_MATCH)
                         if (top()->type == VALUE_CLASS) {

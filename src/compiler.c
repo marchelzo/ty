@@ -4932,7 +4932,23 @@ load_module(char const *name, struct scope *scope)
         return module_scope;
 }
 
-void
+bool
+compiler_import_module(struct statement const *s)
+{
+        SAVE_JB;
+
+        if (setjmp(jb) != 0) {
+                return false;
+        }
+
+        import_module(s);
+
+        RESTORE_JB;
+
+        return true;
+}
+
+static void
 import_module(struct statement const *s)
 {
         char const *name = s->import.module;
