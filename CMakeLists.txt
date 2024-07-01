@@ -38,13 +38,9 @@ endif()
 if (WIN32)
   # the shitty cmake file for the PThreads4W pkg sets NO_DEFAULT_PATH so it
   # doesn't read the CMAKE_PREFIX_PATH value when trying to locate the libs
-  # instead it searches using these vcpkg cache vars that aren't set by default
-  set(_VCPKG_INSTALLED_DIR ${CMAKE_SOURCE_DIR}/vcpkg_installed)
-  set(VCPKG_TARGET_TRIPLET "x64-windows")
+  # instead it searches using "VCPKG_INSTALLED_DIR" and "VCPKG_TARGET_TRIPLET"
   # defines target(s): PThreads4W::PThreads4W
   find_package(PThreads4W CONFIG REQUIRED)
-  unset(_VCPKG_INSTALLED_DIR)
-  unset(VCPKG_TARGET_TRIPLET)
 endif()
 
 # ---
