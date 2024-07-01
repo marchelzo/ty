@@ -11,10 +11,15 @@
             "hidden": true,
             "binaryDir": "${sourceDir}/_build/${presetName}",
             "installDir": "${sourceDir}/_install/${presetName}",
+            "environment": {
+                "VCPKG_ROOT": "${sourceDir}/_vcpkg"
+            },
+            "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
             "generator": "Ninja",
             "cacheVariables": {
                 "VCPKG_MANIFEST_MODE": true,
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+                "VCPKG_VERBOSE": false,
+                "VCPKG_INSTALLED_DIR": "${sourceDir}/_vcpkg_installed",
                 "CMAKE_BUILD_TYPE": "Release"
             }
         },
