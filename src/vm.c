@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <time.h>
 #include <string.h>
 #include <ctype.h>
@@ -5,7 +10,6 @@
 #include <stdbool.h>
 #include <setjmp.h>
 #include <stdarg.h>
-#include <stdatomic.h>
 #include <errno.h>
 #include <stdnoreturn.h>
 #include <locale.h>
@@ -13,20 +17,31 @@
 #include <pcre.h>
 #include <curl/curl.h>
 
-#include <poll.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <signal.h>
-#include <dirent.h>
 #include <pthread.h>
-#include <termios.h>
 
+#include "polyfill_unistd.h"
+#include "polyfill_stdatomic.h"
 #include "barrier.h"
 
 #ifdef __linux__
 #include <sys/epoll.h>
 #endif
 
+#ifdef _WIN32
+#include <windows.h>
+#define PATH_MAX MAX_PATH
+#define NAME_MAX MAX_PATH
+#define O_DIRECTORY 0
+#define O_ASYNC 0
+#define O_NONBLOCK 0
+#define SHUT_RD SD_RECEIVE
+#define SHUT_WR SD_SEND
+#define SHUT_RDWR SD_BOTH
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 0
+#else
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -37,6 +52,7 @@
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <net/if.h>
+#endif
 
 #include "value.h"
 #include "cffi.h"
@@ -187,7 +203,7 @@ typedef struct thread_group {
         vec(pthread_t) ThreadList;
         vec(pthread_mutex_t *) ThreadLocks;
         vec(ThreadStorage) ThreadStorages;
-        vec(_Atomic bool *) ThreadStates;
+        vec(atomic_bool *) ThreadStates;
         atomic_bool WantGC;
         pthread_barrier_t GCBarrierStart;
         pthread_barrier_t GCBarrierMark;
@@ -212,7 +228,7 @@ static ThreadGroup MainGroup;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 
 _Thread_local pthread_mutex_t *MyLock;
-static _Thread_local _Atomic bool *MyState;
+static _Thread_local atomic_bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
 static _Thread_local ThreadGroup *MyGroup;
 static _Thread_local bool GCInProgress;
@@ -239,7 +255,7 @@ UnlockThreads(int *threads, int n)
 inline static void
 SetState(bool blocking)
 {
-        atomic_store(MyState, blocking);
+        *MyState = blocking;
 }
 
 void
@@ -266,7 +282,7 @@ InitThreadGroup(ThreadGroup *g)
         pthread_mutex_init(&g->Lock, NULL);
         pthread_mutex_init(&g->GCLock, NULL);
         pthread_mutex_init(&g->DLock, NULL);
-        atomic_store(&g->WantGC, false);
+        g->WantGC = false;
         g->DeadUsed = 0;
 
 }
@@ -289,8 +305,8 @@ WaitGC()
 
         ReleaseLock(false);
 
-        while (!atomic_load(MyState)) {
-                if (!atomic_load(&MyGroup->WantGC)) {
+        while (!*MyState) {
+                if (!MyGroup->WantGC) {
                         SetState(true);
                         TakeLock();
                         return;
@@ -335,7 +351,7 @@ DoGC()
         GCLOG("Took threads lock on thread %llu to do GC", TID);
 
         GCLOG("Storing true in WantGC on thread %llu", TID);
-        atomic_store(&MyGroup->WantGC, true);
+        MyGroup->WantGC = true;
 
         static int *blockedThreads;
         static int *runningThreads;
@@ -358,15 +374,15 @@ DoGC()
                 if (pthread_equal(me, MyGroup->ThreadList.items[i])) {
                         continue;
                 }
-                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
+                //GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
                 pthread_mutex_lock(MyGroup->ThreadLocks.items[i]);
-                if (atomic_load(MyGroup->ThreadStates.items[i])) {
-                        GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
+                if (*MyGroup->ThreadStates.items[i]) {
+                        //GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
                         blockedThreads[nBlocked++] = i;
                 } else {
-                        GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        //GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
-                        atomic_store(MyGroup->ThreadStates.items[i], true);
+                        *MyGroup->ThreadStates.items[i] = true;
                 }
         }
 
@@ -382,7 +398,7 @@ DoGC()
         pthread_barrier_wait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                //GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 MarkStorage(&MyGroup->ThreadStorages.items[blockedThreads[i]]);
         }
 
@@ -398,10 +414,10 @@ DoGC()
         pthread_barrier_wait(&MyGroup->GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
-        atomic_store(&MyGroup->WantGC, false);
+        MyGroup->WantGC = false;
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                //GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 GCSweep(
                         MyGroup->ThreadStorages.items[blockedThreads[i]].allocs,
                         MyGroup->ThreadStorages.items[blockedThreads[i]].MemoryUsed
@@ -432,13 +448,13 @@ DoGC()
         GCInProgress = false;
 }
 
-static struct {
-        char const *module;
-        char const *name;
-        struct value value;
-} builtins[] = {
+#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
+#define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
+#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
 #include "builtins.h"
-};
+#undef INT
+#undef FLOAT
+#undef BUILTIN
 
 static int builtin_count = sizeof builtins / sizeof builtins[0];
 
@@ -484,6 +500,48 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
 #endif
+
+        // Add FFI types here because they aren't constant expressions on Windows.
+        compiler_introduce_symbol("ffi", "char");
+        vec_push(Globals, PTR(&ffi_type_schar));
+        compiler_introduce_symbol("ffi", "short");
+        vec_push(Globals, PTR(&ffi_type_sshort));
+        compiler_introduce_symbol("ffi", "int");
+        vec_push(Globals, PTR(&ffi_type_sint));
+        compiler_introduce_symbol("ffi", "long");
+        vec_push(Globals, PTR(&ffi_type_slong));
+        compiler_introduce_symbol("ffi", "uchar");
+        vec_push(Globals, PTR(&ffi_type_uchar));
+        compiler_introduce_symbol("ffi", "ushort");
+        vec_push(Globals, PTR(&ffi_type_ushort));
+        compiler_introduce_symbol("ffi", "uint");
+        vec_push(Globals, PTR(&ffi_type_uint));
+        compiler_introduce_symbol("ffi", "ulong");
+        vec_push(Globals, PTR(&ffi_type_ulong));
+        compiler_introduce_symbol("ffi", "u8");
+        vec_push(Globals, PTR(&ffi_type_uint8));
+        compiler_introduce_symbol("ffi", "u16");
+        vec_push(Globals, PTR(&ffi_type_uint16));
+        compiler_introduce_symbol("ffi", "u32");
+        vec_push(Globals, PTR(&ffi_type_uint32));
+        compiler_introduce_symbol("ffi", "u64");
+        vec_push(Globals, PTR(&ffi_type_uint64));
+        compiler_introduce_symbol("ffi", "i8");
+        vec_push(Globals, PTR(&ffi_type_sint8));
+        compiler_introduce_symbol("ffi", "i16");
+        vec_push(Globals, PTR(&ffi_type_sint16));
+        compiler_introduce_symbol("ffi", "i32");
+        vec_push(Globals, PTR(&ffi_type_sint32));
+        compiler_introduce_symbol("ffi", "i64");
+        vec_push(Globals, PTR(&ffi_type_sint64));
+        compiler_introduce_symbol("ffi", "float");
+        vec_push(Globals, PTR(&ffi_type_float));
+        compiler_introduce_symbol("ffi", "double");
+        vec_push(Globals, PTR(&ffi_type_double));
+        compiler_introduce_symbol("ffi", "ptr");
+        vec_push(Globals, PTR(&ffi_type_pointer));
+        compiler_introduce_symbol("ffi", "void");
+        vec_push(Globals, PTR(&ffi_type_void));
 
 #define X(name) \
         do { \
@@ -775,7 +833,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
                 .t = t,
                 .group = isolated ? NewThreadGroup() : MyGroup
         };
-        atomic_store(&created, false);
+        created = false;
 
 #if !defined(TY_RELEASE)
         pthread_attr_t attr;
@@ -791,7 +849,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
         if (r != 0)
                 vm_panic("pthread_create(): %s", strerror(r));
 
-        while (!atomic_load(&created))
+        while (!created)
                 ;
 
         TakeLock();
@@ -800,11 +858,11 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
 static void
 AddThread(void)
 {
-        GCLOG("AddThread(): %llu: taking lock", (long long unsigned)pthread_self());
+        GCLOG("AddThread(): %llu: taking lock", TID);
 
         pthread_mutex_lock(&MyGroup->Lock);
 
-        GCLOG("AddThread(): %llu: took lock", (long long unsigned)pthread_self());
+        GCLOG("AddThread(): %llu: took lock", TID);
 
         ++GC_OFF_COUNT;
 
@@ -836,7 +894,7 @@ AddThread(void)
 
         pthread_mutex_unlock(&MyGroup->Lock);
 
-        GCLOG("AddThread(): %llu: finished", (long long unsigned)pthread_self());
+        GCLOG("AddThread(): %llu: finished", TID);
 }
 
 static void
@@ -878,7 +936,7 @@ CleanupThread(void *ctx)
 
         pthread_mutex_destroy(MyLock);
         free(MyLock);
-        free(MyState);
+        free((void *)MyState);
         free(stack.items);
         gc_free(calls.items);
         gc_free(frames.items);
@@ -918,7 +976,7 @@ vm_run_thread(void *p)
 
         int argc = 0;
 
-        GCLOG("New thread: %llu", (long long unsigned)pthread_self());
+        GCLOG("New thread: %llu", TID);
 
         while (call[argc + 1].type != VALUE_NONE) {
                 push(call[++argc]);
@@ -938,11 +996,11 @@ vm_run_thread(void *p)
 
         pthread_cleanup_push(CleanupThread, NULL);
 
-        atomic_store(ctx->created, true);
+        *ctx->created = true;
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
-                fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
+                fprintf(stderr, "Thread %p dying with error: %s\n", (void *)TID, ERR);
                 t->v = NIL;
         } else {
                 t->v = vm_call(call, argc);
@@ -1014,7 +1072,7 @@ vm_get_sigfn(int sig)
 }
 
 void
-vm_do_signal(int sig, siginfo_t *info, void *ctx)
+vm_do_signal(int sig, void *info_, void *ctx)
 {
         struct value f = NIL;
 
@@ -1033,12 +1091,18 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
                 return;
         }
 
+#ifndef _WIN32
+        siginfo_t *info = info_;
+#endif
+
         switch (sig) {
+#ifdef SIGIO
         case SIGIO:
 #ifdef __APPLE__
                 push(INTEGER(info->si_value.sival_int));
 #else
                 push(INTEGER(info->si_fd));
+#endif
 #endif
                 vm_call(&f, 1);
                 break;
@@ -1505,7 +1569,7 @@ vm_exec(char *code)
         PopulateGlobals();
 
         for (;;) {
-        if (GC_OFF_COUNT == 0 && atomic_load(&MyGroup->WantGC)) {
+        if (GC_OFF_COUNT == 0 && MyGroup->WantGC) {
                 WaitGC();
         }
         for (int N = 0; N < 32; ++N) {
@@ -1772,8 +1836,8 @@ vm_exec(char *code)
                                 ip += n;
                         } else {
                                 int count = top()->count - i;
-                                struct value *rest = gc_alloc_object(sizeof (struct value[count]), GC_TUPLE);
-                                memcpy(rest, top()->items + i, count * sizeof (struct value));
+                                struct value *rest = gc_alloc_object(count * sizeof (Value), GC_TUPLE);
+                                memcpy(rest, top()->items + i, count * sizeof (Value));
                                 *vp = TUPLE(rest, NULL, count, false);
                         }
                         break;
@@ -2158,7 +2222,7 @@ Throw:
                                 memcpy(
                                         v.array->items,
                                         stack.items + stack.count - n,
-                                        sizeof (struct value [n])
+                                        n * sizeof (Value)
                                 );
 
                                 v.array->count = n;
@@ -2206,17 +2270,17 @@ Throw:
                         }
 
                         k = values.count;
-                        vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
+                        vp = gc_alloc_object(k * sizeof (Value), GC_TUPLE);
 
                         v = TUPLE(vp, NULL, k, false);
 
                         GC_OFF_COUNT += 1;
 
                         if (k > 0) {
-                                memcpy(vp, values.items, sizeof (struct value[k]));
+                                memcpy(vp, values.items, k * sizeof (Value));
                                 if (have_names) {
-                                        v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
-                                        memcpy(v.names, names.items, sizeof (char *[k]));
+                                        v.names = gc_alloc_object(k * sizeof (char *), GC_TUPLE);
+                                        memcpy(v.names, names.items, k * sizeof (char *));
                                 }
                         }
 

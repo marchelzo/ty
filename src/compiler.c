@@ -223,7 +223,7 @@ emit_catch(struct expression const *pattern, struct expression const *cond, stru
 inline static void
 emit_tgt(struct symbol const *s, struct scope const *scope, bool def);
 
-static bool
+static void
 emit_return_check(struct expression const *f);
 
 static struct scope *
@@ -378,9 +378,14 @@ static char *
 try_slurp_module(char const *name)
 {
         char pathbuf[512];
+
         char const *home = getenv("HOME");
+
         if (home == NULL)
-                fail("unable to get $HOME from the environment");
+                home = getenv("USERPROFILE");
+
+        if (home == NULL)
+                fail("unable to get USERPROFILE / HOME from the environment");
 
         snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
 
@@ -2526,7 +2531,7 @@ emit_yield(struct expression const * const *es, int n, bool wrap)
         emit_instr(INSTR_YIELD);
 }
 
-static bool
+static void
 emit_return_check(struct expression const *f)
 {
         size_t start = state.code.count;
@@ -4595,7 +4600,7 @@ emit_statement(struct statement const *s, bool want_result)
                 if (loop == NULL) {
                         fail("invalid break statement (not inside a loop)");
                 }
-                
+
                 for (int i = 0; i < s->depth; ++i) {
                         if (get_loop(i)->each) {
                                 emit_instr(INSTR_POP);

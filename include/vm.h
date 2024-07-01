@@ -226,7 +226,7 @@ struct value
 vm_get_sigfn(int);
 
 void
-vm_do_signal(int, siginfo_t *, void *);
+vm_do_signal(int, void *, void *);
 
 bool
 vm_execute(char const *source);

@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include <winsock2.h> // must be included before <windows.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <inttypes.h>
 #include <math.h>
 #include <errno.h>
@@ -8,29 +13,47 @@
 #include <locale.h>
 #include <ctype.h>
 
+#include "polyfill_time.h"
+#include "polyfill_unistd.h"
+#include <openssl/md5.h>
+#include <openssl/sha.h>
+#include <utf8proc.h>
+#include <pthread.h>
+#include <signal.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <dirent.h>
+#include <sys/stat.h>
 #include <sys/types.h>
+
+#define NOT_ON_WINDOWS(name) vm_panic("%s is not implemented in Windows builds of Ty", #name);
+
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#define fstat _fstat
+typedef struct stat StatStruct;
+typedef unsigned short mode_t;
+#define fgetc_unlocked _fgetc_nolock
+#define fputc_unlocked _fputc_nolock
+#define fwrite_unlocked _fwrite_nolock
+#define fread_unlocked _fread_nolock
+#else
+typedef struct stat StatStruct;
+#include <termios.h>
+#include <sys/mman.h>
+#include <dirent.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netdb.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <sys/time.h>
 #include <poll.h>
-#include <signal.h>
 #include <sys/mman.h>
-#include <openssl/md5.h>
-#include <openssl/sha.h>
-#include <utf8proc.h>
-#include <pthread.h>
-#include <termios.h>
-
-#ifdef __linux__
-#include <sys/epoll.h>
 #endif
 
 #include "tags.h"
@@ -55,7 +78,7 @@
 
 static _Thread_local char buffer[1024 * 1024 * 4];
 static _Thread_local vec(char) B;
-static _Atomic uint64_t tid = 1;
+static atomic_uint64_t tid = 1;
 
 #define ASSERT_ARGC(func, ac) \
         if (argc != (ac)) { \
@@ -155,6 +178,10 @@ builtin_slurp(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("slurp()", 0, 1);
 
+#if defined(_WIN32) && !defined(PATH_MAX)
+#define fstat _fstat
+#define PATH_MAX MAX_PATH
+#endif
         char p[PATH_MAX + 1];
         int fd;
         bool need_close = false;
@@ -170,7 +197,11 @@ builtin_slurp(int argc, struct value *kwargs)
                 memcpy(p, v.string, v.bytes);
                 p[v.bytes] = '\0';
 
+#ifdef _WIN32
+                fd = _open(p, _O_RDONLY);
+#else
                 fd = open(p, O_RDONLY);
+#endif
                 if (fd < 0)
                         return NIL;
 
@@ -181,7 +212,7 @@ builtin_slurp(int argc, struct value *kwargs)
                 vm_panic("the argument to slurp() must be a path or a file descriptor");
         }
 
-        struct stat st;
+        StatStruct st;
         if (fstat(fd, &st) != 0) {
                 close(fd);
                 return NIL;
@@ -189,9 +220,22 @@ builtin_slurp(int argc, struct value *kwargs)
 
         struct value *use_mmap = NAMED("mmap");
 
+#ifdef _WIN32
+#define S_ISLNK(m) 0
+#endif
+#if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+#if !defined(S_ISDIR)
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#endif
         if ((use_mmap == NULL || value_truthy(use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
                 size_t n = st.st_size;
+#ifdef _WIN32
+                void *m = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
+#else
                 void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+#endif
                 if (m == NULL) {
                         close(fd);
                         return NIL;
@@ -200,7 +244,12 @@ builtin_slurp(int argc, struct value *kwargs)
                 char *s = value_string_alloc(n);
                 memcpy(s, m, n);
 
+#ifdef _WIN32
+                VirtualFree(m, n, MEM_RELEASE);
+#else
                 munmap(m, n);
+#endif
+
                 close(fd);
 
                 return STRING(s, n);
@@ -1251,7 +1300,11 @@ builtin_setenv(int argc, struct value *kwargs)
         vec_push_n(valbuf, val.string, val.bytes);
         vec_push(valbuf, '\0');
 
+#ifdef _WIN32
+        SetEnvironmentVariableA(varbuf.items, valbuf.items);
+#else
         setenv(varbuf.items, valbuf.items, 1);
+#endif
 
         varbuf.count = 0;
         valbuf.count = 0;
@@ -1624,6 +1677,46 @@ builtin_os_close(int argc, struct value *kwargs)
         return INTEGER(close(file.integer));
 }
 
+static char *
+make_temp_dir(char *template)
+{
+#ifdef _WIN32
+    char tempPath[MAX_PATH];
+    char tempFile[MAX_PATH];
+
+    // Get the path to the temporary folder
+    if (GetTempPath(MAX_PATH, tempPath) == 0)
+    {
+        return NULL;
+    }
+
+    // Generate a temporary file name
+    if (GetTempFileName(tempPath, "tmp", 0, tempFile) == 0)
+    {
+        return NULL;
+    }
+
+    // Remove the temporary file created by GetTempFileName
+    DeleteFile(tempFile);
+
+    // Create a directory with the temporary file name
+    if (CreateDirectory(tempFile, NULL) == 0)
+    {
+        return NULL;
+    }
+
+    // Copy the resulting directory name into the template
+    strcpy(template, tempFile);
+    return template;
+#else
+    if (mkdtemp(template) == NULL)
+    {
+        return NULL;
+    }
+    return template;
+#endif
+}
+
 struct value
 builtin_os_mkdtemp(int argc, struct value *kwargs)
 {
@@ -1645,11 +1738,41 @@ builtin_os_mkdtemp(int argc, struct value *kwargs)
 
         strcat(template, ".XXXXXX");
 
-        if (mkdtemp(template) == NULL) {
+        if (make_temp_dir(template) == NULL) {
                 return NIL;
         }
 
         return STRING_CLONE(template, strlen(template));
+}
+
+static int
+make_temp_file(char *template, int flags)
+{
+    int fd;
+
+#ifdef _WIN32
+    if (_mktemp_s(template, strlen(template) + 1) != 0)
+    {
+        return -1;
+    }
+
+    fd = _open(template, flags | _O_CREAT | _O_EXCL, _S_IREAD | _S_IWRITE);
+    if (fd == -1)
+    {
+        return -1;
+    }
+#else
+    if (flags != -1)
+    {
+        fd = mkostemp(template, flags);
+    }
+    else
+    {
+        fd = mkstemp(template);
+    }
+#endif
+
+    return fd;
 }
 
 struct value
@@ -1675,13 +1798,16 @@ builtin_os_mktemp(int argc, struct value *kwargs)
 
         int fd;
 
-        if (argc == 2) {
+        if (argc == 2)
+        {
                 struct value flags = ARG(1);
                 if (flags.type != VALUE_INTEGER)
                         vm_panic("the second argument to os.mktemp() must be an integer");
-                fd = mkostemp(template, flags.integer);
-        } else {
-                fd = mkstemp(template);
+                fd = make_temp_file(template, flags.integer);
+        }
+        else
+        {
+                fd = make_temp_file(template, -1);
         }
 
         if (fd == -1) {
@@ -1703,6 +1829,9 @@ builtin_os_mktemp(int argc, struct value *kwargs)
 struct value
 builtin_os_opendir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.opendir()");
+#else
         ASSERT_ARGC("os.opendir()", 1);
 
         struct value path = ARG(0);
@@ -1726,11 +1855,15 @@ builtin_os_opendir(int argc, struct value *kwargs)
                 return NIL;
 
         return PTR(d);
+#endif
 }
 
 struct value
 builtin_os_readdir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.readdir()");
+#else
         ASSERT_ARGC("os.readdir()", 1);
 
         struct value d = ARG(0);
@@ -1749,11 +1882,15 @@ builtin_os_readdir(int argc, struct value *kwargs)
                 "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)),
                 NULL
         );
+#endif
 }
 
 struct value
 builtin_os_rewinddir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.rewinddir()");
+#else
         ASSERT_ARGC("os.rewinddir()", 1);
 
         struct value d = ARG(0);
@@ -1764,11 +1901,15 @@ builtin_os_rewinddir(int argc, struct value *kwargs)
         rewinddir(d.ptr);
 
         return NIL;
+#endif
 }
 
 struct value
 builtin_os_seekdir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.seekdir()");
+#else
         ASSERT_ARGC("os.seekdir()", 2);
 
         struct value d = ARG(0);
@@ -1783,11 +1924,15 @@ builtin_os_seekdir(int argc, struct value *kwargs)
         seekdir(d.ptr, off.integer);
 
         return NIL;
+#endif
 }
 
 struct value
 builtin_os_telldir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.telldir()");
+#else
         ASSERT_ARGC("os.telldir()", 1);
 
         struct value d = ARG(0);
@@ -1796,11 +1941,15 @@ builtin_os_telldir(int argc, struct value *kwargs)
                 vm_panic("the argument to os.telldir() must be a pointer");
 
         return INTEGER(telldir(d.ptr));
+#endif
 }
 
 struct value
 builtin_os_closedir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.closedir()");
+#else
         ASSERT_ARGC("os.closedir()", 1);
 
         struct value d = ARG(0);
@@ -1809,6 +1958,7 @@ builtin_os_closedir(int argc, struct value *kwargs)
                 vm_panic("the argument to os.closedir() must be a pointer");
 
         return INTEGER(closedir(d.ptr));
+#endif
 }
 
 struct value
@@ -1889,7 +2039,11 @@ builtin_os_link(int argc, struct value *kwargs)
         memcpy(buffer + old.bytes + 1, new.string, new.bytes);
         buffer[old.bytes + 1 + new.bytes] = '\0';
 
+#ifdef _WIN32
+        return INTEGER(!CreateHardLinkA(buffer, buffer + old.bytes + 1, NULL));
+#else
         return INTEGER(link(buffer, buffer + old.bytes + 1));
+#endif
 }
 
 struct value
@@ -1938,7 +2092,11 @@ builtin_os_symlink(int argc, struct value *kwargs)
         memcpy(buffer + old.bytes + 1, new.string, new.bytes);
         buffer[old.bytes + 1 + new.bytes] = '\0';
 
+#ifdef _WIN32
+        return INTEGER(!CreateSymbolicLinkA(buffer, buffer + old.bytes + 1, 0));
+#else
         return INTEGER(symlink(buffer, buffer + old.bytes + 1));
+#endif
 }
 
 struct value
@@ -1996,7 +2154,11 @@ builtin_os_mkdir(int argc, struct value *kwargs)
         vec_push_n(B, path.string, path.bytes);
         vec_push(B, '\0');
 
+#ifdef _WIN32
+        return INTEGER(mkdir(B.items));
+#else
         return INTEGER(mkdir(B.items, mode));
+#endif
 }
 
 struct value
@@ -2021,6 +2183,10 @@ struct value
 builtin_os_chown(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.chown()", 3);
+
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.chown()");
+#else
 
         size_t n;
         char const *path;
@@ -2059,12 +2225,16 @@ builtin_os_chown(int argc, struct value *kwargs)
         buffer[n] = '\0';
 
         return INTEGER(chown(buffer, ARG(1).integer, ARG(2).integer));
+#endif
 }
 
 struct value
 builtin_os_chmod(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("os.chown()", 2);
+        ASSERT_ARGC("os.chmod()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.chmod()");
+#else
 
         size_t n;
         char const *path;
@@ -2099,6 +2269,7 @@ builtin_os_chmod(int argc, struct value *kwargs)
         buffer[n] = '\0';
 
         return INTEGER(chmod(buffer, ARG(1).integer));
+#endif
 }
 
 struct value
@@ -2118,8 +2289,10 @@ builtin_os_chdir(int argc, struct value *kwargs)
                 buffer[dir.bytes] = '\0';
 
                 return INTEGER(chdir(buffer));
+#ifndef _WIN32
         } else if (dir.type == VALUE_INTEGER) {
                 return INTEGER(fchdir(dir.integer));
+#endif
         } else {
                 vm_panic("the argument to os.chdir() must be a path or a file descriptor");
         }
@@ -2256,7 +2429,11 @@ builtin_os_fsync(int argc, struct value *kwargs)
                 vm_panic("os.fsync(): expected integer but got: %s", value_show(&fd));
         }
 
+#ifdef _WIN32
+        return INTEGER(_commit(fd.integer));
+#else
         return INTEGER(fsync(fd.integer));
+#endif
 }
 
 struct value
@@ -2264,7 +2441,9 @@ builtin_os_sync(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.sync()", 0);
 
+#ifndef _WIN32
         sync();
+#endif
 
         return NIL;
 }
@@ -2272,6 +2451,9 @@ builtin_os_sync(int argc, struct value *kwargs)
 struct value
 builtin_os_spawn(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.spawn()");
+#else
         ASSERT_ARGC("os.spawn()", 1);
 
         struct value cmd = ARG(0);
@@ -2465,7 +2647,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
                         NULL
                 );
         }
-
+#endif
 }
 
 struct value
@@ -2655,11 +2837,11 @@ builtin_thread_create(int argc, struct value *kwargs)
                 vm_panic("non-callable value passed to thread.create(): %s", value_show(&ARG(0)));
         }
 
-        struct value *ctx = gc_alloc(sizeof (struct value[argc + 1]));
+        struct value *ctx = gc_alloc((argc + 1) * sizeof (Value));
         Thread *t = gc_alloc_object(sizeof *t, GC_THREAD);
 
         NOGC(t);
-        t->i = atomic_fetch_add(&tid, 1);
+        t->i += 1;
         t->v = NONE;
 
         for (int i = 0; i < argc; ++i) {
@@ -2869,8 +3051,10 @@ builtin_thread_id(int argc, struct value *kwargs)
         uint64_t id;
         pthread_threadid_np(NULL, &id);
         return INTEGER(id);
-#else
+#elif defined(__linux__)
         return INTEGER(gettid());
+#else
+        return INTEGER(GetCurrentThreadId());
 #endif
 }
 
@@ -2878,20 +3062,31 @@ struct value
 builtin_thread_self(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.self()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("thread.self()");
+#else
         return PTR((void *)pthread_self());
+#endif
 }
 
 struct value
 builtin_os_fork(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.fork()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.fork()");
+#else
         return INTEGER(fork());
+#endif
 }
 
 struct value
 builtin_os_pipe(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.pipe()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.pipe()");
+#else
 
         int p[2];
 
@@ -2904,6 +3099,7 @@ builtin_os_pipe(int argc, struct value *kwargs)
         fds.items[1] = INTEGER(p[1]);
 
         return fds;
+#endif
 }
 
 struct value
@@ -3144,7 +3340,9 @@ builtin_os_connect(int argc, struct value *kwargs)
         if (v == NULL || v->type != VALUE_INTEGER)
                 vm_panic("missing or invalid address family in dict passed to os.connect()");
 
+#ifndef _WIN32
         struct sockaddr_un un_addr;
+#endif
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
@@ -3152,6 +3350,7 @@ builtin_os_connect(int argc, struct value *kwargs)
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
                 return INTEGER(connect(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
         } else switch (v->integer) {
+#ifndef _WIN32
                 case AF_UNIX:
                         memset(&un_addr, 0, sizeof un_addr);
                         un_addr.sun_family = AF_UNIX;
@@ -3160,6 +3359,7 @@ builtin_os_connect(int argc, struct value *kwargs)
                                 vm_panic("missing or invalid path in dict passed to os.connect()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(connect(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+#endif
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
                         in_addr.sin_family = AF_INET;
@@ -3197,7 +3397,9 @@ builtin_os_bind(int argc, struct value *kwargs)
         if (v == NULL || v->type != VALUE_INTEGER)
                 vm_panic("missing or invalid address family in address passed to os.bind()");
 
+#ifndef _WIN32
         struct sockaddr_un un_addr;
+#endif
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
@@ -3205,6 +3407,7 @@ builtin_os_bind(int argc, struct value *kwargs)
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
                 return INTEGER(bind(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
         } else switch (v->integer) {
+#ifndef _WIN32
                 case AF_UNIX:
                         memset(&un_addr, 0, sizeof un_addr);
                         un_addr.sun_family = AF_UNIX;
@@ -3213,6 +3416,7 @@ builtin_os_bind(int argc, struct value *kwargs)
                                 vm_panic("missing or invalid path in tuple passed to os.bind()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+#endif
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
                         in_addr.sin_family = AF_INET;
@@ -3544,7 +3748,11 @@ builtin_os_poll(int argc, struct value *kwargs)
         pfds.count = fds.array->count;
 
         ReleaseLock(true);
+#ifdef _WIN32
+        int ret = WSAPoll(pfds.items, pfds.count, timeout.integer);
+#else
         int ret = poll(pfds.items, pfds.count, timeout.integer);
+#endif
         TakeLock();
 
         if (ret < 0)
@@ -3649,6 +3857,9 @@ struct value
 builtin_os_waitpid(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.waitpid()", 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.waitpid()");
+#else
 
         struct value pid = ARG(0);
 
@@ -3672,8 +3883,17 @@ Bad:
                 return INTEGER(ret);
 
         return PAIR(INTEGER(ret), INTEGER(status));
+#endif
 }
 
+#ifdef _WIN32
+#define WAITMACRO(name) \
+        struct value \
+        builtin_os_ ## name(int argc, struct value *kwargs) \
+        { \
+                NOT_ON_WINDOWS("os." #name); \
+        }
+#else
 #define WAITMACRO(name) \
         struct value \
         builtin_os_ ## name(int argc, struct value *kwargs) \
@@ -3688,6 +3908,7 @@ Bad:
         \
                 return INTEGER(name(s)); \
         }
+#endif
 
 WAITMACRO(WIFEXITED)
 WAITMACRO(WEXITSTATUS)
@@ -3702,6 +3923,20 @@ WAITMACRO(WIFCONTINUED)
 WAITMACRO(WCOREDUMP)
 #endif
 
+#ifdef _WIN32
+#define GETID(name) \
+        struct value \
+        builtin_os_ ## name (int argc, struct value *kwargs) \
+        { \
+                NOT_ON_WINDOWS("os." #name); \
+        }
+#define SETID(name) \
+        struct value \
+        builtin_os_ ## name (int argc, struct value *kwargs) \
+        { \
+                NOT_ON_WINDOWS("os." #name); \
+        }
+#else
 #define GETID(name) \
         struct value \
         builtin_os_ ## name (int argc, struct value *kwargs) \
@@ -3720,6 +3955,7 @@ WAITMACRO(WCOREDUMP)
                         vm_panic("the argument to os." #name "() must be an integer"); \
                 return INTEGER(name(id.integer)); \
         }
+#endif
 
 GETID(getpid)
 GETID(getppid)
@@ -3779,6 +4015,9 @@ struct value
 builtin_os_signal(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.signal()", 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.signal()");
+#else
 
         struct value num = ARG(0);
 
@@ -3809,12 +4048,16 @@ builtin_os_signal(int argc, struct value *kwargs)
                 return vm_get_sigfn(num.integer);
         }
 
+#endif
 }
 
 struct value
 builtin_os_kill(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.kill()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.kill()");
+#else
 
         struct value pid = ARG(0);
         struct value sig = ARG(1);
@@ -3823,6 +4066,7 @@ builtin_os_kill(int argc, struct value *kwargs)
                 vm_panic("both arguments to os.kill() must be integers");
 
         return INTEGER(kill(pid.integer, sig.integer));
+#endif
 }
 
 static struct value
@@ -3890,9 +4134,11 @@ builtin_os_sleep(int argc, struct value *kwargs)
 
         struct value *abs = NAMED("abs");
 
+#ifndef _WIN32
         if (abs != NULL && abs->type == VALUE_BOOLEAN && abs->boolean) {
                 flags = TIMER_ABSTIME;
         }
+#endif
 
         struct value *clock = NAMED("clock");
 
@@ -3930,7 +4176,12 @@ builtin_os_sleep(int argc, struct value *kwargs)
         }
 
         ReleaseLock(true);
+#ifdef _WIN32
+        Sleep(dur.tv_sec * 1000 + dur.tv_nsec / 1000000);
+        int ret = 0;
+#else
         int ret = clock_nanosleep(clk, flags, &dur, &rem);
+#endif
         TakeLock();
 
         switch (ret) {
@@ -3999,6 +4250,26 @@ builtin_os_sleep(int argc, struct value *kwargs)
 }
 #endif
 
+static int
+microsleep(int64_t usec)
+{
+#ifdef _WIN32
+        HANDLE timer;
+        LARGE_INTEGER ft;
+
+        ft.QuadPart = -(10*usec); // Convert to 100 nanosecond interval, negative value indicates relative time
+
+        timer = CreateWaitableTimer(NULL, TRUE, NULL);
+        SetWaitableTimer(timer, &ft, 0, NULL, NULL, 0);
+        WaitForSingleObject(timer, INFINITE);
+        CloseHandle(timer);
+        return 0;
+#else
+        return usleep(usec);
+#endif
+}
+
+// https://stackoverflow.com/questions/5801813/c-usleep-is-obsolete-workarounds-for-windows-mingw
 struct value
 builtin_os_usleep(int argc, struct value *kwargs)
 {
@@ -4011,12 +4282,15 @@ builtin_os_usleep(int argc, struct value *kwargs)
         if (duration.integer < 0)
                 vm_panic("negative argument passed to os.usleep()");
 
-        return INTEGER(usleep(duration.integer));
+        return INTEGER(microsleep(duration.integer));
 }
 
 struct value
 builtin_os_listdir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.listdir()");
+#else
         ASSERT_ARGC("os.listdir()", 1);
 
         struct value dir = ARG(0);
@@ -4048,7 +4322,29 @@ builtin_os_listdir(int argc, struct value *kwargs)
         gc_pop();
 
         return vFiles;
+#endif
 }
+
+static char *
+resolve_path(char const *in, char *out)
+{
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+
+    if (GetFullPathName(in, MAX_PATH, buffer, NULL) == 0) {
+        return NULL;
+    }
+
+    if (GetLongPathName(buffer, out, MAX_PATH) == 0) {
+        return NULL;
+    }
+
+    return out;
+#else
+    return realpath(in, out);
+#endif
+}
+
 
 struct value
 builtin_os_realpath(int argc, struct value *kwargs)
@@ -4068,7 +4364,7 @@ builtin_os_realpath(int argc, struct value *kwargs)
         memcpy(in, path.string, path.bytes);
         in[path.bytes] = '\0';
 
-        char *resolved = realpath(in, out);
+        char *resolved = resolve_path(in, out);
 
         if (resolved == NULL)
                 return NIL;
@@ -4092,6 +4388,45 @@ builtin_os_ftruncate(int argc, struct value *kwargs)
         return INTEGER(ftruncate(fd.integer, size.integer));
 }
 
+static int
+truncate_file(const char* filename, size_t size)
+{
+#ifdef _WIN32
+    HANDLE hFile = CreateFile(
+        filename,
+        GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        return -1;
+    }
+
+    LARGE_INTEGER li;
+    li.QuadPart = size;
+
+    if (!SetFilePointerEx(hFile, li, NULL, FILE_BEGIN)) {
+        CloseHandle(hFile);
+        return -1;
+    }
+
+    if (!SetEndOfFile(hFile)) {
+        CloseHandle(hFile);
+        return -1;
+    }
+
+    CloseHandle(hFile);
+
+    return 0;
+#else
+    return truncate(filename, size);
+#endif
+}
+
 struct value
 builtin_os_truncate(int argc, struct value *kwargs)
 {
@@ -4109,7 +4444,7 @@ builtin_os_truncate(int argc, struct value *kwargs)
         if (size.type != VALUE_INTEGER)
                 vm_panic("os.truncate(): expected integer as second argumnet but got: %s", value_show(&size));
 
-        return INTEGER(truncate(B.items, size.integer));
+        return INTEGER(truncate_file(B.items, size.integer));
 }
 
 struct value
@@ -4117,7 +4452,7 @@ builtin_os_stat(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.stat()", 1);
 
-        struct stat s;
+        StatStruct s;
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
@@ -4140,21 +4475,67 @@ builtin_os_stat(int argc, struct value *kwargs)
                 "st_gid", INTEGER(s.st_gid),
                 "st_rdev", INTEGER(s.st_rdev),
                 "st_size", INTEGER(s.st_size),
+#ifndef _WIN32
                 "st_blocks", INTEGER(s.st_blocks),
                 "st_blksize", INTEGER(s.st_blksize),
+#endif
 #ifdef __APPLE__
                 "st_atim", timespec_tuple(&s.st_atimespec),
                 "st_mtim", timespec_tuple(&s.st_mtimespec),
                 "st_ctim", timespec_tuple(&s.st_ctimespec),
-#else
+#elif defined(__linux__)
                 "st_atim", timespec_tuple(&s.st_atim),
                 "st_mtim", timespec_tuple(&s.st_mtim),
                 "st_ctim", timespec_tuple(&s.st_ctim),
+#elif defined(_WIN32)
+                "st_atim", INTEGER(s.st_atime),
+                "st_mtim", INTEGER(s.st_mtime),
+                "st_ctim", INTEGER(s.st_ctime),
 #endif
                 NULL
         );
 
 }
+
+static int
+lock_file(int fd, int operation)
+{
+#ifdef _WIN32
+
+#define   LOCK_SH   1    /* shared lock */
+#define   LOCK_EX   2    /* exclusive lock */
+#define   LOCK_NB   4    /* don't block when locking */
+#define   LOCK_UN   8    /* unlock */
+        HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+        if (hFile == INVALID_HANDLE_VALUE)
+        {
+                return -1;
+        }
+
+        OVERLAPPED overlapped = {0};
+        DWORD flags = 0;
+
+        if (operation & LOCK_SH)
+        {
+                flags |= LOCKFILE_EXCLUSIVE_LOCK;
+        }
+
+        if (operation & LOCK_NB)
+        {
+                flags |= LOCKFILE_FAIL_IMMEDIATELY;
+        }
+
+        if (!LockFileEx(hFile, flags, 0, MAXDWORD, MAXDWORD, &overlapped))
+        {
+                return -1;
+        }
+
+        return 0;
+#else
+        return flock(fd, operation);
+#endif
+}
+
 
 struct value
 builtin_os_flock(int argc, struct value *kwargs)
@@ -4169,13 +4550,16 @@ builtin_os_flock(int argc, struct value *kwargs)
         if (cmd.type != VALUE_INTEGER)
                 vm_panic("the second argument to os.fcntl() must be an integer");
 
-        return INTEGER(flock(fd.integer, cmd.integer));
+        return INTEGER(lock_file(fd.integer, cmd.integer));
 }
 
 struct value
 builtin_os_fcntl(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.fcntl()", 2, 3);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.fcntl()")
+#else
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
@@ -4205,6 +4589,7 @@ builtin_os_fcntl(int argc, struct value *kwargs)
         }
 
         vm_panic("os.fcntl() functionality not implemented yet");
+#endif
 }
 
 struct value
@@ -4220,6 +4605,9 @@ builtin_os_isatty(int argc, struct value *kwargs)
 struct value
 builtin_termios_tcgetattr(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcgetattr()");
+#else
         if (ARG(0).type != VALUE_INTEGER) {
                 vm_panic("termios.tcgetattr(): expected integer but got: %s", value_show(&ARG(0)));
         }
@@ -4249,11 +4637,15 @@ builtin_termios_tcgetattr(int argc, struct value *kwargs)
                 "cc", BLOB(cc),
                 NULL
         );
+#endif
 }
 
 struct value
 builtin_termios_tcsetattr(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcsetattr()");
+#else
         if (ARG(0).type != VALUE_INTEGER) {
                 vm_panic("termios.tcsetattr(): expected integer but got: %s", value_show(&ARG(0)));
         }
@@ -4294,6 +4686,7 @@ builtin_termios_tcsetattr(int argc, struct value *kwargs)
         }
 
         return BOOLEAN(tcsetattr(ARG(0).integer, ARG(1).integer, &t) == 0);
+#endif
 }
 
 struct value
@@ -4362,7 +4755,7 @@ builtin_time_utime(int argc, struct value *kwargs)
         struct timespec t;
         clock_gettime(clk, &t);
 
-        return INTEGER(t.tv_sec * 1000 * 1000 + t.tv_nsec / 1000);
+        return INTEGER((uint64_t)t.tv_sec * 1000 * 1000 + (uint64_t)t.tv_nsec / 1000);
 }
 
 struct value
@@ -4495,8 +4888,10 @@ builtin_time_strftime(int argc, struct value *kwargs)
 struct value
 builtin_time_strptime(int argc, struct value *kwargs)
 {
-
         ASSERT_ARGC("time.strptime()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("time.strptime()");
+#else
 
         struct value s = ARG(0);
         struct value fmt = ARG(1);
@@ -4531,6 +4926,7 @@ builtin_time_strptime(int argc, struct value *kwargs)
                 "isdst", BOOLEAN(r.tm_isdst),
                 NULL
         );
+#endif
 }
 
 struct value
@@ -5298,7 +5694,7 @@ builtin_type(int argc, struct value *kwargs)
                         return v;
                 }
 
-                struct value *types = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+                struct value *types = gc_alloc_object(n * sizeof (Value), GC_TUPLE);
 
                 NOGC(types);
 
@@ -5819,7 +6215,7 @@ builtin_parse_source(int argc, struct value *kwargs)
                 vm_panic("ty.parse.source(): expected Blob or String but got: %s", value_show(&ARG(0)));
         }
 
-        char *src = gc_alloc(n + 2) + 1;
+        char *src = ((char *)gc_alloc(n + 2)) + 1;
         memcpy(src, s, n);
         src[-1] = '\0';
         src[n] = '\0';

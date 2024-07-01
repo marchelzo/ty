@@ -3,9 +3,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdatomic.h>
 #include <pthread.h>
 
+#include "polyfill_stdatomic.h"
 #include "vec.h"
 #include "log.h"
 #include "alloc.h"

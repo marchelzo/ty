@@ -5,9 +5,8 @@
 #include <stdnoreturn.h>
 #include <setjmp.h>
 
-#include <unistd.h>
+#include "polyfill_unistd.h"
 #include <fcntl.h>
-#include <dlfcn.h>
 #include <getopt.h>
 
 #include <readline/readline.h>
