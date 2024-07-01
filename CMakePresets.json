@@ -28,14 +28,14 @@
             "hidden": true,
             "inherits": "base",
             "cacheVariables": {
-                "CMAKE_PREFIX_PATH": "${sourceDir}/vcpkg_installed/x64-windows"
+                "VCPKG_TARGET_TRIPLET": "x64-windows-static"
             }
         },
         {
             "name": "msvc2022",
             "inherits": "base-windows",
             "displayName": "Visual Studio Community 2022 - amd64 - Release",
-            "description": "Using compilers for Visual Studio 17 2022 (x64 architecture)",
+            "description": "Using compilers for Visual Studio 17 2022",
             "generator": "Visual Studio 17 2022",
             "toolset": "host=x64",
             "architecture": "x64",
@@ -51,6 +51,26 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
+        },
+        {
+            "name": "msvc2022-shared",
+            "inherits": "msvc2022",
+            "displayName": "Visual Studio Community 2022 - amd64 - Release (.dll dependencies)",
+            "description": "Using compilers for Visual Studio 17 2022",
+            "generator": "Visual Studio 17 2022",
+            "toolset": "host=x64",
+            "architecture": "x64",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-windows"
+            }
+        },
+        {
+            "name": "msvc2022-shared-debug",
+            "inherits": "msvc2022-shared",
+            "displayName": "Visual Studio Community 2022 - amd64 - Debug (.dll dependencies)",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
         }
     ],
     "buildPresets": [
@@ -62,14 +82,30 @@
         },
         {
             "name": "msvc2022",
+            "inherits": "base-build",
             "displayName": "Visual Studio Community 2022 - amd64 - Release",
             "configurePreset": "msvc2022",
             "configuration": "Release"
         },
         {
             "name": "msvc2022-debug",
+            "inherits": "base-build",
             "displayName": "Visual Studio Community 2022 - amd64 - Debug",
             "configurePreset": "msvc2022-debug",
+            "configuration": "Debug"
+        },
+        {
+            "name": "msvc2022-shared",
+            "inherits": "base-build",
+            "displayName": "Visual Studio Community 2022 - amd64 - Release (.dll dependencies)",
+            "configurePreset": "msvc2022-shared",
+            "configuration": "Release"
+        },
+        {
+            "name": "msvc2022-shared-debug",
+            "inherits": "base-build",
+            "displayName": "Visual Studio Community 2022 - amd64 - Debug (.dll dependencies)",
+            "configurePreset": "msvc2022-shared-debug",
             "configuration": "Debug"
         }
     ],
@@ -97,6 +133,32 @@
                 {
                     "type": "build",
                     "name": "msvc2022-debug"
+                }
+            ]
+        },
+        {
+            "name": "msvc2022-shared",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "msvc2022-shared"
+                },
+                {
+                    "type": "build",
+                    "name": "msvc2022-shared"
+                }
+            ]
+        },
+        {
+            "name": "msvc2022-shared-debug",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "msvc2022-shared-debug"
+                },
+                {
+                    "type": "build",
+                    "name": "msvc2022-shared-debug"
                 }
             ]
         }
