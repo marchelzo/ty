@@ -1,6 +1,6 @@
 #include <ffi.h>
-#include <dlfcn.h>
 
+#include "polyfill_dlfcn.h"
 #include "value.h"
 #include "alloc.h"
 #include "dict.h"
@@ -342,7 +342,11 @@ cffi_new(int argc, struct value *kwargs)
         unsigned size = max(t->size, sizeof (void *));
         size += (size % align);
 
+#ifdef _WIN32
+        struct value p = TPTR(t, _aligned_malloc(size, align));
+#else
         struct value p = TPTR(t, aligned_alloc(align, size));
+#endif
 
         if (argc == 2) {
                 struct value v = ARG(1);
@@ -589,8 +593,11 @@ cffi_dlopen(int argc, struct value *kwargs)
         memcpy(b, ARG(0).string, n);
         b[n] = '\0';
 
+#ifdef _WIN32
+        void *p = LoadLibraryA(b);
+#else
         void *p = dlopen(b, RTLD_NOW);
-
+#endif
         return (p == NULL) ? NIL : PTR(p);
 }
 
@@ -697,12 +704,16 @@ cffi_dlerror(int argc, struct value *kwargs)
                 vm_panic("ffi.dlerror(): expected 0 arguments but got %d", argc);
         }
 
+#ifdef _WIN32
+        return NIL;
+#else
         char *error = dlerror();
 
         if (error == NULL)
                 return NIL;
 
         return STRING_CLONE(error, strlen(error));
+#endif
 }
 
 struct value
@@ -722,17 +733,23 @@ cffi_dlsym(int argc, struct value *kwargs)
         memcpy(b, ARG(0).string, n);
         b[n] = '\0';
 
-        void *handle;
+        void *handle = GetModuleHandle(NULL);
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 if (ARG(1).type != VALUE_PTR) {
                         vm_panic("the second argument to ffi.dlsym() must be a pointer, instead got: %s", value_show(&ARG(1)));
                 }
                 handle = ARG(1).ptr;
+#ifndef _WIN32
         } else {
                 handle = RTLD_DEFAULT;
+#endif
         }
 
+#ifdef _WIN32
+        void *p = GetProcAddress(handle, b);
+#else
         void *p = dlsym(handle, b);
+#endif
 
         return (p == NULL) ? NIL : PTR(p);
 }
@@ -749,7 +766,7 @@ cffi_struct(int argc, struct value *kwargs)
         t->type = FFI_TYPE_STRUCT;
         t->alignment = 0;
         t->size = 0;
-        t->elements = gc_alloc(sizeof (ffi_type *[argc + 1]));
+        t->elements = gc_alloc((argc + 1) * sizeof (ffi_type *));
 
         for (int i = 0; i < argc; ++i) {
                 struct value member = ARG(i);

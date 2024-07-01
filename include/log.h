@@ -1,9 +1,13 @@
 #ifndef LOG_H_INCLUDED
 #define LOG_H_INCLUDED
 
-#include <unistd.h>
-#include <sys/file.h>
+#include "polyfill_unistd.h"
 #include <stdio.h>
+
+#ifdef _WIN32
+#define flockfile(f) _lock_file(f)
+#define funlockfile(f) _unlock_file(f)
+#endif
 
 extern _Bool EnableLogging;
 
@@ -32,7 +36,12 @@ extern _Bool EnableLogging;
 #define LOG(...) ;
 #endif
 
+#ifdef _WIN32
+#include <windows.h>
+#define TID ((unsigned long long)GetCurrentThreadId())
+#else
 #define TID ((unsigned long long)pthread_self())
+#endif
 
 #if 0
 #define GCLOG(...) if (EnableLogging) do { \

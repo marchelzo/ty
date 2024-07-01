@@ -4,10 +4,20 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <sys/types.h>
-#include <sys/mman.h>
 #include <sys/stat.h>
-#include <unistd.h>
+#include "polyfill_unistd.h"
 #include <fcntl.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
+#if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#define S_ISLNK(m) 0
+#endif
 
 #include "panic.h"
 #include "alloc.h"
@@ -66,10 +76,14 @@ slurp(char const *path)
         struct stat st;
         fstat(fd, &st);
 
-        if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+        if (false && S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
                 int n = st.st_size;
 
+#ifdef _WIN32
+                void *p = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
+#else
                 void *p = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+#endif
                 if (p == NULL) {
                         return NULL;
                 }
@@ -78,7 +92,11 @@ slurp(char const *path)
                 memcpy(s + 1, p, n);
                 s[0] = s[n + 1] = '\0';
 
+#ifdef _WIN32
+                VirtualFree(p, n, MEM_RELEASE);
+#else
                 munmap(p, n);
+#endif
                 close(fd);
 
                 return s + 1;

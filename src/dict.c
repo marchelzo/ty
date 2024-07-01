@@ -73,11 +73,11 @@ grow(struct dict *d)
 {
         size_t new_size = d->size << 1;
 
-        unsigned long *hashes = gc_alloc(sizeof (unsigned long [new_size]));
-        struct value *keys = gc_alloc(sizeof (struct value [new_size]));
-        struct value *values = gc_alloc(sizeof (struct value [new_size]));
+        unsigned long *hashes = gc_alloc(new_size * sizeof (unsigned long));
+        struct value *keys = gc_alloc(new_size * sizeof (Value));
+        struct value *values = gc_alloc(new_size * sizeof (Value));
 
-        memset(keys, 0, sizeof (struct value [new_size]));
+        memset(keys, 0, new_size * sizeof (Value));
 
         for (size_t i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0)

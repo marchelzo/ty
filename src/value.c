@@ -1113,7 +1113,7 @@ value_array_new(void)
 struct value
 value_tuple(int n)
 {
-        struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+        struct value *items = gc_alloc_object(n * sizeof (Value), GC_TUPLE);
 
         for (int i = 0; i < n; ++i) {
                 items[i] = NIL;
@@ -1137,10 +1137,10 @@ value_named_tuple(char const *first, ...)
 
         va_end(ap);
 
-        struct value *items = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+        struct value *items = gc_alloc_object(n * sizeof (Value), GC_TUPLE);
 
         NOGC(items);
-        char const **names = gc_alloc_object(sizeof (char *[n]), GC_TUPLE);
+        char const **names = gc_alloc_object(n * sizeof (char *), GC_TUPLE);
         OKGC(items);
 
         va_start(ap, first);

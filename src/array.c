@@ -211,7 +211,7 @@ array_slice_mut(struct value *array, int argc, struct value *kwargs)
         NOGC(slice);
 
         vec_push_n(*slice, array->array->items + s, n);
-        memmove(array->array->items + s, array->array->items + s + n, sizeof (struct value[array->array->count - (s + n)]));
+        memmove(array->array->items + s, array->array->items + s + n, (array->array->count - (s + n)) * sizeof (Value));
 
         array->array->count -= n;
         shrink(array);
@@ -1454,7 +1454,7 @@ array_tuple(struct value *array, int argc, struct value *kwargs)
         int n = array->array->count;
 
         struct value v = value_tuple(n);
-        memcpy(v.items, array->array->items, sizeof (struct value [n]));
+        memcpy(v.items, array->array->items, n * sizeof (Value));
 
         return v;
 }
