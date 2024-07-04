@@ -573,7 +573,6 @@ error(char const *fmt, ...)
                 TERM(22)
         );
 
-
         LOG("Parse Error: %s", ERR);
 End:
         longjmp(jb, 1);

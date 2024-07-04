@@ -93,6 +93,7 @@ target_compile_options(${_tgt_ty}
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wno-switch -Wno-unused-value -Wno-unused-function>
     $<$<CXX_COMPILER_ID:Clang>:-Weverything>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<CXX_COMPILER_ID:MSVC>:/fsanitize=address>
 )
 
 target_sources(${_tgt_ty}
@@ -127,6 +128,10 @@ target_include_directories(${_tgt_ty}
 target_compile_definitions(${_tgt_ty}
   PRIVATE
     $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>
+    $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
+    $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
+    TY_RELEASE
+    TY_NO_LOG
 )
 
 # ---

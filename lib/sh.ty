@@ -4,9 +4,20 @@ import errno (ETIMEDOUT)
 
 export ls, sh, expand
 
-function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareStderr=false, shell=os.getenv('SHELL')) {
+let KILL_SIG = match `os::SIGKILL` {
+    Some(x) => x,
+    _       => os::SIGTERM
+}
+
+let SHELL = static_if __windows__ {
+    ['cmd.exe', '/c']
+} else {
+    [os.getenv('SHELL'), '-c']
+}
+
+function sh(c, input, timeoutMs, signal=KILL_SIG, combineOutput=false, shareStderr=false, shell=SHELL) {
     if not let $p = os.spawn(
-        [shell, '-c', c],
+        [*shell, c],
         detach: timeoutMs != nil,
         combineOutput: combineOutput,
         shareStderr: shareStderr
@@ -28,6 +39,7 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
 
     let timedOut = false
 
+static_if __apple__ || __linux__ {
     while true {
         if timeoutMs != nil && remainingMs < 0 {
             os.kill(-p.pid, signal)
@@ -74,6 +86,39 @@ function sh(c, input, timeoutMs, signal=os.SIGKILL, combineOutput=false, shareSt
             stderr: err.str!()
         }
     }
+} else {
+    let stdoutThread = Thread(-> do {
+        while let $data = os.read(p.stdout, 4096) {
+            out.push(data)
+        }
+    })
+
+    let stderrThread = Thread(-> do {
+        while let $data = os.read(p.stderr, 4096) {
+            err.push(data)
+        }
+    })
+
+    if timeoutMs == nil {
+        stdoutThread.join()
+        stderrThread.join()
+    } else {
+        let start = utime()
+
+        if not let Some(_) = stdoutThread.join(remainingMs) {
+            return nil
+        }
+
+        remainingMs -= (utime() - start) / 1000
+
+        if not let Some(_) = stderrThread.join(max(0, remainingMs)) {
+            return nil
+        }
+
+    }
+
+    return out.str!()
+}
 }
 
 function ls(d, flags) {

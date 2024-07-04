@@ -3,6 +3,23 @@ static struct {
         char const *name;
         struct value value;
 } builtins[] = {
+#if defined(__APPLE__)
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(true)                     },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(false)                    },
+#elif defined(__linux__)
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(true)                     },
+#elif defined(_WIN32)
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(true)                     },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(false)                    },
+#else
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(false)                    },
+#endif
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
 { .module = NULL,     .name = "eprint",            .value = BUILTIN(builtin_eprint)                        },
 { .module = NULL,     .name = "slurp",             .value = BUILTIN(builtin_slurp)                         },

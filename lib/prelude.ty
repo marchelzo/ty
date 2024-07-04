@@ -1805,8 +1805,8 @@ class Thread {
         thread.setName(s)
     }
 
-    join() {
-        thread.join(@handle)
+    join(timeoutMs: ?Int) {
+        thread.join(@handle, timeoutMs)
     }
 
     kill(sig) {
@@ -1817,8 +1817,8 @@ class Thread {
         thread.detach(@handle)
     }
 
-    id() {
-        int(@handle)
+    id(t) {
+        thread.id(t)
     }
 }
 
