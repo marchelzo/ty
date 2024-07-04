@@ -36,12 +36,7 @@ extern _Bool EnableLogging;
 #define LOG(...) ;
 #endif
 
-#ifdef _WIN32
-#include <windows.h>
-#define TID ((unsigned long long)GetCurrentThreadId())
-#else
-#define TID ((unsigned long long)pthread_self())
-#endif
+#define TID MyThreadId()
 
 #if 0
 #define GCLOG(...) if (EnableLogging) do { \

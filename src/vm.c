@@ -24,6 +24,7 @@
 #include "polyfill_unistd.h"
 #include "polyfill_stdatomic.h"
 #include "barrier.h"
+#include "tthread.h"
 
 #ifdef __linux__
 #include <sys/epoll.h>
@@ -52,6 +53,9 @@
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <net/if.h>
+#include <poll.h>
+#include <termios.h>
+#include <dirent.h>
 #endif
 
 #include "value.h"
@@ -145,7 +149,7 @@ struct sigfn {
 
 typedef vec(struct value) ValueStack;
 typedef vec(char const *) StringVector;
-typedef vec(struct try) TryStack;
+typedef vec(struct try *) TryStack;
 typedef vec(struct sigfn) SigfnStack;
 
 static SigfnStack sigfns;
@@ -162,17 +166,6 @@ static _Thread_local ValueStack drop_stack;
 static _Thread_local char *ip;
 
 typedef struct {
-        ValueStack stack;
-        CallStack calls;
-        FrameStack frames;
-        SPStack sp_stack;
-        TargetStack targets;
-        TryStack try_stack;
-        char *ip;
-        bool waiting;
-} TyThread;
-
-typedef struct {
         ValueStack *stack;
         FrameStack *frames;
         TargetStack *targets;
@@ -183,33 +176,24 @@ typedef struct {
         size_t *MemoryUsed;
 } ThreadStorage;
 
-static vec(TyThread) Threads;
-static int ThreadIndex;
-
 static char const *filename;
 static char const *Error;
 bool CompileOnly = false;
 bool PrintResult = false;
 
-pthread_t BuiltinRunner;
-pthread_t MainThread;
-
-MessageQueue q1;
-MessageQueue q2;
-
 typedef struct thread_group {
-        pthread_mutex_t Lock;
-        pthread_mutex_t GCLock;
-        vec(pthread_t) ThreadList;
-        vec(pthread_mutex_t *) ThreadLocks;
+        TyMutex Lock;
+        TyMutex GCLock;
+        vec(TyThread) ThreadList;
+        vec(TyMutex *) ThreadLocks;
         vec(ThreadStorage) ThreadStorages;
         vec(atomic_bool *) ThreadStates;
         atomic_bool WantGC;
-        pthread_barrier_t GCBarrierStart;
-        pthread_barrier_t GCBarrierMark;
-        pthread_barrier_t GCBarrierSweep;
-        pthread_barrier_t GCBarrierDone;
-        pthread_mutex_t DLock;
+        TyBarrier GCBarrierStart;
+        TyBarrier GCBarrierMark;
+        TyBarrier GCBarrierSweep;
+        TyBarrier GCBarrierDone;
+        TyMutex DLock;
         AllocList DeadAllocs;
         size_t DeadUsed;
 } ThreadGroup;
@@ -227,20 +211,24 @@ static ThreadGroup MainGroup;
 
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 
-_Thread_local pthread_mutex_t *MyLock;
+_Thread_local TyMutex *MyLock;
 static _Thread_local atomic_bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
 static _Thread_local ThreadGroup *MyGroup;
 static _Thread_local bool GCInProgress;
+static _Thread_local uint64_t MyId;
 
 void
 MarkStorage(ThreadStorage const *storage);
+
+static TyThreadReturnValue
+vm_run_thread(void *p);
 
 static void
 LockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                pthread_mutex_lock(MyGroup->ThreadLocks.items[threads[i]]);
+                TyMutexLock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
@@ -248,7 +236,7 @@ inline static void
 UnlockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                pthread_mutex_unlock(MyGroup->ThreadLocks.items[threads[i]]);
+                TyMutexUnlock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
@@ -279,9 +267,9 @@ InitThreadGroup(ThreadGroup *g)
         vec_init(g->ThreadStorages);
         vec_init(g->ThreadLocks);
         vec_init(g->DeadAllocs);
-        pthread_mutex_init(&g->Lock, NULL);
-        pthread_mutex_init(&g->GCLock, NULL);
-        pthread_mutex_init(&g->DLock, NULL);
+        TyMutexInit(&g->Lock);
+        TyMutexInit(&g->GCLock);
+        TyMutexInit(&g->DLock);
         g->WantGC = false;
         g->DeadUsed = 0;
 
@@ -316,18 +304,18 @@ WaitGC()
         TakeLock();
 
         GCLOG("Waiting to mark: %llu", TID);
-        pthread_barrier_wait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&MyGroup->GCBarrierStart);
         GCLOG("Marking: %llu", TID);
         MarkStorage(&MyStorage);
 
         GCLOG("Waiting to sweep: %llu", TID);
-        pthread_barrier_wait(&MyGroup->GCBarrierMark);
+        TyBarrierWait(&MyGroup->GCBarrierMark);
         GCLOG("Sweeping: %llu", TID);
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Waiting to continue execution: %llu", TID);
-        pthread_barrier_wait(&MyGroup->GCBarrierSweep);
-        pthread_barrier_wait(&MyGroup->GCBarrierDone);
+        TyBarrierWait(&MyGroup->GCBarrierSweep);
+        TyBarrierWait(&MyGroup->GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
 }
 
@@ -336,7 +324,7 @@ DoGC()
 {
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        if (pthread_mutex_trylock(&MyGroup->GCLock) != 0) {
+        if (!TyMutexTryLock(&MyGroup->GCLock)) {
                 GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
                 WaitGC();
                 return;
@@ -344,9 +332,9 @@ DoGC()
 
         GCInProgress = true;
 
-        pthread_mutex_lock(&MyGroup->Lock);
+        TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
+        XLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
 
@@ -368,14 +356,12 @@ DoGC()
         int nBlocked = 0;
         int nRunning = 0;
 
-        pthread_t me = pthread_self();
-
         for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (pthread_equal(me, MyGroup->ThreadList.items[i])) {
+                if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         continue;
                 }
                 //GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
-                pthread_mutex_lock(MyGroup->ThreadLocks.items[i]);
+                TyMutexLock(MyGroup->ThreadLocks.items[i]);
                 if (*MyGroup->ThreadStates.items[i]) {
                         //GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
                         blockedThreads[nBlocked++] = i;
@@ -388,14 +374,14 @@ DoGC()
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
-        pthread_barrier_init(&MyGroup->GCBarrierStart, NULL, nRunning + 1);
-        pthread_barrier_init(&MyGroup->GCBarrierMark, NULL, nRunning + 1);
-        pthread_barrier_init(&MyGroup->GCBarrierSweep, NULL, nRunning + 1);
-        pthread_barrier_init(&MyGroup->GCBarrierDone, NULL, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierStart, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierMark, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierSweep, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierDone, nRunning + 1);
 
         UnlockThreads(runningThreads, nRunning);
 
-        pthread_barrier_wait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
                 //GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
@@ -411,7 +397,7 @@ DoGC()
                 }
         }
 
-        pthread_barrier_wait(&MyGroup->GCBarrierMark);
+        TyBarrierWait(&MyGroup->GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
         MyGroup->WantGC = false;
@@ -428,22 +414,22 @@ DoGC()
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        pthread_mutex_lock(&MyGroup->DLock);
+        TyMutexLock(&MyGroup->DLock);
         GCSweep(&MyGroup->DeadAllocs, &MyGroup->DeadUsed);
-        pthread_mutex_unlock(&MyGroup->DLock);
+        TyMutexUnlock(&MyGroup->DLock);
 
-        pthread_barrier_wait(&MyGroup->GCBarrierSweep);
+        TyBarrierWait(&MyGroup->GCBarrierSweep);
 
         UnlockThreads(blockedThreads, nBlocked);
 
         GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        pthread_mutex_unlock(&MyGroup->Lock);
-        pthread_mutex_unlock(&MyGroup->GCLock);
+        TyMutexUnlock(&MyGroup->Lock);
+        TyMutexUnlock(&MyGroup->GCLock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
-        pthread_barrier_wait(&MyGroup->GCBarrierDone);
+        TyBarrierWait(&MyGroup->GCBarrierDone);
 
         GCInProgress = false;
 }
@@ -451,10 +437,12 @@ DoGC()
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+#define BOOL_(b)      { .type = VALUE_BOOLEAN,          .boolean          = (b), .tags = 0 }
 #include "builtins.h"
 #undef INT
 #undef FLOAT
 #undef BUILTIN
+#undef BOOL_
 
 static int builtin_count = sizeof builtins / sizeof builtins[0];
 
@@ -802,12 +790,18 @@ call_co(struct value *v, int n)
         ip = v->gen->ip;
 }
 
+uint64_t
+MyThreadId(void)
+{
+        return MyId;
+}
+
 void
 TakeLock(void)
 {
-        GCLOG("Taking MyLock%s", "");
-        pthread_mutex_lock(MyLock);
-        GCLOG("Took MyLock");
+        XLOG("Taking MyLock%s", "");
+        TyMutexLock(MyLock);
+        XLOG("Took MyLock");
 }
 
 void
@@ -815,7 +809,7 @@ ReleaseLock(bool blocked)
 {
         SetState(blocked);
         GCLOG("Releasing MyLock: %d", (int)blocked);
-        pthread_mutex_unlock(MyLock);
+        TyMutexUnlock(MyLock);
 }
 
 void
@@ -825,7 +819,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
 
         static _Thread_local atomic_bool created;
 
-        NewThreadCtx *ctx = malloc(sizeof *ctx);
+        NewThreadCtx *ctx = mrealloc(NULL, sizeof *ctx);
         *ctx = (NewThreadCtx) {
                 .ctx = call,
                 .name = name,
@@ -835,19 +829,13 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
         };
         created = false;
 
-#if !defined(TY_RELEASE)
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        int r = pthread_attr_setstacksize(&attr, 1ULL << 26);
-        if (r != 0)
-                vm_panic("pthread_attr_setstacksize(): %s", strerror(r));
-        r = pthread_create(&t->t, &attr, vm_run_thread, ctx);
-#else
-        int r = pthread_create(&t->t, NULL, vm_run_thread, ctx);
-#endif
+        TyMutexInit(&t->mutex);
+        TyCondVarInit(&t->cond);
+        t->alive = true;
 
+        int r = TyThreadCreate(&t->t, vm_run_thread, ctx);
         if (r != 0)
-                vm_panic("pthread_create(): %s", strerror(r));
+                vm_panic("TyThreadCreate(): %s", strerror(r));
 
         while (!created)
                 ;
@@ -856,21 +844,21 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
 }
 
 static void
-AddThread(void)
+AddThread(TyThread self)
 {
         GCLOG("AddThread(): %llu: taking lock", TID);
 
-        pthread_mutex_lock(&MyGroup->Lock);
+        TyMutexLock(&MyGroup->Lock);
 
         GCLOG("AddThread(): %llu: took lock", TID);
 
         ++GC_OFF_COUNT;
 
-        vec_push(MyGroup->ThreadList, pthread_self());
+        vec_push(MyGroup->ThreadList, self);
 
-        MyLock = malloc(sizeof *MyLock);
-        pthread_mutex_init(MyLock, NULL);
-        pthread_mutex_lock(MyLock);
+        MyLock = mrealloc(NULL, sizeof *MyLock);
+        TyMutexInit(MyLock);
+        TyMutexLock(MyLock);
         vec_push(MyGroup->ThreadLocks, MyLock);
 
         MyStorage = (ThreadStorage) {
@@ -886,13 +874,13 @@ AddThread(void)
 
         vec_push(MyGroup->ThreadStorages, MyStorage);
 
-        MyState = malloc(sizeof *MyState);
+        MyState = mrealloc(NULL, sizeof *MyState);
         *MyState = false;
         vec_push(MyGroup->ThreadStates, MyState);
 
         --GC_OFF_COUNT;
 
-        pthread_mutex_unlock(&MyGroup->Lock);
+        TyMutexUnlock(&MyGroup->Lock);
 
         GCLOG("AddThread(): %llu: finished", TID);
 }
@@ -902,12 +890,12 @@ CleanupThread(void *ctx)
 {
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        pthread_mutex_lock(&MyGroup->DLock);
+        TyMutexLock(&MyGroup->DLock);
 
         if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
-                pthread_mutex_unlock(&MyGroup->DLock);
+                TyMutexUnlock(&MyGroup->DLock);
                 DoGC();
-                pthread_mutex_lock(&MyGroup->DLock);
+                TyMutexLock(&MyGroup->DLock);
         }
 
         vec_push_n_unchecked(MyGroup->DeadAllocs, allocs.items, allocs.count);
@@ -915,26 +903,29 @@ CleanupThread(void *ctx)
 
         allocs.count = 0;
 
-        pthread_mutex_unlock(&MyGroup->DLock);
+        TyMutexUnlock(&MyGroup->DLock);
 
         ReleaseLock(true);
 
-        pthread_mutex_lock(&MyGroup->Lock);
+        TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("Got threads lock on thread: %llu -- ready to clean up", TID);
+        GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %llu", TID, MyGroup->ThreadList.count);
 
         for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (pthread_equal(MyGroup->ThreadList.items[i], pthread_self())) {
+                if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         MyGroup->ThreadList.items[i] = *vec_pop(MyGroup->ThreadList);
                         MyGroup->ThreadLocks.items[i] = *vec_pop(MyGroup->ThreadLocks);
                         MyGroup->ThreadStorages.items[i] = *vec_pop(MyGroup->ThreadStorages);
                         MyGroup->ThreadStates.items[i] = *vec_pop(MyGroup->ThreadStates);
+                        break;
                 }
         }
 
-        pthread_mutex_unlock(&MyGroup->Lock);
+        size_t group_remaining = MyGroup->ThreadList.count;
 
-        pthread_mutex_destroy(MyLock);
+        TyMutexUnlock(&MyGroup->Lock);
+
+        TyMutexDestroy(MyLock);
         free(MyLock);
         free((void *)MyState);
         free(stack.items);
@@ -951,10 +942,11 @@ CleanupThread(void *ctx)
         vec(struct value const *) *root_set = GCRootSet();
         free(root_set->items);
 
-        if (MyGroup->ThreadList.count == 0) {
-                pthread_mutex_destroy(&MyGroup->Lock);
-                pthread_mutex_destroy(&MyGroup->GCLock);
-                pthread_mutex_destroy(&MyGroup->DLock);
+        if (group_remaining == 0) {
+                XLOG("Cleaning up group %p", (void*)MyGroup);
+                TyMutexDestroy(&MyGroup->Lock);
+                TyMutexDestroy(&MyGroup->GCLock);
+                TyMutexDestroy(&MyGroup->DLock);
                 gc_free(MyGroup->ThreadList.items);
                 gc_free(MyGroup->ThreadLocks.items);
                 gc_free(MyGroup->ThreadStates.items);
@@ -963,16 +955,18 @@ CleanupThread(void *ctx)
                 gc_free(MyGroup);
         }
 
-        GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
+        XLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
 }
 
-void *
+static TyThreadReturnValue
 vm_run_thread(void *p)
 {
         NewThreadCtx *ctx = p;
         struct value *call = ctx->ctx;
         struct value *name = ctx->name;
         Thread *t = ctx->t;
+
+        MyId = t->i;
 
         int argc = 0;
 
@@ -984,7 +978,7 @@ vm_run_thread(void *p)
 
         MyGroup = ctx->group;
 
-        AddThread();
+        AddThread(t->t);
 
         gc_push(&call[0]);
 
@@ -994,25 +988,34 @@ vm_run_thread(void *p)
                 pop();
         }
 
-        pthread_cleanup_push(CleanupThread, NULL);
+        //pthread_cleanup_push(CleanupThread, NULL);
 
         *ctx->created = true;
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
                 fprintf(stderr, "Thread %p dying with error: %s\n", (void *)TID, ERR);
+                OKGC(t);
                 t->v = NIL;
         } else {
                 t->v = vm_call(call, argc);
         }
 
-        pthread_cleanup_pop(1);
+        //pthread_cleanup_pop(1);
+
+        CleanupThread(NULL);
 
         free(ctx);
         gc_free(call);
+
+        TyMutexLock(&t->mutex);
+        t->alive = false;
+        TyMutexUnlock(&t->mutex);
+        TyCondVarSignal(&t->cond);
+
         OKGC(t);
 
-        return &t->v;
+        return TY_THREAD_OK;
 }
 
 
@@ -1493,12 +1496,12 @@ DoDrop(void)
         vec_pop(drop_stack);
 }
 
-inline static struct try *
+inline static struct try **
 GetCurrentTry(void)
 {
         for (int i = 0; i < try_stack.count; ++i) {
-                struct try *t = vec_last(try_stack) - i;
-                if (t->state == TRY_TRY || t->state == TRY_FINALLY) {
+                struct try **t = vec_last(try_stack) - i;
+                if ((*t)->state == TRY_TRY || (*t)->state == TRY_FINALLY) {
                         return t;
                 }
         }
@@ -1538,6 +1541,19 @@ vm_try_exec(char *code)
         ip = save;
 
         return pop();
+}
+
+static void
+printjb(jmp_buf jb)
+{
+        unsigned char const *p = (unsigned char const *)jb;
+        unsigned long hash = 2166136261UL;
+
+        for (int i = 0; i < sizeof (jmp_buf); ++i) {
+                hash = (hash ^ p[i]) * 16777619UL;
+        }
+
+        printf("%lx\n", hash);
 }
 
 void
@@ -1916,9 +1932,9 @@ Throw:
                         // Fallthrough
                 CASE(RETHROW)
                 {
-                        struct try *t = GetCurrentTry();
+                        struct try **tp = GetCurrentTry();
 
-                        if (t == NULL) {
+                        if (tp == NULL) {
                                 ThrowCtx c = *vec_pop(throw_stack);
 
                                 frames.count = c.ctxs;
@@ -1926,6 +1942,8 @@ Throw:
 
                                 vm_panic("uncaught exception: %s%s%s", TERM(31), value_show_color(top()), TERM(39));
                         }
+
+                        struct try *t = *tp;
 
                         if (t->state == TRY_FINALLY) {
                                 vm_panic(
@@ -1939,14 +1957,14 @@ Throw:
 
                         v = pop();
 
-                        for (struct try *t_ = vec_last(try_stack); t_ != t; --t_) {
-                                t_->state = TRY_FINALLY;
-                                if (t_->finally != NULL) {
-                                        *t_->end = INSTR_HALT;
-                                        vm_exec(t_->finally);
-                                        *t_->end = INSTR_NOP;
+                        for (struct try **t_ = vec_last(try_stack); t_ != tp; --t_) {
+                                t_[0]->state = TRY_FINALLY;
+                                if (t_[0]->finally != NULL) {
+                                        *t_[0]->end = INSTR_HALT;
+                                        vm_exec(t_[0]->finally);
+                                        *t_[0]->end = INSTR_NOP;
                                 }
-                                while (drop_stack.count > t_->ds) {
+                                while (drop_stack.count > t_[0]->ds) {
                                         DoDrop();
                                 }
                         }
@@ -1955,7 +1973,7 @@ Throw:
                                 DoDrop();
                         }
 
-                        try_stack.count -= vec_last(try_stack) - t;
+                        try_stack.count -= vec_last(try_stack) - tp;
 
                         stack.count = t->sp;
 
@@ -1974,7 +1992,7 @@ Throw:
                 }
                 CASE(FINALLY)
                 {
-                        struct try *t = vec_pop(try_stack);
+                        struct try *t = *vec_pop(try_stack);
                         t->state = TRY_FINALLY;
                         if (t->finally == NULL)
                                 break;
@@ -1987,32 +2005,40 @@ Throw:
                         --try_stack.count;
                         break;
                 CASE(RESUME_TRY)
-                        vec_last(try_stack)->state = TRY_TRY;
+                        vec_last(try_stack)[0]->state = TRY_TRY;
                         break;
                 CASE(CATCH)
                         --throw_stack.count;
-                        vec_last(try_stack)->state = TRY_CATCH;
+                        vec_last(try_stack)[0]->state = TRY_CATCH;
                         break;
                 CASE(TRY)
                 {
                         READVALUE(n);
-                        struct try t;
-                        if (setjmp(t.jb) != 0)
+                        struct try *t;
+                        if (try_stack.count == try_stack.capacity) {
+                                do {
+                                        t = mrealloc(NULL, sizeof *t);
+                                        vec_push(try_stack, t);
+                                } while (try_stack.count != try_stack.capacity);
+                        } else {
+                                t = try_stack.items[try_stack.count++];
+                        }
+                        if (setjmp(t->jb) != 0) {
                                 break;
-                        t.catch = ip + n;
+                        }
+                        t->catch = ip + n;
                         READVALUE(n);
-                        t.finally = (n == -1) ? NULL : ip + n;
+                        t->finally = (n == -1) ? NULL : ip + n;
                         READVALUE(n);
-                        t.end = (n == -1) ? NULL : ip + n;
-                        t.sp = stack.count;
-                        t.gc = gc_root_set_count();
-                        t.cs = calls.count;
-                        t.ts = targets.count;
-                        t.ds = drop_stack.count;
-                        t.ctxs = frames.count;
-                        t.executing = false;
-                        t.state = TRY_TRY;
-                        vec_push(try_stack, t);
+                        t->end = (n == -1) ? NULL : ip + n;
+                        t->sp = stack.count;
+                        t->gc = gc_root_set_count();
+                        t->cs = calls.count;
+                        t->ts = targets.count;
+                        t->ds = drop_stack.count;
+                        t->ctxs = frames.count;
+                        t->executing = false;
+                        t->state = TRY_TRY;
                         break;
                 }
                 CASE(DROP)
@@ -3701,35 +3727,6 @@ BadContainer:
         }
 }
 
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static struct value *builtin_argv;
-
-void *
-run_builtin_thread(void *ctx)
-{
-        struct value v;
-
-        for (;;) {
-                while (q2.n == 0) {
-                        ;
-                }
-
-                Message *msg = queue_take(&q2);
-
-                switch (msg->type) {
-                case TYMSG_CALL:
-                        v = msg->f->builtin_function(msg->n, NULL);
-                        msg->type = TYMSG_RESULT;
-                        msg->v = v;
-                        queue_add(&q1, msg);
-                        break;
-                }
-        }
-
-        return NULL;
-}
-
 char const *
 vm_error(void)
 {
@@ -3778,8 +3775,6 @@ vm_init(int ac, char **av)
 
         InitThreadGroup(MyGroup = &MainGroup);
 
-        MainThread = pthread_self();
-
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
@@ -3804,17 +3799,9 @@ vm_init(int ac, char **av)
                 return false;
         }
 
-        queue_init(&q1);
-        queue_init(&q2);
-
-        AddThread();
+        AddThread(TyThreadSelf());
 
         --GC_OFF_COUNT;
-
-//        int e;
-//        if (e = pthread_create(&BuiltinRunner, NULL, run_builtin_thread, NULL), e != 0) {
-//                vm_panic("Failed to create thread: %s", strerror(e));
-//        }
 
         atexit(RunExitHooks);
 
@@ -4048,44 +4035,6 @@ FrameStack *
 vm_get_frames(void)
 {
         return &frames;
-}
-
-struct value
-vm_call2(struct value const *f, int argc)
-{
-        struct value v;
-        Message *msg = gc_alloc(sizeof *msg);
-
-        msg->args = gc_alloc(sizeof *msg->args * argc);
-        msg->f = gc_alloc(sizeof *msg->f);
-        *msg->f = *f;
-
-        for (int i = 0; i < argc; ++i) {
-                msg->args[i] = top()[i - argc + 1];
-        }
-
-        queue_add(&q1, msg);
-
-        for (;;) {
-                while (q2.n == 0) {
-                        ;
-                }
-
-                msg = queue_take(&q2);
-
-                switch (msg->type) {
-                case TYMSG_RESULT:
-                        v = msg->v;
-                        gc_free(msg);
-                        return v;
-                case TYMSG_CALL:
-                        v = msg->f->builtin_function(msg->n, NULL);
-                        msg->type = TYMSG_RESULT;
-                        msg->v = v;
-                        queue_add(&q1, msg);
-                        break;
-                }
-        }
 }
 
 struct value

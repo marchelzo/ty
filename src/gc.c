@@ -8,6 +8,7 @@
 #include "log.h"
 #include "token.h"
 #include "class.h"
+#include "tthread.h"
 
 _Thread_local AllocList allocs;
 _Thread_local size_t MemoryUsed = 0;
@@ -28,6 +29,7 @@ collect(struct alloc *a)
         struct value o;
         struct value finalizer;
         struct regex *re;
+        Thread *t;
 
         switch (a->type) {
         case GC_ARRAY:     gc_free(((struct array *)p)->items);    break;
@@ -41,9 +43,12 @@ collect(struct alloc *a)
                 gc_free(((Generator *)p)->sps.items);
                 break;
         case GC_THREAD:
-                if (((Thread *)p)->v.type == VALUE_NONE) {
-                        pthread_detach(((Thread *)p)->t);
+                t = p;
+                if (t->v.type == VALUE_NONE) {
+                        TyThreadDetach(((Thread *)p)->t);
                 }
+                TyMutexDestroy(&t->mutex);
+                TyCondVarDestroy(&t->cond);
                 break;
         case GC_OBJECT:
                 o = OBJECT((struct table *)p, ((struct table *)p)->class);

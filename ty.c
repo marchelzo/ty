@@ -26,6 +26,7 @@
 #include "str.h"
 #include "dict.h"
 #include "array.h"
+#include "polyfill_time.h"
 
 #define MAX_COMPLETIONS 200
 

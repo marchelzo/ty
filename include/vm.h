@@ -1,6 +1,7 @@
 #ifndef VM_H_INCLUDED
 #define VM_H_INCLUDED
 
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
@@ -9,7 +10,7 @@
 #include <signal.h>
 
 #include "value.h"
-
+#include "tthread.h"
 
 extern bool CompileOnly;
 extern bool PrintResult;
@@ -210,9 +211,6 @@ Forget(struct value *v, AllocList *allocs);
 void
 DoGC(void);
 
-void *
-vm_run_thread(void *);
-
 void
 NewThread(Thread *thread, struct value *ctx, struct value *name, bool sigma);
 
@@ -270,7 +268,7 @@ vm_get_frames(void);
 struct value
 GetMember(struct value v, char const *member, unsigned long h, bool b);
 
-extern _Thread_local pthread_mutex_t *MyLock;
+extern _Thread_local TyMutex *MyLock;
 
 void
 TakeLock(void);
@@ -278,8 +276,8 @@ TakeLock(void);
 void
 ReleaseLock(bool blocked);
 
-void
-RemoveFromRootSet(struct value *v);
+uint64_t
+MyThreadId(void);
 
 #endif
 

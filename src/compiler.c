@@ -4948,7 +4948,7 @@ compiler_import_module(struct statement const *s)
         return true;
 }
 
-static void
+void
 import_module(struct statement const *s)
 {
         char const *name = s->import.module;

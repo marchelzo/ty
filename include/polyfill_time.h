@@ -6,7 +6,7 @@
 #include <windows.h>
 #include <time.h>
 
-LARGE_INTEGER
+static inline LARGE_INTEGER
 getFILETIMEoffset()
 {
     SYSTEMTIME s;
@@ -27,7 +27,7 @@ getFILETIMEoffset()
     return (t);
 }
 
-int
+static inline int
 clock_gettime(int X, struct timespec *tv)
 {
     LARGE_INTEGER           t;
