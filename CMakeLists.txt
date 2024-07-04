@@ -35,14 +35,6 @@ if (WIN32)
   find_package(unofficial-getopt-win32 CONFIG REQUIRED)
 endif()
 
-if (WIN32)
-  # the shitty cmake file for the PThreads4W pkg sets NO_DEFAULT_PATH so it
-  # doesn't read the CMAKE_PREFIX_PATH value when trying to locate the libs
-  # instead it searches using "VCPKG_INSTALLED_DIR" and "VCPKG_TARGET_TRIPLET"
-  # defines target(s): PThreads4W::PThreads4W
-  find_package(PThreads4W CONFIG REQUIRED)
-endif()
-
 # ---
 #   global compiler variables
 # ---
@@ -73,7 +65,6 @@ set(_src_files
   src/operators.c
   src/panic.c
   src/parse.c
-  src/queue.c
   src/scope.c
   src/sqlite.c
   src/str.c
@@ -93,7 +84,6 @@ target_compile_options(${_tgt_ty}
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wno-switch -Wno-unused-value -Wno-unused-function>
     $<$<CXX_COMPILER_ID:Clang>:-Weverything>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
-    $<$<CXX_COMPILER_ID:MSVC>:/fsanitize=address>
 )
 
 target_sources(${_tgt_ty}
@@ -114,7 +104,6 @@ target_link_libraries(${_tgt_ty}
     unofficial::pcre::pcre
     $<$<NOT:${WIN32}>:unofficial::readline::readline>
     $<${WIN32}:unofficial::readline-win32::readline>
-    $<${WIN32}:PThreads4W::PThreads4W>
     $<${WIN32}:unofficial::getopt-win32::getopt>
     utf8proc
     $<${WIN32}:ws2_32> # winsock2

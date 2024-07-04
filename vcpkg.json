@@ -8,7 +8,6 @@
         "sqlite3",
         "gumbo",
         "pcre",
-        "pthreads",
         "getopt"
     ]
 }

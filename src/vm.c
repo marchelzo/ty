@@ -19,7 +19,6 @@
 
 #include <fcntl.h>
 #include <signal.h>
-#include <pthread.h>
 
 #include "polyfill_unistd.h"
 #include "polyfill_stdatomic.h"
@@ -56,6 +55,7 @@
 #include <poll.h>
 #include <termios.h>
 #include <dirent.h>
+#include <pthread.h>
 #endif
 
 #include "value.h"
@@ -80,7 +80,6 @@
 #include "html.h"
 #include "curl.h"
 #include "sqlite.h"
-#include "queue.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -209,7 +208,9 @@ typedef struct {
 
 static ThreadGroup MainGroup;
 
+#ifndef _WIN32
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
+#endif
 
 _Thread_local TyMutex *MyLock;
 static _Thread_local atomic_bool *MyState;
@@ -988,7 +989,9 @@ vm_run_thread(void *p)
                 pop();
         }
 
-        //pthread_cleanup_push(CleanupThread, NULL);
+#ifndef _WIN32
+        pthread_cleanup_push(CleanupThread, NULL);
+#endif
 
         *ctx->created = true;
 
@@ -1001,9 +1004,11 @@ vm_run_thread(void *p)
                 t->v = vm_call(call, argc);
         }
 
-        //pthread_cleanup_pop(1);
-
+#ifndef _WIN32
+        pthread_cleanup_pop(1);
+#else
         CleanupThread(NULL);
+#endif
 
         free(ctx);
         gc_free(call);
@@ -1022,6 +1027,7 @@ vm_run_thread(void *p)
 void
 vm_del_sigfn(int sig)
 {
+#ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
 
         for (int i = 0; i < sigfns.count; ++i) {
@@ -1035,11 +1041,13 @@ vm_del_sigfn(int sig)
         }
 
         pthread_rwlock_unlock(&SigLock);
+#endif
 }
 
 void
 vm_set_sigfn(int sig, struct value const *f)
 {
+#ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
 
         for (int i = 0; i < sigfns.count; ++i) {
@@ -1053,13 +1061,14 @@ vm_set_sigfn(int sig, struct value const *f)
 
 End:
         pthread_rwlock_unlock(&SigLock);
+#endif
 }
 
 struct value
 vm_get_sigfn(int sig)
 {
         struct value f = NIL;
-
+#ifndef _WIN32
         pthread_rwlock_rdlock(&SigLock);
 
         for (int i = 0; i < sigfns.count; ++i) {
@@ -1070,13 +1079,14 @@ vm_get_sigfn(int sig)
         }
 
         pthread_rwlock_unlock(&SigLock);
-
+#endif
         return f;
 }
 
 void
 vm_do_signal(int sig, void *info_, void *ctx)
 {
+#ifndef _WIN32
         struct value f = NIL;
 
         pthread_rwlock_rdlock(&SigLock);
@@ -1094,9 +1104,7 @@ vm_do_signal(int sig, void *info_, void *ctx)
                 return;
         }
 
-#ifndef _WIN32
         siginfo_t *info = info_;
-#endif
 
         switch (sig) {
 #ifdef SIGIO
@@ -1112,6 +1120,7 @@ vm_do_signal(int sig, void *info_, void *ctx)
         default:
                 vm_call(&f, 0);
         }
+#endif
 }
 
 inline static void

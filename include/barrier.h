@@ -1,6 +1,8 @@
 #ifndef PTHREAD_BARRIER_H
 #define PTHREAD_BARRIER_H
 
+#ifndef _WIN32
+
 #include <pthread.h>
 
 #ifdef __APPLE__
@@ -143,5 +145,7 @@ pthread_barrier_wait(pthread_barrier_t *barrier)
 }
 
 #endif /* __APPLE__ */
+
+#endif /* _WIN32 */
 
 #endif /* PTHREAD_BARRIER_H */
