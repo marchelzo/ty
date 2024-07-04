@@ -6,7 +6,6 @@
 #include <stdarg.h>
 #include <stdnoreturn.h>
 
-#include <pthread.h>
 #include <signal.h>
 
 #include "value.h"
@@ -14,7 +13,6 @@
 
 extern bool CompileOnly;
 extern bool PrintResult;
-extern pthread_t MainThread;
 extern _Thread_local int EvalDepth;
 
 enum instruction {

@@ -20,7 +20,6 @@
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 #include <utf8proc.h>
-#include <pthread.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -56,6 +55,7 @@ typedef struct stat StatStruct;
 #include <sys/time.h>
 #include <poll.h>
 #include <sys/mman.h>
+#include <pthread.h>
 #endif
 
 #include "tags.h"
@@ -3267,7 +3267,9 @@ struct value
 builtin_thread_setname(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.setName()", 1);
-
+#ifdef _WIN32
+        NOT_ON_WINDOWS("thread.setName()");
+#else
         struct value name = ARG(0);
         char const *pname;
         int n;
@@ -3297,8 +3299,8 @@ builtin_thread_setname(int argc, struct value *kwargs)
 #elif __linux__
         pthread_setname_np(pthread_self(), pname);
 #endif
-
         return NIL;
+#endif
 }
 
 struct value
@@ -3306,12 +3308,16 @@ builtin_thread_getname(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.getName()", 0);
 
+#ifdef _WIN32
+        NOT_ON_WINDOWS("thread.getName()");
+#else
         int r = pthread_getname_np(pthread_self(), buffer, sizeof buffer);
         if (r != 0) {
                 return NIL;
         }
 
         return STRING_CLONE(buffer, strlen(buffer));
+#endif
 }
 
 struct value
