@@ -1,0 +1,8 @@
+# anything beginning with underscore
+_*
+# ides
+.vscode
+.vs
+# vcpkg
+vcpkg_installed
+vcpkg

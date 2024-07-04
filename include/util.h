@@ -7,8 +7,16 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdbool.h>
-#include <unistd.h>
+#include "polyfill_unistd.h"
 #include <pcre.h>
+
+#ifdef max
+#undef max
+#endif
+
+#ifdef min
+#undef min
+#endif
 
 #define TERM(n) (isatty(2) ? ("\x1b[" #n "m") : "")
 #define ERR_SIZE 4096

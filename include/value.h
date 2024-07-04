@@ -11,6 +11,7 @@ struct value;
 #include "ast.h"
 #include "gc.h"
 #include "tags.h"
+#include "tthread.h"
 
 #define V_ALIGN (_Alignof (struct value))
 
@@ -358,9 +359,18 @@ struct generator {
 };
 
 struct thread {
+#ifdef _WIN32
+        HANDLE t;
+        CRITICAL_SECTION mutex;
+        CONDITION_VARIABLE cond;
+#else
         pthread_t t;
+        pthread_mutex_t mutex;
+        pthread_cond_t cond;
+#endif
         struct value v;
         uint64_t i;
+        bool alive;
 };
 
 struct chanval {
@@ -370,8 +380,8 @@ struct chanval {
 
 struct channel {
         bool open;
-        pthread_mutex_t m;
-        pthread_cond_t c;
+        TyMutex m;
+        TyCondVar c;
         vec(ChanVal) q;
 };
 

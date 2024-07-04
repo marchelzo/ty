@@ -3,7 +3,7 @@ import os (..)
 let chan = Channel()
 
 Thread(isolated: true, function () {
-    sleep(0.01)
+    sleep(0.1)
     chan.send('PASS')
 })
 

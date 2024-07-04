@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <time.h>
 #include <string.h>
 #include <ctype.h>
@@ -5,7 +10,6 @@
 #include <stdbool.h>
 #include <setjmp.h>
 #include <stdarg.h>
-#include <stdatomic.h>
 #include <errno.h>
 #include <stdnoreturn.h>
 #include <locale.h>
@@ -13,20 +17,31 @@
 #include <pcre.h>
 #include <curl/curl.h>
 
-#include <poll.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <signal.h>
-#include <dirent.h>
-#include <pthread.h>
-#include <termios.h>
 
+#include "polyfill_unistd.h"
+#include "polyfill_stdatomic.h"
 #include "barrier.h"
+#include "tthread.h"
 
 #ifdef __linux__
 #include <sys/epoll.h>
 #endif
 
+#ifdef _WIN32
+#include <windows.h>
+#define PATH_MAX MAX_PATH
+#define NAME_MAX MAX_PATH
+#define O_DIRECTORY 0
+#define O_ASYNC 0
+#define O_NONBLOCK 0
+#define SHUT_RD SD_RECEIVE
+#define SHUT_WR SD_SEND
+#define SHUT_RDWR SD_BOTH
+#define CLOCK_REALTIME 0
+#define CLOCK_MONOTONIC 0
+#else
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
@@ -37,6 +52,11 @@
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <net/if.h>
+#include <poll.h>
+#include <termios.h>
+#include <dirent.h>
+#include <pthread.h>
+#endif
 
 #include "value.h"
 #include "cffi.h"
@@ -60,7 +80,6 @@
 #include "html.h"
 #include "curl.h"
 #include "sqlite.h"
-#include "queue.h"
 
 #define TY_LOG_VERBOSE 1
 
@@ -129,7 +148,7 @@ struct sigfn {
 
 typedef vec(struct value) ValueStack;
 typedef vec(char const *) StringVector;
-typedef vec(struct try) TryStack;
+typedef vec(struct try *) TryStack;
 typedef vec(struct sigfn) SigfnStack;
 
 static SigfnStack sigfns;
@@ -146,17 +165,6 @@ static _Thread_local ValueStack drop_stack;
 static _Thread_local char *ip;
 
 typedef struct {
-        ValueStack stack;
-        CallStack calls;
-        FrameStack frames;
-        SPStack sp_stack;
-        TargetStack targets;
-        TryStack try_stack;
-        char *ip;
-        bool waiting;
-} TyThread;
-
-typedef struct {
         ValueStack *stack;
         FrameStack *frames;
         TargetStack *targets;
@@ -167,33 +175,24 @@ typedef struct {
         size_t *MemoryUsed;
 } ThreadStorage;
 
-static vec(TyThread) Threads;
-static int ThreadIndex;
-
 static char const *filename;
 static char const *Error;
 bool CompileOnly = false;
 bool PrintResult = false;
 
-pthread_t BuiltinRunner;
-pthread_t MainThread;
-
-MessageQueue q1;
-MessageQueue q2;
-
 typedef struct thread_group {
-        pthread_mutex_t Lock;
-        pthread_mutex_t GCLock;
-        vec(pthread_t) ThreadList;
-        vec(pthread_mutex_t *) ThreadLocks;
+        TyMutex Lock;
+        TyMutex GCLock;
+        vec(TyThread) ThreadList;
+        vec(TyMutex *) ThreadLocks;
         vec(ThreadStorage) ThreadStorages;
-        vec(_Atomic bool *) ThreadStates;
+        vec(atomic_bool *) ThreadStates;
         atomic_bool WantGC;
-        pthread_barrier_t GCBarrierStart;
-        pthread_barrier_t GCBarrierMark;
-        pthread_barrier_t GCBarrierSweep;
-        pthread_barrier_t GCBarrierDone;
-        pthread_mutex_t DLock;
+        TyBarrier GCBarrierStart;
+        TyBarrier GCBarrierMark;
+        TyBarrier GCBarrierSweep;
+        TyBarrier GCBarrierDone;
+        TyMutex DLock;
         AllocList DeadAllocs;
         size_t DeadUsed;
 } ThreadGroup;
@@ -209,22 +208,28 @@ typedef struct {
 
 static ThreadGroup MainGroup;
 
+#ifndef _WIN32
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
+#endif
 
-_Thread_local pthread_mutex_t *MyLock;
-static _Thread_local _Atomic bool *MyState;
+_Thread_local TyMutex *MyLock;
+static _Thread_local atomic_bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
 static _Thread_local ThreadGroup *MyGroup;
 static _Thread_local bool GCInProgress;
+static _Thread_local uint64_t MyId;
 
 void
 MarkStorage(ThreadStorage const *storage);
+
+static TyThreadReturnValue
+vm_run_thread(void *p);
 
 static void
 LockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                pthread_mutex_lock(MyGroup->ThreadLocks.items[threads[i]]);
+                TyMutexLock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
@@ -232,14 +237,14 @@ inline static void
 UnlockThreads(int *threads, int n)
 {
         for (int i = 0; i < n; ++i) {
-                pthread_mutex_unlock(MyGroup->ThreadLocks.items[threads[i]]);
+                TyMutexUnlock(MyGroup->ThreadLocks.items[threads[i]]);
         }
 }
 
 inline static void
 SetState(bool blocking)
 {
-        atomic_store(MyState, blocking);
+        *MyState = blocking;
 }
 
 void
@@ -263,10 +268,10 @@ InitThreadGroup(ThreadGroup *g)
         vec_init(g->ThreadStorages);
         vec_init(g->ThreadLocks);
         vec_init(g->DeadAllocs);
-        pthread_mutex_init(&g->Lock, NULL);
-        pthread_mutex_init(&g->GCLock, NULL);
-        pthread_mutex_init(&g->DLock, NULL);
-        atomic_store(&g->WantGC, false);
+        TyMutexInit(&g->Lock);
+        TyMutexInit(&g->GCLock);
+        TyMutexInit(&g->DLock);
+        g->WantGC = false;
         g->DeadUsed = 0;
 
 }
@@ -289,8 +294,8 @@ WaitGC()
 
         ReleaseLock(false);
 
-        while (!atomic_load(MyState)) {
-                if (!atomic_load(&MyGroup->WantGC)) {
+        while (!*MyState) {
+                if (!MyGroup->WantGC) {
                         SetState(true);
                         TakeLock();
                         return;
@@ -300,18 +305,18 @@ WaitGC()
         TakeLock();
 
         GCLOG("Waiting to mark: %llu", TID);
-        pthread_barrier_wait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&MyGroup->GCBarrierStart);
         GCLOG("Marking: %llu", TID);
         MarkStorage(&MyStorage);
 
         GCLOG("Waiting to sweep: %llu", TID);
-        pthread_barrier_wait(&MyGroup->GCBarrierMark);
+        TyBarrierWait(&MyGroup->GCBarrierMark);
         GCLOG("Sweeping: %llu", TID);
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Waiting to continue execution: %llu", TID);
-        pthread_barrier_wait(&MyGroup->GCBarrierSweep);
-        pthread_barrier_wait(&MyGroup->GCBarrierDone);
+        TyBarrierWait(&MyGroup->GCBarrierSweep);
+        TyBarrierWait(&MyGroup->GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
 }
 
@@ -320,7 +325,7 @@ DoGC()
 {
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        if (pthread_mutex_trylock(&MyGroup->GCLock) != 0) {
+        if (!TyMutexTryLock(&MyGroup->GCLock)) {
                 GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
                 WaitGC();
                 return;
@@ -328,14 +333,14 @@ DoGC()
 
         GCInProgress = true;
 
-        pthread_mutex_lock(&MyGroup->Lock);
+        TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
+        XLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
 
         GCLOG("Storing true in WantGC on thread %llu", TID);
-        atomic_store(&MyGroup->WantGC, true);
+        MyGroup->WantGC = true;
 
         static int *blockedThreads;
         static int *runningThreads;
@@ -352,37 +357,35 @@ DoGC()
         int nBlocked = 0;
         int nRunning = 0;
 
-        pthread_t me = pthread_self();
-
         for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (pthread_equal(me, MyGroup->ThreadList.items[i])) {
+                if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         continue;
                 }
-                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
-                pthread_mutex_lock(MyGroup->ThreadLocks.items[i]);
-                if (atomic_load(MyGroup->ThreadStates.items[i])) {
-                        GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
+                //GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
+                TyMutexLock(MyGroup->ThreadLocks.items[i]);
+                if (*MyGroup->ThreadStates.items[i]) {
+                        //GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
                         blockedThreads[nBlocked++] = i;
                 } else {
-                        GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        //GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
-                        atomic_store(MyGroup->ThreadStates.items[i], true);
+                        *MyGroup->ThreadStates.items[i] = true;
                 }
         }
 
         GCLOG("nBlocked = %d, nRunning = %d on thread %llu", nBlocked, nRunning, TID);
 
-        pthread_barrier_init(&MyGroup->GCBarrierStart, NULL, nRunning + 1);
-        pthread_barrier_init(&MyGroup->GCBarrierMark, NULL, nRunning + 1);
-        pthread_barrier_init(&MyGroup->GCBarrierSweep, NULL, nRunning + 1);
-        pthread_barrier_init(&MyGroup->GCBarrierDone, NULL, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierStart, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierMark, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierSweep, nRunning + 1);
+        TyBarrierInit(&MyGroup->GCBarrierDone, nRunning + 1);
 
         UnlockThreads(runningThreads, nRunning);
 
-        pthread_barrier_wait(&MyGroup->GCBarrierStart);
+        TyBarrierWait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                //GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 MarkStorage(&MyGroup->ThreadStorages.items[blockedThreads[i]]);
         }
 
@@ -395,13 +398,13 @@ DoGC()
                 }
         }
 
-        pthread_barrier_wait(&MyGroup->GCBarrierMark);
+        TyBarrierWait(&MyGroup->GCBarrierMark);
 
         GCLOG("Storing false in WantGC on thread %llu", TID);
-        atomic_store(&MyGroup->WantGC, false);
+        MyGroup->WantGC = false;
 
         for (int i = 0; i < nBlocked; ++i) {
-                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                //GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 GCSweep(
                         MyGroup->ThreadStorages.items[blockedThreads[i]].allocs,
                         MyGroup->ThreadStorages.items[blockedThreads[i]].MemoryUsed
@@ -412,33 +415,35 @@ DoGC()
         GCSweep(MyStorage.allocs, MyStorage.MemoryUsed);
 
         GCLOG("Sweeping objects from dead threads on thread %llu", TID);
-        pthread_mutex_lock(&MyGroup->DLock);
+        TyMutexLock(&MyGroup->DLock);
         GCSweep(&MyGroup->DeadAllocs, &MyGroup->DeadUsed);
-        pthread_mutex_unlock(&MyGroup->DLock);
+        TyMutexUnlock(&MyGroup->DLock);
 
-        pthread_barrier_wait(&MyGroup->GCBarrierSweep);
+        TyBarrierWait(&MyGroup->GCBarrierSweep);
 
         UnlockThreads(blockedThreads, nBlocked);
 
         GCLOG("Unlocking ThreadsLock and GCLock. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        pthread_mutex_unlock(&MyGroup->Lock);
-        pthread_mutex_unlock(&MyGroup->GCLock);
+        TyMutexUnlock(&MyGroup->Lock);
+        TyMutexUnlock(&MyGroup->GCLock);
 
         GCLOG("Unlocked ThreadsLock and GCLock on thread %llu", TID);
 
-        pthread_barrier_wait(&MyGroup->GCBarrierDone);
+        TyBarrierWait(&MyGroup->GCBarrierDone);
 
         GCInProgress = false;
 }
 
-static struct {
-        char const *module;
-        char const *name;
-        struct value value;
-} builtins[] = {
+#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
+#define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
+#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
+#define BOOL_(b)      { .type = VALUE_BOOLEAN,          .boolean          = (b), .tags = 0 }
 #include "builtins.h"
-};
+#undef INT
+#undef FLOAT
+#undef BUILTIN
+#undef BOOL_
 
 static int builtin_count = sizeof builtins / sizeof builtins[0];
 
@@ -484,6 +489,48 @@ add_builtins(int ac, char **av)
         compiler_introduce_symbol("os", "SIGRTMIN");
         vec_push(Globals, INTEGER(SIGRTMIN));
 #endif
+
+        // Add FFI types here because they aren't constant expressions on Windows.
+        compiler_introduce_symbol("ffi", "char");
+        vec_push(Globals, PTR(&ffi_type_schar));
+        compiler_introduce_symbol("ffi", "short");
+        vec_push(Globals, PTR(&ffi_type_sshort));
+        compiler_introduce_symbol("ffi", "int");
+        vec_push(Globals, PTR(&ffi_type_sint));
+        compiler_introduce_symbol("ffi", "long");
+        vec_push(Globals, PTR(&ffi_type_slong));
+        compiler_introduce_symbol("ffi", "uchar");
+        vec_push(Globals, PTR(&ffi_type_uchar));
+        compiler_introduce_symbol("ffi", "ushort");
+        vec_push(Globals, PTR(&ffi_type_ushort));
+        compiler_introduce_symbol("ffi", "uint");
+        vec_push(Globals, PTR(&ffi_type_uint));
+        compiler_introduce_symbol("ffi", "ulong");
+        vec_push(Globals, PTR(&ffi_type_ulong));
+        compiler_introduce_symbol("ffi", "u8");
+        vec_push(Globals, PTR(&ffi_type_uint8));
+        compiler_introduce_symbol("ffi", "u16");
+        vec_push(Globals, PTR(&ffi_type_uint16));
+        compiler_introduce_symbol("ffi", "u32");
+        vec_push(Globals, PTR(&ffi_type_uint32));
+        compiler_introduce_symbol("ffi", "u64");
+        vec_push(Globals, PTR(&ffi_type_uint64));
+        compiler_introduce_symbol("ffi", "i8");
+        vec_push(Globals, PTR(&ffi_type_sint8));
+        compiler_introduce_symbol("ffi", "i16");
+        vec_push(Globals, PTR(&ffi_type_sint16));
+        compiler_introduce_symbol("ffi", "i32");
+        vec_push(Globals, PTR(&ffi_type_sint32));
+        compiler_introduce_symbol("ffi", "i64");
+        vec_push(Globals, PTR(&ffi_type_sint64));
+        compiler_introduce_symbol("ffi", "float");
+        vec_push(Globals, PTR(&ffi_type_float));
+        compiler_introduce_symbol("ffi", "double");
+        vec_push(Globals, PTR(&ffi_type_double));
+        compiler_introduce_symbol("ffi", "ptr");
+        vec_push(Globals, PTR(&ffi_type_pointer));
+        compiler_introduce_symbol("ffi", "void");
+        vec_push(Globals, PTR(&ffi_type_void));
 
 #define X(name) \
         do { \
@@ -744,12 +791,18 @@ call_co(struct value *v, int n)
         ip = v->gen->ip;
 }
 
+uint64_t
+MyThreadId(void)
+{
+        return MyId;
+}
+
 void
 TakeLock(void)
 {
-        GCLOG("Taking MyLock%s", "");
-        pthread_mutex_lock(MyLock);
-        GCLOG("Took MyLock");
+        XLOG("Taking MyLock%s", "");
+        TyMutexLock(MyLock);
+        XLOG("Took MyLock");
 }
 
 void
@@ -757,7 +810,7 @@ ReleaseLock(bool blocked)
 {
         SetState(blocked);
         GCLOG("Releasing MyLock: %d", (int)blocked);
-        pthread_mutex_unlock(MyLock);
+        TyMutexUnlock(MyLock);
 }
 
 void
@@ -767,7 +820,7 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
 
         static _Thread_local atomic_bool created;
 
-        NewThreadCtx *ctx = malloc(sizeof *ctx);
+        NewThreadCtx *ctx = mrealloc(NULL, sizeof *ctx);
         *ctx = (NewThreadCtx) {
                 .ctx = call,
                 .name = name,
@@ -775,44 +828,38 @@ NewThread(Thread *t, struct value *call, struct value *name, bool isolated)
                 .t = t,
                 .group = isolated ? NewThreadGroup() : MyGroup
         };
-        atomic_store(&created, false);
+        created = false;
 
-#if !defined(TY_RELEASE)
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        int r = pthread_attr_setstacksize(&attr, 1ULL << 26);
+        TyMutexInit(&t->mutex);
+        TyCondVarInit(&t->cond);
+        t->alive = true;
+
+        int r = TyThreadCreate(&t->t, vm_run_thread, ctx);
         if (r != 0)
-                vm_panic("pthread_attr_setstacksize(): %s", strerror(r));
-        r = pthread_create(&t->t, &attr, vm_run_thread, ctx);
-#else
-        int r = pthread_create(&t->t, NULL, vm_run_thread, ctx);
-#endif
+                vm_panic("TyThreadCreate(): %s", strerror(r));
 
-        if (r != 0)
-                vm_panic("pthread_create(): %s", strerror(r));
-
-        while (!atomic_load(&created))
+        while (!created)
                 ;
 
         TakeLock();
 }
 
 static void
-AddThread(void)
+AddThread(TyThread self)
 {
-        GCLOG("AddThread(): %llu: taking lock", (long long unsigned)pthread_self());
+        GCLOG("AddThread(): %llu: taking lock", TID);
 
-        pthread_mutex_lock(&MyGroup->Lock);
+        TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("AddThread(): %llu: took lock", (long long unsigned)pthread_self());
+        GCLOG("AddThread(): %llu: took lock", TID);
 
         ++GC_OFF_COUNT;
 
-        vec_push(MyGroup->ThreadList, pthread_self());
+        vec_push(MyGroup->ThreadList, self);
 
-        MyLock = malloc(sizeof *MyLock);
-        pthread_mutex_init(MyLock, NULL);
-        pthread_mutex_lock(MyLock);
+        MyLock = mrealloc(NULL, sizeof *MyLock);
+        TyMutexInit(MyLock);
+        TyMutexLock(MyLock);
         vec_push(MyGroup->ThreadLocks, MyLock);
 
         MyStorage = (ThreadStorage) {
@@ -828,15 +875,15 @@ AddThread(void)
 
         vec_push(MyGroup->ThreadStorages, MyStorage);
 
-        MyState = malloc(sizeof *MyState);
+        MyState = mrealloc(NULL, sizeof *MyState);
         *MyState = false;
         vec_push(MyGroup->ThreadStates, MyState);
 
         --GC_OFF_COUNT;
 
-        pthread_mutex_unlock(&MyGroup->Lock);
+        TyMutexUnlock(&MyGroup->Lock);
 
-        GCLOG("AddThread(): %llu: finished", (long long unsigned)pthread_self());
+        GCLOG("AddThread(): %llu: finished", TID);
 }
 
 static void
@@ -844,12 +891,12 @@ CleanupThread(void *ctx)
 {
         GCLOG("Cleaning up thread: %zu bytes in use. DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
-        pthread_mutex_lock(&MyGroup->DLock);
+        TyMutexLock(&MyGroup->DLock);
 
         if (MyGroup->DeadUsed + MemoryUsed > MemoryLimit) {
-                pthread_mutex_unlock(&MyGroup->DLock);
+                TyMutexUnlock(&MyGroup->DLock);
                 DoGC();
-                pthread_mutex_lock(&MyGroup->DLock);
+                TyMutexLock(&MyGroup->DLock);
         }
 
         vec_push_n_unchecked(MyGroup->DeadAllocs, allocs.items, allocs.count);
@@ -857,28 +904,31 @@ CleanupThread(void *ctx)
 
         allocs.count = 0;
 
-        pthread_mutex_unlock(&MyGroup->DLock);
+        TyMutexUnlock(&MyGroup->DLock);
 
         ReleaseLock(true);
 
-        pthread_mutex_lock(&MyGroup->Lock);
+        TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("Got threads lock on thread: %llu -- ready to clean up", TID);
+        GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %llu", TID, MyGroup->ThreadList.count);
 
         for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
-                if (pthread_equal(MyGroup->ThreadList.items[i], pthread_self())) {
+                if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         MyGroup->ThreadList.items[i] = *vec_pop(MyGroup->ThreadList);
                         MyGroup->ThreadLocks.items[i] = *vec_pop(MyGroup->ThreadLocks);
                         MyGroup->ThreadStorages.items[i] = *vec_pop(MyGroup->ThreadStorages);
                         MyGroup->ThreadStates.items[i] = *vec_pop(MyGroup->ThreadStates);
+                        break;
                 }
         }
 
-        pthread_mutex_unlock(&MyGroup->Lock);
+        size_t group_remaining = MyGroup->ThreadList.count;
 
-        pthread_mutex_destroy(MyLock);
+        TyMutexUnlock(&MyGroup->Lock);
+
+        TyMutexDestroy(MyLock);
         free(MyLock);
-        free(MyState);
+        free((void *)MyState);
         free(stack.items);
         gc_free(calls.items);
         gc_free(frames.items);
@@ -893,10 +943,11 @@ CleanupThread(void *ctx)
         vec(struct value const *) *root_set = GCRootSet();
         free(root_set->items);
 
-        if (MyGroup->ThreadList.count == 0) {
-                pthread_mutex_destroy(&MyGroup->Lock);
-                pthread_mutex_destroy(&MyGroup->GCLock);
-                pthread_mutex_destroy(&MyGroup->DLock);
+        if (group_remaining == 0) {
+                XLOG("Cleaning up group %p", (void*)MyGroup);
+                TyMutexDestroy(&MyGroup->Lock);
+                TyMutexDestroy(&MyGroup->GCLock);
+                TyMutexDestroy(&MyGroup->DLock);
                 gc_free(MyGroup->ThreadList.items);
                 gc_free(MyGroup->ThreadLocks.items);
                 gc_free(MyGroup->ThreadStates.items);
@@ -905,10 +956,10 @@ CleanupThread(void *ctx)
                 gc_free(MyGroup);
         }
 
-        GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
+        XLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
 }
 
-void *
+static TyThreadReturnValue
 vm_run_thread(void *p)
 {
         NewThreadCtx *ctx = p;
@@ -916,9 +967,11 @@ vm_run_thread(void *p)
         struct value *name = ctx->name;
         Thread *t = ctx->t;
 
+        MyId = t->i;
+
         int argc = 0;
 
-        GCLOG("New thread: %llu", (long long unsigned)pthread_self());
+        GCLOG("New thread: %llu", TID);
 
         while (call[argc + 1].type != VALUE_NONE) {
                 push(call[++argc]);
@@ -926,7 +979,7 @@ vm_run_thread(void *p)
 
         MyGroup = ctx->group;
 
-        AddThread();
+        AddThread(t->t);
 
         gc_push(&call[0]);
 
@@ -936,31 +989,45 @@ vm_run_thread(void *p)
                 pop();
         }
 
+#ifndef _WIN32
         pthread_cleanup_push(CleanupThread, NULL);
+#endif
 
-        atomic_store(ctx->created, true);
+        *ctx->created = true;
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
-                fprintf(stderr, "Thread %p dying with error: %s\n", (void *)pthread_self(), ERR);
+                fprintf(stderr, "Thread %p dying with error: %s\n", (void *)TID, ERR);
+                OKGC(t);
                 t->v = NIL;
         } else {
                 t->v = vm_call(call, argc);
         }
 
+#ifndef _WIN32
         pthread_cleanup_pop(1);
+#else
+        CleanupThread(NULL);
+#endif
 
         free(ctx);
         gc_free(call);
+
+        TyMutexLock(&t->mutex);
+        t->alive = false;
+        TyMutexUnlock(&t->mutex);
+        TyCondVarSignal(&t->cond);
+
         OKGC(t);
 
-        return &t->v;
+        return TY_THREAD_OK;
 }
 
 
 void
 vm_del_sigfn(int sig)
 {
+#ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
 
         for (int i = 0; i < sigfns.count; ++i) {
@@ -974,11 +1041,13 @@ vm_del_sigfn(int sig)
         }
 
         pthread_rwlock_unlock(&SigLock);
+#endif
 }
 
 void
 vm_set_sigfn(int sig, struct value const *f)
 {
+#ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
 
         for (int i = 0; i < sigfns.count; ++i) {
@@ -992,13 +1061,14 @@ vm_set_sigfn(int sig, struct value const *f)
 
 End:
         pthread_rwlock_unlock(&SigLock);
+#endif
 }
 
 struct value
 vm_get_sigfn(int sig)
 {
         struct value f = NIL;
-
+#ifndef _WIN32
         pthread_rwlock_rdlock(&SigLock);
 
         for (int i = 0; i < sigfns.count; ++i) {
@@ -1009,13 +1079,14 @@ vm_get_sigfn(int sig)
         }
 
         pthread_rwlock_unlock(&SigLock);
-
+#endif
         return f;
 }
 
 void
-vm_do_signal(int sig, siginfo_t *info, void *ctx)
+vm_do_signal(int sig, void *info_, void *ctx)
 {
+#ifndef _WIN32
         struct value f = NIL;
 
         pthread_rwlock_rdlock(&SigLock);
@@ -1033,18 +1104,23 @@ vm_do_signal(int sig, siginfo_t *info, void *ctx)
                 return;
         }
 
+        siginfo_t *info = info_;
+
         switch (sig) {
+#ifdef SIGIO
         case SIGIO:
 #ifdef __APPLE__
                 push(INTEGER(info->si_value.sival_int));
 #else
                 push(INTEGER(info->si_fd));
 #endif
+#endif
                 vm_call(&f, 1);
                 break;
         default:
                 vm_call(&f, 0);
         }
+#endif
 }
 
 inline static void
@@ -1429,12 +1505,12 @@ DoDrop(void)
         vec_pop(drop_stack);
 }
 
-inline static struct try *
+inline static struct try **
 GetCurrentTry(void)
 {
         for (int i = 0; i < try_stack.count; ++i) {
-                struct try *t = vec_last(try_stack) - i;
-                if (t->state == TRY_TRY || t->state == TRY_FINALLY) {
+                struct try **t = vec_last(try_stack) - i;
+                if ((*t)->state == TRY_TRY || (*t)->state == TRY_FINALLY) {
                         return t;
                 }
         }
@@ -1476,6 +1552,19 @@ vm_try_exec(char *code)
         return pop();
 }
 
+static void
+printjb(jmp_buf jb)
+{
+        unsigned char const *p = (unsigned char const *)jb;
+        unsigned long hash = 2166136261UL;
+
+        for (int i = 0; i < sizeof (jmp_buf); ++i) {
+                hash = (hash ^ p[i]) * 16777619UL;
+        }
+
+        printf("%lx\n", hash);
+}
+
 void
 vm_exec(char *code)
 {
@@ -1505,7 +1594,7 @@ vm_exec(char *code)
         PopulateGlobals();
 
         for (;;) {
-        if (GC_OFF_COUNT == 0 && atomic_load(&MyGroup->WantGC)) {
+        if (GC_OFF_COUNT == 0 && MyGroup->WantGC) {
                 WaitGC();
         }
         for (int N = 0; N < 32; ++N) {
@@ -1730,7 +1819,7 @@ vm_exec(char *code)
                                 ip += 1;
                                 break;
                         } else {
-                                vm_panic("attempt to perform subscript assignment on something other than an object or array");
+                                vm_panic("attempt to perform subscript assignment on something other than an object or array: %s", value_show_color(&container));
                         }
 
                         pop();
@@ -1772,8 +1861,8 @@ vm_exec(char *code)
                                 ip += n;
                         } else {
                                 int count = top()->count - i;
-                                struct value *rest = gc_alloc_object(sizeof (struct value[count]), GC_TUPLE);
-                                memcpy(rest, top()->items + i, count * sizeof (struct value));
+                                struct value *rest = gc_alloc_object(count * sizeof (Value), GC_TUPLE);
+                                memcpy(rest, top()->items + i, count * sizeof (Value));
                                 *vp = TUPLE(rest, NULL, count, false);
                         }
                         break;
@@ -1852,9 +1941,9 @@ Throw:
                         // Fallthrough
                 CASE(RETHROW)
                 {
-                        struct try *t = GetCurrentTry();
+                        struct try **tp = GetCurrentTry();
 
-                        if (t == NULL) {
+                        if (tp == NULL) {
                                 ThrowCtx c = *vec_pop(throw_stack);
 
                                 frames.count = c.ctxs;
@@ -1862,6 +1951,8 @@ Throw:
 
                                 vm_panic("uncaught exception: %s%s%s", TERM(31), value_show_color(top()), TERM(39));
                         }
+
+                        struct try *t = *tp;
 
                         if (t->state == TRY_FINALLY) {
                                 vm_panic(
@@ -1875,14 +1966,14 @@ Throw:
 
                         v = pop();
 
-                        for (struct try *t_ = vec_last(try_stack); t_ != t; --t_) {
-                                t_->state = TRY_FINALLY;
-                                if (t_->finally != NULL) {
-                                        *t_->end = INSTR_HALT;
-                                        vm_exec(t_->finally);
-                                        *t_->end = INSTR_NOP;
+                        for (struct try **t_ = vec_last(try_stack); t_ != tp; --t_) {
+                                t_[0]->state = TRY_FINALLY;
+                                if (t_[0]->finally != NULL) {
+                                        *t_[0]->end = INSTR_HALT;
+                                        vm_exec(t_[0]->finally);
+                                        *t_[0]->end = INSTR_NOP;
                                 }
-                                while (drop_stack.count > t_->ds) {
+                                while (drop_stack.count > t_[0]->ds) {
                                         DoDrop();
                                 }
                         }
@@ -1891,7 +1982,7 @@ Throw:
                                 DoDrop();
                         }
 
-                        try_stack.count -= vec_last(try_stack) - t;
+                        try_stack.count -= vec_last(try_stack) - tp;
 
                         stack.count = t->sp;
 
@@ -1910,7 +2001,7 @@ Throw:
                 }
                 CASE(FINALLY)
                 {
-                        struct try *t = vec_pop(try_stack);
+                        struct try *t = *vec_pop(try_stack);
                         t->state = TRY_FINALLY;
                         if (t->finally == NULL)
                                 break;
@@ -1923,32 +2014,40 @@ Throw:
                         --try_stack.count;
                         break;
                 CASE(RESUME_TRY)
-                        vec_last(try_stack)->state = TRY_TRY;
+                        vec_last(try_stack)[0]->state = TRY_TRY;
                         break;
                 CASE(CATCH)
                         --throw_stack.count;
-                        vec_last(try_stack)->state = TRY_CATCH;
+                        vec_last(try_stack)[0]->state = TRY_CATCH;
                         break;
                 CASE(TRY)
                 {
                         READVALUE(n);
-                        struct try t;
-                        if (setjmp(t.jb) != 0)
+                        struct try *t;
+                        if (try_stack.count == try_stack.capacity) {
+                                do {
+                                        t = mrealloc(NULL, sizeof *t);
+                                        vec_push(try_stack, t);
+                                } while (try_stack.count != try_stack.capacity);
+                        } else {
+                                t = try_stack.items[try_stack.count++];
+                        }
+                        if (setjmp(t->jb) != 0) {
                                 break;
-                        t.catch = ip + n;
+                        }
+                        t->catch = ip + n;
                         READVALUE(n);
-                        t.finally = (n == -1) ? NULL : ip + n;
+                        t->finally = (n == -1) ? NULL : ip + n;
                         READVALUE(n);
-                        t.end = (n == -1) ? NULL : ip + n;
-                        t.sp = stack.count;
-                        t.gc = gc_root_set_count();
-                        t.cs = calls.count;
-                        t.ts = targets.count;
-                        t.ds = drop_stack.count;
-                        t.ctxs = frames.count;
-                        t.executing = false;
-                        t.state = TRY_TRY;
-                        vec_push(try_stack, t);
+                        t->end = (n == -1) ? NULL : ip + n;
+                        t->sp = stack.count;
+                        t->gc = gc_root_set_count();
+                        t->cs = calls.count;
+                        t->ts = targets.count;
+                        t->ds = drop_stack.count;
+                        t->ctxs = frames.count;
+                        t->executing = false;
+                        t->state = TRY_TRY;
                         break;
                 }
                 CASE(DROP)
@@ -2158,7 +2257,7 @@ Throw:
                                 memcpy(
                                         v.array->items,
                                         stack.items + stack.count - n,
-                                        sizeof (struct value [n])
+                                        n * sizeof (Value)
                                 );
 
                                 v.array->count = n;
@@ -2206,17 +2305,17 @@ Throw:
                         }
 
                         k = values.count;
-                        vp = gc_alloc_object(sizeof (struct value[k]), GC_TUPLE);
+                        vp = gc_alloc_object(k * sizeof (Value), GC_TUPLE);
 
                         v = TUPLE(vp, NULL, k, false);
 
                         GC_OFF_COUNT += 1;
 
                         if (k > 0) {
-                                memcpy(vp, values.items, sizeof (struct value[k]));
+                                memcpy(vp, values.items, k * sizeof (Value));
                                 if (have_names) {
-                                        v.names = gc_alloc_object(sizeof (char *[k]), GC_TUPLE);
-                                        memcpy(v.names, names.items, sizeof (char *[k]));
+                                        v.names = gc_alloc_object(k * sizeof (char *), GC_TUPLE);
+                                        memcpy(v.names, names.items, k * sizeof (char *));
                                 }
                         }
 
@@ -2934,7 +3033,7 @@ BadContainer:
                         pop();
                         pop();
                         push(v);
-                        --top()->boolean;
+                        top()->boolean = !top()->boolean;
                         break;
                 CASE(CHECK_MATCH)
                         if (top()->type == VALUE_CLASS) {
@@ -3637,35 +3736,6 @@ BadContainer:
         }
 }
 
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static struct value *builtin_argv;
-
-void *
-run_builtin_thread(void *ctx)
-{
-        struct value v;
-
-        for (;;) {
-                while (q2.n == 0) {
-                        ;
-                }
-
-                Message *msg = queue_take(&q2);
-
-                switch (msg->type) {
-                case TYMSG_CALL:
-                        v = msg->f->builtin_function(msg->n, NULL);
-                        msg->type = TYMSG_RESULT;
-                        msg->v = v;
-                        queue_add(&q1, msg);
-                        break;
-                }
-        }
-
-        return NULL;
-}
-
 char const *
 vm_error(void)
 {
@@ -3714,8 +3784,6 @@ vm_init(int ac, char **av)
 
         InitThreadGroup(MyGroup = &MainGroup);
 
-        MainThread = pthread_self();
-
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
@@ -3740,17 +3808,9 @@ vm_init(int ac, char **av)
                 return false;
         }
 
-        queue_init(&q1);
-        queue_init(&q2);
-
-        AddThread();
+        AddThread(TyThreadSelf());
 
         --GC_OFF_COUNT;
-
-//        int e;
-//        if (e = pthread_create(&BuiltinRunner, NULL, run_builtin_thread, NULL), e != 0) {
-//                vm_panic("Failed to create thread: %s", strerror(e));
-//        }
 
         atexit(RunExitHooks);
 
@@ -3984,44 +4044,6 @@ FrameStack *
 vm_get_frames(void)
 {
         return &frames;
-}
-
-struct value
-vm_call2(struct value const *f, int argc)
-{
-        struct value v;
-        Message *msg = gc_alloc(sizeof *msg);
-
-        msg->args = gc_alloc(sizeof *msg->args * argc);
-        msg->f = gc_alloc(sizeof *msg->f);
-        *msg->f = *f;
-
-        for (int i = 0; i < argc; ++i) {
-                msg->args[i] = top()[i - argc + 1];
-        }
-
-        queue_add(&q1, msg);
-
-        for (;;) {
-                while (q2.n == 0) {
-                        ;
-                }
-
-                msg = queue_take(&q2);
-
-                switch (msg->type) {
-                case TYMSG_RESULT:
-                        v = msg->v;
-                        gc_free(msg);
-                        return v;
-                case TYMSG_CALL:
-                        v = msg->f->builtin_function(msg->n, NULL);
-                        msg->type = TYMSG_RESULT;
-                        msg->v = v;
-                        queue_add(&q1, msg);
-                        break;
-                }
-        }
 }
 
 struct value

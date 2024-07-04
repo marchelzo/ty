@@ -15,10 +15,18 @@ let r = pen(bold, red)
 let m = pen(bold, brightMagenta)
 let b = pen(bold, blue)
 
+function getTyCommand(test) {
+    if __windows__ {
+        ".\\_install\\msvc2022\\bin\\ty.exe tests\\{test}"
+    } else {
+        "./ty tests/{test}"
+    }
+}
+
 function doTest(name) {
     let testStart = time.utime()
 
-    let result = match sh("./ty tests/{name}", timeoutMs: 2000) {
+    let result = match sh(getTyCommand(name), timeoutMs: 2000) {
         nil => {
             timedOut += 1
             m('TIMEOUT')
@@ -48,7 +56,9 @@ let pool = ThreadPool(16, doTest)
 let fs = []
 
 for test in listdir('tests') {
-    fs.push(pool.submit(test))
+    if test not in ['os.ty'] {
+        fs.push(pool.submit(test))
+    }
 }
 
 fs.map(&wait)

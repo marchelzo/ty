@@ -1,19 +1,18 @@
 #ifndef VM_H_INCLUDED
 #define VM_H_INCLUDED
 
+#include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
 
-#include <pthread.h>
 #include <signal.h>
 
 #include "value.h"
-
+#include "tthread.h"
 
 extern bool CompileOnly;
 extern bool PrintResult;
-extern pthread_t MainThread;
 extern _Thread_local int EvalDepth;
 
 enum instruction {
@@ -210,9 +209,6 @@ Forget(struct value *v, AllocList *allocs);
 void
 DoGC(void);
 
-void *
-vm_run_thread(void *);
-
 void
 NewThread(Thread *thread, struct value *ctx, struct value *name, bool sigma);
 
@@ -226,7 +222,7 @@ struct value
 vm_get_sigfn(int);
 
 void
-vm_do_signal(int, siginfo_t *, void *);
+vm_do_signal(int, void *, void *);
 
 bool
 vm_execute(char const *source);
@@ -270,7 +266,7 @@ vm_get_frames(void);
 struct value
 GetMember(struct value v, char const *member, unsigned long h, bool b);
 
-extern _Thread_local pthread_mutex_t *MyLock;
+extern _Thread_local TyMutex *MyLock;
 
 void
 TakeLock(void);
@@ -278,8 +274,8 @@ TakeLock(void);
 void
 ReleaseLock(bool blocked);
 
-void
-RemoveFromRootSet(struct value *v);
+uint64_t
+MyThreadId(void);
 
 #endif
 
