@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#include <winsock2.h> // must be included before <windows.h>
+#include <ws2tcpip.h>
+#endif
+
 #include <inttypes.h>
 #include <math.h>
 #include <errno.h>
@@ -8,29 +13,49 @@
 #include <locale.h>
 #include <ctype.h>
 
+#include "tthread.h"
+#include "polyfill_time.h"
+#include "polyfill_unistd.h"
+#include "polyfill_stdatomic.h"
+#include <openssl/md5.h>
+#include <openssl/sha.h>
+#include <utf8proc.h>
+#include <signal.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <dirent.h>
+#include <sys/stat.h>
 #include <sys/types.h>
+
+#define NOT_ON_WINDOWS(name) vm_panic("%s is not implemented in Windows builds of Ty", #name);
+
+#ifdef __linux__
+#include <sys/epoll.h>
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#define fstat _fstat
+typedef struct stat StatStruct;
+typedef unsigned short mode_t;
+#define fgetc_unlocked _fgetc_nolock
+#define fputc_unlocked _fputc_nolock
+#define fwrite_unlocked _fwrite_nolock
+#define fread_unlocked _fread_nolock
+#else
+typedef struct stat StatStruct;
+#include <termios.h>
+#include <sys/mman.h>
+#include <dirent.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netdb.h>
-#include <sys/stat.h>
 #include <sys/wait.h>
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <sys/time.h>
 #include <poll.h>
-#include <signal.h>
 #include <sys/mman.h>
-#include <openssl/md5.h>
-#include <openssl/sha.h>
-#include <utf8proc.h>
 #include <pthread.h>
-#include <termios.h>
-
-#ifdef __linux__
-#include <sys/epoll.h>
 #endif
 
 #include "tags.h"
@@ -55,7 +80,7 @@
 
 static _Thread_local char buffer[1024 * 1024 * 4];
 static _Thread_local vec(char) B;
-static _Atomic uint64_t tid = 1;
+static _Atomic(uint64_t) tid = 1;
 
 #define ASSERT_ARGC(func, ac) \
         if (argc != (ac)) { \
@@ -71,6 +96,20 @@ static _Atomic uint64_t tid = 1;
         if (argc != (ac1) && argc != (ac2) && argc != (ac3)) { \
                 vm_panic(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
+
+inline static void
+GetCurrentTimespec(struct timespec* ts)
+{
+#ifdef _WIN32
+        FILETIME ft;
+        GetSystemTimeAsFileTime(&ft);
+        uint64_t totalUs = (((uint64_t)ft.dwHighDateTime << 32) + ft.dwLowDateTime - 0x19DB1DED53E8000ULL) / 10ULL;
+        ts->tv_sec = totalUs / 1000000ULL;
+        ts->tv_nsec = (totalUs % 1000000ULL) * 1000ULL;
+#else
+        clock_gettime(CLOCK_REALTIME, ts);
+#endif
+}
 
 static void
 doprint(int argc, struct value *kwargs, FILE *f)
@@ -155,6 +194,10 @@ builtin_slurp(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("slurp()", 0, 1);
 
+#if defined(_WIN32) && !defined(PATH_MAX)
+#define fstat _fstat
+#define PATH_MAX MAX_PATH
+#endif
         char p[PATH_MAX + 1];
         int fd;
         bool need_close = false;
@@ -170,7 +213,11 @@ builtin_slurp(int argc, struct value *kwargs)
                 memcpy(p, v.string, v.bytes);
                 p[v.bytes] = '\0';
 
+#ifdef _WIN32
+                fd = _open(p, _O_RDONLY);
+#else
                 fd = open(p, O_RDONLY);
+#endif
                 if (fd < 0)
                         return NIL;
 
@@ -181,7 +228,7 @@ builtin_slurp(int argc, struct value *kwargs)
                 vm_panic("the argument to slurp() must be a path or a file descriptor");
         }
 
-        struct stat st;
+        StatStruct st;
         if (fstat(fd, &st) != 0) {
                 close(fd);
                 return NIL;
@@ -189,9 +236,22 @@ builtin_slurp(int argc, struct value *kwargs)
 
         struct value *use_mmap = NAMED("mmap");
 
+#ifdef _WIN32
+#define S_ISLNK(m) 0
+#endif
+#if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
+#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
+#endif
+#if !defined(S_ISDIR)
+#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
+#endif
         if ((use_mmap == NULL || value_truthy(use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
                 size_t n = st.st_size;
+#ifdef _WIN32
+                void *m = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
+#else
                 void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
+#endif
                 if (m == NULL) {
                         close(fd);
                         return NIL;
@@ -200,7 +260,12 @@ builtin_slurp(int argc, struct value *kwargs)
                 char *s = value_string_alloc(n);
                 memcpy(s, m, n);
 
+#ifdef _WIN32
+                VirtualFree(m, n, MEM_RELEASE);
+#else
                 munmap(m, n);
+#endif
+
                 close(fd);
 
                 return STRING(s, n);
@@ -1251,7 +1316,11 @@ builtin_setenv(int argc, struct value *kwargs)
         vec_push_n(valbuf, val.string, val.bytes);
         vec_push(valbuf, '\0');
 
+#ifdef _WIN32
+        SetEnvironmentVariableA(varbuf.items, valbuf.items);
+#else
         setenv(varbuf.items, valbuf.items, 1);
+#endif
 
         varbuf.count = 0;
         valbuf.count = 0;
@@ -1358,6 +1427,8 @@ builtin_sha1(int argc, struct value *kwargs)
                 SHA1((unsigned char const *)s.string, s.bytes, digest);
         } else if (s.type == VALUE_BLOB) {
                 SHA1(s.blob->items, s.blob->count, digest);
+        } else {
+                vm_panic("md5(): invalid argument: %s", value_show_color(&s));
         }
 
         ++GC_OFF_COUNT;
@@ -1380,6 +1451,8 @@ builtin_md5(int argc, struct value *kwargs)
                 MD5((unsigned char const *)s.string, s.bytes, digest);
         } else if (s.type == VALUE_BLOB) {
                 MD5(s.blob->items, s.blob->count, digest);
+        } else {
+                vm_panic("md5(): invalid argument: %s", value_show_color(&s));
         }
 
         struct blob *b = value_blob_new();
@@ -1624,6 +1697,46 @@ builtin_os_close(int argc, struct value *kwargs)
         return INTEGER(close(file.integer));
 }
 
+static char *
+make_temp_dir(char *template)
+{
+#ifdef _WIN32
+    char tempPath[MAX_PATH];
+    char tempFile[MAX_PATH];
+
+    // Get the path to the temporary folder
+    if (GetTempPath(MAX_PATH, tempPath) == 0)
+    {
+        return NULL;
+    }
+
+    // Generate a temporary file name
+    if (GetTempFileName(tempPath, "tmp", 0, tempFile) == 0)
+    {
+        return NULL;
+    }
+
+    // Remove the temporary file created by GetTempFileName
+    DeleteFile(tempFile);
+
+    // Create a directory with the temporary file name
+    if (CreateDirectory(tempFile, NULL) == 0)
+    {
+        return NULL;
+    }
+
+    // Copy the resulting directory name into the template
+    strcpy(template, tempFile);
+    return template;
+#else
+    if (mkdtemp(template) == NULL)
+    {
+        return NULL;
+    }
+    return template;
+#endif
+}
+
 struct value
 builtin_os_mkdtemp(int argc, struct value *kwargs)
 {
@@ -1645,11 +1758,41 @@ builtin_os_mkdtemp(int argc, struct value *kwargs)
 
         strcat(template, ".XXXXXX");
 
-        if (mkdtemp(template) == NULL) {
+        if (make_temp_dir(template) == NULL) {
                 return NIL;
         }
 
         return STRING_CLONE(template, strlen(template));
+}
+
+static int
+make_temp_file(char *template, int flags)
+{
+    int fd;
+
+#ifdef _WIN32
+    if (_mktemp_s(template, strlen(template) + 1) != 0)
+    {
+        return -1;
+    }
+
+    fd = _open(template, flags | _O_CREAT | _O_EXCL, _S_IREAD | _S_IWRITE);
+    if (fd == -1)
+    {
+        return -1;
+    }
+#else
+    if (flags != -1)
+    {
+        fd = mkostemp(template, flags);
+    }
+    else
+    {
+        fd = mkstemp(template);
+    }
+#endif
+
+    return fd;
 }
 
 struct value
@@ -1675,13 +1818,16 @@ builtin_os_mktemp(int argc, struct value *kwargs)
 
         int fd;
 
-        if (argc == 2) {
+        if (argc == 2)
+        {
                 struct value flags = ARG(1);
                 if (flags.type != VALUE_INTEGER)
                         vm_panic("the second argument to os.mktemp() must be an integer");
-                fd = mkostemp(template, flags.integer);
-        } else {
-                fd = mkstemp(template);
+                fd = make_temp_file(template, flags.integer);
+        }
+        else
+        {
+                fd = make_temp_file(template, -1);
         }
 
         if (fd == -1) {
@@ -1703,6 +1849,9 @@ builtin_os_mktemp(int argc, struct value *kwargs)
 struct value
 builtin_os_opendir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.opendir()");
+#else
         ASSERT_ARGC("os.opendir()", 1);
 
         struct value path = ARG(0);
@@ -1726,11 +1875,15 @@ builtin_os_opendir(int argc, struct value *kwargs)
                 return NIL;
 
         return PTR(d);
+#endif
 }
 
 struct value
 builtin_os_readdir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.readdir()");
+#else
         ASSERT_ARGC("os.readdir()", 1);
 
         struct value d = ARG(0);
@@ -1749,11 +1902,15 @@ builtin_os_readdir(int argc, struct value *kwargs)
                 "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)),
                 NULL
         );
+#endif
 }
 
 struct value
 builtin_os_rewinddir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.rewinddir()");
+#else
         ASSERT_ARGC("os.rewinddir()", 1);
 
         struct value d = ARG(0);
@@ -1764,11 +1921,15 @@ builtin_os_rewinddir(int argc, struct value *kwargs)
         rewinddir(d.ptr);
 
         return NIL;
+#endif
 }
 
 struct value
 builtin_os_seekdir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.seekdir()");
+#else
         ASSERT_ARGC("os.seekdir()", 2);
 
         struct value d = ARG(0);
@@ -1783,11 +1944,15 @@ builtin_os_seekdir(int argc, struct value *kwargs)
         seekdir(d.ptr, off.integer);
 
         return NIL;
+#endif
 }
 
 struct value
 builtin_os_telldir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.telldir()");
+#else
         ASSERT_ARGC("os.telldir()", 1);
 
         struct value d = ARG(0);
@@ -1796,11 +1961,15 @@ builtin_os_telldir(int argc, struct value *kwargs)
                 vm_panic("the argument to os.telldir() must be a pointer");
 
         return INTEGER(telldir(d.ptr));
+#endif
 }
 
 struct value
 builtin_os_closedir(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.closedir()");
+#else
         ASSERT_ARGC("os.closedir()", 1);
 
         struct value d = ARG(0);
@@ -1809,6 +1978,7 @@ builtin_os_closedir(int argc, struct value *kwargs)
                 vm_panic("the argument to os.closedir() must be a pointer");
 
         return INTEGER(closedir(d.ptr));
+#endif
 }
 
 struct value
@@ -1889,7 +2059,11 @@ builtin_os_link(int argc, struct value *kwargs)
         memcpy(buffer + old.bytes + 1, new.string, new.bytes);
         buffer[old.bytes + 1 + new.bytes] = '\0';
 
+#ifdef _WIN32
+        return INTEGER(!CreateHardLinkA(buffer, buffer + old.bytes + 1, NULL));
+#else
         return INTEGER(link(buffer, buffer + old.bytes + 1));
+#endif
 }
 
 struct value
@@ -1938,7 +2112,11 @@ builtin_os_symlink(int argc, struct value *kwargs)
         memcpy(buffer + old.bytes + 1, new.string, new.bytes);
         buffer[old.bytes + 1 + new.bytes] = '\0';
 
+#ifdef _WIN32
+        return INTEGER(!CreateSymbolicLinkA(buffer, buffer + old.bytes + 1, 0));
+#else
         return INTEGER(symlink(buffer, buffer + old.bytes + 1));
+#endif
 }
 
 struct value
@@ -1996,7 +2174,11 @@ builtin_os_mkdir(int argc, struct value *kwargs)
         vec_push_n(B, path.string, path.bytes);
         vec_push(B, '\0');
 
+#ifdef _WIN32
+        return INTEGER(mkdir(B.items));
+#else
         return INTEGER(mkdir(B.items, mode));
+#endif
 }
 
 struct value
@@ -2021,6 +2203,10 @@ struct value
 builtin_os_chown(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.chown()", 3);
+
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.chown()");
+#else
 
         size_t n;
         char const *path;
@@ -2059,12 +2245,16 @@ builtin_os_chown(int argc, struct value *kwargs)
         buffer[n] = '\0';
 
         return INTEGER(chown(buffer, ARG(1).integer, ARG(2).integer));
+#endif
 }
 
 struct value
 builtin_os_chmod(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("os.chown()", 2);
+        ASSERT_ARGC("os.chmod()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.chmod()");
+#else
 
         size_t n;
         char const *path;
@@ -2099,6 +2289,7 @@ builtin_os_chmod(int argc, struct value *kwargs)
         buffer[n] = '\0';
 
         return INTEGER(chmod(buffer, ARG(1).integer));
+#endif
 }
 
 struct value
@@ -2118,8 +2309,10 @@ builtin_os_chdir(int argc, struct value *kwargs)
                 buffer[dir.bytes] = '\0';
 
                 return INTEGER(chdir(buffer));
+#ifndef _WIN32
         } else if (dir.type == VALUE_INTEGER) {
                 return INTEGER(fchdir(dir.integer));
+#endif
         } else {
                 vm_panic("the argument to os.chdir() must be a path or a file descriptor");
         }
@@ -2159,18 +2352,21 @@ builtin_os_read(int argc, struct value *kwargs)
 
         NOGC(blob.blob);
         vec_reserve(*blob.blob, blob.blob->count + n.integer);
-        OKGC(blob.blob);
 
         ReleaseLock(true);
+        XLOG("Starting read(%d)", file.integer);
         ssize_t nr = read(file.integer, blob.blob->items + blob.blob->count, n.integer);
+        XLOG("Finished read(): %lld", nr);
         TakeLock();
+
+        OKGC(blob.blob);
 
         if (nr != -1)
                 blob.blob->count += nr;
 
         if (argc == 3)
                 return INTEGER(nr);
-        else if (nr != -1)
+        else if (nr > 0)
                 return blob;
         else
                 return NIL;
@@ -2256,7 +2452,11 @@ builtin_os_fsync(int argc, struct value *kwargs)
                 vm_panic("os.fsync(): expected integer but got: %s", value_show(&fd));
         }
 
+#ifdef _WIN32
+        return INTEGER(_commit(fd.integer));
+#else
         return INTEGER(fsync(fd.integer));
+#endif
 }
 
 struct value
@@ -2264,11 +2464,249 @@ builtin_os_sync(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.sync()", 0);
 
+#ifndef _WIN32
         sync();
+#endif
 
         return NIL;
 }
 
+#ifdef _WIN32
+// Paraphrased from https://github.com/python/cpython/blob/main/Lib/subprocess.py (list2cmdline)
+char *
+make_cmdline(Array *args)
+{
+        vec(char) result = {0};
+
+        for (int i = 0; i < args->count; ++i) {
+                char const *arg = args->items[i].string;
+                int n = args->items[i].bytes;
+                int n_bs = 0;
+                bool need_quote = memchr(arg, ' ', n) || memchr(arg, '\t', n) || (n == 0);
+
+                if (i > 0)
+                        vec_nogc_push(result, ' ');
+
+                if (need_quote)
+                        vec_nogc_push(result, '"');
+
+                for (int j = 0; j < n; ++j) switch (arg[j]) {
+                case '\\':
+                        n_bs += 1;
+                        break;
+                case '"':
+                        n_bs *= 2;
+                        while (n_bs --> 0)
+                                vec_nogc_push(result, '\\');
+                        n_bs = 0;
+                        vec_nogc_push(result, '\\');
+                        vec_nogc_push(result, '"');
+                        break;
+                default:
+                        while (n_bs --> 0)
+                                vec_nogc_push(result, '\\');
+                        n_bs = 0;
+                        vec_nogc_push(result, arg[j]);
+
+                }
+
+                if (need_quote)
+                        n_bs *= 2;
+
+                while (n_bs --> 0)
+                        vec_nogc_push(result, '\\');
+
+                if (need_quote)
+                        vec_nogc_push(result, '"');
+        }
+
+        vec_nogc_push(result, '\0');
+
+        return result.items;
+}
+
+struct value
+builtin_os_spawn(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.spawn()", 1);
+
+        struct value cmd = ARG(0);
+        if (cmd.type != VALUE_ARRAY)
+                vm_panic("the argument to os.spawn() must be an array");
+
+        if (cmd.array->count == 0)
+                vm_panic("empty array passed to os.spawn()");
+
+        for (int i = 0; i < cmd.array->count; ++i)
+                if (cmd.array->items[i].type != VALUE_STRING)
+                        vm_panic("non-string in array passed to os.spawn()");
+
+        struct value *detached = NAMED("detach");
+        struct value *combine = NAMED("combineOutput");
+        struct value *share_stderr = NAMED("shareStderr");
+        struct value *share_stdout = NAMED("shareStdout");
+        struct value *share_stdin = NAMED("shareStdin");
+
+        if (detached != NULL && !value_truthy(detached)) detached = NULL;
+        if (combine != NULL && !value_truthy(combine)) combine = NULL;
+        if (share_stderr != NULL && !value_truthy(share_stderr)) share_stderr = NULL;
+        if (share_stdout != NULL && !value_truthy(share_stdout)) share_stdout = NULL;
+        if (share_stdin != NULL && !value_truthy(share_stdin)) share_stdin = NULL;
+
+        HANDLE hChildStdInRead = NULL;
+        HANDLE hChildStdInWrite = NULL;
+        HANDLE hChildStdOutRead = NULL;
+        HANDLE hChildStdOutWrite = NULL;
+        HANDLE hChildStdErrRead = NULL;
+        HANDLE hChildStdErrWrite = NULL;
+
+        SECURITY_ATTRIBUTES saAttr;
+        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+        saAttr.bInheritHandle = TRUE;
+        saAttr.lpSecurityDescriptor = NULL;
+
+        if (!share_stdin) {
+                if (!CreatePipe(&hChildStdInRead, &hChildStdInWrite, &saAttr, 0))
+                        return NIL; // Handle error
+        }
+
+        if (!share_stdout) {
+                if (!CreatePipe(&hChildStdOutRead, &hChildStdOutWrite, &saAttr, 0))
+                        return NIL; // Handle error
+        }
+
+        if (!share_stderr && !combine) {
+                if (!CreatePipe(&hChildStdErrRead, &hChildStdErrWrite, &saAttr, 0))
+                        return NIL; // Handle error
+        }
+
+        // Prepare the list of handles to be inherited
+        HANDLE inheritHandles[3] = {0};
+        int inheritHandleCount = 0;
+        if (hChildStdInRead) inheritHandles[inheritHandleCount++] = hChildStdInRead;
+        if (hChildStdOutWrite) inheritHandles[inheritHandleCount++] = hChildStdOutWrite;
+        if (hChildStdErrWrite) inheritHandles[inheritHandleCount++] = hChildStdErrWrite;
+
+        // Set up the process attribute list
+        SIZE_T attributeListSize = 0;
+        InitializeProcThreadAttributeList(NULL, 1, 0, &attributeListSize);
+        LPPROC_THREAD_ATTRIBUTE_LIST lpAttributeList = mrealloc(NULL, attributeListSize);
+        InitializeProcThreadAttributeList(lpAttributeList, 1, 0, &attributeListSize);
+
+        // Update the attribute list with the handles to inherit
+        if (!UpdateProcThreadAttribute(lpAttributeList,
+                                0,
+                                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                inheritHandles,
+                                inheritHandleCount * sizeof(HANDLE),
+                                NULL,
+                                NULL)) {
+                // Handle error
+                free(lpAttributeList);
+                printf("It's over\n");
+                return NIL;
+        }
+
+        STARTUPINFOEX siStartInfo = {0};
+        siStartInfo.StartupInfo.cb = sizeof (STARTUPINFOEX);
+        siStartInfo.lpAttributeList = lpAttributeList;
+
+        siStartInfo.StartupInfo.hStdError = share_stderr ? GetStdHandle(STD_ERROR_HANDLE) : hChildStdErrWrite;
+        siStartInfo.StartupInfo.hStdOutput = share_stdout ? GetStdHandle(STD_OUTPUT_HANDLE) : hChildStdOutWrite;
+        siStartInfo.StartupInfo.hStdInput = share_stdin ? GetStdHandle(STD_INPUT_HANDLE) : hChildStdInRead;
+        siStartInfo.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+
+        PROCESS_INFORMATION piProcInfo;
+        ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
+
+        char *cmdline = make_cmdline(cmd.array);
+
+        bool bSuccess = CreateProcessA(
+                NULL,
+                cmdline,
+                NULL,
+                NULL,
+                TRUE,
+                EXTENDED_STARTUPINFO_PRESENT | (detached ? CREATE_NEW_PROCESS_GROUP : 0),
+                NULL,
+                NULL,
+                &siStartInfo.StartupInfo,
+                &piProcInfo
+        );
+
+        DeleteProcThreadAttributeList(lpAttributeList);
+        free(lpAttributeList);
+        free(cmdline);
+
+        if (!bSuccess) {
+                // Handle error
+                DWORD error = GetLastError();
+                char* errorMessage = NULL;
+                FormatMessage(
+                                FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
+                                NULL,
+                                error,
+                                0,
+                                (LPSTR)&errorMessage,
+                                0,
+                                NULL
+                             );
+                printf("CreateProcess failed with error %d: %s\n", error, errorMessage);
+                LocalFree(errorMessage);
+                return NIL;
+        }
+
+        // Close handles to the child process and its primary thread
+        CloseHandle(piProcInfo.hThread);
+
+        if (hChildStdInRead != NULL) CloseHandle(hChildStdInRead);
+        if (hChildStdOutWrite != NULL) CloseHandle(hChildStdOutWrite);
+        if (hChildStdErrWrite != NULL) CloseHandle(hChildStdErrWrite);
+
+        int stdin_fd = -1, stdout_fd = -1, stderr_fd = -1;
+
+        if (!share_stdin) {
+                stdin_fd = _open_osfhandle((intptr_t)hChildStdInWrite, _O_WRONLY);
+                if (stdin_fd == -1) {
+                        // Handle error
+                        return NIL;
+                }
+        }
+
+        if (!share_stdout) {
+                stdout_fd = _open_osfhandle((intptr_t)hChildStdOutRead, _O_RDONLY);
+                if (stdout_fd == -1) {
+                        // Handle error
+                        return NIL;
+                }
+        }
+
+        if (!share_stderr && !combine) {
+                stderr_fd = _open_osfhandle((intptr_t)hChildStdErrRead, _O_RDONLY);
+                if (stderr_fd == -1) {
+                        // Handle error
+                        return NIL;
+                }
+        }
+
+        // Prepare return value
+        Value vStdin = share_stdin ? INTEGER(0) : INTEGER(stdin_fd);
+        Value vStdout = share_stdout ? INTEGER(1) : INTEGER(stdout_fd);
+        Value vStderr = combine ? vStdout : (share_stderr ? INTEGER(2) : INTEGER(stderr_fd));
+
+        return value_named_tuple(
+                "stdin",    vStdin,
+                "stdout",   vStdout,
+                "stderr",   vStderr,
+                "hStdin",   PTR((void *)_get_osfhandle(vStdin.integer)),
+                "hStdout",  PTR((void *)_get_osfhandle(vStdout.integer)),
+                "hStderr",  PTR((void *)_get_osfhandle(vStderr.integer)),
+                "pid",      INTEGER(piProcInfo.dwProcessId),
+                "handle",   PTR((void *)piProcInfo.hProcess),
+                NULL
+        );
+}
+#else
 struct value
 builtin_os_spawn(int argc, struct value *kwargs)
 {
@@ -2465,27 +2903,47 @@ builtin_os_spawn(int argc, struct value *kwargs)
                         NULL
                 );
         }
-
 }
+#endif
 
 struct value
 builtin_thread_join(int argc, struct value *kwargs)
 {
-        if (argc != 1) {
-                vm_panic("thread.join() expects one argument but got %d", argc);
-        }
-
-        if (ARG(0).type != VALUE_THREAD) {
+        if (argc == 0 || ARG(0).type != VALUE_THREAD) {
                 vm_panic("non-thread passed to thread.join(): %s", value_show(&ARG(0)));
         }
 
-        void *v;
+        if (argc == 1 || ARG(1).type == VALUE_NIL || (ARG(1).type == VALUE_INTEGER && ARG(1).integer == -1)) {
+                ReleaseLock(true);
+                TyThreadJoin(ARG(0).thread->t);
+                TakeLock();
+                return ARG(0).thread->v;
+        } else if (argc == 2) {
+                if (ARG(1).type != VALUE_INTEGER) {
+                        vm_panic("thread.join(): invalid timeout argument: %s", value_show_color(&ARG(1)));
+                }
 
-        ReleaseLock(true);
-        pthread_join(ARG(0).thread->t, &v);
-        TakeLock();
+                Thread* t = ARG(0).thread;
+                int64_t timeoutMs = ARG(1).integer;
 
-        return *(struct value *)v;
+                ReleaseLock(true);
+                TyMutexLock(&t->mutex);
+                while (t->alive) {
+                        if (!TyCondVarTimedWaitRelative(&t->cond, &t->mutex, timeoutMs)) {
+                                TyMutexUnlock(&t->mutex);
+                                TakeLock();
+                                return None;
+                        }
+                }
+
+                TyMutexUnlock(&t->mutex);
+                TyThreadJoin(t->t);
+                TakeLock();
+
+                return Some(t->v);
+        } else {
+                vm_panic("thread.join(): expected 2 arguments but got %d", argc);
+        }
 }
 
 struct value
@@ -2499,22 +2957,22 @@ builtin_thread_detach(int argc, struct value *kwargs)
                 vm_panic("non-thread passed to thread.detach(): %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_detach(ARG(0).thread->t));
+        return BOOLEAN(TyThreadDetach(ARG(0).thread->t));
 }
 
 struct value
 builtin_thread_mutex(int argc, struct value *kwargs)
 {
-        pthread_mutex_t *p = gc_alloc_object(sizeof *p, GC_ANY);
-        pthread_mutex_init(p, NULL);
+        TyMutex *p = gc_alloc_object(sizeof *p, GC_ANY);
+        TyMutexInit(p);
         return GCPTR(p, p);
 }
 
 struct value
 builtin_thread_cond(int argc, struct value *kwargs)
 {
-        pthread_cond_t *p = gc_alloc_object(sizeof *p, GC_ANY);
-        pthread_cond_init(p, NULL);
+        TyCondVar *p = gc_alloc_object(sizeof *p, GC_ANY);
+        TyCondVarInit(p);
         return GCPTR(p, p);
 }
 
@@ -2536,19 +2994,19 @@ builtin_thread_cond_wait(int argc, struct value *kwargs)
         ReleaseLock(true);
 
         if (argc == 2) {
-                r = pthread_cond_wait(ARG(0).ptr, ARG(1).ptr);
+                r = TyCondVarWait(ARG(0).ptr, ARG(1).ptr);
         } else {
                 if (ARG(2).type != VALUE_INTEGER) {
                         vm_panic("thread.waitCond() expects an integer as its third argument but got: %s", value_show(&ARG(2)));
                 }
 
                 struct timespec ts;
-                clock_gettime(CLOCK_REALTIME, &ts);
+                GetCurrentTimespec(&ts);
 
                 ts.tv_sec += ARG(2).integer / 1000000;
                 ts.tv_nsec += (ARG(2).integer % 1000000) * 1000;
 
-                r = pthread_cond_timedwait(ARG(0).ptr, ARG(1).ptr, &ts);
+                r = TyCondVarTimedWaitRelative(ARG(0).ptr, ARG(1).ptr, ARG(2).integer);
         }
 
         TakeLock();
@@ -2565,7 +3023,7 @@ builtin_thread_cond_signal(int argc, struct value *kwargs)
                 vm_panic("thread.signalCond() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_cond_signal(ARG(0).ptr));
+        return BOOLEAN(TyCondVarSignal(ARG(0).ptr));
 }
 
 struct value
@@ -2577,7 +3035,7 @@ builtin_thread_cond_broadcast(int argc, struct value *kwargs)
                 vm_panic("thread.broadcastCond() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_cond_broadcast(ARG(0).ptr));
+        return BOOLEAN(TyCondVarBroadcast(ARG(0).ptr));
 }
 
 struct value
@@ -2589,7 +3047,7 @@ builtin_thread_cond_destroy(int argc, struct value *kwargs)
                 vm_panic("thread.destroyCond() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_cond_destroy(ARG(0).ptr));
+        return BOOLEAN(TyCondVarDestroy(ARG(0).ptr));
 }
 
 struct value
@@ -2601,7 +3059,7 @@ builtin_thread_mutex_destroy(int argc, struct value *kwargs)
                 vm_panic("thread.destroyMutex() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_mutex_destroy(ARG(0).ptr));
+        return BOOLEAN(TyMutexDestroy(ARG(0).ptr));
 }
 
 struct value
@@ -2614,7 +3072,7 @@ builtin_thread_lock(int argc, struct value *kwargs)
         }
 
         ReleaseLock(true);
-        int r = pthread_mutex_lock(ARG(0).ptr);
+        int r = TyMutexLock(ARG(0).ptr);
         TakeLock();
 
         return INTEGER(r);
@@ -2629,7 +3087,7 @@ builtin_thread_trylock(int argc, struct value *kwargs)
                 vm_panic("thread.tryLock() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_mutex_trylock(ARG(0).ptr));
+        return BOOLEAN(TyMutexTryLock(ARG(0).ptr));
 }
 
 struct value
@@ -2641,7 +3099,7 @@ builtin_thread_unlock(int argc, struct value *kwargs)
                 vm_panic("thread.unlock() expects a pointer but got: %s", value_show(&ARG(0)));
         }
 
-        return INTEGER(pthread_mutex_unlock(ARG(0).ptr));
+        return BOOLEAN(TyMutexUnlock(ARG(0).ptr));
 }
 
 struct value
@@ -2655,11 +3113,11 @@ builtin_thread_create(int argc, struct value *kwargs)
                 vm_panic("non-callable value passed to thread.create(): %s", value_show(&ARG(0)));
         }
 
-        struct value *ctx = gc_alloc(sizeof (struct value[argc + 1]));
+        struct value *ctx = gc_alloc((argc + 1) * sizeof (Value));
         Thread *t = gc_alloc_object(sizeof *t, GC_THREAD);
 
         NOGC(t);
-        t->i = atomic_fetch_add(&tid, 1);
+        t->i = tid++;
         t->v = NONE;
 
         for (int i = 0; i < argc; ++i) {
@@ -2685,8 +3143,8 @@ builtin_thread_channel(int argc, struct value *kwargs)
 
         c->open = true;
         vec_init(c->q);
-        pthread_cond_init(&c->c, NULL);
-        pthread_mutex_init(&c->m, NULL);
+        TyCondVarInit(&c->c);
+        TyMutexInit(&c->m);
 
         return GCPTR(c, c);
 }
@@ -2706,11 +3164,11 @@ builtin_thread_send(int argc, struct value *kwargs)
         Forget(&cv.v, (AllocList *)&cv.as);
 
         ReleaseLock(true);
-        pthread_mutex_lock(&chan->m);
+        TyMutexLock(&chan->m);
         TakeLock();
         vec_push(chan->q, cv);
-        pthread_mutex_unlock(&chan->m);
-        pthread_cond_signal(&chan->c);
+        TyMutexUnlock(&chan->m);
+        TyCondVarSignal(&chan->c);
 
         return NIL;
 }
@@ -2729,23 +3187,19 @@ builtin_thread_recv(int argc, struct value *kwargs)
         Channel *chan = ARG(0).ptr;
 
         ReleaseLock(true);
-        pthread_mutex_lock(&chan->m);
+        TyMutexLock(&chan->m);
 
         if (argc == 1) {
                 while (chan->open && chan->q.count == 0) {
-                        pthread_cond_wait(&chan->c, &chan->m);
+                        TyCondVarWait(&chan->c, &chan->m);
                 }
         } else {
-                struct timespec ts;
-                clock_gettime(CLOCK_REALTIME, &ts);
                 struct value t = ARG(1);
                 if (t.type != VALUE_INTEGER) {
                         vm_panic("thread.recv(): expected integer but got: %s", value_show(&t));
                 }
-                ts.tv_sec += (t.integer / 1000);
-                ts.tv_nsec += 1000 * (t.integer % 1000);
                 while (chan->open && chan->q.count == 0) {
-                        if (pthread_cond_timedwait(&chan->c, &chan->m, &ts) == ETIMEDOUT) {
+                        if (!TyCondVarTimedWaitRelative(&chan->c, &chan->m, t.integer)) {
                                 break;
                         }
                 }
@@ -2754,7 +3208,7 @@ builtin_thread_recv(int argc, struct value *kwargs)
         TakeLock();
 
         if (chan->q.count == 0) {
-                pthread_mutex_unlock(&chan->m);
+                TyMutexUnlock(&chan->m);
                 return None;
         }
 
@@ -2762,7 +3216,7 @@ builtin_thread_recv(int argc, struct value *kwargs)
 
         vec_pop_ith(chan->q, 0);
 
-        pthread_mutex_unlock(&chan->m);
+        TyMutexUnlock(&chan->m);
 
         GCTakeOwnership((AllocList *)&v.as);
 
@@ -2781,10 +3235,10 @@ builtin_thread_close(int argc, struct value *kwargs)
         Channel *chan = ARG(0).ptr;
 
         ReleaseLock(true);
-        pthread_mutex_lock(&chan->m);
+        TyMutexLock(&chan->m);
         TakeLock();
         chan->open = false;
-        pthread_mutex_unlock(&chan->m);
+        TyMutexUnlock(&chan->m);
 
         return NIL;
 }
@@ -2806,14 +3260,16 @@ builtin_thread_kill(int argc, struct value *kwargs)
                 vm_panic("thread.kill(): expected integer as second argument but got: %s", value_show(&sig));
         }
 
-        return INTEGER(pthread_kill(t.thread->t, sig.integer));
+        return BOOLEAN(TyThreadKill(t.thread->t, sig.integer));
 }
 
 struct value
 builtin_thread_setname(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.setName()", 1);
-
+#ifdef _WIN32
+        NOT_ON_WINDOWS("thread.setName()");
+#else
         struct value name = ARG(0);
         char const *pname;
         int n;
@@ -2840,11 +3296,11 @@ builtin_thread_setname(int argc, struct value *kwargs)
 
 #ifdef __APPLE__
         pthread_setname_np(pname);
-#else
+#elif __linux__
         pthread_setname_np(pthread_self(), pname);
 #endif
-
         return NIL;
+#endif
 }
 
 struct value
@@ -2852,46 +3308,57 @@ builtin_thread_getname(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.getName()", 0);
 
+#ifdef _WIN32
+        NOT_ON_WINDOWS("thread.getName()");
+#else
         int r = pthread_getname_np(pthread_self(), buffer, sizeof buffer);
         if (r != 0) {
                 return NIL;
         }
 
         return STRING_CLONE(buffer, strlen(buffer));
+#endif
 }
 
 struct value
 builtin_thread_id(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("thread.id()", 0);
+        ASSERT_ARGC_2("thread.id()", 0, 1);
 
-#ifdef __APPLE__
-        uint64_t id;
-        pthread_threadid_np(NULL, &id);
-        return INTEGER(id);
-#else
-        return INTEGER(gettid());
-#endif
+        if (argc == 0 || ARG(0).type == VALUE_NIL) {
+                return INTEGER(MyThreadId());
+        } else if (ARG(0).type == VALUE_PTR) {
+                return INTEGER(((Thread *)ARG(0).ptr)->i);
+        } else {
+                vm_panic("thread.id(): expected thread pointer but got: %s", value_show_color(&ARG(0)));
+        }
 }
 
 struct value
 builtin_thread_self(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("thread.self()", 0);
-        return PTR((void *)pthread_self());
+        return PTR((void *)TyThreadSelf());
 }
 
 struct value
 builtin_os_fork(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.fork()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.fork()");
+#else
         return INTEGER(fork());
+#endif
 }
 
 struct value
 builtin_os_pipe(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.pipe()", 0);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.pipe()");
+#else
 
         int p[2];
 
@@ -2904,6 +3371,7 @@ builtin_os_pipe(int argc, struct value *kwargs)
         fds.items[1] = INTEGER(p[1]);
 
         return fds;
+#endif
 }
 
 struct value
@@ -3144,7 +3612,9 @@ builtin_os_connect(int argc, struct value *kwargs)
         if (v == NULL || v->type != VALUE_INTEGER)
                 vm_panic("missing or invalid address family in dict passed to os.connect()");
 
+#ifndef _WIN32
         struct sockaddr_un un_addr;
+#endif
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
@@ -3152,6 +3622,7 @@ builtin_os_connect(int argc, struct value *kwargs)
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
                 return INTEGER(connect(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
         } else switch (v->integer) {
+#ifndef _WIN32
                 case AF_UNIX:
                         memset(&un_addr, 0, sizeof un_addr);
                         un_addr.sun_family = AF_UNIX;
@@ -3160,6 +3631,7 @@ builtin_os_connect(int argc, struct value *kwargs)
                                 vm_panic("missing or invalid path in dict passed to os.connect()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(connect(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+#endif
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
                         in_addr.sin_family = AF_INET;
@@ -3197,7 +3669,9 @@ builtin_os_bind(int argc, struct value *kwargs)
         if (v == NULL || v->type != VALUE_INTEGER)
                 vm_panic("missing or invalid address family in address passed to os.bind()");
 
+#ifndef _WIN32
         struct sockaddr_un un_addr;
+#endif
         struct sockaddr_in in_addr;
         struct in_addr ia;
 
@@ -3205,6 +3679,7 @@ builtin_os_bind(int argc, struct value *kwargs)
         if (sockaddr != NULL && sockaddr->type == VALUE_BLOB) {
                 return INTEGER(bind(sockfd.integer, (struct sockaddr *)sockaddr->blob->items, sockaddr->blob->count));
         } else switch (v->integer) {
+#ifndef _WIN32
                 case AF_UNIX:
                         memset(&un_addr, 0, sizeof un_addr);
                         un_addr.sun_family = AF_UNIX;
@@ -3213,6 +3688,7 @@ builtin_os_bind(int argc, struct value *kwargs)
                                 vm_panic("missing or invalid path in tuple passed to os.bind()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
+#endif
                 case AF_INET:
                         memset(&in_addr, 0, sizeof in_addr);
                         in_addr.sin_family = AF_INET;
@@ -3544,7 +4020,11 @@ builtin_os_poll(int argc, struct value *kwargs)
         pfds.count = fds.array->count;
 
         ReleaseLock(true);
+#ifdef _WIN32
+        int ret = WSAPoll(pfds.items, pfds.count, timeout.integer);
+#else
         int ret = poll(pfds.items, pfds.count, timeout.integer);
+#endif
         TakeLock();
 
         if (ret < 0)
@@ -3649,6 +4129,9 @@ struct value
 builtin_os_waitpid(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.waitpid()", 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.waitpid()");
+#else
 
         struct value pid = ARG(0);
 
@@ -3672,8 +4155,17 @@ Bad:
                 return INTEGER(ret);
 
         return PAIR(INTEGER(ret), INTEGER(status));
+#endif
 }
 
+#ifdef _WIN32
+#define WAITMACRO(name) \
+        struct value \
+        builtin_os_ ## name(int argc, struct value *kwargs) \
+        { \
+                NOT_ON_WINDOWS("os." #name); \
+        }
+#else
 #define WAITMACRO(name) \
         struct value \
         builtin_os_ ## name(int argc, struct value *kwargs) \
@@ -3688,6 +4180,7 @@ Bad:
         \
                 return INTEGER(name(s)); \
         }
+#endif
 
 WAITMACRO(WIFEXITED)
 WAITMACRO(WEXITSTATUS)
@@ -3702,6 +4195,20 @@ WAITMACRO(WIFCONTINUED)
 WAITMACRO(WCOREDUMP)
 #endif
 
+#ifdef _WIN32
+#define GETID(name) \
+        struct value \
+        builtin_os_ ## name (int argc, struct value *kwargs) \
+        { \
+                NOT_ON_WINDOWS("os." #name); \
+        }
+#define SETID(name) \
+        struct value \
+        builtin_os_ ## name (int argc, struct value *kwargs) \
+        { \
+                NOT_ON_WINDOWS("os." #name); \
+        }
+#else
 #define GETID(name) \
         struct value \
         builtin_os_ ## name (int argc, struct value *kwargs) \
@@ -3720,6 +4227,7 @@ WAITMACRO(WCOREDUMP)
                         vm_panic("the argument to os." #name "() must be an integer"); \
                 return INTEGER(name(id.integer)); \
         }
+#endif
 
 GETID(getpid)
 GETID(getppid)
@@ -3779,6 +4287,9 @@ struct value
 builtin_os_signal(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.signal()", 1, 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.signal()");
+#else
 
         struct value num = ARG(0);
 
@@ -3809,6 +4320,7 @@ builtin_os_signal(int argc, struct value *kwargs)
                 return vm_get_sigfn(num.integer);
         }
 
+#endif
 }
 
 struct value
@@ -3822,7 +4334,16 @@ builtin_os_kill(int argc, struct value *kwargs)
         if (pid.type != VALUE_INTEGER || sig.type != VALUE_INTEGER)
                 vm_panic("both arguments to os.kill() must be integers");
 
+
+#ifdef _WIN32
+        HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid.integer);
+        bool bSuccess = TerminateProcess(hProc, 0);
+        int error = GetLastError();
+        CloseHandle(hProc);
+        return INTEGER(bSuccess ? 0 : error);
+#else
         return INTEGER(kill(pid.integer, sig.integer));
+#endif
 }
 
 static struct value
@@ -3890,9 +4411,11 @@ builtin_os_sleep(int argc, struct value *kwargs)
 
         struct value *abs = NAMED("abs");
 
+#ifndef _WIN32
         if (abs != NULL && abs->type == VALUE_BOOLEAN && abs->boolean) {
                 flags = TIMER_ABSTIME;
         }
+#endif
 
         struct value *clock = NAMED("clock");
 
@@ -3930,7 +4453,12 @@ builtin_os_sleep(int argc, struct value *kwargs)
         }
 
         ReleaseLock(true);
+#ifdef _WIN32
+        Sleep(dur.tv_sec * 1000 + dur.tv_nsec / 1000000);
+        int ret = 0;
+#else
         int ret = clock_nanosleep(clk, flags, &dur, &rem);
+#endif
         TakeLock();
 
         switch (ret) {
@@ -3999,6 +4527,26 @@ builtin_os_sleep(int argc, struct value *kwargs)
 }
 #endif
 
+static int
+microsleep(int64_t usec)
+{
+#ifdef _WIN32
+        HANDLE timer;
+        LARGE_INTEGER ft;
+
+        ft.QuadPart = -(10*usec); // Convert to 100 nanosecond interval, negative value indicates relative time
+
+        timer = CreateWaitableTimer(NULL, TRUE, NULL);
+        SetWaitableTimer(timer, &ft, 0, NULL, NULL, 0);
+        WaitForSingleObject(timer, INFINITE);
+        CloseHandle(timer);
+        return 0;
+#else
+        return usleep(usec);
+#endif
+}
+
+// https://stackoverflow.com/questions/5801813/c-usleep-is-obsolete-workarounds-for-windows-mingw
 struct value
 builtin_os_usleep(int argc, struct value *kwargs)
 {
@@ -4011,9 +4559,51 @@ builtin_os_usleep(int argc, struct value *kwargs)
         if (duration.integer < 0)
                 vm_panic("negative argument passed to os.usleep()");
 
-        return INTEGER(usleep(duration.integer));
+        return INTEGER(microsleep(duration.integer));
 }
 
+#ifdef _WIN32
+struct value
+builtin_os_listdir(int argc, struct value* kwargs)
+{
+        ASSERT_ARGC("os.listdir()", 1);
+        struct value dir = ARG(0);
+        if (dir.type != VALUE_STRING)
+                vm_panic("the argument to os.listdir() must be a string");
+
+        // Prepare the search path
+        B.count = 0;
+        vec_push_n(B, dir.string, dir.bytes);
+        vec_push_n(B, "\\*", 2); // Add wildcard for all files
+        vec_push(B, '\0');
+
+        WIN32_FIND_DATAA findData;
+        HANDLE hFind = FindFirstFileA(B.items, &findData);
+        if (hFind == INVALID_HANDLE_VALUE)
+                return NIL;
+
+        struct array* files = value_array_new();
+        struct value vFiles = ARRAY(files);
+        gc_push(&vFiles);
+
+        do {
+                if (strcmp(findData.cFileName, ".") != 0 && strcmp(findData.cFileName, "..") != 0) {
+                        vec_push(*files, STRING_CLONE(findData.cFileName, strlen(findData.cFileName)));
+                }
+        } while (FindNextFileA(hFind, &findData) != 0);
+
+        DWORD dwError = GetLastError();
+        if (dwError != ERROR_NO_MORE_FILES) {
+                // Handle error if needed
+        }
+
+        FindClose(hFind);
+
+        gc_pop();
+
+        return vFiles;
+}
+#else
 struct value
 builtin_os_listdir(int argc, struct value *kwargs)
 {
@@ -4049,6 +4639,28 @@ builtin_os_listdir(int argc, struct value *kwargs)
 
         return vFiles;
 }
+#endif
+
+static char *
+resolve_path(char const *in, char *out)
+{
+#ifdef _WIN32
+    char buffer[MAX_PATH];
+
+    if (GetFullPathName(in, MAX_PATH, buffer, NULL) == 0) {
+        return NULL;
+    }
+
+    if (GetLongPathName(buffer, out, MAX_PATH) == 0) {
+        return NULL;
+    }
+
+    return out;
+#else
+    return realpath(in, out);
+#endif
+}
+
 
 struct value
 builtin_os_realpath(int argc, struct value *kwargs)
@@ -4068,7 +4680,7 @@ builtin_os_realpath(int argc, struct value *kwargs)
         memcpy(in, path.string, path.bytes);
         in[path.bytes] = '\0';
 
-        char *resolved = realpath(in, out);
+        char *resolved = resolve_path(in, out);
 
         if (resolved == NULL)
                 return NIL;
@@ -4092,6 +4704,45 @@ builtin_os_ftruncate(int argc, struct value *kwargs)
         return INTEGER(ftruncate(fd.integer, size.integer));
 }
 
+static int
+truncate_file(const char* filename, size_t size)
+{
+#ifdef _WIN32
+    HANDLE hFile = CreateFile(
+        filename,
+        GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+
+    if (hFile == INVALID_HANDLE_VALUE)
+    {
+        return -1;
+    }
+
+    LARGE_INTEGER li;
+    li.QuadPart = size;
+
+    if (!SetFilePointerEx(hFile, li, NULL, FILE_BEGIN)) {
+        CloseHandle(hFile);
+        return -1;
+    }
+
+    if (!SetEndOfFile(hFile)) {
+        CloseHandle(hFile);
+        return -1;
+    }
+
+    CloseHandle(hFile);
+
+    return 0;
+#else
+    return truncate(filename, size);
+#endif
+}
+
 struct value
 builtin_os_truncate(int argc, struct value *kwargs)
 {
@@ -4109,7 +4760,7 @@ builtin_os_truncate(int argc, struct value *kwargs)
         if (size.type != VALUE_INTEGER)
                 vm_panic("os.truncate(): expected integer as second argumnet but got: %s", value_show(&size));
 
-        return INTEGER(truncate(B.items, size.integer));
+        return INTEGER(truncate_file(B.items, size.integer));
 }
 
 struct value
@@ -4117,7 +4768,7 @@ builtin_os_stat(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.stat()", 1);
 
-        struct stat s;
+        StatStruct s;
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
@@ -4140,21 +4791,67 @@ builtin_os_stat(int argc, struct value *kwargs)
                 "st_gid", INTEGER(s.st_gid),
                 "st_rdev", INTEGER(s.st_rdev),
                 "st_size", INTEGER(s.st_size),
+#ifndef _WIN32
                 "st_blocks", INTEGER(s.st_blocks),
                 "st_blksize", INTEGER(s.st_blksize),
+#endif
 #ifdef __APPLE__
                 "st_atim", timespec_tuple(&s.st_atimespec),
                 "st_mtim", timespec_tuple(&s.st_mtimespec),
                 "st_ctim", timespec_tuple(&s.st_ctimespec),
-#else
+#elif defined(__linux__)
                 "st_atim", timespec_tuple(&s.st_atim),
                 "st_mtim", timespec_tuple(&s.st_mtim),
                 "st_ctim", timespec_tuple(&s.st_ctim),
+#elif defined(_WIN32)
+                "st_atim", INTEGER(s.st_atime),
+                "st_mtim", INTEGER(s.st_mtime),
+                "st_ctim", INTEGER(s.st_ctime),
 #endif
                 NULL
         );
 
 }
+
+static int
+lock_file(int fd, int operation)
+{
+#ifdef _WIN32
+
+#define   LOCK_SH   1    /* shared lock */
+#define   LOCK_EX   2    /* exclusive lock */
+#define   LOCK_NB   4    /* don't block when locking */
+#define   LOCK_UN   8    /* unlock */
+        HANDLE hFile = (HANDLE)_get_osfhandle(fd);
+        if (hFile == INVALID_HANDLE_VALUE)
+        {
+                return -1;
+        }
+
+        OVERLAPPED overlapped = {0};
+        DWORD flags = 0;
+
+        if (operation & LOCK_SH)
+        {
+                flags |= LOCKFILE_EXCLUSIVE_LOCK;
+        }
+
+        if (operation & LOCK_NB)
+        {
+                flags |= LOCKFILE_FAIL_IMMEDIATELY;
+        }
+
+        if (!LockFileEx(hFile, flags, 0, MAXDWORD, MAXDWORD, &overlapped))
+        {
+                return -1;
+        }
+
+        return 0;
+#else
+        return flock(fd, operation);
+#endif
+}
+
 
 struct value
 builtin_os_flock(int argc, struct value *kwargs)
@@ -4169,13 +4866,16 @@ builtin_os_flock(int argc, struct value *kwargs)
         if (cmd.type != VALUE_INTEGER)
                 vm_panic("the second argument to os.fcntl() must be an integer");
 
-        return INTEGER(flock(fd.integer, cmd.integer));
+        return INTEGER(lock_file(fd.integer, cmd.integer));
 }
 
 struct value
 builtin_os_fcntl(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("os.fcntl()", 2, 3);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.fcntl()")
+#else
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
@@ -4205,6 +4905,7 @@ builtin_os_fcntl(int argc, struct value *kwargs)
         }
 
         vm_panic("os.fcntl() functionality not implemented yet");
+#endif
 }
 
 struct value
@@ -4220,6 +4921,9 @@ builtin_os_isatty(int argc, struct value *kwargs)
 struct value
 builtin_termios_tcgetattr(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcgetattr()");
+#else
         if (ARG(0).type != VALUE_INTEGER) {
                 vm_panic("termios.tcgetattr(): expected integer but got: %s", value_show(&ARG(0)));
         }
@@ -4249,11 +4953,15 @@ builtin_termios_tcgetattr(int argc, struct value *kwargs)
                 "cc", BLOB(cc),
                 NULL
         );
+#endif
 }
 
 struct value
 builtin_termios_tcsetattr(int argc, struct value *kwargs)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("termios.tcsetattr()");
+#else
         if (ARG(0).type != VALUE_INTEGER) {
                 vm_panic("termios.tcsetattr(): expected integer but got: %s", value_show(&ARG(0)));
         }
@@ -4294,6 +5002,7 @@ builtin_termios_tcsetattr(int argc, struct value *kwargs)
         }
 
         return BOOLEAN(tcsetattr(ARG(0).integer, ARG(1).integer, &t) == 0);
+#endif
 }
 
 struct value
@@ -4347,6 +5056,11 @@ builtin_time_gettime(int argc, struct value *kwargs)
 struct value
 builtin_time_utime(int argc, struct value *kwargs)
 {
+        struct timespec t;
+#ifdef _WIN32
+        ASSERT_ARGC("time.utime()", 0);
+        GetCurrentTimespec(&t);
+#else
         ASSERT_ARGC_2("time.utime()", 0, 1);
 
         clockid_t clk;
@@ -4359,10 +5073,9 @@ builtin_time_utime(int argc, struct value *kwargs)
                 clk = CLOCK_REALTIME;
         }
 
-        struct timespec t;
         clock_gettime(clk, &t);
-
-        return INTEGER(t.tv_sec * 1000 * 1000 + t.tv_nsec / 1000);
+#endif
+        return INTEGER((uint64_t)t.tv_sec * 1000 * 1000 + (uint64_t)t.tv_nsec / 1000);
 }
 
 struct value
@@ -4495,8 +5208,10 @@ builtin_time_strftime(int argc, struct value *kwargs)
 struct value
 builtin_time_strptime(int argc, struct value *kwargs)
 {
-
         ASSERT_ARGC("time.strptime()", 2);
+#ifdef _WIN32
+        NOT_ON_WINDOWS("time.strptime()");
+#else
 
         struct value s = ARG(0);
         struct value fmt = ARG(1);
@@ -4531,6 +5246,7 @@ builtin_time_strptime(int argc, struct value *kwargs)
                 "isdst", BOOLEAN(r.tm_isdst),
                 NULL
         );
+#endif
 }
 
 struct value
@@ -5298,7 +6014,7 @@ builtin_type(int argc, struct value *kwargs)
                         return v;
                 }
 
-                struct value *types = gc_alloc_object(sizeof (struct value[n]), GC_TUPLE);
+                struct value *types = gc_alloc_object(n * sizeof (Value), GC_TUPLE);
 
                 NOGC(types);
 
@@ -5819,7 +6535,7 @@ builtin_parse_source(int argc, struct value *kwargs)
                 vm_panic("ty.parse.source(): expected Blob or String but got: %s", value_show(&ARG(0)));
         }
 
-        char *src = gc_alloc(n + 2) + 1;
+        char *src = ((char *)gc_alloc(n + 2)) + 1;
         memcpy(src, s, n);
         src[-1] = '\0';
         src[n] = '\0';

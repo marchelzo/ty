@@ -1,15 +1,25 @@
 import sh (sh)
 
-if not let $out = sh('echo -n based 1>&2', combineOutput: true) or out != 'based' {
-    print('FAIL')
-}
+if __windows__ {
+    if not let $out = sh('echo hello') or out.strip() != 'hello' {
+        print('FAIL')
+    }
 
-if not let $out = sh('echo -n based') or out != 'based' {
-	print('FAIL')
-}
+    if let $out = sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeoutMs: 100) {
+        print('FAIL')
+    }
+} else {
+    if not let $out = sh('echo -n based 1>&2', combineOutput: true) or out != 'based' {
+        print('FAIL')
+    }
 
-if let $out = sh('sleep 0.25', timeoutMs: 100) {
-    print('FAIL')
+    if not let $out = sh('echo -n based') or out != 'based' {
+            print('FAIL')
+    }
+
+    if let $out = sh('sleep 0.25', timeoutMs: 100) {
+        print('FAIL')
+    }
 }
 
 print('PASS')

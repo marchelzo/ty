@@ -61,8 +61,8 @@ compiler_global_count(void);
 struct value
 compiler_render_template(struct expression *);
 
-void
-import_module(struct statement const *);
+bool
+compiler_import_module(struct statement const *);
 
 void
 define_macro(struct statement *, bool fun);

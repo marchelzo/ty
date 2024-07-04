@@ -10,6 +10,7 @@
 #include "vm.h"
 #include "token.h"
 #include "functions.h"
+#include "polyfill_memmem.h"
 
 static _Thread_local struct stringpos limitpos;
 static _Thread_local struct stringpos outpos;
@@ -41,19 +42,19 @@ stringwidth(char const *s, int byte_lim)
 }
 
 inline static bool
-is_prefix(char const *big, int blen, char const *small, int slen)
+is_prefix(char const *big, int blen, char const *little, int slen)
 {
-        return (blen >= slen) && (memcmp(big, small, slen) == 0);
+        return (blen >= slen) && (memcmp(big, little, slen) == 0);
 }
 
 inline static char const *
-sfind(char const *big, int blen, char const *small, int slen)
+sfind(char const *big, int blen, char const *little, int slen)
 {
         register int i;
 
         while (blen >= slen) {
                 for (i = 0; i < slen; ++i) {
-                        if (big[i] != small[i]) {
+                        if (big[i] != little[i]) {
                                 goto Next;
                         }
                 }

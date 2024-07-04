@@ -573,7 +573,6 @@ error(char const *fmt, ...)
                 TERM(22)
         );
 
-
         LOG("Parse Error: %s", ERR);
 End:
         longjmp(jb, 1);
@@ -4353,7 +4352,10 @@ parse(char const *source, char const *file)
         lex_start(&CtxCheckpoint);
 
         for (int i = 0; i < program.count; ++i) {
-                import_module(program.items[i]);
+                if (!compiler_import_module(program.items[i])) {
+                        strcpy(ERR, compiler_error());
+                        return NULL;
+                }
         }
 
         lex_end();

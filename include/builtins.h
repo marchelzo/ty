@@ -1,8 +1,25 @@
-#include <curl/urlapi.h>
-#define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
-#define FLOAT(x)      { .type = VALUE_REAL,             .real             = (x), .tags = 0 }
-#define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
-
+static struct {
+        char const *module;
+        char const *name;
+        struct value value;
+} builtins[] = {
+#if defined(__APPLE__)
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(true)                     },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(false)                    },
+#elif defined(__linux__)
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(true)                     },
+#elif defined(_WIN32)
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(true)                     },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(false)                    },
+#else
+{ .module = NULL,     .name = "__apple__",         .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__windows__",       .value = BOOL_(false)                    },
+{ .module = NULL,     .name = "__linux__",         .value = BOOL_(false)                    },
+#endif
 { .module = NULL,     .name = "print",             .value = BUILTIN(builtin_print)                         },
 { .module = NULL,     .name = "eprint",            .value = BUILTIN(builtin_eprint)                        },
 { .module = NULL,     .name = "slurp",             .value = BUILTIN(builtin_slurp)                         },
@@ -219,6 +236,7 @@
 #ifdef WCONTINUED
 { .module = "os",     .name = "WCONTINUED",        .value = INT(WCONTINUED)                                },
 #endif
+#ifndef _WIN32
 { .module = "os",     .name = "F_SETFD",           .value = INT(F_SETFD)                                   },
 { .module = "os",     .name = "F_GETFD",           .value = INT(F_GETFD)                                   },
 { .module = "os",     .name = "F_GETFL",           .value = INT(F_GETFL)                                   },
@@ -243,6 +261,14 @@
 { .module = "os",     .name = "F_GETSIG",          .value = INT(F_GETSIG)                                  },
 { .module = "os",     .name = "F_SETSIG",          .value = INT(F_SETSIG)                                  },
 #endif
+#endif
+#endif
+
+#ifdef _WIN32
+     #define   LOCK_SH   1    /* shared lock */
+     #define   LOCK_EX   2    /* exclusive lock */
+     #define   LOCK_NB   4    /* don't block when locking */
+     #define   LOCK_UN   8    /* unlock */
 #endif
 
 { .module = "os",     .name = "LOCK_SH", .value = INT(LOCK_SH) },
@@ -311,7 +337,9 @@
 { .module = "errno",  .name = "ENOTSOCK",          .value = INT(ENOTSOCK)                                  },
 { .module = "errno",  .name = "ETIMEDOUT",         .value = INT(ETIMEDOUT)                                 },
 { .module = "errno",  .name = "ECHILD",            .value = INT(ECHILD)                                    },
+#ifndef _WIN32
 { .module = "errno",  .name = "EDQUOT",            .value = INT(EDQUOT)                                    },
+#endif
 { .module = "errno",  .name = "EEXIST",            .value = INT(EEXIST)                                    },
 { .module = "errno",  .name = "EFAULT",            .value = INT(EFAULT)                                    },
 { .module = "errno",  .name = "EFBIG",             .value = INT(EFBIG)                                     },
@@ -515,12 +543,13 @@
 { .module = "os",      .name = "SIGUSR2",                 .value = INT(SIGUSR2)                              },
 #endif
 
+{ .module = "os",      .name = "S_IFREG",                 .value = INT(S_IFREG)                              },
+{ .module = "os",      .name = "S_IFDIR",                 .value = INT(S_IFDIR)                              },
+#ifndef _WIN32
 { .module = "os",      .name = "S_IFMT",                  .value = INT(S_IFMT)                              },
 { .module = "os",      .name = "S_IFSOCK",                .value = INT(S_IFSOCK)                              },
 { .module = "os",      .name = "S_IFLNK",                 .value = INT(S_IFLNK)                              },
-{ .module = "os",      .name = "S_IFREG",                 .value = INT(S_IFREG)                              },
 { .module = "os",      .name = "S_IFBLK",                 .value = INT(S_IFBLK)                              },
-{ .module = "os",      .name = "S_IFDIR",                 .value = INT(S_IFDIR)                              },
 { .module = "os",      .name = "S_IFCHR",                 .value = INT(S_IFCHR)                              },
 { .module = "os",      .name = "S_IFIFO",                 .value = INT(S_IFIFO)                              },
 { .module = "os",      .name = "S_ISUID",                 .value = INT(S_ISUID)                              },
@@ -546,7 +575,9 @@
 { .module = "os",      .name = "DT_LNK",                  .value = INT(DT_LNK)                               },
 { .module = "os",      .name = "DT_REG",                  .value = INT(DT_REG)                               },
 { .module = "os",      .name = "DT_UNKNOWN",              .value = INT(DT_UNKNOWN)                           },
+#endif
 
+#ifndef _WIN32
 { .module = "termios", .name = "CSIZE", .value = INT(CSIZE) },
 { .module = "termios", .name = "CS5", .value = INT(CS5) },
 { .module = "termios", .name = "CS6", .value = INT(CS6) },
@@ -621,27 +652,8 @@
 { .module = "termios", .name = "VTIME", .value = INT(VTIME) },
 { .module = "termios", .name = "tcgetattr", .value = BUILTIN(builtin_termios_tcgetattr) },
 { .module = "termios", .name = "tcsetattr", .value = BUILTIN(builtin_termios_tcsetattr) },
+#endif
 
-{.module = "ffi", .name = "char", .value = POINTER(&ffi_type_schar)},
-{.module = "ffi", .name = "short", .value = POINTER(&ffi_type_sshort)},
-{.module = "ffi", .name = "int", .value = POINTER(&ffi_type_sint)},
-{.module = "ffi", .name = "long", .value = POINTER(&ffi_type_slong)},
-{.module = "ffi", .name = "uchar", .value = POINTER(&ffi_type_uchar)},
-{.module = "ffi", .name = "ushort", .value = POINTER(&ffi_type_ushort)},
-{.module = "ffi", .name = "uint", .value = POINTER(&ffi_type_uint)},
-{.module = "ffi", .name = "ulong", .value = POINTER(&ffi_type_ulong)},
-{.module = "ffi", .name = "u8", .value = POINTER(&ffi_type_uint8)},
-{.module = "ffi", .name = "u16", .value = POINTER(&ffi_type_uint16)},
-{.module = "ffi", .name = "u32", .value = POINTER(&ffi_type_uint32)},
-{.module = "ffi", .name = "u64", .value = POINTER(&ffi_type_uint64)},
-{.module = "ffi", .name = "i8", .value = POINTER(&ffi_type_sint8)},
-{.module = "ffi", .name = "i16", .value = POINTER(&ffi_type_sint16)},
-{.module = "ffi", .name = "i32", .value = POINTER(&ffi_type_sint32)},
-{.module = "ffi", .name = "i64", .value = POINTER(&ffi_type_sint64)},
-{.module = "ffi", .name = "float", .value = POINTER(&ffi_type_float)},
-{.module = "ffi", .name = "double", .value = POINTER(&ffi_type_double)},
-{.module = "ffi", .name = "ptr", .value = POINTER(&ffi_type_pointer)},
-{.module = "ffi", .name = "void", .value = POINTER(&ffi_type_void)},
 {.module = "ffi", .name = "new", .value = BUILTIN(cffi_new)},
 {.module = "ffi", .name = "size", .value = BUILTIN(cffi_size)},
 {.module = "ffi", .name = "alloc", .value = BUILTIN(cffi_alloc)},
@@ -683,7 +695,4 @@
 
 #include "ioctl_constants.h"
 
-#undef INT
-#undef FLOAT
-#undef BUILTIN
-
+};

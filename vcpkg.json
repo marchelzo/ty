@@ -1,0 +1,13 @@
+{
+    "dependencies": [
+        "libffi",
+        "curl",
+        "openssl",
+        "readline",
+        "utf8proc",
+        "sqlite3",
+        "gumbo",
+        "pcre",
+        "getopt"
+    ]
+}
