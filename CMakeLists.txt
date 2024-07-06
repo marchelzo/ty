@@ -20,8 +20,14 @@ if (WIN32)
   # defines target(s): unofficial::readline-win32::readline
   find_package(unofficial-readline-win32 CONFIG REQUIRED)
 else()
-  # defines target(s): unofficial::readline::readline
-  find_package(unofficial-readline CONFIG REQUIRED)
+  find_package(PkgConfig)
+  pkg_check_modules(READLINE REQUIRED readline)
+  add_library(unofficial-readline STATIC IMPORTED)
+  target_link_libraries(unofficial-readline INTERFACE "${READLINE_STATIC_LIBRARIES}")
+  target_include_directories(unofficial-readline INTERFACE "${READLINE_INCLUDE_DIRS}")
+  target_link_directories(unofficial-readline INTERFACE "${READLINE_LIBRARY_DIRS}")
+  list(GET READLINE_LINK_LIBRARIES 0 _readline_imported_location)
+  set_target_properties(unofficial-readline PROPERTIES IMPORTED_LOCATION ${_readline_imported_location})
 endif()
 # defines target(s): unofficial::pcre::pcre unofficial::pcre::pcre16 unofficial::pcre::pcre32 unofficial::pcre::pcrecpp
 find_package(unofficial-pcre CONFIG REQUIRED)
@@ -94,7 +100,7 @@ target_sources(${_tgt_ty}
 target_link_libraries(${_tgt_ty}
   PUBLIC
     Threads::Threads # pthreads (or equivalent)
-    $<$<NOT:${WIN32}>:"${CMAKE_DL_LIBS}">
+    $<$<NOT:$<BOOL:${WIN32}>>:"${CMAKE_DL_LIBS}">
     CURL::libcurl
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -102,11 +108,12 @@ target_link_libraries(${_tgt_ty}
     unofficial::sqlite3::sqlite3
     unofficial::gumbo::gumbo
     unofficial::pcre::pcre
-    $<$<NOT:${WIN32}>:unofficial::readline::readline>
-    $<${WIN32}:unofficial::readline-win32::readline>
-    $<${WIN32}:unofficial::getopt-win32::getopt>
+    $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
+    $<$<NOT:$<BOOL:${WIN32}>>:m>
+    $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>
+    $<$<BOOL:${WIN32}>:unofficial::getopt-win32::getopt>
     utf8proc
-    $<${WIN32}:ws2_32> # winsock2
+    $<$<BOOL:${WIN32}>:ws2_32> # winsock2
 )
 
 target_include_directories(${_tgt_ty}
