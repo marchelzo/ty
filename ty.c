@@ -4,6 +4,7 @@
 #include <time.h>
 #include <stdnoreturn.h>
 #include <setjmp.h>
+#include <errno.h>
 
 #include "polyfill_unistd.h"
 #include <fcntl.h>
