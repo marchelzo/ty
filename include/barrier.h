@@ -33,21 +33,6 @@ typedef struct {
     unsigned int phase;
 } pthread_barrier_t;
 
-int pthread_barrierattr_init(pthread_barrierattr_t *attr);
-int pthread_barrierattr_destroy(pthread_barrierattr_t *attr);
-
-int pthread_barrierattr_getpshared(const pthread_barrierattr_t *restrict attr,
-                   int *restrict pshared);
-int pthread_barrierattr_setpshared(pthread_barrierattr_t *attr,
-                   int pshared);
-
-int pthread_barrier_init(pthread_barrier_t *restrict barrier,
-             const pthread_barrierattr_t *restrict attr,
-             unsigned int count);
-int pthread_barrier_destroy(pthread_barrier_t *barrier);
-
-int pthread_barrier_wait(pthread_barrier_t *barrier);
-
 #ifdef  __cplusplus
 }
 #endif
@@ -57,19 +42,19 @@ int pthread_barrier_wait(pthread_barrier_t *barrier);
 
 #define __unused __attribute__((unused))
 
-int
+static int
 pthread_barrierattr_init(pthread_barrierattr_t *attr __unused)
 {
     return 0;
 }
 
-int
+static int
 pthread_barrierattr_destroy(pthread_barrierattr_t *attr __unused)
 {
     return 0;
 }
 
-int
+static int
 pthread_barrierattr_getpshared(const pthread_barrierattr_t *restrict attr __unused,
                    int *restrict pshared)
 {
@@ -77,7 +62,7 @@ pthread_barrierattr_getpshared(const pthread_barrierattr_t *restrict attr __unus
     return 0;
 }
 
-int
+static int
 pthread_barrierattr_setpshared(pthread_barrierattr_t *attr __unused,
                    int pshared)
 {
@@ -88,7 +73,7 @@ pthread_barrierattr_setpshared(pthread_barrierattr_t *attr __unused,
     return 0;
 }
 
-int
+static int
 pthread_barrier_init(pthread_barrier_t *restrict barrier,
              const pthread_barrierattr_t *restrict attr __unused,
              unsigned count)
@@ -115,7 +100,7 @@ pthread_barrier_init(pthread_barrier_t *restrict barrier,
     return 0;
 }
 
-int
+static int
 pthread_barrier_destroy(pthread_barrier_t *barrier)
 {
     pthread_mutex_destroy(&barrier->mutex);
@@ -123,7 +108,7 @@ pthread_barrier_destroy(pthread_barrier_t *barrier)
     return 0;
 }
 
-int
+static int
 pthread_barrier_wait(pthread_barrier_t *barrier)
 {
     pthread_mutex_lock(&barrier->mutex);

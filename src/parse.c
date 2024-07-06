@@ -4353,7 +4353,6 @@ parse(char const *source, char const *file)
 
         for (int i = 0; i < program.count; ++i) {
                 if (!compiler_import_module(program.items[i])) {
-                        strcpy(ERR, compiler_error());
                         return NULL;
                 }
         }

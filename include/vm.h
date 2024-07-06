@@ -221,11 +221,13 @@ vm_del_sigfn(int);
 struct value
 vm_get_sigfn(int);
 
+#ifndef _WIN32
 void
-vm_do_signal(int, void *, void *);
+vm_do_signal(int, siginfo_t *, void *);
+#endif
 
 bool
-vm_execute(char const *source);
+vm_execute(char const *source, char const *file);
 
 bool
 vm_execute_file(char const *path);

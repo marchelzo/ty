@@ -7,7 +7,6 @@
 
 #include "polyfill_unistd.h"
 #include <fcntl.h>
-#include <getopt.h>
 
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -28,6 +27,23 @@
 #include "array.h"
 #include "polyfill_time.h"
 
+#define TY_VERSION_STRING "0.1"
+
+static char const usage_string[] =
+        "usage: ty [options] [script [args]]\n"
+        "Available options are:\n"
+        "  -c            Exit after compilation without executing the program\n"
+        "  -e EXPR       Evaluate and print EXPR\n"
+        "  -m MODULE     Import module MODULE\n"
+        "  -p            Print the value of the last-evaluated expression before exiting\n"
+        "  -q            Ignore constraints on function parameters and return values\n"
+        "  -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL\n"
+        "                in the specified source file\n"
+        "  --            Stop handling options\n"
+        "  --version     Print ty version information and exit\n"
+        "  --help        Print this help message and exit\n"
+;
+
 #define MAX_COMPLETIONS 200
 
 static bool use_readline;
@@ -47,6 +63,12 @@ readln(void)
         } else {
                 return fgets(buffer, sizeof buffer, stdin);
         }
+}
+
+inline static bool
+repl_exec(char const *code)
+{
+        return vm_execute(code, "(repl)");
 }
 
 static bool
@@ -77,17 +99,17 @@ execln(char *line)
 
         } else if (strncmp(line, "help ", 5) == 0) {
                 snprintf(buffer + 1, sizeof buffer - 2, "help(%s);", line + 5);
-                if (vm_execute(buffer + 1))
+                if (repl_exec(buffer + 1))
                         goto End;
                 else
                         goto Bad;
         }
 
         snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
-        if (vm_execute(buffer + 1))
+        if (repl_exec(buffer + 1))
                 goto End;
         snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
-        if (strstr(vm_error(), "ParseError") != NULL && vm_execute(buffer + 1))
+        if (strstr(vm_error(), "ParseError") != NULL && repl_exec(buffer + 1))
                 goto End;
 Bad:
         good = false;
@@ -179,7 +201,7 @@ complete(char const *s, int start, int end)
         if (compiler_has_module(before + 1)) {
                 n = compiler_get_completions(before + 1, s, completions, MAX_COMPLETIONS);
         } else {
-                vm_execute(before + 1);
+                repl_exec(before + 1);
 
                 struct value *v = vm_get(-1);
 
@@ -218,6 +240,16 @@ complete(char const *s, int start, int end)
         }
 }
 
+inline static bool
+stdin_is_tty(void)
+{
+#ifdef _WIN32
+        return _isatty(0);
+#else
+        return isatty(0);
+#endif
+}
+
 int
 main(int argc, char **argv)
 {
@@ -226,42 +258,113 @@ main(int argc, char **argv)
                 return -1;
         }
 
-        if (argc <= 1)
+        if (argc <= 1 && stdin_is_tty())
                 repl();
 
         char SymbolLocation[512] = {0};
 
-        for (int ch; (ch = getopt_long(argc, argv, "+qcpLm:t:e:", NULL, NULL)) != -1;) {
-                switch (ch) {
-                case 'q':
-                        CheckConstraints = false;
+        int argi = 1;
+        while (argv[argi] != NULL && argv[argi][0] == '-') {
+                if (strcmp(argv[argi], "--") == 0) {
+                        argi += 1;
                         break;
-                case 'c':
-                        CompileOnly = true;
-                        break;
-                case 'L':
-                        EnableLogging = true;
-                        break;
-                case 'p':
-                        PrintResult = true;
-                        break;
-                case 'm':
-                        snprintf(buffer, sizeof buffer, "import %s\n", optarg);
-                        if (!execln(buffer))
-                                return -1;
-                        break;
-                case 't':
-                        strcpy(SymbolLocation, optarg);
-                        break;
-                case 'e':
-                        return (int)execln(optarg);
                 }
+
+                if (strcmp(argv[argi], "--version") == 0) {
+                        printf("ty version %s\n", TY_VERSION_STRING);
+                        return 0;
+                }
+
+                if (strcmp(argv[argi], "--help") == 0) {
+                        fputs(usage_string, stdout);
+                        return 0;
+                }
+
+                if (argv[argi][1] != '-') {
+                        for (char const *opt = argv[argi] + 1; *opt != '\0'; ++opt) {
+                                switch (*opt) {
+                                case 'q':
+                                        CheckConstraints = false;
+                                        break;
+                                case 'c':
+                                        CompileOnly = true;
+                                        break;
+                                case 'L':
+                                        EnableLogging = true;
+                                        break;
+                                case 'p':
+                                        PrintResult = true;
+                                        break;
+                                case 't':
+                                        if (opt[1] == '\0') {
+                                                if (argv[argi + 1] == NULL) {
+                                                        fprintf(stderr, "Missing argument for -t\n");
+                                                        return 1;
+                                                }
+                                                snprintf(SymbolLocation, sizeof SymbolLocation - 1, "%s", argv[++argi]);
+                                        } else {
+                                                snprintf(SymbolLocation, sizeof SymbolLocation - 1, "%s", opt + 1);
+                                                while (opt[1] != '\0') ++opt;
+                                        }
+                                        break;
+                                case 'e':
+                                        if (opt[1] == '\0') {
+                                                if (argv[argi + 1] == NULL) {
+                                                        fprintf(stderr, "Missing argument for -e\n");
+                                                        return 1;
+                                                }
+                                                return (int)!execln(argv[++argi]);
+                                        } else {
+                                                return (int)!execln((char *)(opt + 1));
+                                        }
+                                        break;
+                                case 'm':
+                                        if (opt[1] == '\0') {
+                                                if (argv[argi + 1] == NULL) {
+                                                        fprintf(stderr, "Missing argument for -m\n");
+                                                        return 1;
+                                                }
+                                                snprintf(buffer, sizeof buffer - 1, "import %s\n", argv[++argi]);
+                                        } else {
+                                                snprintf(buffer, sizeof buffer - 1, "import %s\n", opt + 1);
+                                                while (opt[1] != '\0') ++opt;
+                                        }
+                                        if (!execln(buffer)) {
+                                                return 1;
+                                        }
+                                        break;
+                                default:
+                                        fprintf(stderr, "Unrecognized option -%c\n", *opt);
+                                        return 1;
+                                }
+                        }
+                } else {
+                        fprintf(stderr, "Unrecognized option %s\n", argv[argi]);
+                        return 1;
+                }
+
+                argi += 1;
         }
 
-        argc -= optind;
-        argv += optind;
+        argc -= argi;
+        argv += argi;
 
-        char const *file = (argv[0] != NULL && strcmp(argv[0], "-") != 0) ? argv[0] : "/dev/stdin";
+        FILE *file;
+        char const *filename;
+        if (argv[0] == NULL || strcmp(argv[0], "-") == 0) {
+                file = stdin;
+                filename = "<stdin>";
+        } else {
+                file = fopen(argv[0], "r");
+                filename = argv[0];
+        }
+
+        if (file == NULL) {
+                fprintf(stderr, "Failed to open source file '%s': %s\n", argv[0], strerror(errno));
+                return 1;
+        }
+
+        char *source = fslurp(file);
 
         if (*SymbolLocation != '\0') {
                 char *colon = strchr(SymbolLocation, ':');
@@ -272,11 +375,11 @@ main(int argc, char **argv)
                 int col = atoi(colon + 1);
 
                 CompileOnly = true;
-                if (!vm_execute_file(file)) {
+                if (!vm_execute(source, filename)) {
                         return 1;
                 }
 
-                struct location loc = compiler_find_definition(file, line - 1, col - 1);
+                struct location loc = compiler_find_definition(filename, line - 1, col - 1);
 
                 if (loc.s == NULL) {
                         return -1;
@@ -286,7 +389,7 @@ main(int argc, char **argv)
                 }
         }
 
-        if (!vm_execute_file(file)) {
+        if (!vm_execute(source, filename)) {
                 fprintf(stderr, "%s\n", vm_error());
                 return -1;
         }

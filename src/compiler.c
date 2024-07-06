@@ -4938,6 +4938,7 @@ compiler_import_module(struct statement const *s)
         SAVE_JB;
 
         if (setjmp(jb) != 0) {
+                RESTORE_JB;
                 return false;
         }
 
