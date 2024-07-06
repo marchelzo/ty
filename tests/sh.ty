@@ -2,23 +2,23 @@ import sh (sh)
 
 if __windows__ {
     if not let $out = sh('echo hello') or out.strip() != 'hello' {
-        print('FAIL')
+        print('FAIL1')
     }
 
     if let $out = sh('Sleep 1; echo Hello', shell: ['powershell', '-Command'], timeoutMs: 100) {
-        print('FAIL')
+        print('FAIL2')
     }
 } else {
     if not let $out = sh('echo -n based 1>&2', combineOutput: true) or out != 'based' {
-        print('FAIL')
+        print('FAIL3')
     }
 
     if not let $out = sh('echo -n based') or out != 'based' {
-            print('FAIL')
+            print('FAIL4')
     }
 
     if let $out = sh('sleep 0.25', timeoutMs: 100) {
-        print('FAIL')
+        print('FAIL5')
     }
 }
 

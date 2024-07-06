@@ -1083,10 +1083,10 @@ vm_get_sigfn(int sig)
         return f;
 }
 
-void
-vm_do_signal(int sig, void *info_, void *ctx)
-{
 #ifndef _WIN32
+void
+vm_do_signal(int sig, siginfo_t *info, void *ctx)
+{
         struct value f = NIL;
 
         pthread_rwlock_rdlock(&SigLock);
@@ -1104,8 +1104,6 @@ vm_do_signal(int sig, void *info_, void *ctx)
                 return;
         }
 
-        siginfo_t *info = info_;
-
         switch (sig) {
 #ifdef SIGIO
         case SIGIO:
@@ -1120,8 +1118,8 @@ vm_do_signal(int sig, void *info_, void *ctx)
         default:
                 vm_call(&f, 0);
         }
-#endif
 }
+#endif
 
 inline static void
 AddTupleEntry(StringVector *names, ValueVector *values, char const *name, struct value const *v)
@@ -3952,9 +3950,7 @@ vm_execute_file(char const *path)
                 return false;
         }
 
-        filename = path;
-
-        bool success = vm_execute(source);
+        bool success = vm_execute(source, path);
 
         GCLOG("Allocs before: %zu", allocs.count);
         //DoGC();
@@ -3967,16 +3963,13 @@ vm_execute_file(char const *path)
          */
         gc_free(source - 1);
 
-        filename = NULL;
-
         return success;
 }
 
 bool
-vm_execute(char const *source)
+vm_execute(char const *source, char const *file)
 {
-        if (filename == NULL)
-                filename = "(repl)";
+        filename = file;
 
         ++GC_OFF_COUNT;
 
@@ -3988,11 +3981,13 @@ vm_execute(char const *source)
 
         if (setjmp(jb) != 0) {
                 Error = ERR;
+                filename = NULL;
                 return false;
         }
 
         char *code = compiler_compile_source(source, filename);
         if (code == NULL) {
+                filename = NULL;
                 Error = compiler_error();
                 LOG("compiler error was: %s", Error);
                 return false;
@@ -4001,6 +3996,7 @@ vm_execute(char const *source)
         --GC_OFF_COUNT;
 
         if (CompileOnly) {
+                filename = NULL;
                 return true;
         }
 
@@ -4009,6 +4005,8 @@ vm_execute(char const *source)
         if (PrintResult && stack.capacity > 0) {
                 printf("%s\n", value_show(top() + 1));
         }
+
+        filename = NULL;
 
         return true;
 }

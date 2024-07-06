@@ -78,6 +78,7 @@ bool
 contains(char const *s, char c);
 
 char *slurp(char const *path);
+char *fslurp(FILE *f);
 
 /* memmem. maybe change this to Knuth-Morris-Pratt or Boyer-Moore at some point */
 inline static char const *

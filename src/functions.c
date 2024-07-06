@@ -1,3 +1,4 @@
+#include <stdatomic.h>
 #ifdef _WIN32
 #include <winsock2.h> // must be included before <windows.h>
 #include <ws2tcpip.h>
@@ -56,6 +57,8 @@ typedef struct stat StatStruct;
 #include <poll.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <spawn.h>
+extern char **environ;
 #endif
 
 #include "tags.h"
@@ -2709,6 +2712,149 @@ builtin_os_spawn(int argc, struct value *kwargs)
 #else
 struct value
 builtin_os_spawn(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("os.spawn()", 1);
+
+        struct value cmd = ARG(0);
+        if (cmd.type != VALUE_ARRAY)
+                vm_panic("the argument to os.spawn() must be an array");
+
+        if (cmd.array->count == 0)
+                vm_panic("empty array passed to os.spawn()");
+
+        for (int i = 0; i < cmd.array->count; ++i)
+                if (cmd.array->items[i].type != VALUE_STRING)
+                        vm_panic("non-string in array passed to os.spawn()");
+
+        struct value *detached = NAMED("detach");
+        struct value *combine = NAMED("combineOutput");
+        struct value *share_stderr = NAMED("shareStderr");
+        struct value *share_stdout = NAMED("shareStdout");
+        struct value *share_stdin = NAMED("shareStdin");
+
+        if (combine != NULL && !value_truthy(combine)) combine = NULL;
+        if (share_stderr != NULL && !value_truthy(share_stderr)) share_stderr = NULL;
+        if (share_stdout != NULL && !value_truthy(share_stdout)) share_stdout = NULL;
+        if (share_stdin != NULL && !value_truthy(share_stdin)) share_stdin = NULL;
+
+        if (detached != NULL && detached->type != VALUE_BOOLEAN) {
+                vm_panic(
+                        "os.spawn(): %s%sdetached%s must be a boolean",
+                        TERM(93),
+                        TERM(1),
+                        TERM(0)
+                );
+        }
+
+        int in[2], out[2], err[2];
+        int nToClose = 0;
+        int aToClose[6];
+
+#define CloseOnError(fd) do { aToClose[nToClose++] = (fd); } while (0)
+#define Cleanup() do { TyMutexUnlock(&spawn_lock); for (int i = 0; i < nToClose; ++i) close(aToClose[i]); } while (0)
+
+        static TyMutex spawn_lock;
+        static atomic_bool init = false;
+        bool expected = false;
+
+        if (atomic_compare_exchange_weak(&init, &expected, true)) {
+                TyMutexInit(&spawn_lock);
+                init = true;
+        }
+
+        TyMutexLock(&spawn_lock);
+
+        if (!share_stdin && pipe(in) == -1) { Cleanup(); return NIL; }
+        if (!share_stdout && pipe(out) == -1) { Cleanup(); return NIL; }
+        if (!share_stderr && !combine && pipe(err) == -1) { Cleanup(); return NIL; }
+
+        if (!share_stdin) { CloseOnError(in[0]); CloseOnError(in[1]); }
+        if (!share_stdout) { CloseOnError(out[0]); CloseOnError(out[1]); }
+        if (!share_stderr && !combine) { CloseOnError(err[0]); CloseOnError(err[1]); }
+
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+
+        if (!share_stdin) {
+                posix_spawn_file_actions_addclose(&actions, in[1]);
+                posix_spawn_file_actions_adddup2(&actions, in[0], STDIN_FILENO);
+                posix_spawn_file_actions_addclose(&actions, in[0]);
+        }
+
+        if (!share_stdout) {
+                posix_spawn_file_actions_addclose(&actions, out[0]);
+                posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
+                posix_spawn_file_actions_addclose(&actions, out[1]);
+        }
+
+        if (!share_stderr) {
+                int errfd = combine ? STDOUT_FILENO : err[1];
+                posix_spawn_file_actions_adddup2(&actions, errfd, STDERR_FILENO);
+                if (!combine) {
+                        posix_spawn_file_actions_addclose(&actions, err[0]);
+                        posix_spawn_file_actions_addclose(&actions, err[1]);
+                }
+        }
+
+        posix_spawnattr_t attr;
+        posix_spawnattr_init(&attr);
+
+        if (detached && detached->boolean) {
+                posix_spawnattr_setpgroup(&attr, 0);
+                posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+        }
+
+        vec(char *) args = {0};
+
+        for (int i = 0; i < cmd.array->count; ++i) {
+                char *arg = mrealloc(NULL, cmd.array->items[i].bytes + 1);
+                memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
+                arg[cmd.array->items[i].bytes] = '\0';
+                vec_nogc_push(args, arg);
+        }
+
+        vec_nogc_push(args, NULL);
+
+        pid_t pid;
+        int status = posix_spawnp(&pid, args.items[0], &actions, &attr, args.items, environ);
+
+        posix_spawn_file_actions_destroy(&actions);
+        posix_spawnattr_destroy(&attr);
+
+        for (int i = 0; args.items[i] != NULL; ++i) {
+                free(args.items[i]);
+        }
+
+        free(args.items);
+
+        if (status != 0) {
+                Cleanup();
+                return NIL;
+        }
+
+        TyMutexUnlock(&spawn_lock);
+
+        if (!share_stdin) close(in[0]);
+        if (!share_stdout) close(out[1]);
+        if (!share_stderr && !combine) close(err[1]);
+
+        Value vStdin = share_stdin ? INTEGER(0) : INTEGER(in[1]);
+        Value vStdout = share_stdout ? INTEGER(1) : INTEGER(out[0]);
+        Value vStderr = combine ? vStdout : (share_stderr ? INTEGER(2) : INTEGER(err[0]));
+
+#undef CloseOnError
+#undef Cleanup
+
+        return value_named_tuple(
+                "stdin",   vStdin,
+                "stdout",  vStdout,
+                "stderr",  vStderr,
+                "pid",     INTEGER(pid),
+                NULL
+        );
+}
+struct value
+builtin_os_spawn2(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("os.spawn()", 1);
 

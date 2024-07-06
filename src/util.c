@@ -66,6 +66,22 @@ contains(char const *s, char c)
 }
 
 char *
+fslurp(FILE *f)
+{
+        vec(char) s = {0};
+
+        vec_push(s, '\0');
+
+        for (int c; (c = fgetc(f)) != EOF;) {
+                vec_push(s, c);
+        }
+
+        vec_push(s, '\0');
+
+        return s.items + 1;
+}
+
+char *
 slurp(char const *path)
 {
         int fd = open(path, O_RDONLY);
