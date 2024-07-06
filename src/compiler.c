@@ -6270,8 +6270,8 @@ cstmt(struct value *v)
                 } else {
                         Value *expr = tuple_get(v, "value");
                         Value *depth = tuple_get(v, "depth");
-                        s->depth = (depth == NULL) ? 1 : max(1, depth->integer);
-                        s->expression = (expr == NULL) ? NULL : cexpr(expr);
+                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->integer);
+                        s->expression = (expr == NULL || expr->type == VALUE_NIL) ? NULL : cexpr(expr);
                 }
                 break;
         }
@@ -6285,7 +6285,7 @@ cstmt(struct value *v)
                         s->depth = max(1, v->integer);
                 } else {
                         Value *depth = tuple_get(v, "depth");
-                        s->depth = (depth == NULL) ? 1 : max(1, depth->integer);
+                        s->depth = (depth == NULL || depth->type == VALUE_NIL) ? 1 : max(1, depth->integer);
                 }
                 break;
         }
