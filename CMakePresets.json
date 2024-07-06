@@ -32,6 +32,25 @@
             }
         },
         {
+            "name": "base-linux",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-linux"
+            }
+        },
+        {
+            "name": "gcc",
+            "inherits": "base-linux",
+            "displayName": "GCC - amd64 - Release",
+            "description": "Using GCC",
+            "generator": "Unix Makefiles",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
             "name": "msvc2022",
             "inherits": "base-windows",
             "displayName": "Visual Studio Community 2022 - amd64 - Release",
@@ -107,6 +126,13 @@
             "displayName": "Visual Studio Community 2022 - amd64 - Debug (.dll dependencies)",
             "configurePreset": "msvc2022-shared-debug",
             "configuration": "Debug"
+        },
+        {
+            "name": "gcc",
+            "inherits": "base-build",
+            "displayName": "GCC - amd64 - Release",
+            "configurePreset": "gcc",
+            "configuration": "Release"
         }
     ],
     "workflowPresets": [
@@ -159,6 +185,19 @@
                 {
                     "type": "build",
                     "name": "msvc2022-shared-debug"
+                }
+            ]
+        },
+        {
+            "name": "gcc",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "gcc"
+                },
+                {
+                    "type": "build",
+                    "name": "gcc"
                 }
             ]
         }

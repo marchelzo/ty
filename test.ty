@@ -15,11 +15,13 @@ let r = pen(bold, red)
 let m = pen(bold, brightMagenta)
 let b = pen(bold, blue)
 
+let TY_PATH = getenv('TY_PATH') ?? (__windows__ ? 'ty.exe' : 'ty')
+
 function getTyCommand(test) {
     if __windows__ {
-        ".\\_install\\msvc2022\\bin\\ty.exe tests\\{test}"
+        "{TY_PATH} tests\\{test}"
     } else {
-        "./ty tests/{test}"
+        "{TY_PATH} tests/{test}"
     }
 }
 
@@ -56,9 +58,7 @@ let pool = ThreadPool(16, doTest)
 let fs = []
 
 for test in listdir('tests') {
-    if test not in ['os.ty'] {
-        fs.push(pool.submit(test))
-    }
+    fs.push(pool.submit(test))
 }
 
 fs.map(&wait)
