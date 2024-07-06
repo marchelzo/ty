@@ -54,6 +54,7 @@ typedef struct stat StatStruct;
 #include <netdb.h>
 #include <netinet/ip.h>
 #include <sys/time.h>
+#include <sys/file.h>
 #include <poll.h>
 #include <sys/mman.h>
 #include <pthread.h>
