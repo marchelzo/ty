@@ -1550,19 +1550,6 @@ vm_try_exec(char *code)
         return pop();
 }
 
-static void
-printjb(jmp_buf jb)
-{
-        unsigned char const *p = (unsigned char const *)jb;
-        unsigned long hash = 2166136261UL;
-
-        for (int i = 0; i < sizeof (jmp_buf); ++i) {
-                hash = (hash ^ p[i]) * 16777619UL;
-        }
-
-        printf("%lx\n", hash);
-}
-
 void
 vm_exec(char *code)
 {

@@ -4925,6 +4925,7 @@ load_module(char const *name, struct scope *scope)
 
         state = save;
 
+        // TODO: which makes more sense here?
         //emit_instr(INSTR_EXEC_CODE);
         //emit_symbol((uintptr_t) m.code);
         vm_exec(code);
