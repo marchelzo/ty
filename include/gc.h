@@ -164,8 +164,11 @@ gc_register(void *p);
 void
 _gc_push(struct value *v);
 
+void
+gc_immortalize(struct value *v);
+
 #if 0
-#define gc_push(v) do { LOG("gc_push: " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0);
+#define gc_push(v) do { GCLOG("gc_push(): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0)
 #else
 #define gc_push _gc_push
 #endif
@@ -254,6 +257,7 @@ void GCForget(AllocList *allocs, size_t *used);
 void GCTakeOwnership(AllocList *new);
 
 void *GCRootSet(void);
+void *GCImmortalSet(void);
 
 #endif
 

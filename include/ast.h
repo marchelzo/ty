@@ -145,6 +145,9 @@ struct statement {
 
 struct expression {
         enum {
+#ifdef TY_ENABLE_PROFILING
+                EXPRESSION_KEEP_LOC,
+#endif
                 EXPRESSION_FUNCTION,
                 EXPRESSION_IMPLICIT_FUNCTION,
                 EXPRESSION_GENERATOR,
@@ -172,7 +175,9 @@ struct expression {
                 EXPRESSION_IN,
                 EXPRESSION_NOT_IN,
 
+#ifndef TY_ENABLE_PROFILING
                 EXPRESSION_KEEP_LOC,
+#endif
 
                 EXPRESSION_IDENTIFIER,
                 EXPRESSION_RESOURCE_BINDING,

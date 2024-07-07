@@ -10,6 +10,7 @@
 
 #include "value.h"
 #include "tthread.h"
+#include "log.h"
 
 extern bool CompileOnly;
 extern bool PrintResult;
@@ -247,6 +248,9 @@ vm_throw(struct value const *);
 struct value
 vm_call(struct value const *f, int argc);
 
+uint64_t
+MyThreadId(void);
+
 struct value
 vm_call_method(struct value const *self, struct value const *f, int argc);
 
@@ -275,9 +279,6 @@ TakeLock(void);
 
 void
 ReleaseLock(bool blocked);
-
-uint64_t
-MyThreadId(void);
 
 #endif
 

@@ -109,14 +109,6 @@ static _Thread_local jmp_buf jb;
 
 _Thread_local int EvalDepth = 0;
 
-typedef struct {
-        int argc;
-        struct value *argv;
-        struct value (*f)(int);
-} BuiltinCall;
-
-static vec(BuiltinCall) builtin_calls;
-
 struct try {
         jmp_buf jb;
         int sp;
@@ -163,6 +155,75 @@ static _Thread_local vec(ThrowCtx) throw_stack;
 static _Thread_local ValueStack defer_stack;
 static _Thread_local ValueStack drop_stack;
 static _Thread_local char *ip;
+
+#ifdef TY_ENABLE_PROFILING
+inline static uint64_t
+TyThreadTime(void)
+{
+#ifdef _WIN32
+        FILETIME CreationTime;
+        FILETIME ExitTime;
+        FILETIME KernelTime;
+        FILETIME UserTime;
+
+        GetThreadTimes(GetCurrentThread(), &CreationTime, &ExitTime, &KernelTime, &UserTime);
+
+        return (((uint64_t)UserTime.dwHighDateTime) << 32) | UserTime.dwLowDateTime;
+#else
+        struct timespec t;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+#endif
+}
+
+typedef struct profile_entry {
+        int64_t count;
+        void *ctx;
+} ProfileEntry;
+
+static int
+CompareProfileEntriesByWeight(void const *a_, void const *b_)
+{
+        ProfileEntry const *a = a_;
+        ProfileEntry const *b = b_;
+
+        if (a->count > b->count)
+                return -1;
+
+        if (a->count < b->count)
+                return 1;
+
+        return 0;
+}
+
+static int
+CompareProfileEntriesByLocation(void const *a_, void const *b_)
+{
+        ProfileEntry const *a = a_;
+        ProfileEntry const *b = b_;
+
+        Location aStart, aEnd;
+        Location bStart, bEnd;
+
+        char const *aFile = compiler_get_location(a->ctx, &aStart, &aEnd);
+        char const *bFile = compiler_get_location(b->ctx, &bStart, &bEnd);
+
+        if (aFile == NULL) return -1;
+        if (bFile == NULL) return  1;
+
+        if (aFile != bFile) return strcmp(aFile, bFile);
+
+        if (aStart.line != bStart.line) return aStart.line - bStart.line;
+
+        return aStart.col - bStart.col;
+}
+
+static _Thread_local char *LastIP;
+static _Thread_local uint64_t LastThreadTime;
+static TyMutex ProfileMutex;
+static Dict *Samples;
+static Dict *FuncSamples;
+#endif
 
 typedef struct {
         ValueStack *stack;
@@ -395,6 +456,12 @@ DoGC()
         if (MyGroup == &MainGroup) {
                 for (int i = 0; i < Globals.count; ++i) {
                         value_mark(&Globals.items[i]);
+                }
+
+                vec(Value const *) *immortal = GCImmortalSet();
+
+                for (int i = 0; i < immortal->count; ++i) {
+                        value_mark(immortal->items[i]);
                 }
         }
 
@@ -1584,6 +1651,35 @@ vm_exec(char *code)
         }
         for (int N = 0; N < 32; ++N) {
         NextInstruction:
+#ifdef TY_ENABLE_PROFILING
+                if (Samples != NULL) {
+                        //printf("Adding sample... root_set=%zu\n", gc_root_set_count());
+                        uint64_t now = TyThreadTime();
+                        if (LastThreadTime != 0) {
+                                uint64_t dt = now - LastThreadTime;
+                                TyMutexLock(&ProfileMutex);
+
+                                Value *count = dict_put_key_if_not_exists(Samples, PTR(LastIP));
+                                if (count->type == VALUE_NIL) {
+                                        *count = INTEGER(dt);
+                                } else {
+                                        count->integer += dt;
+                                }
+
+                                int *func = (frames.count > 0) ? vec_last(frames)->f.info : NULL;
+                                count = dict_put_key_if_not_exists(FuncSamples, PTR(func));
+                                if (count->type == VALUE_NIL) {
+                                        *count = INTEGER(dt);
+                                } else {
+                                        count->integer += dt;
+                                }
+
+                                TyMutexUnlock(&ProfileMutex);
+                        }
+                        LastIP = ip;
+                        LastThreadTime = now;
+                }
+#endif
                 switch ((unsigned char)*ip++) {
                 CASE(NOP)
                         continue;
@@ -3805,6 +3901,14 @@ vm_init(int ac, char **av)
 
         sqlite_load();
 
+#ifdef TY_ENABLE_PROFILING
+        Samples = dict_new();
+        NOGC(Samples);
+        FuncSamples = dict_new();
+        NOGC(FuncSamples);
+        TyMutexInit(&ProfileMutex);
+#endif
+
         return true;
 }
 
@@ -3953,6 +4057,43 @@ vm_execute_file(char const *path)
         return success;
 }
 
+#ifdef TY_ENABLE_PROFILING
+inline static int
+ilerp(int lo, int hi, float a, float x, float b)
+{
+        if (x < a || x > b)
+                return -1;
+
+        float p = (x - a) / (b - a);
+
+        return lo + p * (hi - lo);
+}
+
+static void
+color_sequence(float p, char *out)
+{
+        int r, g, b;
+
+        if ((r = ilerp(0, 100, 0.0, p, 0.1)) != -1) {
+                g = ilerp(255, 225, 0.0, p, 0.1);
+                b = 65;
+        } else if ((r = ilerp(130, 180, 0.1, p, 0.3)) != -1) {
+                g = ilerp(200, 120, 0.1, p, 0.3);
+                b = 40;
+        } else if ((r = ilerp(180, 235, 0.3, p, 0.65)) != -1) {
+                r += 20;
+                g = ilerp(120, 60, 0.3, p, 0.65);
+                b = 60;
+        } else {
+                r = 255;
+                g = ilerp(50, 20, 0.65, p, 1.0);
+                b = 60;
+        }
+
+        sprintf(out, "\033[38;2;%d;%d;%dm", r, g, b);
+}
+#endif
+
 bool
 vm_execute(char const *source, char const *file)
 {
@@ -3992,6 +4133,126 @@ vm_execute(char const *source, char const *file)
         if (PrintResult && stack.capacity > 0) {
                 printf("%s\n", value_show(top() + 1));
         }
+
+#ifdef TY_ENABLE_PROFILING
+        vec(ProfileEntry) profile = {0};
+        vec(ProfileEntry) func_profile = {0};
+
+        char color_buffer[64];
+        double total_ticks = 0.0;
+
+        for (int i = 0; i < Samples->size; ++i) {
+                if (Samples->keys[i].type == 0)
+                        continue;
+                ProfileEntry entry = {
+                        .ctx = Samples->keys[i].ptr,
+                        .count = Samples->values[i].integer
+                };
+                vec_nogc_push(profile, entry);
+                total_ticks += entry.count;
+        }
+
+        for (int i = 0; i < FuncSamples->size; ++i) {
+                if (FuncSamples->keys[i].type == 0)
+                        continue;
+                ProfileEntry entry = {
+                        .ctx = FuncSamples->keys[i].ptr,
+                        .count = FuncSamples->values[i].integer
+                };
+                vec_nogc_push(func_profile, entry);
+        }
+
+        qsort(func_profile.items, func_profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
+
+        printf("%s===== profile by function =====%s\n\n", TERM(95), TERM(0));
+        for (int i = 0; i < func_profile.count; ++i) {
+                ProfileEntry *entry = &func_profile.items[i];
+                color_sequence(entry->count / total_ticks, color_buffer);
+                if (entry->ctx == NULL) {
+                        printf(
+                                "   %s%5.1f%%  %-14lld  %s(top)%s\n",
+                                color_buffer,
+                                entry->count / total_ticks * 100.0,
+                                entry->count,
+                                TERM(92),
+                                TERM(0)
+                        );
+                } else {
+                        Value f = FUNCTION();
+                        f.info = entry->ctx;
+                        char *f_string = value_show_color(&f);
+                        printf(
+                                "   %s%5.1f%%  %-14lld  %s\n",
+                                color_buffer,
+                                entry->count / total_ticks * 100.0,
+                                entry->count,
+                                f_string
+                        );
+                        gc_free(f_string);
+                }
+        }
+
+        qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByLocation);
+
+        int n = 1;
+        for (int i = 1; i < profile.count; ++i) {
+                if (CompareProfileEntriesByLocation(&profile.items[n - 1], &profile.items[i]) == 0) {
+                        profile.items[n - 1].count += profile.items[i].count;
+                } else {
+                        profile.items[n++] = profile.items[i];
+                }
+        }
+
+        profile.count = n;
+
+        qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
+
+        printf("\n\n%s===== profile by line =====%s\n\n", TERM(95), TERM(0));
+        for (int i = 0; i < profile.count; ++i) {
+                Location start, end;
+                ProfileEntry *entry = &profile.items[i];
+                char const *filename = compiler_get_location(entry->ctx, &start, &end);
+
+                color_sequence(entry->count / total_ticks, color_buffer);
+
+                if (filename == NULL) {
+                        continue;
+                }
+
+                char buffer[4096];
+
+                snprintf(buffer, sizeof buffer - 1, "%.*s", (int)(end.s - start.s), start.s);
+
+                int n = 0;
+                int len = strlen(buffer);
+
+                for (int i = 0; i < len; ++i) {
+                        if (n > 0 && isspace(buffer[n - 1]) && isspace(buffer[i]))
+                                continue;
+                        if (isspace(buffer[i]))
+                                buffer[n++] = ' ';
+                        else
+                                buffer[n++] = buffer[i];
+                }
+
+                buffer[n] = '\0';
+
+                printf(
+                        "   %s%5.1f%%  %-14lld  %s%14.14s%s:%s%5d:%-3d%s   |   %s\n",
+                        color_buffer,
+                        entry->count / total_ticks * 100.0,
+                        entry->count,
+                        TERM(93),
+                        filename,
+                        TERM(0),
+                        TERM(94),
+                        start.line + 1,
+                        start.col + 1,
+                        TERM(0),
+                        buffer
+                );
+        }
+#endif
 
         filename = NULL;
 
@@ -4133,7 +4394,7 @@ MarkStorage(ThreadStorage const *storage)
 {
         vec(struct value const *) *root_set = storage->root_set;
 
-        GCLOG("Marking root set");
+        GCLOG("Marking root set (%zu items)", gc_root_set_count());
         for (int i = 0; i < root_set->count; ++i) {
                 value_mark(root_set->items[i]);
         }

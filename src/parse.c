@@ -1078,6 +1078,9 @@ prefix_at(void)
         if (token(1)->type == '[')
                 return prefix_function();
 
+        Location start = tok()->start;
+        Location end = tok()->end;
+
         next();
 
         if (tok()->type == '{') {
@@ -1110,10 +1113,14 @@ prefix_at(void)
                 return m;
         } else {
                 unconsume('.');
+                tok()->start = start;
+                tok()->end = end;
 
                 unconsume(TOKEN_IDENTIFIER);
                 tok()->identifier = "self";
                 tok()->module = NULL;
+                tok()->start = start;
+                tok()->end = end;
 
                 return prefix_identifier();
         }
@@ -2308,8 +2315,8 @@ infix_function_call(struct expression *left)
                 return e;
         } else {
                 if (tok()->type == TOKEN_STAR) {
-                        next();
                         struct expression *arg = mkexpr();
+                        next();
                         if (tok()->type == TOKEN_STAR) {
                                 next();
                                 arg->type = EXPRESSION_SPLAT;
@@ -2317,7 +2324,7 @@ infix_function_call(struct expression *left)
                                 arg->type = EXPRESSION_SPREAD;
                         }
                         arg->value = parse_expr(0);
-                        arg->start = arg->value->start;
+                        arg->end = End;
                         if (arg->type == EXPRESSION_SPLAT) {
                                 VPush(e->kwargs, arg);
                                 VPush(e->kws, "*");
@@ -2496,7 +2503,7 @@ infix_member_access(struct expression *left)
         next();
 
         /*
-         * xs.<N> is syntactic sugar for xs[N - 1]
+         * xs.N is syntactic sugar for xs[N]
          */
         if (tok()->type == TOKEN_INTEGER) {
                 e->type = EXPRESSION_SUBSCRIPT;
@@ -2764,11 +2771,13 @@ static struct expression *
 postfix_inc(struct expression *left)
 {
         struct expression *e = mkexpr();
+        e->start = left->start;
 
         consume(TOKEN_INC);
 
         e->type = EXPRESSION_POSTFIX_INC;
         e->operand = assignment_lvalue(left);
+        e->end = End;
 
         return e;
 }
@@ -2777,11 +2786,13 @@ static struct expression *
 postfix_dec(struct expression *left)
 {
         struct expression *e = mkexpr();
+        e->start = left->start;
 
         consume(TOKEN_DEC);
 
         e->type = EXPRESSION_POSTFIX_DEC;
         e->operand = assignment_lvalue(left);
+        e->end = End;
 
         return e;
 }
