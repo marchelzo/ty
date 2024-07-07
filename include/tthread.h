@@ -72,6 +72,12 @@ TyMutexInit(TyMutex* m)
         InitializeCriticalSection(m);
 }
 
+inline static void
+TyMutexInitRecursive(TyMutex *m)
+{
+        InitializeCriticalSection(m);
+}
+
 inline static bool
 TyMutexDestroy(TyMutex* m)
 {
@@ -228,6 +234,16 @@ inline static void
 TyMutexInit(TyMutex *m)
 {
         pthread_mutex_init(m, NULL);
+}
+
+inline static void
+TyMutexInitRecursive(TyMutex *m)
+{
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(m, &attr);
+        pthread_mutexattr_destroy(&attr);
 }
 
 inline static bool

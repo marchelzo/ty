@@ -66,6 +66,10 @@ else ifndef LOG
         CFLAGS += -DTY_RELEASE
 endif
 
+ifdef TY_PROFILER
+        CFLAGS += -DTY_ENABLE_PROFILING
+endif
+
 ifdef GENPROF
         CFLAGS += -fprofile-generate
 endif

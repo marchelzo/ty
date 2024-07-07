@@ -385,14 +385,14 @@ struct channel {
         vec(ChanVal) q;
 };
 
-struct dict {
+typedef struct dict {
         unsigned long *hashes;
         struct value *keys;
         struct value *values;
         size_t size;
         size_t count;
         struct value dflt;
-};
+} Dict;
 
 unsigned long
 value_hash(struct value const *val);

@@ -3,6 +3,7 @@
 #include <limits.h>
 
 #include "value.h"
+#include "gc.h"
 #include "dict.h"
 #include "log.h"
 #include "functions.h"

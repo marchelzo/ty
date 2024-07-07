@@ -2215,7 +2215,24 @@ emit_function(struct expression const *e, int class)
         emit_symbol((uintptr_t)e->proto);
         emit_symbol((uintptr_t)e->doc);
 
+#ifdef TY_ENABLE_PROFILING
+        if (e->name == NULL) {
+                char buffer[512];
+                snprintf(
+                        buffer,
+                        sizeof buffer - 1,
+                        "(anonymous function : %s:%d)",
+                        state.filename,
+                        e->start.line + 1
+                );
+                emit_string(buffer);
+        } else {
+                emit_string(e->name);
+        }
+#else
         emit_string(e->name == NULL ? "(anonymous function)" : e->name);
+#endif
+
         LOG("COMPILING FUNCTION: %s", scope_name(e->scope));
 
         for (int i = 0; i < ncaps; ++i) {
@@ -5234,8 +5251,8 @@ compiler_get_location(char const *code, struct location *start, struct location 
 
         while (lo <= hi) {
                 int m = (lo / 2) + (hi / 2) + (lo & hi & 1);
-                if      (c < locs->items[m].p_end) hi = m - 1;
-                else if (c > locs->items[m].p_end) lo = m + 1;
+                if      (c < locs->items[m].p_start) hi = m - 1;
+                else if (c > locs->items[m].p_end)   lo = m + 1;
                 else {
                         lo = m;
                         break;
@@ -6352,7 +6369,7 @@ cexpr(struct value *v)
                 }
                 e->type = EXPRESSION_VALUE;
                 e->v = value;
-                gc_push(value);
+                gc_immortalize(value);
                 break;
         }
         case TyInt:

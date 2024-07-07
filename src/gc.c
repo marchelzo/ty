@@ -15,6 +15,7 @@ _Thread_local size_t MemoryUsed = 0;
 _Thread_local size_t MemoryLimit = GC_INITIAL_LIMIT;
 
 static _Thread_local vec(struct value const *) RootSet;
+static vec(Value const *) ImmortalSet;
 
 _Thread_local int GC_OFF_COUNT = 0;
 
@@ -134,6 +135,12 @@ _gc_push(struct value *v)
 }
 
 void
+gc_immortalize(Value *v)
+{
+        vec_nogc_push(ImmortalSet, v);
+}
+
+void
 gc_pop(void)
 {
         --RootSet.count;
@@ -169,9 +176,16 @@ gc_root_set_count(void)
         return RootSet.count;
 }
 
-void *GCRootSet(void)
+void *
+GCRootSet(void)
 {
         return &RootSet;
+}
+
+void *
+GCImmortalSet(void)
+{
+        return &ImmortalSet;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */
