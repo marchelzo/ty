@@ -6515,8 +6515,7 @@ builtin_eval(int argc, struct value *kwargs)
                 struct expression *e = prog[0]->expression;
 
                 if (!compiler_symbolize_expression(e, scope))
-                Err1:
-                {
+                Err1: {
                         char const *msg = compiler_error();
                         struct value e = Err(STRING_CLONE(msg, strlen(msg)));
                         DestroyArena(old);
@@ -6535,8 +6534,7 @@ builtin_eval(int argc, struct value *kwargs)
                 compiler_clear_location();
                 struct expression *e = TyToCExpr(&ARG(0));
                 if (e == NULL || !compiler_symbolize_expression(e, scope))
-                Err2:
-                {
+                Err2: {
                         char const *msg = compiler_error();
                         struct value e = Err(STRING_CLONE(msg, strlen(msg)));
                         vm_throw(&e);
