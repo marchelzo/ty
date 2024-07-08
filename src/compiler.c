@@ -5275,7 +5275,8 @@ compiler_get_location(char const *code, struct location *start, struct location 
                 }
         }
 
-        while (lo + 1 < locs->count && locs->items[lo + 1].p_start <= c &&
+        // TODO: not sure if we should be doing this
+        while (false && lo + 1 < locs->count && locs->items[lo + 1].p_start <= c &&
                         locs->items[lo + 1].p_end == locs->items[lo].p_end) {
                 lo += 1;
         }
