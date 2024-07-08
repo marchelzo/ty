@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <utf8proc.h>
 
 #include "test.h"
 #include "value.h"
@@ -158,8 +159,9 @@ string(void)
         vec(char) str;
         vec_init(str);
 
-        char b[3] = {0};
+        char b[8] = {0};
         unsigned hex;
+        utf8proc_ssize_t n;
 
         while (peek() != '\0' && peek() != '"') {
                 if (peek() == '\\') switch (next(), next()) {
@@ -174,10 +176,23 @@ string(void)
                 case 'x':
                         b[0] = next();
                         b[1] = next();
+                        b[2] = '\0';
                         if (sscanf(b, "%X", &hex) != 1) {
                                 FAIL;
                         }
                         vec_push(str, (char)hex);
+                        break;
+                case 'u':
+                        b[0] = isxdigit(peek()) ? next() : '\0';
+                        b[1] = isxdigit(peek()) ? next() : '\0';
+                        b[2] = isxdigit(peek()) ? next() : '\0';
+                        b[3] = isxdigit(peek()) ? next() : '\0';
+                        b[4] = '\0';
+                        if (sscanf(b, "%x", &hex) != 1) {
+                                FAIL;
+                        }
+                        n = utf8proc_encode_char(hex, b);
+                        vec_push_n(str, b, n);
                         break;
                 } else vec_push(str, next());
         }
@@ -185,7 +200,7 @@ string(void)
         if (next() != '"')
                 FAIL;
 
-        int n = str.count;
+        n = str.count;
 
         if (n == 0)
                 return STRING_NOGC(NULL, 0);
