@@ -215,7 +215,11 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
 
         if (aStart.line != bStart.line) return aStart.line - bStart.line;
 
-        return aStart.col - bStart.col;
+        if (aStart.col != bStart.col) return  aStart.col - bStart.col;
+
+        if (aEnd.line != bEnd.line) return aEnd.line - bEnd.line;
+
+        return aEnd.col - bEnd.col;
 }
 
 static _Thread_local char *LastIP;
