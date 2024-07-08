@@ -361,10 +361,18 @@ show_string(char const *s, size_t n, bool color)
                 vec_push(v, 'n');
                 COLOR(92);
                 break;
+        case '\\':
+                COLOR(93);
+                vec_push(v, '\\');
+                vec_push(v, '\\');
+                COLOR(92);
+                break;
         case '\'':
                 COLOR(93);
                 vec_push(v, '\\');
+                vec_push(v, '\'');
                 COLOR(92);
+                break;
         default:
                 vec_push(v, *c);
         }

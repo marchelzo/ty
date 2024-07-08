@@ -4203,14 +4203,15 @@ vm_execute(char const *source, char const *file)
                 }
         }
 
-        profile.count = n;
+        if (profile.count > 0)
+                profile.count = n;
 
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
         printf("\n\n%s===== profile by line =====%s\n\n", TERM(95), TERM(0));
         for (int i = 0; i < profile.count; ++i) {
                 Location start, end;
-                ProfileEntry *entry = &profile.items[i];
+                ProfileEntry *entry = profile.items + i;
                 char const *filename = compiler_get_location(entry->ctx, &start, &end);
 
                 color_sequence(entry->count / total_ticks, color_buffer);
