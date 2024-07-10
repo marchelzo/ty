@@ -883,6 +883,8 @@ prefix_function(void)
 {
         struct expression *e = mkfunc();
 
+        bool sugared_generator = false;
+
         if (tok()->type == TOKEN_AT) {
                 consume(TOKEN_AT);
                 consume('[');
@@ -933,8 +935,6 @@ prefix_function(void)
 
         if (e->type == EXPRESSION_GENERATOR)
                 goto Body;
-
-        bool sugared_generator = false;
 
         if (tok()->type == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
@@ -1016,6 +1016,12 @@ prefix_function(void)
 
 Body:
         e->body = parse_statement(-1);
+
+        if (sugared_generator) {
+                char name[256];
+                snprintf(name, sizeof name - 1, "<%s:generator>", e->name);
+                e->body->expression->name = sclonea(name);
+        }
 
         return e;
 }
@@ -1379,6 +1385,24 @@ prefix_with(void)
         with->end = End;
 
         return with;
+}
+
+static Expr *
+prefix_throw(void)
+{
+        Expr *e = mkexpr();
+        e->type = EXPRESSION_THROW;
+
+        consume_keyword(KEYWORD_THROW);
+
+        e->throw = parse_expr(0);
+
+        if (tok()->type == ';')
+                next();
+
+        e->end = End;
+
+        return e;
 }
 
 static struct expression *
@@ -2044,6 +2068,8 @@ implicit_subscript(struct expression *o)
 static struct expression *
 prefix_implicit_method(void)
 {
+        Location start = tok()->start;
+
         consume('&');
 
         if (tok()->type == '{') {
@@ -2083,6 +2109,7 @@ prefix_implicit_method(void)
 
         struct expression *e = mkexpr();
         e->maybe = false;
+        e->start = start;
 
         if (tok()->type == '.') {
                 next();
@@ -2113,18 +2140,12 @@ prefix_implicit_method(void)
 
                         setctx(LEX_PREFIX);
 
-                        if (tok()->type == ')') {
-                                next();
-                                return e;
-                        } else {
+                        while (tok()->type != ')') {
                                 VPush(e->method_args, parse_expr(0));
                                 VPush(e->mconds, try_cond());
-                        }
-
-                        while (tok()->type == ',') {
-                                next();
-                                VPush(e->method_args, parse_expr(0));
-                                VPush(e->mconds, try_cond());
+                                if (tok()->type != ')') {
+                                        consume(',');
+                                }
                         }
 
                         consume(')');
@@ -2133,6 +2154,8 @@ prefix_implicit_method(void)
 
         struct expression *f = mkfunc();
         f->body = mkret(e);
+        f->start = start;
+        f->end = End;
 
         VPush(f->params, o->identifier);
         VPush(f->dflts, NULL);
@@ -2193,11 +2216,15 @@ prefix_bit_or(void)
 static struct expression *
 prefix_arrow(void)
 {
+        Location start = tok()->start;
+
         unconsume(')');
         unconsume('(');
 
         struct expression *f = parse_expr(0);
         f->type = EXPRESSION_IMPLICIT_FUNCTION;
+        f->start = start;
+        f->end = End;
 
         return f;
 }
@@ -2653,6 +2680,7 @@ infix_arrow_function(struct expression *left)
         consume(TOKEN_ARROW);
 
         struct expression *e = mkfunc();
+        e->start = left->start;
 
         if (left->type != EXPRESSION_LIST && (left->type != EXPRESSION_TUPLE || !left->only_identifiers)) {
                 struct expression *l = mkexpr();
@@ -2692,6 +2720,8 @@ infix_arrow_function(struct expression *left)
                 VPush(body->statements, ret);
                 e->body = body;
         }
+
+        e->end = End;
 
         return e;
 }
@@ -2897,6 +2927,7 @@ Keyword:
         case KEYWORD_SELF:      return prefix_self;
         case KEYWORD_NIL:       return prefix_nil;
         case KEYWORD_YIELD:     return prefix_yield;
+        case KEYWORD_THROW:     return prefix_throw;
         case KEYWORD_WITH:      return prefix_with;
         case KEYWORD_DO:        return prefix_do;
 
@@ -2904,7 +2935,6 @@ Keyword:
         case KEYWORD_FOR:
         case KEYWORD_WHILE:
         case KEYWORD_TRY:
-        case KEYWORD_THROW:
                 return prefix_statement;
 
         default:                return NULL;
@@ -3439,19 +3469,23 @@ parse_condparts(bool neg)
 static struct statement *
 parse_while(void)
 {
-        consume_keyword(KEYWORD_WHILE);
+        Location start = tok()->start;
 
         /*
          * Maybe it's a while-match loop.
          */
-        if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_MATCH) {
+        if (have_keywords(KEYWORD_WHILE, KEYWORD_MATCH)) {
+                next();
                 struct statement *m = parse_match_statement();
                 m->type = STATEMENT_WHILE_MATCH;
+                m->start = start;
                 return m;
         }
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_WHILE;
+
+        consume_keyword(KEYWORD_WHILE);
 
         vec_init(s->While.parts);
 
@@ -3464,18 +3498,21 @@ parse_while(void)
 
         s->While.block = parse_block();
 
+        s->end = End;
+
         return s;
 }
 
 static struct statement *
 parse_if(void)
 {
-        consume_keyword(KEYWORD_IF);
 
         struct statement *s = mkstmt();
         s->type = STATEMENT_IF;
-        s->iff.neg = have_keyword(KEYWORD_NOT);
 
+        consume_keyword(KEYWORD_IF);
+
+        s->iff.neg = have_keyword(KEYWORD_NOT);
         if (s->iff.neg) {
                 next();
         }
@@ -3490,6 +3527,8 @@ parse_if(void)
         } else {
                 s->iff.otherwise = NULL;
         }
+
+        s->end = End;
 
         return s;
 }
@@ -4025,24 +4064,6 @@ parse_class_definition(void)
 }
 
 static struct statement *
-parse_throw(void)
-{
-        struct statement *s = mkstmt();
-        s->type = STATEMENT_THROW;
-
-        consume_keyword(KEYWORD_THROW);
-
-        s->throw = parse_expr(0);
-
-        if (tok()->type == ';')
-                next();
-
-        s->end = End;
-
-        return s;
-}
-
-static struct statement *
 parse_try(void)
 {
         consume_keyword(KEYWORD_TRY);
@@ -4246,7 +4267,6 @@ Keyword:
         case KEYWORD_BREAK:    return parse_break_statement();
         case KEYWORD_CONTINUE: return parse_continue_statement();
         case KEYWORD_TRY:      return parse_try();
-        case KEYWORD_THROW:    return parse_throw();
         default:               goto Expression;
         }
 

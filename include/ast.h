@@ -16,6 +16,8 @@ typedef vec(struct expression *) expression_vector;
 struct expression;
 struct value;
 
+typedef struct expression Expr;
+
 struct class_definition {
         int symbol;
         bool pub;
@@ -42,40 +44,44 @@ typedef struct class_definition ClassDefinition;
 enum { FT_NONE, FT_FUNC, FT_GEN };
 enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
 
+#define TY_STATEMENT_TYPES \
+        X(FOR_LOOP), \
+        X(EACH_LOOP), \
+        X(DEFINITION), \
+        X(FUNCTION_DEFINITION), \
+        X(MACRO_DEFINITION), \
+        X(FUN_MACRO_DEFINITION), \
+        X(TAG_DEFINITION), \
+        X(CLASS_DEFINITION), \
+        X(WHILE), \
+        X(WHILE_MATCH), \
+        X(IF_LET), \
+        X(MATCH), \
+        X(IF), \
+        X(RETURN), \
+        X(GENERATOR_RETURN), \
+        X(NEXT), \
+        X(CONTINUE), \
+        X(BREAK), \
+        X(TRY), \
+        X(DEFER), \
+        X(CLEANUP), \
+        X(TRY_CLEAN), \
+        X(DROP), \
+        X(BLOCK), \
+        X(MULTI), \
+        X(HALT), \
+        X(NULL), \
+        X(EXPRESSION), \
+        X(IMPORT), \
+        X(EXPORT)
+
 struct statement {
+#define X(t) STATEMENT_ ## t
         enum {
-                STATEMENT_FOR_LOOP,
-                STATEMENT_EACH_LOOP,
-                STATEMENT_DEFINITION,
-                STATEMENT_FUNCTION_DEFINITION,
-                STATEMENT_MACRO_DEFINITION,
-                STATEMENT_FUN_MACRO_DEFINITION,
-                STATEMENT_TAG_DEFINITION,
-                STATEMENT_CLASS_DEFINITION,
-                STATEMENT_WHILE,
-                STATEMENT_WHILE_MATCH,
-                STATEMENT_IF_LET,
-                STATEMENT_MATCH,
-                STATEMENT_IF,
-                STATEMENT_RETURN,
-                STATEMENT_GENERATOR_RETURN,
-                STATEMENT_NEXT,
-                STATEMENT_CONTINUE,
-                STATEMENT_BREAK,
-                STATEMENT_THROW,
-                STATEMENT_TRY,
-                STATEMENT_DEFER,
-                STATEMENT_CLEANUP,
-                STATEMENT_TRY_CLEAN,
-                STATEMENT_DROP,
-                STATEMENT_BLOCK,
-                STATEMENT_MULTI,
-                STATEMENT_HALT,
-                STATEMENT_NULL,
-                STATEMENT_EXPRESSION,
-                STATEMENT_IMPORT,
-                STATEMENT_EXPORT,
+                TY_STATEMENT_TYPES
         } type;
+#undef X
         struct location start;
         struct location end;
         union {
@@ -83,7 +89,6 @@ struct statement {
                         struct expression *expression;
                         int depth;
                 };
-                struct expression *throw;
                 vec(struct statement *) statements;
                 expression_vector returns;
                 vec(char *) exports;
@@ -142,110 +147,107 @@ struct statement {
         };
 };
 
+#define TY_EXPRESSION_TYPES \
+        X(FUNCTION), \
+        X(IMPLICIT_FUNCTION), \
+        X(GENERATOR), \
+        X(INTEGER), \
+        X(BOOLEAN), \
+        X(STRING), \
+        X(REAL), \
+        X(ARRAY), \
+        X(ARRAY_COMPR), \
+        X(STATEMENT), \
+        X(DICT), \
+        X(DICT_COMPR), \
+        X(TAG), \
+        X(CONDITIONAL), \
+        X(COMPILE_TIME), \
+        X(EQ), \
+        X(MAYBE_EQ), \
+        X(TICK), \
+        X(PREFIX_QUESTION), \
+        X(PREFIX_BANG), \
+        X(NIL), \
+        X(SELF), \
+        X(LIST), \
+        X(TUPLE), \
+        X(IN), \
+        X(NOT_IN), \
+        X(KEEP_LOC), \
+        X(IDENTIFIER), \
+        X(RESOURCE_BINDING), \
+        X(DEFINED), \
+        X(WITH), \
+        X(YIELD), \
+        X(THROW), \
+        X(TAG_APPLICATION), \
+        X(TEMPLATE), \
+        X(TEMPLATE_HOLE), \
+        X(SPREAD), \
+        X(SPLAT), \
+        X(MUST_EQUAL), \
+        X(REGEX), \
+        X(SPECIAL_STRING), \
+        X(FUNCTION_CALL), \
+        X(MEMBER_ACCESS), \
+        X(SELF_ACCESS), \
+        X(SUBSCRIPT), \
+        X(METHOD_CALL), \
+        X(USER_OP), \
+        X(BIT_AND), \
+        X(BIT_OR), \
+        X(MATCH_NOT_NIL), \
+        X(MATCH_REST), \
+        X(DOT_DOT), \
+        X(DOT_DOT_DOT), \
+        X(MATCH), \
+        X(VIEW_PATTERN), \
+        X(NOT_NIL_VIEW_PATTERN), \
+        X(PLUS), \
+        X(MINUS), \
+        X(STAR), \
+        X(DIV), \
+        X(PERCENT), \
+        X(AND), \
+        X(OR), \
+        X(KW_AND), \
+        X(KW_OR), \
+        X(WTF), \
+        X(LT), \
+        X(LEQ), \
+        X(GT), \
+        X(GEQ), \
+        X(CMP), \
+        X(DBL_EQ), \
+        X(NOT_EQ), \
+        X(CHECK_MATCH), \
+        X(PLUS_EQ), \
+        X(STAR_EQ), \
+        X(DIV_EQ), \
+        X(MINUS_EQ), \
+        X(PREFIX_MINUS), \
+        X(PREFIX_HASH), \
+        X(PREFIX_AT), \
+        X(PREFIX_INC), \
+        X(PREFIX_DEC), \
+        X(POSTFIX_INC), \
+        X(POSTFIX_DEC), \
+        X(PTR), \
+        X(EVAL), \
+        X(IFDEF), \
+        X(NONE), \
+        X(MULTI_FUNCTION), \
+        X(MACRO_INVOCATION), \
+        X(VALUE), \
+        X(EXPRESSION_MAX_TYPE)
 
 struct expression {
+#define X(t) EXPRESSION_ ## t
         enum {
-#ifdef TY_ENABLE_PROFILING
-                EXPRESSION_KEEP_LOC,
-#endif
-                EXPRESSION_FUNCTION,
-                EXPRESSION_IMPLICIT_FUNCTION,
-                EXPRESSION_GENERATOR,
-                EXPRESSION_INTEGER,
-                EXPRESSION_BOOLEAN,
-                EXPRESSION_STRING,
-                EXPRESSION_REAL,
-                EXPRESSION_ARRAY,
-                EXPRESSION_ARRAY_COMPR,
-                EXPRESSION_STATEMENT,
-                EXPRESSION_DICT,
-                EXPRESSION_DICT_COMPR,
-                EXPRESSION_TAG,
-                EXPRESSION_CONDITIONAL,
-                EXPRESSION_COMPILE_TIME,
-                EXPRESSION_EQ,
-                EXPRESSION_MAYBE_EQ,
-                EXPRESSION_TICK,
-                EXPRESSION_PREFIX_QUESTION,
-                EXPRESSION_PREFIX_BANG,
-                EXPRESSION_NIL,
-                EXPRESSION_SELF,
-                EXPRESSION_LIST,
-                EXPRESSION_TUPLE,
-                EXPRESSION_IN,
-                EXPRESSION_NOT_IN,
-
-#ifndef TY_ENABLE_PROFILING
-                EXPRESSION_KEEP_LOC,
-#endif
-
-                EXPRESSION_IDENTIFIER,
-                EXPRESSION_RESOURCE_BINDING,
-                EXPRESSION_DEFINED,
-                EXPRESSION_WITH,
-                EXPRESSION_YIELD,
-                EXPRESSION_TAG_APPLICATION,
-                EXPRESSION_TEMPLATE,
-                EXPRESSION_TEMPLATE_HOLE,
-                EXPRESSION_SPREAD,
-                EXPRESSION_SPLAT,
-                EXPRESSION_MUST_EQUAL,
-                EXPRESSION_REGEX,
-                EXPRESSION_SPECIAL_STRING,
-                EXPRESSION_FUNCTION_CALL,
-                EXPRESSION_MEMBER_ACCESS,
-                EXPRESSION_SELF_ACCESS,
-                EXPRESSION_SUBSCRIPT,
-                EXPRESSION_METHOD_CALL,
-                EXPRESSION_USER_OP,
-                EXPRESSION_BIT_AND,
-                EXPRESSION_BIT_OR,
-                EXPRESSION_MATCH_NOT_NIL,
-                EXPRESSION_MATCH_REST,
-                EXPRESSION_DOT_DOT,
-                EXPRESSION_DOT_DOT_DOT,
-                EXPRESSION_MATCH,
-                EXPRESSION_VIEW_PATTERN,
-                EXPRESSION_NOT_NIL_VIEW_PATTERN,
-                EXPRESSION_PLUS,
-                EXPRESSION_MINUS,
-                EXPRESSION_STAR,
-                EXPRESSION_DIV,
-                EXPRESSION_PERCENT,
-                EXPRESSION_AND,
-                EXPRESSION_OR,
-                EXPRESSION_KW_AND,
-                EXPRESSION_KW_OR,
-                EXPRESSION_WTF,
-                EXPRESSION_LT,
-                EXPRESSION_LEQ,
-                EXPRESSION_GT,
-                EXPRESSION_GEQ,
-                EXPRESSION_CMP,
-                EXPRESSION_DBL_EQ,
-                EXPRESSION_NOT_EQ,
-                EXPRESSION_CHECK_MATCH,
-                EXPRESSION_PLUS_EQ,
-                EXPRESSION_STAR_EQ,
-                EXPRESSION_DIV_EQ,
-                EXPRESSION_MINUS_EQ,
-                EXPRESSION_PREFIX_MINUS,
-                EXPRESSION_PREFIX_HASH,
-                EXPRESSION_PREFIX_AT,
-                EXPRESSION_PREFIX_INC,
-                EXPRESSION_PREFIX_DEC,
-                EXPRESSION_POSTFIX_INC,
-                EXPRESSION_POSTFIX_DEC,
-                EXPRESSION_PTR,
-                EXPRESSION_EVAL,
-                EXPRESSION_IFDEF,
-                EXPRESSION_NONE,
-                EXPRESSION_MULTI_FUNCTION,
-
-                EXPRESSION_MACRO_INVOCATION,
-                EXPRESSION_VALUE,
-                EXPRESSION_MAX_TYPE
+                TY_EXPRESSION_TYPES
         } type;
+#undef X
 
         struct location start;
         struct location end;
@@ -262,6 +264,7 @@ struct expression {
                 struct statement *statement;
                 struct value *v;
                 void *p;
+                Expr *throw;
                 struct {
                         struct expression *operand;
                         struct scope *escope;
@@ -398,6 +401,9 @@ struct expression {
                 };
         };
 };
+
+char const *
+ExpressionTypeName(Expr const *e);
 
 #endif
 

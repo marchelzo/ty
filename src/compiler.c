@@ -56,14 +56,18 @@
                 emit_int(loc - state.code.count - sizeof (int)); \
         } while (false)
 
-#define EXPR(...) ((struct expression){ .start = { -1, -1 }, __VA_ARGS__ })
-
 #define SAVE_JB \
         jmp_buf jb_; \
         memcpy(&jb_, &jb, sizeof jb);
 
 #define RESTORE_JB \
         memcpy(&jb, &jb_, sizeof jb);
+
+#ifdef TY_ENABLE_PROFILING
+#define KEEP_LOCATION(e) true
+#else
+#define KEEP_LOCATION(e) ((e)->type > EXPRESSION_KEEP_LOC)
+#endif
 
 #if 0
   #define INSTR_SAVE_STACK_POS INSTR_SAVE_STACK_POS), emit_int(__LINE__
@@ -247,6 +251,77 @@ emit_spread(struct expression const *e, bool nils);
 static void
 compile(char const *source);
 
+#define X(t) #t
+static char const *ExpressionTypeNames[] = {
+        TY_EXPRESSION_TYPES
+};
+static char const *StatementTypeNames[] = {
+        TY_STATEMENT_TYPES
+};
+#undef X
+
+char const *
+ExpressionTypeName(Expr const *e)
+{
+        if (e->type == EXPRESSION_STATEMENT) {
+                if (e->statement->type == STATEMENT_EXPRESSION) {
+                        return ExpressionTypeName(e->statement->expression);
+                } else {
+                        return StatementTypeNames[e->statement->type];
+                }
+        } else {
+                return ExpressionTypeNames[e->type];
+        }
+}
+
+void
+colorize_code(
+        char const *expr_color,
+        char const *base_color,
+        Location const *start,
+        Location const *end,
+        char *out,
+        size_t n
+)
+{
+        char const *prefix = start->s;
+        char const *eol = start->s + strcspn(start->s, "\n");
+        char const *suffix = (eol > end->s) ? end->s : eol;
+
+        while (prefix[-1] != '\0' && prefix[-1] != '\n')
+                --prefix;
+
+        while (isspace(prefix[0]))
+                ++prefix;
+
+        int before = start->s - prefix;
+        int length = suffix - start->s;
+        int after = strcspn(suffix, "\n");
+
+        if (length == 0) {
+                length = 1;
+                suffix += 1;
+        }
+
+        snprintf(
+                out,
+                n == 0 ? 0 : n - 1,
+                "%s%.*s%s%s%.*s%s%s%.*s%s",
+                base_color,
+                before,
+                prefix,
+                TERM(1),
+                expr_color,
+                length,
+                start->s,
+                TERM(0),
+                base_color,
+                after,
+                suffix,
+                TERM(0)
+        );
+}
+
 noreturn static void
 fail(char const *fmt, ...)
 {
@@ -357,6 +432,39 @@ fail(char const *fmt, ...)
         longjmp(jb, 1);
 }
 
+static int
+eloc_cmp(void const *a_, void const *b_)
+{
+        struct eloc *a = a_;
+        struct eloc *b = b_;
+
+        if (a->p_start < b->p_start) return -1;
+        if (a->p_start > b->p_start) return  1;
+
+        return 0;
+}
+
+char const *
+show_expr_type(Expr const *e)
+{
+        Value v = tyexpr(e);
+
+        if (v.type == VALUE_TAG) {
+                return tags_name(v.tag);
+        } else {
+                //return value_show_color(&v);
+                return tags_name(tags_first(v.tags));
+        }
+}
+
+static char *
+show_expr(struct expression const *e)
+{
+        char buffer[4096];
+        colorize_code(TERM(93), TERM(0), &e->start, &e->end, buffer, sizeof buffer);
+        return sclone_malloc(buffer);
+}
+
 inline static void
 _emit_instr(char c)
 {
@@ -432,13 +540,17 @@ add_location(struct expression const *e, size_t start_off, size_t end_off)
 }
 
 static void
-patch_location_info(void)
+add_location_info(void)
 {
         struct eloc *locs = state.expression_locations.items;
         for (int i = 0; i < state.expression_locations.count; ++i) {
                 locs[i].p_start = (uintptr_t)(state.code.items + locs[i].start_off);
                 locs[i].p_end = (uintptr_t)(state.code.items + locs[i].end_off);
         }
+
+        qsort(state.expression_locations.items, state.expression_locations.count, sizeof (struct eloc), eloc_cmp);
+
+        VPush(location_lists, state.expression_locations);
 }
 
 inline static void
@@ -755,6 +867,7 @@ to_module_access(struct scope const *scope, struct expression const *e)
 
         id->start = start;
         id->end = end;
+        id->filename = state.filename;
         id->identifier = (char *)name;
         id->type = EXPRESSION_IDENTIFIER;
 
@@ -943,6 +1056,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 items->type = EXPRESSION_TUPLE;
                                 items->start = e->start;
                                 items->end = e->end;
+                                items->filename = state.filename;
                                 vec_init(items->es);
                                 vec_init(items->tconds);
                                 vec_init(items->required);
@@ -979,6 +1093,8 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
 
         if (target->symbolized)
                 return;
+
+        target->filename = state.filename;
 
         struct expression *mod_access;
 
@@ -1111,6 +1227,8 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
         if (e->symbolized)
                 return;
 
+        e->filename = state.filename;
+
         try_symbolize_application(scope, e);
 
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
@@ -1221,10 +1339,17 @@ invoke_fun_macro(struct expression *e)
         byte_vector code_save = state.code;
         vec_init(state.code);
 
+        location_vector locs_save = state.expression_locations;
+        vec_init(state.expression_locations);
+
         emit_expression(e->function);
         emit_instr(INSTR_HALT);
 
+        add_location_info();
+
         vm_exec(state.code.items);
+
+        state.expression_locations = locs_save;
         state.code = code_save;
 
         struct value m = *vm_get(0);
@@ -1267,6 +1392,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
 
         if (e->symbolized)
                 return;
+
+        e->filename = state.filename;
 
         state.start = e->start;
         state.end = e->end;
@@ -1605,6 +1732,9 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         }
                 }
                 break;
+        case EXPRESSION_THROW:
+                symbolize_expression(scope, e->throw);
+                break;
         case EXPRESSION_YIELD:
                 for (int i = 0; i < e->es.count; ++i) {
                     symbolize_expression(scope, e->es.items[i]);
@@ -1764,9 +1894,6 @@ symbolize_statement(struct scope *scope, struct statement *s)
                         symbolize_statement(scope, s->statements.items[i]);
                 }
                 break;
-        case STATEMENT_THROW:
-                symbolize_expression(scope, s->throw);
-                break;
         case STATEMENT_TRY:
         {
                 symbolize_statement(scope, s->try.s);
@@ -1881,11 +2008,15 @@ invoke_macro(struct expression *e, struct scope *scope)
         symbolize_expression(scope, e->macro.m);
 
         byte_vector code_save = state.code;
-
         vec_init(state.code);
+
+        location_vector locs_save = state.expression_locations;
+        vec_init(state.expression_locations);
 
         emit_expression(e->macro.m);
         emit_instr(INSTR_HALT);
+
+        add_location_info();
 
         vm_exec(state.code.items);
 
@@ -1893,6 +2024,7 @@ invoke_macro(struct expression *e, struct scope *scope)
         vm_pop();
 
         state.code = code_save;
+        state.expression_locations = locs_save;
 
         struct value node = tyexpr(e->macro.e);
         vm_push(&node);
@@ -2507,17 +2639,15 @@ emit_special_string(struct expression const *e)
         emit_int(2 * e->expressions.count + 1);
 }
 
-static bool
-emit_throw(struct statement const *s)
+static void
+emit_throw(Expr const *e)
 {
         size_t start = state.code.count;
 
-        emit_expression(s->throw);
+        emit_expression(e->throw);
         emit_instr(INSTR_THROW);
 
-        add_location(&((struct expression){ .start = s->start, .end = s->end }), start, state.code.count);
-
-        return true;
+        add_location(e, start, state.code.count);
 }
 
 static void
@@ -2950,7 +3080,7 @@ emit_try_match_(struct expression const *pattern)
                 need_loc = true;
         }
 
-        if (pattern->type > EXPRESSION_KEEP_LOC || need_loc)
+        if (KEEP_LOCATION(pattern) || need_loc)
                 add_location(pattern, start, state.code.count);
 }
 
@@ -3443,14 +3573,12 @@ static void
 emit_target(struct expression *target, bool def)
 {
         size_t start = state.code.count;
-        bool need_loc = true;
 
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
                 emit_instr(INSTR_PUSH_DROP);
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_REST:
-                need_loc = false;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_tgt(target->symbol, state.fscope, def);
                 break;
@@ -3470,7 +3598,7 @@ emit_target(struct expression *target, bool def)
                 fail("oh no!");
         }
 
-        if (need_loc)
+        if (KEEP_LOCATION(target))
                 add_location(target, start, state.code.count);
 }
 
@@ -3733,7 +3861,9 @@ emit_for_each2(struct statement const *s, bool want_result)
         emit_instr(INSTR_GET_NEXT);
         emit_instr(INSTR_READ_INDEX);
 
+#ifndef TY_ENABLE_PROFILING
         add_location(s->each.array, start, state.code.count);
+#endif
 
         size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
@@ -3941,8 +4071,10 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                         add_location(target->constraint, start, state.code.count);
                 }
 
+#ifndef TY_ENABLE_PROFILING
                 // Don't need location info, can't fail here
                 return;
+#endif
         }
 
         add_location(target, start, state.code.count);
@@ -3995,6 +4127,8 @@ emit_expr(struct expression const *e, bool need_loc)
 
         size_t start = state.code.count;
         char const *method = NULL;
+
+        TryState *try = get_try(0);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -4214,6 +4348,11 @@ emit_expr(struct expression const *e, bool need_loc)
                 break;
         case EXPRESSION_YIELD:
                 emit_yield((struct expression const **)e->es.items, e->es.count, true);
+                break;
+        case EXPRESSION_THROW:
+                if (try != NULL && try->finally) {
+                        fail("invalid 'throw' statement (occurs in a finally block)");
+                }
                 break;
         case EXPRESSION_SPREAD:
                 emit_spread(e->value, false);
@@ -4454,7 +4593,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 fail("expression unexpected in this context: %d", (int)e->type);
         }
 
-        if (e->type > EXPRESSION_KEEP_LOC || need_loc)
+        if (KEEP_LOCATION(e) || need_loc)
                 add_location(e, start, state.code.count);
 }
 
@@ -4474,8 +4613,11 @@ emit_statement(struct statement const *s, bool want_result)
 
         int resources = state.resources;
 
+#ifdef TY_ENABLE_PROFILING
+        size_t start = state.code.count;
+#endif
+
         LoopState *loop = get_loop(0);
-        TryState *try = get_try(0);
 
         switch (s->type) {
         case STATEMENT_BLOCK:
@@ -4596,12 +4738,6 @@ emit_statement(struct statement const *s, bool want_result)
                 returns |= emit_try(s, want_result);
                 want_result = false;
                 break;
-        case STATEMENT_THROW:
-                if (try != NULL && try->finally) {
-                        fail("invalid 'throw' statement (occurs in a finally block)");
-                }
-                returns |= emit_throw(s);
-                break;
         case STATEMENT_RETURN:
                 returns |= emit_return(s);
                 break;
@@ -4695,6 +4831,19 @@ emit_statement(struct statement const *s, bool want_result)
 
         if (want_result)
                 emit_instr(INSTR_NIL);
+
+#ifdef TY_ENABLE_PROFILING
+        if (s->type != STATEMENT_BLOCK && s->type != STATEMENT_MULTI) {
+                Expr *e = Allocate(sizeof *e);
+                *e = (Expr){0};
+                e->type = EXPRESSION_STATEMENT;
+                e->start = s->start;
+                e->end = s->end;
+                e->filename = state.filename;
+                e->statement = s;
+                add_location(e, start, state.code.count);
+        }
+#endif
 
         return returns;
 }
@@ -4803,6 +4952,9 @@ compile(char const *source)
                         def->target = Allocate(sizeof *def->target);
                         *def->target = (struct expression) {
                                 .type = EXPRESSION_IDENTIFIER,
+                                .start = p[i]->target->start,
+                                .end = p[i]->target->end,
+                                .filename = state.filename,
                                 .identifier = multi->name
                         };
                         def->value = multi;
@@ -4892,8 +5044,7 @@ compile(char const *source)
          */
         //struct location end = { 0 };
         //add_location(end, end, state);
-        patch_location_info();
-        VPush(location_lists, state.expression_locations);
+        add_location_info();
 
         state.generator_returns.count = 0;
         state.tries.count = 0;
@@ -5173,7 +5324,11 @@ compiler_compile_source(char const *source, char const *filename)
 
         compile(source);
 
-        return state.code.items;
+        char *code = state.code.items;
+
+        vec_init(state.code);
+
+        return code;
 }
 
 int
@@ -5215,13 +5370,13 @@ compiler_find_definition(char const *file, int line, int col)
         return (struct location) {0};
 }
 
-char const *
-compiler_get_location(char const *code, struct location *start, struct location *end)
+Expr const *
+compiler_find_expr(char const *code)
 {
         location_vector *locs = NULL;
 
-        //printf("Looking for %zu\n", (size_t)(code - state.code.items));
         uintptr_t c = (uintptr_t) code;
+        //printf("Looking for %lu\n", c);
 
         /*
          * First do a linear search for the group of locations which
@@ -5230,65 +5385,62 @@ compiler_get_location(char const *code, struct location *start, struct location 
         for (int i = 0; i < location_lists.count; ++i) {
                 if (location_lists.items[i].count == 0)
                         continue;
+
                 if (c < location_lists.items[i].items[0].p_start)
                         continue;
-                if (c > vec_last(location_lists.items[i])->p_end)
+
+                uintptr_t end = 0;
+                for (int j = 0; j < location_lists.items[i].count; ++j)
+                        if (location_lists.items[i].items[j].p_end > end)
+                                end = location_lists.items[i].items[j].p_end;
+
+                if (c >= end)
                         continue;
+
                 locs = &location_lists.items[i];
+
+                //printf("Found range (%lu, %lu)\n", locs->items[0].p_start, end);
+
                 break;
         }
 
         if (locs == NULL) {
-                *start = (struct location) { -1, -1 };
                 return NULL;
         }
 
-        /*
-         * Now do a binary search within this group of locations.
-         */
-        int lo = 0,
-            hi = locs->count - 1;
+        int match_index = 0;
+        ptrdiff_t match_width = PTRDIFF_MAX;
 
-        while (lo <= hi) {
-                int m = (lo / 2) + (hi / 2) + (lo & hi & 1);
-                if      (c < locs->items[m].p_start) hi = m - 1;
-                else if (c > locs->items[m].p_end)   lo = m + 1;
-                else {
-                        lo = m;
-                        break;
+        for (int i = 0; i < locs->count; ++i) {
+                if (c < locs->items[i].p_start)
+                        continue;
+                if (c >= locs->items[i].p_end)
+                        continue;
+                ptrdiff_t width = locs->items[i].p_end - locs->items[i].p_start;
+                if (width < match_width) {
+                        match_index = i;
+                        match_width = width;
                 }
         }
 
-//        printf("Initially: (%zu, %zu)\n",
-//               (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items),
-//               (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
-
-        if (c < locs->items[lo].p_start) {
-                for (int i = lo + 1; i < locs->count; ++i) {
-//                printf("Checking: (%zu, %zu)\n",
-//                       (size_t)(locs->items[i].p_start - (uintptr_t)state.code.items),
-//                       (size_t)(locs->items[i].p_end - (uintptr_t)state.code.items));
-                        if (locs->items[i].p_start <= c && locs->items[i].p_end >= c) {
-                                lo = i;
-                                break;
+        if (c < locs->items[match_index].p_start || c >= locs->items[match_index].p_end) {
+                printf("Failed to find expression for %lu\n", c);
+                for (int i = 0; i < locs->count; ++i) {
+                        printf("Candidate: %s (%lu, %lu)\n", ExpressionTypeName(locs->items[i].e), locs->items[i].p_start, locs->items[i].p_end);
+                        if (locs->items[i].e->type == EXPRESSION_IDENTIFIER) {
+                                Expr const *e = locs->items[i].e;
+                                printf("Identifier: %s | %s:%d\n", e->identifier, e->filename, e->start.line + 1);
                         }
                 }
+                exit(1);
         }
 
-        // TODO: not sure if we should be doing this
-        while (false && lo + 1 < locs->count && locs->items[lo + 1].p_start <= c &&
-                        locs->items[lo + 1].p_end == locs->items[lo].p_end) {
-                lo += 1;
-        }
+        //printf("Found: (%luu, %lu)\n",
+        //       (uintptr_t)(locs->items[match_index].p_start),
+        //       (uintptr_t)(locs->items[match_index].p_end));
 
-        *start = locs->items[lo].start;
-        *end = locs->items[lo].end;
+        return locs->items[match_index].e;
 
-//        printf("Found: (%zu, %zu)\n",
-//               (size_t)(locs->items[lo].p_start - (uintptr_t)state.code.items),
-//               (size_t)(locs->items[lo].p_end - (uintptr_t)state.code.items));
-
-        return locs->items[lo].filename;
 }
 
 static bool
@@ -5606,6 +5758,9 @@ tyexpr(struct expression const *e)
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyYield);
+                break;
+        case EXPRESSION_THROW:
+                v = tagged(TyThrow, tyexpr(e->throw), NONE);
                 break;
         case EXPRESSION_DICT:
                 v = tagged(
@@ -6043,9 +6198,6 @@ tystmt(struct statement *s)
         case STATEMENT_NULL:
                 v = TAG(TyNull);
                 break;
-        case STATEMENT_THROW:
-                v = tagged(TyThrow, tyexpr(s->throw), NONE);
-                break;
         case STATEMENT_EXPRESSION:
                 v = tyexpr(s->expression);
                 break;
@@ -6255,14 +6407,6 @@ cstmt(struct value *v)
                 s->each.cond = (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL;
                 struct value *stop = tuple_get(v, "stop");
                 s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(stop) : NULL;
-                break;
-        }
-        case TyThrow:
-        {
-                struct value v_ = *v;
-                v_.tags = tags_pop(v_.tags);
-                s->type = STATEMENT_THROW;
-                s->throw = cexpr(&v_);
                 break;
         }
         case TyReturn:
@@ -6683,6 +6827,14 @@ cexpr(struct value *v)
                         VPush(e->es, cexpr(&v_));
                 }
                 break;
+        case TyThrow:
+        {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_THROW;
+                e->throw = cexpr(&v_);
+                break;
+        }
         case TyWith:
         {
                 struct value *lets = &v->items[0];
@@ -6830,7 +6982,6 @@ cexpr(struct value *v)
         case TyMulti:
         case TyFuncDef:
         case TyClass:
-        case TyThrow:
         case TyBreak:
         case TyContinue:
         case TyReturn:
@@ -6879,7 +7030,7 @@ tyeval(struct expression *e)
         byte_vector code_save = state.code;
         vec_init(state.code);
 
-        location_vector locations_save = state.expression_locations;
+        location_vector locs_save = state.expression_locations;
         vec_init(state.expression_locations);
 
         emit_expression(e);
@@ -6887,12 +7038,14 @@ tyeval(struct expression *e)
 
         RESTORE_JB;
 
+        add_location_info();
+
         EvalDepth += 1;
         struct value v = vm_try_exec(state.code.items);
         EvalDepth -= 1;
 
         state.code = code_save;
-        state.expression_locations = locations_save;
+        state.expression_locations = locs_save;
 
         return v;
 }
@@ -6905,11 +7058,18 @@ typarse(struct expression *e, struct location const *start, struct location cons
         byte_vector code_save = state.code;
         vec_init(state.code);
 
+        location_vector locs_save = state.expression_locations;
+        vec_init(state.expression_locations);
+
         emit_expression(e);
         emit_instr(INSTR_HALT);
 
+        add_location_info();
+
         vm_exec(state.code.items);
+
         state.code = code_save;
+        state.expression_locations = locs_save;
 
         struct value m = *vm_get(0);
 

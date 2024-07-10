@@ -6436,18 +6436,15 @@ builtin_ty_bt(int argc, struct value *kwargs)
                 Value *f = &frames->items[i].f;
                 char const *name = name_of(f);
                 char const *ip = frames->items[i].ip;
-                Location start;
-                Location end;
-
-                char const *file = compiler_get_location(ip, &start, &end);
+                Expr const *e = compiler_find_expr(ip);
 
                 Value entry = value_tuple(5);
 
                 entry.items[0] = *f;
                 entry.items[1] = STRING_NOGC(name, strlen(name));
-                entry.items[2] = (file == NULL) ? NIL : STRING_NOGC(file, strlen(file));
-                entry.items[3] = (start.line == -1) ? NIL : INTEGER(start.line);
-                entry.items[4] = (start.col == -1) ? NIL : INTEGER(start.col);
+                entry.items[2] = (e == NULL) ? NIL : STRING_NOGC(e->filename, strlen(e->filename));
+                entry.items[3] = (e == NULL) ? NIL : INTEGER(e->start.line);
+                entry.items[4] = (e == NULL) ? NIL : INTEGER(e->start.col);
 
                 value_array_push(avFrames, entry);
         }

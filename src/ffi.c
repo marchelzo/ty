@@ -162,6 +162,8 @@ load(ffi_type *t, void const *p)
 static void
 closure_func(ffi_cif *cif, void *ret, void **args, void *data)
 {
+        TakeLock();
+
         for (int i = 0; i < cif->nargs; ++i) {
                 struct value arg = load(cif->arg_types[i], args[i]);
                 vm_push(&arg);
@@ -186,6 +188,8 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         default:
                 store(cif->rtype, ret, &rv);
         }
+
+        ReleaseLock(true);
 }
 
 struct value
@@ -545,9 +549,9 @@ cffi_call(int argc, struct value *kwargs)
         vec(void *) args = {0};
         for (int i = 2; i < argc; ++i) {
                 if (ARG(i).type == VALUE_PTR) {
-                        vec_push(args, ARG(i).ptr);
+                        vec_nogc_push(args, ARG(i).ptr);
                 } else {
-                        vec_empty(args);
+                        free(args.items);
                         vm_panic("non-pointer passed as argument %d to ffi.call()", i + 1);
                 }
         }
@@ -569,9 +573,11 @@ cffi_call(int argc, struct value *kwargs)
                 vm_panic("invalid `out` argument to ffi.call(): %s", value_show_color(out));
         }
 
+        ReleaseLock(true);
         ffi_call(cif, func, ret, args.items);
+        TakeLock();
 
-        vec_empty(args);
+        free(args.items);
 
         return (out == NULL) ? load(cif->rtype, ret) : PTR(ret);
 }
