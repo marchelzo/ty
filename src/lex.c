@@ -735,7 +735,7 @@ Start:
         while (C(0) != '"') {
                 switch (C(0)) {
                 case '\0': goto Unterminated;
-                case '{':  goto Expr;
+                case '{':  goto LexExpr;
                 case '\\':
                         nextchar();
                         switch (C(0)) {
@@ -804,7 +804,7 @@ Start:
         special.end = state.loc;
         return special;
 
-Expr:
+LexExpr:
         VPush(str, '\0');
         VPush(special.strings, str.items);
         vec_init(str);
