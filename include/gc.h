@@ -101,7 +101,7 @@ CheckUsed(void)
 {
         if (
                 GC_OFF_COUNT == 0
-#ifdef TY_RELEASE
+#if 1
                 && MemoryUsed > MemoryLimit
 #endif
         ) {

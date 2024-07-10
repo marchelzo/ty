@@ -86,9 +86,9 @@
 #define READVALUE(s) (memcpy(&s, ip, sizeof s), (ip += sizeof s))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
-  #define CASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); XLOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
+  #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ip); LOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
 #else
-  #define XCASE(i) case INSTR_ ## i: fname = compiler_get_location(ip, &loc, &loc); XLOG("%s:%d:%d: " #i, fname, loc.line + 1, loc.col + 1);
+  #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ip); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
@@ -98,7 +98,14 @@
         push(TAG(gettag(NULL, "MatchError"))); \
         goto Throw;
 
+#define X(i) #i
+static char const *InstructionNames[] = {
+        TY_INSTRUCTIONS
+};
+#undef X
+
 static char halt = INSTR_HALT;
+static char throw = INSTR_THROW;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
@@ -181,6 +188,8 @@ typedef struct profile_entry {
         void *ctx;
 } ProfileEntry;
 
+char const *GC_ENTRY = "(Garbage Collection)";
+
 static int
 CompareProfileEntriesByWeight(void const *a_, void const *b_)
 {
@@ -202,14 +211,24 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
         ProfileEntry const *a = a_;
         ProfileEntry const *b = b_;
 
-        Location aStart, aEnd;
-        Location bStart, bEnd;
+        char const *aIp = a->ctx;
+        char const *bIp = b->ctx;
 
-        char const *aFile = compiler_get_location(a->ctx, &aStart, &aEnd);
-        char const *bFile = compiler_get_location(b->ctx, &bStart, &bEnd);
+        //printf("Instruction(%lu) = %s\n", (uintptr_t)aIp, InstructionNames[(uint8_t)((char *)a->ctx)[0]]);
+        Expr const *aExpr = compiler_find_expr(a->ctx);
 
-        if (aFile == NULL) return -1;
-        if (bFile == NULL) return  1;
+        //printf("Instruction(%lu) = %s\n", (uintptr_t)bIp, InstructionNames[(uint8_t)((char *)b->ctx)[0]]);
+        Expr const *bExpr = compiler_find_expr(b->ctx);
+
+        if (aExpr == bExpr) return 0;
+        if (aExpr == NULL) return -1;
+        if (bExpr == NULL) return  1;
+
+        char const *aFile = aExpr->filename;
+        char const *bFile = bExpr->filename;
+
+        Location aStart = aExpr->start, aEnd = aExpr->end;
+        Location bStart = bExpr->start, bEnd = bExpr->end;
 
         if (aFile != bFile) return strcmp(aFile, bFile);
 
@@ -224,6 +243,7 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
 
 static _Thread_local char *LastIP;
 static _Thread_local uint64_t LastThreadTime;
+static _Thread_local uint64_t LastThreadGCTime;
 static TyMutex ProfileMutex;
 static Dict *Samples;
 static Dict *FuncSamples;
@@ -282,6 +302,7 @@ static _Thread_local atomic_bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
 static _Thread_local ThreadGroup *MyGroup;
 static _Thread_local bool GCInProgress;
+static _Thread_local bool HaveLock = true;
 static _Thread_local uint64_t MyId;
 
 void
@@ -359,10 +380,17 @@ WaitGC()
 
         ReleaseLock(false);
 
+#ifdef TY_ENABLE_PROFILING
+        uint64_t start = TyThreadTime();
+#endif
+
         while (!*MyState) {
                 if (!MyGroup->WantGC) {
                         SetState(true);
                         TakeLock();
+#ifdef TY_ENABLE_PROFILING
+                        LastThreadGCTime = TyThreadTime() - start;
+#endif
                         return;
                 }
         }
@@ -383,6 +411,10 @@ WaitGC()
         TyBarrierWait(&MyGroup->GCBarrierSweep);
         TyBarrierWait(&MyGroup->GCBarrierDone);
         GCLOG("Continuing execution: %llu", TID);
+
+#ifdef TY_ENABLE_PROFILING
+        LastThreadGCTime = TyThreadTime() - start;
+#endif
 }
 
 void
@@ -395,6 +427,10 @@ DoGC()
                 WaitGC();
                 return;
         }
+
+#ifdef TY_ENABLE_PROFILING
+        uint64_t start = TyThreadTime();
+#endif
 
         GCInProgress = true;
 
@@ -504,6 +540,10 @@ DoGC()
         TyBarrierWait(&MyGroup->GCBarrierDone);
 
         GCInProgress = false;
+
+#ifdef TY_ENABLE_PROFILING
+        LastThreadGCTime = TyThreadTime() - start;
+#endif
 }
 
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
@@ -874,6 +914,7 @@ TakeLock(void)
         XLOG("Taking MyLock%s", "");
         TyMutexLock(MyLock);
         XLOG("Took MyLock");
+        HaveLock = true;
 }
 
 void
@@ -882,6 +923,7 @@ ReleaseLock(bool blocked)
         SetState(blocked);
         GCLOG("Releasing MyLock: %d", (int)blocked);
         TyMutexUnlock(MyLock);
+        HaveLock = false;
 }
 
 void
@@ -1068,7 +1110,7 @@ vm_run_thread(void *p)
 
         if (setjmp(jb) != 0) {
                 // TODO: do something useful here
-                fprintf(stderr, "Thread %p dying with error: %s\n", (void *)TID, ERR);
+                fprintf(stderr, "Thread %llu dying with error: %s\n", TID, ERR);
                 OKGC(t);
                 t->v = NIL;
         } else {
@@ -1607,7 +1649,7 @@ vm_try_exec(char *code)
                 push(STRING_CLONE(ERR, strlen(ERR)));
                 top()->tags = tags_push(0, gettag(NULL, "Err"));
                 top()->type |= VALUE_TAGGED;
-                vm_exec((char[]){INSTR_THROW});
+                vm_exec(&throw);
                 // unreachable
         }
 
@@ -1642,12 +1684,15 @@ vm_exec(char *code)
 
         struct value (*func)(struct value *, int, struct value *);
 
-#ifdef TY_LOG_VERBOSE
-        struct location loc;
-        char const *fname;
+#if !defined(TY_NO_LOG) && defined(TY_LOG_VERBOSE)
+        struct expression *expr;
 #endif
 
         PopulateGlobals();
+
+#ifdef TY_ENABLE_PROFILING
+        char *StartIPLocal = LastIP;
+#endif
 
         for (;;) {
         if (GC_OFF_COUNT == 0 && MyGroup->WantGC) {
@@ -1657,11 +1702,20 @@ vm_exec(char *code)
         NextInstruction:
 #ifdef TY_ENABLE_PROFILING
                 if (Samples != NULL) {
-                        //printf("Adding sample... root_set=%zu\n", gc_root_set_count());
                         uint64_t now = TyThreadTime();
-                        if (LastThreadTime != 0) {
+                        if (StartIPLocal != LastIP && LastThreadTime != 0 && *LastIP != INSTR_HALT && LastIP != next_fix && LastIP != iter_fix && LastIP != next_fix + 1 && LastIP != iter_fix + 1 && LastIP != &throw) {
                                 uint64_t dt = now - LastThreadTime;
                                 TyMutexLock(&ProfileMutex);
+
+                                if (LastThreadGCTime > 0) {
+                                        Value *count = dict_put_key_if_not_exists(FuncSamples, PTR((void *)GC_ENTRY));
+                                        if (count->type == VALUE_NIL) {
+                                                *count = INTEGER(LastThreadGCTime);
+                                        } else {
+                                                count->integer += LastThreadGCTime;
+                                        }
+                                        LastThreadGCTime = 0;
+                                }
 
                                 Value *count = dict_put_key_if_not_exists(Samples, PTR(LastIP));
                                 if (count->type == VALUE_NIL) {
@@ -2081,6 +2135,7 @@ Throw:
 
                         gc_truncate_root_set(t->gc);
 
+                        printf("Doing longjmp!\n");
                         longjmp(t->jb, 1);
                         /* unreachable */
                 }
@@ -3922,9 +3977,6 @@ vm_panic(char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        struct location start;
-        struct location end;
-
         int sz = ERR_SIZE - 1;
 
         int n = snprintf(ERR, sz, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
@@ -3935,8 +3987,12 @@ vm_panic(char const *fmt, ...)
                 ERR[n++] = '\n';
 
         for (int i = 0; n < sz; ++i) {
-                char const *file = compiler_get_location(ip, &start, &end);
+                Expr const *expr = compiler_find_expr(ip);
                 char buffer[512];
+
+                char const *file = (expr == NULL || expr->filename == NULL) ? "(unknown)" : expr->filename;
+                int line = (expr == NULL) ? 0 : expr->start.line;
+                int col = (expr == NULL) ? 0 : expr->start.col;
 
                 snprintf(
                         buffer,
@@ -3947,10 +4003,10 @@ vm_panic(char const *fmt, ...)
                         file,
                         TERM(39),
                         TERM(33),
-                        start.line + 1,
+                        line + 1,
                         TERM(39),
                         TERM(33),
-                        start.col + 1,
+                        col + 1,
                         TERM(39)
                 );
 
@@ -3969,21 +4025,26 @@ vm_panic(char const *fmt, ...)
                         where
                 );
 
-                if (start.s == NULL) {
-                        start.s = "\n(unknown location)" + 1;
-                        end.s = start.s;
+                char const *prefix;
+                char const *suffix;
+                char const *source;
+
+                if (expr == NULL) {
+                        source = prefix = suffix = "\n(unknown location)" + 1;
+                } else {
+                        prefix = source = expr->start.s;
+                        suffix = expr->end.s;
                 }
 
-                char const *prefix = start.s;
                 while (prefix[-1] != '\0' && prefix[-1] != '\n')
                         --prefix;
 
                 while (isspace(prefix[0]))
                         ++prefix;
 
-                int before = start.s - prefix;
-                int length = end.s - start.s;
-                int after = strcspn(end.s, "\n");
+                int before = source - prefix;
+                int length = suffix - source;
+                int after = strcspn(suffix, "\n");
 
                 n += snprintf(
                         ERR + n,
@@ -3995,11 +4056,11 @@ vm_panic(char const *fmt, ...)
                         (i == 0) ? TERM(1) : "",
                         (i == 0) ? TERM(91) : TERM(31),
                         length,
-                        start.s,
+                        source,
                         TERM(32),
                         TERM(22),
                         after,
-                        end.s,
+                        suffix,
                         TERM(39)
                 );
 
@@ -4142,7 +4203,7 @@ vm_execute(char const *source, char const *file)
         vec(ProfileEntry) profile = {0};
         vec(ProfileEntry) func_profile = {0};
 
-        char color_buffer[64];
+        char color_buffer[64] = {0};
         double total_ticks = 0.0;
 
         for (int i = 0; i < Samples->size; ++i) {
@@ -4171,14 +4232,33 @@ vm_execute(char const *source, char const *file)
         printf("%s===== profile by function =====%s\n\n", TERM(95), TERM(0));
         for (int i = 0; i < func_profile.count; ++i) {
                 ProfileEntry *entry = &func_profile.items[i];
-                color_sequence(entry->count / total_ticks, color_buffer);
+
+                if (entry->count / total_ticks < 0.01) {
+                        break;
+                }
+
+                if (isatty(1)) {
+                        color_sequence(entry->count / total_ticks, color_buffer);
+                }
                 if (entry->ctx == NULL) {
                         printf(
-                                "   %s%5.1f%%  %-14lld  %s(top)%s\n",
+                                "   %s%5.1f%%  %-14lld  %s%s(top)%s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 entry->count,
                                 TERM(92),
+                                TERM(1),
+                                TERM(0)
+                        );
+                } else if (entry->ctx == GC_ENTRY) {
+                        printf(
+                                "   %s%5.1f%%  %-14lld  %s%s%s%s\n",
+                                color_buffer,
+                                entry->count / total_ticks * 100.0,
+                                entry->count,
+                                TERM(93),
+                                TERM(1),
+                                GC_ENTRY,
                                 TERM(0)
                         );
                 } else {
@@ -4200,7 +4280,7 @@ vm_execute(char const *source, char const *file)
 
         int n = 1;
         for (int i = 1; i < profile.count; ++i) {
-                if (CompareProfileEntriesByLocation(&profile.items[n - 1], &profile.items[i]) == 0) {
+                if (compiler_find_expr(profile.items[n - 1].ctx) == compiler_find_expr(profile.items[i].ctx)) {
                         profile.items[n - 1].count += profile.items[i].count;
                 } else {
                         profile.items[n++] = profile.items[i];
@@ -4212,49 +4292,49 @@ vm_execute(char const *source, char const *file)
 
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
-        printf("\n\n%s===== profile by line =====%s\n\n", TERM(95), TERM(0));
+        printf("\n\n%s===== profile by expression =====%s\n\n", TERM(95), TERM(0));
         for (int i = 0; i < profile.count; ++i) {
-                Location start, end;
                 ProfileEntry *entry = profile.items + i;
-                char const *filename = compiler_get_location(entry->ctx, &start, &end);
+                Expr const *expr = compiler_find_expr(entry->ctx);
 
-                color_sequence(entry->count / total_ticks, color_buffer);
-
-                if (filename == NULL) {
+                if (expr == NULL) {
                         continue;
                 }
 
-                char buffer[4096];
+                char const *etype = ExpressionTypeName(expr);
 
-                snprintf(buffer, sizeof buffer - 1, "%.*s", (int)(end.s - start.s), start.s);
-
-                int n = 0;
-                int len = strlen(buffer);
-
-                for (int i = 0; i < len; ++i) {
-                        if (n > 0 && isspace(buffer[n - 1]) && isspace(buffer[i]))
-                                continue;
-                        if (isspace(buffer[i]))
-                                buffer[n++] = ' ';
-                        else
-                                buffer[n++] = buffer[i];
+                if (entry->count / total_ticks < 0.01) {
+                        break;
                 }
 
-                buffer[n] = '\0';
+                if (isatty(1)) {
+                        color_sequence(entry->count / total_ticks, color_buffer);
+                }
+
+                char const *filename = expr->filename;
+                Location start = expr->start;
+                Location end = expr->end;
+
+                char code_buffer[1024];
+                colorize_code(TERM(93), TERM(0), &start, &end, code_buffer, sizeof code_buffer);
+
+                char type_buffer[1024];
+                snprintf(type_buffer, sizeof type_buffer - 1, "(%s)", show_expr_type(expr));
 
                 printf(
-                        "   %s%5.1f%%  %-14lld  %s%14.14s%s:%s%5d:%-3d%s   |   %s\n",
+                        "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%s:%s%-5d%s   |   %s\n",
                         color_buffer,
                         entry->count / total_ticks * 100.0,
                         entry->count,
+                        TERM(95),
+                        etype,
                         TERM(93),
                         filename,
                         TERM(0),
                         TERM(94),
                         start.line + 1,
-                        start.col + 1,
-                        TERM(0),
-                        buffer
+                        TERM(92),
+                        code_buffer
                 );
         }
 #endif
@@ -4440,6 +4520,12 @@ MarkStorage(ThreadStorage const *storage)
                         value_mark(&((struct table *)storage->allocs->items[i]->data)->finalizer);
                 }
         }
+}
+
+char const *
+GetInstructionName(uint8_t i)
+{
+        return InstructionNames[i];
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

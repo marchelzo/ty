@@ -82,8 +82,6 @@ ifdef LTO
         CFLAGS += -flto
         CFLAGS += -fomit-frame-pointer
         CFLAGS += -fwhole-program
-else
-        CFLAGS += -g3
 endif
 
 ifdef WITHOUT_OS

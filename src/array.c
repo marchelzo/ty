@@ -350,7 +350,7 @@ array_slice(struct value *array, int argc, struct value *kwargs)
         NOGC(result.array);
         value_array_reserve(result.array, n);
         OKGC(result.array);
-        memmove(result.array->items, array->array->items + s, n * sizeof (struct value));
+        memmove(result.array->items, array->array->items + s, n * sizeof (Value));
         result.array->count = n;
 
         return result;

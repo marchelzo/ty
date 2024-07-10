@@ -49,8 +49,8 @@ compiler_load_prelude(void);
 struct location
 compiler_find_definition(char const *file, int line, int col);
 
-char const *
-compiler_get_location(char const *code, struct location *start, struct location *end);
+Expr const *
+compiler_find_expr(char const *ip);
 
 bool
 compiler_has_module(char const *path);
@@ -96,5 +96,18 @@ typarse(struct expression *, struct location const *start, struct location const
 
 struct statement *
 cstmt(struct value *);
+
+void
+colorize_code(
+        char const *expr_color,
+        char const *base_color,
+        Location const *start,
+        Location const *end,
+        char *out,
+        size_t n
+);
+
+char const *
+show_expr_type(Expr const *e);
 
 #endif
