@@ -15,7 +15,7 @@ struct value
 parse_get_token(int i);
 
 struct value
-parse_get_expr(int prec, bool resolve);
+parse_get_expr(int prec, bool resolve, bool want_raw);
 
 struct value
 parse_get_stmt(int prec, bool want_raw);

@@ -140,8 +140,6 @@ pub function termkey_keymod(key) {
 }
 
 pub function termkey_waitkey(tk, k) {
-    ty.unlock()
     let x = waitkey(tk, k)
-    ty.lock()
     return x
 }

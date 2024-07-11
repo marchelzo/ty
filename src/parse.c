@@ -1330,6 +1330,9 @@ make_with(struct expression *e, statement_vector defs, struct statement *body)
         VPushN(s->statements, defs.items, defs.count);
         VPush(s->statements, try);
         e->with.block = s;
+
+        try->start = e->start;
+        try->end = body->end;
 }
 
 static struct expression *
@@ -2260,8 +2263,8 @@ prefix_dict(void)
                         e->dflt->start = start;
                         e->dflt->end = End;
                 } else if (tok()->type == TOKEN_STAR) {
-                        next();
                         struct expression *spread = mkexpr();
+                        next();
                         spread->type = EXPRESSION_SPREAD;
                         spread->value = parse_expr(0);
                         spread->start = spread->value->start;
@@ -2572,8 +2575,8 @@ infix_member_access(struct expression *left)
         if (tok()->type == ')') {
                 goto End;
         } else if (tok()->type == TOKEN_STAR) {
-                next();
                 struct expression *arg = mkexpr();
+                next();
                 if (tok()->type == TOKEN_STAR) {
                         next();
                         arg->type = EXPRESSION_SPLAT;
@@ -3922,6 +3925,8 @@ mktagdef(char *name)
 static struct statement *
 parse_class_definition(void)
 {
+        Location start = tok()->start;
+
         bool tag = tok()->keyword == KEYWORD_TAG;
 
         consume_keyword(tag ? KEYWORD_TAG : KEYWORD_CLASS);
@@ -3933,6 +3938,8 @@ parse_class_definition(void)
                 s->type = STATEMENT_CLASS_DEFINITION;
 
         next();
+
+        s->start = start;
 
         if (tok()->type == ':') {
                 next();
@@ -4060,16 +4067,18 @@ parse_class_definition(void)
                 consume('}');
         }
 
+        s->end = End;
+
         return s;
 }
 
 static struct statement *
 parse_try(void)
 {
-        consume_keyword(KEYWORD_TRY);
-
         struct statement *s = mkstmt();
         s->type = STATEMENT_TRY;
+
+        consume_keyword(KEYWORD_TRY);
 
         vec_init(s->try.patterns);
         vec_init(s->try.handlers);
@@ -4125,6 +4134,8 @@ parse_try(void)
         } else {
                 s->try.finally = NULL;
         }
+
+        s->end = End;
 
         return s;
 }
@@ -4610,7 +4621,7 @@ parse_next(void)
 }
 
 struct value
-parse_get_expr(int prec, bool resolve)
+parse_get_expr(int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
 
@@ -4622,13 +4633,14 @@ parse_get_expr(int prec, bool resolve)
 
         bool keep_comments = lex_keep_comments(false);
 
-        struct value v;
+        Value v;
+        Expr *e;
 
         if (setjmp(jb) != 0) {
                 v = NIL;
                 seek(save);
         } else {
-                struct expression *e = parse_expr(prec);
+                e = parse_expr(prec);
                 if (!resolve) {
                         v = tyexpr(e);
                 } else {
@@ -4646,7 +4658,14 @@ parse_get_expr(int prec, bool resolve)
 
         lex_keep_comments(keep_comments);
 
-        return v;
+        if (want_raw) {
+                Value pair = value_tuple(2);
+                pair.items[0] = PTR(e);
+                pair.items[1] = v;
+                return pair;
+        } else {
+                return v;
+        }
 }
 
 struct value

@@ -6704,8 +6704,9 @@ builtin_parse_expr(int argc, struct value *kwargs)
         }
 
         struct value *resolve = NAMED("resolve");
+        Value *raw = NAMED("raw");
 
-        return parse_get_expr(prec, resolve != NULL && value_truthy(resolve));
+        return parse_get_expr(prec, resolve != NULL && value_truthy(resolve), raw != NULL && value_truthy(raw));
 }
 
 struct value

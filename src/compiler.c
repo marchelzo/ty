@@ -842,9 +842,22 @@ to_module_access(struct scope const *scope, struct expression const *e)
 
         VPush(mod, '\0');
 
-        char const *name = (e->type == EXPRESSION_MEMBER_ACCESS) ? e->member_name : e->method_name;
+        char const *name;
         struct location start = e->start;
         struct location end = e->end;
+
+        if (e->type == EXPRESSION_MEMBER_ACCESS) {
+                name = e->member_name;
+                start = e->start;
+                end = e->end;
+        } else {
+                name = e->method_name;
+                start = e->object->start;
+                end = e->object->end;
+                while (*end.s != '\0' && *end.s != '(') {
+                        end.s += 1;
+                }
+        }
 
         e = e->object;
 
@@ -1329,8 +1342,14 @@ comptime(struct scope *scope, struct expression *e)
 {
         symbolize_expression(scope, e->operand);
         struct value v = tyeval(e->operand);
+        Location mstart = state.mstart;
+        Location mend = state.mend;
+        state.mstart = state.start;
+        state.mend = state.end;
         *e = *cexpr(&v);
         symbolize_expression(scope, e);
+        state.mstart = mstart;
+        state.mend = mend;
 }
 
 static void
@@ -2637,17 +2656,6 @@ emit_special_string(struct expression const *e)
 
         emit_instr(INSTR_CONCAT_STRINGS);
         emit_int(2 * e->expressions.count + 1);
-}
-
-static void
-emit_throw(Expr const *e)
-{
-        size_t start = state.code.count;
-
-        emit_expression(e->throw);
-        emit_instr(INSTR_THROW);
-
-        add_location(e, start, state.code.count);
 }
 
 static void
@@ -4353,6 +4361,8 @@ emit_expr(struct expression const *e, bool need_loc)
                 if (try != NULL && try->finally) {
                         fail("invalid 'throw' statement (occurs in a finally block)");
                 }
+                emit_expression(e->throw);
+                emit_instr(INSTR_THROW);
                 break;
         case EXPRESSION_SPREAD:
                 emit_spread(e->value, false);
@@ -5424,15 +5434,7 @@ compiler_find_expr(char const *code)
         }
 
         if (c < locs->items[match_index].p_start || c >= locs->items[match_index].p_end) {
-                printf("Failed to find expression for %lu\n", c);
-                for (int i = 0; i < locs->count; ++i) {
-                        printf("Candidate: %s (%lu, %lu)\n", ExpressionTypeName(locs->items[i].e), locs->items[i].p_start, locs->items[i].p_end);
-                        if (locs->items[i].e->type == EXPRESSION_IDENTIFIER) {
-                                Expr const *e = locs->items[i].e;
-                                printf("Identifier: %s | %s:%d\n", e->identifier, e->filename, e->start.line + 1);
-                        }
-                }
-                exit(1);
+                return NULL;
         }
 
         //printf("Found: (%luu, %lu)\n",
