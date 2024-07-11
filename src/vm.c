@@ -224,21 +224,13 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
         if (aExpr == NULL) return -1;
         if (bExpr == NULL) return  1;
 
-        char const *aFile = aExpr->filename;
-        char const *bFile = bExpr->filename;
+        uintptr_t aPtr = (uintptr_t)aExpr;
+        uintptr_t bPtr = (uintptr_t)bExpr;
 
-        Location aStart = aExpr->start, aEnd = aExpr->end;
-        Location bStart = bExpr->start, bEnd = bExpr->end;
+        if (aPtr < bPtr) return -1;
+        if (aPtr > bPtr) return  1;
 
-        if (aFile != bFile) return strcmp(aFile, bFile);
-
-        if (aStart.line != bStart.line) return aStart.line - bStart.line;
-
-        if (aStart.col != bStart.col) return  aStart.col - bStart.col;
-
-        if (aEnd.line != bEnd.line) return aEnd.line - bEnd.line;
-
-        return aEnd.col - bEnd.col;
+        return 0;
 }
 
 static _Thread_local char *LastIP;
@@ -2135,7 +2127,6 @@ Throw:
 
                         gc_truncate_root_set(t->gc);
 
-                        printf("Doing longjmp!\n");
                         longjmp(t->jb, 1);
                         /* unreachable */
                 }
@@ -4293,27 +4284,44 @@ vm_execute(char const *source, char const *file)
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
         printf("\n\n%s===== profile by expression =====%s\n\n", TERM(95), TERM(0));
+        uint64_t reported_ticks = 0;
         for (int i = 0; i < profile.count; ++i) {
                 ProfileEntry *entry = profile.items + i;
                 Expr const *expr = compiler_find_expr(entry->ctx);
-
-                if (expr == NULL) {
-                        continue;
-                }
-
-                char const *etype = ExpressionTypeName(expr);
-
-                if (entry->count / total_ticks < 0.01) {
-                        break;
-                }
 
                 if (isatty(1)) {
                         color_sequence(entry->count / total_ticks, color_buffer);
                 }
 
-                char const *filename = expr->filename;
+                if (expr == NULL) {
+                        printf(
+                                "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%6s%s  |  %s<no source avilable>%s\n",
+                                color_buffer,
+                                entry->count / total_ticks * 100.0,
+                                entry->count,
+                                TERM(95),
+                                "",
+                                TERM(91),
+                                "(unknown)",
+                                "",
+                                TERM(92),
+                                TERM(91),
+                                TERM(0)
+                        );
+                        continue;
+                }
+
+                char const *etype = ExpressionTypeName(expr);
+
+                if ((reported_ticks += entry->count) / total_ticks > 0.90 && i > 18) {
+                        break;
+                }
+
+                char const *filename = strrchr(expr->filename, '/');
                 Location start = expr->start;
                 Location end = expr->end;
+
+                if (filename == NULL) filename = expr->filename;
 
                 char code_buffer[1024];
                 colorize_code(TERM(93), TERM(0), &start, &end, code_buffer, sizeof code_buffer);
@@ -4322,7 +4330,7 @@ vm_execute(char const *source, char const *file)
                 snprintf(type_buffer, sizeof type_buffer - 1, "(%s)", show_expr_type(expr));
 
                 printf(
-                        "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%s:%s%-5d%s   |   %s\n",
+                        "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%s:%s%-5d%s  |  %s\n",
                         color_buffer,
                         entry->count / total_ticks * 100.0,
                         entry->count,
