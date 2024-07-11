@@ -4843,7 +4843,7 @@ emit_statement(struct statement const *s, bool want_result)
                 emit_instr(INSTR_NIL);
 
 #ifdef TY_ENABLE_PROFILING
-        if (s->type != STATEMENT_BLOCK && s->type != STATEMENT_MULTI) {
+        if (s->type != STATEMENT_BLOCK && s->type != STATEMENT_MULTI && s->type != STATEMENT_EXPRESSION) {
                 Expr *e = Allocate(sizeof *e);
                 *e = (Expr){0};
                 e->type = EXPRESSION_STATEMENT;

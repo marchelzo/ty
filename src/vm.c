@@ -168,14 +168,9 @@ inline static uint64_t
 TyThreadTime(void)
 {
 #ifdef _WIN32
-        FILETIME CreationTime;
-        FILETIME ExitTime;
-        FILETIME KernelTime;
-        FILETIME UserTime;
-
-        GetThreadTimes(GetCurrentThread(), &CreationTime, &ExitTime, &KernelTime, &UserTime);
-
-        return (((uint64_t)UserTime.dwHighDateTime) << 32) | UserTime.dwLowDateTime;
+        ULONG64 cycles;
+        QueryThreadCycleTime(GetCurrentThread(), &cycles);
+        return cycles;
 #else
         struct timespec t;
         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
@@ -4345,6 +4340,8 @@ vm_execute(char const *source, char const *file)
                         code_buffer
                 );
         }
+
+        putchar('\n');
 #endif
 
         filename = NULL;

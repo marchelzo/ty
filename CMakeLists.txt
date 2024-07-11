@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.21)
 
 project(ty VERSION 0.1 LANGUAGES C)
 
+include(cmake/VersionInfoTarget.cmake)
+
+# ---
+#   user-defined options
+# ---
+option(BUILD_PROFILER "Build the typrof executable" OFF)
+
 # ---
 #   find 3rd-party dependencies
 # ---
@@ -82,23 +89,27 @@ set(_src_files
   src/vm.c
 )
 
-set(_tgt_ty "${PROJECT_NAME}")
-add_executable(${_tgt_ty})
+set(_tgt_ty_interface "${PROJECT_NAME}_Objects")
+add_library(${_tgt_ty_interface} INTERFACE)
 
-target_compile_options(${_tgt_ty}
-  PRIVATE
+set(_tgt_ty_interface_version_info "${_tgt_ty_interface}_VersionInfo")
+add_version_info_target(NAME ${_tgt_ty_interface_version_info} LANGUAGE C)
+
+target_compile_options(${_tgt_ty_interface}
+  INTERFACE
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wno-switch -Wno-unused-value -Wno-unused-function>
     $<$<CXX_COMPILER_ID:Clang>:-Weverything>
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-target_sources(${_tgt_ty}
-  PRIVATE
+target_sources(${_tgt_ty_interface}
+  INTERFACE
     ${_src_files}
 )
 
-target_link_libraries(${_tgt_ty}
-  PUBLIC
+target_link_libraries(${_tgt_ty_interface}
+  INTERFACE
+    ${_tgt_ty_interface_version_info}
     Threads::Threads # pthreads (or equivalent)
     $<$<NOT:$<BOOL:${WIN32}>>:"${CMAKE_DL_LIBS}">
     CURL::libcurl
@@ -116,13 +127,13 @@ target_link_libraries(${_tgt_ty}
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
 )
 
-target_include_directories(${_tgt_ty}
-  PUBLIC
+target_include_directories(${_tgt_ty_interface}
+  INTERFACE
     ${PROJECT_SOURCE_DIR}/include
 )
 
-target_compile_definitions(${_tgt_ty}
-  PRIVATE
+target_compile_definitions(${_tgt_ty_interface}
+  INTERFACE
     $<$<C_COMPILER_ID:GNU>:_GNU_SOURCE>
     $<$<NOT:$<CONFIG:Debug>>:TY_RELEASE>
     $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
@@ -131,10 +142,24 @@ target_compile_definitions(${_tgt_ty}
 )
 
 # ---
+#  define ty targets
+# ---
+set(_tgt_ty ${PROJECT_NAME})
+add_executable(${_tgt_ty})
+target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_interface})
+
+if(BUILD_PROFILER)
+  set(_tgt_ty_profiler "${PROJECT_NAME}prof")
+  add_executable(${_tgt_ty_profiler})
+  target_compile_definitions(${_tgt_ty_profiler} PRIVATE TY_ENABLE_PROFILING)
+  target_link_libraries(${_tgt_ty_profiler} PRIVATE ${_tgt_ty_interface})
+endif()
+
+# ---
 #  install rules
 # ---
 
 include(GNUInstallDirs)
-install(TARGETS ${_tgt_ty}
+install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler}
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
