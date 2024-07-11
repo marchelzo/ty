@@ -111,7 +111,7 @@ target_link_libraries(${_tgt_ty_interface}
   INTERFACE
     ${_tgt_ty_interface_version_info}
     Threads::Threads # pthreads (or equivalent)
-    $<$<NOT:$<BOOL:${WIN32}>>:"${CMAKE_DL_LIBS}">
+    $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     CURL::libcurl
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -119,11 +119,11 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::sqlite3::sqlite3
     unofficial::gumbo::gumbo
     unofficial::pcre::pcre
+    utf8proc
     $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>
     $<$<BOOL:${WIN32}>:unofficial::getopt-win32::getopt>
-    utf8proc
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
 )
 
@@ -144,6 +144,7 @@ target_compile_definitions(${_tgt_ty_interface}
 # ---
 #  define ty targets
 # ---
+
 set(_tgt_ty ${PROJECT_NAME})
 add_executable(${_tgt_ty})
 target_link_libraries(${_tgt_ty} PRIVATE ${_tgt_ty_interface})

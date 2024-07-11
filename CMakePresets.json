@@ -43,8 +43,9 @@
             "name": "base-osx",
             "hidden": true,
             "inherits": "base",
+            "generator": "Unix Makefiles",
             "cacheVariables": {
-                "VCPKG_TARGET_TRIPLET": "x64-linux",
+                "VCPKG_TARGET_TRIPLET": "arm64-osx",
                 "VCPKG_CMAKE_SYSTEM_NAME": "Darwin",
                 "VCPKG_TARGET_ARCHITECTURE": "arm64",
                 "VCPKG_OSX_ARCHITECTURES": "arm64",
@@ -63,11 +64,10 @@
             }
         },
         {
-            "name": "ninja-osx",
+            "name": "clang-osx",
             "inherits": "base-osx",
-            "displayName": "Ninja/Clang - amd64 - Release",
-            "description": "Using Ninja w/ Clang on MacOS",
-            "generator": "Ninja",
+            "displayName": "Clang - amd64 - Release",
+            "description": "Using Clang on MacOS",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "clang",
                 "CMAKE_CXX_COMPILER": "clang++"
@@ -158,10 +158,10 @@
             "configuration": "Release"
         },
         {
-            "name": "ninja-osx",
+            "name": "clang-osx",
             "inherits": "base-build",
-            "displayName": "Ninja/Clang - amd64 - Release",
-            "configurePreset": "ninja-osx",
+            "displayName": "Clang - amd64 - Release",
+            "configurePreset": "clang-osx",
             "configuration": "Release"
         }
     ],
@@ -228,6 +228,19 @@
                 {
                     "type": "build",
                     "name": "gcc"
+                }
+            ]
+        },
+        {
+            "name": "clang-osx",
+            "steps": [
+                {
+                    "type": "configure",
+                    "name": "clang-osx"
+                },
+                {
+                    "type": "build",
+                    "name": "clang-osx"
                 }
             ]
         }
