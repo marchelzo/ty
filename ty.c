@@ -27,8 +27,7 @@
 #include "dict.h"
 #include "array.h"
 #include "polyfill_time.h"
-
-#define TY_VERSION_STRING "0.1"
+#include "VersionInfo.h"
 
 static char const usage_string[] =
         "usage: ty [options] [script [args]]\n"
@@ -272,7 +271,17 @@ main(int argc, char **argv)
                 }
 
                 if (strcmp(argv[argi], "--version") == 0) {
-                        printf("ty version %s\n", TY_VERSION_STRING);
+                        printf(
+                                "%s version %s\n"
+                                "Compiler: %s %s\n"
+                                "Platform: %s-%s\n",
+                                VersionInfo_ProjectName,
+                                VersionInfo_ProjectVersion,
+                                VersionInfo_CompilerId,
+                                VersionInfo_CompilerVersion,
+                                VersionInfo_Architecture,
+                                VersionInfo_BuildType
+                        );
                         return 0;
                 }
 

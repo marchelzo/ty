@@ -40,6 +40,18 @@
             }
         },
         {
+            "name": "base-osx",
+            "hidden": true,
+            "inherits": "base",
+            "cacheVariables": {
+                "VCPKG_TARGET_TRIPLET": "x64-linux",
+                "VCPKG_CMAKE_SYSTEM_NAME": "Darwin",
+                "VCPKG_TARGET_ARCHITECTURE": "arm64",
+                "VCPKG_OSX_ARCHITECTURES": "arm64",
+                "VCPKG_CRT_LINKAGE": "dynamic"
+            }
+        },
+        {
             "name": "gcc",
             "inherits": "base-linux",
             "displayName": "GCC - amd64 - Release",
@@ -48,6 +60,17 @@
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "gcc",
                 "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
+            "name": "ninja-osx",
+            "inherits": "base-osx",
+            "displayName": "Ninja/Clang - amd64 - Release",
+            "description": "Using Ninja w/ Clang on MacOS",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++"
             }
         },
         {
@@ -132,6 +155,13 @@
             "inherits": "base-build",
             "displayName": "GCC - amd64 - Release",
             "configurePreset": "gcc",
+            "configuration": "Release"
+        },
+        {
+            "name": "ninja-osx",
+            "inherits": "base-build",
+            "displayName": "Ninja/Clang - amd64 - Release",
+            "configurePreset": "ninja-osx",
             "configuration": "Release"
         }
     ],
