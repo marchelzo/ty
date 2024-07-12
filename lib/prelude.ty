@@ -2092,13 +2092,13 @@ macro sync! {
 }
 
 macro static_if {
-    let cond = parse.expr(0)
+    let (ty.Expr ~> cond, _) = parse.expr(0, raw: true)
 
-    let then = parse.stmt(0)
+    let (ty.Stmt ~> then, _) = parse.stmt(0, raw: true)
 
     let otherwise = if lex.peek().type == 'else' {
         lex.next()
-        parse.stmt(0)
+        ty.Stmt(parse.stmt(0, raw: true)[0])
     }
 
     ty.CompileTime(ty.If([cond], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
