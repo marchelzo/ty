@@ -3,6 +3,7 @@ import sh (sh)
 import chalk (..)
 import time
 import tp (ThreadPool)
+import ty
 
 let start = time.utime()
 
@@ -15,7 +16,7 @@ let r = pen(bold, red)
 let m = pen(bold, brightMagenta)
 let b = pen(bold, blue)
 
-let TY_PATH = getenv('TY_PATH') ?? (__windows__ ? 'ty.exe' : 'ty')
+let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
 function getTyCommand(test) {
     if __windows__ {

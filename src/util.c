@@ -8,6 +8,10 @@
 #include "polyfill_unistd.h"
 #include <fcntl.h>
 
+#ifdef __APPLE__
+#include <libproc.h>
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -23,6 +27,7 @@
 #include "alloc.h"
 #include "util.h"
 #include "vec.h"
+#include "value.h"
 
 _Thread_local char ERR[ERR_SIZE];
 
@@ -135,4 +140,33 @@ slurp(char const *path)
 
                 return s.items + 1;
         }
+}
+
+Value
+this_executable(void)
+{
+#if defined(__APPLE__)
+        pid_t pid = getpid();
+        char path[PROC_PIDPATHINFO_MAXSIZE];
+
+        if (proc_pidpath(pid, path, sizeof path) <= 0) {
+                return NIL;
+        }
+
+        return STRING_CLONE(path, strlen(path));
+#elif defined(__linux__)
+        char path[PATH_MAX];
+        ssize_t len = readlink("/proc/self/exe", path, sizeof path - 1);
+        if (len <= 0)
+                return NIL;
+        return STRING_CLONE(path, len);
+#elif defined(_WIN32)
+        char path[MAX_PATH];
+        DWORD len = GetModuleFileName(NULL, path, MAX_PATH);
+        if (len == 0)
+                return NIL;
+        return STRING_CLONE(path, len);
+#else
+        return NIL;
+#endif
 }
