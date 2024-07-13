@@ -1,13 +1,7 @@
 export wrap, black, red, green, yellow, blue, magenta, cyan, white, bgBlack, bgRed, bgGreen, bgYellow, bgBlue, bgMagenta, bgCyan, bgWhite, brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite, bold, underline, fg, bg, pen
 
 function wrap(s, *props) {
-  Blob(
-    0x1b,
-    "[{props.join(';')}m",
-    "{s}",
-    0x1b,
-    "[0m"
-  ).str()
+  "\x1b[{props.join(';')}m{s}\x1b[0m"
 }
 
 function black(s)   { wrap(s, 30) }
