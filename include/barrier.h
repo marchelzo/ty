@@ -40,22 +40,24 @@ typedef struct {
 
 #include <errno.h>
 
-#define __unused __attribute__((unused))
+#ifndef _unused_
+#define _unused_ __attribute__((unused))
+#endif
 
 static int
-pthread_barrierattr_init(pthread_barrierattr_t *attr __unused)
+pthread_barrierattr_init(pthread_barrierattr_t *attr _unused_)
 {
     return 0;
 }
 
 static int
-pthread_barrierattr_destroy(pthread_barrierattr_t *attr __unused)
+pthread_barrierattr_destroy(pthread_barrierattr_t *attr _unused_)
 {
     return 0;
 }
 
 static int
-pthread_barrierattr_getpshared(const pthread_barrierattr_t *restrict attr __unused,
+pthread_barrierattr_getpshared(const pthread_barrierattr_t *restrict attr _unused_,
                    int *restrict pshared)
 {
     *pshared = PTHREAD_PROCESS_PRIVATE;
@@ -63,7 +65,7 @@ pthread_barrierattr_getpshared(const pthread_barrierattr_t *restrict attr __unus
 }
 
 static int
-pthread_barrierattr_setpshared(pthread_barrierattr_t *attr __unused,
+pthread_barrierattr_setpshared(pthread_barrierattr_t *attr _unused_,
                    int pshared)
 {
     if (pshared != PTHREAD_PROCESS_PRIVATE) {
@@ -75,7 +77,7 @@ pthread_barrierattr_setpshared(pthread_barrierattr_t *attr __unused,
 
 static int
 pthread_barrier_init(pthread_barrier_t *restrict barrier,
-             const pthread_barrierattr_t *restrict attr __unused,
+             const pthread_barrierattr_t *restrict attr _unused_,
              unsigned count)
 {
     if (count == 0) {
