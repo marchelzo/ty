@@ -582,6 +582,9 @@ add_builtins(int ac, char **av)
         iExitHooks = (int)Globals.count;
         vec_push(Globals, ARRAY(value_array_new()));
 
+        compiler_introduce_symbol("ty", "executable");
+        vec_push(Globals, this_executable());
+
 #ifdef SIGRTMIN
         /* Add this here because SIGRTMIN doesn't expand to a constant */
         compiler_introduce_symbol("os", "SIGRTMIN");

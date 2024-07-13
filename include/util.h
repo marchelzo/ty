@@ -10,6 +10,8 @@
 #include "polyfill_unistd.h"
 #include <pcre.h>
 
+#include "value.h"
+
 #ifdef max
 #undef max
 #endif
@@ -114,5 +116,8 @@ gcd(int a, int b)
 
         return a;
 }
+
+Value
+this_executable();
 
 #endif
