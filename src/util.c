@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include "polyfill_unistd.h"
 #include <fcntl.h>
+#include <limits.h>
 
 #ifdef __APPLE__
 #include <libproc.h>
