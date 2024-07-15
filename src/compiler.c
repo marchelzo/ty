@@ -270,6 +270,22 @@ wrapped_type(Value const *v)
         }
 }
 
+inline static Value
+unwrap(Value const *wrapped)
+{
+        Value v = *wrapped;
+
+        if (v.tags != 0) {
+                v.tags = tags_pop(v.tags);
+        }
+
+        if (v.tags == 0) {
+                v.type &= ~VALUE_TAGGED;
+        }
+
+        return v;
+}
+
 char const *
 ExpressionTypeName(Expr const *e)
 {
@@ -4044,6 +4060,18 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                 emit_assignment2(target->right, maybe, def);
                 emit_instr(INSTR_POP);
                 break;
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                emit_instr(INSTR_DUP);
+                emit_expression(target->left);
+                emit_instr(INSTR_CALL);
+                emit_int(1);
+                emit_int(0);
+                add_location(target->left, start, state.code.count);
+                emit_instr(INSTR_THROW_IF_NIL);
+                add_location(target, state.code.count - 1, state.code.count);
+                emit_assignment2(target->right, maybe, def);
+                emit_instr(INSTR_POP);
+                break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_instr(INSTR_THROW_IF_NIL);
                 emit_target(target, def);
@@ -5223,6 +5251,7 @@ compiler_load_builtin_modules(void)
 
         load_module("ffi", get_module_scope("ffi"));
         load_module("os", get_module_scope("os"));
+        load_module("ty", get_module_scope("ty"));
 }
 
 char *
@@ -5634,6 +5663,17 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyNotNil);
                 break;
+        case EXPRESSION_RESOURCE_BINDING:
+                v = tagged(
+                        TyResource,
+                        value_named_tuple(
+                                "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
+                                "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                                NULL
+                        ),
+                        NONE
+                );
+                break;
         case EXPRESSION_ARRAY:
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
@@ -5960,14 +6000,32 @@ tyexpr(struct expression const *e)
                 v.tags = tags_push(0, TySpecialString);
 
                 break;
+        case EXPRESSION_USER_OP:
+                v = tagged(
+                        TyUserOp,
+                        STRING_CLONE(e->op_name, strlen(e->op_name)),
+                        tyexpr(e->left),
+                        tyexpr(e->right),
+                        NONE
+                );
+                break;
         case EXPRESSION_EQ:
                 v = tagged(TyAssign, tyexpr(e->target), tyexpr(e->value), NONE);
                 break;
         case EXPRESSION_GT:
                 v = tagged(TyGT, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
+        case EXPRESSION_GEQ:
+                v = tagged(TyGEQ, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
         case EXPRESSION_LT:
                 v = tagged(TyLT, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_LEQ:
+                v = tagged(TyLEQ, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_CMP:
+                v = tagged(TyCmp, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_WTF:
                 v = tagged(TyWtf, tyexpr(e->left), tyexpr(e->right), NONE);
@@ -5999,10 +6057,28 @@ tyexpr(struct expression const *e)
         case EXPRESSION_NOT_IN:
                 v = tagged(TyNotIn, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
+        case EXPRESSION_OR:
+                v = tagged(TyOr, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_AND:
+                v = tagged(TyAnd, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_VIEW_PATTERN:
+                v = tagged(TyView, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                v = tagged(TyNotNilView, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
         case EXPRESSION_PREFIX_HASH:
                 v = tyexpr(e->operand);
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(v.tags, TyCount);
+                break;
+        case EXPRESSION_PREFIX_BANG:
+                v = tagged(TyNot, tyexpr(e->operand), NONE);
+                break;
+        case EXPRESSION_PREFIX_QUESTION:
+                v = tagged(TyQuestion, tyexpr(e->operand), NONE);
                 break;
         case EXPRESSION_DEFINED:
                 v = tagged(
@@ -6538,11 +6614,24 @@ cexpr(struct value *v)
                 e->real = v->real;
                 break;
         case TyId:
-                e->type = EXPRESSION_IDENTIFIER;
-        case TyNotNil:
-                if (e->type == -1)
-                        e->type = EXPRESSION_MATCH_NOT_NIL;
         {
+                e->type = EXPRESSION_IDENTIFIER;
+                e->identifier = mkcstr(tuple_get(v, "name"));
+                struct value *mod = tuple_get(v, "module");
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                break;
+        }
+        case TyNotNil:
+        {
+                e->type = EXPRESSION_MATCH_NOT_NIL;
+                e->identifier = mkcstr(tuple_get(v, "name"));
+                struct value *mod = tuple_get(v, "module");
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                break;
+        }
+        case TyResource:
+        {
+                e->type = EXPRESSION_RESOURCE_BINDING;
                 e->identifier = mkcstr(tuple_get(v, "name"));
                 struct value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
@@ -6841,8 +6930,7 @@ cexpr(struct value *v)
                 break;
         case TyThrow:
         {
-                struct value v_ = *v;
-                v_.tags = tags_pop(v_.tags);
+                Value v_ = unwrap(v);
                 e->type = EXPRESSION_THROW;
                 e->throw = cexpr(&v_);
                 break;
@@ -6874,6 +6962,16 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_EQ;
                 e->target = cexpr(&v->items[0]);
                 e->value = cexpr(&v->items[1]);
+                break;
+        case TyView:
+                e->type = EXPRESSION_VIEW_PATTERN;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyNotNilView:
+                e->type = EXPRESSION_NOT_NIL_VIEW_PATTERN;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
                 break;
         case TyWtf:
                 e->type = EXPRESSION_WTF;
@@ -6920,8 +7018,23 @@ cexpr(struct value *v)
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
                 break;
+        case TyGEQ:
+                e->type = EXPRESSION_GEQ;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
         case TyLT:
                 e->type = EXPRESSION_LT;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyLEQ:
+                e->type = EXPRESSION_LEQ;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyCmp:
+                e->type = EXPRESSION_CMP;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
                 break;
@@ -6947,14 +7060,29 @@ cexpr(struct value *v)
                 break;
         case TyUserOp:
                 e->type = EXPRESSION_USER_OP;
-                e->left = cexpr(&v->items[0]);
-                e->right = cexpr(&v->items[1]);
+                e->op_name = mkcstr(&v->items[0]);
+                e->left = cexpr(&v->items[1]);
+                e->right = cexpr(&v->items[2]);
                 break;
         case TyCount:
         {
                 struct value v_ = *v;
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_PREFIX_HASH;
+                e->operand = cexpr(&v_);
+                break;
+        }
+        case TyNot:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_PREFIX_BANG;
+                e->operand = cexpr(&v_);
+                break;
+        }
+        case TyQuestion:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_PREFIX_QUESTION;
                 e->operand = cexpr(&v_);
                 break;
         }

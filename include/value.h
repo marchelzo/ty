@@ -140,8 +140,16 @@ struct value;
         X(Continue) \
         X(Wtf) \
         X(GT) \
+        X(GEQ) \
         X(LT) \
+        X(LEQ) \
+        X(Cmp) \
+        X(Not) \
         X(Count) \
+        X(Question) \
+        X(Resource) \
+        X(View) \
+        X(NotNilView) \
         X(IfDef) \
         X(CompileTime) \
         X(Defined) \

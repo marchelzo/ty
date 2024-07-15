@@ -1511,6 +1511,18 @@ gencompr(struct expression *e)
         return g;
 }
 
+inline static bool
+has_names(Expr const *e)
+{
+        for (int i = 0; e->names.count; ++i) {
+                if (e->names.items[i] != NULL) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static struct expression *
 prefix_parenthesis(void)
 {
@@ -1672,7 +1684,7 @@ prefix_parenthesis(void)
         } else {
                 consume(')');
 
-                if (e->type == EXPRESSION_TUPLE) {
+                if (e->type == EXPRESSION_TUPLE && !has_names(e)) {
                         struct expression *list = mkexpr();
                         list->start = start;
                         list->only_identifiers = false;
@@ -3125,6 +3137,7 @@ definition_lvalue(struct expression *e)
                 }
                 return e;
         case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 e->right = definition_lvalue(e->right);
                 return e;
         case EXPRESSION_ARRAY:
@@ -3171,6 +3184,7 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_FUNCTION_CALL:
         case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
                 return e;
