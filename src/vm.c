@@ -3980,7 +3980,7 @@ vm_panic(char const *fmt, ...)
                 ERR[n++] = '\n';
 
         for (int i = 0; n < sz; ++i) {
-                Expr const *expr = compiler_find_expr(ip);
+                Expr const *expr = compiler_find_expr(ip - 1);
                 char buffer[512];
 
                 char const *file = (expr == NULL || expr->filename == NULL) ? "(unknown)" : expr->filename;
