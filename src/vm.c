@@ -1892,6 +1892,7 @@ vm_exec(char *code)
                         } else if (v.type == VALUE_TUPLE) {
                                 vp = tuple_get(&v, member);
                                 if (vp == NULL) {
+                                        value = v;
                                         goto BadTupleMember;
                                 }
                                 pushtarget(vp, v.items);
@@ -2821,6 +2822,7 @@ Throw:
                         v = peek();
 
                         if (v.type != VALUE_TUPLE || v.names == NULL) {
+                                value = v;
                                 goto BadTupleMember;
                         }
 
@@ -2835,6 +2837,8 @@ Throw:
                                 push(NIL);
                                 goto NextInstruction;
                         }
+
+                        value = v;
 
                         goto BadTupleMember;
                 CASE(PUSH_ALL)
@@ -2915,7 +2919,7 @@ Throw:
                                         member,
                                         TERM(39),
                                         TERM(97),
-                                        value_show(&value),
+                                        value_show_color(&value),
                                         TERM(39)
                                 );
                         } else {
@@ -2925,7 +2929,7 @@ Throw:
                                         member,
                                         TERM(39),
                                         TERM(97),
-                                        value_show(&value),
+                                        value_show_color(&value),
                                         TERM(39)
                                 );
                         }
