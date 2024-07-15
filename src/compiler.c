@@ -260,6 +260,16 @@ static char const *StatementTypeNames[] = {
 };
 #undef X
 
+inline static int
+wrapped_type(Value const *v)
+{
+        if (v->tags == 0 || tags_pop(v->tags) == 0) {
+                return v->type & ~VALUE_TAGGED;
+        } else {
+                return v->type;
+        }
+}
+
 char const *
 ExpressionTypeName(Expr const *e)
 {
@@ -6415,7 +6425,7 @@ cstmt(struct value *v)
         {
                 s->type = STATEMENT_RETURN;
                 vec_init(s->returns);
-                if ((v->type & ~VALUE_TAGGED)  == VALUE_TUPLE) {
+                if (wrapped_type(v) == VALUE_TUPLE) {
                         for (int i = 0; i < v->count; ++i) {
                                 VPush(s->returns, cexpr(&v->items[i]));
                         }

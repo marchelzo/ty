@@ -139,6 +139,7 @@ target_compile_definitions(${_tgt_ty_interface}
     $<$<NOT:$<CONFIG:Debug>>:TY_NO_LOG>
     TY_RELEASE
     TY_NO_LOG
+    TY_HAVE_VERSION_INFO
 )
 
 # ---
