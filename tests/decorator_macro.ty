@@ -1,7 +1,7 @@
 import ty
 
-macro upper(e) {
-    let ty.Func(f) = e
+macro upper(def) {
+    let ty.FuncDef(f) = def
     ty.FuncDef({*f, body: $$[ $$(f.body).upper() $$]})
 }
 
