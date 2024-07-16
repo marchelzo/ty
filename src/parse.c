@@ -1105,7 +1105,13 @@ prefix_at(void)
 
                 struct expression *m = parse_expr(0);
 
-                if (m->type != EXPRESSION_FUNCTION_CALL) {
+                if (
+                        (
+                                m->type != EXPRESSION_FUNCTION_CALL ||
+                                m->function->type != EXPRESSION_IDENTIFIER
+                        )
+                        // TODO: allow . for module access here
+                ) {
                         EStart = m->start;
                         EEnd = m->end;
                         error("expected function-like macro invocation inside @{...}");
@@ -1113,8 +1119,12 @@ prefix_at(void)
 
                 consume('}');
 
-                VPush(m->args, parse_expr(0));
-                VPush(m->aconds, NULL);
+                Expr *stmt = mkexpr();
+                stmt->type = EXPRESSION_STATEMENT;
+                stmt->statement = parse_statement(-1);
+
+                VInsert(m->args, stmt, 0);
+                VInsert(m->aconds, NULL, 0);
 
                 return m;
         } else {

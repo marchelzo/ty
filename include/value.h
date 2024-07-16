@@ -80,7 +80,9 @@ struct value;
         X(Value) \
         X(Match) \
         X(Each) \
+        X(For) \
         X(While) \
+        X(WhileMatch) \
         X(Func) \
         X(FuncDef) \
         X(ImplicitFunc) \
@@ -119,6 +121,7 @@ struct value;
         X(Bool) \
         X(Float) \
         X(Nil) \
+        X(Regex) \
         X(Id) \
         X(Record) \
         X(RecordEntry) \
@@ -145,6 +148,10 @@ struct value;
         X(LEQ) \
         X(Cmp) \
         X(Not) \
+        X(PreInc) \
+        X(PostInc) \
+        X(PreDec) \
+        X(PostDec) \
         X(Count) \
         X(Question) \
         X(Resource) \
@@ -338,7 +345,7 @@ struct value {
                         int count;
                         bool gc_names;
                 };
-                struct regex *regex;
+                struct regex const *regex;
                 struct {
                         int *info;
                         struct value **env;

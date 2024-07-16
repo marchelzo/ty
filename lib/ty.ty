@@ -103,6 +103,12 @@ pub function walk(tree, f) {
         ty.And(a, b)   => ty.And(walk(a, f), walk(b, f)),
         ty.Or(a, b)    => ty.Or(walk(a, f), walk(b, f)),
 
+        ty.UserOp(op, a, b) => ty.UserOp(
+            op,
+            walk(a, f),
+            walk(b, f)
+        ),
+
         ty.MemberAccess(object, member) => ty.MemberAccess(
             walk(object, f),
             member
@@ -128,7 +134,19 @@ pub function walk(tree, f) {
             cond: walk(each.cond, f)
         ),
 
+        ty.For(init, cond, next, body) => ty.For(
+            walk(init, f),
+            walk(cond, f),
+            walk(next, f),
+            walk(body, f)
+        ),
+
         ty.Match(subject, arms) => ty.Match(
+            walk(subject, f),
+            [(walk(pattern, f), walk(value, f)) for (pattern, value) in arms]
+        ),
+
+        ty.WhileMatch(subject, arms) => ty.WhileMatch(
             walk(subject, f),
             [(walk(pattern, f), walk(value, f)) for (pattern, value) in arms]
         ),
@@ -175,6 +193,11 @@ pub function walk(tree, f) {
 
         ty.Count(xs) => ty.Count(walk(xs, f)),
 
+        ty.PreInc(x)  => ty.PreInc(walk(x, f)),
+        ty.PostInc(x) => ty.PostInc(walk(x, f)),
+        ty.PreDec(x)  => ty.PreDec(walk(x, f)),
+        ty.PostDec(x) => ty.PostDec(walk(x, f)),
+
         ty.Let(target, x) => ty.Let(
             walk(target, f),
             walk(x, f)
@@ -198,6 +221,9 @@ pub function walk(tree, f) {
             walk(a, f),
             walk(b, f)
         ),
+
+        ty.View(view, pattern) => ty.View(walk(view, f), walk(pattern, f)),
+        ty.NotNilView(view, pattern) => ty.NotNilView(walk(view, f), walk(pattern, f)),
 
         _ => tree
     }

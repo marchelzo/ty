@@ -344,31 +344,31 @@ show_string(char const *s, size_t n, bool color)
 
         if (s != NULL) for (char const *c = s; c < s + n; ++c) switch (*c) {
         case '\t':
-                COLOR(93);
+                COLOR(95);
                 vec_push(v, '\\');
                 vec_push(v, 't');
                 COLOR(92);
                 break;
         case '\r':
-                COLOR(93);
+                COLOR(95);
                 vec_push(v, '\\');
                 vec_push(v, 'r');
                 COLOR(92);
                 break;
         case '\n':
-                COLOR(93);
+                COLOR(95);
                 vec_push(v, '\\');
                 vec_push(v, 'n');
                 COLOR(92);
                 break;
         case '\\':
-                COLOR(93);
+                COLOR(95);
                 vec_push(v, '\\');
                 vec_push(v, '\\');
                 COLOR(92);
                 break;
         case '\'':
-                COLOR(93);
+                COLOR(95);
                 vec_push(v, '\\');
                 vec_push(v, '\'');
                 COLOR(92);
@@ -664,19 +664,30 @@ value_show_color(struct value const *v)
                 );
                 break;
         case VALUE_TAG:
-                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(97), tags_name(v->tag), TERM(0));
+                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(34), tags_name(v->tag), TERM(0));
                 break;
         case VALUE_BLOB:
                 snprintf(buffer, sizeof buffer, "<blob at %p (%zu bytes)>", (void *) v->blob, v->blob->count);
                 break;
         case VALUE_PTR:
-                snprintf(buffer, sizeof buffer, "<pointer at %p>", v->ptr);
+                snprintf(
+                        buffer,
+                        sizeof buffer,
+                        "%s<pointer at %s%s%p%s%s>%s",
+                        TERM(32),
+                        TERM(1),
+                        TERM(92),
+                        v->ptr,
+                        TERM(0),
+                        TERM(32),
+                        TERM(0)
+                );
                 break;
         case VALUE_GENERATOR:
                 snprintf(buffer, sizeof buffer, "<generator at %p>", v->gen);
                 break;
         case VALUE_THREAD:
-                snprintf(buffer, sizeof buffer, "<thread %"PRIu64">", v->thread->i);
+                snprintf(buffer, sizeof buffer, "%s<thread %"PRIu64">%s", TERM(33), v->thread->i, TERM(0));
                 break;
         case VALUE_SENTINEL:
                 return sclone("<sentinel>");
