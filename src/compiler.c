@@ -5722,23 +5722,40 @@ tyexpr(struct expression const *e)
                 v.tags = tags_push(v.tags, TyGenerator);
                 break;
         case EXPRESSION_FUNCTION:
-                v = value_named_tuple(
-                        "name", e->name != NULL ? STRING_CLONE(e->name, strlen(e->name)) : NIL,
-                        "params", ARRAY(value_array_new()),
-                        "rt", e->return_type != NULL ? tyexpr(e->return_type) : NIL,
-                        "body", tystmt(e->body),
-                        NULL
+        case EXPRESSION_IMPLICIT_FUNCTION:
+        {
+                Array *decorators = value_array_new();
+                Array *params = value_array_new();
+
+                int tag = (e->type == EXPRESSION_IMPLICIT_FUNCTION) ? TyImplicitFunc : TyFunc;
+
+                v = tagged(
+                        tag,
+                        value_named_tuple(
+                                "name", e->name != NULL ? STRING_CLONE(e->name, strlen(e->name)) : NIL,
+                                "params", ARRAY(params),
+                                "rt", e->return_type != NULL ? tyexpr(e->return_type) : NIL,
+                                "body", tystmt(e->body),
+                                "decorators", ARRAY(decorators),
+                                NULL
+                        ),
+                        NONE
                 );
+
+                for (int i = 0; i < e->decorators.count; ++i) {
+                        value_array_push(decorators, tyexpr(e->decorators.items[i]));
+                }
+
                 for (int i = 0; i < e->params.count; ++i) {
                         struct value name = STRING_CLONE(e->params.items[i], strlen(e->params.items[i]));
                         if (i == e->rest) {
                                 value_array_push(
-                                        v.items[1].array,
+                                        params,
                                         tagged(TyGather, name, NONE)
                                 );
                         } else if (i == e->ikwargs) {
                                 value_array_push(
-                                        v.items[1].array,
+                                        params,
                                         tagged(TyKwargs, name, NONE)
                                 );
                         } else {
@@ -5748,12 +5765,12 @@ tyexpr(struct expression const *e)
                                         "default", e->dflts.items[i] != NULL ? tyexpr(e->dflts.items[i]) : NIL,
                                         NULL
                                 );
-                                value_array_push(v.items[1].array, tagged(TyParam, p, NONE));
+                                value_array_push(params, tagged(TyParam, p, NONE));
                         }
                 }
-                v.type |= VALUE_TAGGED;
-                v.tags = tags_push(0, TyFunc);
+
                 break;
+        }
         case EXPRESSION_TUPLE:
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
@@ -6896,6 +6913,7 @@ cexpr(struct value *v)
                 struct value *name = tuple_get(v, "name");
                 struct value *params = tuple_get(v, "params");
                 struct value *rt = tuple_get(v, "rt");
+                Value *decorators = tuple_get(v, "decorators");
                 e->name = (name != NULL && name->type != VALUE_NIL) ? mkcstr(name) : NULL;
                 e->doc = NULL;
                 e->proto = NULL;
@@ -6904,6 +6922,11 @@ cexpr(struct value *v)
                 vec_init(e->constraints);
                 vec_init(e->dflts);
                 vec_init(e->decorators);
+                if (decorators != NULL && decorators->type != VALUE_NIL) {
+                        for (int i = 0; i < decorators->array->count; ++i) {
+                                VPush(e->decorators, cexpr(&decorators->array->items[i]));
+                        }
+                }
                 for (int i = 0; i < params->array->count; ++i) {
                         struct value *p = &params->array->items[i];
                         switch (tags_first(p->tags)) {

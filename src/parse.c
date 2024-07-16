@@ -74,7 +74,8 @@
                 return e; \
         } \
 
-typedef struct expression *parse_fn();
+typedef Expr *prefix_parse_fn(void);
+typedef Expr *infix_parse_fn(Expr *);
 
 /*
  * Meaningful names for different contexts in which we can parse lvalues.
@@ -151,10 +152,10 @@ error(char const *fmt, ...);
 static void
 logctx(void);
 
-static parse_fn *
+static infix_parse_fn *
 get_infix_parser(void);
 
-static parse_fn *
+static prefix_parse_fn *
 get_prefix_parser(void);
 
 static struct statement *
@@ -655,6 +656,53 @@ try_cond(void)
 }
 
 
+static expression_vector
+parse_decorators(void)
+{
+        expression_vector decorators = {0};
+
+        consume(TOKEN_AT);
+        consume('[');
+
+        while (tok()->type != ']') {
+                struct expression *f = parse_expr(0);
+                if (f->type != EXPRESSION_FUNCTION_CALL && f->type != EXPRESSION_METHOD_CALL) {
+                        struct expression *call = mkexpr();
+                        if (f->type == EXPRESSION_MEMBER_ACCESS) {
+                                call->type = EXPRESSION_METHOD_CALL;
+                                call->sc = NULL;
+                                call->maybe = false;
+                                call->object = f->object;
+                                call->method_name = f->method_name;
+                                vec_init(call->method_args);
+                                vec_init(call->mconds);
+                                vec_init(call->method_kwargs);
+                                vec_init(call->method_kws);
+                        } else {
+                                call->type = EXPRESSION_FUNCTION_CALL;
+                                call->function = f;
+                                vec_init(call->args);
+                                vec_init(call->kws);
+                                vec_init(call->kwargs);
+                                vec_init(call->fconds);
+                                vec_init(call->fkwconds);
+                        }
+                        vec_push(decorators, call);
+                } else {
+                        vec_push(decorators, f);
+                }
+
+                if (tok()->type == ',') {
+                        next();
+                }
+        }
+
+        consume(']');
+
+        return decorators;
+}
+
+
 /* * * * | prefix parsers | * * * */
 static struct expression *
 prefix_integer(void)
@@ -886,43 +934,7 @@ prefix_function(void)
         bool sugared_generator = false;
 
         if (tok()->type == TOKEN_AT) {
-                consume(TOKEN_AT);
-                consume('[');
-
-                while (tok()->type != ']') {
-                        struct expression *f = parse_expr(0);
-                        if (f->type != EXPRESSION_FUNCTION_CALL && f->type != EXPRESSION_METHOD_CALL) {
-                                struct expression *call = mkexpr();
-                                if (f->type == EXPRESSION_MEMBER_ACCESS) {
-                                        call->type = EXPRESSION_METHOD_CALL;
-                                        call->sc = NULL;
-                                        call->maybe = false;
-                                        call->object = f->object;
-                                        call->method_name = f->method_name;
-                                        vec_init(call->method_args);
-                                        vec_init(call->mconds);
-                                        vec_init(call->method_kwargs);
-                                        vec_init(call->method_kws);
-                                } else {
-                                        call->type = EXPRESSION_FUNCTION_CALL;
-                                        call->function = f;
-                                        vec_init(call->args);
-                                        vec_init(call->kws);
-                                        vec_init(call->kwargs);
-                                        vec_init(call->fconds);
-                                        vec_init(call->fkwconds);
-                                }
-                                vec_push(e->decorators, call);
-                        } else {
-                                vec_push(e->decorators, f);
-                        }
-
-                        if (tok()->type == ',') {
-                                next();
-                        }
-                }
-
-                consume(']');
+                e->decorators = parse_decorators();
         }
 
         if (tok()->keyword == KEYWORD_GENERATOR) {
@@ -1184,7 +1196,6 @@ prefix_statement(void)
 static struct expression *
 prefix_record(void)
 {
-        struct location start = tok()->start;
         struct expression *e = mkexpr();
         e->only_identifiers = false;
         e->type = EXPRESSION_TUPLE;
@@ -2464,7 +2475,7 @@ infix_eq(struct expression *left)
 }
 
 static struct expression *
-prefix_user_op(struct expression *e)
+prefix_user_op(void)
 {
         error("not implemented");
 }
@@ -2484,7 +2495,7 @@ infix_user_op(struct expression *left)
 
         struct value *p = table_look(&uops, e->op_name);
         if (p != NULL) {
-                prec = (p->integer > 0) ? p->integer : abs(p->integer) - 1;
+                prec = (p->integer > 0) ? p->integer : llabs(p->integer) - 1;
         }
 
         struct value *sc = table_look(&uopcs, e->op_name);
@@ -2886,7 +2897,7 @@ BINARY_LVALUE_OPERATOR(div_eq,   DIV_EQ,   2, true)
 BINARY_LVALUE_OPERATOR(minus_eq, MINUS_EQ, 2, true)
 /* * * * | end of infix parsers | * * * */
 
-static parse_fn *
+static prefix_parse_fn *
 get_prefix_parser(void)
 {
         setctx(LEX_PREFIX);
@@ -2966,7 +2977,7 @@ Keyword:
         }
 }
 
-static parse_fn *
+static infix_parse_fn *
 get_infix_parser(void)
 {
         setctx(LEX_INFIX);
@@ -3114,7 +3125,7 @@ Keyword:
 
 UserOp:
         p = table_look(&uops, tok()->identifier);
-        return (p != NULL) ? abs(p->integer) : 8;
+        return (p != NULL) ? llabs(p->integer) : 8;
 }
 
 static struct expression *
@@ -3882,7 +3893,7 @@ parse_expr(int prec)
         if (++depth > 256)
                 error("exceeded maximum recursion depth of 256");
 
-        parse_fn *f = get_prefix_parser();
+        prefix_parse_fn *f = get_prefix_parser();
         if (f == NULL) {
                 error(
                         "expected expression but found %s%s%s",
@@ -3895,7 +3906,7 @@ parse_expr(int prec)
         e = f();
 
         while (!should_split() && prec < get_infix_prec()) {
-                f = get_infix_parser();
+                infix_parse_fn *f = get_infix_parser();
                 if (f == NULL) {
                         error("unexpected token after expression: %s", token_show(tok()));
                 }
@@ -4041,7 +4052,14 @@ parse_class_definition(void)
                         case TOKEN_USER_OP:     tok()->type = TOKEN_IDENTIFIER;                             break;
                         case '~':               next();
                         case TOKEN_IDENTIFIER:                                                              break;
-                        default: if (!have_keyword(KEYWORD_STATIC)) expect(TOKEN_IDENTIFIER);               break;
+                        default:                                                                            break;
+                        }
+                        expression_vector decorators = {0};
+                        if (tok()->type == TOKEN_AT) {
+                                decorators = parse_decorators();
+                        }
+                        if (!have_keyword(KEYWORD_STATIC)) {
+                                expect(TOKEN_IDENTIFIER);
                         }
                         struct location start = tok()->start;
                         if (have_keyword(KEYWORD_STATIC)) {
@@ -4053,6 +4071,7 @@ parse_class_definition(void)
                                 (*vec_last(s->tag.statics))->doc = doc;
                                 (*vec_last(s->tag.statics))->start = start;
                                 (*vec_last(s->tag.statics))->start = End;
+                                (*vec_last(s->tag.statics))->decorators = decorators;
                         } else if (token(1)->type == TOKEN_EQ) {
                                 struct token t = *tok();
                                 skip(2);
@@ -4064,6 +4083,7 @@ parse_class_definition(void)
                                 (*vec_last(s->tag.setters))->doc = doc;
                                 (*vec_last(s->tag.setters))->start = start;
                                 (*vec_last(s->tag.setters))->start = End;
+                                (*vec_last(s->tag.setters))->decorators = decorators;
 
                         } else if (token(1)->type == '{') {
                                 struct token t = *tok();
@@ -4078,6 +4098,7 @@ parse_class_definition(void)
                                 (*vec_last(s->tag.getters))->doc = doc;
                                 (*vec_last(s->tag.getters))->start = start;
                                 (*vec_last(s->tag.getters))->start = End;
+                                (*vec_last(s->tag.getters))->decorators = decorators;
                         } else {
                                 unconsume(TOKEN_KEYWORD);
                                 tok()->keyword = KEYWORD_FUNCTION;
@@ -4085,6 +4106,7 @@ parse_class_definition(void)
                                 (*vec_last(s->tag.methods))->doc = doc;
                                 (*vec_last(s->tag.methods))->start = start;
                                 (*vec_last(s->tag.methods))->start = End;
+                                (*vec_last(s->tag.methods))->decorators = decorators;
                         }
                 }
                 setctx(LEX_PREFIX);

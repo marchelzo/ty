@@ -51,15 +51,11 @@ pub function walk(tree, f) {
         ty.In(a, b) => ty.In(walk(a, f), walk(b, f)),
         ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
 
-        ty.Func(func) => ty.Func(
+        ty.Func(func),
+        ty.ImplicitFunc(func),
+        ty.FuncDef(func) => type(tree)(
             name: func.name,
-            params: [walk(param, f) for param in func.params],
-            rt: walk(func.rt, f),
-            body: walk(func.body, f)
-        ),
-
-        ty.FuncDef(func) => ty.FuncDef(
-            name: func.name,
+            decorators: [walk(dec, f) for dec in func.decorators],
             params: [walk(param, f) for param in func.params],
             rt: walk(func.rt, f),
             body: walk(func.body, f)

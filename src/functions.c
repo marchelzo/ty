@@ -6175,6 +6175,10 @@ builtin_type(int argc, struct value *kwargs)
                 return TUPLE(types, NULL, n, false);
         }
 
+        if (v.tags != 0) {
+                return TAG(tags_first(v.tags));
+        }
+
         switch (v.type) {
         case VALUE_INTEGER:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_INT     };
         case VALUE_REAL:     return (struct value) { .type = VALUE_CLASS, .class = CLASS_FLOAT   };
@@ -6191,6 +6195,7 @@ builtin_type(int argc, struct value *kwargs)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_FUNCTION:  return (struct value) { .type = VALUE_CLASS, .class = CLASS_FUNCTION  };
         case VALUE_GENERATOR: return (struct value) { .type = VALUE_CLASS, .class = CLASS_GENERATOR };
+        case VALUE_TAG:       return (struct value) { .type = VALUE_CLASS, .class = CLASS_TAG       };
         case VALUE_PTR:       return PTR(NULL);
         default:
         case VALUE_NIL:      return NIL;
