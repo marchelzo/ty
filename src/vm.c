@@ -1335,16 +1335,16 @@ GetMember(struct value v, char const *member, unsigned long h, bool b)
                 }
                 break;
         case VALUE_OBJECT:
-                vp = class_lookup_getter(v.class, member, h);
-                if (vp != NULL) {
-                        return vm_call(&METHOD(member, vp, &v), 0);
-                }
                 vp = table_lookup(v.object, member, h);
                 if (vp != NULL) {
                         return *vp;
                 }
                 n = v.class;
 ClassLookup:
+                vp = class_lookup_getter(n, member, h);
+                if (vp != NULL) {
+                        return vm_call(&METHOD(member, vp, &v), 0);
+                }
                 vp = class_lookup_method(n, member, h);
                 if (vp != NULL) {
                         this = gc_alloc_object(sizeof *this, GC_VALUE);
@@ -2234,7 +2234,7 @@ Throw:
                 CASE(TRY_REGEX)
                         READVALUE(s);
                         READVALUE(n);
-                        v = REGEX((struct regex const *) s);
+                        v = REGEX((struct regex *) s);
                         value = value_apply_callable(&v, top());
                         vp = poptarget();
                         if (value.type == VALUE_NIL) {

@@ -5957,6 +5957,9 @@ tyexpr(struct expression const *e)
                         NONE
                 );
                 break;
+        case EXPRESSION_REGEX:
+                v = tagged(TyRegex, REGEX(e->regex), NONE);
+                break;
         case EXPRESSION_INTEGER:
                 v = INTEGER(e->integer);
                 v.type |= VALUE_TAGGED;
@@ -6080,6 +6083,18 @@ tyexpr(struct expression const *e)
         case EXPRESSION_PREFIX_QUESTION:
                 v = tagged(TyQuestion, tyexpr(e->operand), NONE);
                 break;
+        case EXPRESSION_PREFIX_INC:
+                v = tagged(TyPreInc, tyexpr(e->operand), NONE);
+                break;
+        case EXPRESSION_POSTFIX_INC:
+                v = tagged(TyPostInc, tyexpr(e->operand), NONE);
+                break;
+        case EXPRESSION_PREFIX_DEC:
+                v = tagged(TyPreDec, tyexpr(e->operand), NONE);
+                break;
+        case EXPRESSION_POSTFIX_DEC:
+                v = tagged(TyPostDec, tyexpr(e->operand), NONE);
+                break;
         case EXPRESSION_DEFINED:
                 v = tagged(
                         TyDefined,
@@ -6107,6 +6122,7 @@ tyexpr(struct expression const *e)
                 break;
         case EXPRESSION_STATEMENT:
                 v = tystmt(e->statement);
+                break;
         default:
                 v = tagged(TyExpr, PTR((void *)e), NONE);
         }
@@ -6191,16 +6207,32 @@ tystmt(struct statement *s)
                 v.items[0] = tyexpr(s->match.e);
                 v.items[1] = ARRAY(value_array_new());
                 for (int i = 0; i < s->match.patterns.count; ++i) {
-                        struct value _case = value_tuple(2);
-                        _case.items[0] = tyexpr(s->match.patterns.items[i]);
-                        _case.items[1] = tystmt(s->match.statements.items[i]);
+                        struct value case_ = value_tuple(2);
+                        case_.items[0] = tyexpr(s->match.patterns.items[i]);
+                        case_.items[1] = tystmt(s->match.statements.items[i]);
                         value_array_push(
                                 v.items[1].array,
-                                _case
+                                case_
                         );
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyMatch);
+                break;
+        case STATEMENT_WHILE_MATCH:
+                v = value_tuple(2);
+                v.items[0] = tyexpr(s->match.e);
+                v.items[1] = ARRAY(value_array_new());
+                for (int i = 0; i < s->match.patterns.count; ++i) {
+                        struct value case_ = value_tuple(2);
+                        case_.items[0] = tyexpr(s->match.patterns.items[i]);
+                        case_.items[1] = tystmt(s->match.statements.items[i]);
+                        value_array_push(
+                                v.items[1].array,
+                                case_
+                        );
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyWhileMatch);
                 break;
         case STATEMENT_EACH_LOOP:
         {
@@ -6224,6 +6256,13 @@ tystmt(struct statement *s)
 
                 break;
         }
+        case STATEMENT_FOR_LOOP:
+                v = tagged(TyFor, value_tuple(4), NONE);
+                v.items[0] = tystmt(s->for_loop.init);
+                v.items[1] = tyexpr(s->for_loop.cond);
+                v.items[2] = tyexpr(s->for_loop.next);
+                v.items[3] = tystmt(s->for_loop.body);
+                break;
         case STATEMENT_BLOCK:
                 v = ARRAY(value_array_new());
                 for (int i = 0; i < s->statements.count; ++i) {
@@ -6468,10 +6507,33 @@ cstmt(struct value *v)
                 }
                 break;
         }
+        case TyWhileMatch:
+        {
+                s->type = STATEMENT_WHILE_MATCH;
+                s->match.e = cexpr(&v->items[0]);
+                vec_init(s->match.patterns);
+                vec_init(s->match.statements);
+                vec_init(s->match.conds);
+                struct value *cases = &v->items[1];
+                for (int i = 0; i < cases->array->count; ++i) {
+                        struct value *_case = &cases->array->items[i];
+                        VPush(s->match.patterns, cexpr(&_case->items[0]));
+                        VPush(s->match.statements, cstmt(&_case->items[1]));
+                        VPush(s->match.conds, NULL);
+                }
+                break;
+        }
         case TyWhile:
                 s->type = STATEMENT_WHILE;
                 s->While.parts = cparts(&v->items[0]);
                 s->While.block = cstmt(&v->items[1]);
+                break;
+        case TyFor:
+                s->type = STATEMENT_FOR_LOOP;
+                s->for_loop.init = cstmt(&v->items[0]);
+                s->for_loop.cond = cexpr(&v->items[1]);
+                s->for_loop.next = cexpr(&v->items[2]);
+                s->for_loop.body = cstmt(&v->items[3]);
                 break;
         case TyEach:
         {
@@ -6612,6 +6674,10 @@ cexpr(struct value *v)
         case TyFloat:
                 e->type = EXPRESSION_REAL;
                 e->real = v->real;
+                break;
+        case TyRegex:
+                e->type = EXPRESSION_REGEX;
+                e->regex = v->regex;
                 break;
         case TyId:
         {
@@ -7079,6 +7145,34 @@ cexpr(struct value *v)
                 e->operand = cexpr(&v_);
                 break;
         }
+        case TyPreInc:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_PREFIX_INC;
+                e->operand = cexpr(&v_);
+                break;
+        }
+        case TyPostInc:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_POSTFIX_INC;
+                e->operand = cexpr(&v_);
+                break;
+        }
+        case TyPreDec:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_PREFIX_DEC;
+                e->operand = cexpr(&v_);
+                break;
+        }
+        case TyPostDec:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_POSTFIX_DEC;
+                e->operand = cexpr(&v_);
+                break;
+        }
         case TyQuestion:
         {
                 Value v_ = unwrap(v);
@@ -7113,7 +7207,9 @@ cexpr(struct value *v)
         case TyLet:
         case TyMatch:
         case TyEach:
+        case TyFor:
         case TyWhile:
+        case TyWhileMatch:
         case TyIf:
         case TyIfNot:
         case TyStmt:
