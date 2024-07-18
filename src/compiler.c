@@ -246,6 +246,9 @@ static void
 invoke_macro(struct expression *e, struct scope *scope);
 
 static void
+invoke_fun_macro(struct expression *e);
+
+static void
 emit_spread(struct expression const *e, bool nils);
 
 static void
@@ -949,6 +952,29 @@ get_import_scope(char const *name)
         }
 
         return scope;
+}
+
+static void
+apply_decorator_macros(struct scope *scope, struct expression **ms, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                if (
+                        ms[i]->type == EXPRESSION_FUNCTION_CALL &&
+                        ms[i]->function->type == EXPRESSION_IDENTIFIER
+                ) {
+                        symbolize_expression(scope, ms[i]->function);
+
+                        if (!ms[i]->function->symbol->fun_macro) {
+                                fail("non-FLM used as method decorator macro");
+                        }
+
+                        invoke_fun_macro(ms[i]);
+
+                        if (ms[i]->type != EXPRESSION_FUNCTION) {
+                                fail("method decorator macro returned %s", ExpressionTypeName(ms[i]));
+                        }
+                }
+        }
 }
 
 static void
@@ -1900,6 +1926,11 @@ symbolize_statement(struct scope *scope, struct statement *s)
 
                 subscope = scope_new(s->class.name, scope, false);
                 state.class = s->class.symbol;
+
+                apply_decorator_macros(subscope, s->class.methods.items, s->class.methods.count);
+                apply_decorator_macros(subscope, s->class.getters.items, s->class.getters.count);
+                apply_decorator_macros(subscope, s->class.setters.items, s->class.setters.count);
+                apply_decorator_macros(subscope, s->class.statics.items, s->class.statics.count);
 
                 aggregate_overloads(&s->class.methods, false);
                 aggregate_overloads(&s->class.setters, true);
@@ -4638,7 +4669,7 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_symbol((uintptr_t)e);
                 break;
         default:
-                fail("expression unexpected in this context: %d", (int)e->type);
+                fail("expression unexpected in this context: %s", ExpressionTypeName(e));
         }
 
         if (KEEP_LOCATION(e) || need_loc)

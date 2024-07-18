@@ -656,6 +656,40 @@ try_cond(void)
 }
 
 
+Expr *
+parse_decorator_macro(void)
+{
+        setctx(LEX_PREFIX);
+
+        if (token(1)->type == '}') {
+                struct token id = *tok();
+
+                next();
+                unconsume(')');
+                unconsume('(');
+
+                unconsume(TOKEN_IDENTIFIER);
+                *tok() = id;
+        }
+
+        struct expression *m = parse_expr(0);
+
+        if (
+                (
+                        m->type != EXPRESSION_FUNCTION_CALL ||
+                        m->function->type != EXPRESSION_IDENTIFIER
+                )
+                // TODO: allow . for module access here
+        ) {
+                EStart = m->start;
+                EEnd = m->end;
+                error("expected function-like macro invocation inside @{...}");
+        }
+
+        return m;
+}
+
+
 static expression_vector
 parse_decorators(void)
 {
@@ -1104,30 +1138,7 @@ prefix_at(void)
         if (tok()->type == '{') {
                 next();
 
-                if (token(1)->type == '}') {
-                        struct token id = *tok();
-
-                        next();
-                        unconsume(')');
-                        unconsume('(');
-
-                        unconsume(TOKEN_IDENTIFIER);
-                        *tok() = id;
-                }
-
-                struct expression *m = parse_expr(0);
-
-                if (
-                        (
-                                m->type != EXPRESSION_FUNCTION_CALL ||
-                                m->function->type != EXPRESSION_IDENTIFIER
-                        )
-                        // TODO: allow . for module access here
-                ) {
-                        EStart = m->start;
-                        EEnd = m->end;
-                        error("expected function-like macro invocation inside @{...}");
-                }
+                Expr *m = parse_decorator_macro();
 
                 consume('}');
 
@@ -1136,7 +1147,7 @@ prefix_at(void)
                 stmt->statement = parse_statement(-1);
 
                 VInsert(m->args, stmt, 0);
-                VInsert(m->aconds, NULL, 0);
+                VInsert(m->fconds, NULL, 0);
 
                 return m;
         } else {
@@ -3396,7 +3407,7 @@ parse_for_loop(void)
 
                 if (match) {
                         unconsume(TOKEN_EXPRESSION);
-                        tok()->e = s->each.target;
+                        tok()->e = s->each.target->es.items[0];
 
                         unconsume(TOKEN_KEYWORD);
                         tok()->keyword = KEYWORD_MATCH;
@@ -3957,6 +3968,27 @@ mktagdef(char *name)
         return s;
 }
 
+static Expr *
+parse_method(Location start, Expr *decorator_macro, char const *doc, expression_vector decorators)
+{
+        unconsume(TOKEN_KEYWORD);
+        tok()->keyword = KEYWORD_FUNCTION;
+
+        Expr *func = prefix_function();
+        func->start = start;
+        func->end = End;
+        func->doc = doc;
+        func->decorators = decorators;
+
+        if (decorator_macro == NULL) {
+                return func;
+        } else {
+                VInsert(decorator_macro->args, func, 0);
+                VInsert(decorator_macro->fconds, NULL, 0);
+                return decorator_macro;
+        }
+}
+
 static struct statement *
 parse_class_definition(void)
 {
@@ -4054,6 +4086,13 @@ parse_class_definition(void)
                         case TOKEN_IDENTIFIER:                                                              break;
                         default:                                                                            break;
                         }
+                        Expr *decorator_macro = NULL;
+                        if (tok()->type == TOKEN_AT && token(1)->type == '{') {
+                                next();
+                                next();
+                                decorator_macro = parse_decorator_macro();
+                                consume('}');
+                        }
                         expression_vector decorators = {0};
                         if (tok()->type == TOKEN_AT) {
                                 decorators = parse_decorators();
@@ -4065,26 +4104,29 @@ parse_class_definition(void)
                         if (have_keyword(KEYWORD_STATIC)) {
                                 next();
                                 expect(TOKEN_IDENTIFIER);
-                                unconsume(TOKEN_KEYWORD);
-                                tok()->keyword = KEYWORD_FUNCTION;
-                                VPush(s->tag.statics, prefix_function());
-                                (*vec_last(s->tag.statics))->doc = doc;
-                                (*vec_last(s->tag.statics))->start = start;
-                                (*vec_last(s->tag.statics))->start = End;
-                                (*vec_last(s->tag.statics))->decorators = decorators;
+                                VPush(
+                                        s->tag.statics,
+                                        parse_method(
+                                                start,
+                                                decorator_macro,
+                                                doc,
+                                                decorators
+                                        )
+                                );
                         } else if (token(1)->type == TOKEN_EQ) {
                                 struct token t = *tok();
                                 skip(2);
                                 unconsume(TOKEN_IDENTIFIER);
                                 *tok() = t;
-                                unconsume(TOKEN_KEYWORD);
-                                tok()->keyword = KEYWORD_FUNCTION;
-                                VPush(s->tag.setters, prefix_function());
-                                (*vec_last(s->tag.setters))->doc = doc;
-                                (*vec_last(s->tag.setters))->start = start;
-                                (*vec_last(s->tag.setters))->start = End;
-                                (*vec_last(s->tag.setters))->decorators = decorators;
-
+                                VPush(
+                                        s->tag.setters,
+                                        parse_method(
+                                                start,
+                                                decorator_macro,
+                                                doc,
+                                                decorators
+                                        )
+                                );
                         } else if (token(1)->type == '{') {
                                 struct token t = *tok();
                                 next();
@@ -4092,21 +4134,25 @@ parse_class_definition(void)
                                 unconsume('(');
                                 unconsume(TOKEN_IDENTIFIER);
                                 *tok() = t;
-                                unconsume(TOKEN_KEYWORD);
-                                tok()->keyword = KEYWORD_FUNCTION;
-                                VPush(s->tag.getters, prefix_function());
-                                (*vec_last(s->tag.getters))->doc = doc;
-                                (*vec_last(s->tag.getters))->start = start;
-                                (*vec_last(s->tag.getters))->start = End;
-                                (*vec_last(s->tag.getters))->decorators = decorators;
+                                VPush(
+                                        s->tag.getters,
+                                        parse_method(
+                                                start,
+                                                decorator_macro,
+                                                doc,
+                                                decorators
+                                        )
+                                );
                         } else {
-                                unconsume(TOKEN_KEYWORD);
-                                tok()->keyword = KEYWORD_FUNCTION;
-                                VPush(s->tag.methods, prefix_function());
-                                (*vec_last(s->tag.methods))->doc = doc;
-                                (*vec_last(s->tag.methods))->start = start;
-                                (*vec_last(s->tag.methods))->start = End;
-                                (*vec_last(s->tag.methods))->decorators = decorators;
+                                VPush(
+                                        s->tag.methods,
+                                        parse_method(
+                                                start,
+                                                decorator_macro,
+                                                doc,
+                                                decorators
+                                        )
+                                );
                         }
                 }
                 setctx(LEX_PREFIX);
