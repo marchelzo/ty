@@ -111,7 +111,7 @@ gc_resize(void *p, size_t n);
 
 #define VPushN(v, elements, n) \
           (((v).count + (n) >= (v).capacity) \
-        ? ((Resize((v).items, (((v).capacity + ((n) + 16)) * (sizeof (*(v).items))), ((v).capacity * sizeof (*(v).items))), \
+        ? ((Resize((v).items, (((v).capacity + ((n) + 16)) * (sizeof (*(v).items))), ((v).capacity * (sizeof (*(v).items)))), \
                         (((v).capacity = (v).capacity + (n) + 16)), \
                         (memcpy((v).items + (v).count, (elements), ((n) * (sizeof (*(v).items))))), \
                         ((v).count += (n)))) \
