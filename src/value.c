@@ -715,7 +715,19 @@ value_show_color(struct value const *v)
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
-                        snprintf(buffer, sizeof buffer, "<%s object at %p>", class_name(v->class), (void *)v->object);
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s<%s%s%s object at %s%p%s>%s",
+                                TERM(96),
+                                TERM(34),
+                                class_name(v->class),
+                                TERM(96),
+                                TERM(94),
+                                (void *)v->object,
+                                TERM(96),
+                                TERM(0)
+                        );
                 }
                 break;
         default:

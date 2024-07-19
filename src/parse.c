@@ -766,6 +766,68 @@ prefix_real(void)
         return e;
 }
 
+static char *
+astrcat(char const *s1, char const *s2)
+{
+        size_t n1 = strlen(s1);
+        size_t n2 = strlen(s2);
+
+        char *s = Allocate(n1 + n2 + 1);
+
+        memcpy(s, s1, n1);
+        memcpy(s + n1, s2, n2);
+        s[n1 + n2] = '\0';
+
+        return s;
+}
+
+static void
+merge_strings(Expr *s1, Expr *s2)
+{
+        if (s1->type == EXPRESSION_STRING && s2->type == EXPRESSION_STRING) {
+                s1->string = astrcat(s1->string, s2->string);
+                return;
+        }
+
+        if (s2->type == EXPRESSION_STRING) {
+                char **last = &s1->strings.items[s1->strings.count - 1];
+                *last = astrcat(*last, s2->string);
+                return;
+        }
+
+        if (s1->type == EXPRESSION_STRING) {
+                char **first = &s2->strings.items[0];
+                *first = astrcat(s1->string, *first);
+                *s1 = *s2;
+                return;
+        }
+
+        /*
+         *      As1  Ae1  As2  Ae2  As3
+         *
+         *      Bs1  Be1  Bs2  Be2  Bs3  Be3  Bs4
+         *
+         *              vvvv
+         *
+         *      As1 Ae1 As2 Ae2 As3_Bs1 Be1 Bs2 Be2 Bs3 Be3 Bs4
+         */
+        char **last = vec_last(s1->strings);
+        *last = astrcat(*last, s2->strings.items[0]);
+        VPushN(s1->expressions, s2->expressions.items, s2->expressions.count);
+        VPushN(s1->fmts, s2->fmts.items, s2->fmts.count);
+        VPushN(s1->strings, s2->strings.items + 1, s2->strings.count - 1);
+}
+
+Expr *
+extend_string(Expr *s)
+{
+        while (tok()->type == TOKEN_STRING || tok()->type == TOKEN_SPECIAL_STRING) {
+                merge_strings(s, parse_expr(999));
+        }
+
+        return s;
+}
+
 static struct expression *
 prefix_string(void)
 {
@@ -777,7 +839,7 @@ prefix_string(void)
 
         consume(TOKEN_STRING);
 
-        return e;
+        return extend_string(e);
 }
 
 static struct expression *
@@ -788,13 +850,11 @@ prefix_special_string(void)
         struct expression *e = mkexpr();
         e->type = EXPRESSION_SPECIAL_STRING;
         vec_init(e->expressions);
+        vec_init(e->fmts);
 
         e->strings.items = tok()->strings.items;
         e->strings.count = tok()->strings.count;
-
-        e->fmts.items = tok()->fmts.items;
-        e->fmts.count = tok()->fmts.count;
-        vec_init(e->fmts);
+        e->strings.capacity = tok()->strings.capacity;
 
         LexState *exprs = tok()->expressions.items;
         int count = tok()->expressions.count;
@@ -831,7 +891,7 @@ prefix_special_string(void)
         setctx(LEX_PREFIX);
         setctx(LEX_INFIX);
 
-        return e;
+        return extend_string(e);
 }
 
 static struct expression *
@@ -3649,7 +3709,7 @@ parse_function_definition(void)
         Location target_start = tok()->start;
         Location target_end = tok()->end;
 
-        for (int i = 0; i < 128; ++i) { 
+        for (int i = 0; i < 128; ++i) {
                 if (token(i)->type == TOKEN_KEYWORD && token(i)->keyword == KEYWORD_FUNCTION) {
                         target_start = token(i + 1)->start;
                         target_end = token(i + 1)->end;

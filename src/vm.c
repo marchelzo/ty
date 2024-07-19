@@ -4328,9 +4328,6 @@ vm_execute(char const *source, char const *file)
                 char code_buffer[1024];
                 colorize_code(TERM(93), TERM(0), &start, &end, code_buffer, sizeof code_buffer);
 
-                char type_buffer[1024];
-                snprintf(type_buffer, sizeof type_buffer - 1, "(%s)", show_expr_type(expr));
-
                 printf(
                         "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%s:%s%-5d%s  |  %s\n",
                         color_buffer,
