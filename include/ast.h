@@ -171,10 +171,10 @@ struct statement {
         X(NIL), \
         X(SELF), \
         X(LIST), \
-        X(TUPLE), \
         X(IN), \
         X(NOT_IN), \
         X(KEEP_LOC), \
+        X(TUPLE), \
         X(IDENTIFIER), \
         X(RESOURCE_BINDING), \
         X(DEFINED), \

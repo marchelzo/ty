@@ -2413,7 +2413,13 @@ Throw:
 
                         for (int i = 0; i < n; ++i, ip += strlen(ip) + 1) {
                                 struct value *v = &stack.items[stack.count - n + i];
-                                if (v->type == VALUE_TUPLE && strcmp(ip, "*") == 0) {
+                                if (strcmp(ip, "*") == 0) {
+                                        if (v->type != VALUE_TUPLE) {
+                                                vm_panic(
+                                                        "attempt to spread non-tuple in tuple expression: %s",
+                                                        value_show_color(v)
+                                                );
+                                        }
                                         for (int j = 0; j < v->count; ++j) {
                                                 if (v->names != NULL && v->names[j] != NULL) {
                                                         AddTupleEntry(&names, &values, v->names[j], &v->items[j]);

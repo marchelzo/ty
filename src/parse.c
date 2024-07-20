@@ -1335,6 +1335,8 @@ Next:
 
         consume('}');
 
+        e->end = End;
+
         return e;
 }
 
