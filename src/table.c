@@ -13,7 +13,7 @@ table_init(struct table *t)
         }
 
         t->finalizer = NIL;
-		t->class = -1;
+        t->class = -1;
 }
 
 struct value *
@@ -121,3 +121,5 @@ table_get_completions(struct table const *t, char const *prefix, char **out, int
 
         return n;
 }
+
+/* vim: set sts=8 sw=8 expandtab: */

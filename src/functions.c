@@ -6153,7 +6153,7 @@ builtin_define_method(int argc, struct value *kwargs)
 
         snprintf(buffer, sizeof buffer - 1, "%*s", (int)name.bytes, name.string);
 
-        class_add_method(class.class, buffer, f);
+        class_add_method(class.class, sclone(buffer), f);
 
         return NIL;
 }
