@@ -204,7 +204,7 @@ static struct expression *
 prefix_function(void);
 
 static struct expression *
-prefix_dict(void);
+prefix_percent(void);
 
 static struct expression *
 prefix_implicit_lambda(void);
@@ -2083,6 +2083,11 @@ prefix_template_expr(void)
                 next();
                 VPush(TemplateExprs, parse_expr(0));
                 consume(')');
+        } else if (tok()->type == '{') {
+                e->type = EXPRESSION_TEMPLATE_VHOLE;
+                next();
+                VPush(TemplateExprs, parse_expr(0));
+                consume('}');
         } else {
                 VPush(TemplateExprs, parse_expr(99));
         }
@@ -2362,13 +2367,30 @@ prefix_expr(void)
 }
 
 static struct expression *
-prefix_dict(void)
+prefix_percent(void)
 {
         struct expression *e = mkexpr();
+        consume(TOKEN_PERCENT);
+
+        if (tok()->type == TOKEN_IDENTIFIER) {
+                if (tok()->module != NULL && *tok()->module != '\0') {
+                        next();
+                        EStart = e->start;
+                        EEnd = End;
+                        error("unexpected module qualifier in resource binding pattern");
+                }
+                e->type = EXPRESSION_RESOURCE_BINDING;
+                e->identifier = tok()->identifier;
+                e->module = NULL;
+                e->constraint = NULL;
+                next();
+                e->end = End;
+                return e;
+        }
+
         e->type = EXPRESSION_DICT;
         e->dflt = NULL;
 
-        consume(TOKEN_PERCENT);
         consume('{');
 
         vec_init(e->keys);
@@ -2442,19 +2464,28 @@ PREFIX_LVALUE_OPERATOR(inc,   INC,   9)
 PREFIX_LVALUE_OPERATOR(dec,   DEC,   9)
 /* * * * | end of prefix parsers | * * * */
 
-/* * * * | infix parsers | * * * */
-static struct expression *
-infix_function_call(struct expression *left)
+Expr *
+mkcall(Expr *func)
 {
         struct expression *e = mkexpr();
+
         e->type = EXPRESSION_FUNCTION_CALL;
-        e->function = left;
-        e->start = left->start;
+        e->function = func;
+        e->start = func->start;
         vec_init(e->args);
         vec_init(e->kws);
         vec_init(e->kwargs);
         vec_init(e->fconds);
         vec_init(e->fkwconds);
+
+        return e;
+}
+
+/* * * * | infix parsers | * * * */
+static struct expression *
+infix_function_call(struct expression *left)
+{
+        Expr *e = mkcall(left);
 
         consume('(');
 
@@ -3001,7 +3032,7 @@ get_prefix_parser(void)
         case TOKEN_KEYWORD:        goto Keyword;
 
         case '&':                  return prefix_implicit_method;
-        case TOKEN_PERCENT:        return prefix_dict;
+        case TOKEN_PERCENT:        return prefix_percent;
         case '#':                  return prefix_hash;
 
         case '(':                  return prefix_parenthesis;

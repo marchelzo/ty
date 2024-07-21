@@ -6174,6 +6174,9 @@ tyexpr(struct expression const *e)
         case EXPRESSION_TEMPLATE_HOLE:
                 v = *vm_get(e->integer);
                 break;
+        case EXPRESSION_TEMPLATE_VHOLE:
+                v = tagged(TyValue, *vm_get(e->integer), NONE);
+                break;
         case EXPRESSION_STATEMENT:
                 v = tystmt(e->statement);
                 break;

@@ -184,6 +184,7 @@ struct statement {
         X(TAG_APPLICATION), \
         X(TEMPLATE), \
         X(TEMPLATE_HOLE), \
+        X(TEMPLATE_VHOLE), \
         X(SPREAD), \
         X(SPLAT), \
         X(MUST_EQUAL), \

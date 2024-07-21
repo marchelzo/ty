@@ -55,6 +55,9 @@ struct value
 builtin_unbind(int argc, struct value *kwargs);
 
 struct value
+builtin_define_method(int argc, struct value *kwargs);
+
+struct value
 builtin_apply(int argc, struct value *kwargs);
 
 struct value
