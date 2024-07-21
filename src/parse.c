@@ -2515,7 +2515,13 @@ infix_function_call(struct expression *left)
                                 VPush(e->args, arg);
                                 VPush(e->fconds, try_cond());
                         }
-                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                } else if (
+                        tok()->type == TOKEN_IDENTIFIER &&
+                        (
+                                token(1)->type == ':' ||
+                                token(1)->type == TOKEN_EQ
+                        )
+                ) {
                         VPush(e->kws, tok()->identifier);
                         next();
                         next();
@@ -2552,7 +2558,13 @@ infix_function_call(struct expression *left)
                                 VPush(e->args, arg);
                                 VPush(e->fconds, try_cond());
                         }
-                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                } else if (
+                        tok()->type == TOKEN_IDENTIFIER &&
+                        (
+                                token(1)->type == ':' ||
+                                token(1)->type == TOKEN_EQ
+                        )
+                ) {
                         VPush(e->kws, tok()->identifier);
                         next();
                         next();
