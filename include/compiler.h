@@ -74,7 +74,10 @@ void
 define_function(struct statement *);
 
 bool
-is_macro(struct expression const *e);
+is_macro(char const *module, char const *id);
+
+bool
+is_fun_macro(char const *module, char const *id);
 
 struct value
 tyexpr(struct expression const *);

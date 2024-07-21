@@ -20,9 +20,15 @@ macro doc! {
 }
 
 doc! print
-(*args, sep: String = ', ', end: String = '\n', flush: Bool)
+(*args, sep: String = ', ', end: String = '\n', flush: Bool = false)
 '''
     Print each argument to stdout.
+'''
+
+doc! eprint
+(*args, sep: String = ', ', end: String = '\n', flush: Bool = false)
+'''
+    Print each argument to stderr.
 '''
 
 doc! os::getaddrinfo
@@ -102,6 +108,8 @@ doc! os::exec
 '''
 
 pub function help(x) {
+    let x = unbindMethod(x)
+
     let doc = function (x) {
         return table[x] ?? doc(x)
     }

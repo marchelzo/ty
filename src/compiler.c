@@ -6060,6 +6060,12 @@ tyexpr(struct expression const *e)
                         NONE
                 );
                 break;
+        case EXPRESSION_DOT_DOT:
+                v = tagged(TyRange, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_DOT_DOT_DOT:
+                v = tagged(TyIncRange, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
         case EXPRESSION_EQ:
                 v = tagged(TyAssign, tyexpr(e->target), tyexpr(e->value), NONE);
                 break;
@@ -7083,6 +7089,16 @@ cexpr(struct value *v)
                 e->target = cexpr(&v->items[0]);
                 e->value = cexpr(&v->items[1]);
                 break;
+        case TyRange:
+                e->type = EXPRESSION_DOT_DOT;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyIncRange:
+                e->type = EXPRESSION_DOT_DOT_DOT;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
         case TyView:
                 e->type = EXPRESSION_VIEW_PATTERN;
                 e->left = cexpr(&v->items[0]);
@@ -7450,18 +7466,33 @@ define_macro(struct statement *s, bool fun)
 }
 
 bool
-is_macro(struct expression const *e)
+is_fun_macro(char const *module, char const *id)
 {
         struct symbol *s = NULL;
 
-        assert(e->type == EXPRESSION_IDENTIFIER);
-
-        if (e->module == NULL) {
-                s = scope_lookup(state.global, e->identifier);
+        if (module == NULL) {
+                s = scope_lookup(state.global, id);
         } else {
-                struct scope *mod = search_import_scope(e->module);
+                struct scope *mod = search_import_scope(module);
                 if (mod != NULL) {
-                        s = scope_lookup(mod, e->identifier);
+                        s = scope_lookup(mod, id);
+                }
+        }
+
+        return s != NULL && s->fun_macro;
+}
+
+bool
+is_macro(char const *module, char const *id)
+{
+        struct symbol *s = NULL;
+
+        if (module == NULL) {
+                s = scope_lookup(state.global, id);
+        } else {
+                struct scope *mod = search_import_scope(module);
+                if (mod != NULL) {
+                        s = scope_lookup(mod, id);
                 }
         }
 

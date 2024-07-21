@@ -3926,7 +3926,7 @@ vm_init(int ac, char **av)
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
-        NewArena(1 << 28);
+        NewArena(1ULL << 32);
 
         curl_global_init(CURL_GLOBAL_ALL);
 
@@ -4083,7 +4083,7 @@ vm_panic(char const *fmt, ...)
                         TERM(39),
                         TERM(22)
                 );
-Next:
+
                 if (frames.count == 0) {
                         break;
                 }

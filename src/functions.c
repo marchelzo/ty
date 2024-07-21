@@ -2356,20 +2356,41 @@ builtin_os_read(int argc, struct value *kwargs)
         NOGC(blob.blob);
         vec_reserve(*blob.blob, blob.blob->count + n.integer);
 
-        ReleaseLock(true);
-        XLOG("Starting read(%d)", file.integer);
-        ssize_t nr = read(file.integer, blob.blob->items + blob.blob->count, n.integer);
-        XLOG("Finished read(): %lld", nr);
-        TakeLock();
+        Value *all = NAMED("all");
+        bool read_all = all != NULL && value_truthy(all);
+
+        ssize_t n_read = 0;
+        while (n_read < n.integer) {
+                ReleaseLock(true);
+                ssize_t r = read(
+                        file.integer,
+                        blob.blob->items + blob.blob->count + n_read,
+                        n.integer
+                );
+                TakeLock();
+
+                if (r <= 0) {
+                        if (n_read == 0) {
+                                n_read = r;
+                        }
+                        break;
+                }
+
+                n_read += r;
+
+                if (!read_all) {
+                        break;
+                }
+        }
 
         OKGC(blob.blob);
 
-        if (nr != -1)
-                blob.blob->count += nr;
+        if (n_read > 0)
+                blob.blob->count += n_read;
 
         if (argc == 3)
-                return INTEGER(nr);
-        else if (nr > 0)
+                return INTEGER(n_read);
+        else if (n_read > 0)
                 return blob;
         else
                 return NIL;
@@ -6068,7 +6089,7 @@ builtin_object(int argc, struct value *kwargs)
 struct value
 builtin_bind(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("bind()", 2);
+        ASSERT_ARGC("bindMethod()", 2);
 
         struct value f = ARG(0);
         struct value x = ARG(1);
@@ -6093,6 +6114,20 @@ builtin_bind(int argc, struct value *kwargs)
         }
 
         return f;
+}
+
+struct value
+builtin_unbind(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("unbindMethod()", 1);
+
+        Value f = ARG(0);
+
+        if (f.type == VALUE_METHOD) {
+                return *f.method;
+        } else {
+                return f;
+        }
 }
 
 struct value
@@ -6441,7 +6476,7 @@ builtin_ty_bt(int argc, struct value *kwargs)
                 Value *f = &frames->items[i].f;
                 char const *name = name_of(f);
                 char const *ip = frames->items[i].ip;
-                Expr const *e = compiler_find_expr(ip);
+                Expr const *e = compiler_find_expr(ip - 1);
 
                 Value entry = value_tuple(5);
 
