@@ -821,8 +821,23 @@ merge_strings(Expr *s1, Expr *s2)
 Expr *
 extend_string(Expr *s)
 {
-        while (tok()->type == TOKEN_STRING || tok()->type == TOKEN_SPECIAL_STRING) {
-                merge_strings(s, parse_expr(999));
+        while (
+                tok()->type == TOKEN_STRING ||
+                tok()->type == TOKEN_SPECIAL_STRING ||
+                (
+                        tok()->type == TOKEN_IDENTIFIER &&
+                        is_macro(tok()->module, tok()->identifier)
+                )
+        ) {
+                Expr *s2 = parse_expr(999);
+
+                if (s2->type != EXPRESSION_STRING && s2->type != EXPRESSION_SPECIAL_STRING) {
+                        EStart = s2->start;
+                        EEnd = s2->end;
+                        error("string-adjacent macro expanded to non-string: %s", ExpressionTypeName(s2));
+                }
+
+                merge_strings(s, s2);
         }
 
         return s;
@@ -949,7 +964,7 @@ prefix_identifier(void)
 
         consume(TOKEN_IDENTIFIER);
 
-        if (true && is_macro(e)) {
+        if (true && is_macro(e->module, e->identifier)) {
                 return typarse(e, &e->start, &token(-1)->end);
         }
 
@@ -3798,7 +3813,7 @@ parse_return_statement(void)
 
         consume_keyword(KEYWORD_RETURN);
 
-        if (tok()->start.line != s->start.line) {
+        if (tok()->start.line != s->start.line || get_prefix_parser() == NULL) {
                 return s;
         }
 
@@ -4588,6 +4603,9 @@ parse(char const *source, char const *file)
                 if (tok()->type == TOKEN_COMMENT) {
                         doc = tok()->comment;
                         next();
+                        if (tok()->type == TOKEN_END) {
+                                break;
+                        }
                 }
 
                 bool pub = have_keyword(KEYWORD_PUB);

@@ -160,7 +160,9 @@ struct value;
         X(IfDef) \
         X(CompileTime) \
         X(Defined) \
-        X(Throw)
+        X(Throw) \
+        X(Range) \
+        X(IncRange)
 
 #define X(x) Ty ## x,
 enum {

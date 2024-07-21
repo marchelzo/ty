@@ -47,7 +47,7 @@ static char const usage_string[] =
         "  --help        Print this help message and exit\n"
 ;
 
-#define MAX_COMPLETIONS 200
+#define MAX_COMPLETIONS 240
 
 static bool use_readline;
 static char buffer[8192];
@@ -215,19 +215,19 @@ complete(char const *s, int start, int end)
                         break;
                 case VALUE_ARRAY:
                         n += array_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_ARRAY, s, completions, MAX_COMPLETIONS - n);
+                        n += class_get_completions(CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_DICT:
                         n += dict_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_DICT, s, completions, MAX_COMPLETIONS - n);
+                        n += class_get_completions(CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_STRING:
                         n += string_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_STRING, s, completions, MAX_COMPLETIONS - n);
+                        n += class_get_completions(CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_BLOB:
                         n += blob_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_BLOB, s, completions, MAX_COMPLETIONS - n);
+                        n += class_get_completions(CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_TUPLE:
                         n += tuple_get_completions(v, s, completions, MAX_COMPLETIONS);
