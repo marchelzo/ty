@@ -1,4 +1,5 @@
 #include "alloc.h"
+#include "gc.h"
 #include "panic.h"
 
 #define align (_Alignof(void *))
@@ -6,11 +7,25 @@
 static Arena A;
 
 Arena
+NewArenaGC(size_t cap)
+{
+        Arena old = A;
+
+        A.base = gc_alloc_object(cap, GC_ANY);
+        A.gc = true;
+        A.beg = A.base;
+        A.end = A.base + cap;
+
+        return old;
+}
+
+Arena
 NewArena(size_t cap)
 {
         Arena old = A;
 
         A.base = malloc(cap);
+        A.gc = false;
         
         if (A.base == NULL) {
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
@@ -39,10 +54,22 @@ Allocate(size_t n)
 }
 
 void
+ReleaseArena(Arena old)
+{
+        A = old;
+}
+
+void
 DestroyArena(Arena old)
 {
         free(A.base);
         A = old;
+}
+
+void *
+GetArenaAlloc(void)
+{
+        return A.gc ? A.base : NULL;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

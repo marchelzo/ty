@@ -11,10 +11,14 @@ typedef struct arena {
 	char *base;
 	char *beg;
 	char *end;
+	bool gc;
 } Arena;
 
 Arena NewArena(size_t cap);
+Arena NewArenaGC(size_t cap);
+void *GetArenaAlloc(void);
 void DestroyArena(Arena arena);
+void ReleaseArena(Arena old);
 
 void *Allocate(size_t n);
 

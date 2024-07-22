@@ -16,6 +16,8 @@
 #include "gc.h"
 #include "vm.h"
 #include "token.h"
+#include "ast.h"
+#include "compiler.h"
 
 static bool
 arrays_equal(struct value const *v1, struct value const *v2)
@@ -1111,6 +1113,11 @@ _value_mark(struct value const *v)
 
         ++d;
 #endif
+
+        Expr *src = source_lookup(v->src);
+        if (src != NULL && src->arena != NULL) {
+                MARK(src->arena);
+        }
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;

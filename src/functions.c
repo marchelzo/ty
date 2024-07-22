@@ -6538,13 +6538,13 @@ builtin_eval(int argc, struct value *kwargs)
                 vec_push_n_unchecked(B, PRE, strlen(PRE));
                 vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
                 vec_push_n_unchecked(B, POST, (sizeof POST));
-                Arena old = NewArena(1 << 22);
+                Arena old = NewArenaGC(1 << 22);
                 struct statement **prog = parse(B.items + 1, "(eval)");
 
                 if (prog == NULL) {
                         char const *msg = parse_error();
                         struct value e = Err(STRING_CLONE(msg, strlen(msg)));
-                        DestroyArena(old);
+                        ReleaseArena(old);
                         vm_throw(&e);
                 }
 
@@ -6554,7 +6554,7 @@ builtin_eval(int argc, struct value *kwargs)
                 Err1: {
                         char const *msg = compiler_error();
                         struct value e = Err(STRING_CLONE(msg, strlen(msg)));
-                        DestroyArena(old);
+                        ReleaseArena(old);
                         vm_throw(&e);
                 }
 
@@ -6563,7 +6563,7 @@ builtin_eval(int argc, struct value *kwargs)
                         goto Err1;
                 }
 
-                DestroyArena(old);
+                ReleaseArena(old);
 
                 return v;
         } else {
@@ -6603,24 +6603,24 @@ builtin_ty_parse(int argc, struct value *kwargs)
         vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
         vec_push_unchecked(B, '\0');
 
-        Arena old = NewArena(1 << 22);
+        Arena old = NewArenaGC(1 << 22);
 
         struct statement **prog = parse(B.items + 1, "(eval)");
 
         if (prog == NULL) {
-                DestroyArena(old);
+                ReleaseArena(old);
                 return NIL;
         }
 
         if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
                 struct value v = tyexpr(prog[0]->expression);
-                DestroyArena(old);
+                ReleaseArena(old);
                 return v;
         }
 
         if (prog[1] == NULL) {
                 struct value v = tystmt(prog[0]);
-                DestroyArena(old);
+                ReleaseArena(old);
                 return v;
         }
 
@@ -6633,7 +6633,7 @@ builtin_ty_parse(int argc, struct value *kwargs)
 
         struct value v = tystmt(multi);
 
-        DestroyArena(old);
+        ReleaseArena(old);
 
         return v;
 }
