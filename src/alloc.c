@@ -11,10 +11,12 @@ NewArenaGC(size_t cap)
 {
         Arena old = A;
 
-        A.base = gc_alloc_object(cap, GC_ANY);
+        A.base = gc_alloc_object(cap, GC_ARENA);
         A.gc = true;
         A.beg = A.base;
         A.end = A.base + cap;
+
+        NOGC(A.base);
 
         return old;
 }
@@ -56,6 +58,10 @@ Allocate(size_t n)
 void
 ReleaseArena(Arena old)
 {
+        if (A.gc) {
+                OKGC(A.base);
+        }
+
         A = old;
 }
 

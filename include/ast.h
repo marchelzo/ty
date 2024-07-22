@@ -248,9 +248,9 @@ struct statement {
         X(EXPRESSION_MAX_TYPE)
 
 struct expression {
-#define X(t) EXPRESSION_ ## t
         void *arena;
 
+#define X(t) EXPRESSION_ ## t
         enum {
                 TY_EXPRESSION_TYPES
         } type;

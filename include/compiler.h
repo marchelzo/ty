@@ -119,4 +119,7 @@ source_register(void const *src);
 void *
 source_lookup(uint32_t src);
 
+void
+source_forget_arena(void const *arena);
+
 #endif

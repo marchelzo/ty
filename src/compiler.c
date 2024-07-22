@@ -5656,7 +5656,15 @@ mkcstr(struct value const *v)
 uint32_t
 source_register(void const *src)
 {
+        for (uint32_t i = 0; i < source_map.count; ++i) {
+                if (source_map.items[i] == NULL) {
+                        source_map.items[i] = (void *)src;
+                        return i + 1;
+                }
+        }
+
         vec_nogc_push(source_map, (void *)src);
+
         return source_map.count;
 }
 
@@ -5667,6 +5675,17 @@ source_lookup(uint32_t src)
                 return NULL;
         } else {
                 return source_map.items[src - 1];
+        }
+}
+
+void
+source_forget_arena(void const *arena)
+{
+        for (uint32_t i = 0; i < source_map.count; ++i) {
+                void **p = source_map.items[i];
+                if (p != NULL && *p == arena) {
+                        source_map.items[i] = NULL;
+                }
         }
 }
 
