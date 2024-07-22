@@ -6640,6 +6640,19 @@ builtin_ty_parse(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_ty_copy_source(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.copySource()", 2);
+
+        Value from = ARG(0);
+        Value to = ARG(1);
+
+        to.src = from.src;
+
+        return to;
+}
+
+struct value
 builtin_lex_peek_char(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ty.lex.peekc()", 0);
