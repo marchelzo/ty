@@ -5653,15 +5653,15 @@ mkcstr(struct value const *v)
         return s;
 }
 
-static uint32_t
-register_src(void const *src)
+uint32_t
+source_register(void const *src)
 {
         vec_nogc_push(source_map, (void *)src);
         return source_map.count;
 }
 
-static void *
-lookup_src(uint32_t src)
+void *
+source_lookup(uint32_t src)
 {
         if (src == 0 || src > source_map.count) {
                 return NULL;
@@ -6275,7 +6275,7 @@ tyexpr(struct expression const *e)
 
         GC_OFF_COUNT -= 1;
 
-        v.src = register_src(e);
+        v.src = source_register(e);
 
         return v;
 }
@@ -6482,7 +6482,7 @@ tystmt(struct statement *s)
 
         --GC_OFF_COUNT;
 
-        v.src = register_src(s);
+        v.src = source_register(s);
 
         return v;
 }
@@ -6519,14 +6519,15 @@ struct statement *
 cstmt(struct value *v)
 {
         struct statement *s = Allocate(sizeof *s);
-        struct statement *src = lookup_src(v->src);
+        struct statement *src = source_lookup(v->src);
 
         *s = (struct statement){0};
+        s->arena = GetArenaAlloc();
 
         if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
                 if (src_val != NULL) {
-                        src = lookup_src(src_val->src);
+                        src = source_lookup(src_val->src);
                 }
         }
 
@@ -6797,14 +6798,15 @@ struct expression *
 cexpr(struct value *v)
 {
         Expr *e = Allocate(sizeof *e);
-        Expr *src = lookup_src(v->src);
+        Expr *src = source_lookup(v->src);
 
         *e = (struct expression){0};
+        e->arena = GetArenaAlloc();
 
         if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
                 if (src_val != NULL) {
-                        src = lookup_src(src_val->src);
+                        src = source_lookup(src_val->src);
                 }
         }
 

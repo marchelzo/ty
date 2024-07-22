@@ -113,4 +113,10 @@ colorize_code(
 char const *
 show_expr_type(Expr const *e);
 
+uint32_t
+source_register(void const *src);
+
+void *
+source_lookup(uint32_t src);
+
 #endif

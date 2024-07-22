@@ -77,6 +77,8 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(EXPORT)
 
 struct statement {
+        void *arena;
+
 #define X(t) STATEMENT_ ## t
         enum {
                 TY_STATEMENT_TYPES
@@ -247,6 +249,8 @@ struct statement {
 
 struct expression {
 #define X(t) EXPRESSION_ ## t
+        void *arena;
+
         enum {
                 TY_EXPRESSION_TYPES
         } type;
