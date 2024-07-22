@@ -1793,6 +1793,23 @@ class CondVar {
 }
 
 class Thread {
+    /*
+     * Thread(func, *args, isolated=false, name=nil)
+     *
+     * Call the specified function with any provided arguments in a
+     * new thread.
+     *
+     * isolated: If isolated is true, the new thread will be in its own thread
+     *           group, and will not synchronize its garbage collection with
+     *           other threads. This can be useful if the thread is generating
+     *           little to no garbage and needs to avoid garbage collection
+     *           pauses.
+     *
+     *           NOTE A side effect of this is that references held by the new thread
+     *                to objects allocated in other thread groups will not keep those
+     *                objects alive. You must take care to avoid use-after-free bugs,
+     *                and use Channel to transfer objects between thread groups.
+     */
     init(*args,  %kwargs) {
         @handle = thread.create(*args, **kwargs)
     }
