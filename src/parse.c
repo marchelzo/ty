@@ -239,7 +239,7 @@ inline static struct expression *
 mkexpr(void)
 {
         struct expression *e = Allocate(sizeof *e);
-        e->arena = NULL;
+        e->arena = GetArenaAlloc();
         e->constraint = NULL;
         e->is_method = false;
         e->symbolized = false;
@@ -282,9 +282,9 @@ inline static struct statement *
 mkstmt(void)
 {
         struct statement *s = Allocate(sizeof *s);
+        s->arena = GetArenaAlloc();
         s->start = tok()->start;
         s->end = tok()->start;
-        s->arena = NULL;
         return s;
 }
 

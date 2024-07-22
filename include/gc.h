@@ -12,6 +12,9 @@
 
 void DoGC(void);
 
+uint64_t
+MyThreadId(void);
+
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
 #define resize(ptr, n) ((ptr) = gc_resize((ptr), (n)))
@@ -63,6 +66,7 @@ enum {
         GC_GENERATOR,
         GC_THREAD,
         GC_REGEX,
+        GC_ARENA,
         GC_ANY
 };
 

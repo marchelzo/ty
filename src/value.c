@@ -1104,6 +1104,11 @@ value_string_alloc(int n)
 void
 _value_mark(struct value const *v)
 {
+        void **src = source_lookup(v->src);
+        if (src != NULL && *src != NULL) {
+                MARK(*src);
+        }
+
 #ifndef TY_RELEASE
         static _Thread_local int d;
 
@@ -1113,11 +1118,6 @@ _value_mark(struct value const *v)
 
         ++d;
 #endif
-
-        Expr *src = source_lookup(v->src);
-        if (src != NULL && src->arena != NULL) {
-                MARK(src->arena);
-        }
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_METHOD:          if (!MARKED(v->this)) { MARK(v->this); value_mark(v->this); } break;

@@ -1668,7 +1668,7 @@ vm_exec(char *code)
 
         bool AutoThis = false;
 
-        struct value left, right, v, key, value, container, subscript, *vp, *vp2;
+        Value v, key, value, container, subscript, *vp, *vp2;
         char *str;
         char const *method, *member;
 

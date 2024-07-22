@@ -6625,6 +6625,7 @@ builtin_ty_parse(int argc, struct value *kwargs)
         }
 
         struct statement *multi = Allocate(sizeof *multi);
+        multi->arena = GetArenaAlloc();
         vec_init(multi->statements);
 
         for (int i = 0; prog[i] != NULL; ++i) {

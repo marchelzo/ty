@@ -9,6 +9,7 @@
 #include "token.h"
 #include "class.h"
 #include "tthread.h"
+#include "compiler.h"
 
 _Thread_local AllocList allocs;
 _Thread_local size_t MemoryUsed = 0;
@@ -65,6 +66,9 @@ collect(struct alloc *a)
                 pcre_free_study(re->extra);
                 pcre_free(re->pcre);
                 gc_free((char *)re->pattern);
+                break;
+        case GC_ARENA:
+                source_forget_arena(p);
                 break;
         }
 }
