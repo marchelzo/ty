@@ -650,6 +650,9 @@ struct value
 builtin_ty_parse(int argc, struct value *kwargs);
 
 struct value
+builtin_ty_copy_source(int argc, struct value *kwargs);
+
+struct value
 builtin_ty_gensym(int argc, struct value *kwargs);
 
 struct value

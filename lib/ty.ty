@@ -3,7 +3,8 @@ import ty
 pub function walk(tree, f) {
     if tree == nil { return nil }
 
-    let tree = match tree {
+
+    let tree = ty.copySource(tree, match tree {
         ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
 
         ty.ArrayItem(x) => ty.ArrayItem(
@@ -227,7 +228,7 @@ pub function walk(tree, f) {
         ty.NotNilView(view, pattern) => ty.NotNilView(walk(view, f), walk(pattern, f)),
 
         _ => tree
-    }
+    })
 
     return f(tree)
 }
