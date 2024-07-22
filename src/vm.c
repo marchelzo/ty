@@ -2010,6 +2010,29 @@ vm_exec(char *code)
                                 top()->type &= ~VALUE_TAGGED;
                         }
                         break;
+                CASE(STEAL_TAG)
+                        vp = poptarget();
+                        if (top()->type & VALUE_TAGGED) {
+                                *vp = TAG(tags_first(top()->tags));
+                                if ((top()->tags = tags_pop(top()->tags)) == 0) {
+                                        top()->type &= ~VALUE_TAGGED;
+                                }
+                        } else {
+                                MatchError;
+                        }
+                        break;
+                CASE(TRY_STEAL_TAG)
+                        READVALUE(n);
+                        vp = poptarget();
+                        if (top()->type & VALUE_TAGGED) {
+                                *vp = TAG(tags_first(top()->tags));
+                                if ((top()->tags = tags_pop(top()->tags)) == 0) {
+                                        top()->type &= ~VALUE_TAGGED;
+                                }
+                        } else {
+                                ip += n;
+                        }
+                        break;
                 CASE(BAD_MATCH)
                         MatchError;
                 CASE(BAD_DISPATCH);

@@ -187,13 +187,10 @@ static int BuiltinCount;
 static int jumpdistance;
 static vec(struct module) modules;
 static struct state state;
-
 static vec(location_vector) location_lists;
-
+static vec(void *) source_map;
 static struct scope *global;
-
 static uint64_t t;
-
 static char const EmptyString[] = { '\0', '\0' };
 static struct location Nowhere = { 0, 0, EmptyString + 1 };
 
@@ -1100,19 +1097,34 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                 *e = fc;
         }
 
-        if (e->type == EXPRESSION_FUNCTION_CALL && e->function->type == EXPRESSION_IDENTIFIER) {
-                symbolize_expression(scope, e->function);
-                if (e->function->symbol->tag != -1) {
+        bool tag_pattern = e->type == EXPRESSION_TAG_PATTERN_CALL;
+
+        if (
+                tag_pattern ||
+                (
+                        e->type == EXPRESSION_FUNCTION_CALL &&
+                        e->function->type == EXPRESSION_IDENTIFIER
+                )
+        ) {
+                if (!tag_pattern) {
+                        symbolize_expression(scope, e->function);
+                } else {
+                        e->type = EXPRESSION_TAG_PATTERN;
+                }
+                if (tag_pattern || e->function->symbol->tag != -1) {
                         struct expression f = *e;
                         char *identifier = e->function->identifier;
                         char *module = e->function->module;
                         struct expression **tagged = e->args.items;
                         int tagc = e->args.count;
                         struct symbol *symbol = e->function->symbol;
-                        e->type = EXPRESSION_TAG_APPLICATION;
+                        if (!tag_pattern) {
+                                e->type = EXPRESSION_TAG_APPLICATION;
+                        }
                         e->identifier = identifier;
                         e->module = module;
                         e->symbol = symbol;
+                        e->constraint = NULL;
                         if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
                                 e->tagged = tagged[0];
                         } else {
@@ -1170,9 +1182,18 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                 if (strcmp(target->identifier, "_") == 0) {
                         target->identifier = gensym();
                 }
+        case EXPRESSION_SPREAD:
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
+        case EXPRESSION_TAG_PATTERN:
+                if (target->type == EXPRESSION_SPREAD) {
+                        target->type = EXPRESSION_MATCH_REST;
+                        target->identifier = target->value->identifier;
+                        target->constraint = NULL;
+                } else if (target->type == EXPRESSION_TAG_PATTERN) {
+                        symbolize_lvalue_(scope, target->tagged, decl, pub);
+                }
                 if (decl) {
                         if (target->module != NULL) {
                                 scope = get_import_scope(target->module);
@@ -1266,7 +1287,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                 }
                 break;
         default:
-                assert(false);
+                fail("unexpected %s in lvalue context", ExpressionTypeName(target));
         }
 
         target->symbolized = true;
@@ -1316,6 +1337,7 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
                         e->symbol = getsymbol(s, e->identifier, NULL);
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_TAG_PATTERN:
                         if (reuse != NULL && e->module == NULL && (existing = scope_local_lookup(reuse, e->identifier)) != NULL) {
                                 e->symbol = existing;
                         } else {
@@ -1325,6 +1347,8 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
                 }
                 if (e->type == EXPRESSION_RESOURCE_BINDING) {
                         state.resources += 1;
+                } else if (e->type == EXPRESSION_TAG_PATTERN) {
+                        symbolize_pattern_(scope, e->tagged, reuse, def);
                 }
                 e->local = true;
                 break;
@@ -2911,6 +2935,18 @@ emit_for_loop(struct statement const *s, bool want_result)
         end_loop();
 }
 
+static bool
+has_any_names(Expr const *e)
+{
+        for (int i = 0; i < e->names.count; ++i) {
+                if (e->names.items[i] != NULL) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 static void
 emit_try_match_(struct expression const *pattern)
 {
@@ -2936,6 +2972,13 @@ emit_try_match_(struct expression const *pattern)
                         VPush(state.match_fails, state.code.count);
                         emit_int(0);
                 }
+                break;
+        case EXPRESSION_TAG_PATTERN:
+                emit_tgt(pattern->symbol, state.fscope, true);
+                emit_instr(INSTR_TRY_STEAL_TAG);
+                VPush(state.match_fails, state.code.count);
+                emit_int(0);
+                emit_try_match_(pattern->tagged);
                 break;
         case EXPRESSION_CHECK_MATCH:
                 emit_try_match_(pattern->left);
@@ -3086,14 +3129,19 @@ emit_try_match_(struct expression const *pattern)
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < pattern->es.count; ++i) {
                         if (pattern->es.items[i]->type == EXPRESSION_MATCH_REST) {
-                                emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
-                                emit_instr(INSTR_TUPLE_REST);
-                                emit_int(i);
-                                VPush(state.match_fails, state.code.count);
-                                emit_int(0);
+                                if (has_any_names(pattern)) {
+                                        emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
+                                        emit_instr(INSTR_ASSIGN);
+                                } else {
+                                        emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
+                                        emit_instr(INSTR_TUPLE_REST);
+                                        emit_int(i);
+                                        VPush(state.match_fails, state.code.count);
+                                        emit_int(0);
 
-                                if (i + 1 != pattern->es.count)
-                                        fail("the *<id> tuple-matching pattern must be the last pattern in the tuple");
+                                        if (i + 1 != pattern->es.count)
+                                                fail("the *<id> tuple-matching pattern must be the last pattern in the tuple");
+                                }
                         } else if (pattern->names.items[i] != NULL) {
                                 emit_instr(INSTR_TRY_TUPLE_MEMBER);
                                 emit_boolean(pattern->required.items[i]);
@@ -3645,6 +3693,7 @@ emit_target(struct expression *target, bool def)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_TAG_PATTERN:
                 emit_tgt(target->symbol, state.fscope, def);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
@@ -4081,6 +4130,11 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                 emit_int(target->symbol->tag);
                 emit_assignment2(target->tagged, maybe, def);
                 break;
+        case EXPRESSION_TAG_PATTERN:
+                emit_target(target, def);
+                emit_instr(INSTR_STEAL_TAG);
+                emit_assignment2(target->tagged, maybe, def);
+                break;
         case EXPRESSION_VIEW_PATTERN:
                 emit_instr(INSTR_DUP);
                 emit_expression(target->left);
@@ -4111,14 +4165,19 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < target->es.count; ++i) {
                         if (target->es.items[i]->type == EXPRESSION_MATCH_REST) {
-                                // FIXME: should we handle elements after the match-rest?
-                                emit_target(target->es.items[i], def);
-                                emit_instr(INSTR_TUPLE_REST);
-                                emit_int(i);
-                                emit_int(sizeof (int) + 1);
-                                emit_instr(INSTR_JUMP);
-                                emit_int(1);
-                                emit_instr(INSTR_BAD_MATCH);
+                                if (has_any_names(target)) {
+                                        emit_target(target->es.items[i], def);
+                                        emit_instr(INSTR_ASSIGN);
+                                } else {
+                                        // FIXME: should we handle elements after the match-rest?
+                                        emit_target(target->es.items[i], def);
+                                        emit_instr(INSTR_TUPLE_REST);
+                                        emit_int(i);
+                                        emit_int(sizeof (int) + 1);
+                                        emit_instr(INSTR_JUMP);
+                                        emit_int(1);
+                                        emit_instr(INSTR_BAD_MATCH);
+                                }
                         } else if (target->names.items[i] != NULL) {
                                 emit_instr(INSTR_PUSH_TUPLE_MEMBER);
                                 emit_boolean(target->required.items[i]);
@@ -5594,6 +5653,23 @@ mkcstr(struct value const *v)
         return s;
 }
 
+static uint32_t
+register_src(void const *src)
+{
+        vec_nogc_push(source_map, (void *)src);
+        return source_map.count;
+}
+
+static void *
+lookup_src(uint32_t src)
+{
+        if (src == 0 || src > source_map.count) {
+                return NULL;
+        } else {
+                return source_map.items[src - 1];
+        }
+}
+
 struct value
 tagged(int tag, struct value v, ...)
 {
@@ -5680,6 +5756,7 @@ tyexpr(struct expression const *e)
                 v = value_named_tuple(
                         "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
                         "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                        "constraint", (e->constraint == NULL) ? NIL : tyexpr(e->constraint),
                         NULL
                 );
                 v.type |= VALUE_TAGGED;
@@ -5802,6 +5879,18 @@ tyexpr(struct expression const *e)
 
                 break;
         }
+        case EXPRESSION_TAG_PATTERN_CALL:
+                try_symbolize_application(NULL, (Expr *)e);
+        case EXPRESSION_TAG_PATTERN:
+                v = value_tuple(2);
+                v.items[0] = STRING_CLONE(e->identifier, strlen(e->identifier));
+                v.items[1] = tyexpr(e->tagged);
+                v = tagged(
+                        TyTagPattern,
+                        v,
+                        NONE
+                );
+                break;
         case EXPRESSION_TUPLE:
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
@@ -6186,6 +6275,8 @@ tyexpr(struct expression const *e)
 
         GC_OFF_COUNT -= 1;
 
+        v.src = register_src(e);
+
         return v;
 }
 
@@ -6391,6 +6482,8 @@ tystmt(struct statement *s)
 
         --GC_OFF_COUNT;
 
+        v.src = register_src(s);
+
         return v;
 }
 
@@ -6426,10 +6519,24 @@ struct statement *
 cstmt(struct value *v)
 {
         struct statement *s = Allocate(sizeof *s);
+        struct statement *src = lookup_src(v->src);
+
         *s = (struct statement){0};
 
-        s->start = state.mstart;
-        s->end = state.mend;
+        if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
+                Value *src_val = tuple_get(v, "src");
+                if (src_val != NULL) {
+                        src = lookup_src(src_val->src);
+                }
+        }
+
+        if (src != NULL) {
+                s->start = src->start;
+                s->end = src->end;
+        } else {
+                s->start = state.mstart;
+                s->end = state.mend;
+        }
 
         if (v->type == VALUE_TAG) switch (v->tag) {
         case TyNull:
@@ -6689,11 +6796,27 @@ cstmt(struct value *v)
 struct expression *
 cexpr(struct value *v)
 {
-        struct expression *e = Allocate(sizeof *e);
+        Expr *e = Allocate(sizeof *e);
+        Expr *src = lookup_src(v->src);
+
         *e = (struct expression){0};
 
-        e->start = state.mstart;
-        e->end = state.mend;
+        if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
+                Value *src_val = tuple_get(v, "src");
+                if (src_val != NULL) {
+                        src = lookup_src(src_val->src);
+                }
+        }
+
+        if (src != NULL) {
+                e->start = src->start;
+                e->end = src->end;
+                e->filename = src->filename;
+        } else {
+                e->start = state.mstart;
+                e->end = state.mend;
+        }
+
         e->type = -1;
 
         if (v->type == VALUE_TAG) switch (v->tag) {
@@ -6740,8 +6863,10 @@ cexpr(struct value *v)
         {
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = mkcstr(tuple_get(v, "name"));
-                struct value *mod = tuple_get(v, "module");
+                Value *mod = tuple_get(v, "module");
+                Value *constraint = tuple_get(v, "constraint");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(constraint) : NULL;
                 break;
         }
         case TyNotNil:
@@ -7251,6 +7376,15 @@ cexpr(struct value *v)
                 Value v_ = unwrap(v);
                 e->type = EXPRESSION_PREFIX_QUESTION;
                 e->operand = cexpr(&v_);
+                break;
+        }
+        case TyTagPattern:
+        {
+                e->type = EXPRESSION_TAG_PATTERN;
+                e->identifier = mkcstr(&v->items[0]);
+                e->module = NULL;
+                e->constraint = NULL;
+                e->tagged = cexpr(&v->items[1]);
                 break;
         }
         case TyCompileTime:

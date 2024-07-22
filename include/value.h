@@ -129,6 +129,7 @@ struct value;
         X(ArrayItem) \
         X(Call) \
         X(MethodCall) \
+        X(TagPattern) \
         X(MemberAccess) \
         X(Subscript) \
         X(NotNil) \
@@ -294,6 +295,7 @@ enum {
 struct value {
         uint8_t type;
         uint16_t tags;
+        uint32_t src;
         union {
                 short tag;
                 double real;

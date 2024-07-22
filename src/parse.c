@@ -2377,15 +2377,17 @@ prefix_percent(void)
                         next();
                         EStart = e->start;
                         EEnd = End;
-                        error("unexpected module qualifier in resource binding pattern");
+                        error("unexpected module qualifier in tag binding pattern");
                 }
-                e->type = EXPRESSION_RESOURCE_BINDING;
-                e->identifier = tok()->identifier;
-                e->module = NULL;
-                e->constraint = NULL;
-                next();
-                e->end = End;
-                return e;
+                if (token(1)->type != '(') {
+                        next();
+                        consume('(');
+                }
+                Expr *call = parse_expr(10);
+                call->type = EXPRESSION_TAG_PATTERN_CALL;
+                call->start = e->start;
+                call->end = End;
+                return call;
         }
 
         e->type = EXPRESSION_DICT;
@@ -3266,6 +3268,7 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_RESOURCE_BINDING:
         case EXPRESSION_TAG_APPLICATION:
+        case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_LIST:

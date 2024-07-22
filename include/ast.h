@@ -182,6 +182,8 @@ struct statement {
         X(YIELD), \
         X(THROW), \
         X(TAG_APPLICATION), \
+        X(TAG_PATTERN_CALL), \
+        X(TAG_PATTERN), \
         X(TEMPLATE), \
         X(TEMPLATE_HOLE), \
         X(TEMPLATE_VHOLE), \
