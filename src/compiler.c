@@ -576,7 +576,7 @@ add_location_info(void)
 
         qsort(state.expression_locations.items, state.expression_locations.count, sizeof (struct eloc), eloc_cmp);
 
-        VPush(location_lists, state.expression_locations);
+        vec_nogc_push(location_lists, state.expression_locations);
 }
 
 inline static void
@@ -7481,6 +7481,8 @@ tyeval(struct expression *e)
 
         RESTORE_JB;
 
+        size_t n_location_lists = location_lists.count;
+
         add_location_info();
 
         EvalDepth += 1;
@@ -7489,6 +7491,8 @@ tyeval(struct expression *e)
 
         state.code = code_save;
         state.expression_locations = locs_save;
+
+        location_lists.count = n_location_lists;
 
         return v;
 }
