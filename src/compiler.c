@@ -435,8 +435,8 @@ fail(char const *fmt, ...)
         n += snprintf(
                 ERR + n,
                 sz - n,
-                "\n\t%*s%s%s",
-                before + 35,
+                "\n%*s%s%s",
+                before + 43,
                 "",
                 TERM(1),
                 TERM(91)

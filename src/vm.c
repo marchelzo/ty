@@ -4089,8 +4089,8 @@ vm_panic(char const *fmt, ...)
                 n += snprintf(
                         ERR + n,
                         sz - n,
-                        "\n\t%*s%s%s",
-                        before + 35,
+                        "\n%*s%s%s",
+                        before + 43,
                         "",
                         (i == 0) ? TERM(1) : "",
                         (i == 0) ? TERM(91) : TERM(31)
