@@ -1,0 +1,13 @@
+import ty
+
+function f() {
+    let e = ty.parse('throw 0')
+
+    try let x = ty.eval(e) or else {
+        return 'PASS'
+    }
+
+    return 'FAIL'
+}
+
+print(f())
