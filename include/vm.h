@@ -138,6 +138,8 @@ extern _Thread_local int EvalDepth;
         X(BAD_DISPATCH), \
         X(BAD_ASSIGN), \
         X(UNTAG_OR_DIE), \
+        X(STEAL_TAG), \
+        X(TRY_STEAL_TAG), \
         X(ENSURE_LEN), \
         X(ENSURE_LEN_TUPLE), \
         X(ENSURE_EQUALS_VAR), \

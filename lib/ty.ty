@@ -218,6 +218,11 @@ pub function walk(tree, f) {
             walk(b, f)
         ),
 
+        ty.TagPattern(id, pattern) => ty.TagPattern(
+            id,
+            walk(pattern, f)
+        ),
+
         ty.View(view, pattern) => ty.View(walk(view, f), walk(pattern, f)),
         ty.NotNilView(view, pattern) => ty.NotNilView(walk(view, f), walk(pattern, f)),
 
@@ -225,4 +230,14 @@ pub function walk(tree, f) {
     }
 
     return f(tree)
+}
+
+pub function withSource(src, code) {
+    walk(code, expr -> match expr {
+        %t(expr) => if expr.?isTuple() {
+            t({*expr, src})
+        } else {
+            t(expr)
+        }
+    })
 }

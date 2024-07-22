@@ -685,6 +685,7 @@ static struct {
 {.module = "ty", .name = "unlock", .value = BUILTIN(builtin_ty_unlock)},
 {.module = "ty", .name = "gc", .value = BUILTIN(builtin_ty_gc)},
 {.module = "ty", .name = "bt", .value = BUILTIN(builtin_ty_bt)},
+{.module = "ty", .name = "valueSize", .value = INT(sizeof (Value))},
 {.module = "ty/token", .name = "next", .value = BUILTIN(builtin_token_next)},
 {.module = "ty/token", .name = "peek", .value = BUILTIN(builtin_token_peek)},
 {.module = "ty/parse", .name = "source", .value = BUILTIN(builtin_parse_source)},
