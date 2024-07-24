@@ -419,13 +419,13 @@ lexdocstring(void)
         }
 
         if (!end_of_docstring('\'', ndelim)) {
-                error("unterminated docstring starting on line %d", Start.line);
+                error("unterminated docstring starting on line %d", Start.line + 1);
         }
 
         // The only characters on this line before the docstring terminator should be whitespace
         for (int i = 0; i < line.count; ++i) {
                 if (!isspace(line.items[i])) {
-                        error("illegal docstring terminator on line %d", state.loc.line);
+                        error("illegal docstring terminator on line %d", state.loc.line + 1);
                 }
         }
 
@@ -468,7 +468,7 @@ lexrawstr(void)
                 switch (C(0)) {
                 case '\0':
                 Unterminated:
-                        error("unterminated string literal starting on line %d", Start.line);
+                        error("unterminated string literal starting on line %d", Start.line + 1);
                 case '\\':
                         nextchar();
                         switch (C(0)) {
@@ -660,13 +660,13 @@ lexspecialdocstring(void)
         }
 
         if (!end_of_docstring('"', ndelim)) {
-                error("unterminated docstring starting on line %d", Start.line);
+                error("unterminated docstring starting on line %d", Start.line + 1);
         }
 
         // The only characters on this line before the docstring terminator should be whitespace
         for (int i = 0; i < str.count; ++i) {
                 if (!isspace(str.items[i])) {
-                        error("illegal docstring terminator on line %d", state.loc.line);
+                        error("illegal docstring terminator on line %d", state.loc.line + 1);
                 }
         }
 
@@ -710,7 +710,7 @@ lexspecialdocstring(void)
         return special;
 
 Unterminated:
-        error("unterminated docstring literal starting on line %d", special.start.line);
+        error("unterminated docstring literal starting on line %d", special.start.line + 1);
 }
 
 static struct token
@@ -826,7 +826,7 @@ LexExpr:
         goto Start;
 
 Unterminated:
-        error("unterminated string literal starting on line %d", special.start.line);
+        error("unterminated string literal starting on line %d", special.start.line + 1);
 }
 
 static struct token
