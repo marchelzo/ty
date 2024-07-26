@@ -1360,7 +1360,7 @@ class Iter : Iterable {
         }
     }
 
-    chain*(*its) {
+    static chain*(*its) {
         for it in its {
             for x in it.__iter__() {
                 yield x
@@ -1440,6 +1440,69 @@ class ReverseIter : Iter {
             Some(@xs.pop())
         } else {
             None
+        }
+    }
+}
+
+class Queue : Iterable {
+    init(xs=[]) {
+        @xs = []
+        @i = 0
+        @j = 0
+
+        for x in xs {
+            self.put(x)
+        }
+    }
+
+    __len__() {
+        if @xs {
+            (@j - @i + #@xs) % #@xs
+        } else {
+            0
+        }
+    }
+
+    empty?() {
+        #self == 0
+    }
+
+    put(x) {
+        if !@xs {
+            @xs = [x, nil]
+            @j = 1
+        } else if (@j + 1) % #@xs == @i {
+            let n = #self
+            @xs.rotate!(@i)
+            @xs += @xs
+            @i = 0
+            @j = n + 1
+            @xs[n] = x
+        } else {
+            @xs[@j] = x
+            @j = (@j + 1) % #@xs
+        }
+    }
+
+    tryTake() {
+        if #self == 0 {
+            return None
+        }
+
+        let x = @xs[@i]
+        @i = (@i + 1) % #@xs
+
+        return Some(x)
+    }
+
+    take() {
+        let Some(x) = self.tryTake()
+        return x
+    }
+
+    __iter__*() {
+        for let i = @i; i != @j; i = (i + 1) % #@xs {
+            yield @xs[i]
         }
     }
 }
