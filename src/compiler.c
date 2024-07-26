@@ -1964,7 +1964,28 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_methods(subscope, s->class.getters.items, s->class.getters.count);
                 symbolize_methods(subscope, s->class.setters.items, s->class.setters.count);
                 symbolize_methods(subscope, s->class.statics.items, s->class.statics.count);
+
+                for (int i = 0; i < s->class.fields.count; ++i) {
+                        Expr *field = s->class.fields.items[i];
+                        switch (field->type) {
+                        case EXPRESSION_IDENTIFIER:
+                                symbolize_expression(subscope, field->constraint);
+                                break;
+                        case EXPRESSION_EQ:
+                                if (field->target->type != EXPRESSION_IDENTIFIER) {
+                                        field = field->target;
+                                        goto BadField;
+                                }
+                                symbolize_expression(subscope, field->target->constraint);
+                                break;
+                        default:
+                        BadField:
+                                fail("invalid expression in field definition: %s", ExpressionTypeName(field));
+                        }
+                }
+
                 state.class = -1;
+
                 break;
         case STATEMENT_TAG_DEFINITION:
                 if (scope_locally_defined(state.global, s->tag.name))
@@ -6322,6 +6343,7 @@ tystmt(struct statement *s)
                         "getters", ARRAY(value_array_new()),
                         "setters", ARRAY(value_array_new()),
                         "statics", ARRAY(value_array_new()),
+                        "fields",  ARRAY(value_array_new()),
                         NULL
                 );
                 for (int i = 0; i < s->class.methods.count; ++i) {
@@ -6335,6 +6357,9 @@ tystmt(struct statement *s)
                 }
                 for (int i = 0; i < s->class.statics.count; ++i) {
                         value_array_push(v.items[5].array, tyexpr(s->class.statics.items[i]));
+                }
+                for (int i = 0; i < s->class.fields.count; ++i) {
+                        value_array_push(v.items[6].array, tyexpr(s->class.fields.items[i]));
                 }
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyClass);
@@ -6608,10 +6633,12 @@ cstmt(struct value *v)
                 struct value *getters = tuple_get(v, "getters");
                 struct value *setters = tuple_get(v, "setters");
                 struct value *statics = tuple_get(v, "statics");
+                struct value *fields = tuple_get(v, "fields");
                 vec_init(s->class.methods);
                 vec_init(s->class.getters);
                 vec_init(s->class.setters);
                 vec_init(s->class.statics);
+                vec_init(s->class.fields);
                 if (methods != NULL) for (int i = 0; i < methods->array->count; ++i) {
                         VPush(s->class.methods, cexpr(&methods->array->items[i]));
                 }
@@ -6623,6 +6650,9 @@ cstmt(struct value *v)
                 }
                 if (statics != NULL) for (int i = 0; i < statics->array->count; ++i) {
                         VPush(s->class.statics, cexpr(&statics->array->items[i]));
+                }
+                if (fields != NULL) for (int i = 0; i < fields->array->count; ++i) {
+                        VPush(s->class.fields, cexpr(&fields->array->items[i]));
                 }
                 break;
         }

@@ -3270,7 +3270,7 @@ definition_lvalue(struct expression *e)
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_RESOURCE_BINDING:
         case EXPRESSION_TAG_APPLICATION:
-        case EXPRESSION_TAG_PATTERN:
+        case EXPRESSION_TAG_PATTERN_CALL:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_LIST:
@@ -4090,6 +4090,7 @@ mktagdef(char *name)
         vec_init(s->tag.getters);
         vec_init(s->tag.setters);
         vec_init(s->tag.statics);
+        vec_init(s->tag.fields);
         return s;
 }
 
@@ -4211,6 +4212,7 @@ parse_class_definition(void)
                         case TOKEN_IDENTIFIER:                                                              break;
                         default:                                                                            break;
                         }
+
                         Expr *decorator_macro = NULL;
                         if (tok()->type == TOKEN_AT && token(1)->type == '{') {
                                 next();
@@ -4226,7 +4228,47 @@ parse_class_definition(void)
                                 expect(TOKEN_IDENTIFIER);
                         }
                         struct location start = tok()->start;
-                        if (have_keyword(KEYWORD_STATIC)) {
+
+                        /*
+                         * This is pretty ugly but we use whitespace to differentiate between a setter:
+                         *
+                         *      onClick= {
+                         *              ...
+                         *      }
+                         *
+                         * and a field assignment:
+                         *
+                         *      onClick = foo
+                         */
+                        if (
+                                tok()->type == TOKEN_IDENTIFIER &&
+                                (
+                                        (
+                                                token(1)->type == TOKEN_EQ &&
+                                                (
+                                                        token(1)->start.col != tok()->end.col + 1 ||
+                                                        token(1)->start.line != tok()->end.line
+                                                )
+                                        ) ||
+                                        token(1)->type == ':'
+                                )
+                        ) {
+                                SAVE_NE(true);
+                                Expr *field = parse_expr(0);
+                                LOAD_NE();
+
+                                if (tok()->type == TOKEN_EQ) {
+                                        field = infix_eq(field);
+                                }
+
+                                if (field->type != EXPRESSION_IDENTIFIER && field->type != EXPRESSION_EQ) {
+                                        EStart = field->start;
+                                        EEnd = field->end;
+                                        error("expected a field definition");
+                                }
+
+                                VPush(s->tag.fields, field);
+                        } else if (have_keyword(KEYWORD_STATIC)) {
                                 next();
                                 expect(TOKEN_IDENTIFIER);
                                 VPush(

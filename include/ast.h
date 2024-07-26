@@ -28,6 +28,7 @@ struct class_definition {
         expression_vector getters;
         expression_vector setters;
         expression_vector statics;
+        expression_vector fields;
 };
 
 struct condpart {
