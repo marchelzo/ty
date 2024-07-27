@@ -145,7 +145,7 @@ struct sigfn {
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
 
-typedef vec(struct value) ValueStack;
+typedef ValueVector ValueStack;
 typedef vec(char const *) StringVector;
 typedef vec(struct try *) TryStack;
 typedef vec(struct sigfn) SigfnStack;
@@ -884,6 +884,8 @@ call_co(struct value *v, int n)
         SWAP(TargetStack, v->gen->targets, targets);
         SWAP(SPStack, v->gen->sps, sp_stack);
         SWAP(FrameStack, v->gen->frames, frames);
+        SWAP(ValueVector, v->gen->deferred, defer_stack);
+        SWAP(ValueVector, v->gen->to_drop, drop_stack);
 
         for (int i = 0; i < v->gen->frame.count; ++i) {
                 push(v->gen->frame.items[i]);
@@ -2552,6 +2554,8 @@ Throw:
                         SWAP(TargetStack, v.gen->targets, targets);
                         SWAP(CallStack, v.gen->calls, calls);
                         SWAP(FrameStack, v.gen->frames, frames);
+                        SWAP(ValueVector, v.gen->deferred, defer_stack);
+                        SWAP(ValueVector, v.gen->to_drop, drop_stack);
 
                         vec_nogc_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
 
@@ -2577,6 +2581,7 @@ Throw:
                         vec_init(v.gen->targets);
                         vec_init(v.gen->calls);
                         vec_init(v.gen->frames);
+                        vec_init(v.gen->deferred);
                         push(v);
                         OKGC(v.gen);
                         goto Return;
