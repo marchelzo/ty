@@ -164,8 +164,11 @@ static _Thread_local ValueStack drop_stack;
 static _Thread_local char *ip;
 
 #ifdef TY_ENABLE_PROFILING
+
+bool UseWallTime = false;
+
 inline static uint64_t
-TyThreadTime(void)
+TyThreadCPUTime(void)
 {
 #ifdef _WIN32
         ULONG64 cycles;
@@ -176,6 +179,27 @@ TyThreadTime(void)
         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
         return 1000000000ULL * t.tv_sec + t.tv_nsec;
 #endif
+}
+
+inline static uint64_t TyThreadWallTime(void)
+{
+#ifdef _WIN32
+        LARGE_INTEGER counter;
+        LARGE_INTEGER frequency;
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        return (uint64_t)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
+#else
+        struct timespec t;
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+#endif
+}
+
+inline static uint64_t
+TyThreadTime(void)
+{
+        return UseWallTime ? TyThreadWallTime() : TyThreadCPUTime();
 }
 
 typedef struct profile_entry {
@@ -4357,20 +4381,33 @@ vm_execute(char const *source, char const *file)
                 Location start = expr->start;
                 Location end = expr->end;
 
-                if (filename == NULL) filename = expr->filename;
+                if (filename == NULL) {
+                        filename = expr->filename;
+                } else {
+                        filename += 1;
+                }
+
+                int name_len = strlen(filename);
+                char name_buffer[32];
+
+                if (name_len > 18) {
+                        sprintf(name_buffer, "..%s", filename + (name_len - 18) + 2);
+                } else {
+                        strcpy(name_buffer, filename);
+                }
 
                 char code_buffer[1024];
                 colorize_code(TERM(93), TERM(0), &start, &end, code_buffer, sizeof code_buffer);
 
                 printf(
-                        "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%s:%s%-5d%s  |  %s\n",
+                        "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s\n",
                         color_buffer,
                         entry->count / total_ticks * 100.0,
                         entry->count,
                         TERM(95),
                         etype,
                         TERM(93),
-                        filename,
+                        name_buffer,
                         TERM(0),
                         TERM(94),
                         start.line + 1,

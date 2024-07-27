@@ -42,6 +42,9 @@ static char const usage_string[] =
         "  -q            Ignore constraints on function parameters and return values\n"
         "  -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL\n"
         "                in the specified source file\n"
+#ifdef TY_ENABLE_PROFILING
+        "  --wall        Profile based on wall time instead of CPU time\n"
+#endif
         "  --            Stop handling options\n"
         "  --version     Print ty version information and exit\n"
         "  --help        Print this help message and exit\n"
@@ -296,6 +299,13 @@ main(int argc, char **argv)
                         fputs(usage_string, stdout);
                         return 0;
                 }
+
+#ifdef TY_ENABLE_PROFILING
+                extern bool UseWallTime;
+                if (strcmp(argv[argi], "--wall") == 0) {
+                        UseWallTime = true;
+                } else
+#endif
 
                 if (argv[argi][1] != '-') {
                         for (char const *opt = argv[argi] + 1; *opt != '\0'; ++opt) {
