@@ -375,6 +375,8 @@ struct generator {
         CallStack calls;
         SPStack sps;
         TargetStack targets;
+        ValueVector deferred;
+        ValueVector to_drop;
 };
 
 struct thread {

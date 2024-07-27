@@ -43,6 +43,8 @@ collect(struct alloc *a)
                 gc_free(((Generator *)p)->frames.items);
                 gc_free(((Generator *)p)->targets.items);
                 gc_free(((Generator *)p)->sps.items);
+                gc_free(((Generator *)p)->deferred.items);
+                gc_free(((Generator *)p)->to_drop.items);
                 break;
         case GC_THREAD:
                 t = p;
