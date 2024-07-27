@@ -1414,6 +1414,34 @@ class Iter : Iterable {
         return true
     }
 
+    static tee(it, n = 2) {
+        let queues = [Queue() for _ in ..n]
+        let it = it.__iter__()
+
+        function get() {
+            if let Some(x) = it.__next__() {
+                for queue in queues {
+                    queue.put(x)
+                }
+                return true
+            } else {
+                return false
+            }
+        }
+
+        let generators = queues.map(queue -> generator {
+            while true {
+                if let Some(x) = queue.tryTake() {
+                    yield x
+                } else if !get() {
+                    return None
+                }
+            }
+        })
+
+        return tuple(*generators)
+    }
+
     __subscript__(i) {
         for _ in ..(i - 1) {
             if @__next__() == None { return nil }
@@ -2195,6 +2223,110 @@ macro ifdef {
     }
 
     ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
+}
+
+class SharedQueue : Iterable {
+    init(xs=[]) {
+        @xs = []
+        @i = 0
+        @j = 0
+        @mutex = Mutex()
+        @cond = CondVar()
+
+        for x in xs {
+            self.put(x)
+        }
+    }
+
+    __len__() {
+        with @mutex.lock() {
+            if @xs {
+                (@j - @i + #@xs) % #@xs
+            } else {
+                0
+            }
+        }
+    }
+
+    countUnlocked() {
+        if @xs {
+            (@j - @i + #@xs) % #@xs
+        } else {
+            0
+        }
+    }
+
+    empty?() {
+        with @mutex.lock() {
+            #self == 0
+        }
+    }
+
+    put(x) {
+        let notify = false
+
+        with @mutex.lock() {
+            if self.countUnlocked() == 0 {
+                notify = true
+            }
+
+            if !@xs {
+                @xs = [x, nil]
+                @j = 1
+            } else if (@j + 1) % #@xs == @i {
+                let n = self.countUnlocked()
+                @xs.rotate!(@i)
+                @xs += @xs
+                @i = 0
+                @j = n + 1
+                @xs[n] = x
+            } else {
+                @xs[@j] = x
+                @j = (@j + 1) % #@xs
+            }
+        }
+
+        if notify {
+            @cond.signal()
+        }
+    }
+
+    tryTake(timeoutMs: Int = 0) {
+        let stop = time.utime() + timeoutMs * 1000
+
+        @mutex.lock()
+
+        while self.countUnlocked() == 0 {
+            let now = time.utime()
+
+            if timeoutMs != -1 && now >= stop {
+                @mutex.unlock()
+                return None
+            }
+
+            let condTimeout = (timeoutMs == -1) ? -1 : (stop - now) / 1000
+
+            @cond.wait(@mutex, condTimeout)
+        }
+
+        let x = @xs[@i]
+        @i = (@i + 1) % #@xs
+
+        @mutex.unlock()
+
+        return Some(x)
+    }
+
+    take() {
+        let Some(x) = self.tryTake()
+        return x
+    }
+
+    __iter__*() {
+        for let i = @i; i != @j; i = (i + 1) % #@xs {
+            yield @xs[i]
+        }
+    }
 }
 
 function memoized(f) {

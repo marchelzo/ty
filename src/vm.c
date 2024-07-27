@@ -423,7 +423,7 @@ DoGC()
 
         TyMutexLock(&MyGroup->Lock);
 
-        XLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
+        GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
 
@@ -901,9 +901,9 @@ MyThreadId(void)
 void
 TakeLock(void)
 {
-        XLOG("Taking MyLock%s", "");
+        GCLOG("Taking MyLock%s", "");
         TyMutexLock(MyLock);
-        XLOG("Took MyLock");
+        GCLOG("Took MyLock");
         HaveLock = true;
 }
 
@@ -1047,7 +1047,7 @@ CleanupThread(void *ctx)
         free(root_set->items);
 
         if (group_remaining == 0) {
-                XLOG("Cleaning up group %p", (void*)MyGroup);
+                GCLOG("Cleaning up group %p", (void*)MyGroup);
                 TyMutexDestroy(&MyGroup->Lock);
                 TyMutexDestroy(&MyGroup->GCLock);
                 TyMutexDestroy(&MyGroup->DLock);
@@ -1059,7 +1059,7 @@ CleanupThread(void *ctx)
                 gc_free(MyGroup);
         }
 
-        XLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
+        GCLOG("Finished cleaning up on thread: %llu -- releasing threads lock", TID);
 }
 
 static TyThreadReturnValue
