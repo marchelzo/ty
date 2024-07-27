@@ -3160,18 +3160,23 @@ builtin_thread_cond_wait(int argc, struct value *kwargs)
 
         ReleaseLock(true);
 
-        if (argc == 2) {
-                r = TyCondVarWait(ARG(0).ptr, ARG(1).ptr);
-        } else {
+        int64_t usec = -1;
+        if (argc == 3) {
                 if (ARG(2).type != VALUE_INTEGER) {
                         vm_panic("thread.waitCond() expects an integer as its third argument but got: %s", value_show(&ARG(2)));
                 }
+                usec = ARG(2).integer;
+        }
+
+        if (usec == -1) {
+                r = TyCondVarWait(ARG(0).ptr, ARG(1).ptr);
+        } else {
 
                 struct timespec ts;
                 GetCurrentTimespec(&ts);
 
-                ts.tv_sec += ARG(2).integer / 1000000;
-                ts.tv_nsec += (ARG(2).integer % 1000000) * 1000;
+                ts.tv_sec += usec / 1000000;
+                ts.tv_nsec += (usec % 1000000) * 1000;
 
                 r = TyCondVarTimedWaitRelative(ARG(0).ptr, ARG(1).ptr, ARG(2).integer);
         }

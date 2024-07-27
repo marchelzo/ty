@@ -1,0 +1,17 @@
+import ty
+
+macro x {
+    let s = ty.String('pass')
+
+    $$[
+        class Test {
+            static test() {
+                $$(s).upper()
+            }
+        }
+    $$]
+}
+
+x
+
+print(Test.test())
