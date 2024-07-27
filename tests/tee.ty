@@ -1,0 +1,11 @@
+let rng = generator {
+    while true {
+        yield rand()
+    }
+}
+
+let (r1, r2, r3) = Iter.tee(rng.take(50), n: 3)
+
+if [r1.list(), r2.list(), r3.list()].uniq!().len() == 1 {
+    print('PASS')
+}

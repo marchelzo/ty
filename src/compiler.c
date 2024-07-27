@@ -1743,6 +1743,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
                         symbolize_expression(scope, e->object);
                         for (size_t i = 0;  i < e->method_args.count; ++i)
                                 symbolize_expression(scope, e->method_args.items[i]);
+                        for (size_t i = 0;  i < e->method_args.count; ++i)
+                                symbolize_expression(scope, e->mconds.items[i]);
                         for (size_t i = 0; i < e->method_kwargs.count; ++i)
                                 symbolize_expression(scope, e->method_kwargs.items[i]);
                 }

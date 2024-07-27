@@ -1,0 +1,23 @@
+let s = '''
+    try {
+        try {
+            throw 20
+        } catch _ {
+        } finally {
+            throw 50
+        }
+    } catch _ {
+        "FAIL"
+    }
+
+'''
+
+try {
+    print(__eval__(s))
+} catch Err(e) {
+    if 'in a finally block' in e {
+        print('PASS')
+    } else {
+        print(e)
+    }
+}
