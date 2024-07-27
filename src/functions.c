@@ -3168,17 +3168,10 @@ builtin_thread_cond_wait(int argc, struct value *kwargs)
                 usec = ARG(2).integer;
         }
 
-        if (usec == -1) {
+        if (usec < 0) {
                 r = TyCondVarWait(ARG(0).ptr, ARG(1).ptr);
         } else {
-
-                struct timespec ts;
-                GetCurrentTimespec(&ts);
-
-                ts.tv_sec += usec / 1000000;
-                ts.tv_nsec += (usec % 1000000) * 1000;
-
-                r = TyCondVarTimedWaitRelative(ARG(0).ptr, ARG(1).ptr, ARG(2).integer);
+                r = TyCondVarTimedWaitRelative(ARG(0).ptr, ARG(1).ptr, usec / 1000);
         }
 
         TakeLock();
