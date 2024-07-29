@@ -4355,7 +4355,7 @@ vm_execute(char const *source, char const *file)
 
                 if (expr == NULL) {
                         printf(
-                                "   %s%5.1f%%  %-13lld %s%16s %s%14.14s%6s%s  |  %s<no source avilable>%s\n",
+                                "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source avilable>%s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 entry->count,
