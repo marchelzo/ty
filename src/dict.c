@@ -52,8 +52,16 @@ delete(struct dict *d, size_t i)
         unsigned long h = d->hashes[i] & mask;
 
         size_t j = i;
-        while ((d->hashes[(j + 1) & mask] & mask) == h && d->keys[(j + 1) & mask].type != 0)
-                j = (j + 1) & mask;
+        size_t k = (i + 1) & mask;
+
+        while (d->keys[k].type != 0) {
+                if ((d->hashes[k] & mask) == h) {
+                        j = k;
+                }
+                k = (k + 1) & mask;
+        }
+
+        j &= mask;
 
         if (i != j) {
                 d->keys[i] = d->keys[j];
