@@ -227,9 +227,14 @@ class Array : Iterable {
     }
 
     cycle*() {
-        let i = 0
+        if #self == 0 {
+            return None
+        }
+
         while true {
-            yield self[i++ % #self]
+            for x in self {
+                yield x
+            }
         }
     }
 
@@ -1672,6 +1677,7 @@ function uuid7(pseudo = true) {
 class Mutex {
     init() {
         @mtx = thread.mutex()
+        @waited = 0
     }
 
     inner() {
@@ -1679,7 +1685,9 @@ class Mutex {
     }
 
     lock() {
+        let start = time.utime()
         thread.lock(@mtx)
+        @waited += time.utime() - start
         return MutexLock(@mtx)
     }
 
@@ -2286,9 +2294,7 @@ class SharedQueue : Iterable {
             }
         }
 
-        if notify {
-            @cond.signal()
-        }
+        @cond.signal()
     }
 
     tryTake(timeoutMs: Int = 0) {
