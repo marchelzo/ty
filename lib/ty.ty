@@ -232,13 +232,3 @@ pub function walk(tree, f) {
 
     return f(tree)
 }
-
-pub function withSource(src, code) {
-    walk(code, expr -> match expr {
-        %t(expr) => if expr.?isTuple() {
-            t({*expr, src})
-        } else {
-            t(expr)
-        }
-    })
-}
