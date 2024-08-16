@@ -103,6 +103,7 @@ struct token {
                         KEYWORD_NIL,
                         KEYWORD_IMPORT,
                         KEYWORD_EXPORT,
+                        KEYWORD_AS,
                         KEYWORD_TAG,
                         KEYWORD_CLASS,
                         KEYWORD_MATCH,

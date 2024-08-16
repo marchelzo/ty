@@ -6,7 +6,7 @@ let bytes = with f = io.open('/dev/urandom', 'r') { f.next(5000) }
 
 let qsort = wrap(nil, 'qsort', c.void, c.ptr, c.u64, c.u64, c.ptr)
 
-qsort(bytes, #bytes, 1, c.closure(c.int, c.ptr, c.ptr, (pa, pb) -> {
+qsort(bytes, #bytes, 1, c.closure(c.int, c.ptr, c.ptr, (pa, pb) -> do {
 	let a = c.load(c.u8, pa)
 	let b = c.load(c.u8, pb)
 	a <=> b

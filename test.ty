@@ -30,12 +30,12 @@ function doTest(name) {
     let testStart = time.utime()
 
     let result = match sh(getTyCommand(name), timeoutMs: 2000) {
-        nil => {
+        nil => do {
             timedOut += 1
             m('TIMEOUT')
         },
 
-        &strip ~> 'PASS' => {
+        &strip ~> 'PASS' => do {
             passed += 1
             let elapsedMs = (time.utime() - testStart) / 1000.0
             let elapsed = match elapsedMs <=> 100.0 {
@@ -46,7 +46,7 @@ function doTest(name) {
             "{g('PASS')} {yellow(elapsed)}"
         },
 
-        x => {
+        x => do {
             failed += 1
             r('FAIL')
         }

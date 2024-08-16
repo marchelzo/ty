@@ -1403,21 +1403,6 @@ parse_pattern(void)
         return pattern;
 }
 
-static struct expression *
-parse_block_expr(void)
-{
-        expect('{');
-
-        struct statement *s = parse_statement(0);
-        struct expression *e = mkexpr();
-        e->type = EXPRESSION_STATEMENT;
-        e->statement = s;
-        e->start = s->start;
-        e->end = s->end;
-
-        return e;
-}
-
 void
 make_with(struct expression *e, statement_vector defs, struct statement *body)
 {
@@ -1558,11 +1543,7 @@ prefix_match(void)
         VPush(e->patterns, parse_pattern());
 
         consume(TOKEN_FAT_ARROW);
-        if (tok()->type == '{') {
-                VPush(e->thens, parse_block_expr());
-        } else {
-                VPush(e->thens, parse_expr(0));
-        }
+        VPush(e->thens, parse_expr(0));
 
         while (tok()->type == ',') {
                 next();
@@ -1574,11 +1555,7 @@ prefix_match(void)
 
                 VPush(e->patterns, parse_pattern());
                 consume(TOKEN_FAT_ARROW);
-                if (tok()->type == '{') {
-                        VPush(e->thens, parse_block_expr());
-                } else {
-                        VPush(e->thens, parse_expr(0));
-                }
+                VPush(e->thens, parse_expr(0));
         }
 
         consume('}');
@@ -2690,6 +2667,26 @@ infix_subscript(struct expression *left)
         return e;
 }
 
+static Expr *
+infix_alias(Expr *left)
+{
+        consume_keyword(KEYWORD_AS);
+
+        Expr *alias = parse_expr(0);
+
+        if (alias->type != EXPRESSION_IDENTIFIER) {
+                EStart = alias->start;
+                EEnd = alias->end;
+                error("pattern alias must be an identifier");
+        }
+
+        alias->type = EXPRESSION_ALIAS_PATTERN;
+        alias->aliased = left;
+
+        return alias;
+}
+
+
 static struct expression *
 infix_member_access(struct expression *left)
 {
@@ -2883,7 +2880,7 @@ infix_arrow_function(struct expression *left)
                 VPush(e->constraints, NULL);
         }
 
-        struct statement *ret = mkret((tok()->type == '{') ? parse_block_expr() : parse_expr(0));
+        struct statement *ret = mkret(parse_expr(0));
 
         if (body->statements.count == 0) {
                 e->body = ret;
@@ -3167,6 +3164,7 @@ Keyword:
         //case KEYWORD_OR:  return infix_kw_or;
         case KEYWORD_NOT:
         case KEYWORD_IN:  return infix_kw_in;
+        case KEYWORD_AS:  return infix_alias;
         default:          return NULL;
         }
 }
@@ -3255,6 +3253,7 @@ Keyword:
         //case KEYWORD_AND: return 4;
         case KEYWORD_NOT:
         case KEYWORD_IN:  return NoIn ? -3 : 6;
+        case KEYWORD_AS:  return 1;
         default:          return -3;
         }
 
@@ -4466,7 +4465,7 @@ parse_import(void)
 
         s->import.module = sclonea(module.items);
 
-        if (tok()->type == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "as") == 0) {
+        if (have_keyword(KEYWORD_AS)) {
                 next();
                 expect(TOKEN_IDENTIFIER);
                 s->import.as = tok()->identifier;
