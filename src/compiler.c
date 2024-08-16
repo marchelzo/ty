@@ -1338,6 +1338,7 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
+        case EXPRESSION_ALIAS_PATTERN:
                         if (reuse != NULL && e->module == NULL && (existing = scope_local_lookup(reuse, e->identifier)) != NULL) {
                                 e->symbol = existing;
                         } else {
@@ -1349,6 +1350,8 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
                         state.resources += 1;
                 } else if (e->type == EXPRESSION_TAG_PATTERN) {
                         symbolize_pattern_(scope, e->tagged, reuse, def);
+                } else if (e->type == EXPRESSION_ALIAS_PATTERN) {
+                        symbolize_pattern_(scope, e->aliased, reuse, def);
                 }
                 e->local = true;
                 break;
@@ -2982,6 +2985,7 @@ emit_try_match_(struct expression const *pattern)
         case EXPRESSION_RESOURCE_BINDING:
                 emit_instr(INSTR_PUSH_DROP);
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_ALIAS_PATTERN:
                 if (strcmp(pattern->identifier, "_") == 0) {
                         /* nothing to do */
                 } else {
@@ -2994,6 +2998,9 @@ emit_try_match_(struct expression const *pattern)
                         emit_instr(INSTR_JUMP_IF_NOT);
                         VPush(state.match_fails, state.code.count);
                         emit_int(0);
+                }
+                if (pattern->type == EXPRESSION_ALIAS_PATTERN) {
+                        emit_try_match_(pattern->aliased);
                 }
                 break;
         case EXPRESSION_TAG_PATTERN:

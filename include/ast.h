@@ -187,6 +187,7 @@ struct statement {
         X(TAG_APPLICATION), \
         X(TAG_PATTERN_CALL), \
         X(TAG_PATTERN), \
+        X(ALIAS_PATTERN), \
         X(TEMPLATE), \
         X(TEMPLATE_HOLE), \
         X(TEMPLATE_VHOLE), \
@@ -324,7 +325,10 @@ struct expression {
                 };
                 struct {
                         bool local;
-                        struct expression *tagged;
+                        union {
+                                struct expression *tagged;
+                                struct expression *aliased;
+                        };
                         struct expression *constraint;
                         struct symbol *symbol;
                         char *module;

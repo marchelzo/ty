@@ -29,6 +29,7 @@ static struct {
         { "and",         KEYWORD_AND       },
         { "not",         KEYWORD_NOT       },
         { "import",      KEYWORD_IMPORT    },
+        { "as",          KEYWORD_AS        },
         { "in",          KEYWORD_IN        },
         { "let",         KEYWORD_LET       },
         { "pub",         KEYWORD_PUB       },

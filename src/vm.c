@@ -2236,6 +2236,7 @@ Throw:
                         vec_push_unchecked(drop_stack, ARRAY(value_array_new()));
                         break;
                 CASE(PUSH_DROP)
+                        printf("Pushing drop: %s\n", value_show_color(top()));
                         vec_push_unchecked(*vec_last(drop_stack)->array, peek());
                         break;
                 CASE(PUSH_DEFER_GROUP)
@@ -2606,6 +2607,7 @@ Throw:
                         vec_init(v.gen->calls);
                         vec_init(v.gen->frames);
                         vec_init(v.gen->deferred);
+                        vec_init(v.gen->to_drop);
                         push(v);
                         OKGC(v.gen);
                         goto Return;
