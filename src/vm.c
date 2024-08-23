@@ -2236,7 +2236,6 @@ Throw:
                         vec_push_unchecked(drop_stack, ARRAY(value_array_new()));
                         break;
                 CASE(PUSH_DROP)
-                        printf("Pushing drop: %s\n", value_show_color(top()));
                         vec_push_unchecked(*vec_last(drop_stack)->array, peek());
                         break;
                 CASE(PUSH_DEFER_GROUP)
