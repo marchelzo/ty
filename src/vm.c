@@ -1609,6 +1609,23 @@ DoAssign(void)
         }
 }
 
+inline static void
+DoTag(int tag, int n, Value *kws)
+{
+        if (n == 1 && kws == NULL) {
+                top()->tags = tags_push(top()->tags, tag);
+                top()->type |= VALUE_TAGGED;
+        } else {
+                GC_OFF_COUNT += 1;
+                Value v = builtin_tuple(n, kws);
+                stack.count -= n;
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(v.tags, tag);
+                push(v);
+                GC_OFF_COUNT -= 1;
+        }
+}
+
 #ifndef TY_RELEASE
 __attribute__((noinline))
 #else
@@ -3625,26 +3642,11 @@ BadContainer:
                                 call_co(&v, n);
                                 break;
                         case VALUE_TAG:
-                                if (n == 1 && nkw == 0) {
-                                        top()->tags = tags_push(top()->tags, v.tag);
-                                        top()->type |= VALUE_TAGGED;
-                                } else if (nkw > 0) {
-                                        GC_OFF_COUNT += 1;
+                                if (nkw > 0) {
                                         container = pop();
-                                        value = builtin_tuple(n, &container);
-                                        stack.count -= n;
-                                        value.type |= VALUE_TAGGED;
-                                        value.tags = tags_push(value.tags, v.tag);
-                                        push(value);
-                                        GC_OFF_COUNT -= 1;
+                                        DoTag(v.tag, n, &container);
                                 } else {
-                                        GC_OFF_COUNT += 1;
-                                        value = builtin_tuple(n, NULL);
-                                        stack.count -= n;
-                                        value.type |= VALUE_TAGGED;
-                                        value.tags = tags_push(value.tags, v.tag);
-                                        push(value);
-                                        GC_OFF_COUNT -= 1;
+                                        DoTag(v.tag, n, NULL);
                                 }
                                 break;
                         case VALUE_CLASS:
@@ -4038,7 +4040,7 @@ vm_panic(char const *fmt, ...)
         if (n < sz)
                 ERR[n++] = '\n';
 
-        for (int i = 0; n < sz; ++i) {
+        for (int i = 0; ip != NULL && n < sz; ++i) {
                 Expr const *expr = compiler_find_expr(ip - 1);
                 char buffer[512];
 
@@ -4550,8 +4552,11 @@ vm_eval_function(struct value const *f, ...)
                 r = f->builtin_method(f->this, argc, NULL);
                 stack.count = n;
                 return r;
+        case VALUE_TAG:
+                DoTag(f->tag, argc, NULL);
+                return pop();
         default:
-                abort();
+                vm_panic("Non-callable value passed to vm_eval_function(): %s", value_show_color(f));
         }
 }
 

@@ -6927,6 +6927,12 @@ cexpr(struct value *v)
                 Value *constraint = tuple_get(v, "constraint");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(constraint) : NULL;
+
+                if (e->module == NULL && strcmp(e->identifier, "__line__") == 0) {
+                        e->start = state.mstart;
+                        e->end = state.mend;
+                }
+
                 break;
         }
         case TyNotNil:

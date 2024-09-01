@@ -176,6 +176,14 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
                 return vm_eval_function(&method, right, NULL);
         }
 
+        if (left->type == VALUE_STRING) {
+                struct value const *f = class_method(CLASS_STRING, "-");
+                if (f == NULL)
+                        goto Fail;
+                struct value method = METHOD("-", f, left);
+                return vm_eval_function(&method, right, NULL);
+        }
+
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
                 return REAL(left->real - right->integer);
 

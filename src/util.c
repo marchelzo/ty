@@ -98,7 +98,7 @@ slurp(char const *path)
         struct stat st;
         fstat(fd, &st);
 
-        if (false && S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+        if (false && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
                 int n = st.st_size;
 
 #ifdef _WIN32

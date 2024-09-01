@@ -363,7 +363,7 @@ class String : Iterable {
     }
 
     ends?(s) {
-        s in ['', self.slice(-#s)]
+        s == '' || s == self.slice(-#s)
     }
 
     starts?(s) {
@@ -462,6 +462,10 @@ class String : Iterable {
         }
 
         D[#a][#b]
+    }
+
+    -(end) {
+        self.slice(0, -#end if end == self.slice(-#end))
     }
 
     __iter__*() {
