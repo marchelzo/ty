@@ -6651,6 +6651,17 @@ builtin_ty_copy_source(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_ty_strip_source(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.stripSource()", 1);
+
+        Value e = ARG(0);
+        e.src = 0;
+
+        return e;
+}
+
+struct value
 builtin_lex_peek_char(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("ty.lex.peekc()", 0);
