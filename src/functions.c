@@ -6603,26 +6603,36 @@ builtin_ty_parse(int argc, struct value *kwargs)
 
         Arena old = NewArenaGC(1 << 22);
 
-        struct statement **prog = parse(B.items + 1, "(eval)");
+        struct statement **prog;
+        Location stop;
+        Value vstop = NIL;
 
-        if (prog == NULL) {
+        if (!parse_ex(B.items + 1, "(eval)", &prog, &stop)) {
+                vstop = value_tuple(3);
+                vstop.items[0] = INTEGER(stop.s - (B.items + 1));
+                vstop.items[1] = INTEGER(stop.line);
+                vstop.items[2] = INTEGER(stop.col);
+        }
+
+        if (prog == NULL || prog[0]) {
                 ReleaseArena(old);
-                return NIL;
+                return PAIR(NIL, vstop);
         }
 
         if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
                 struct value v = tyexpr(prog[0]->expression);
                 ReleaseArena(old);
-                return v;
+                return PAIR(v, vstop);
         }
 
         if (prog[1] == NULL) {
                 struct value v = tystmt(prog[0]);
                 ReleaseArena(old);
-                return v;
+                return PAIR(v, vstop);
         }
 
         struct statement *multi = Allocate(sizeof *multi);
+        multi->type = STATEMENT_MULTI;
         multi->arena = GetArenaAlloc();
         vec_init(multi->statements);
 
@@ -6634,7 +6644,7 @@ builtin_ty_parse(int argc, struct value *kwargs)
 
         ReleaseArena(old);
 
-        return v;
+        return PAIR(v, vstop);
 }
 
 struct value

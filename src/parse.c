@@ -4594,8 +4594,8 @@ define_top(struct statement *s, char const *doc)
         }
 }
 
-struct statement **
-parse(char const *source, char const *file)
+bool
+parse_ex(char const *source, char const *file, struct statement ***prog_out, Location *err_loc)
 {
         volatile vec(struct statement *) program;
         vec_init(program);
@@ -4617,7 +4617,11 @@ parse(char const *source, char const *file)
         setctx(LEX_PREFIX);
 
         if (setjmp(jb) != 0) {
-                return NULL;
+        Error:
+                VPush(program, NULL);
+                *err_loc = tok()->start;
+                *prog_out = program.items;
+                return false;
         }
 
         while (tok()->type == TOKEN_NEWLINE) {
@@ -4653,7 +4657,7 @@ parse(char const *source, char const *file)
 
         for (int i = 0; i < program.count; ++i) {
                 if (!compiler_import_module(program.items[i])) {
-                        return NULL;
+                        goto Error;
                 }
         }
 
@@ -4748,9 +4752,24 @@ parse(char const *source, char const *file)
         }
 
         VPush(program, NULL);
+        *prog_out = program.items;
 
-        return program.items;
+        return true;
 }
+
+struct statement **
+parse(char const *source, char const *file)
+{
+        struct statement **prog;
+        Location loc;
+
+        if (!parse_ex(source, file, &prog, &loc)) {
+                return NULL;
+        }
+
+        return prog;
+}
+
 
 struct value
 parse_get_token(int i)

@@ -2220,14 +2220,15 @@ Throw:
                 {
                         READVALUE(n);
                         struct try *t;
-                        if (try_stack.count == try_stack.capacity) {
+                        size_t n_tstk = try_stack.count;
+                        if (n_tstk == try_stack.capacity) {
                                 do {
                                         t = mrealloc(NULL, sizeof *t);
                                         vec_push(try_stack, t);
                                 } while (try_stack.count != try_stack.capacity);
-                        } else {
-                                t = try_stack.items[try_stack.count++];
+                                try_stack.count = n_tstk;
                         }
+                        t = try_stack.items[try_stack.count++];
                         if (setjmp(t->jb) != 0) {
                                 break;
                         }
