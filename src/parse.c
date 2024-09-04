@@ -4245,7 +4245,7 @@ parse_class_definition(void)
                                         (
                                                 token(1)->type == TOKEN_EQ &&
                                                 (
-                                                        token(1)->start.col != tok()->end.col + 1 ||
+                                                        token(1)->start.col > tok()->end.col ||
                                                         token(1)->start.line != tok()->end.line
                                                 )
                                         ) ||
