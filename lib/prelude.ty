@@ -158,6 +158,14 @@ class Function : Iter {
     __next__() {
         Some(self())
     }
+
+    &&&(g) {
+        x -> (self(x), g(x))
+    }
+
+    ***(g) {
+        |(x, y)| -> (self(x), g(y))
+    }
 }
 
 class Array : Iterable {

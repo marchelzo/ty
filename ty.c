@@ -111,7 +111,7 @@ execln(char *line)
                         goto Bad;
         }
 
-        snprintf(buffer + 1, sizeof buffer - 2, "print(%s);", line);
+        snprintf(buffer + 1, sizeof buffer - 2, "prettyPrint(%s);", line);
         if (repl_exec(buffer + 1))
                 goto End;
         snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);

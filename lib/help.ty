@@ -3,6 +3,8 @@ import ty
 import ty.lex as lex
 import ty.parse as parse
 import ty.token as tok
+import chalk
+import json
 
 let table = %{}
 
@@ -176,4 +178,166 @@ pub function help(x) {
     os.write(p.stdin, helpString.str!())
     os.close(p.stdin)
     os.waitpid(p.pid)
+}
+
+class TooWideError {}
+
+let defaultColors = {
+    dict:  ['#2A5056', nil],
+    array: ['#2A5056', nil],
+    str:   ['#a9b665', true],
+    int:   ['#d3869b', nil],
+    float: ['#d3869b', nil],
+    null:  ['#89b482', nil],
+    t:     ['#d8a657', nil],
+    field: ['#7daea3', nil],
+    bool:  ['#d3869b', nil]
+}
+
+class Printer {
+    init(width=120, indent=2, colors=defaultColors) {
+        @width = width
+        @indent = indent
+        @out = Blob()
+        @col = 0
+        @depth = 0
+        @colors = tuple(**members(colors).map([fg, b] -> chalk.fg(fg) |> (b ? chalk.bold : id)))
+    }
+
+    save() {
+        (@col, @depth, #@out)
+    }
+
+    restore(state) {
+        let (col, depth, i) = state
+        @out.splice(i)
+        @col = col
+        @depth = depth
+    }
+
+    write(s, pen=id) {
+        @col += #s
+        if @col > @width { throw TooWideError() }
+        @out.push(pen(s))
+    }
+
+    nl(n=0) {
+        @depth += n
+        @out.push('\n')
+        @col = 0
+        self.write(' '.repeat(@indent * @depth))
+    }
+
+    go(x, canPush) {
+        let state = self.save()
+        match x {
+            xs :: Array => {
+                try {
+                    self.write('[', @colors.array)
+                    for (f, x) in ((self.go, x) for x in xs).intersperse((self.write, ', ')) {
+                        f(x)
+                    }
+                    self.write(']', @colors.array)
+                } catch e: TooWideError & canPush {
+                    self.restore(state)
+                    self.write('[', @colors.array)
+                    self.nl(1)
+                    for x, i in xs {
+                        if i > 0 { self.write(','); self.nl() }
+                        self.go(x, true)
+                    }
+                    self.nl(-1)
+                    self.write(']', @colors.array)
+                }
+            },
+
+            d :: Dict => {
+                try {
+                    self.write('{', @colors.dict)
+                    for match ((k, v) for k, v in d).intersperse(', ') {
+                        (k, v) => {
+                            self.write(k, @colors.field)
+                            self.write(': ', chalk.brightGreen)
+                            self.go(v)
+                        },
+
+                        s => {
+                            self.write(s)
+                        }
+                    }
+                    self.write('}', @colors.dict)
+                } catch e: TooWideError & canPush {
+                    self.restore(state)
+                    self.write('{', @colors.dict)
+                    self.nl(1)
+                    for k, v, i in d {
+                        if i > 0 { self.write(','); self.nl() }
+                        self.write(k, @colors.field)
+                        self.write(': ', chalk.brightGreen)
+                        self.go(v, true)
+                    }
+                    self.nl(-1)
+                    self.write('}', @colors.dict)
+                }
+            },
+
+            %t(x) => {
+                self.write("{t}(", @colors.t)
+                self.go(x, canPush)
+                self.write(")", @colors.t)
+            },
+
+            &?isTuple ~> true => {
+                let d = members(x)
+                if d.keys().all?((:: Int)) {
+                    self.go(d.list().sort(by: &0).map(&1), canPush)
+                } else {
+                    self.go(d, canPush)
+                }
+            },
+
+            nil => {
+                self.write('nil', @colors.null)
+            },
+
+            _ :: String => {
+                let s = x.sub('\\', '\\\\')
+                         .sub('\n', '\\n')
+                         .sub('\t', '\\t')
+                         .sub('\r', '\\r')
+                         .sub('"', '\\"')
+                self.write("\"{s}\"", @colors.str)
+            },
+
+            _ :: Bool => {
+                self.write("{x}", @colors.bool)
+            },
+
+            _ :: Int => {
+                self.write("{x}", @colors.int)
+            },
+
+            _ :: Float => {
+                self.write("{x}", @colors.float)
+            },
+
+            _ => {
+                self.write(show(x))
+            }
+        }
+    }
+
+    print(x) {
+        self.restore((0, 0, 0))
+        self.go(x, true)
+        return @out.str()
+    }
+}
+
+pub function prettyPrint(x) {
+    if let $s = slurp('tycolors.json') {
+        print(Printer(colors=tuple(**json.parse(s))).print(x))
+    } else {
+        print(Printer().print(x))
+    }
 }
