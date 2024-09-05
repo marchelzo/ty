@@ -215,9 +215,9 @@ class Printer {
         @depth = depth
     }
 
-    write(s, pen=id) {
+    write(s, pen=id, force) {
         @col += #s
-        if @col > @width { throw TooWideError() }
+        if !force && @col > @width { throw TooWideError() }
         @out.push(pen(s))
     }
 
@@ -228,76 +228,76 @@ class Printer {
         self.write(' '.repeat(@indent * @depth))
     }
 
-    go(x, canPush) {
+    go(x, canPush, force) {
         let state = self.save()
         match x {
             xs :: Array => {
                 try {
-                    self.write('[', @colors.array)
+                    self.write('[', @colors.array, false)
                     for (f, x) in ((self.go, x) for x in xs).intersperse((self.write, ', ')) {
                         f(x)
                     }
-                    self.write(']', @colors.array)
+                    self.write(']', @colors.array, false)
                 } catch e: TooWideError & canPush {
                     self.restore(state)
-                    self.write('[', @colors.array)
+                    self.write('[', @colors.array, force)
                     self.nl(1)
                     for x, i in xs {
-                        if i > 0 { self.write(','); self.nl() }
-                        self.go(x, true)
+                        if i > 0 { self.write(',', id, force); self.nl() }
+                        self.go(x, true, force)
                     }
                     self.nl(-1)
-                    self.write(']', @colors.array)
+                    self.write(']', @colors.array, force)
                 }
             },
 
             d :: Dict => {
                 try {
-                    self.write('{', @colors.dict)
+                    self.write('{', @colors.dict, force)
                     for match ((k, v) for k, v in d).intersperse(', ') {
                         (k, v) => {
-                            self.write(k, @colors.field)
-                            self.write(': ', chalk.brightGreen)
-                            self.go(v)
+                            self.write(k, @colors.field, false)
+                            self.write(': ', chalk.brightGreen, false)
+                            self.go(v, false, false)
                         },
 
                         s => {
-                            self.write(s)
+                            self.write(s, id, false)
                         }
                     }
-                    self.write('}', @colors.dict)
+                    self.write('}', @colors.dict, false)
                 } catch e: TooWideError & canPush {
                     self.restore(state)
-                    self.write('{', @colors.dict)
+                    self.write('{', @colors.dict, force)
                     self.nl(1)
                     for k, v, i in d {
-                        if i > 0 { self.write(','); self.nl() }
-                        self.write(k, @colors.field)
-                        self.write(': ', chalk.brightGreen)
-                        self.go(v, true)
+                        if i > 0 { self.write(',', id, force); self.nl() }
+                        self.write(k, @colors.field, force)
+                        self.write(': ', chalk.brightGreen, force)
+                        self.go(v, true, force)
                     }
                     self.nl(-1)
-                    self.write('}', @colors.dict)
+                    self.write('}', @colors.dict, force)
                 }
             },
 
             %t(x) => {
-                self.write("{t}(", @colors.t)
-                self.go(x, canPush)
-                self.write(")", @colors.t)
+                self.write("{t}(", @colors.t, force)
+                self.go(x, canPush, force)
+                self.write(")", @colors.t, force)
             },
 
             &?isTuple ~> true => {
                 let d = members(x)
                 if d.keys().all?((:: Int)) {
-                    self.go(d.list().sort(by: &0).map(&1), canPush)
+                    self.go(d.list().sort(by: &0).map(&1), canPush, force)
                 } else {
-                    self.go(d, canPush)
+                    self.go(d, canPush, force)
                 }
             },
 
             nil => {
-                self.write('nil', @colors.null)
+                self.write('nil', @colors.null, force)
             },
 
             _ :: String => {
@@ -306,36 +306,36 @@ class Printer {
                          .sub('\t', '\\t')
                          .sub('\r', '\\r')
                          .sub('"', '\\"')
-                self.write("\"{s}\"", @colors.str)
+                self.write("\"{s}\"", @colors.str, force)
             },
 
             _ :: Bool => {
-                self.write("{x}", @colors.bool)
+                self.write("{x}", @colors.bool, force)
             },
 
             _ :: Int => {
-                self.write("{x}", @colors.int)
+                self.write("{x}", @colors.int, force)
             },
 
             _ :: Float => {
-                self.write("{x}", @colors.float)
+                self.write("{x}", @colors.float, force)
             },
 
             _ => {
-                self.write(show(x))
+                self.write(show(x), id, force)
             }
         }
     }
 
     print(x) {
         self.restore((0, 0, 0))
-        self.go(x, true)
+        self.go(x, true, true)
         return @out.str()
     }
 }
 
 pub function prettyPrint(x) {
-    if let $s = slurp('tycolors.json') {
+    if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
         print(Printer(colors=tuple(**json.parse(s))).print(x))
     } else {
         print(Printer().print(x))
