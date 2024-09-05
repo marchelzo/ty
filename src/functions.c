@@ -671,6 +671,23 @@ TooBig:
 }
 
 struct value
+builtin_show(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("show()", 1);
+
+        struct value arg = ARG(0);
+        Value *color = NAMED("color");
+
+        bool use_color = (color == NULL) ? isatty(1) : value_truthy(color);
+
+        char *str = use_color ? value_show_color(&arg) : value_show(&arg);
+        struct value result = STRING_CLONE(str, strlen(str));
+        gc_free(str);
+
+        return result;
+}
+
+struct value
 builtin_str(int argc, struct value *kwargs)
 {
         ASSERT_ARGC_2("str()", 0, 1);
