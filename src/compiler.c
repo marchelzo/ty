@@ -6000,6 +6000,22 @@ tyexpr(struct expression const *e)
         case EXPRESSION_THROW:
                 v = tagged(TyThrow, tyexpr(e->throw), NONE);
                 break;
+        case EXPRESSION_MATCH:
+                v = value_tuple(2);
+                v.items[0] = tyexpr(e->subject);
+                v.items[1] = ARRAY(value_array_new());
+                for (int i = 0; i < e->patterns.count; ++i) {
+                        struct value case_ = value_tuple(2);
+                        case_.items[0] = tyexpr(e->patterns.items[i]);
+                        case_.items[1] = tyexpr(e->thens.items[i]);
+                        value_array_push(
+                                v.items[1].array,
+                                case_
+                        );
+                }
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyMatch);
+                break;
         case EXPRESSION_DICT:
                 v = tagged(
                         TyDict,

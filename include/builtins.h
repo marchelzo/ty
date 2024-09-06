@@ -53,6 +53,7 @@ static struct {
 { .module = NULL,     .name = "defineMethod",      .value = BUILTIN(builtin_define_method)                 },
 { .module = NULL,     .name = "setFinalizer",      .value = BUILTIN(builtin_finalizer)                     },
 { .module = NULL,     .name = "apply",             .value = BUILTIN(builtin_apply)                         },
+{ .module = NULL,     .name = "docRef",            .value = BUILTIN(builtin_doc_ref)                       },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
 { .module = NULL,     .name = "chr",               .value = BUILTIN(builtin_chr)                           },

@@ -21,6 +21,22 @@ macro doc! {
     $$]
 }
 
+doc! Array.sort
+(by: ?Function, cmp: ?Function, desc: ?Bool)
+'''
+    Return a copy of the array with the elements sorted
+    in ascending order.
+
+    by:
+        Sort by(xi) <=> by(xj) instead of xi <=> xj
+
+    cmp:
+        Sort by cmp(xi, xj) instead of xi <=> xj
+
+    desc:
+        When true, reverse the usual sorting order.
+'''
+
 doc! print
 (*args, sep: String = ', ', end: String = '\n', flush: Bool = false)
 '''
@@ -110,7 +126,7 @@ doc! os::exec
 '''
 
 pub function help(x) {
-    let x = unbindMethod(x)
+    let x = docRef(x)
 
     let doc = function (x) {
         return table[x] ?? doc(x)
