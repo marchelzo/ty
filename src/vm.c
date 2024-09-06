@@ -1349,6 +1349,28 @@ GetMember(struct value v, char const *member, unsigned long h, bool b)
                 n = CLASS_FUNCTION;
                 goto ClassLookup;
         case VALUE_CLASS:
+                switch (v.class) {
+                case CLASS_ARRAY:
+                        if ((func = get_array_method(member)) != NULL) {
+                                return PTR((void *)func);
+                        }
+                        break;
+                case CLASS_STRING:
+                        if ((func = get_string_method(member)) != NULL) {
+                                return PTR((void *)func);
+                        }
+                        break;
+                case CLASS_DICT:
+                        if ((func = get_dict_method(member)) != NULL) {
+                                return PTR((void *)func);
+                        }
+                        break;
+                case CLASS_BLOB:
+                        if ((func = get_blob_method(member)) != NULL) {
+                                return PTR((void *)func);
+                        }
+                        break;
+                }
                 vp = class_lookup_static(v.class, member, h);
                 if (vp == NULL) {
                         vp = class_lookup_method(v.class, member, h);

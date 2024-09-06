@@ -2716,7 +2716,7 @@ infix_member_access(struct expression *left)
 
         expect(TOKEN_IDENTIFIER);
 
-        if (token(1)->type != '(') {
+        if (token(1)->type != '(' || token(1)->start.line != tok()->end.line) {
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->member_name = tok()->identifier;
                 consume(TOKEN_IDENTIFIER);

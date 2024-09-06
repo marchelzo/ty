@@ -6132,6 +6132,22 @@ builtin_bind(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_doc_ref(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("docRef()", 1);
+
+        Value f = ARG(0);
+
+        if (f.type == VALUE_METHOD) {
+                return *f.method;
+        } else if (f.type == VALUE_BUILTIN_METHOD) {
+                return PTR((void *)f.builtin_method);
+        } else {
+                return f;
+        }
+}
+
+struct value
 builtin_unbind(int argc, struct value *kwargs)
 {
         ASSERT_ARGC("unbindMethod()", 1);

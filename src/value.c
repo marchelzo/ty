@@ -166,7 +166,7 @@ hash(struct value const *val)
         case VALUE_TUPLE:             return tpl_hash(val);
         case VALUE_DICT:              return ptr_hash(val->dict);
         case VALUE_OBJECT:            return obj_hash(val);
-        case VALUE_METHOD:            return ptr_hash(val->method) ^ ptr_hash(val->this);
+        case VALUE_METHOD:            return ptr_hash(val->method) ^ str_hash((void *)val->this, sizeof (Value));
         case VALUE_BUILTIN_METHOD:    return ptr_hash(val->builtin_method) ^ ptr_hash(val->this);
         case VALUE_FUNCTION:          return ptr_hash(val->builtin_function);
         case VALUE_BUILTIN_FUNCTION:  return ptr_hash(val->info) ^ ptr_hash(val->env);
@@ -959,7 +959,7 @@ value_test_equality(struct value const *v1, struct value const *v2)
         case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
         case VALUE_DICT:             if (v1->dict != v2->dict)                                                      return false; break;
         case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
-        case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || v1->this != v2->this)          return false; break;
+        case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || memcmp(v1->this, v2->this, sizeof (Value)) != 0) return false; break;
         case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
         case VALUE_CLASS:            if (v1->class != v2->class)                                                    return false; break;
         case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
