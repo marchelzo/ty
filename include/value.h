@@ -102,6 +102,7 @@ struct value;
         X(Let) \
         X(Class) \
         X(Spread) \
+        X(Splat) \
         X(Gather) \
         X(Kwargs) \
         X(Add) \

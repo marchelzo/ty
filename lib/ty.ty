@@ -187,12 +187,13 @@ pub function walk(tree, f) {
         ),
 
         ty.Spread(spread) => ty.Spread(walk(spread, f)),
+        ty.Splat (splat)  => ty.Splat (walk(splat, f)),
 
         ty.Count(xs) => ty.Count(walk(xs, f)),
 
-        ty.PreInc(x)  => ty.PreInc(walk(x, f)),
+        ty.PreInc (x) => ty.PreInc (walk(x, f)),
         ty.PostInc(x) => ty.PostInc(walk(x, f)),
-        ty.PreDec(x)  => ty.PreDec(walk(x, f)),
+        ty.PreDec (x) => ty.PreDec (walk(x, f)),
         ty.PostDec(x) => ty.PostDec(walk(x, f)),
 
         ty.Let(target, x) => ty.Let(

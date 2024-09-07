@@ -211,7 +211,7 @@ let defaultColors = {
     bool:  ['#d3869b', nil]
 }
 
-function sanitizeString(s) {
+pub function sanitizeString(s) {
     s.sub(/[\x00-\x1F\x7F-\xFF"\\]/, m -> match m {
         '"'  => '\\"',
         '\\' => '\\\\',

@@ -1211,11 +1211,16 @@ class Iter : Iterable {
         return n
     }
 
-    interleave*(ys) {
+    interleave*(ys, long=true) {
         ys = ys.__iter__()
         for x in self {
             yield x
             if let Some(y) = ys.__next__() {
+                yield y
+            }
+        }
+        if long {
+            for y in ys {
                 yield y
             }
         }
@@ -2353,6 +2358,310 @@ function memoized(f) {
         let kwargs = kwargs.list().sort(by: &0)
         memo[(args, kwargs)]
     }
+}
+
+function walk(tree, f) {
+    if tree == nil { return nil }
+
+
+    let tree = ty.copySource(tree, match tree {
+        ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
+
+        ty.ArrayItem(x) => ty.ArrayItem(
+            item: walk(x.item, f),
+            cond: walk(x.cond, f),
+            optional: x.optional
+        ),
+
+        ty.Call(call) => ty.Call(
+            func: walk(call.func, f),
+            args: [walk(arg, f) for arg in call.args]
+        ),
+
+        ty.Arg(arg) => ty.Arg(
+            arg: walk(arg.arg, f),
+            cond: walk(arg.cond, f),
+            name: arg.name
+        ),
+
+        ty.MethodCall(call) => ty.MethodCall(
+            object: walk(call.object, f),
+            args: [walk(arg, f) for arg in call.args],
+            method: call.method
+        ),
+
+        ty.Record(record) => ty.Record([walk(entry, f) for entry in record]),
+
+        ty.RecordEntry(entry) => ty.RecordEntry(
+            item: walk(entry.item, f),
+            name: entry.name,
+            cond: walk(entry.cond, f),
+            optional: entry.optional
+        ),
+
+        ty.Add(a, b) => ty.Add(walk(a, f), walk(b, f)),
+        ty.Mul(a, b) => ty.Mul(walk(a, f), walk(b, f)),
+        ty.Div(a, b) => ty.Div(walk(a, f), walk(b, f)),
+        ty.Sub(a, b) => ty.Sub(walk(a, f), walk(b, f)),
+        ty.Mod(a, b) => ty.Mod(walk(a, f), walk(b, f)),
+        ty.LT(a, b) => ty.LT(walk(a, f), walk(b, f)),
+        ty.LEQ(a, b) => ty.LEQ(walk(a, f), walk(b, f)),
+        ty.GT(a, b) => ty.GT(walk(a, f), walk(b, f)),
+        ty.GEQ(a, b) => ty.GEQ(walk(a, f), walk(b, f)),
+        ty.Cmp(a, b) => ty.Cmp(walk(a, f), walk(b, f)),
+        ty.In(a, b) => ty.In(walk(a, f), walk(b, f)),
+        ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
+
+        ty.Func(func),
+        ty.ImplicitFunc(func),
+        ty.FuncDef(func) => type(tree)(
+            name: func.name,
+            decorators: [walk(dec, f) for dec in func.decorators],
+            params: [walk(param, f) for param in func.params],
+            rt: walk(func.rt, f),
+            body: walk(func.body, f)
+        ),
+
+        ty.Param(param) => ty.Param(
+            name: param.name,
+            constraint: walk(param.constraint, f),
+            default: walk(param.default, f)
+        ),
+
+        ty.Class(c) => ty.Class(
+            name: c.name,
+            super: walk(c.super, f),
+            methods: [walk(m, f) for m in c.methods],
+            getters: [walk(g, f) for g in c.getters],
+            setters: [walk(s, f) for s in c.setters],
+            statics: [walk(s, f) for s in c.statics]
+        ),
+
+        ty.Cond(cond, a, b) => ty.Cond(
+            walk(cond, f),
+            walk(a, f),
+            walk(b, f)
+        ),
+
+        ty.If(conds, a, b) => ty.If(
+            [walk(cond, f) for cond in conds],
+            walk(a, f),
+            walk(b, f)
+        ),
+
+        ty.IfNot(conds, a, b) => ty.IfNot(
+            [walk(cond, f) for cond in conds],
+            walk(a, f),
+            walk(b, f)
+        ),
+
+        ty.Eq(a, b)    => ty.Eq(walk(a, f), walk(b, f)),
+        ty.NotEq(a, b) => ty.NotEq(walk(a, f), walk(b, f)),
+        ty.And(a, b)   => ty.And(walk(a, f), walk(b, f)),
+        ty.Or(a, b)    => ty.Or(walk(a, f), walk(b, f)),
+
+        ty.UserOp(op, a, b) => ty.UserOp(
+            op,
+            walk(a, f),
+            walk(b, f)
+        ),
+
+        ty.MemberAccess(object, member) => ty.MemberAccess(
+            walk(object, f),
+            member
+        ),
+
+        ty.Return(values) => ty.Return(*(walk(v, f) for v in values)),
+
+        ty.Yield(values) => ty.Yield([walk(v, f) for v in values]),
+
+        ty.Block(block) => ty.Block([walk(s, f) for s in block]),
+
+        ty.Multi(multi) => ty.Multi([walk(s, f) for s in multi]),
+
+        ty.While(conds, body) => ty.While(
+            [walk(c, f) for c in conds],
+            walk(body, f)
+        ),
+
+        ty.Each(each) => ty.Each(
+            pattern: [walk(p, f) for p in each.pattern],
+            iter: walk(each.iter, f),
+            expr: walk(each.expr, f),
+            cond: walk(each.cond, f)
+        ),
+
+        ty.For(init, cond, next, body) => ty.For(
+            walk(init, f),
+            walk(cond, f),
+            walk(next, f),
+            walk(body, f)
+        ),
+
+        ty.Match(subject, arms) => ty.Match(
+            walk(subject, f),
+            [(walk(pattern, f), walk(value, f)) for (pattern, value) in arms]
+        ),
+
+        ty.WhileMatch(subject, arms) => ty.WhileMatch(
+            walk(subject, f),
+            [(walk(pattern, f), walk(value, f)) for (pattern, value) in arms]
+        ),
+
+        ty.Defer(func) => ty.Defer(walk(func, f)),
+
+        ty.Eval(code) => ty.Eval(walk(code, f)),
+
+        ty.Throw(x) => ty.Throw(walk(x, f)),
+
+        ty.Try({body, catches, always}) => ty.Try(
+            body: walk(body, f),
+            catches: [(walk(p, f), walk(h, f)) for (p, h) in catches],
+            always: walk(always, f)
+        ),
+
+        ty.Break(b) => ty.Break(value: walk(b.value, f), depth: b.depth),
+
+        ty.Dict(dict) => ty.Dict(
+            items: [walk(item, f) for item in dict.items],
+            default: walk(dict.default, f)
+        ),
+
+        ty.DictItem(a, b) => ty.DictItem(
+            walk(a, f),
+            walk(b, f)
+        ),
+
+        ty.Subscript(xs, i) => ty.Subscript(
+            walk(xs, f),
+            walk(i, f)
+        ),
+
+        ty.Generator(gen) => ty.Generator(walk(gen, f)),
+
+        ty.ArrayCompr({items, pattern, iter, cond}) => ty.ArrayCompr(
+            items: [walk(item, f) for item in items],
+            pattern: walk(pattern, f),
+            iter: walk(iter, f),
+            cond: walk(cond, f)
+        ),
+
+        ty.Spread(spread) => ty.Spread(walk(spread, f)),
+        ty.Splat (splat)  => ty.Splat (walk(splat, f)),
+
+        ty.Count(xs) => ty.Count(walk(xs, f)),
+
+        ty.PreInc (x) => ty.PreInc (walk(x, f)),
+        ty.PostInc(x) => ty.PostInc(walk(x, f)),
+        ty.PreDec (x) => ty.PreDec (walk(x, f)),
+        ty.PostDec(x) => ty.PostDec(walk(x, f)),
+
+        ty.Let(target, x) => ty.Let(
+            walk(target, f),
+            walk(x, f)
+        ),
+
+        ty.Assign(target, x) => ty.Assign(
+            walk(target, f),
+            walk(x, f)
+        ),
+
+        ty.With(bindings, body) -> ty.With(
+            [walk(binding, f) for binding in bindings],
+            walk(body, f)
+        ),
+
+        ty.SpecialString(parts) => ty.SpecialString(
+            [walk(part, f) for part in parts]
+        ),
+
+        ty.Wtf(a, b) => ty.Wtf(
+            walk(a, f),
+            walk(b, f)
+        ),
+
+        ty.TagPattern(id, pattern) => ty.TagPattern(
+            id,
+            walk(pattern, f)
+        ),
+
+        ty.View(view, pattern) => ty.View(walk(view, f), walk(pattern, f)),
+        ty.NotNilView(view, pattern) => ty.NotNilView(walk(view, f), walk(pattern, f)),
+
+        _ => tree
+    })
+
+    return f(tree)
+}
+
+macro __desugar_partial__(call) {
+    let (args, mkcall) = match call {
+        %t({args, *call}) => (args, args -> t({*call, args}))
+    }
+
+    function canEval?(e) {
+        let hole = false
+        ty.walk(e, e -> match e {
+            ty.Id({name: /^_\d*$/, *}) => do { hole = true; e },
+            _ => e
+        })
+        return !hole
+    }
+
+    args.map!(ty.Arg({arg, *rest}) -> ty.Arg({
+        arg: ty.walk(arg, e -> canEval?(e) ? ty.Value(ty.eval(e)) : e),
+        *rest
+    }))
+
+    let argvId = ty.gensym()
+    let kwargsId = ty.gensym()
+
+    let argv = ty.Id(name: argvId)
+    let kwargs = ty.Id(name: kwargsId)
+
+    let i = 0
+    args.map!(e -> ty.walk(e, e -> match e {
+        ty.Id({name: '_', *})        => ty.Subscript(argv, ty.Int(i++)),
+        ty.Id({name: /^_(\d+)$/, *}) => ty.Subscript(argv, ty.Int(int(_1) - 1)),
+        _ => e
+    }))
+
+    args.push(ty.Arg({arg: ty.Spread($$[ $$argv.slice($$(ty.Int(i))) $$])}))
+    args.push(ty.Arg({arg: ty.Splat(kwargs), name: '*'}))
+
+    /*
+    let kws = %{}
+    let pos = []
+
+    for match args {
+        ty.Arg({arg, name: $name, *}) => kws[name] = arg,
+        arg                           => pos.push(arg)
+    }
+
+    let vPos = ty.Value(pos)
+    let vKws = ty.Value(kws)
+    */
+
+    ty.Func({
+        params: [ty.Gather(argvId), ty.Kwargs(kwargsId)],
+        body: mkcall(args)
+        /*
+        body: ty.Multi([
+            $$[
+                for (x, i) in $$vPos {
+                    while $$argv.len() < i { $$argv.push(nil) }
+                    $$argv.insert(i, x)
+                }
+
+                let kws = $$vKws + $$kwargs
+            $$],
+            mkcall([
+                ty.Arg({arg: ty.Spread(argv)}),
+                ty.Arg({arg: ty.Splat($$[ kws $$]), name: '*'})
+            ])
+        ])
+        */
+    })
 }
 
 operator **   10 right
