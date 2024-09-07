@@ -2554,6 +2554,9 @@ function walk(tree, f) {
 
         ty.Count(xs) => ty.Count(walk(xs, f)),
 
+        ty.Not(x) => ty.Not(walk(x, f)),
+        ty.Neg(x) => ty.Neg(walk(x, f)),
+
         ty.PreInc (x) => ty.PreInc (walk(x, f)),
         ty.PostInc(x) => ty.PostInc(walk(x, f)),
         ty.PreDec (x) => ty.PreDec (walk(x, f)),
