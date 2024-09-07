@@ -2974,6 +2974,44 @@ has_any_names(Expr const *e)
 }
 
 static void
+emit_record_rest(Expr const *rec, int i, bool is_assignment)
+{
+        emit_tgt(rec->es.items[i]->symbol, state.fscope, true);
+        emit_instr(INSTR_RECORD_REST);
+
+        size_t bad_assign_jump;
+
+        if (!is_assignment) {
+                VPush(state.match_fails, state.code.count);
+        } else {
+                bad_assign_jump = state.code.count;
+        }
+
+        // How far to jump in case this fails (i.e. the subject is not a record).
+        // Overwritten later.
+        emit_int(0);
+
+        size_t sz_off = state.code.count;
+        emit_int(0);
+
+        VPush(state.code, '\0');
+        for (int j = 0; j < i; ++j) {
+                if (rec->names.items[j] != NULL) {
+                        emit_string(rec->names.items[j]);
+                }
+        }
+
+        PATCH_JUMP(sz_off);
+
+        if (is_assignment) {
+                emit_instr(INSTR_JUMP);
+                emit_int(1);
+                PATCH_JUMP(bad_assign_jump);
+                emit_instr(INSTR_BAD_MATCH);
+        }
+}
+
+static void
 emit_try_match_(struct expression const *pattern)
 {
         size_t start = state.code.count;
@@ -3160,8 +3198,7 @@ emit_try_match_(struct expression const *pattern)
                 for (int i = 0; i < pattern->es.count; ++i) {
                         if (pattern->es.items[i]->type == EXPRESSION_MATCH_REST) {
                                 if (has_any_names(pattern)) {
-                                        emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
-                                        emit_instr(INSTR_ASSIGN);
+                                        emit_record_rest(pattern, i, false);
                                 } else {
                                         emit_tgt(pattern->es.items[i]->symbol, state.fscope, true);
                                         emit_instr(INSTR_TUPLE_REST);
@@ -4196,8 +4233,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                 for (int i = 0; i < target->es.count; ++i) {
                         if (target->es.items[i]->type == EXPRESSION_MATCH_REST) {
                                 if (has_any_names(target)) {
-                                        emit_target(target->es.items[i], def);
-                                        emit_instr(INSTR_ASSIGN);
+                                        emit_record_rest(target, i, true);
                                 } else {
                                         // FIXME: should we handle elements after the match-rest?
                                         emit_target(target->es.items[i], def);

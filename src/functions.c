@@ -6284,9 +6284,70 @@ builtin_subclass(int argc, struct value *kwargs)
 }
 
 struct value
+builtin_members_list(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("members()", 1);
+
+        struct value o = ARG(0);
+
+        Array *a = value_array_new();
+        Value items = ARRAY(a);
+
+        gc_push(&items);
+
+        switch (o.type) {
+        case VALUE_OBJECT:
+                for (int i = 0; i < TABLE_SIZE; ++i) {
+                        for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
+                                char const *key = o.object->buckets[i].names.items[v];
+                                Value member = value_tuple(2);
+                                NOGC(member.items);
+                                member.items[0] = STRING_CLONE(key, strlen(key));
+                                member.items[1] = o.object->buckets[i].values.items[v];
+                                NOGC(member.items[0].string);
+                                value_array_push(a, member);
+                                OKGC(member.items[0].string);
+                                OKGC(member.items);
+                        }
+                }
+
+                break;
+        case VALUE_TUPLE:
+                for (int i = 0; i < o.count; ++i) {
+                        Value entry = value_tuple(2);
+                        Value *pair = entry.items;
+                        NOGC(pair);
+                        value_array_push(a, entry);
+                        if (o.names != NULL && o.names[i] != NULL) {
+                                pair[0] = STRING_CLONE(o.names[i], strlen(o.names[i]));
+                                pair[1] = o.items[i];
+                        } else {
+                                pair[0] = INTEGER(i);
+                                pair[1] = o.items[i];
+                        }
+                        OKGC(pair);
+                }
+
+                break;
+        default:
+                gc_pop();
+                return NIL;
+        }
+
+        gc_pop();
+
+        return items;
+}
+
+struct value
 builtin_members(int argc, struct value *kwargs)
 {
-        ASSERT_ARGC("members", 1);
+        ASSERT_ARGC("members()", 1);
+
+        Value *list = NAMED("list");
+        if (list != NULL && value_truthy(list)) {
+                return builtin_members_list(argc, NULL);
+        }
 
         struct value o = ARG(0);
 
