@@ -5882,6 +5882,11 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(v.tags, TySpread);
                 break;
+        case EXPRESSION_SPLAT:
+                v = tyexpr(e->value);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(v.tags, TySplat);
+                break;
         case EXPRESSION_ARRAY_COMPR:
         {
                 Array *avElems = value_array_new();
@@ -7008,6 +7013,14 @@ cexpr(struct value *v)
                 struct value v_ = *v;
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_SPREAD;
+                e->value = cexpr(&v_);
+                break;
+        }
+        case TySplat:
+        {
+                struct value v_ = *v;
+                v_.tags = tags_pop(v_.tags);
+                e->type = EXPRESSION_SPLAT;
                 e->value = cexpr(&v_);
                 break;
         }

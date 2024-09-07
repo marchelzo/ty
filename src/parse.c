@@ -198,6 +198,9 @@ static struct expression *
 infix_member_access(struct expression *e);
 
 static struct expression *
+infix_function_call(struct expression *left);
+
+static struct expression *
 prefix_parenthesis(void);
 
 static struct expression *
@@ -208,6 +211,9 @@ prefix_percent(void);
 
 static struct expression *
 prefix_implicit_lambda(void);
+
+static struct expression *
+prefix_identifier(void);
 
 inline static struct token *
 tok(void);
@@ -594,6 +600,18 @@ have_keywords(int kw1, int kw2)
                token(1)->type == TOKEN_KEYWORD && token(1)->keyword == kw2;
 }
 
+inline static bool
+have_without_nl(int t)
+{
+        return tok()->type == t && tok()->start.line == End.line;
+}
+
+inline static bool
+next_without_nl(int t)
+{
+        return token(1)->type == t && token(1)->start.line == tok()->end.line;
+}
+
 static bool
 have_not_in(void)
 {
@@ -932,6 +950,13 @@ prefix_dollar(void)
                 return prefix_implicit_lambda();
         }
 
+        if (next_without_nl('(')) {
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->module = NULL;
+                tok()->identifier = "id";
+                return prefix_identifier();
+        }
+
         struct expression *e = mkexpr();
 
         consume('$');
@@ -974,15 +999,13 @@ prefix_identifier(void)
         if (strchr(e->identifier, '$') != NULL) {
                 e->identifier = sclonea(e->identifier);
                 *strchr(e->identifier, '$') = '\0';
-                struct expression *macro = mkexpr();
-                macro->type = EXPRESSION_MACRO_INVOCATION;
-                macro->macro.m = e;
-                macro->macro.e = mkexpr();
-                macro->macro.e->type = EXPRESSION_STATEMENT;
-                macro->macro.e->statement = parse_statement(0);
-                macro->start = e->start;
-                macro->end = End;
-                return macro;
+                Expr *call = infix_function_call(e);
+                Expr *f = mkfunc();
+                f->type = EXPRESSION_IMPLICIT_FUNCTION;
+                f->body = mkstmt();
+                f->body->type = STATEMENT_EXPRESSION;
+                f->body->expression = call;
+                return f;
         }
 
         // TODO: maybe get rid of this
@@ -1597,6 +1620,118 @@ gencompr(struct expression *e)
         VPush(g->body->each.body->expression->es, e);
         g->end = End;
         return g;
+}
+
+static bool
+try_parse_flag(expression_vector *kwargs, name_vector *kws)
+{
+        if (tok()->type != ':' && (tok()->type != TOKEN_BANG || !next_without_nl(':'))) {
+                return false;
+        }
+
+        bool flag = (tok()->type == ':') || (next(), false);
+        next();
+
+        expect(TOKEN_IDENTIFIER);
+
+        Expr *arg = mkexpr();
+        arg->type = EXPRESSION_BOOLEAN;
+        arg->boolean = flag;
+
+        VPush(*kwargs, arg);
+        VPush(*kws, tok()->identifier);
+
+        next();
+
+        return true;
+}
+
+static void
+parse_method_args(Expr *e)
+{
+        vec_init(e->method_args);
+        vec_init(e->mconds);
+        vec_init(e->method_kwargs);
+        vec_init(e->method_kws);
+
+        consume('(');
+
+        setctx(LEX_PREFIX);
+
+        if (tok()->type == ')') {
+                goto End;
+        } else if (try_parse_flag(&e->method_kwargs, &e->method_kws)) {
+                ;
+        } else if (tok()->type == TOKEN_STAR) {
+                struct expression *arg = mkexpr();
+                next();
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        arg->type = EXPRESSION_SPLAT;
+                } else {
+                        arg->type = EXPRESSION_SPREAD;
+                }
+                arg->value = parse_expr(0);
+                arg->start = arg->value->start;
+                if (arg->type == EXPRESSION_SPLAT) {
+                        VPush(e->method_kwargs, arg);
+                        VPush(e->method_kws, "*");
+                } else {
+                        VPush(e->method_args, arg);
+                        VPush(e->mconds, try_cond());
+                }
+        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                VPush(e->method_kws, tok()->identifier);
+                next();
+                next();
+                VPush(e->method_kwargs, parse_expr(0));
+        } else {
+                VPush(e->method_args, parse_expr(0));
+                VPush(e->mconds, try_cond());
+        }
+
+        if (have_keyword(KEYWORD_FOR)) {
+                *vec_last(e->method_args) = gencompr(*vec_last(e->method_args));
+        }
+
+        while (tok()->type == ',') {
+                next();
+                setctx(LEX_PREFIX);
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        struct expression *arg = mkexpr();
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                arg->type = EXPRESSION_SPLAT;
+                        } else {
+                                arg->type = EXPRESSION_SPREAD;
+                        }
+                        arg->value = parse_expr(0);
+                        arg->start = arg->value->start;
+                        if (arg->type == EXPRESSION_SPLAT) {
+                                VPush(e->method_kwargs, arg);
+                                VPush(e->method_kws, "*");
+                        } else {
+                                VPush(e->method_args, arg);
+                                VPush(e->mconds, try_cond());
+                        }
+                } else if (try_parse_flag(&e->method_kwargs, &e->method_kws)) {
+                        ;
+                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
+                        VPush(e->method_kws, tok()->identifier);
+                        next();
+                        next();
+                        VPush(e->method_kwargs, parse_expr(0));
+                } else {
+                        VPush(e->method_args, parse_expr(0));
+                        VPush(e->mconds, try_cond());
+                }
+        }
+
+End:
+        consume(')');
+
+        e->end = End;
 }
 
 inline static bool
@@ -2232,10 +2367,10 @@ prefix_implicit_method(void)
                 expect(TOKEN_IDENTIFIER);
 
                 e->type = EXPRESSION_METHOD_CALL;
-                e->sc = NULL;
                 e->maybe = maybe;
                 e->object = o;
                 e->method_name = tok()->identifier;
+
                 vec_init(e->method_args);
                 vec_init(e->mconds);
                 vec_init(e->method_kwargs);
@@ -2244,19 +2379,7 @@ prefix_implicit_method(void)
                 next();
 
                 if (tok()->type == '(') {
-                        next();
-
-                        setctx(LEX_PREFIX);
-
-                        while (tok()->type != ')') {
-                                VPush(e->method_args, parse_expr(0));
-                                VPush(e->mconds, try_cond());
-                                if (tok()->type != ')') {
-                                        consume(',');
-                                }
-                        }
-
-                        consume(')');
+                        parse_method_args(e);
                 }
         }
 
@@ -2462,6 +2585,24 @@ mkcall(Expr *func)
         return e;
 }
 
+static Expr *
+mkpartial(Expr *sugared)
+{
+        Expr *fun = mkexpr();
+        fun->type = EXPRESSION_IDENTIFIER;
+        fun->identifier = "__desugar_partial__";
+        fun->module = NULL;
+
+        Expr *call = mkcall(fun);
+        VPush(call->args, sugared);
+        VPush(call->fconds, NULL);
+
+        call->start = sugared->start;
+        call->end = sugared->end;
+
+        return call;
+}
+
 /* * * * | infix parsers | * * * */
 static struct expression *
 infix_function_call(struct expression *left)
@@ -2496,6 +2637,8 @@ infix_function_call(struct expression *left)
                                 VPush(e->args, arg);
                                 VPush(e->fconds, try_cond());
                         }
+                } else if (try_parse_flag(&e->kwargs, &e->kws)) {
+                        VPush(e->fkwconds, NULL);
                 } else if (
                         tok()->type == TOKEN_IDENTIFIER &&
                         (
@@ -2539,6 +2682,8 @@ infix_function_call(struct expression *left)
                                 VPush(e->args, arg);
                                 VPush(e->fconds, try_cond());
                         }
+                } else if (try_parse_flag(&e->kwargs, &e->kws)) {
+                        VPush(e->fkwconds, NULL);
                 } else if (
                         tok()->type == TOKEN_IDENTIFIER &&
                         (
@@ -2715,98 +2860,25 @@ infix_member_access(struct expression *left)
         e->object = left;
 
         expect(TOKEN_IDENTIFIER);
+        char *id = tok()->identifier;
+        consume(TOKEN_IDENTIFIER);
 
-        if (token(1)->type != '(' || token(1)->start.line != tok()->end.line) {
+        if (!have_without_nl('(') && !have_without_nl('$')) {
                 e->type = EXPRESSION_MEMBER_ACCESS;
-                e->member_name = tok()->identifier;
-                consume(TOKEN_IDENTIFIER);
+                e->member_name = id;
                 e->end = End;
                 return e;
         }
 
+        bool partial = (tok()->type == '$') && (next(), true);
+
+        e->method_name = id;
         e->type = EXPRESSION_METHOD_CALL;
-        e->sc = NULL;
-        e->method_name = tok()->identifier;
-        consume(TOKEN_IDENTIFIER);
-        vec_init(e->method_args);
-        vec_init(e->mconds);
-        vec_init(e->method_kwargs);
-        vec_init(e->method_kws);
+        parse_method_args(e);
 
-        consume('(');
-
-        setctx(LEX_PREFIX);
-
-        if (tok()->type == ')') {
-                goto End;
-        } else if (tok()->type == TOKEN_STAR) {
-                struct expression *arg = mkexpr();
-                next();
-                if (tok()->type == TOKEN_STAR) {
-                        next();
-                        arg->type = EXPRESSION_SPLAT;
-                } else {
-                        arg->type = EXPRESSION_SPREAD;
-                }
-                arg->value = parse_expr(0);
-                arg->start = arg->value->start;
-                if (arg->type == EXPRESSION_SPLAT) {
-                        VPush(e->method_kwargs, arg);
-                        VPush(e->method_kws, "*");
-                } else {
-                        VPush(e->method_args, arg);
-                        VPush(e->mconds, try_cond());
-                }
-        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                VPush(e->method_kws, tok()->identifier);
-                next();
-                next();
-                VPush(e->method_kwargs, parse_expr(0));
-        } else {
-                VPush(e->method_args, parse_expr(0));
-                VPush(e->mconds, try_cond());
-        }
-
-        if (have_keyword(KEYWORD_FOR)) {
-                *vec_last(e->method_args) = gencompr(*vec_last(e->method_args));
-        }
-
-        while (tok()->type == ',') {
-                next();
-                setctx(LEX_PREFIX);
-                if (tok()->type == TOKEN_STAR) {
-                        next();
-                        struct expression *arg = mkexpr();
-                        if (tok()->type == TOKEN_STAR) {
-                                next();
-                                arg->type = EXPRESSION_SPLAT;
-                        } else {
-                                arg->type = EXPRESSION_SPREAD;
-                        }
-                        arg->value = parse_expr(0);
-                        arg->start = arg->value->start;
-                        if (arg->type == EXPRESSION_SPLAT) {
-                                VPush(e->method_kwargs, arg);
-                                VPush(e->method_kws, "*");
-                        } else {
-                                VPush(e->method_args, arg);
-                                VPush(e->mconds, try_cond());
-                        }
-                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                        VPush(e->method_kws, tok()->identifier);
-                        next();
-                        next();
-                        VPush(e->method_kwargs, parse_expr(0));
-                } else {
-                        VPush(e->method_args, parse_expr(0));
-                        VPush(e->mconds, try_cond());
-                }
-        }
-
-End:
-        consume(')');
         e->end = End;
-        return e;
+
+        return partial ? mkpartial(e) : e;
 }
 
 static struct expression *
@@ -2944,6 +3016,13 @@ infix_kw_in(struct expression *left)
         e->end = e->right->end;
 
         return e;
+}
+
+static Expr *
+infix_dollar(Expr *left)
+{
+        next();
+        return mkpartial(infix_function_call(left));
 }
 
 static struct expression *
@@ -3154,6 +3233,12 @@ get_infix_parser(void)
         case TOKEN_AND:            return infix_and;
         case TOKEN_USER_OP:        return infix_user_op;
         case TOKEN_QUESTION:       return infix_conditional;
+
+        case '$':
+                if (token(1)->type == '(' && token(1)->start.line == tok()->start.line) {
+                        return infix_dollar;
+                }
+
         default:                   return NULL;
         }
 
@@ -3188,6 +3273,7 @@ get_infix_prec(void)
         setctx(LEX_INFIX);
 
         switch (tok()->type) {
+        case '$':                  return next_without_nl('(') ? 13 : -3;
         case '.':                  return 12;
         case TOKEN_DOT_MAYBE:      return 12;
 
