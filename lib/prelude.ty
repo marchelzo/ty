@@ -984,7 +984,7 @@ class Iterable {
         @__iter__().repeat(n)
     }
 
-    all?(pred) {
+    all?(pred=id) {
         @__iter__().all?(pred)
     }
 
@@ -1424,7 +1424,7 @@ class Iter : Iterable {
         return @list().median()
     }
 
-    all?(pred) {
+    all?(pred=id) {
         for x in self {
             if !pred(x) { return false }
         }
@@ -2369,8 +2369,8 @@ function walk(tree, f) {
 
         ty.ArrayItem(x) => ty.ArrayItem(
             item: walk(x.item, f),
-            cond: walk(x.cond, f),
-            optional: x.optional
+            cond: walk(x.?cond, f),
+            optional: x.?optional
         ),
 
         ty.Call(call) => ty.Call(
@@ -2380,8 +2380,8 @@ function walk(tree, f) {
 
         ty.Arg(arg) => ty.Arg(
             arg: walk(arg.arg, f),
-            cond: walk(arg.cond, f),
-            name: arg.name
+            cond: walk(arg.?cond, f),
+            name: arg.?name
         ),
 
         ty.MethodCall(call) => ty.MethodCall(
@@ -2394,9 +2394,9 @@ function walk(tree, f) {
 
         ty.RecordEntry(entry) => ty.RecordEntry(
             item: walk(entry.item, f),
-            name: entry.name,
-            cond: walk(entry.cond, f),
-            optional: entry.optional
+            name: entry.?name,
+            cond: walk(entry.?cond, f),
+            optional: entry.?optional
         ),
 
         ty.Add(a, b) => ty.Add(walk(a, f), walk(b, f)),
@@ -2411,6 +2411,9 @@ function walk(tree, f) {
         ty.Cmp(a, b) => ty.Cmp(walk(a, f), walk(b, f)),
         ty.In(a, b) => ty.In(walk(a, f), walk(b, f)),
         ty.NotIn(a, b) => ty.NotIn(walk(a, f), walk(b, f)),
+
+        ty.Range(a, b) => ty.Range(walk(a, f), walk(b, f)),
+        ty.IncRange(a, b) => ty.IncRange(walk(a, f), walk(b, f)),
 
         ty.Func(func),
         ty.ImplicitFunc(func),
@@ -2599,12 +2602,21 @@ macro __desugar_partial__(call) {
         %t({args, *call}) => (args, args -> t({*call, args}))
     }
 
+    let depth = 0
+
     function canEval?(e) {
         let hole = false
+
         ty.walk(e, e -> match e {
-            ty.Id({name: /^_\d*$/, *}) => do { hole = true; e },
+            ty.Id({name: /^(_+)\d*$/, *}) => do {
+                hole = true
+                depth = max(depth, #_1)
+                return e
+            },
+
             _ => e
         })
+
         return !hole
     }
 
@@ -2613,55 +2625,40 @@ macro __desugar_partial__(call) {
         *rest
     }))
 
-    let argvId = ty.gensym()
-    let kwargsId = ty.gensym()
-
-    let argv = ty.Id(name: argvId)
-    let kwargs = ty.Id(name: kwargsId)
-
-    let i = 0
     args.map!(e -> ty.walk(e, e -> match e {
-        ty.Id({name: '_', *})        => ty.Subscript(argv, ty.Int(i++)),
-        ty.Id({name: /^_(\d+)$/, *}) => ty.Subscript(argv, ty.Int(int(_1) - 1)),
+        ty.Id({name: /^(_+)(\d*)$/, *}) => ty.Id({name: '_'.repeat(depth - #_1 + 1) + _2}),
         _ => e
     }))
 
-    args.push(ty.Arg({arg: ty.Spread($$[ $$argv.slice($$(ty.Int(i))) $$])}))
-    args.push(ty.Arg({arg: ty.Splat(kwargs), name: '*'}))
+    function go(args, mkcall, d) {
+        if d == 0 {
+            return mkcall(args)
+        }
 
-    /*
-    let kws = %{}
-    let pos = []
+        let argvId = ty.gensym()
+        let kwargsId = ty.gensym()
 
-    for match args {
-        ty.Arg({arg, name: $name, *}) => kws[name] = arg,
-        arg                           => pos.push(arg)
+        let argv = ty.Id(name: argvId)
+        let kwargs = ty.Id(name: kwargsId)
+
+        let i = 0
+        let reducedArgs = args.map(e -> ty.walk(e, e -> match e {
+            ty.Id({name: '_', *})          => ty.Subscript(argv, ty.Int(i++)),
+            ty.Id({name: /^_(\d+)$/, *})   => ty.Subscript(argv, ty.Int(int(_1) - 1)),
+            ty.Id({name: /^_(_+\d*)$/, *}) => ty.Id({name: _1}),
+            _ => e
+        }))
+
+        reducedArgs.push(ty.Arg({arg: ty.Spread($$[ $$argv.slice($$(ty.Int(i))) $$])}))
+        reducedArgs.push(ty.Arg({arg: ty.Splat(kwargs), name: '*'}))
+
+        return ty.Func({
+            params: [ty.Gather(argvId), ty.Kwargs(kwargsId)],
+            body: go(reducedArgs, mkcall, d - 1)
+        })
     }
 
-    let vPos = ty.Value(pos)
-    let vKws = ty.Value(kws)
-    */
-
-    ty.Func({
-        params: [ty.Gather(argvId), ty.Kwargs(kwargsId)],
-        body: mkcall(args)
-        /*
-        body: ty.Multi([
-            $$[
-                for (x, i) in $$vPos {
-                    while $$argv.len() < i { $$argv.push(nil) }
-                    $$argv.insert(i, x)
-                }
-
-                let kws = $$vKws + $$kwargs
-            $$],
-            mkcall([
-                ty.Arg({arg: ty.Spread(argv)}),
-                ty.Arg({arg: ty.Splat($$[ kws $$]), name: '*'})
-            ])
-        ])
-        */
-    })
+    return go(args, mkcall, depth)
 }
 
 operator **   10 right
