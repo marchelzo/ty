@@ -33,6 +33,7 @@ extern _Thread_local int EvalDepth;
         X(MAYBE_ASSIGN), \
         X(ARRAY_REST), \
         X(TUPLE_REST), \
+        X(RECORD_REST), \
         X(INTEGER), \
         X(REAL), \
         X(BOOLEAN), \

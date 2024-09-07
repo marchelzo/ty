@@ -2061,6 +2061,41 @@ vm_exec(char *code)
                                 *vp = TUPLE(rest, NULL, count, false);
                         }
                         break;
+                CASE(RECORD_REST)
+                        READVALUE(n);
+                        READVALUE(j);
+                        if (top()->type != VALUE_TUPLE) {
+                                ip += n;
+                        } else {
+                                v = peek();
+
+                                vec(char const *) names = {0};
+                                vec(int) indices = {0};
+
+                                for (int i = 0; i < v.count; ++i) {
+                                        if (v.names == NULL || v.names[i] == NULL)
+                                                continue;
+                                        char const *name = memmem(ip, j, v.names[i], strlen(v.names[i]) + 1);
+                                        if (name == NULL) {
+                                                vec_push(names, v.names[i]);
+                                                vec_push(indices, i);
+                                        }
+                                }
+
+                                value = value_tuple(names.count);
+                                value.names = gc_alloc_object(value.count * sizeof (char *), GC_TUPLE);
+                                memcpy(value.names, names.items, value.count * sizeof (char *));
+                                // FIXME: i think we may need to clone all of the individual names
+
+                                for (int i = 0; i < value.count; ++i) {
+                                        value.items[i] = v.items[indices.items[i]];
+                                }
+
+                                *poptarget() = value;
+
+                                ip += j;
+                        }
+                        break;
                 CASE(THROW_IF_NIL)
                         if (top()->type == VALUE_NIL) {
                                 MatchError;
@@ -3284,6 +3319,7 @@ BadContainer:
                                 case VALUE_STRING:    *top() = BOOLEAN(class_is_subclass(CLASS_STRING, v.class));    break;
                                 case VALUE_BLOB:      *top() = BOOLEAN(class_is_subclass(CLASS_BLOB, v.class));      break;
                                 case VALUE_DICT:      *top() = BOOLEAN(class_is_subclass(CLASS_DICT, v.class));      break;
+                                case VALUE_TUPLE:     *top() = BOOLEAN(class_is_subclass(CLASS_TUPLE, v.class));     break;
                                 case VALUE_METHOD:
                                 case VALUE_BUILTIN_METHOD:
                                 case VALUE_BUILTIN_FUNCTION:

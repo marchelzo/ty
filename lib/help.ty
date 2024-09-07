@@ -199,15 +199,29 @@ pub function help(x) {
 class TooWideError {}
 
 let defaultColors = {
-    dict:  ['#2A5056', nil],
-    array: ['#2A5056', nil],
-    str:   ['#a9b665', true],
+    dict:  ['#e78a4e', true],
+    array: ['#e78a4e', true],
+    str:   ['#a9b665', false],
+    quote: ['#a9b665', true],
     int:   ['#d3869b', nil],
     float: ['#d3869b', nil],
     null:  ['#89b482', nil],
     t:     ['#d8a657', nil],
     field: ['#7daea3', nil],
     bool:  ['#d3869b', nil]
+}
+
+function sanitizeString(s) {
+    s.sub(/[\x00-\x1F\x7F-\xFF"\\]/, m -> match m {
+        '"'  => '\\"',
+        '\\' => '\\\\',
+        '\b' => '\\b',
+        '\f' => '\\f',
+        '\n' => '\\n',
+        '\r' => '\\r',
+        '\t' => '\\t',
+        _    => "\\x{m.byte(0)#02x}"
+    })
 }
 
 class Printer {
@@ -246,55 +260,72 @@ class Printer {
 
     go(x, canPush, force) {
         let state = self.save()
+
+        function printList(xs, open, close, color) {
+            try {
+                self.write(open, color, false)
+                for (f, x) in ((self.go, x) for x in xs).intersperse((self.write, ', ')) {
+                    f(x)
+                }
+                self.write(close, color, false)
+            } catch e: TooWideError & canPush {
+                self.restore(state)
+                self.write(open, color, force)
+                self.nl(1)
+                for x, i in xs {
+                    if i > 0 { self.write(',', id, force); self.nl() }
+                    self.go(x, true, force)
+                }
+                self.nl(-1)
+                self.write(close, color, force)
+            }
+        }
+
+        function printMap(m, dict?) {
+            try {
+                self.write('{', @colors.dict, force)
+                for match m.intersperse(', ') {
+                    (k, v) => {
+                        if dict? {
+                            self.go(k, false, false)
+                        } else {
+                            self.write(k, @colors.field, false)
+                        }
+                        self.write(': ', @colors.dict, false)
+                        self.go(v, false, false)
+                    },
+
+                    s => {
+                        self.write(s, id, false)
+                    }
+                }
+                self.write('}', @colors.dict, false)
+            } catch e: TooWideError & canPush {
+                self.restore(state)
+                self.write('{', @colors.dict, force)
+                self.nl(1)
+                for (k, v), i in m {
+                    if i > 0 { self.write(',', id, force); self.nl() }
+                    if dict? {
+                        self.go(k, true, force)
+                    } else {
+                        self.write(k, @colors.field, force)
+                    }
+                    self.write(': ', @colors.dict, force)
+                    self.go(v, true, force)
+                }
+                self.nl(-1)
+                self.write('}', @colors.dict, force)
+            }
+        }
+
         match x {
             xs :: Array => {
-                try {
-                    self.write('[', @colors.array, false)
-                    for (f, x) in ((self.go, x) for x in xs).intersperse((self.write, ', ')) {
-                        f(x)
-                    }
-                    self.write(']', @colors.array, false)
-                } catch e: TooWideError & canPush {
-                    self.restore(state)
-                    self.write('[', @colors.array, force)
-                    self.nl(1)
-                    for x, i in xs {
-                        if i > 0 { self.write(',', id, force); self.nl() }
-                        self.go(x, true, force)
-                    }
-                    self.nl(-1)
-                    self.write(']', @colors.array, force)
-                }
+                printList(xs, '[', ']', @colors.array)
             },
 
             d :: Dict => {
-                try {
-                    self.write('{', @colors.dict, force)
-                    for match ((k, v) for k, v in d).intersperse(', ') {
-                        (k, v) => {
-                            self.write(k, @colors.field, false)
-                            self.write(': ', chalk.brightGreen, false)
-                            self.go(v, false, false)
-                        },
-
-                        s => {
-                            self.write(s, id, false)
-                        }
-                    }
-                    self.write('}', @colors.dict, false)
-                } catch e: TooWideError & canPush {
-                    self.restore(state)
-                    self.write('{', @colors.dict, force)
-                    self.nl(1)
-                    for k, v, i in d {
-                        if i > 0 { self.write(',', id, force); self.nl() }
-                        self.write(k, @colors.field, force)
-                        self.write(': ', chalk.brightGreen, force)
-                        self.go(v, true, force)
-                    }
-                    self.nl(-1)
-                    self.write('}', @colors.dict, force)
-                }
+                printMap(d.list(), true)
             },
 
             %t(x) => {
@@ -303,12 +334,13 @@ class Printer {
                 self.write(")", @colors.t, force)
             },
 
-            &?isTuple ~> true => {
-                let d = members(x)
-                if d.keys().all?((:: Int)) {
-                    self.go(d.list().sort(by: &0).map(&1), canPush, force)
+            _ :: Tuple => {
+                let items = members(x, list: true)
+
+                if items.map(&0) :: Array[Int] {
+                    printList(items.map(&1), '(', ')', @colors.array)
                 } else {
-                    self.go(d, canPush, force)
+                    printMap(items, false)
                 }
             },
 
@@ -317,12 +349,10 @@ class Printer {
             },
 
             _ :: String => {
-                let s = x.sub('\\', '\\\\')
-                         .sub('\n', '\\n')
-                         .sub('\t', '\\t')
-                         .sub('\r', '\\r')
-                         .sub('"', '\\"')
-                self.write("\"{s}\"", @colors.str, force)
+                let s = sanitizeString(x)
+                self.write('"', @colors.quote, force)
+                self.write(s, @colors.str, force)
+                self.write('"', @colors.quote, force)
             },
 
             _ :: Bool => {
