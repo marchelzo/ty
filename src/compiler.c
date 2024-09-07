@@ -923,6 +923,46 @@ to_module_access(struct scope const *scope, struct expression const *e)
         }
 }
 
+
+static bool
+fixup_module_access(Expr *e, struct scope *scope)
+{
+        if (
+                e->type != EXPRESSION_METHOD_CALL &&
+                e->type != EXPRESSION_MEMBER_ACCESS
+        ) {
+                return false;
+        }
+
+        Expr *mod_access = to_module_access(scope, e);
+
+        if (mod_access == NULL) {
+                return false;
+        }
+
+        if (e->type == EXPRESSION_METHOD_CALL) {
+                struct expression fc = *e;
+
+                fc.type = EXPRESSION_FUNCTION_CALL;
+                fc.args = e->method_args;
+                fc.kwargs = e->method_kwargs;
+                fc.kws = e->method_kws;
+                fc.fconds = e->mconds;
+
+                vec_init(fc.fkwconds);
+                for (size_t i = 0; i < fc.kws.count; ++i)
+                        VPush(fc.fkwconds, NULL);
+
+                fc.function = mod_access;
+
+                *e = fc;
+        } else {
+                *e = *mod_access;
+        }
+
+        return true;
+}
+
 static struct scope *
 search_import_scope(char const *name)
 {
@@ -5835,6 +5875,8 @@ tyexpr(struct expression const *e)
         struct value v;
 
         GC_OFF_COUNT += 1;
+
+        fixup_module_access((Expr *)e, state.global);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
