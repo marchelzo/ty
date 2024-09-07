@@ -150,6 +150,7 @@ struct value;
         X(LEQ) \
         X(Cmp) \
         X(Not) \
+        X(Neg) \
         X(PreInc) \
         X(PostInc) \
         X(PreDec) \

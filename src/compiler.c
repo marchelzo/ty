@@ -6371,6 +6371,9 @@ tyexpr(struct expression const *e)
         case EXPRESSION_PREFIX_BANG:
                 v = tagged(TyNot, tyexpr(e->operand), NONE);
                 break;
+        case EXPRESSION_PREFIX_MINUS:
+                v = tagged(TyNeg, tyexpr(e->operand), NONE);
+                break;
         case EXPRESSION_PREFIX_QUESTION:
                 v = tagged(TyQuestion, tyexpr(e->operand), NONE);
                 break;
@@ -7513,6 +7516,13 @@ cexpr(struct value *v)
         {
                 Value v_ = unwrap(v);
                 e->type = EXPRESSION_PREFIX_BANG;
+                e->operand = cexpr(&v_);
+                break;
+        }
+        case TyNeg:
+        {
+                Value v_ = unwrap(v);
+                e->type = EXPRESSION_PREFIX_MINUS;
                 e->operand = cexpr(&v_);
                 break;
         }
