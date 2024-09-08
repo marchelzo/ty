@@ -243,7 +243,7 @@ static void
 invoke_macro(struct expression *e, struct scope *scope);
 
 static void
-invoke_fun_macro(struct expression *e);
+invoke_fun_macro(Scope *, Expr *e);
 
 static void
 emit_spread(struct expression const *e, bool nils);
@@ -1005,7 +1005,7 @@ apply_decorator_macros(struct scope *scope, struct expression **ms, int n)
                                 fail("non-FLM used as method decorator macro");
                         }
 
-                        invoke_fun_macro(ms[i]);
+                        invoke_fun_macro(scope, ms[i]);
 
                         if (ms[i]->type != EXPRESSION_FUNCTION) {
                                 fail("method decorator macro returned %s", ExpressionTypeName(ms[i]));
@@ -1456,6 +1456,32 @@ symbolize_pattern(struct scope *scope, struct expression *e, struct scope *reuse
         }
 }
 
+
+static Expr *
+expedite_fun(Expr *e, void *ctx)
+{
+        if (e->type != EXPRESSION_FUNCTION_CALL)
+                return e;
+
+        if (e->function->type != EXPRESSION_IDENTIFIER) {
+                return e;
+        }
+
+        Symbol *sym = scope_lookup(ctx, e->function->identifier);
+
+        if (sym == NULL) {
+                return e;
+        }
+
+        symbolize_expression(ctx, e->function);
+
+        if (e->function->symbol->fun_macro) {
+                invoke_fun_macro(ctx, e);
+        }
+
+        return e;
+}
+
 static void
 comptime(struct scope *scope, struct expression *e)
 {
@@ -1472,7 +1498,7 @@ comptime(struct scope *scope, struct expression *e)
 }
 
 static void
-invoke_fun_macro(struct expression *e)
+invoke_fun_macro(Scope *scope, struct expression *e)
 {
         byte_vector code_save = state.code;
         vec_init(state.code);
@@ -1500,6 +1526,10 @@ invoke_fun_macro(struct expression *e)
         vm_push(&raw);
 
         for (size_t i = 0;  i < e->args.count; ++i) {
+                VisitorSet vs = visit_identitiy();
+                vs.e_post = expedite_fun;
+                vs.user = scope;
+                visit_expression(e->args.items[i], &vs);
                 value_array_push(raw.array, PTR(e->args.items[i]));
                 struct value v = tyexpr(e->args.items[i]);
                 vm_push(&v);
@@ -1739,7 +1769,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
         case EXPRESSION_FUNCTION_CALL:
                 symbolize_expression(scope, e->function);
                 if (e->function->type == EXPRESSION_IDENTIFIER && e->function->symbol->fun_macro) {
-                        invoke_fun_macro(e);
+                        invoke_fun_macro(scope, e);
                         symbolize_expression(scope, e);
                         break;
                 }
