@@ -55,6 +55,7 @@ static char const usage_string[] =
 static bool use_readline;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
+static char const *print_function = "print";
 
 bool EnableLogging = false;
 
@@ -111,7 +112,7 @@ execln(char *line)
                         goto Bad;
         }
 
-        snprintf(buffer + 1, sizeof buffer - 2, "prettyPrint(%s);", line);
+        snprintf(buffer + 1, sizeof buffer - 2, "%s(%s);", print_function, line);
         if (repl_exec(buffer + 1))
                 goto End;
         snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
@@ -148,6 +149,7 @@ repl(void)
         signal(SIGINT, sigint);
 
         execln("import help (..)");
+        print_function = "prettyPrint";
 
         use_readline = true;
 
