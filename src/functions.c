@@ -1915,13 +1915,21 @@ builtin_os_readdir(int argc, struct value *kwargs)
         if (entry == NULL)
                 return NIL;
 
-        return value_named_tuple(
+        Value name = STRING_CLONE(entry->d_name, strlen(entry->d_name));
+
+        NOGC(name.string);
+
+        Value result = value_named_tuple(
                 "d_ino", INTEGER(entry->d_ino),
                 "d_reclen", INTEGER(entry->d_reclen),
                 "d_type", INTEGER(entry->d_type),
-                "d_name", STRING_CLONE(entry->d_name, strlen(entry->d_name)),
+                "d_name", name,
                 NULL
         );
+
+        OKGC(name.string);
+
+        return result;
 #endif
 }
 
@@ -6610,6 +6618,165 @@ builtin_ty_gensym(int argc, struct value *kwargs)
         return STRING_NOGC(s, strlen(s));
 }
 
+inline static char const *
+beginning_of(char const *s)
+{
+        while (s && s[-1]) --s;
+        return s;
+}
+
+static Value
+make_location(Location const *loc, char const *start)
+{
+        if (loc->s == NULL) {
+                return NIL;
+        }
+
+        return value_named_tuple(
+                "line", INTEGER(loc->line),
+                "col",  INTEGER(loc->col),
+                "byte", INTEGER(loc->s - start),
+                NULL
+        );
+}
+
+Value
+make_token(Token const *t)
+{
+        char *type = NULL;
+
+        char const *s = beginning_of(t->start.s);
+        Value start = make_location(&t->start, s);
+        Value end = make_location(&t->end, s);
+
+#define T(name) (STRING_NOGC(#name, strlen(#name)))
+        switch (t->type) {
+        case TOKEN_IDENTIFIER:
+                return value_named_tuple(
+                        "type",   T(id),
+                        "start",  start,
+                        "end",    end,
+                        "id",     STRING_NOGC(t->identifier, strlen(t->identifier)),
+                        "module", t->module == NULL ? NIL : STRING_NOGC(t->module, strlen(t->module)),
+                        NULL
+                );
+        case TOKEN_INTEGER:
+                return value_named_tuple(
+                        "type",   T(int),
+                        "start",  start,
+                        "end",    end,
+                        "int",    INTEGER(t->integer),
+                        NULL
+                );
+        case TOKEN_STRING:
+                return value_named_tuple(
+                        "type",   T(string),
+                        "start",  start,
+                        "end",    end,
+                        "str",    STRING_NOGC(t->string, strlen(t->string)),
+                        NULL
+                );
+        case TOKEN_COMMENT:
+                return value_named_tuple(
+                        "type",    T(comment),
+                        "start",   start,
+                        "end",     end,
+                        "comment", STRING_NOGC(t->comment, strlen(t->comment)),
+                        NULL
+                );
+        case TOKEN_END:
+                return NIL;
+        case TOKEN_DOT_DOT:
+                type = "..";
+                break;
+        case TOKEN_DOT_DOT_DOT:
+                type = "...";
+                break;
+        case TOKEN_AT:
+                type = "@";
+                break;
+        case TOKEN_INC:
+                type = "++";
+                break;
+        case TOKEN_BANG:
+                type = "!";
+                break;
+        case TOKEN_EQ:
+                type = "=";
+                break;
+        case TOKEN_NOT_EQ:
+                type = "!=";
+                break;
+        case TOKEN_STAR:
+                type = "*";
+                break;
+        case TOKEN_PLUS:
+                type = "+";
+                break;
+        case TOKEN_LT:
+                type = "<";
+                break;
+        case TOKEN_GT:
+                type = ">";
+                break;
+        case TOKEN_LEQ:
+                type = "<=";
+                break;
+        case TOKEN_GEQ:
+                type = ">=";
+                break;
+        case TOKEN_CMP:
+                type = "<=>";
+                break;
+        case TOKEN_WTF:
+                type = "??";
+                break;
+        case TOKEN_ARROW:
+                type = "->";
+                break;
+        case TOKEN_FAT_ARROW:
+                type = "=>";
+                break;
+        case TOKEN_SQUIGGLY_ARROW:
+                type = "~>";
+                break;
+        case TOKEN_KEYWORD:
+                type = (char *)keyword_show(t->keyword);
+                break;
+        }
+
+#undef T
+
+        if (type == NULL) {
+                type = sclonea((char const []){(char)t->type, '\0'});
+        }
+
+        return value_named_tuple(
+                "type",   STRING_NOGC(type, strlen(type)),
+                "start",  start,
+                "end",    end,
+                NULL
+        );
+}
+
+static Value
+make_tokens(TokenVector const *ts)
+{
+        Array *a = value_array_new();
+
+        GC_OFF_COUNT += 1;
+
+        for (int i = 0; i < ts->count; ++i) {
+                if (ts->items[i].ctx != LEX_FAKE) {
+                        value_array_push(a, make_token(&ts->items[i]));
+                }
+        }
+
+        GC_OFF_COUNT -= 1;
+
+        return ARRAY(a);
+}
+
 struct value
 builtin_eval(int argc, struct value *kwargs)
 {
@@ -6699,30 +6866,54 @@ builtin_ty_parse(int argc, struct value *kwargs)
 
         struct statement **prog;
         Location stop;
-        Value vstop = NIL;
+        Value extra = NIL;
+        TokenVector tokens = {0};
 
-        if (!parse_ex(B.items + 1, "(eval)", &prog, &stop)) {
-                vstop = value_tuple(3);
-                vstop.items[0] = INTEGER(stop.s - (B.items + 1));
-                vstop.items[1] = INTEGER(stop.line);
-                vstop.items[2] = INTEGER(stop.col);
+        Value *want_tokens = NAMED("tokens");
+
+        char const *tokens_key = (want_tokens && value_truthy(want_tokens)) ? "tokens" : NULL;
+        Value vTokens = NIL;
+
+        Value result;
+
+        GC_OFF_COUNT += 1;
+
+        if (!parse_ex(B.items + 1, "(eval)", &prog, &stop, &tokens)) {
+                char const *msg = parse_error();
+
+                if (tokens_key) {
+                        vTokens = make_tokens(&tokens);
+                }
+
+                extra = value_named_tuple(
+                        "where",    make_location(&stop, beginning_of(stop.s)),
+                        "msg",      STRING_CLONE(msg, strlen(msg)),
+                        tokens_key, vTokens,
+                        NULL
+                );
+        } else if (tokens_key) {
+                vTokens = make_tokens(&tokens);
+                extra = value_named_tuple(
+                        tokens_key, vTokens,
+                        NULL
+                );
         }
 
-        if (prog == NULL || prog[0]) {
-                ReleaseArena(old);
-                return PAIR(NIL, vstop);
+        if (prog == NULL || prog[0] == NULL) {
+                result = PAIR(NIL, extra);
+                goto Return;
         }
 
         if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
                 struct value v = tyexpr(prog[0]->expression);
-                ReleaseArena(old);
-                return PAIR(v, vstop);
+                result = PAIR(v, extra);
+                goto Return;
         }
 
         if (prog[1] == NULL) {
                 struct value v = tystmt(prog[0]);
-                ReleaseArena(old);
-                return PAIR(v, vstop);
+                result = PAIR(v, extra);
+                goto Return;
         }
 
         struct statement *multi = Allocate(sizeof *multi);
@@ -6735,10 +6926,13 @@ builtin_ty_parse(int argc, struct value *kwargs)
         }
 
         struct value v = tystmt(multi);
+        result = PAIR(v, extra);
 
+Return:
         ReleaseArena(old);
+        GC_OFF_COUNT -= 1;
 
-        return PAIR(v, vstop);
+        return result;
 }
 
 struct value
@@ -6752,6 +6946,43 @@ builtin_ty_copy_source(int argc, struct value *kwargs)
         to.src = from.src;
 
         return to;
+}
+
+struct value
+builtin_ty_get_source(int argc, struct value *kwargs)
+{
+        ASSERT_ARGC("ty.getSource()", 1);
+
+        Value expr = ARG(0);
+        Expr *src = source_lookup(expr.src);
+
+        if (src == NULL) {
+                return NIL;
+        }
+
+        GC_OFF_COUNT += 1;
+
+        Value file = (src->filename == NULL)
+                   ? NIL
+                   : STRING_CLONE(src->filename, strlen(src->filename));
+
+        char const *start = beginning_of(src->start.s);
+
+        Value text = (start == NULL)
+                   ? NIL
+                   : STRING_NOGC(start, strlen(start));
+
+        Value result = value_named_tuple(
+                "start", make_location(&src->start, start),
+                "end",   make_location(&src->end, start),
+                "file",  file,
+                "src",   text,
+                NULL
+        );
+
+        GC_OFF_COUNT -= 1;
+
+        return result;
 }
 
 struct value
@@ -6807,7 +7038,14 @@ builtin_token_peek(int argc, struct value *kwargs)
                 vm_panic("ty.token.peek(): expected integer but got: %s", value_show(&ARG(0)));
         }
 
-        return parse_get_token(argc == 0 ? 0 : ARG(0).integer);
+        GC_OFF_COUNT += 1;
+
+        Token t = parse_get_token(argc == 0 ? 0 : ARG(0).integer);
+        Value v = make_token(&t);
+
+        GC_OFF_COUNT -= 1;
+
+        return v;
 }
 
 struct value

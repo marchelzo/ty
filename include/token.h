@@ -18,7 +18,7 @@ struct regex {
         bool detailed;
 };
 
-struct token {
+typedef struct token {
         enum {
                 /*
                  * We start the enumeration constants slightly below INT_MAX so that they
@@ -141,7 +141,7 @@ struct token {
                 intmax_t integer;
                 float real;
         };
-};
+} Token;
 
 char const *
 token_show(struct token const *t);

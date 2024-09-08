@@ -5,6 +5,8 @@
 #include "table.h"
 #include "ast.h"
 
+typedef vec(struct token) TokenVector;
+
 char const *
 parse_error(void);
 
@@ -12,9 +14,15 @@ struct statement **
 parse(char const *source, char const *file);
 
 bool
-parse_ex(char const *source, char const *file, struct statement ***prog_out, Location *err_loc);
+parse_ex(
+        char const *source,
+        char const *file,
+        struct statement ***prog_out,
+        Location *err_loc,
+        TokenVector *tok_out
+);
 
-struct value
+Token
 parse_get_token(int i);
 
 struct value

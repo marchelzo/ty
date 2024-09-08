@@ -21,6 +21,7 @@
 #include "table.h"
 #include "log.h"
 #include "vm.h"
+#include "parse.h"
 
 #define BINARY_OPERATOR(name, t, prec, right_assoc) \
         static struct expression * \
@@ -91,8 +92,6 @@ enum {
         LV_SUB,
         LV_ANY
 };
-
-typedef vec(struct token) TokenVector;
 
 static jmp_buf jb;
 
@@ -256,6 +255,7 @@ mkexpr(void)
         e->is_method = false;
         e->symbolized = false;
         e->has_resources = false;
+        e->filename = filename;
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -295,6 +295,7 @@ mkstmt(void)
 {
         struct statement *s = Allocate(sizeof *s);
         s->arena = GetArenaAlloc();
+        s->filename = filename;
         s->start = tok()->start;
         s->end = tok()->start;
         return s;
@@ -616,6 +617,12 @@ inline static bool
 next_without_nl(int t)
 {
         return token(1)->type == t && token(1)->start.line == tok()->end.line;
+}
+
+inline static bool
+kw_without_nl(int t)
+{
+        return have_without_nl(TOKEN_KEYWORD) && tok()->keyword == t;
 }
 
 static bool
@@ -947,6 +954,29 @@ prefix_hash(void)
         e->end = End;
 
         return e;
+}
+
+static struct expression *
+prefix_slash(void)
+{
+        next();
+
+        /*
+        next();
+        Expr *body = parse_expr(0);
+        next();
+        */
+
+        Expr *body = parse_expr(99);
+
+        Expr *nil = mkexpr();
+        nil->type = EXPRESSION_NIL;
+
+        Expr *f = mkcall(nil);
+        VPush(f->args, body);
+        VPush(f->fconds, NULL);
+
+        return mkpartial(f);
 }
 
 static struct expression *
@@ -1629,7 +1659,7 @@ gencompr(struct expression *e)
 }
 
 static bool
-try_parse_flag(expression_vector *kwargs, name_vector *kws)
+try_parse_flag(expression_vector *kwargs, name_vector *kws, expression_vector *kwconds)
 {
         if (tok()->type != ':' && (tok()->type != TOKEN_BANG || !next_without_nl(':'))) {
                 return false;
@@ -1649,7 +1679,83 @@ try_parse_flag(expression_vector *kwargs, name_vector *kws)
 
         next();
 
+        if (kwconds != NULL) {
+                VPush(*kwconds, try_cond());
+        }
+
         return true;
+}
+
+static void
+next_arg(
+        expression_vector *args,
+        expression_vector *conds,
+        expression_vector *kwargs,
+        name_vector *kws,
+        expression_vector *kwconds
+)
+{
+        if (try_parse_flag(kwargs, kws, kwconds)) {
+                return;
+        }
+
+        if (tok()->type == TOKEN_STAR) {
+                struct expression *arg = mkexpr();
+
+                next();
+
+                if (tok()->type == TOKEN_STAR) {
+                        next();
+                        arg->type = EXPRESSION_SPLAT;
+                } else {
+                        arg->type = EXPRESSION_SPREAD;
+                }
+
+                if (
+                        tok()->type == ',' ||
+                        tok()->type == ')' ||
+                        have_keyword(KEYWORD_IF)
+                ) {
+                        arg->value = mkexpr();
+                        arg->value->type = EXPRESSION_IDENTIFIER;
+                        arg->value->module = NULL;
+                        arg->value->identifier = "**" + (arg->type == EXPRESSION_SPREAD);
+                        arg->end = End;
+                        arg->value->start = arg->start;
+                        arg->value->end = arg->end;
+                } else {
+                        arg->value = parse_expr(0);
+                        arg->end = arg->value->end;
+                }
+
+                if (arg->type == EXPRESSION_SPLAT) {
+                        VPush(*kwargs, arg);
+                        VPush(*kws, "*");
+                        if (kwconds != NULL) {
+                                VPush(*kwconds, try_cond());
+                        }
+                } else {
+                        VPush(*args, arg);
+                        VPush(*conds, try_cond());
+                }
+        } else if (
+                 tok()->type == TOKEN_IDENTIFIER &&
+                 (
+                         token(1)->type == ':' ||
+                         token(1)->type == TOKEN_EQ
+                 )
+        ) {
+                VPush(*kws, tok()->identifier);
+                next();
+                next();
+                VPush(*kwargs, parse_expr(0));
+                if (kwconds != NULL) {
+                        VPush(*kwconds, try_cond());
+                }
+        } else {
+                VPush(*args, parse_expr(0));
+                VPush(*conds, try_cond());
+        }
 }
 
 static void
@@ -1664,74 +1770,40 @@ parse_method_args(Expr *e)
 
         setctx(LEX_PREFIX);
 
+        Location start = tok()->start;
+
         if (tok()->type == ')') {
                 goto End;
-        } else if (try_parse_flag(&e->method_kwargs, &e->method_kws)) {
-                ;
-        } else if (tok()->type == TOKEN_STAR) {
-                struct expression *arg = mkexpr();
-                next();
-                if (tok()->type == TOKEN_STAR) {
-                        next();
-                        arg->type = EXPRESSION_SPLAT;
-                } else {
-                        arg->type = EXPRESSION_SPREAD;
-                }
-                arg->value = parse_expr(0);
-                arg->start = arg->value->start;
-                if (arg->type == EXPRESSION_SPLAT) {
-                        VPush(e->method_kwargs, arg);
-                        VPush(e->method_kws, "*");
-                } else {
-                        VPush(e->method_args, arg);
-                        VPush(e->mconds, try_cond());
-                }
-        } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                VPush(e->method_kws, tok()->identifier);
-                next();
-                next();
-                VPush(e->method_kwargs, parse_expr(0));
         } else {
-                VPush(e->method_args, parse_expr(0));
-                VPush(e->mconds, try_cond());
+                next_arg(
+                        &e->method_args,
+                        &e->mconds,
+                        &e->method_kwargs,
+                        &e->method_kws,
+                        NULL
+                );
         }
 
         if (have_keyword(KEYWORD_FOR)) {
-                *vec_last(e->method_args) = gencompr(*vec_last(e->method_args));
+                if (e->method_args.count > 0) {
+                        *vec_last(e->method_args) = gencompr(*vec_last(e->method_args));
+                } else {
+                        EStart = start;
+                        EEnd = tok()->end;
+                        error("malformed generator comprehension argument");
+                }
         }
 
         while (tok()->type == ',') {
                 next();
                 setctx(LEX_PREFIX);
-                if (tok()->type == TOKEN_STAR) {
-                        next();
-                        struct expression *arg = mkexpr();
-                        if (tok()->type == TOKEN_STAR) {
-                                next();
-                                arg->type = EXPRESSION_SPLAT;
-                        } else {
-                                arg->type = EXPRESSION_SPREAD;
-                        }
-                        arg->value = parse_expr(0);
-                        arg->start = arg->value->start;
-                        if (arg->type == EXPRESSION_SPLAT) {
-                                VPush(e->method_kwargs, arg);
-                                VPush(e->method_kws, "*");
-                        } else {
-                                VPush(e->method_args, arg);
-                                VPush(e->mconds, try_cond());
-                        }
-                } else if (try_parse_flag(&e->method_kwargs, &e->method_kws)) {
-                        ;
-                } else if (tok()->type == TOKEN_IDENTIFIER && token(1)->type == ':') {
-                        VPush(e->method_kws, tok()->identifier);
-                        next();
-                        next();
-                        VPush(e->method_kwargs, parse_expr(0));
-                } else {
-                        VPush(e->method_args, parse_expr(0));
-                        VPush(e->mconds, try_cond());
-                }
+                next_arg(
+                        &e->method_args,
+                        &e->mconds,
+                        &e->method_kwargs,
+                        &e->method_kws,
+                        NULL
+                );
         }
 
 End:
@@ -1758,7 +1830,7 @@ parse_method_call(Expr *e)
                 parse_method_args(e);
                 e->end = End;
                 return mkpartial(e);
-        case '$':
+        case '\\':
                 next();
                 break;
         default:
@@ -2050,7 +2122,7 @@ prefix_array(void)
         case TOKEN_PERCENT:
         case TOKEN_PLUS:
         case TOKEN_MINUS:
-        case TOKEN_STAR:
+        //case TOKEN_STAR:
         case TOKEN_DIV:
         case TOKEN_CMP:
         case TOKEN_AND:
@@ -2122,15 +2194,21 @@ prefix_array(void)
                 if (tok()->type == TOKEN_STAR) {
                         struct expression *item = mkexpr();
                         next();
-                        if (tok()->type == ']') {
-                                item->type = EXPRESSION_MATCH_REST;
-                                item->identifier = "_";
-                                item->module = NULL;
+
+                        item->type = EXPRESSION_SPREAD;
+                        if (tok()->type == ']' || tok()->type == ',') {
+                                item->value = mkexpr();
+                                item->value->type = EXPRESSION_IDENTIFIER;
+                                item->value->module = NULL;
+                                item->value->identifier = "*";
+                                item->value->start = item->start;
+                                item->value->end = item->end = End;
                         } else {
-                                item->type = EXPRESSION_SPREAD;
                                 item->value = parse_expr(0);
-                                item->end = End;
                         }
+
+                        item->end = End;
+
                         VPush(e->elements, item);
                         VPush(e->optional, false);
                 } else {
@@ -2552,12 +2630,28 @@ prefix_percent(void)
                         e->dflt->start = start;
                         e->dflt->end = End;
                 } else if (tok()->type == TOKEN_STAR) {
-                        struct expression *spread = mkexpr();
+                        struct expression *item = mkexpr();
                         next();
-                        spread->type = EXPRESSION_SPREAD;
-                        spread->value = parse_expr(0);
-                        spread->start = spread->value->start;
-                        VPush(e->keys, spread);
+                        if (tok()->type == TOKEN_STAR) {
+                                next();
+                                item->type = EXPRESSION_SPLAT;
+                        } else {
+                                item->type = EXPRESSION_SPREAD;
+                        }
+
+                        if (tok()->type == ',' || tok()->type == '}') {
+                                item->value = mkexpr();
+                                item->value->type = EXPRESSION_IDENTIFIER;
+                                item->value->module = NULL;
+                                item->value->identifier = "**" + (item->type == EXPRESSION_SPREAD);
+                                item->value->start = item->start;
+                                item->value->end = item->end = End;
+                        } else {
+                                item->value = parse_expr(0);
+                                item->end = End;
+                        }
+
+                        VPush(e->keys, item);
                         VPush(e->values, NULL);
                 } else {
                         struct expression *key = parse_expr(0);
@@ -2655,93 +2749,42 @@ infix_function_call(struct expression *left)
 
         setctx(LEX_PREFIX);
 
+        Location start = tok()->start;
+
         if (tok()->type == ')') {
                 next();
                 e->end = End;
                 return e;
-        } else {
-                if (tok()->type == TOKEN_STAR) {
-                        struct expression *arg = mkexpr();
-                        next();
-                        if (tok()->type == TOKEN_STAR) {
-                                next();
-                                arg->type = EXPRESSION_SPLAT;
-                        } else {
-                                arg->type = EXPRESSION_SPREAD;
-                        }
-                        arg->value = parse_expr(0);
-                        arg->end = End;
-                        if (arg->type == EXPRESSION_SPLAT) {
-                                VPush(e->kwargs, arg);
-                                VPush(e->kws, "*");
-                                VPush(e->fkwconds, NULL);
-                        } else {
-                                VPush(e->args, arg);
-                                VPush(e->fconds, try_cond());
-                        }
-                } else if (try_parse_flag(&e->kwargs, &e->kws)) {
-                        VPush(e->fkwconds, NULL);
-                } else if (
-                        tok()->type == TOKEN_IDENTIFIER &&
-                        (
-                                token(1)->type == ':' ||
-                                token(1)->type == TOKEN_EQ
-                        )
-                ) {
-                        VPush(e->kws, tok()->identifier);
-                        next();
-                        next();
-                        VPush(e->kwargs, parse_expr(0));
-                        VPush(e->fkwconds, NULL);
-                } else {
-                        VPush(e->args, parse_expr(0));
-                        VPush(e->fconds, try_cond());
-                }
-                if (have_keyword(KEYWORD_FOR)) {
+        }
+
+        next_arg(
+                &e->args,
+                &e->fconds,
+                &e->kwargs,
+                &e->kws,
+                &e->fkwconds
+        );
+
+        if (have_keyword(KEYWORD_FOR)) {
+                if (e->args.count > 0) {
                         *vec_last(e->args) = gencompr(*vec_last(e->args));
+                } else {
+                        EStart = start;
+                        EEnd = tok()->end;
+                        error("malformed generator comprehension argument");
                 }
         }
 
         while (tok()->type == ',') {
                 next();
                 setctx(LEX_PREFIX);
-                if (tok()->type == TOKEN_STAR) {
-                        next();
-                        struct expression *arg = mkexpr();
-                        if (tok()->type == TOKEN_STAR) {
-                                next();
-                                arg->type = EXPRESSION_SPLAT;
-                        } else {
-                                arg->type = EXPRESSION_SPREAD;
-                        }
-                        arg->value = parse_expr(0);
-                        arg->start = arg->value->start;
-                        if (arg->type == EXPRESSION_SPLAT) {
-                                VPush(e->kwargs, arg);
-                                VPush(e->kws, "*");
-                                VPush(e->fkwconds, NULL);
-                        } else {
-                                VPush(e->args, arg);
-                                VPush(e->fconds, try_cond());
-                        }
-                } else if (try_parse_flag(&e->kwargs, &e->kws)) {
-                        VPush(e->fkwconds, NULL);
-                } else if (
-                        tok()->type == TOKEN_IDENTIFIER &&
-                        (
-                                token(1)->type == ':' ||
-                                token(1)->type == TOKEN_EQ
-                        )
-                ) {
-                        VPush(e->kws, tok()->identifier);
-                        next();
-                        next();
-                        VPush(e->kwargs, parse_expr(0));
-                        VPush(e->fkwconds, NULL);
-                } else {
-                        VPush(e->args, parse_expr(0));
-                        VPush(e->fconds, try_cond());
-                }
+                next_arg(
+                        &e->args,
+                        &e->fconds,
+                        &e->kwargs,
+                        &e->kws,
+                        &e->fkwconds
+                );
         }
 
         consume(')');
@@ -3062,7 +3105,7 @@ infix_at(Expr *left)
 }
 
 static Expr *
-infix_dollar(Expr *left)
+infix_slash(Expr *left)
 {
         next();
         next();
@@ -3191,6 +3234,7 @@ get_prefix_parser(void)
         case '[':                  return prefix_array;
         case '{':                  return prefix_record;
 
+        case '\\':                 return prefix_slash;
         case '$':                  return prefix_dollar;
         case '`':                  return prefix_tick;
         case '^':                  return prefix_carat;
@@ -3294,8 +3338,8 @@ get_infix_parser(void)
         case TOKEN_USER_OP:        return infix_user_op;
         case TOKEN_QUESTION:       return infix_conditional;
 
-        case '$': return next_without_nl('(') ? infix_dollar : NULL;
-        case TOKEN_AT: return next_without_nl('(') ? infix_at : NULL;
+        case '\\':     return next_without_nl('(') ? infix_slash  : NULL;
+        case TOKEN_AT: return next_without_nl('(') ? infix_at     : NULL;
 
         default:                   return NULL;
         }
@@ -3336,7 +3380,7 @@ get_infix_prec(void)
 
         case '[':                  return 11;
         case '(':                  return 11;
-        case '$': case TOKEN_AT:   return next_without_nl('(') ? 11 : -3;
+        case '\\': case TOKEN_AT:  return next_without_nl('(') ? 11 : -3;
 
         case TOKEN_INC:            return 10;
         case TOKEN_DEC:            return 10;
@@ -3487,14 +3531,8 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
-                return e;
         case EXPRESSION_SPREAD:
-                // TODO: fix this so spread/match-rest are differentiated earlier
-                v = e->value;
-                //assert(v->type == EXPRESSION_IDENTIFIER);
-                v->type = EXPRESSION_MATCH_REST;
-                v->start = e->start;
-                return v;
+                return e;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i)
                         e->elements.items[i] = assignment_lvalue(e->elements.items[i]);
@@ -4740,7 +4778,13 @@ define_top(struct statement *s, char const *doc)
 }
 
 bool
-parse_ex(char const *source, char const *file, struct statement ***prog_out, Location *err_loc)
+parse_ex(
+        char const *source,
+        char const *file,
+        struct statement ***prog_out,
+        Location *err_loc,
+        TokenVector *tok_out
+)
 {
         volatile vec(struct statement *) program;
         vec_init(program);
@@ -4766,6 +4810,9 @@ parse_ex(char const *source, char const *file, struct statement ***prog_out, Loc
                 VPush(program, NULL);
                 *err_loc = tok()->start;
                 *prog_out = program.items;
+                if (tok_out != NULL) {
+                        *tok_out = tokens;
+                }
                 return false;
         }
 
@@ -4899,6 +4946,10 @@ parse_ex(char const *source, char const *file, struct statement ***prog_out, Loc
         VPush(program, NULL);
         *prog_out = program.items;
 
+        if (tok_out != NULL) {
+                *tok_out = tokens;
+        }
+
         return true;
 }
 
@@ -4908,19 +4959,17 @@ parse(char const *source, char const *file)
         struct statement **prog;
         Location loc;
 
-        if (!parse_ex(source, file, &prog, &loc)) {
+        if (!parse_ex(source, file, &prog, &loc, NULL)) {
                 return NULL;
         }
 
         return prog;
 }
 
-
-struct value
+Token
 parse_get_token(int i)
 {
         bool keep_comments = lex_keep_comments(true);
-        char *type = NULL;
 
         if (lex_pos().s > vec_last(tokens)->end.s) {
                 tokens.count = TokenIndex;
@@ -4940,103 +4989,7 @@ parse_get_token(int i)
 
         lex_keep_comments(keep_comments);
 
-
-#define T(name) (STRING_NOGC(#name, strlen(#name)))
-
-        switch (t->type) {
-        case TOKEN_IDENTIFIER:
-                return value_named_tuple(
-                        "type", T(id),
-                        "id", STRING_NOGC(t->identifier, strlen(t->identifier)),
-                        "module", t->module == NULL ? NIL : STRING_NOGC(t->module, strlen(t->module)),
-                        NULL
-                );
-        case TOKEN_INTEGER:
-                return value_named_tuple(
-                        "type", T(int),
-                        "int", INTEGER(t->integer),
-                        NULL
-                );
-        case TOKEN_STRING:
-                return value_named_tuple(
-                        "type", T(string),
-                        "str", STRING_NOGC(t->string, strlen(t->string)),
-                        NULL
-                );
-        case TOKEN_COMMENT:
-                return value_named_tuple(
-                        "type", T(comment),
-                        "comment", STRING_NOGC(t->comment, strlen(t->comment)),
-                        NULL
-                );
-        case TOKEN_END:
-                return NIL;
-        case TOKEN_DOT_DOT:
-                type = "..";
-                break;
-        case TOKEN_DOT_DOT_DOT:
-                type = "...";
-                break;
-        case TOKEN_AT:
-                type = "@";
-                break;
-        case TOKEN_INC:
-                type = "++";
-                break;
-        case TOKEN_BANG:
-                type = "!";
-                break;
-        case TOKEN_EQ:
-                type = "=";
-                break;
-        case TOKEN_NOT_EQ:
-                type = "!=";
-                break;
-        case TOKEN_STAR:
-                type = "*";
-                break;
-        case TOKEN_LT:
-                type = "<";
-                break;
-        case TOKEN_GT:
-                type = ">";
-                break;
-        case TOKEN_LEQ:
-                type = "<=";
-                break;
-        case TOKEN_GEQ:
-                type = ">=";
-                break;
-        case TOKEN_CMP:
-                type = "<=>";
-                break;
-        case TOKEN_WTF:
-                type = "??";
-                break;
-        case TOKEN_ARROW:
-                type = "->";
-                break;
-        case TOKEN_FAT_ARROW:
-                type = "=>";
-                break;
-        case TOKEN_SQUIGGLY_ARROW:
-                type = "~>";
-                break;
-        case TOKEN_KEYWORD:
-                type = (char *)keyword_show(t->keyword);
-                break;
-        }
-
-#undef T
-
-        if (type == NULL) {
-                type = sclonea((char const []){(char)t->type, '\0'});
-        }
-
-        return value_named_tuple(
-                "type", STRING_NOGC(type, strlen(type)),
-                NULL
-        );
+        return *t;
 }
 
 void

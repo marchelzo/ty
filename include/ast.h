@@ -100,6 +100,7 @@ struct statement {
 #undef X
         struct location start;
         struct location end;
+        char const *filename;
         union {
                 struct {
                         struct expression *expression;
@@ -261,6 +262,12 @@ struct statement {
         X(MACRO_INVOCATION), \
         X(VALUE), \
         X(EXPRESSION_MAX_TYPE)
+
+#define ZERO_EXPR(e) memset( \
+        ((char *)(e)) + offsetof(Expr, has_resources) + 1, \
+        0, \
+        sizeof (Expr) - offsetof(Expr, has_resources) - 1 \
+)
 
 struct expression {
         void *arena;
