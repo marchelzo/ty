@@ -63,6 +63,7 @@ set(_src_files
   ty.c
   src/alloc.c
   src/array.c
+  src/ast.c
   src/blob.c
   src/class.c
   src/compiler.c
