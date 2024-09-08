@@ -794,8 +794,8 @@ class Tuple {
     }
 
     __match__(t) {
-        let myMembers = members(self)
-        let tMembers = members(t)
+        let myMembers = dbg(members(self))
+        let tMembers = dbg(members(t))
 
         if #myMembers.diff(tMembers) != 0 {
             return false
@@ -1966,6 +1966,13 @@ macro showCode {
     e
 }
 
+macro match?(e, p) $$[
+    match $$e {
+        $$p => true,
+        _   => false
+    }
+$$]
+
 macro dbg(*args) {
     let tmp = ty.Id(name: ty.gensym())
 
@@ -2554,6 +2561,8 @@ function walk(tree, f) {
 
         ty.Count(xs) => ty.Count(walk(xs, f)),
 
+        ty.Question(xs) => ty.Question(walk(xs, f)),
+
         ty.Not(x) => ty.Not(walk(x, f)),
         ty.Neg(x) => ty.Neg(walk(x, f)),
 
@@ -2610,6 +2619,12 @@ macro __desugar_partial__(call) {
         }
     }
 
+    args.map!(e -> ty.walk(e, e -> match e {
+        ty.Id({name: /^(_+)([xyz])$/, *})
+            => ty.Id({name: _1 + str(' xyz'.search(_2))}),
+        _   => e
+    }))
+
     let depth = 0
 
     ty.walk(call, e -> match e {
@@ -2620,22 +2635,6 @@ macro __desugar_partial__(call) {
 
         _ => e
     })
-
-    function canEval?(e) {
-        let hole = false
-
-        ty.walk(e, e -> match e {
-            ty.Id({name: /^(_+)\d*$/, *}) => do {
-                hole = true
-                depth = max(depth, #_1)
-                return e
-            },
-
-            _ => e
-        })
-
-        return !hole
-    }
 
     args.map!(ty.Arg({arg, *rest}) -> ty.Arg({
         arg: ty.walk(arg, e -> try { ty.Value(ty.eval(e)) } catch _ { e }),
@@ -2658,16 +2657,29 @@ macro __desugar_partial__(call) {
         let argv = ty.Id(name: argvId)
         let kwargs = ty.Id(name: kwargsId)
 
+        let sliceArgs = []
+        let add = arg -> do { sliceArgs.push(arg); arg }
+
         let i = 0
         let reducedArgs = args.map(e -> ty.walk(e, e -> match e {
             ty.Id({name: '_', *})          => ty.Subscript(argv, ty.Int(i++)),
             ty.Id({name: /^_(\d+)$/, *})   => ty.Subscript(argv, ty.Int(int(_1) - 1)),
             ty.Id({name: /^_(_+\d*)$/, *}) => ty.Id({name: _1}),
+            ty.Id({name: '**', *})         => (d == 1) ? kwargs : ty.Add(kwargs, e),
+
+            ty.Id({name: '*', *}) => do {
+                let slice = ty.MethodCall({
+                    object: argv,
+                    method: 'slice',
+                    args: [ty.Arg(add({arg: ty.Int(0)}))]
+                })
+                (d == 1) ? slice : ty.Add(slice, e)
+            },
+
             _ => e
         }))
 
-        reducedArgs.push(ty.Arg({arg: ty.Spread($$[ $$argv.slice($$(ty.Int(i))) $$])}))
-        reducedArgs.push(ty.Arg({arg: ty.Splat(kwargs), name: '*'}))
+        for arg in sliceArgs { arg.arg = ty.Int(i) }
 
         return ty.Func({
             params: [ty.Gather(argvId), ty.Kwargs(kwargsId)],

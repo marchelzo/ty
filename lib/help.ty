@@ -225,7 +225,7 @@ pub function sanitizeString(s) {
 }
 
 class Printer {
-    init(width=120, indent=2, colors=defaultColors) {
+    init(width=96, indent=2, colors=defaultColors) {
         @width = width
         @indent = indent
         @out = Blob()

@@ -1671,6 +1671,32 @@ DoDrop(void)
         vec_pop(drop_stack);
 }
 
+static void
+splat(Dict *d, Value *v)
+{
+        size_t n;
+
+        if (v->type == VALUE_DICT) {
+                n = stack.count;
+                dict_update(&DICT(d), 1, NULL);
+                stack.count = n;
+                return;
+        }
+
+        if (v->type == VALUE_TUPLE) {
+                for (int i = 0; i < v->count; ++i) {
+                        if (v->names == NULL || v->names[i] == NULL) {
+                                dict_put_value(d, INTEGER(i), v->items[i]);
+                        } else {
+                                dict_put_member(d, v->names[i], v->items[i]);
+                        }
+                }
+                return;
+        }
+
+        // FIXME: What else should be allowed here?
+}
+
 inline static struct try **
 GetCurrentTry(void)
 {
@@ -1823,9 +1849,7 @@ vm_exec(char *code)
                         LOG("Loading capture: %s (%d) of %s", ip, n, value_show(&vec_last(frames)->f));
                         ip += strlen(ip) + 1;
 #endif
-                        if (vec_last(frames)->f.env == NULL) {
-                            puts(value_show(&vec_last(frames)->f));
-                        }
+
                         push(*vec_last(frames)->f.env[n]);
                         break;
                 CASE(LOAD_GLOBAL)
@@ -2083,7 +2107,11 @@ vm_exec(char *code)
                                 }
 
                                 value = value_tuple(names.count);
+
+                                if (value.items != NULL) { NOGC(value.items); }
                                 value.names = gc_alloc_object(value.count * sizeof (char *), GC_TUPLE);
+                                if (value.items != NULL) { NOGC(value.items); }
+
                                 memcpy(value.names, names.items, value.count * sizeof (char *));
                                 // FIXME: i think we may need to clone all of the individual names
 
@@ -2589,19 +2617,28 @@ Throw:
                 }
                 CASE(DICT)
                         v = DICT(dict_new());
-                        NOGC(v.dict);
+
+                        gc_push(&v);
 
                         n = (stack.count - *vec_pop(sp_stack)) / 2;
                         for (i = 0; i < n; ++i) {
                                 value = top()[0];
                                 key = top()[-1];
-                                dict_put_value(v.dict, key, value);
-                                pop();
-                                pop();
+                                if (value.type == VALUE_NONE) {
+                                        pop();
+                                        splat(v.dict, &key);
+                                        pop();
+                                } else {
+                                        dict_put_value(v.dict, key, value);
+                                        pop();
+                                        pop();
+                                }
                         }
 
-                        OKGC(v.dict);
                         push(v);
+
+                        gc_pop();
+
                         break;
                 CASE(DICT_DEFAULT)
                         v = pop();
@@ -2733,6 +2770,10 @@ Throw:
                                 } else {
                                         push(NONE);
                                 }
+                                break;
+                        case VALUE_FUNCTION:
+                                push(INTEGER(i));
+                                call(&v, NULL, 1, 0, false);
                                 break;
                         case VALUE_OBJECT:
                                 if ((vp = class_method(v.class, "__next__")) != NULL) {

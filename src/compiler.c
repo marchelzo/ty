@@ -1228,9 +1228,16 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_TAG_PATTERN:
                 if (target->type == EXPRESSION_SPREAD) {
+                        if (target->value->type != EXPRESSION_IDENTIFIER) {
+                                fail("spread expression used in lvalue context");
+                        }
+                        char *name = target->value->identifier;
+                        ZERO_EXPR(target);
                         target->type = EXPRESSION_MATCH_REST;
-                        target->identifier = target->value->identifier;
-                        target->constraint = NULL;
+                        target->identifier = name;
+                        if (strcmp(target->identifier, "*") == 0) {
+                                target->identifier = "_";
+                        }
                 } else if (target->type == EXPRESSION_TAG_PATTERN) {
                         symbolize_lvalue_(scope, target->tagged, decl, pub);
                 }
@@ -1417,9 +1424,15 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
                 symbolize_pattern_(scope, e->right, reuse, def);
                 break;
         case EXPRESSION_SPREAD:
-                assert(e->value->type == EXPRESSION_IDENTIFIER);
+                if (e->value->type != EXPRESSION_IDENTIFIER) {
+                        fail("spread expression used in pattern context");
+                }
                 e->type = EXPRESSION_MATCH_REST;
                 e->identifier = e->value->identifier;
+                if (strcmp(e->identifier, "*") == 0) {
+                        e->identifier = "_";
+                }
+                /* fallthrough */
         case EXPRESSION_MATCH_REST:
                 e->symbol = addsymbol(scope, e->identifier);
                 break;
@@ -1526,10 +1539,6 @@ invoke_fun_macro(Scope *scope, struct expression *e)
         vm_push(&raw);
 
         for (size_t i = 0;  i < e->args.count; ++i) {
-                VisitorSet vs = visit_identitiy();
-                vs.e_post = expedite_fun;
-                vs.user = scope;
-                visit_expression(e->args.items[i], &vs);
                 value_array_push(raw.array, PTR(e->args.items[i]));
                 struct value v = tyexpr(e->args.items[i]);
                 vm_push(&v);
@@ -4505,10 +4514,13 @@ emit_expr(struct expression const *e, bool need_loc)
                                 emit_spread(e->keys.items[i]->value, true);
                         } else {
                                 emit_expression(e->keys.items[i]);
-                                if (e->values.items[i] == NULL)
+                                if (e->keys.items[i]->type == EXPRESSION_SPLAT) {
+                                        emit_instr(INSTR_NONE);
+                                } else if (e->values.items[i] == NULL) {
                                         emit_instr(INSTR_NIL);
-                                else
+                                } else {
                                         emit_expression(e->values.items[i]);
+                                }
                         }
                 }
                 emit_instr(INSTR_DICT);
@@ -5904,9 +5916,14 @@ tyexpr(struct expression const *e)
 {
         struct value v;
 
+        if (e == NULL) {
+                return NIL;
+        }
+
         GC_OFF_COUNT += 1;
 
         fixup_module_access((Expr *)e, state.global);
+        expedite_fun((Expr *)e, state.global);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -6083,6 +6100,8 @@ tyexpr(struct expression const *e)
                 v = ARRAY(value_array_new());
                 NOGC(v.array);
                 for (int i = 0; i < e->es.count; ++i) {
+                        value_array_push(v.array, tyexpr(e->es.items[i]));
+                        continue;
                         value_array_push(
                                 v.array,
                                 tagged(
@@ -6099,6 +6118,7 @@ tyexpr(struct expression const *e)
                         );
                 }
                 OKGC(v.array);
+                break;
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyRecord);
                 break;
@@ -6450,6 +6470,9 @@ tyexpr(struct expression const *e)
         case EXPRESSION_STATEMENT:
                 v = tystmt(e->statement);
                 break;
+        case EXPRESSION_VALUE:
+                v = tagged(TyValue, *e->v, NONE);
+                break;
         default:
                 v = tagged(TyExpr, PTR((void *)e), NONE);
         }
@@ -6465,6 +6488,10 @@ struct value
 tystmt(struct statement *s)
 {
         struct value v;
+
+        if (s == NULL) {
+                return NIL;
+        }
 
         ++GC_OFF_COUNT;
 
@@ -6703,10 +6730,10 @@ cparts(struct value *v)
 struct statement *
 cstmt(struct value *v)
 {
-        struct statement *s = Allocate(sizeof *s);
-        struct statement *src = source_lookup(v->src);
+        Stmt *s = Allocate(sizeof *s);
+        Stmt *src = source_lookup(v->src);
 
-        *s = (struct statement){0};
+        *s = (Stmt){0};
         s->arena = GetArenaAlloc();
 
         if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
@@ -6719,6 +6746,7 @@ cstmt(struct value *v)
         if (src != NULL) {
                 s->start = src->start;
                 s->end = src->end;
+                s->filename = src->filename;
         } else {
                 s->start = state.mstart;
                 s->end = state.mend;
@@ -6978,6 +7006,11 @@ cstmt(struct value *v)
         default:
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(v);
+                if (s->filename == NULL && s->expression->filename != NULL) {
+                        s->filename = s->expression->filename;
+                        s->start = s->expression->start;
+                        s->end = s->expression->end;
+                }
                 break;
         }
 
@@ -6987,6 +7020,10 @@ cstmt(struct value *v)
 struct expression *
 cexpr(struct value *v)
 {
+        if (v->type == VALUE_NIL) {
+                return NULL;
+        }
+
         Expr *e = Allocate(sizeof *e);
         Expr *src = source_lookup(v->src);
 
@@ -7024,6 +7061,15 @@ cexpr(struct value *v)
         int tag = tags_first(v->tags);
 
         switch (tag) {
+        case 0:
+                e->type = EXPRESSION_LIST;
+                if (v->type != VALUE_ARRAY) {
+                        goto Bad;
+                }
+                for (int i = 0; i < v->array->count; ++i) {
+                        VPush(e->es, cexpr(&v->array->items[i]));
+                }
+                break;
         case TyExpr:
                 return v->ptr;
         case TyValue:
@@ -7644,6 +7690,11 @@ cexpr(struct value *v)
         Statement:
                 e->type = EXPRESSION_STATEMENT;
                 e->statement = cstmt(v);
+                if (e->filename == NULL && e->statement->filename != NULL) {
+                        e->filename = e->statement->filename;
+                        e->start = e->statement->start;
+                        e->end = e->statement->end;
+                }
                 break;
         default:
         Bad:
