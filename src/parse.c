@@ -221,6 +221,12 @@ tok(void);
 inline static struct token *
 token(int i);
 
+Expr *
+mkcall(Expr *func);
+
+static Expr *
+mkpartial(Expr *sugared);
+
 char *
 mksym(int s)
 {
@@ -1734,6 +1740,50 @@ End:
         e->end = End;
 }
 
+static Expr *
+parse_method_call(Expr *e)
+{
+        vec_init(e->method_args);
+        vec_init(e->mconds);
+        vec_init(e->method_kws);
+        vec_init(e->method_kwargs);
+
+        switch (tok()->type) {
+        case '(':
+                parse_method_args(e);
+                e->end = End;
+                return e;
+        case TOKEN_AT:
+                next();
+                parse_method_args(e);
+                e->end = End;
+                return mkpartial(e);
+        case '$':
+                next();
+                break;
+        default:
+                return e;
+        }
+
+        next();
+        Expr *body = parse_expr(0);
+        next();
+
+        Expr *nil = mkexpr();
+        nil->type = EXPRESSION_NIL;
+
+        Expr *f = mkcall(nil);
+        VPush(f->args, body);
+        VPush(f->fconds, NULL);
+
+        VPush(e->method_args, mkpartial(f));
+        VPush(e->mconds, NULL);
+
+        e->end = End;
+
+        return e;
+}
+
 inline static bool
 has_names(Expr const *e)
 {
@@ -2370,17 +2420,9 @@ prefix_implicit_method(void)
                 e->maybe = maybe;
                 e->object = o;
                 e->method_name = tok()->identifier;
-
-                vec_init(e->method_args);
-                vec_init(e->mconds);
-                vec_init(e->method_kwargs);
-                vec_init(e->method_kws);
-
                 next();
 
-                if (tok()->type == '(') {
-                        parse_method_args(e);
-                }
+                e = parse_method_call(e);
         }
 
         struct expression *f = mkfunc();
@@ -2831,7 +2873,6 @@ infix_alias(Expr *left)
         return alias;
 }
 
-
 static struct expression *
 infix_member_access(struct expression *left)
 {
@@ -2863,22 +2904,17 @@ infix_member_access(struct expression *left)
         char *id = tok()->identifier;
         consume(TOKEN_IDENTIFIER);
 
-        if (!have_without_nl('(') && !have_without_nl('$')) {
+        if (!have_without_nl('(') && !have_without_nl('$') && !have_without_nl(TOKEN_AT)) {
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->member_name = id;
                 e->end = End;
                 return e;
         }
 
-        bool partial = (tok()->type == '$') && (next(), true);
-
         e->method_name = id;
         e->type = EXPRESSION_METHOD_CALL;
-        parse_method_args(e);
 
-        e->end = End;
-
-        return partial ? mkpartial(e) : e;
+        return parse_method_call(e);
 }
 
 static struct expression *
@@ -3019,10 +3055,34 @@ infix_kw_in(struct expression *left)
 }
 
 static Expr *
-infix_dollar(Expr *left)
+infix_at(Expr *left)
 {
         next();
         return mkpartial(infix_function_call(left));
+}
+
+static Expr *
+infix_dollar(Expr *left)
+{
+        next();
+        next();
+
+        Expr *body = parse_expr(0);
+
+        next();
+
+        Expr *nil = mkexpr();
+        nil->type = EXPRESSION_NIL;
+
+        Expr *f = mkcall(nil);
+        VPush(f->args, body);
+        VPush(f->fconds, NULL);
+
+        Expr *call = mkcall(left);
+        VPush(call->args, mkpartial(f));
+        VPush(call->fconds, NULL);
+
+        return call;
 }
 
 static struct expression *
@@ -3234,10 +3294,8 @@ get_infix_parser(void)
         case TOKEN_USER_OP:        return infix_user_op;
         case TOKEN_QUESTION:       return infix_conditional;
 
-        case '$':
-                if (token(1)->type == '(' && token(1)->start.line == tok()->start.line) {
-                        return infix_dollar;
-                }
+        case '$': return next_without_nl('(') ? infix_dollar : NULL;
+        case TOKEN_AT: return next_without_nl('(') ? infix_at : NULL;
 
         default:                   return NULL;
         }
@@ -3273,12 +3331,12 @@ get_infix_prec(void)
         setctx(LEX_INFIX);
 
         switch (tok()->type) {
-        case '$':                  return next_without_nl('(') ? 13 : -3;
         case '.':                  return 12;
         case TOKEN_DOT_MAYBE:      return 12;
 
         case '[':                  return 11;
         case '(':                  return 11;
+        case '$': case TOKEN_AT:   return next_without_nl('(') ? 11 : -3;
 
         case TOKEN_INC:            return 10;
         case TOKEN_DEC:            return 10;
@@ -4137,6 +4195,7 @@ parse_expr(int prec)
                 }
                 e = f(e);
         }
+
 End:
         --depth;
 

@@ -10,7 +10,7 @@ enum {
         SYMBOL_TABLE_SIZE = 16
 };
 
-struct symbol {
+typedef struct symbol {
         char const *identifier;
         char const *doc;
         int symbol;
@@ -32,9 +32,9 @@ struct symbol {
 
         uint64_t hash;
         struct symbol *next;
-};
+} Symbol;
 
-struct scope {
+typedef struct scope {
         bool external;
 
         struct symbol *table[SYMBOL_TABLE_SIZE];
@@ -49,7 +49,7 @@ struct scope {
 #ifndef TY_RELEASE
         char const *name;
 #endif
-};
+} Scope;
 
 struct scope *
 _scope_new(

@@ -17,6 +17,19 @@ struct expression;
 struct value;
 
 typedef struct expression Expr;
+typedef struct statement Stmt;
+
+typedef Expr *ExprTransform(Expr *, void *);
+typedef Expr *PatternTransform(Expr *, void *);
+typedef Stmt *StmtTransform(Stmt *, void *);
+
+typedef struct {
+        ExprTransform    *e_pre, *e_post;
+        PatternTransform *p_pre, *p_post;
+        PatternTransform *l_pre, *l_post;
+        StmtTransform    *s_pre, *s_post;
+        void *user;
+} VisitorSet;
 
 struct class_definition {
         int symbol;
@@ -416,6 +429,21 @@ struct expression {
 
 char const *
 ExpressionTypeName(Expr const *e);
+
+Stmt *
+visit_statement(Stmt *s, VisitorSet const *);
+
+Expr *
+visit_pattern(Expr *e, VisitorSet const *);
+
+Expr *
+visit_lvalue(Expr *e, VisitorSet const *);
+
+Expr *
+visit_expression(Expr *e, VisitorSet const *);
+
+VisitorSet
+visit_identitiy(void);
 
 #endif
 

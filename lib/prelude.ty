@@ -2602,10 +2602,24 @@ function walk(tree, f) {
 
 macro __desugar_partial__(call) {
     let (args, mkcall) = match call {
-        %t({args, *call}) => (args, args -> t({*call, args}))
+        %t({args, ?func, *call}) => do {
+            if func == ty.Nil {
+                func = ty.Value(x -> x)
+            }
+            (args, args -> t({*call, func, args}))
+        }
     }
 
     let depth = 0
+
+    ty.walk(call, e -> match e {
+        ty.Id({name: /^(_+)\d*$/, *}) => do {
+            depth = max(depth, #_1)
+            e
+        },
+
+        _ => e
+    })
 
     function canEval?(e) {
         let hole = false
@@ -2624,7 +2638,7 @@ macro __desugar_partial__(call) {
     }
 
     args.map!(ty.Arg({arg, *rest}) -> ty.Arg({
-        arg: ty.walk(arg, e -> canEval?(e) ? ty.Value(ty.eval(e)) : e),
+        arg: ty.walk(arg, e -> try { ty.Value(ty.eval(e)) } catch _ { e }),
         *rest
     }))
 
@@ -2661,7 +2675,7 @@ macro __desugar_partial__(call) {
         })
     }
 
-    return go(args, mkcall, depth)
+    return go(args, mkcall, max(depth, 1))
 }
 
 operator **   10 right
