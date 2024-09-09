@@ -3652,10 +3652,10 @@ parse_target_list(void)
 static struct statement *
 parse_for_loop(void)
 {
-        consume_keyword(KEYWORD_FOR);
-
         struct statement *s = mkstmt();
         s->type = STATEMENT_FOR_LOOP;
+
+        consume_keyword(KEYWORD_FOR);
 
         bool match = false;
         bool cloop = false;
