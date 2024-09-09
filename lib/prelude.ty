@@ -2481,7 +2481,7 @@ function walk(tree, f) {
             member
         ),
 
-        ty.Return(values) => ty.Return(*(walk(v, f) for v in values)),
+        ty.Return(values) => ty.Return([walk(v, f) for v in values]),
 
         ty.Yield(values) => ty.Yield([walk(v, f) for v in values]),
 
