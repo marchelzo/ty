@@ -2606,7 +2606,7 @@ function walk(tree, f) {
         _ => tree
     })
 
-    return f(tree)
+    return ty.copySource(tree, f(tree))
 }
 
 macro __desugar_partial__(call) {
