@@ -5939,6 +5939,17 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyId);
                 break;
+        case EXPRESSION_ALIAS_PATTERN:
+                v = value_named_tuple(
+                        "name",       STRING_CLONE(e->identifier, strlen(e->identifier)),
+                        "pattern",    tyexpr(e->aliased),
+                        "module",     (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
+                        "constraint", (e->constraint == NULL) ? NIL : tyexpr(e->constraint),
+                        NULL
+                );
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TyPatternAlias);
+                break;
         case EXPRESSION_MATCH_NOT_NIL:
                 v = value_named_tuple(
                         "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
@@ -6397,6 +6408,9 @@ tyexpr(struct expression const *e)
                 break;
         case EXPRESSION_NOT_EQ:
                 v = tagged(TyNotEq, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_CHECK_MATCH:
+                v = tagged(TyMatches, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
         case EXPRESSION_IN:
                 v = tagged(TyIn, tyexpr(e->left), tyexpr(e->right), NONE);
@@ -7116,6 +7130,17 @@ cexpr(struct value *v)
 
                 break;
         }
+        case TyPatternAlias:
+        {
+                e->type = EXPRESSION_ALIAS_PATTERN;
+                e->identifier = mkcstr(tuple_get(v, "name"));
+                Value *mod = tuple_get(v, "module");
+                Value *constraint = tuple_get(v, "constraint");
+                e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
+                e->constraint = (constraint != NULL && constraint->type != VALUE_NIL) ? cexpr(constraint) : NULL;
+                e->aliased = cexpr(tuple_get(v, "pattern"));
+                break;
+        }
         case TyNotNil:
         {
                 e->type = EXPRESSION_MATCH_NOT_NIL;
@@ -7554,6 +7579,11 @@ cexpr(struct value *v)
                 break;
         case TyCmp:
                 e->type = EXPRESSION_CMP;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyMatches:
+                e->type = EXPRESSION_CHECK_MATCH;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
                 break;

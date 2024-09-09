@@ -95,6 +95,7 @@ struct value;
         X(In) \
         X(NotIn) \
         X(Eq) \
+        X(Matches) \
         X(Or) \
         X(And) \
         X(NotEq) \
@@ -131,6 +132,7 @@ struct value;
         X(Call) \
         X(MethodCall) \
         X(TagPattern) \
+        X(PatternAlias) \
         X(MemberAccess) \
         X(Subscript) \
         X(NotNil) \
