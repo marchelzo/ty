@@ -6968,8 +6968,13 @@ cstmt(struct value *v)
                                 VPush(s->returns, cexpr(&v->items[i]));
                         }
                 } else {
-                        v->tags = tags_pop(v->tags);
-                        VPush(s->returns, cexpr(v));
+                        Value v_ = unwrap(v);
+                        Expr *ret = cexpr(&v_);
+                        if (ret->type == EXPRESSION_LIST) {
+                                VPushN(s->returns, ret->es.items, ret->es.count);
+                        } else {
+                                VPush(s->returns, cexpr(v));
+                        }
                 }
                 break;
         }

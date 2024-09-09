@@ -28,7 +28,7 @@ NewArena(size_t cap)
 
         A.base = malloc(cap);
         A.gc = false;
-        
+
         if (A.base == NULL) {
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
         }
@@ -46,7 +46,7 @@ Allocate(size_t n)
         ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
 
         if (n > avail - padding) {
-                panic("out of memory: couldn't allocate object %zu-byte object in %zu-byte arena. avail=%zu", n, (size_t)(A.end - A.base), (size_t)avail);
+                panic("out of memory: couldn't allocate %zu-byte object in %zu-byte arena. avail=%zu", n, (size_t)(A.end - A.base), (size_t)avail);
         }
 
         char *p = A.beg + padding;
