@@ -1717,15 +1717,17 @@ vm_try_exec(char *code)
         memcpy(&jb_, &jb, sizeof jb_);
 
         size_t nframes = frames.count;
-        size_t ntry = try_stack.count;
-        try_stack.count = 0;
+
+        // FIXME: don't need to allocate a new stack
+        TryStack ts = try_stack;
+        vec_init(try_stack);
 
         char *save = ip;
 
         if (setjmp(jb) != 0) {
                 memcpy(&jb, &jb_, sizeof jb_);
                 frames.count = nframes;
-                try_stack.count = ntry;
+                try_stack = ts;
                 ip = save;
                 push(STRING_CLONE(ERR, strlen(ERR)));
                 top()->tags = tags_push(0, gettag(NULL, "Err"));
@@ -1738,7 +1740,7 @@ vm_try_exec(char *code)
 
         memcpy(&jb, &jb_, sizeof jb_);
         frames.count = nframes;
-        try_stack.count = ntry;
+        try_stack = ts;
         ip = save;
 
         return pop();
@@ -2250,9 +2252,7 @@ Throw:
                         for (struct try **t_ = vec_last(try_stack); t_ != tp; --t_) {
                                 t_[0]->state = TRY_FINALLY;
                                 if (t_[0]->finally != NULL) {
-                                        *t_[0]->end = INSTR_HALT;
                                         vm_exec(t_[0]->finally);
-                                        *t_[0]->end = INSTR_NOP;
                                 }
                                 while (drop_stack.count > t_[0]->ds) {
                                         DoDrop();
@@ -2284,11 +2284,8 @@ Throw:
                 {
                         struct try *t = *vec_pop(try_stack);
                         t->state = TRY_FINALLY;
-                        if (t->finally == NULL)
-                                break;
-                        *t->end = INSTR_HALT;
-                        vm_exec(t->finally);
-                        *t->end = INSTR_NOP;
+                        if (t->finally != NULL)
+                                vm_exec(t->finally);
                         break;
                 }
                 CASE(POP_TRY)

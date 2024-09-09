@@ -2963,8 +2963,6 @@ emit_try(struct statement const *s, bool want_result)
 
         bool returns = emit_statement(s->try.s, want_result);
 
-        emit_instr(INSTR_POP_TRY);
-
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
 
         offset_vector successes_save = state.match_successes;
@@ -2984,18 +2982,23 @@ emit_try(struct statement const *s, bool want_result)
 
         state.match_successes = successes_save;
 
+        emit_instr(INSTR_FINALLY);
+
         end_try();
 
         if (s->try.finally != NULL) {
+                PLACEHOLDER_JUMP(INSTR_JUMP, size_t end_real);
                 PATCH_JUMP(finally_offset);
                 begin_finally();
                 returns &= emit_statement(s->try.finally, false);
                 end_finally();
                 PATCH_JUMP(end_offset);
-                emit_instr(INSTR_NOP);
+                emit_instr(INSTR_HALT);
+                PATCH_JUMP(end_real);
         } else {
                 returns = false;
         }
+
 
         return returns;
 }
