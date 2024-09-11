@@ -986,7 +986,24 @@ lexop(void)
         char op[MAX_OP_LEN + 1] = {0};
         size_t i = 0;
 
-        while (contains(opchars, C(0)) || (C(0) == ':' && (C(-1) != '*' || i > 1 || (contains(opchars, C(1)) && C(1) != '-')))) {
+        while (
+                contains(opchars, C(0)) ||
+                (
+                        C(0) == ':' &&
+                        (
+                                C(-1) != '*' ||
+                                i > 1 ||
+                                (
+                                        contains(opchars, C(1)) &&
+                                        C(1) != '-'
+                                )
+                        )
+                )
+        ) {
+                /* Special case to make dict literals less annoying (e.g. apply(f, kwargs=%{}) */
+                if (C(0) == '%' && C(1) == '{' && i != 0)
+                        break;
+
                 if (i == MAX_OP_LEN) {
                         error(
                                 "operator contains too many characters: %s'%s...'%s",
