@@ -162,6 +162,7 @@ static _Thread_local vec(ThrowCtx) throw_stack;
 static _Thread_local ValueStack defer_stack;
 static _Thread_local ValueStack drop_stack;
 static _Thread_local char *ip;
+static _Thread_local int rc;
 
 #ifdef TY_ENABLE_PROFILING
 
@@ -1757,7 +1758,7 @@ vm_exec(char *code)
         intmax_t k;
         bool b = false, tco = false;
         float f;
-        int n, nkw = 0, i, j, tag, rc = 0;
+        int n, nkw = 0, i, j, tag;
         unsigned long h;
 
         bool AutoThis = false;
@@ -4591,6 +4592,87 @@ vm_call_method(struct value const *self, struct value const *f, int argc)
 {
         call(f, self, argc, 0, true);
         return pop();
+}
+
+Value
+vm_call_ex(Value const *f, int argc, Value const *kwargs, bool collect)
+{
+        Value r, *init;
+        size_t n = stack.count - argc;
+
+        switch (f->type) {
+        case VALUE_FUNCTION:
+                if (kwargs != NULL) {
+                        push(*kwargs);
+                        call(f, NULL, argc, 1, true);
+                } else {
+                        call(f, NULL, argc, 0, true);
+                }
+                goto Collect;
+        case VALUE_METHOD:
+                if (kwargs != NULL) {
+                        push(*kwargs);
+                        call(f->method, f->this, argc, 1, true);
+                } else {
+                        call(f->method, f->this, argc, 0, true);
+                }
+                goto Collect;
+        case VALUE_BUILTIN_FUNCTION:
+                r = f->builtin_function(argc, kwargs);
+                stack.count = n;
+                return r;
+        case VALUE_BUILTIN_METHOD:
+                r = f->builtin_method(f->this, argc, NULL);
+                stack.count = n;
+                return r;
+        case VALUE_TAG:
+                r = pop();
+                r.tags = tags_push(r.tags, f->tag);
+                r.type |= VALUE_TAGGED;
+                return r;
+        case VALUE_CLASS:
+                init = class_method(f->class, "init");
+                if (f->class < CLASS_PRIMITIVE) {
+                        if (init != NULL) {
+                                call(init, NULL, argc, 0, true);
+                                return pop();
+                        } else {
+                                vm_panic("Couldn't find init method for built-in class. Was prelude loaded?");
+                        }
+                } else {
+                        r = OBJECT(object_new(f->class), f->class);
+                        if (init != NULL) {
+                                call(init, &r, argc, 0, true);
+                                pop();
+                        } else {
+                                stack.count -= (argc + 1);
+                        }
+                        return r;
+                }
+        default:
+                vm_panic("Non-callable value passed to vm_call(): %s", value_show_color(f));
+        }
+
+Collect:
+
+        if (!collect) {
+                stack.count = n + 1;
+                return pop();
+        }
+
+        stack.count += rc;
+        rc = 0;
+
+        Value xs = ARRAY(value_array_new());
+        NOGC(xs.array);
+        for (size_t i = n; i < stack.count; ++i) {
+                value_array_push(xs.array, stack.items[i]);
+        }
+        OKGC(xs.array);
+
+        stack.count = n;
+
+        return xs;
 }
 
 struct value

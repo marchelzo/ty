@@ -6201,24 +6201,32 @@ builtin_define_method(int argc, struct value *kwargs)
 struct value
 builtin_apply(int argc, struct value *kwargs)
 {
-        if (argc < 2) {
-                vm_panic("apply() expects at least 2 arguments but got %d", argc);
+        if (argc == 0) {
+                vm_panic("apply() expects at least 1 argument but got %d", argc);
         }
 
-        struct value f = ARG(0);
-        struct value x = ARG(1);
+        Value g = ARG(0);
+        Value *self = NAMED("self");
 
-        if (f.type != VALUE_FUNCTION) {
-                vm_panic("the first argument to apply() must be a function, got: %s", value_show(&f));
+        Value *collect = NAMED("collect");
+        Value *kws = NAMED("kwargs");
+
+        Value f = (self == NULL || g.type != VALUE_METHOD) ? g : METHOD(g.name, &g, self);
+
+        if (!CALLABLE(f)) {
+                vm_panic("apply(): non-callable argument: %s", value_show_color(&f));
         }
 
-        struct value m = METHOD(f.name, &f, &x);
-
-        for (int i = 2; i < argc; ++i) {
-                vm_push(&ARG(i));
+        for (int i = 1; i < argc; ++i) {
+                vm_push(&ARG(1));
         }
 
-        return vm_call(&m, argc - 2);
+        return vm_call_ex(
+                &f,
+                argc - 1,
+                kws,
+                collect != NULL && value_truthy(collect)
+        );
 }
 
 struct value
