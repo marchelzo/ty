@@ -102,9 +102,6 @@ extern _Thread_local int EvalDepth;
         X(CLEAR_EXTRA), \
         X(FIX_EXTRA), \
         X(PUSH_ALL), \
-        X(FUCK), \
-        X(FUCK2), \
-        X(FUCK3), \
         X(VALUE), \
         X(EVAL), \
         X(SAVE_STACK_POS), \
@@ -148,6 +145,7 @@ extern _Thread_local int EvalDepth;
         X(ENSURE_CONTAINS), \
         X(ENSURE_SAME_KEYS), \
         X(RENDER_TEMPLATE), \
+        X(TRAP), \
         X(ADD), \
         X(SUB), \
         X(MUL), \
@@ -169,6 +167,7 @@ extern _Thread_local int EvalDepth;
         X(NOT), \
         X(QUESTION), \
         X(COUNT), \
+        X(PATCH_ENV), \
         X(GET_TAG)
 
 #define X(i) INSTR_ ## i

@@ -12,6 +12,7 @@
 #include <time.h>
 #include <locale.h>
 #include <ctype.h>
+#include <setjmp.h>
 
 #include "tthread.h"
 #include "polyfill_time.h"
@@ -6573,6 +6574,10 @@ builtin_ty_bt(int argc, struct value *kwargs)
         ++GC_OFF_COUNT;
 
         for (size_t i = 0; i < frames->count; ++i) {
+                if (frames->items[i].ip == NULL) {
+                        continue;
+                }
+
                 Value *f = &frames->items[i].f;
                 char const *name = name_of(f);
                 char const *ip = frames->items[i].ip;
@@ -6878,6 +6883,24 @@ builtin_ty_parse(int argc, struct value *kwargs)
 
         GC_OFF_COUNT += 1;
 
+        jmp_buf cjb;
+        jmp_buf *cjb_save;
+
+        if (setjmp(cjb) != 0) {
+                char const *msg = compiler_error();
+
+                result = Err(
+                        value_named_tuple(
+                                "msg", STRING_CLONE(msg, strlen(msg)),
+                                NULL
+                        )
+                );
+
+                goto Return;
+        }
+
+        cjb_save = compiler_swap_jb(&cjb);
+
         if (!parse_ex(B.items + 1, "(eval)", &prog, &stop, &tokens)) {
                 char const *msg = parse_error();
 
@@ -6900,19 +6923,27 @@ builtin_ty_parse(int argc, struct value *kwargs)
         }
 
         if (prog == NULL || prog[0] == NULL) {
-                result = PAIR(NIL, extra);
+                result = Err(extra);
                 goto Return;
         }
 
         if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
-                struct value v = tyexpr(prog[0]->expression);
-                result = PAIR(v, extra);
+                Value v = CToTyExpr(prog[0]->expression);
+                if (v.type == VALUE_NONE) {
+                        result = Err(extra);
+                } else {
+                        result = Ok(PAIR(v, extra));
+                }
                 goto Return;
         }
 
         if (prog[1] == NULL) {
-                struct value v = tystmt(prog[0]);
-                result = PAIR(v, extra);
+                Value v = CToTyStmt(prog[0]);
+                if (v.type == VALUE_NONE) {
+                        result = Err(extra);
+                } else {
+                        result = Ok(PAIR(v, extra));
+                }
                 goto Return;
         }
 
@@ -6925,12 +6956,18 @@ builtin_ty_parse(int argc, struct value *kwargs)
                 VPush(multi->statements, prog[i]);
         }
 
-        struct value v = tystmt(multi);
-        result = PAIR(v, extra);
+        Value v = CToTyStmt(multi);
+        if (v.type == VALUE_NONE) {
+                result = Err(extra);
+        } else {
+                result = Ok(PAIR(v, extra));
+        }
 
 Return:
         ReleaseArena(old);
         GC_OFF_COUNT -= 1;
+
+        compiler_swap_jb(cjb_save);
 
         return result;
 }

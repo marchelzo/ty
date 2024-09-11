@@ -20,6 +20,14 @@
 #undef min
 #endif
 
+#define PTERM(n) \
+        ( \
+                ( \
+                        (ProfileOut == stderr && isatty(2)) || \
+                        (ProfileOut == stdout && isatty(1)) \
+                ) \
+                ? ("\x1b[" #n "m") : "" \
+        )
 #define TERM(n) (isatty(2) ? ("\x1b[" #n "m") : "")
 #define ERR_SIZE 4096
 

@@ -1,24 +1,31 @@
 #include "ast.h"
+#include "scope.h"
 
-#define V(e) ((e) = visit_expression(e, hooks))
-#define VS(s) ((s) = visit_statement(s, hooks))
-#define VP(e) ((e) = visit_pattern(e, hooks))
-#define VL(t) ((t) = visit_lvalue(t, hooks))
+#define V(e) ((e) = visit_expression(e, scope, hooks))
+#define VS(s) ((s) = visit_statement(s, scope, hooks))
+#define VP(e) ((e) = visit_pattern(e, scope, hooks))
+#define VL(d, t) ((t) = visit_lvalue(t, scope, hooks, (d)))
+#define VL_(t) ((t) = visit_lvalue(t, scope, hooks, decl))
+#define VLT(t) ((t) = visit_lvalue(t, scope, hooks, true))
 
-#define E1(e) ((e) = (hooks->e_pre)(e, hooks->user))
-#define E2(e) ((e) = (hooks->e_post)(e, hooks->user))
+#define SUB(f, name, ...) do { Scope *tmp_scope = scope; scope = scope_new(name, scope, f); __VA_ARGS__; scope = tmp_scope; } while (0)
 
-#define S1(s) ((s) = (hooks->s_pre)(s, hooks->user))
-#define S2(s) ((s) = (hooks->s_post)(s, hooks->user))
+#define E1(e) ((e) = (hooks->e_pre)(e, scope, hooks->user))
+#define E2(e) ((e) = (hooks->e_post)(e, scope, hooks->user))
 
-#define P1(p) ((p) = (hooks->p_pre)(p, hooks->user))
-#define P2(p) ((p) = (hooks->p_post)(p, hooks->user))
+#define S1(s) ((s) = (hooks->s_pre)(s, scope, hooks->user))
+#define S2(s) ((s) = (hooks->s_post)(s, scope, hooks->user))
 
-#define L1(t) ((t) = (hooks->l_pre)(t, hooks->user))
-#define L2(t) ((t) = (hooks->l_post)(t, hooks->user))
+#define P1(p) ((p) = (hooks->p_pre)(p, scope, hooks->user))
+#define P2(p) ((p) = (hooks->p_post)(p, scope, hooks->user))
 
-static Expr *id_e(Expr *e, void *u) { return e; }
-static Stmt *id_s(Stmt *s, void *u) { return s; }
+#define L1(t) ((t) = (hooks->l_pre)(t, decl, scope, hooks->user))
+#define L2(t) ((t) = (hooks->l_post)(t, decl, scope, hooks->user))
+
+static Expr *id_e(Expr *e, Scope *scope, void *u) { return e; }
+static Stmt *id_s(Stmt *s, Scope *scope, void *u) { return s; }
+
+static Expr *id_l(Expr *t, bool decl, Scope *scope, void *u) { return t; }
 
 VisitorSet
 visit_identitiy(void)
@@ -26,15 +33,19 @@ visit_identitiy(void)
         return (VisitorSet) {
                 id_e, id_e,
                 id_e, id_e,
-                id_e, id_e,
+                id_l, id_l,
                 id_s, id_s,
                 NULL
         };
 }
 
 Stmt *
-visit_statement(Stmt *s, VisitorSet const *hooks)
+visit_statement(Stmt *s, Scope *scope, VisitorSet const *hooks)
 {
+        if (s == NULL) {
+                return NULL;
+        }
+
         S1(s);
 
         switch (s->type) {
@@ -48,8 +59,94 @@ visit_statement(Stmt *s, VisitorSet const *hooks)
                         VS(s->statements.items[i]);
                 }
                 break;
+        case STATEMENT_BLOCK:
+                SUB(false, "(block)",
+                        for (size_t i = 0; i < s->statements.count; ++i) {
+                                VS(s->statements.items[i]);
+                        }
+                );
+                break;
         case STATEMENT_EXPRESSION:
                 V(s->expression);
+                break;
+        case STATEMENT_WHILE:
+                for (int i = 0; i < s->While.parts.count; ++i) {
+                        struct condpart *p = s->While.parts.items[i];
+                        V(p->e);
+                        VP(p->target);
+                }
+                SUB(false, "(while)", VS(s->While.block));
+                break;
+        case STATEMENT_IF:
+                if (s->iff.neg) {
+                        VS(s->iff.then);
+                        SUB(false, "(if-not)",
+                                for (int i = 0; i < s->iff.parts.count; ++i) {
+                                        struct condpart *p = s->iff.parts.items[i];
+                                        VP(p->target);
+                                        V(p->e);
+                                }
+                                VS(s->iff.otherwise);
+                        );
+                } else {
+                        VS(s->iff.otherwise);
+                        SUB(false, "(if)",
+                                for (int i = 0; i < s->iff.parts.count; ++i) {
+                                        struct condpart *p = s->iff.parts.items[i];
+                                        V(p->e);
+                                        VP(p->target);
+
+                                }
+                                VS(s->iff.then);
+                        );
+                }
+                break;
+        case STATEMENT_WHILE_MATCH:
+        case STATEMENT_MATCH:
+                V(s->match.e);
+                for (int i = 0; i < s->match.patterns.count; ++i) {
+                        SUB(false, "(match)",
+                                VP(s->match.patterns.items[i]);
+                                VS(s->match.statements.items[i]);
+                        );
+                }
+                break;
+        case STATEMENT_TRY:
+        {
+                VS(s->try.s);
+
+                for (int i = 0; i < s->try.patterns.count; ++i) {
+                        VP(s->try.patterns.items[i]);
+                        VS(s->try.handlers.items[i]);
+                }
+
+                VS(s->try.finally);
+
+                break;
+
+        }
+        case STATEMENT_EACH_LOOP:
+                V(s->each.array);
+                VL(true, s->each.target);
+                VS(s->each.body);
+                V(s->each.cond);
+                V(s->each.stop);
+                break;
+        case STATEMENT_DEFINITION:
+                if (s->value->type == EXPRESSION_LIST) {
+                        for (int i = 0; i < s->value->es.count; ++i) {
+                                V(s->value->es.items[i]);
+                        }
+                } else {
+                        V(s->value);
+                }
+                VL(true, s->target);
+                break;
+        case STATEMENT_FUNCTION_DEFINITION:
+        case STATEMENT_MACRO_DEFINITION:
+        case STATEMENT_FUN_MACRO_DEFINITION:
+                VL(true, s->target);
+                V(s->value);
                 break;
         }
 
@@ -57,19 +154,80 @@ visit_statement(Stmt *s, VisitorSet const *hooks)
 }
 
 Expr *
-visit_pattern(Expr *p, VisitorSet const *hooks)
+visit_pattern(Expr *p, Scope *scope, VisitorSet const *hooks)
 {
-        return visit_expression(p, hooks);
+        if (p == NULL) {
+                return NULL;
+        }
+
+        return visit_expression(p, scope, hooks);
 }
 
 Expr *
-visit_lvalue(Expr *t, VisitorSet const *hooks)
+visit_lvalue(Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
 {
-        return visit_expression(t, hooks);
+        Symbol *sym;
+
+        if (t == NULL) {
+                return NULL;
+        }
+
+        L1(t);
+
+        switch (t->type) {
+        case EXPRESSION_TAG_PATTERN:
+                VL_(t->tagged);
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_RESOURCE_BINDING:
+                sym = scope_add(scope, t->identifier);
+                sym->file = t->filename;
+                sym->loc = t->start;
+                V(t->constraint);
+                break;
+        case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                V(t->left);
+                VL_(t->right);
+                break;
+        case EXPRESSION_TAG_APPLICATION:
+                VL_(t->tagged);
+                break;
+        case EXPRESSION_ARRAY:
+                for (size_t i = 0; i < t->elements.count; ++i)
+                        VL_(t->elements.items[i]);
+                break;
+        case EXPRESSION_DICT:
+                V(t->dflt);
+                for (int i = 0; i < t->keys.count; ++i) {
+                        V(t->keys.items[i]);
+                        VL_(t->values.items[i]);
+                }
+                break;
+        case EXPRESSION_SUBSCRIPT:
+                V(t->container);
+                V(t->subscript);
+                break;
+        case EXPRESSION_MEMBER_ACCESS:
+                V(t->object);
+                break;
+        case EXPRESSION_TUPLE:
+        case EXPRESSION_LIST:
+                for (int i = 0; i < t->es.count; ++i) {
+                        VL_(t->es.items[i]);
+                }
+                break;
+        default:
+                V(t);
+        }
+
+        return L2(t);
 }
 
 Expr *
-visit_expression(Expr *e, VisitorSet const *hooks)
+visit_expression(Expr *e, Scope *scope, VisitorSet const *hooks)
 {
         if (e == NULL)
                 return NULL;
@@ -224,7 +382,7 @@ visit_expression(Expr *e, VisitorSet const *hooks)
         case EXPRESSION_DIV_EQ:
         case EXPRESSION_MINUS_EQ:
                 V(e->value);
-                VL(e->target);
+                VL(false, e->target);
                 break;
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
@@ -267,7 +425,7 @@ visit_expression(Expr *e, VisitorSet const *hooks)
                 break;
         case EXPRESSION_ARRAY_COMPR:
                 V(e->compr.iter);
-                VL(e->compr.pattern); /* true, false */
+                VL(true, e->compr.pattern); /* true, false */
                 V(e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         V(e->elements.items[i]);
@@ -283,7 +441,7 @@ visit_expression(Expr *e, VisitorSet const *hooks)
                 break;
         case EXPRESSION_DICT_COMPR:
                 V(e->dcompr.iter);
-                VL(e->dcompr.pattern); /* true, false */
+                VL(true, e->dcompr.pattern); /* true, false */
                 V(e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         V(e->keys.items[i]);

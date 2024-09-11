@@ -71,6 +71,9 @@ void
 define_class(struct statement *);
 
 void
+define_tag(struct statement *s);
+
+void
 define_function(struct statement *);
 
 bool
@@ -94,11 +97,20 @@ cexpr(struct value *);
 struct expression *
 TyToCExpr(struct value *v);
 
+Value
+CToTyExpr(Expr *);
+
+Value
+CToTyStmt(Stmt *);
+
 struct expression *
 typarse(struct expression *, struct location const *start, struct location const *end);
 
 struct statement *
 cstmt(struct value *);
+
+void *
+compiler_swap_jb(void *);
 
 void
 colorize_code(
@@ -121,5 +133,8 @@ source_lookup(uint32_t src);
 
 void
 source_forget_arena(void const *arena);
+
+void
+try_symbolize_application(struct scope *scope, struct expression *e);
 
 #endif

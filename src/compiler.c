@@ -178,6 +178,7 @@ struct state {
 bool CheckConstraints = true;
 size_t GlobalCount = 0;
 
+static jmp_buf *ujb;
 static jmp_buf jb;
 static char const *Error;
 
@@ -261,6 +262,16 @@ static char const *StatementTypeNames[] = {
 #undef X
 
 inline static int
+tag_app_tag(Expr const *e)
+{
+        if (e->identifier == EmptyString) {
+                return e->constraint->v->tag;
+        } else {
+                return e->symbol->tag;
+        }
+}
+
+inline static int
 wrapped_type(Value const *v)
 {
         if (v->tags == 0 || tags_pop(v->tags) == 0) {
@@ -329,6 +340,8 @@ colorize_code(
                 suffix += 1;
         }
 
+        bool color = *base_color != '\0';
+
         snprintf(
                 out,
                 n == 0 ? 0 : n - 1,
@@ -336,15 +349,15 @@ colorize_code(
                 base_color,
                 before,
                 prefix,
-                TERM(1),
+                color ? TERM(1) : "",
                 expr_color,
                 length,
                 start->s,
-                TERM(0),
+                color ? TERM(0) : "",
                 base_color,
                 after,
                 suffix,
-                TERM(0)
+                color ? TERM(0) : ""
         );
 }
 
@@ -455,7 +468,11 @@ fail(char const *fmt, ...)
 
         Error = ERR;
 
-        longjmp(jb, 1);
+        if (ujb != NULL) {
+                longjmp(*ujb, 1);
+        } else {
+                longjmp(jb, 1);
+        }
 }
 
 static int
@@ -1114,9 +1131,13 @@ add_captures(struct expression *pattern, struct scope *scope)
         }
 }
 
-static void
+void
 try_symbolize_application(struct scope *scope, struct expression *e)
 {
+        if (scope == NULL) {
+                scope = state.global;
+        }
+
         struct expression *mod_access = (e->type == EXPRESSION_METHOD_CALL) ? to_module_access(scope, e) : NULL;
 
         if (mod_access != NULL) {
@@ -1193,7 +1214,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                                 e->tagged = items;
                         }
                 }
-        } else if (e->type == EXPRESSION_TAG_APPLICATION) {
+        } else if (e->type == EXPRESSION_TAG_APPLICATION && e->identifier != EmptyString) {
                 e->symbol = getsymbol(
                         (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module),
                         e->identifier,
@@ -1227,6 +1248,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_TAG_PATTERN:
+        case EXPRESSION_MATCH_ANY:
                 if (target->type == EXPRESSION_SPREAD) {
                         if (target->value->type != EXPRESSION_IDENTIFIER) {
                                 fail("spread expression used in lvalue context");
@@ -1290,11 +1312,13 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue_(scope, target->tagged, decl, pub);
-                target->symbol = getsymbol(
-                        ((target->module == NULL || *target->module == '\0') ? state.global : get_import_scope(target->module)),
-                        target->identifier,
-                        NULL
-                );
+                if (target->identifier != EmptyString) {
+                        target->symbol = getsymbol(
+                                ((target->module == NULL || *target->module == '\0') ? state.global : get_import_scope(target->module)),
+                                target->identifier,
+                                NULL
+                        );
+                }
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < target->elements.count; ++i)
@@ -1386,6 +1410,7 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_ALIAS_PATTERN:
+        case EXPRESSION_MATCH_ANY:
                         if (reuse != NULL && e->module == NULL && (existing = scope_local_lookup(reuse, e->identifier)) != NULL) {
                                 e->symbol = existing;
                         } else {
@@ -1529,26 +1554,26 @@ invoke_fun_macro(Scope *scope, struct expression *e)
         state.expression_locations = locs_save;
         state.code = code_save;
 
-        struct value m = *vm_get(0);
+        Value m = *vm_get(0);
         vm_pop();
 
         ++GC_OFF_COUNT;
 
-        struct value raw = ARRAY(value_array_new());
+        Value raw = ARRAY(value_array_new());
 
         vm_push(&raw);
 
         for (size_t i = 0;  i < e->args.count; ++i) {
                 value_array_push(raw.array, PTR(e->args.items[i]));
-                struct value v = tyexpr(e->args.items[i]);
+                Value v = tyexpr(e->args.items[i]);
                 vm_push(&v);
         }
 
 
-        struct value v = vm_call(&m, e->args.count + 1);
+        Value v = vm_call(&m, e->args.count + 1);
 
-        struct location const mstart = state.mstart;
-        struct location const mend = state.mend;
+        Location const mstart = state.mstart;
+        Location const mend = state.mend;
 
         state.mstart = e->start;
         state.mend = e->end;
@@ -1665,11 +1690,13 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 );
                 break;
         case EXPRESSION_TAG_APPLICATION:
-                e->symbol = getsymbol(
-                        ((e->module == NULL || *e->module) ? state.global : get_import_scope(e->module)),
-                        e->identifier,
-                        NULL
-                );
+                if (e->identifier != EmptyString) {
+                        e->symbol = getsymbol(
+                                ((e->module == NULL || *e->module) ? state.global : get_import_scope(e->module)),
+                                e->identifier,
+                                NULL
+                        );
+                }
                 symbolize_expression(scope, e->tagged);
                 break;
         case EXPRESSION_MATCH:
@@ -2072,19 +2099,19 @@ symbolize_statement(struct scope *scope, struct statement *s)
 
                 break;
         case STATEMENT_TAG_DEFINITION:
-                if (scope_locally_defined(state.global, s->tag.name))
-                        fail("redeclaration of tag: %s", s->tag.name);
+                if (!scope_locally_defined(state.global, s->tag.name)) {
+                        define_tag(s);
+                }
+
                 if (s->tag.super != NULL) {
                         symbolize_expression(scope, s->tag.super);
                         if (!is_tag(s->tag.super))
                                 fail("attempt to extend non-tag");
                 }
-                sym = addsymbol(state.global, s->tag.name);
-                sym->cnst = true;
-                sym->tag = tags_new(s->tag.name);
-                s->tag.symbol = sym->tag;
+
                 subscope = scope_new(s->tag.name, scope, false);
                 symbolize_methods(subscope, s->tag.methods.items, s->tag.methods.count);
+
                 break;
         case STATEMENT_BLOCK:
                 scope = scope_new("(block)", scope, false);
@@ -2738,9 +2765,15 @@ emit_function(struct expression const *e, int class)
         memcpy(state.code.items + size_offset, &bytes, sizeof bytes);
         LOG("bytes in func = %d", bytes);
 
+        int self_cap = -1;
+
         for (int i = 0; i < ncaps; ++i) {
                 if (caps[i]->scope->function == e->scope)
                         continue;
+                if (caps[i] == e->function_symbol) {
+                        LOG("Function '%s' self-captures at i=%d", e->name == NULL ? "(anon)" : e->name, i);
+                        self_cap = i;
+                }
                 bool local = caps[i]->scope->function == fs_save;
                 LOG("local(%s, %s): %d", e->name == NULL ? "(anon)" : e->name, caps[i]->identifier, local);
                 LOG("  fscope(%s) = %p, fs_save = %p", caps[i]->identifier, caps[i]->scope->function, fs_save);
@@ -2761,6 +2794,11 @@ emit_function(struct expression const *e, int class)
         if (e->function_symbol != NULL) {
                 emit_tgt(e->function_symbol, e->scope->parent, false);
                 emit_instr(INSTR_ASSIGN);
+        }
+
+        if (self_cap != -1) {
+                emit_instr(INSTR_PATCH_ENV);
+                emit_int(self_cap);
         }
 
         state.func = func_save;
@@ -3102,8 +3140,11 @@ emit_try_match_(struct expression const *pattern)
         bool after = false;
 
         switch (pattern->type) {
+        case EXPRESSION_MATCH_ANY:
+                break;
         case EXPRESSION_RESOURCE_BINDING:
                 emit_instr(INSTR_PUSH_DROP);
+                /* fallthrough */
         case EXPRESSION_IDENTIFIER:
         case EXPRESSION_ALIAS_PATTERN:
                 if (strcmp(pattern->identifier, "_") == 0) {
@@ -3260,7 +3301,7 @@ emit_try_match_(struct expression const *pattern)
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_DUP);
                 emit_instr(INSTR_TRY_TAG_POP);
-                emit_int(pattern->symbol->tag);
+                emit_int(tag_app_tag(pattern));
                 VPush(state.match_fails, state.code.count);
                 emit_int(0);
 
@@ -3840,6 +3881,7 @@ emit_target(struct expression *target, bool def)
         case EXPRESSION_RESOURCE_BINDING:
                 emit_instr(INSTR_PUSH_DROP);
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_ANY:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
@@ -4276,7 +4318,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(INSTR_UNTAG_OR_DIE);
-                emit_int(target->symbol->tag);
+                emit_int(tag_app_tag(target));
                 emit_assignment2(target->tagged, maybe, def);
                 break;
         case EXPRESSION_TAG_PATTERN:
@@ -4437,7 +4479,7 @@ emit_expr(struct expression const *e, bool need_loc)
         case EXPRESSION_TAG_APPLICATION:
                 emit_expression(e->tagged);
                 emit_instr(INSTR_TAG_PUSH);
-                emit_int(e->symbol->tag);
+                emit_int(tag_app_tag(e));
                 break;
         case EXPRESSION_DOT_DOT:
                 emit_expression(e->left);
@@ -4456,8 +4498,12 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_assignment(e->target, e->value, true, false);
                 break;
         case EXPRESSION_INTEGER:
-                emit_instr(INSTR_INTEGER);
-                emit_integer(e->integer);
+                if (e->integer == 0xCAFEBABE) {
+                        emit_instr(INSTR_TRAP);
+                } else {
+                        emit_instr(INSTR_INTEGER);
+                        emit_integer(e->integer);
+                }
                 break;
         case EXPRESSION_BOOLEAN:
                 emit_instr(INSTR_BOOLEAN);
@@ -5938,6 +5984,14 @@ tyexpr(struct expression const *e)
                 );
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyId);
+
+                break;
+        case EXPRESSION_MATCH_ANY:
+                if (e->constraint != NULL) {
+                        v = tagged(TyAny, tyexpr(e->constraint), NONE);
+                } else {
+                        v = TAG(TyAny);
+                }
                 break;
         case EXPRESSION_ALIAS_PATTERN:
                 v = value_named_tuple(
@@ -6008,6 +6062,31 @@ tyexpr(struct expression const *e)
 
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(v.tags, TyArrayCompr);
+
+                break;
+        }
+        case EXPRESSION_TAG_APPLICATION:
+        {
+                if (e->tagged->type == EXPRESSION_TUPLE) {
+                        v = value_tuple(e->tagged->es.count +  1);
+                        for (int i = 0; i < e->tagged->es.count; ++i) {
+                                v.items[i + 1] = tyexpr(e->tagged->es.items[i]);
+                        }
+                } else {
+                        v = value_tuple(2);
+                        v.items[1] = tyexpr(e->tagged);
+                }
+
+                if (e->identifier != EmptyString) {
+                        Expr id = *e;
+                        id.type = EXPRESSION_IDENTIFIER;
+                        v.items[0] = tyexpr(&id);
+                } else {
+                        v.items[0] = tagged(TyValue, *e->constraint->v, NONE);
+                }
+
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(v.tags, TyTagged);
 
                 break;
         }
@@ -6753,6 +6832,8 @@ cstmt(struct value *v)
         *s = (Stmt){0};
         s->arena = GetArenaAlloc();
 
+        //printf("cstmt(): %s\n", value_show_color(v));
+
         if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
                 if (src_val != NULL) {
@@ -7011,6 +7092,9 @@ cstmt(struct value *v)
                 s->type = STATEMENT_BLOCK;
                 vec_init(s->statements);
                 for (int i = 0; i < v->array->count; ++i) {
+                        if (v->array->items[i].type == VALUE_NIL) {
+                                fail("nil in block: %s", value_show_color(v));
+                        }
                         VPush(s->statements, cstmt(&v->array->items[i]));
                 }
                 break;
@@ -7028,6 +7112,9 @@ cstmt(struct value *v)
         default:
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(v);
+                if (s->expression == NULL) {
+                        fail("cexpr() returned NULL: %s", value_show_color(v));
+                }
                 if (s->filename == NULL && s->expression->filename != NULL) {
                         s->filename = s->expression->filename;
                         s->start = s->expression->start;
@@ -7045,6 +7132,8 @@ cexpr(struct value *v)
         if (v->type == VALUE_NIL) {
                 return NULL;
         }
+
+        //printf("cexpr(): %s\n", value_show_color(v));
 
         Expr *e = Allocate(sizeof *e);
         Expr *src = source_lookup(v->src);
@@ -7078,6 +7167,8 @@ cexpr(struct value *v)
         case TyBreak:
         case TyContinue:
                 goto Statement;
+        case TyAny:
+                goto Any;
         }
 
         int tag = tags_first(v->tags);
@@ -7154,6 +7245,19 @@ cexpr(struct value *v)
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(mod) : NULL;
                 break;
         }
+        case TyAny:
+        {
+                if (v->count > 0) {
+                        e->constraint = cexpr(&v->items[0]);
+                } else {
+                        e->constraint = NULL;
+                }
+        Any:
+                e->type = EXPRESSION_MATCH_ANY;
+                e->identifier = "_";
+                e->module = NULL;
+                break;
+        }
         case TyResource:
         {
                 e->type = EXPRESSION_RESOURCE_BINDING;
@@ -7176,6 +7280,37 @@ cexpr(struct value *v)
                 v_.tags = tags_pop(v_.tags);
                 e->type = EXPRESSION_SPLAT;
                 e->value = cexpr(&v_);
+                break;
+        }
+        case TyTagged:
+        {
+                e->type = EXPRESSION_TAG_APPLICATION;
+
+                Expr *t = cexpr(&v->items[0]);
+
+                if (t->type == EXPRESSION_VALUE) {
+                        if (t->v->type != VALUE_TAG) {
+                                goto Bad;
+                        }
+                        e->identifier = (char *)EmptyString;
+                        e->constraint = t;
+                } else {
+                        *e = *t;
+                }
+
+                if (v->count < 2) {
+                        goto Bad;
+                } if (v->count == 2) {
+                        e->tagged = cexpr(&v->items[1]);
+                } else {
+                        e->tagged = Allocate(sizeof *e);
+                        ZERO_EXPR(e->tagged);
+                        e->tagged->type = EXPRESSION_TUPLE;
+                        for (int i = 1; i < v->count; ++i) {
+                                VPush(e->tagged->es, cexpr(&v->items[i]));
+                        }
+                }
+
                 break;
         }
         case TyString:
@@ -7742,6 +7877,40 @@ cexpr(struct value *v)
         return e;
 }
 
+Value
+CToTyExpr(Expr *e)
+{
+        SAVE_JB;
+
+        if (setjmp(jb) != 0) {
+                RESTORE_JB;
+                return NONE;
+        }
+
+        Value v = tyexpr(e);
+
+        RESTORE_JB;
+
+        return v;
+}
+
+Value
+CToTyStmt(Stmt *s)
+{
+        SAVE_JB;
+
+        if (setjmp(jb) != 0) {
+                RESTORE_JB;
+                return NONE;
+        }
+
+        Value v = tystmt(s);
+
+        RESTORE_JB;
+
+        return v;
+}
+
 struct expression *
 TyToCExpr(struct value *v)
 {
@@ -7845,6 +8014,20 @@ typarse(struct expression *e, struct location const *start, struct location cons
         vm_pop();
 
         return e_;
+}
+
+void
+define_tag(struct statement *s)
+{
+        if (scope_locally_defined(state.global, s->class.name)) {
+                fail("redeclaration of tag: %s", s->tag.name);
+        }
+
+        Symbol *sym = addsymbol(state.global, s->tag.name);
+        sym->cnst = true;
+        sym->tag = tags_new(s->tag.name);
+        sym->doc = s->tag.doc;
+        s->tag.symbol = sym->tag;
 }
 
 void
@@ -7977,6 +8160,15 @@ compiler_render_template(struct expression *e)
 {
         Value v;
 
+        SAVE_JB;
+
+        if (setjmp(jb) != 0) {
+                RESTORE_JB;
+                char const *msg = compiler_error();
+                v = Err(STRING_CLONE(msg, strlen(msg)));
+                vm_throw(&v);
+        }
+
         if (e->template.stmts.count == 1) {
                 v = tystmt(e->template.stmts.items[0]);
                 goto End;
@@ -7995,7 +8187,17 @@ End:
                 vm_pop();
         }
 
+        RESTORE_JB;
+
         return v;
+}
+
+void *
+compiler_swap_jb(void *jb)
+{
+        void *u = ujb;
+        ujb = jb;
+        return u;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

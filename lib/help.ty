@@ -9,9 +9,17 @@ import json
 let table = %{}
 
 macro doc! {
-    let (parse.show ~> name, func) = parse.stmt(0, raw: true)
-    let (parse.show ~> proto, _) = parse.stmt(0, raw: true)
+    let (parse.show ~> name, func) = parse.stmt(0, :raw)
+    let (parse.show ~> proto, _) = parse.stmt(99, :raw)
+
+    if tok.peek().type == '->' {
+        tok.next()
+        let (parse.show ~> rt, _) = parse.stmt(0, :raw)
+        proto = "{proto} -> {rt}"
+    }
+
     let help = tok.next().str
+
     $$[
         table[$$(func)] = (
             $$(ty.String(name)),
