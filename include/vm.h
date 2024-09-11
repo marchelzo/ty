@@ -232,6 +232,9 @@ vm_throw(struct value const *);
 struct value
 vm_call(struct value const *f, int argc);
 
+Value
+vm_call_ex(Value const *f, int argc, Value const *kwargs, bool collect);
+
 uint64_t
 MyThreadId(void);
 
