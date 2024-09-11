@@ -106,6 +106,7 @@ struct value;
         X(Splat) \
         X(Gather) \
         X(Kwargs) \
+        X(Any) \
         X(Add) \
         X(Mul) \
         X(Sub) \
@@ -132,6 +133,7 @@ struct value;
         X(Call) \
         X(MethodCall) \
         X(TagPattern) \
+        X(Tagged) \
         X(PatternAlias) \
         X(MemberAccess) \
         X(Subscript) \
@@ -167,7 +169,8 @@ struct value;
         X(Defined) \
         X(Throw) \
         X(Range) \
-        X(IncRange)
+        X(IncRange) \
+        X(Stop)
 
 #define X(x) Ty ## x,
 enum {

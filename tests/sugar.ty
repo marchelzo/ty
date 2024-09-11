@@ -1,0 +1,19 @@
+let f = \match _ {
+    [::_, _, _y] => 0,
+    _            => 1
+}
+
+if f([5, 9999, 5], 5) != 0 {
+    print('FAIL')
+}
+
+if f([5, 5, 5], 4) != 1 {
+    print('FAIL')
+}
+
+if (..100).map\(_ + 1).fold\(_ + _) != 5050 {
+    print('FAIL')
+}
+
+
+print@(*, end='SS\n')('PA')

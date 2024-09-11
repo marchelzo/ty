@@ -166,6 +166,7 @@ static _Thread_local char *ip;
 #ifdef TY_ENABLE_PROFILING
 
 bool UseWallTime = false;
+FILE *ProfileOut = NULL;
 
 inline static uint64_t
 TyThreadCPUTime(void)
@@ -1439,7 +1440,7 @@ DoMutDiv(void)
                 break;
         case 1:
                 FALSE_OR (top()->type != VALUE_INTEGER) {
-                        vm_panic("attempt to divide byte by non-integer");
+                        vm_panic("attempt to divide byte by non-integer: %s", value_show_color(top()));
                 }
                 b = ((struct blob *)targets.items[targets.count].gc)->items[((uintptr_t)vp) >> 3] /= pop().integer;
                 push(INTEGER(b));
@@ -2735,9 +2736,12 @@ Throw:
                         READVALUE(s);
                         push(compiler_render_template((struct expression *)s));
                         break;
-                CASE(FUCK)
-                CASE(FUCK2)
-                CASE(FUCK3)
+                CASE(TRAP)
+#ifdef _WIN32
+                        __debugbreak();
+#else
+                        raise(SIGTRAP);
+#endif
                         break;
                 CASE(GET_NEXT)
                         v = top()[-1];
@@ -2978,10 +2982,17 @@ Throw:
                 CASE(PUSH_TUPLE_ELEM)
                         READVALUE(n);
                         FALSE_OR (top()->type != VALUE_TUPLE) {
-                                vm_panic("attempt to destructure non-tuple as tuple in assignment");
+                                vm_panic(
+                                        "attempt to destructure non-tuple as tuple in assignment: %s",
+                                        value_show_color(top())
+                                );
                         }
                         FALSE_OR (n >= top()->count) {
-                                vm_panic("elment index out of range in destructuring assignment");
+                                vm_panic(
+                                        "elment index %d out of range in destructuring assignment: %s",
+                                        n,
+                                        value_show_color(top())
+                                );
                         }
                         push(top()->items[n]);
                         break;
@@ -3188,7 +3199,10 @@ Throw:
                                         }
                                         push(container.array->items[subscript.integer]);
                                 } else {
-                                        vm_panic("non-integer array index used in subscript expression");
+                                        vm_panic(
+                                                "non-integer array index used in subscript expression: %s",
+                                                value_show_color(&subscript)
+                                        );
                                 }
                                 break;
                         case VALUE_TUPLE:
@@ -3203,7 +3217,10 @@ Throw:
                                         }
                                         push(container.items[subscript.integer]);
                                 } else {
-                                        vm_panic("non-integer array index used in subscript expression");
+                                        vm_panic(
+                                                "non-integer array index used in subscript expression: %s",
+                                                value_show_color(&subscript)
+                                        );
                                 }
                                 break;
                         case VALUE_STRING:
@@ -3634,6 +3651,10 @@ BadContainer:
 
                         break;
                 }
+                CASE(PATCH_ENV)
+                        READVALUE(n);
+                        *top()->env[n] = *top();
+                        break;
                 CASE(TAIL_CALL)
                         tco = true;
                         break;
@@ -4088,18 +4109,18 @@ vm_init(int ac, char **av)
 
         add_builtins(ac, av);
 
-        char *prelude = compiler_load_prelude();
-        if (prelude == NULL) {
-                Error = compiler_error();
-                return false;
-        }
+        AddThread(TyThreadSelf());
 
         if (setjmp(jb) != 0) {
                 Error = ERR;
                 return false;
         }
 
-        AddThread(TyThreadSelf());
+        char *prelude = compiler_load_prelude();
+        if (prelude == NULL) {
+                Error = compiler_error();
+                return false;
+        }
 
         --GC_OFF_COUNT;
 
@@ -4112,6 +4133,9 @@ vm_init(int ac, char **av)
         sqlite_load();
 
 #ifdef TY_ENABLE_PROFILING
+        if (ProfileOut == NULL) {
+                ProfileOut = stdout;
+        }
         Samples = dict_new();
         NOGC(Samples);
         FuncSamples = dict_new();
@@ -4380,7 +4404,7 @@ vm_execute(char const *source, char const *file)
 
         qsort(func_profile.items, func_profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
-        printf("%s===== profile by function =====%s\n\n", TERM(95), TERM(0));
+        fprintf(ProfileOut, "%s===== profile by function =====%s\n\n", PTERM(95), PTERM(0));
         for (int i = 0; i < func_profile.count; ++i) {
                 ProfileEntry *entry = &func_profile.items[i];
 
@@ -4388,35 +4412,38 @@ vm_execute(char const *source, char const *file)
                         break;
                 }
 
-                if (isatty(1)) {
+                if (*PTERM(0)) {
                         color_sequence(entry->count / total_ticks, color_buffer);
                 }
                 if (entry->ctx == NULL) {
-                        printf(
+                        fprintf(
+                                ProfileOut,
                                 "   %s%5.1f%%  %-14lld  %s%s(top)%s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 entry->count,
-                                TERM(92),
-                                TERM(1),
-                                TERM(0)
+                                PTERM(92),
+                                PTERM(1),
+                                PTERM(0)
                         );
                 } else if (entry->ctx == GC_ENTRY) {
-                        printf(
+                        fprintf(
+                                ProfileOut,
                                 "   %s%5.1f%%  %-14lld  %s%s%s%s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 entry->count,
-                                TERM(93),
-                                TERM(1),
+                                PTERM(93),
+                                PTERM(1),
                                 GC_ENTRY,
-                                TERM(0)
+                                PTERM(0)
                         );
                 } else {
                         Value f = FUNCTION();
                         f.info = entry->ctx;
                         char *f_string = value_show_color(&f);
-                        printf(
+                        fprintf(
+                                ProfileOut,
                                 "   %s%5.1f%%  %-14lld  %s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
@@ -4443,30 +4470,31 @@ vm_execute(char const *source, char const *file)
 
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByWeight);
 
-        printf("\n\n%s===== profile by expression =====%s\n\n", TERM(95), TERM(0));
+        fprintf(ProfileOut, "\n\n%s===== profile by expression =====%s\n\n", PTERM(95), PTERM(0));
         uint64_t reported_ticks = 0;
         for (int i = 0; i < profile.count; ++i) {
                 ProfileEntry *entry = profile.items + i;
                 Expr const *expr = compiler_find_expr(entry->ctx);
 
-                if (isatty(1)) {
+                if (*PTERM(0)) {
                         color_sequence(entry->count / total_ticks, color_buffer);
                 }
 
                 if (expr == NULL) {
-                        printf(
+                        fprintf(
+                                ProfileOut,
                                 "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source avilable>%s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 entry->count,
-                                TERM(95),
+                                PTERM(95),
                                 "",
-                                TERM(91),
+                                PTERM(91),
                                 "(unknown)",
                                 "",
-                                TERM(92),
-                                TERM(91),
-                                TERM(0)
+                                PTERM(92),
+                                PTERM(91),
+                                PTERM(0)
                         );
                         continue;
                 }
@@ -4497,26 +4525,27 @@ vm_execute(char const *source, char const *file)
                 }
 
                 char code_buffer[1024];
-                colorize_code(TERM(93), TERM(0), &start, &end, code_buffer, sizeof code_buffer);
+                colorize_code(PTERM(93), PTERM(0), &start, &end, code_buffer, sizeof code_buffer);
 
-                printf(
+                fprintf(
+                        ProfileOut,
                         "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s\n",
                         color_buffer,
                         entry->count / total_ticks * 100.0,
                         entry->count,
-                        TERM(95),
+                        PTERM(95),
                         etype,
-                        TERM(93),
+                        PTERM(93),
                         name_buffer,
-                        TERM(0),
-                        TERM(94),
+                        PTERM(0),
+                        PTERM(94),
                         start.line + 1,
-                        TERM(92),
+                        PTERM(92),
                         code_buffer
                 );
         }
 
-        putchar('\n');
+        fputc('\n', ProfileOut);
 #endif
 
         filename = NULL;

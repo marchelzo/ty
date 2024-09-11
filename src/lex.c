@@ -245,7 +245,7 @@ nextchar(void)
 static bool
 haveid(void)
 {
-        if (C(0) == ':' && C(1) == ':' && isalpha(C(2)))
+        if (C(0) == ':' && C(1) == ':' && (isalpha(C(2)) || C(2) == '_'))
                 return true;
 
         if (isalpha(C(0)) || C(0) == '_' || (C(0) > 0xC0))

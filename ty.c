@@ -43,6 +43,8 @@ static char const usage_string[] =
         "  -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL\n"
         "                in the specified source file\n"
 #ifdef TY_ENABLE_PROFILING
+        "  -o FILE       Write profile data to FILE instead of stdout\n"
+        "                 (if FILE is @ then stderr will be used)\n"
         "  --wall        Profile based on wall time instead of CPU time\n"
 #endif
         "  --            Stop handling options\n"
@@ -258,6 +260,31 @@ stdin_is_tty(void)
 #endif
 }
 
+
+#ifdef TY_ENABLE_PROFILING
+static void
+set_profile_out(char const *path)
+{
+        extern FILE *ProfileOut;
+
+        if (strcmp(path, "@") == 0) {
+                ProfileOut = stderr;
+        } else {
+                ProfileOut = fopen(path, "w+");
+        }
+
+        if (ProfileOut == NULL) {
+                fprintf(
+                        stderr,
+                        "Failed to open %s for writing: %s",
+                        path,
+                        strerror(errno)
+                );
+                exit(EXIT_FAILURE);
+        }
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -362,6 +389,20 @@ main(int argc, char **argv)
                                                 return 1;
                                         }
                                         break;
+#ifdef TY_ENABLE_PROFILING
+                                case 'o':
+                                        if (opt[1] == '\0') {
+                                                if (argv[argi + 1] == NULL) {
+                                                        fprintf(stderr, "Missing argument for -o\n");
+                                                        return 1;
+                                                }
+                                                set_profile_out(argv[++argi]);
+                                        } else {
+                                                set_profile_out(opt + 1);
+                                                while (opt[1] != '\0') ++opt;
+                                        }
+                                        break;
+#endif
                                 default:
                                         fprintf(stderr, "Unrecognized option -%c\n", *opt);
                                         return 1;

@@ -472,6 +472,14 @@ unconsume(int type)
         VInsert(tokens, t, TokenIndex);
 }
 
+inline static void
+putback(Token t)
+{
+        unconsume(TOKEN_ERROR);
+        *tok() = t;
+        tok()->ctx = LEX_FAKE;
+}
+
 noreturn static void
 error(char const *fmt, ...)
 {
@@ -701,8 +709,7 @@ parse_decorator_macro(void)
                 unconsume(')');
                 unconsume('(');
 
-                unconsume(TOKEN_IDENTIFIER);
-                *tok() = id;
+                putback(id);
         }
 
         struct expression *m = parse_expr(0);
@@ -1230,8 +1237,7 @@ opfunc(void)
         tok()->module = NULL;
         tok()->identifier = b;
 
-        unconsume(TOKEN_USER_OP);
-        *tok() = t;
+        putback(t);
 
         unconsume(TOKEN_IDENTIFIER);
         tok()->module = NULL;
@@ -1417,6 +1423,9 @@ Next:
 }
 
 static struct expression *
+patternize(struct expression *e);
+
+static struct expression *
 next_pattern(void)
 {
         SAVE_NE(true);
@@ -1432,7 +1441,7 @@ next_pattern(void)
 
         LOAD_NE();
 
-        return p;
+        return patternize(p);
 }
 
 static struct expression *
@@ -2262,11 +2271,9 @@ prefix_array(void)
                         tok()->identifier = f->params.items[0];
                         tok()->module = NULL;
                         if (t2.type != ']') {
-                                unconsume(TOKEN_STAR);
-                                *tok() = t2;
+                                putback(t2);
                         }
-                        unconsume(TOKEN_STAR);
-                        *tok() = t;
+                        putback(t);
                         f->body = mkstmt();
                         f->body->type = STATEMENT_EXPRESSION;
                         f->body->expression = get_infix_parser()(e->elements.items[0]);
@@ -3455,14 +3462,23 @@ definition_lvalue(struct expression *e)
 {
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+                if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
+                        e->type = EXPRESSION_MATCH_ANY;
+                }
+                /* fallthrough */
         case EXPRESSION_RESOURCE_BINDING:
         case EXPRESSION_TAG_APPLICATION:
         case EXPRESSION_TAG_PATTERN_CALL:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_TEMPLATE_HOLE:
+                return e;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
-        case EXPRESSION_TEMPLATE_HOLE:
+                for (int i = 0; i < e->es.count; ++i) {
+                        e->es.items[i] = definition_lvalue(e->es.items[i]);
+                }
                 return e;
         case EXPRESSION_FUNCTION_CALL:
                 for (int i = 0; i < e->args.count; ++i) {
@@ -3511,7 +3527,60 @@ definition_lvalue(struct expression *e)
                 return e;
         }
 
-        error("expression is not a valid definition lvalue");
+        error("expression is not a valid definition lvalue: %s", ExpressionTypeName(e));
+}
+
+static struct expression *
+patternize(struct expression *e)
+{
+        try_symbolize_application(NULL, e);
+
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+                if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
+                        e->type = EXPRESSION_MATCH_ANY;
+                }
+                return e;
+        case EXPRESSION_TAG_APPLICATION:
+                e->tagged = patternize(e->tagged);
+                return e;
+        case EXPRESSION_LIST:
+        case EXPRESSION_TUPLE:
+                for (int i = 0; i < e->es.count; ++i) {
+                        e->es.items[i] = patternize(e->es.items[i]);
+                }
+                return e;
+        case EXPRESSION_ARRAY:
+                for (size_t i = 0; i < e->elements.count; ++i)
+                        e->elements.items[i] = patternize(e->elements.items[i]);
+                return e;
+        case EXPRESSION_DICT:
+                for (size_t i = 0; i < e->keys.count; ++i) {
+                        if (e->values.items[i] == NULL) {
+                                struct expression *key = mkexpr();
+                                if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
+                                        EStart = key->start;
+                                        EEnd = key->end;
+                                        error("short-hand target in dict lvalue must be an identifier");
+                                }
+                                key->type = EXPRESSION_STRING;
+                                key->string = e->keys.items[i]->identifier;
+                                e->values.items[i] = e->keys.items[i];
+                                e->keys.items[i] = key;
+                        }
+                        e->values.items[i] = patternize(e->values.items[i]);
+                }
+                return e;
+        case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                e->right = patternize(e->right);
+                return e;
+        case EXPRESSION_ALIAS_PATTERN:
+                e->aliased = patternize(e->aliased);
+                return e;
+        default:
+                return e;
+        }
 }
 
 static struct expression *
@@ -3521,6 +3590,10 @@ assignment_lvalue(struct expression *e)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+                if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
+                        e->type = EXPRESSION_MATCH_ANY;
+                }
+                /* fallthrough */
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_SUBSCRIPT:
@@ -3529,9 +3602,13 @@ assignment_lvalue(struct expression *e)
         case EXPRESSION_FUNCTION_CALL:
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+        case EXPRESSION_SPREAD:
+                return e;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
-        case EXPRESSION_SPREAD:
+                for (int i = 0; i < e->es.count; ++i) {
+                        e->es.items[i] = assignment_lvalue(e->es.items[i]);
+                }
                 return e;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i)
@@ -3555,7 +3632,7 @@ assignment_lvalue(struct expression *e)
                 }
                 return e;
         default:
-                error("expression is not a valid assignment lvalue");
+                error("expression is not a valid assignment lvalue: %s", ExpressionTypeName(e));
         }
 }
 
@@ -3943,10 +4020,8 @@ parse_function_definition(void)
                         unconsume(')');
                         unconsume('(');
                 }
-                unconsume(TOKEN_IDENTIFIER);
-                *tok() = name;
-                unconsume(TOKEN_KEYWORD);
-                *tok() = kw;
+                putback(name);
+                putback(kw);
         } else {
                 s->type = STATEMENT_FUNCTION_DEFINITION;
 
@@ -4465,8 +4540,7 @@ parse_class_definition(void)
                         } else if (token(1)->type == TOKEN_EQ) {
                                 struct token t = *tok();
                                 skip(2);
-                                unconsume(TOKEN_IDENTIFIER);
-                                *tok() = t;
+                                putback(t);
                                 VPush(
                                         s->tag.setters,
                                         parse_method(
@@ -4481,8 +4555,7 @@ parse_class_definition(void)
                                 next();
                                 unconsume(')');
                                 unconsume('(');
-                                unconsume(TOKEN_IDENTIFIER);
-                                *tok() = t;
+                                putback(t);
                                 VPush(
                                         s->tag.getters,
                                         parse_method(
@@ -4764,6 +4837,10 @@ define_top(struct statement *s, char const *doc)
                 s->class.doc = doc;
                 define_class(s);
                 break;
+        case STATEMENT_TAG_DEFINITION:
+                s->tag.doc = doc;
+                define_tag(s);
+                break;
         case STATEMENT_MULTI:
                 for (int i = 0; i < s->statements.count; ++i) {
                         define_top(s->statements.items[i], doc);
@@ -5020,7 +5097,7 @@ parse_get_expr(int prec, bool resolve, bool want_raw)
         } else {
                 e = parse_expr(prec);
                 if (!resolve) {
-                        v = tyexpr(e);
+                        v = CToTyExpr(e);
                 } else {
                         compiler_symbolize_expression(e, NULL);
                         v = PTR(e);

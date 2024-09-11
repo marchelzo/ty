@@ -13,20 +13,23 @@
 typedef vec(int) int_vector;
 typedef vec(struct expression *) expression_vector;
 
+typedef struct scope Scope;
+
 struct expression;
 struct value;
 
 typedef struct expression Expr;
 typedef struct statement Stmt;
 
-typedef Expr *ExprTransform(Expr *, void *);
-typedef Expr *PatternTransform(Expr *, void *);
-typedef Stmt *StmtTransform(Stmt *, void *);
+typedef Expr *ExprTransform(Expr *, Scope *, void *);
+typedef Expr *PatternTransform(Expr *, Scope *, void *);
+typedef Expr *LValueTransform(Expr *, bool, Scope *, void *);
+typedef Stmt *StmtTransform(Stmt *, Scope *, void *);
 
 typedef struct {
         ExprTransform    *e_pre, *e_post;
         PatternTransform *p_pre, *p_post;
-        PatternTransform *l_pre, *l_post;
+        LValueTransform  *l_pre, *l_post;
         StmtTransform    *s_pre, *s_post;
         void *user;
 } VisitorSet;
@@ -218,6 +221,7 @@ struct statement {
         X(USER_OP), \
         X(BIT_AND), \
         X(BIT_OR), \
+        X(MATCH_ANY), \
         X(MATCH_NOT_NIL), \
         X(MATCH_REST), \
         X(DOT_DOT), \
@@ -438,16 +442,16 @@ char const *
 ExpressionTypeName(Expr const *e);
 
 Stmt *
-visit_statement(Stmt *s, VisitorSet const *);
+visit_statement(Stmt *s, Scope *, VisitorSet const *);
 
 Expr *
-visit_pattern(Expr *e, VisitorSet const *);
+visit_pattern(Expr *e, Scope *, VisitorSet const *);
 
 Expr *
-visit_lvalue(Expr *e, VisitorSet const *);
+visit_lvalue(Expr *e, Scope *, VisitorSet const *, bool);
 
 Expr *
-visit_expression(Expr *e, VisitorSet const *);
+visit_expression(Expr *e, Scope *, VisitorSet const *);
 
 VisitorSet
 visit_identitiy(void);
