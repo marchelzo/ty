@@ -4730,16 +4730,33 @@ parse_import(void)
                 s->import.as = s->import.module;
         }
 
+        if (tok()->type == TOKEN_IDENTIFIER && strcmp(tok()->identifier, "hiding") == 0) {
+                next();
+                s->import.hiding = true;
+        } else {
+                s->import.hiding = false;
+        }
+
         vec_init(s->import.identifiers);
+        vec_init(s->import.aliases);
 
         if (tok()->type == '(') {
                 next();
                 if (tok()->type == TOKEN_DOT_DOT) {
                         next();
                         VPush(s->import.identifiers, "..");
+                        VPush(s->import.aliases, "..");
                 } else while (tok()->type == TOKEN_IDENTIFIER) {
                         VPush(s->import.identifiers, tok()->identifier);
                         next();
+                        if (have_keyword(KEYWORD_AS)) {
+                                next();
+                                expect(TOKEN_IDENTIFIER);
+                                VPush(s->import.aliases, tok()->identifier);
+                                next();
+                        } else {
+                                VPush(s->import.aliases, *vec_last(s->import.identifiers));
+                        }
                         if (tok()->type == ',')
                                 next();
                         else
