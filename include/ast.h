@@ -117,7 +117,9 @@ struct statement {
                         char *module;
                         char *as;
                         vec(char *) identifiers;
+                        vec(char *) aliases;
                         bool pub;
+                        bool hiding;
                 } import;
                 union {
                         struct class_definition tag;

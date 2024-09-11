@@ -210,6 +210,24 @@ scope_add(struct scope *s, char const *id)
 }
 
 struct symbol *
+scope_insert_as(struct scope *s, struct symbol *sym, char const *id)
+{
+        struct symbol *new = Allocate(sizeof *new);
+
+        *new = *sym;
+        new->identifier = id;
+        new->hash = strhash(id);
+        new->scope = s;
+        new->public = false;
+
+        int i = new->hash % SYMBOL_TABLE_SIZE;
+        new->next = s->table[i];
+        s->table[i] = new;
+
+        return new;
+}
+
+struct symbol *
 scope_insert(struct scope *s, struct symbol *sym)
 {
         struct symbol *newsym = Allocate(sizeof *newsym);
@@ -239,6 +257,47 @@ scope_copy(struct scope *dst, struct scope const *src)
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
                         scope_insert(dst, s);
+                }
+        }
+
+        return NULL;
+}
+
+inline static bool
+should_skip(char const *id, char const **skip, int n)
+{
+        for (int i = 0; i < n; ++i) {
+                if (strcmp(id, skip[i]) == 0) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+char const *
+scope_copy_public_except(struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport)
+{
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
+                        if (should_skip(s->identifier, skip, n)) {
+                                continue;
+                        }
+                        struct symbol *conflict = scope_lookup(dst, s->identifier);
+                        if (conflict != NULL && conflict->scope != src && conflict->public) {
+                                return conflict->identifier;
+                        }
+                }
+        }
+
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
+                        if (should_skip(s->identifier, skip, n)) {
+                                continue;
+                        }
+                        if (s->public) {
+                                scope_insert(dst, s)->public = reexport;
+                        }
                 }
         }
 

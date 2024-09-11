@@ -84,11 +84,17 @@ scope_local_lookup(struct scope const *s, char const *id);
 struct symbol *
 scope_insert(struct scope *s, struct symbol *sym);
 
+struct symbol *
+scope_insert_as(struct scope *s, struct symbol *sym, char const *id);
+
 bool
 scope_is_subscope(struct scope const *sub, struct scope const *scope);
 
 char const *
 scope_copy_public(struct scope *dst, struct scope const *src, bool reexport);
+
+char const *
+scope_copy_public_except(struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport);
 
 char const *
 scope_copy(struct scope *dst, struct scope const *src);

@@ -5491,12 +5491,18 @@ import_module(struct statement const *s)
                 module_scope = load_module(name, NULL);
         }
 
-        char const **identifiers = (char const **) s->import.identifiers.items;
+        char const **identifiers = (char const **)s->import.identifiers.items;
+        char const **aliases = (char const **)s->import.aliases.items;
         int n = s->import.identifiers.count;
+
         bool everything = n == 1 && strcmp(identifiers[0], "..") == 0;
 
         if (everything) {
                 char const *id = scope_copy_public(state.global, module_scope, pub);
+                if (id != NULL)
+                        fail("module '%s' exports conflcting name '%s'", name, id);
+        } else if (s->import.hiding) {
+                char const *id = scope_copy_public_except(state.global, module_scope, identifiers, n, pub);
                 if (id != NULL)
                         fail("module '%s' exports conflcting name '%s'", name, id);
         } else for (int i = 0; i < n; ++i) {
@@ -5505,7 +5511,7 @@ import_module(struct statement const *s)
                         fail("module '%s' does not export '%s'", name, identifiers[i]);
                 if (scope_lookup(state.global, identifiers[i]) != NULL)
                         fail("module '%s' exports conflicting name '%s'", name, identifiers[i]);
-                scope_insert(state.global, s)->public = pub;
+                scope_insert_as(state.global, s, aliases[i])->public = pub;
         }
 
         VPush(state.imports, ((struct import){ .name = as, .scope = module_scope, .pub = pub }));
