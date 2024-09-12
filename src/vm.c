@@ -95,8 +95,11 @@
 #define inline __attribute__((always_inline)) inline
 
 #define MatchError \
-        push(TAG(gettag(NULL, "MatchError"))); \
-        goto Throw;
+        do { \
+                top()->tags = tags_push(top()->tags, TAG_MATCH_ERR); \
+                top()->type |= VALUE_TAGGED; \
+                goto Throw; \
+        } while (0)
 
 #define X(i) #i
 static char const *InstructionNames[] = {
