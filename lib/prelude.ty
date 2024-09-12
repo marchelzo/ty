@@ -2636,21 +2636,21 @@ macro __desugar_partial__(call) {
         }
     }
 
-    args.map!(e -> __walk!(e, e -> match e {
+    args.map!(e -> __walk!(e, match {
         ty.Id({name: /^(_+)([xyz])$/, *})
             => ty.Id({name: _1 + str(' xyz'.search(_2))}),
-        _   => e
+        e   => e
     }))
 
     let depth = 0
 
-    __walk!(call, e -> match e {
-        ty.Id({name: /^(_+)\d*$/, *}) => do {
+    __walk!(call, match {
+        ty.Id({name: /^(_+)\d*$/, *}) as e => do {
             depth = max(depth, #_1)
             e
         },
 
-        _ => e
+        e => e
     })
 
     // FIXME This doesn't work right now because it breaks on stuff like
@@ -2668,9 +2668,9 @@ macro __desugar_partial__(call) {
     }))
     */
 
-    args.map!(e -> __walk!(e, e -> match e {
+    args.map!(e -> __walk!(e, match {
         ty.Id({name: /^(_+)(\d*)$/, *}) => ty.Id({name: '_'.repeat(depth - #_1 + 1) + _2}),
-        _ => e
+        e => e
     }))
 
     function go(args, mkcall, d) {
@@ -2688,13 +2688,13 @@ macro __desugar_partial__(call) {
         let add = arg -> do { sliceArgs.push(arg); arg }
 
         let i = 0
-        let reducedArgs = args.map(e -> __walk!(e, e -> match e {
+        let reducedArgs = args.map(e -> __walk!(e, match {
             ty.Id({name: '_', *})          => ty.Subscript(argv, ty.Int(i++)),
             ty.Id({name: /^_(\d+)$/, *})   => ty.Subscript(argv, ty.Int(int(_1) - 1)),
             ty.Id({name: /^_(_+\d*)$/, *}) => ty.Id({name: _1}),
-            ty.Id({name: '**', *})         => (d == 1) ? kwargs : ty.Add(kwargs, e),
+            ty.Id({name: '**', *}) as e    => (d == 1) ? kwargs : ty.Add(kwargs, e),
 
-            ty.Id({name: '*', *}) => do {
+            ty.Id({name: '*', *}) as e => do {
                 let slice = ty.MethodCall({
                     object: argv,
                     method: 'slice',
@@ -2703,7 +2703,7 @@ macro __desugar_partial__(call) {
                 (d == 1) ? slice : ty.Add(slice, e)
             },
 
-            _ => e
+            e => e
         }))
 
         for arg in sliceArgs { arg.arg = ty.Int(i) }

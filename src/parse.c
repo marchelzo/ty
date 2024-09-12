@@ -1595,6 +1595,16 @@ prefix_yield(void)
 static struct expression *
 prefix_match(void)
 {
+        char *id = NULL;
+
+        if (token(1)->type == '{') {
+                Token kw = *tok();
+                next();
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->identifier = id = gensym();
+                putback(kw);
+        }
+
         struct expression *e = mkexpr();
         e->type = EXPRESSION_MATCH;
 
@@ -1627,6 +1637,17 @@ prefix_match(void)
         }
 
         consume('}');
+
+        if (id != NULL) {
+                Expr *f = mkfunc();
+                VPush(f->params, id);
+                VPush(f->dflts, NULL);
+                VPush(f->constraints, NULL);
+                f->body = mkstmt();
+                f->body->type = STATEMENT_EXPRESSION;
+                f->body->expression = e;
+                e = f;
+        }
 
         return e;
 }
