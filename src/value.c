@@ -1106,7 +1106,6 @@ _value_mark(struct value const *v)
 {
         void **src = source_lookup(v->src);
         if (src != NULL && *src != NULL) {
-                puts("Mark src");
                 MARK(*src);
         }
 
