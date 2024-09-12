@@ -137,6 +137,7 @@ struct value;
         X(PatternAlias) \
         X(MemberAccess) \
         X(Subscript) \
+        X(Slice) \
         X(NotNil) \
         X(ArrayCompr) \
         X(Try) \

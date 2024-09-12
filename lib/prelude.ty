@@ -16,6 +16,7 @@ tag DispatchError;
 tag None {
      map()     { None }
      flatMap() { None }
+     some?()   { false }
 }
 
 tag Some {
@@ -27,12 +28,14 @@ tag Some {
         f(self)
     }
 
-    from(x) {
+    static from(x) {
         match x {
             nil => None,
             _   => Some(x)
         }
     }
+
+    some?() { true }
 }
 
 tag Ok {
@@ -100,7 +103,11 @@ class Object {
     }
 
     |>(f) {
-        (*xs) -> f(self(*xs))
+        f@(self(*, **))
+    }
+
+    *>(f) {
+        f(self)
     }
 
     __match__(other) {
@@ -316,6 +323,40 @@ class Array : Iterable {
             return self[T]
         }
     }
+
+    __slice__(i=0, j, k=1) {
+        let slice = []
+
+        let wrap = match {
+            $ix :: ix < 0 => ix + #self,
+            ix            => ix
+        }
+
+        if k < 0 {
+            let start = min(wrap(i - 1), #self)
+            let stop = max(wrap(j ?? 0), 0)
+            for let ix = start; ix >= stop; ix += k {
+                if let Some(x) = self.get(ix) {
+                    slice.push(x)
+                }
+            }
+        } else {
+            let start = max(wrap(i), 0)
+            let stop = min(wrap(j ?? #self), #self)
+            for let ix = start; ix < stop; ix += k {
+                if let Some(x) = self.get(ix) {
+                    slice.push(x)
+                }
+            }
+        }
+
+        return slice
+    }
+
+    get(i) {
+        let n = #self
+        (i in -n..n) ? Some(self[i]) : None
+    }
 }
 
 class Dict : Iterable {
@@ -479,6 +520,10 @@ class String : Iterable {
         D[#a][#b]
     }
 
+    __count__() {
+        (ord(self)..).map(chr)
+    }
+
     -(end) {
         self.slice(0, -#end if end == self.slice(-#end))
     }
@@ -558,6 +603,14 @@ class Int {
             yield self
             self += k
         }
+    }
+
+    __count__*() {
+        while true { yield self++ }
+    }
+
+    __iter__*() {
+        while true { yield self++ }
     }
 
     negate() {
@@ -1973,12 +2026,23 @@ macro showCode {
     e
 }
 
-macro match?(e, p) $$[
-    match $$e {
-        $$p => true,
-        _   => false
+macro match?(e, p) {
+    if p != nil {
+        $$[
+            match $$e {
+                $$p => true,
+                _   => false
+            }
+        $$]
+    } else {
+        $$[
+            (match {
+                $$e => true,
+                _   => false
+            })
+        $$]
     }
-$$]
+}
 
 macro dbg(*args) {
     let tmp = ty.Id(name: ty.gensym())
@@ -2723,3 +2787,4 @@ operator >>   7  left
 operator ^    5  left
 operator :>   5  left
 operator !::  3  left
+operator *>   2  left

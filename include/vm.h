@@ -54,6 +54,7 @@ extern _Thread_local int EvalDepth;
         X(MEMBER_ACCESS), \
         X(TRY_MEMBER_ACCESS), \
         X(SUBSCRIPT), \
+        X(SLICE), \
         X(TAIL_CALL), \
         X(CALL), \
         X(CALL_METHOD), \
