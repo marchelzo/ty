@@ -487,7 +487,7 @@ value_show(struct value const *v)
                         struct value str = vm_eval_function(fp, v, NULL);
                         if (str.type != VALUE_STRING)
                                 vm_panic("%s.__str__() returned non-string", class_name(v->class));
-                        s = gc_alloc(str.bytes + 1);
+                        s = gc_resize_unchecked(NULL, str.bytes + 1);
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
@@ -1106,6 +1106,7 @@ _value_mark(struct value const *v)
 {
         void **src = source_lookup(v->src);
         if (src != NULL && *src != NULL) {
+                puts("Mark src");
                 MARK(*src);
         }
 
@@ -1113,7 +1114,7 @@ _value_mark(struct value const *v)
         static _Thread_local int d;
 
         ++GC_OFF_COUNT;
-        GCLOG("Marking: %s", value_show(v));
+        //GCLOG("Marking: %s", value_show(v));
         --GC_OFF_COUNT;
 
         ++d;

@@ -21,20 +21,20 @@ gc_resize(void *p, size_t n);
           (((v).count == (v).capacity) \
         ? ((resize((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count] = (item)), \
-						(v).count += 1, \
+                        (v).count += 1, \
                         ((v).items + (v).count - 1)) \
         : (((v).items[(v).count] = (item)), \
-				(v).count += 1, \
+                (v).count += 1, \
                 ((v).items + (v).count - 1)))
 
 #define vec_push_unchecked(v, item) \
           (((v).count == (v).capacity) \
         ? ((resize_unchecked((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count] = (item)), \
-						(v).count += 1, \
+                        (v).count += 1, \
                         ((v).items + (v).count - 1)) \
         : (((v).items[(v).count] = (item)), \
-				(v).count += 1, \
+                (v).count += 1, \
                 ((v).items + (v).count - 1)))
 
 #define vec_push_n(v, elements, n) \
@@ -84,10 +84,10 @@ gc_resize(void *p, size_t n);
           (((v).count == (v).capacity) \
         ? ((resize_nogc((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count] = (item)), \
-						(v).count += 1, \
+                        (v).count += 1, \
                         ((v).items + (v).count - 1)) \
         : (((v).items[(v).count] = (item)), \
-				(v).count += 1, \
+                (v).count += 1, \
                 ((v).items + (v).count - 1)))
 
 #define vec_nogc_push_n(v, elements, n) \
@@ -103,10 +103,10 @@ gc_resize(void *p, size_t n);
         ? ((Resize((v).items, (((v).capacity == 0 ? 4 : ((v).capacity * 2)) * (sizeof (*(v).items))), ((v).capacity * sizeof (*(v).items))), \
                         ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))), \
                         ((v).items[(v).count] = (item)), \
-						(v).count += 1, \
+                        (v).count += 1, \
                         ((v).items + (v).count - 1))) \
         : (((v).items[(v).count] = (item)), \
-				(v).count += 1, \
+                (v).count += 1, \
                 ((v).items + (v).count - 1)))
 
 #define VPushN(v, elements, n) \
