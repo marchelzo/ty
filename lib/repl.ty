@@ -5,7 +5,7 @@ import ty.parse as parse
 pub macro repl(cond, *exprs) {
     let sourceStrings = raw.drop(1).map(parse.show)
     let width = sourceStrings.map(&len).max() ?? 0
-    let formatString = "%%{width}s"
+    let formatString = "%{width}s"
 
     let prints = ty.Multi([
         $$[ print(fmt($$(ty.Value(formatString)), $$(ty.Value(s))), '=', $$(e), sep: ' ') $$]
