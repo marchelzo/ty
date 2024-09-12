@@ -3076,7 +3076,7 @@ Throw:
                         break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
-                        value = pop();
+                        value = peek();
 
                         b = ip[-1] == INSTR_TRY_MEMBER_ACCESS;
 
@@ -3087,6 +3087,7 @@ Throw:
 
                         push(NIL);
                         v = GetMember(value, member, h, true);
+                        pop();
 
                         if (v.type != VALUE_NONE) {
                                 *top() = v;

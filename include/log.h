@@ -38,7 +38,7 @@ extern _Bool EnableLogging;
 
 #define TID MyThreadId()
 
-#if 1
+#if 0
 #define GCLOG(...) if (EnableLogging) do { \
                         flockfile(stderr), \
                         fprintf(stderr, "(%14llu) ", TID), \

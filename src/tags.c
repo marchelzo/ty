@@ -31,7 +31,7 @@ static struct tags *
 mklist(int tag, struct tags *next)
 {
         struct tags *t = NULL;
-		resize_nogc(t, sizeof *t);
+        resize_nogc(t, sizeof *t);
 
         vec_init(t->links);
         t->n = lists.count;
@@ -108,8 +108,8 @@ tags_wrap(char const *s, int tags, bool color)
 {
         vec(char) cs = {0};
 
-		if (color)
-			vec_push_n(cs, TERM(94), strlen(TERM(94)));
+        if (color)
+                vec_push_n(cs, TERM(94), strlen(TERM(94)));
 
         struct tags *list = lists.items[tags];
         int n = 0;
@@ -121,19 +121,19 @@ tags_wrap(char const *s, int tags, bool color)
                 ++n;
         }
 
-		if (color)
-			vec_push_n(cs, TERM(0), strlen(TERM(0)));
+        if (color)
+                vec_push_n(cs, TERM(0), strlen(TERM(0)));
 
         vec_push_n(cs, s, strlen(s));
 
-		if (color)
-			vec_push_n(cs, TERM(94), strlen(TERM(94)));
+        if (color)
+                vec_push_n(cs, TERM(94), strlen(TERM(94)));
 
         while (n --> 0)
                 vec_push(cs, ')');
 
-		if (color)
-			vec_push_n(cs, TERM(0), strlen(TERM(0)));
+        if (color)
+                vec_push_n(cs, TERM(0), strlen(TERM(0)));
 
         vec_push(cs, '\0');
 
@@ -143,11 +143,11 @@ tags_wrap(char const *s, int tags, bool color)
 int
 tags_lookup(char const *name)
 {
-     for (int i = 0; i < names.count; ++i)
-          if (strcmp(names.items[i], name) == 0)
-               return i + 1;
+        for (int i = 0; i < names.count; ++i)
+                if (strcmp(names.items[i], name) == 0)
+                        return i + 1;
 
-     return -1;
+        return -1;
 }
 
 char const *
