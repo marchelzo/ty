@@ -1820,6 +1820,12 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->container);
                 symbolize_expression(scope, e->subscript);
                 break;
+        case EXPRESSION_SLICE:
+                symbolize_expression(scope, e->slice.e);
+                symbolize_expression(scope, e->slice.i);
+                symbolize_expression(scope, e->slice.j);
+                symbolize_expression(scope, e->slice.k);
+                break;
         case EXPRESSION_MEMBER_ACCESS:
                 mod_access = to_module_access(scope, e);
                 if (mod_access != NULL) {
@@ -4483,8 +4489,17 @@ emit_expr(struct expression const *e, bool need_loc)
                 break;
         case EXPRESSION_DOT_DOT:
                 emit_expression(e->left);
-                emit_expression(e->right);
-                emit_instr(INSTR_RANGE);
+                if (e->right != NULL) {
+                        emit_expression(e->right);
+                        emit_instr(INSTR_RANGE);
+                } else {
+                        method = "__count__";
+                        emit_instr(INSTR_CALL_METHOD);
+                        emit_int(0);
+                        emit_string(method);
+                        emit_ulong(strhash(method));
+                        emit_int(0);
+                }
                 break;
         case EXPRESSION_DOT_DOT_DOT:
                 emit_expression(e->left);
@@ -4604,6 +4619,16 @@ emit_expr(struct expression const *e, bool need_loc)
                 emit_expression(e->container);
                 emit_expression(e->subscript);
                 emit_instr(INSTR_SUBSCRIPT);
+                break;
+        case EXPRESSION_SLICE:
+                if (e->slice.i != NULL) emit_expression(e->slice.i);
+                else                    emit_instr(INSTR_NIL);
+                if (e->slice.j != NULL) emit_expression(e->slice.j);
+                else                    emit_instr(INSTR_NIL);
+                if (e->slice.k != NULL) emit_expression(e->slice.k);
+                else                    emit_instr(INSTR_NIL);
+                emit_expression(e->slice.e);
+                emit_instr(INSTR_SLICE);
                 break;
         case EXPRESSION_STATEMENT:
                 emit_statement(e->statement, true);
@@ -6367,6 +6392,15 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TySubscript);
                 break;
+        case EXPRESSION_SLICE:
+                v = value_tuple(4);
+                v.items[0] = tyexpr(e->slice.e);
+                v.items[1] = tyexpr(e->slice.i);
+                v.items[2] = tyexpr(e->slice.j);
+                v.items[3] = tyexpr(e->slice.k);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(0, TySlice);
+                break;
         case EXPRESSION_WITH:
                 v = ARRAY(value_array_new());
                 for (int i = 0; i < e->with.defs.count; ++i) {
@@ -7586,6 +7620,13 @@ cexpr(struct value *v)
                 e->type = EXPRESSION_SUBSCRIPT;
                 e->container = cexpr(&v->items[0]);
                 e->subscript = cexpr(&v->items[1]);
+                break;
+        case TySlice:
+                e->type = EXPRESSION_SLICE;
+                e->slice.e = cexpr(&v->items[0]);
+                e->slice.i = cexpr(&v->items[1]);
+                e->slice.j = cexpr(&v->items[2]);
+                e->slice.k = cexpr(&v->items[3]);
                 break;
         case TyEval:
         {

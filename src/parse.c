@@ -642,6 +642,14 @@ have_not_in(void)
                token(1)->keyword == KEYWORD_IN;
 }
 
+inline static bool
+no_rhs(int i)
+{
+        return token(i)->type == ']' ||
+               token(i)->type == ')' ||
+               token(i)->type == '}';
+}
+
 static void
 expect(int type)
 {
@@ -1610,13 +1618,33 @@ prefix_match(void)
 
         consume_keyword(KEYWORD_MATCH);
 
+        vec_init(e->patterns);
+        vec_init(e->thens);
+
         e->subject = parse_expr(-1);
         e->end = e->subject->end = End;
 
-        consume('{');
+        if (tok()->type == TOKEN_FAT_ARROW) {
+                next();
+                VPush(e->patterns, patternize(e->subject));
+                e->subject = mkexpr();
+                e->subject->type = EXPRESSION_IDENTIFIER;
+                e->subject->identifier = id = gensym();
+                VPush(e->thens, parse_expr(0));
+                if (have_keyword(KEYWORD_ELSE)) {
+                        next();
+                        Expr *alt = parse_expr(0);
+                        Expr *any = mkexpr();
+                        ZERO_EXPR(any);
+                        any->type = EXPRESSION_MATCH_ANY;
+                        any->identifier = "_";
+                        VPush(e->patterns, any);
+                        VPush(e->thens, alt);
+                }
+                goto End;
+        }
 
-        vec_init(e->patterns);
-        vec_init(e->thens);
+        consume('{');
 
         VPush(e->patterns, parse_pattern());
 
@@ -1638,6 +1666,7 @@ prefix_match(void)
 
         consume('}');
 
+End:
         if (id != NULL) {
                 Expr *f = mkfunc();
                 VPush(f->params, id);
@@ -2433,8 +2462,8 @@ prefix_range(void)
         consume(TOKEN_DOT_DOT);
 
         e->left = zero;
-        e->right = parse_expr(7);
-        e->end = e->right->end;
+        e->right = no_rhs(0) ? NULL : parse_expr(7);
+        e->end = End;
 
         return e;
 }
@@ -2541,6 +2570,13 @@ prefix_implicit_method(void)
         VPush(f->constraints, NULL);
 
         return f;
+}
+
+static struct expression *
+prefix_colon(void)
+{
+        tok()->type = '&';
+        return prefix_implicit_method();
 }
 
 static struct expression *
@@ -2906,6 +2942,21 @@ infix_list(struct expression *left)
         return e;
 }
 
+static Expr *
+infix_count_from(Expr *left)
+{
+        next();
+
+        Expr *e = mkexpr();
+        e->type = EXPRESSION_DOT_DOT;
+        e->start = left->start;
+        e->left = left;
+        e->right = NULL;
+        e->end = End;
+
+        return e;
+}
+
 static struct expression *
 infix_subscript(struct expression *left)
 {
@@ -2914,10 +2965,43 @@ infix_subscript(struct expression *left)
 
         consume('[');
 
-        e->type = EXPRESSION_SUBSCRIPT;
-        e->container = left;
-        e->subscript = parse_expr(0);
+        Expr *i;
+        if (tok()->type == ';') {
+                i = NULL;
+        } else {
+                i = parse_expr(0);
+        }
 
+        if (tok()->type == ']' && i != NULL) {
+                e->type = EXPRESSION_SUBSCRIPT;
+                e->container = left;
+                e->subscript = i;
+                goto End;
+        }
+
+        consume(';');
+
+        e->type = EXPRESSION_SLICE;
+        e->slice.e = left;
+        e->slice.i = i;
+        e->slice.j = NULL;
+        e->slice.k = NULL;
+
+        if (tok()->type != ']' && tok()->type != ';') {
+                e->slice.j = parse_expr(0);
+        }
+
+        if (tok()->type == ']') {
+                goto End;
+        }
+
+        consume(';');
+
+        if (tok()->type != ']') {
+                e->slice.k = parse_expr(0);
+        }
+
+End:
         consume(']');
 
         e->end = End;
@@ -3276,7 +3360,7 @@ get_prefix_parser(void)
         case TOKEN_QUESTION:       return prefix_is_nil;
         case TOKEN_BANG:           return prefix_bang;
         case TOKEN_AT:             return prefix_at;
-        case ':':                  return prefix_at;
+        case ':':                  return prefix_colon;
         case TOKEN_MINUS:          return prefix_minus;
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
@@ -3339,8 +3423,10 @@ get_infix_parser(void)
         case TOKEN_ARROW:          return infix_arrow_function;
         case TOKEN_SQUIGGLY_ARROW: return infix_squiggly_arrow;
         case '$~>':                return infix_squiggly_not_nil_arrow;
-        case TOKEN_DOT_DOT:        return infix_range;
-        case TOKEN_DOT_DOT_DOT:    return infix_incrange;
+
+        case TOKEN_DOT_DOT:        return no_rhs(1) ? infix_count_from : infix_range;
+        case TOKEN_DOT_DOT_DOT:    return no_rhs(1) ? infix_count_from : infix_incrange;
+
         case TOKEN_PLUS_EQ:        return infix_plus_eq;
         case TOKEN_STAR_EQ:        return infix_star_eq;
         case TOKEN_DIV_EQ:         return infix_div_eq;

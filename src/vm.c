@@ -3123,6 +3123,12 @@ Throw:
                         }
 
                         break;
+                CASE(SLICE)
+                        n = 3;
+                        nkw = 0;
+                        method = "__slice__";
+                        h = strhash(method);
+                        goto CallMethod;
                 CASE(SUBSCRIPT)
                         subscript = pop();
                         container = pop();

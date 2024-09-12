@@ -219,6 +219,7 @@ struct statement {
         X(MEMBER_ACCESS), \
         X(SELF_ACCESS), \
         X(SUBSCRIPT), \
+        X(SLICE), \
         X(METHOD_CALL), \
         X(USER_OP), \
         X(BIT_AND), \
@@ -423,6 +424,12 @@ struct expression {
                         struct expression *container;
                         struct expression *subscript;
                 };
+                struct {
+                        Expr *e;
+                        Expr *i;
+                        Expr *j;
+                        Expr *k;
+                } slice;
                 struct {
                         struct expression *object;
                         union {
