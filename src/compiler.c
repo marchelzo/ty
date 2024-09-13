@@ -6688,6 +6688,12 @@ tyexpr(struct expression const *e)
         case EXPRESSION_AND:
                 v = tagged(TyAnd, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
+        case EXPRESSION_BIT_AND:
+                v = tagged(TyBitAnd, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
+        case EXPRESSION_BIT_OR:
+                v = tagged(TyBitOr, tyexpr(e->left), tyexpr(e->right), NONE);
+                break;
         case EXPRESSION_VIEW_PATTERN:
                 v = tagged(TyView, tyexpr(e->left), tyexpr(e->right), NONE);
                 break;
@@ -7934,6 +7940,16 @@ cexpr(struct value *v)
                 break;
         case TyAnd:
                 e->type = EXPRESSION_AND;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyBitAnd:
+                e->type = EXPRESSION_BIT_AND;
+                e->left = cexpr(&v->items[0]);
+                e->right = cexpr(&v->items[1]);
+                break;
+        case TyBitOr:
+                e->type = EXPRESSION_BIT_OR;
                 e->left = cexpr(&v->items[0]);
                 e->right = cexpr(&v->items[1]);
                 break;

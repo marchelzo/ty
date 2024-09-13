@@ -98,6 +98,8 @@ struct value;
         X(Matches) \
         X(Or) \
         X(And) \
+        X(BitAnd) \
+        X(BitOr) \
         X(NotEq) \
         X(Assign) \
         X(Let) \

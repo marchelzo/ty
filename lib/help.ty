@@ -1,10 +1,12 @@
-import os
+import os (ioctl)
 import ty
 import ty.lex as lex
 import ty.parse as parse
 import ty.token as tok
 import chalk
 import json
+import ffi as c (C!)
+import ioctls (..)
 
 let table = %{}
 
@@ -388,10 +390,23 @@ class Printer {
     }
 }
 
+C! struct WinSize {
+    c.short lines;
+    c.short cols;
+    c.short xpix;
+    c.short ypix;
+}
+
+let winSize = WinSize()
+
 pub function prettyPrint(x) {
+    ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get()))
+
+    let P = Printer@(width: min(winSize.cols, 108))
+
     if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
-        print(Printer(colors=tuple(**json.parse(s))).print(x))
+        print(P(colors=tuple(**json.parse(s))).print(x))
     } else {
-        print(Printer().print(x))
+        print(P().print(x))
     }
 }
