@@ -318,7 +318,7 @@ scope_copy_public_except(struct scope *dst, struct scope const *src, char const 
                                 continue;
                         }
                         if (s->public) {
-                                scope_insert(dst, s)->public = reexport;
+                                scope_insert(dst, s)->public |= reexport;
                         }
                 }
         }
@@ -340,7 +340,7 @@ scope_copy_public(struct scope *dst, struct scope const *src, bool reexport)
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (s->public) {
-                                scope_insert(dst, s)->public = reexport;
+                                scope_insert(dst, s)->public |= reexport;
                         }
                 }
         }
