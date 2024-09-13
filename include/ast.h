@@ -34,6 +34,15 @@ typedef struct {
         void *user;
 } VisitorSet;
 
+typedef struct ns Namespace;
+
+struct ns {
+        char *id;
+        bool pub;
+        bool braced;
+        Namespace *next;
+};
+
 struct class_definition {
         int symbol;
         bool pub;
@@ -104,12 +113,13 @@ struct statement {
         struct location start;
         struct location end;
         char const *filename;
+        Namespace *ns;
         union {
                 struct {
                         struct expression *expression;
                         int depth;
                 };
-                vec(struct statement *) statements;
+                vec(Stmt *) statements;
                 expression_vector returns;
                 vec(char *) exports;
                 vec(struct symbol *) drop;
@@ -217,6 +227,8 @@ struct statement {
         X(SPECIAL_STRING), \
         X(FUNCTION_CALL), \
         X(MEMBER_ACCESS), \
+        X(MODULE), \
+        X(NAMESPACE), \
         X(SELF_ACCESS), \
         X(SUBSCRIPT), \
         X(SLICE), \
@@ -360,6 +372,7 @@ struct expression {
                         struct symbol *symbol;
                         char *module;
                         char *identifier;
+                        Expr *namespace;
                 };
                 struct {
                         char const *op_name;
@@ -388,7 +401,10 @@ struct expression {
                         expression_vector constraints;
                         expression_vector decorators;
                         expression_vector functions;
-                        struct expression *return_type;
+                        union {
+                                Expr *return_type;
+                                Expr *parent;
+                        };
                         vec(struct symbol *) param_symbols;
                         vec(struct symbol *) bound_symbols;
                         struct statement *body;

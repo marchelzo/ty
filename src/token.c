@@ -18,7 +18,6 @@ static struct {
         { "const",       KEYWORD_CONST     },
         { "continue",    KEYWORD_CONTINUE  },
         { "else",        KEYWORD_ELSE      },
-        { "export",      KEYWORD_EXPORT    },
         { "false",       KEYWORD_FALSE     },
         { "for",         KEYWORD_FOR       },
         { "function",    KEYWORD_FUNCTION  },
@@ -51,6 +50,7 @@ static struct {
         { "Next",        KEYWORD_NEXT      },
         { "generator",   KEYWORD_GENERATOR },
         { "static",      KEYWORD_STATIC    },
+        { "namespace",   KEYWORD_NAMESPACE },
         { "__eval__",    KEYWORD_EVAL      },
         { "__defined__", KEYWORD_DEFINED   },
 };

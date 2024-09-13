@@ -2,17 +2,15 @@ import os
 import errno
 import stdio
 
-export open, stdin, stdout, stderr, FBF, LBF, NBF, SEEK_SET, SEEK_CUR
+pub FBF = stdio._IOFBF
+pub LBF = stdio._IOLBF
+pub NBF = stdio._IONBF
+pub BufferingMethod = FBF | LBF | NBF
 
-let FBF = stdio._IOFBF
-let LBF = stdio._IOLBF
-let NBF = stdio._IONBF
-let BufferingMethod = FBF | LBF | NBF
+pub SEEK_SET = stdio.SEEK_SET
+pub SEEK_CUR = stdio.SEEK_CUR
 
-let SEEK_SET = stdio.SEEK_SET
-let SEEK_CUR = stdio.SEEK_CUR
-
-class Stream : Iter {
+pub class Stream : Iter {
     init(fd, mode: ?String = 'a+', buffering: ?BufferingMethod, dup: Bool = false) {
         if fd :: Int {
             @fd = match dup { true => os.dup(fd), _ => fd }
@@ -150,11 +148,11 @@ class Stream : Iter {
     }
 }
 
-let stdin = Stream(0, 'r');
-let stdout = Stream(1, 'w');
-let stderr = Stream(2, 'w', NBF);
+pub stdin = Stream(0, 'r');
+pub stdout = Stream(1, 'w');
+pub stderr = Stream(2, 'w', NBF);
 
-function open(path: String | Int, mode: String = 'a+', buffering, dup: Bool = false) {
+pub function open(path: String | Int, mode: String = 'a+', buffering, dup: Bool = false) {
 
     if path :: Int {
         return Stream(path, mode, buffering, dup);

@@ -1,7 +1,5 @@
 import sqlite3c (..)
 
-export SQLite
-
 tag SQLiteError {
     str() {
         errorMessage(self)
@@ -92,7 +90,7 @@ class SQLiteStatement : Iterable {
     }
 }
 
-class SQLite {
+pub class SQLite {
     init(path, fullMutex: Bool = false) {
         let fullMutexFlags =  SQLITE_OPEN_FULLMUTEX
                           .|. SQLITE_OPEN_READWRITE

@@ -4,9 +4,7 @@ import curl.slist as slist
 import curl.url
 import ptr (null)
 
-export CURL
-
-class CURL {
+pub class CURL {
     init(url, params) {
         self.handle = init()
         self.url = curl.url.new()

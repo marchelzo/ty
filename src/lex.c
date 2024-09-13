@@ -352,8 +352,8 @@ lexword(void)
         if (keyword = keyword_get_number(w), keyword != -1) {
                 state.need_nl |= (
                         keyword == KEYWORD_IMPORT
-                     || keyword == KEYWORD_EXPORT
                      || keyword == KEYWORD_OPERATOR
+                     || keyword == KEYWORD_NAMESPACE
                 );
                 return mkkw(keyword);
         } else {
@@ -1276,9 +1276,9 @@ lex_rewind(struct location const *where)
 }
 
 void
-lex_need_nl(void)
+lex_need_nl(bool need)
 {
-        state.need_nl = true;
+        state.need_nl = need;
 }
 
 bool

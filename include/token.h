@@ -102,7 +102,6 @@ typedef struct token {
                         KEYWORD_SELF,
                         KEYWORD_NIL,
                         KEYWORD_IMPORT,
-                        KEYWORD_EXPORT,
                         KEYWORD_AS,
                         KEYWORD_TAG,
                         KEYWORD_CLASS,
@@ -118,9 +117,10 @@ typedef struct token {
                         KEYWORD_PUB,
                         KEYWORD_DEFER,
                         KEYWORD_WITH,
-						KEYWORD_STATIC,
-						KEYWORD_EVAL,
-						KEYWORD_DEFINED,
+                        KEYWORD_STATIC,
+                        KEYWORD_EVAL,
+                        KEYWORD_DEFINED,
+                        KEYWORD_NAMESPACE,
                 } keyword;
                 struct expression *e;
                 struct regex const *regex;

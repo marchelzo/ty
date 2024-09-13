@@ -1,45 +1,43 @@
-export wrap, black, red, green, yellow, blue, magenta, cyan, white, bgBlack, bgRed, bgGreen, bgYellow, bgBlue, bgMagenta, bgCyan, bgWhite, brightBlack, brightRed, brightGreen, brightYellow, brightBlue, brightMagenta, brightCyan, brightWhite, bold, underline, fg, bg, pen
-
-function wrap(s, *props) {
+pub function wrap(s, *props) {
   "\x1b[{props.join(';')}m{s}\x1b[0m"
 }
 
-function black(s)   { wrap(s, 30) }
-function red(s)     { wrap(s, 31) }
-function green(s)   { wrap(s, 32) }
-function yellow(s)  { wrap(s, 33) }
-function blue(s)    { wrap(s, 34) }
-function magenta(s) { wrap(s, 35) }
-function cyan(s)    { wrap(s, 36) }
-function white(s)   { wrap(s, 37) }
+pub function black(s)   { wrap(s, 30) }
+pub function red(s)     { wrap(s, 31) }
+pub function green(s)   { wrap(s, 32) }
+pub function yellow(s)  { wrap(s, 33) }
+pub function blue(s)    { wrap(s, 34) }
+pub function magenta(s) { wrap(s, 35) }
+pub function cyan(s)    { wrap(s, 36) }
+pub function white(s)   { wrap(s, 37) }
 
-function bgBlack(s)   { wrap(s, 40) }
-function bgRed(s)     { wrap(s, 41) }
-function bgGreen(s)   { wrap(s, 42) }
-function bgYellow(s)  { wrap(s, 43) }
-function bgBlue(s)    { wrap(s, 44) }
-function bgMagenta(s) { wrap(s, 45) }
-function bgCyan(s)    { wrap(s, 46) }
-function bgWhite(s)   { wrap(s, 47) }
+pub function bgBlack(s)   { wrap(s, 40) }
+pub function bgRed(s)     { wrap(s, 41) }
+pub function bgGreen(s)   { wrap(s, 42) }
+pub function bgYellow(s)  { wrap(s, 43) }
+pub function bgBlue(s)    { wrap(s, 44) }
+pub function bgMagenta(s) { wrap(s, 45) }
+pub function bgCyan(s)    { wrap(s, 46) }
+pub function bgWhite(s)   { wrap(s, 47) }
 
-function brightBlack(s)   { wrap(s, 90) }
-function brightRed(s)     { wrap(s, 91) }
-function brightGreen(s)   { wrap(s, 92) }
-function brightYellow(s)  { wrap(s, 93) }
-function brightBlue(s)    { wrap(s, 94) }
-function brightMagenta(s) { wrap(s, 95) }
-function brightCyan(s)    { wrap(s, 96) }
-function brightWhite(s)   { wrap(s, 97) }
+pub function brightBlack(s)   { wrap(s, 90) }
+pub function brightRed(s)     { wrap(s, 91) }
+pub function brightGreen(s)   { wrap(s, 92) }
+pub function brightYellow(s)  { wrap(s, 93) }
+pub function brightBlue(s)    { wrap(s, 94) }
+pub function brightMagenta(s) { wrap(s, 95) }
+pub function brightCyan(s)    { wrap(s, 96) }
+pub function brightWhite(s)   { wrap(s, 97) }
 
-function bold(s) {
+pub function bold(s) {
   wrap(s, 1)
 }
 
-function underline(s) {
+pub function underline(s) {
   wrap(s, 4)
 }
 
-function fg(c) {
+pub function fg(c) {
   match c.lower() {
     'black'   => black,
     'red'     => red,
@@ -53,7 +51,7 @@ function fg(c) {
   }
 }
 
-function bg(c) {
+pub function bg(c) {
   return match c.lower() {
     'black'   => bgBlack,
     'red'     => bgRed,
@@ -67,7 +65,7 @@ function bg(c) {
   }
 }
 
-function pen(*args) {
+pub function pen(*args) {
   let p = id
 
   for arg in args {
@@ -81,7 +79,7 @@ function pen(*args) {
   return p
 }
 
-function strip(s) {
+pub function strip(s) {
     s.comb(/\x1b[^m]+m/)
 }
 

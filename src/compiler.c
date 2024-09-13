@@ -131,7 +131,7 @@ typedef vec(TryState) TryStates;
 /*
  * State which is local to a single compilation unit.
  */
-struct state {
+typedef struct state {
         byte_vector code;
 
         offset_vector selfs;
@@ -144,15 +144,15 @@ struct state {
         int function_resources;
         int resources;
 
-        struct scope *method;
-        struct scope *fscope;
+        Scope *method;
+        Scope *fscope;
 
-        struct scope *macro_scope;
+        Scope *macro_scope;
 
-        struct scope *implicit_fscope;
-        struct expression *implicit_func;
+        Scope *implicit_fscope;
+        Expr *implicit_func;
 
-        struct expression *func;
+        Expr *func;
         int class;
 
         int function_depth;
@@ -161,7 +161,8 @@ struct state {
         LoopStates loops;
 
         import_vector imports;
-        vec(char const *) exports;
+
+        name_vector ns;
 
         struct scope *global;
 
@@ -173,7 +174,7 @@ struct state {
         struct location mend;
 
         location_vector expression_locations;
-};
+} CompileState;
 
 bool CheckConstraints = true;
 size_t GlobalCount = 0;
@@ -187,7 +188,7 @@ static int BuiltinCount;
 
 static int jumpdistance;
 static vec(struct module) modules;
-static struct state state;
+static CompileState state;
 static vec(location_vector) location_lists;
 static vec(void *) source_map;
 static struct scope *global;
@@ -744,8 +745,8 @@ addsymbol(struct scope *scope, char const *name)
         s->file = state.filename;
         s->loc = state.start;
 
-        if ((scope == global || scope == state.global) && isupper(name[0])) {
-                VPush(state.exports, name);
+        if (isupper(name[0])) {
+                s->public = true;
         }
 
         LOG("adding symbol: %s -> %d", name, s->symbol);
@@ -788,7 +789,7 @@ getsymbol(struct scope const *scope, char const *name, bool *local)
         }
 
         struct symbol *s = scope_lookup(scope, name);
-        if (s == NULL) {
+        if (s == NULL || s->namespace) {
                 fail(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
@@ -840,7 +841,8 @@ freshstate(void)
         s.function_resources = 0;
 
         vec_init(s.imports);
-        vec_init(s.exports);
+
+        vec_init(s.ns);
 
         s.method = NULL;
         s.global = scope_new("(global)", global, false);
@@ -877,88 +879,121 @@ is_loop(struct statement const *s)
         }
 }
 
-inline static struct expression *
-to_module_access(struct scope const *scope, struct expression const *e)
+inline static Expr *
+resolve_access(Scope const *scope, char **parts, int n, Expr *e)
 {
-        static vec(char) mod = {0};
+        static vec(char) mod;
         mod.count = 0;
 
-        VPush(mod, '\0');
+        Symbol *sym = NULL;
 
-        char const *name;
-        struct location start = e->start;
-        struct location end = e->end;
-
-        if (e->type == EXPRESSION_MEMBER_ACCESS) {
-                name = e->member_name;
-                start = e->start;
-                end = e->end;
-        } else {
-                name = e->method_name;
-                start = e->object->start;
-                end = e->object->end;
-                while (*end.s != '\0' && *end.s != '(') {
-                        end.s += 1;
+        if (n == 1) {
+                sym = scope_lookup(scope, parts[0]);
+                if (sym != NULL && !sym->namespace) {
+                        return e;
                 }
         }
 
-        e = e->object;
-
-        while (e->type == EXPRESSION_MEMBER_ACCESS) {
-                VInsertN(mod, e->member_name, strlen(e->member_name), 0);
-                VInsert(mod, '/', 0);
-                e = e->object;
+        for (int i = 0; i < n; ++i) {
+                if (i > 0) {
+                        vec_nogc_push(mod, '/');
+                }
+                int len = strlen(parts[i]);
+                vec_nogc_push_n(mod, parts[i], len);
         }
 
-        if (e->type != EXPRESSION_IDENTIFIER || e->module != NULL) {
-                return NULL;
-        }
+        vec_nogc_push(mod, '\0');
 
-        if (scope_lookup(scope, e->identifier) != NULL) {
-                return NULL;
-        }
-
-        struct expression *id = Allocate(sizeof *id);
-        *id = (struct expression){0};
-
-        id->start = start;
-        id->end = end;
-        id->filename = state.filename;
-        id->identifier = (char *)name;
-        id->type = EXPRESSION_IDENTIFIER;
-
-        VInsertN(mod, e->identifier, strlen(e->identifier), 0);
-
-        struct scope *mod_scope = search_import_scope(mod.items);
-
+        Scope *mod_scope = search_import_scope(mod.items);
         if (mod_scope != NULL) {
-                id->module = sclonea(mod.items);
-                id->symbol = getsymbol(mod_scope, name, &id->local);
-                return id;
-        } else {
-                return NULL;
+                e->type = EXPRESSION_MODULE;
+                e->name = (n == 1) ? parts[0] : sclonea(mod.items);
+                e->scope = mod_scope;
+                e->parent = NULL;
+                return e;
         }
-}
 
+        if (n == 1) {
+                if (sym != NULL) {
+                        e->type = EXPRESSION_NAMESPACE;
+                        e->name = parts[0];
+                        e->scope = sym->scope;
+                        e->parent = NULL;
+                }
+                return e;
+        }
 
-static bool
-fixup_module_access(Expr *e, struct scope *scope)
-{
-        if (
-                e->type != EXPRESSION_METHOD_CALL &&
-                e->type != EXPRESSION_MEMBER_ACCESS
+        Expr *left;
+
+        switch (e->type) {
+        case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_METHOD_CALL:
+                left = e->object;
+                break;
+        case EXPRESSION_NAMESPACE:
+                left = e->parent;
+                break;
+        default:
+                left = NULL;
+        }
+
+        if (left == NULL) {
+                return e;
+        }
+
+        char *id = parts[n - 1];
+
+#ifdef TY_DEBUG_NAMES
+        static int d;
+        printf("%*sbefore: left=%s, e=%s, part=%s\n", d*4, "", ExpressionTypeName(left), ExpressionTypeName(e), parts[n - 1]);
+        d += 1;
+        resolve_access(scope, parts, n - 1, left);
+        d -= 1;
+        printf("%*safter:  left=%s, e=%s, part=%s\n", d*4, "", ExpressionTypeName(left), ExpressionTypeName(e), id);
+#else
+        resolve_access(scope, parts, n - 1, left);
+#endif
+
+        if (left->type == EXPRESSION_IDENTIFIER || left->type == EXPRESSION_MEMBER_ACCESS)
+                return e;
+
+        sym = scope_lookup(left->scope, id);
+        if (sym == NULL) {
+                state.end = e->end;
+                fail(
+                        "reference to undefined variable: %s%s%s%s",
+                        TERM(1),
+                        TERM(93),
+                        id,
+                        TERM(0)
+                );
+        } else if (
+                !sym->public &&
+                (
+                        left->scope->external ||
+                        !scope_is_subscope(left->scope, state.global)
+                )
         ) {
-                return false;
+                state.end = e->end;
+                fail(
+                        "reference to non-public external symbol %s%s%s%s",
+                        TERM(1),
+                        TERM(93),
+                        id,
+                        TERM(0)
+                );
         }
 
-        Expr *mod_access = to_module_access(scope, e);
-
-        if (mod_access == NULL) {
-                return false;
+        if (sym->namespace) {
+                e->type = EXPRESSION_NAMESPACE;
+                e->name = id;
+                e->scope = sym->scope;
+                e->parent = left;
+                return e;
         }
 
         if (e->type == EXPRESSION_METHOD_CALL) {
-                struct expression fc = *e;
+                Expr fc = *e;
 
                 fc.type = EXPRESSION_FUNCTION_CALL;
                 fc.args = e->method_args;
@@ -970,14 +1005,116 @@ fixup_module_access(Expr *e, struct scope *scope)
                 for (size_t i = 0; i < fc.kws.count; ++i)
                         VPush(fc.fkwconds, NULL);
 
-                fc.function = mod_access;
+                Expr *f = fc.function = Allocate(sizeof *f);
+                ZERO_EXPR(f);
+                f->type = EXPRESSION_IDENTIFIER;
+                f->identifier = id;
+                f->namespace = left;
+                f->module = NULL;
+                f->symbol = sym;
+                f->symbolized = true;
 
                 *e = fc;
         } else {
-                *e = *mod_access;
+                ZERO_EXPR(e);
+                e->type = EXPRESSION_IDENTIFIER;
+                e->identifier = id;
+                e->namespace = left;
+                e->module = NULL;
+                e->symbol = sym;
+                e->symbolized = true;
         }
 
-        return true;
+        return e;
+}
+
+static void
+fixup_access(Scope const *scope, Expr *e)
+{
+        name_vector parts = {0};
+
+        char const *name;
+        Location start = e->start;
+        Location end = e->end;
+
+        if (e->type == EXPRESSION_MEMBER_ACCESS) {
+                name = e->member_name;
+                start = e->start;
+                end = e->end;
+        } else if (e->type == EXPRESSION_METHOD_CALL) {
+                name = e->method_name;
+                start = e->object->start;
+                end = e->object->end;
+                while (*end.s != '\0' && *end.s != '(') {
+                        end.s += 1;
+                }
+        } else {
+                return;
+        }
+
+        Expr const *o = e->object;
+
+        for (;;) {
+                if (o->type == EXPRESSION_MEMBER_ACCESS) {
+                        o = o->object;
+                } else if (o->type == EXPRESSION_NAMESPACE && o->parent != NULL) {
+                        o = o->parent;
+                } else {
+                        break;
+                }
+        }
+
+        if (
+                (o->type != EXPRESSION_MODULE) &&
+                (o->type != EXPRESSION_NAMESPACE || o->parent != NULL) &&
+                (o->type != EXPRESSION_IDENTIFIER || o->module != NULL)
+        ) {
+                return;
+        }
+
+        if (o->type == EXPRESSION_IDENTIFIER) {
+                Symbol *sym = scope_lookup(scope, o->identifier);
+                if (sym != NULL && !sym->namespace) {
+                        return;
+                }
+        }
+
+        VPush(parts, (char *)name);
+
+        o = e->object;
+
+       for (;;) {
+                if (o->type == EXPRESSION_MEMBER_ACCESS) {
+                        VInsert(parts, o->member_name, 0);
+                        o = o->object;
+                } else if (o->type == EXPRESSION_NAMESPACE && o->parent != NULL) {
+                        VInsert(parts, o->name, 0);
+                        o = o->parent;
+                } else {
+                        break;
+                }
+        }
+
+        if (o->type == EXPRESSION_IDENTIFIER) {
+                VInsert(parts, o->identifier, 0);
+        } else {
+                VInsert(parts, o->name, 0);
+        }
+
+#ifdef TY_DEBUG_NAMES
+        printf("parts: ");
+        for (int i = 0; i < parts.count; ++i) {
+                if (i > 0) putchar('.');
+                printf("%s", parts.items[i]);
+        }
+        putchar('\n');
+#endif
+
+        resolve_access(scope, parts.items, parts.count, (Expr *)e);
+
+#ifdef TY_DEBUG_NAMES
+        printf("resolved to: %s\n", ExpressionTypeName(e));
+#endif
 }
 
 static struct scope *
@@ -1138,26 +1275,6 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                 scope = state.global;
         }
 
-        struct expression *mod_access = (e->type == EXPRESSION_METHOD_CALL) ? to_module_access(scope, e) : NULL;
-
-        if (mod_access != NULL) {
-                struct expression fc = *e;
-
-                fc.type = EXPRESSION_FUNCTION_CALL;
-                fc.args = e->method_args;
-                fc.kwargs = e->method_kwargs;
-                fc.kws = e->method_kws;
-                fc.fconds = e->mconds;
-
-                vec_init(fc.fkwconds);
-                for (size_t i = 0; i < fc.kws.count; ++i)
-                        VPush(fc.fkwconds, NULL);
-
-                fc.function = mod_access;
-
-                *e = fc;
-        }
-
         bool tag_pattern = e->type == EXPRESSION_TAG_PATTERN_CALL;
 
         if (
@@ -1215,7 +1332,7 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                         }
                 }
         } else if (e->type == EXPRESSION_TAG_APPLICATION && e->identifier != EmptyString) {
-                e->symbol = getsymbol(
+                e->symbol = e->symbolized ? e->symbol : getsymbol(
                         (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(e->module),
                         e->identifier,
                         NULL
@@ -1236,7 +1353,11 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
 
         struct expression *mod_access;
 
+        fixup_access(scope, target);
         try_symbolize_application(scope, target);
+
+        if (target->symbolized)
+                return;
 
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
@@ -1273,7 +1394,6 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                         symbolize_expression(scope, target->constraint);
                         if (pub) {
                                 target->symbol->public = true;
-                                //VPush(state.exports, target->identifier);
                         }
                 } else {
                         if (target->constraint != NULL) {
@@ -1313,7 +1433,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue_(scope, target->tagged, decl, pub);
                 if (target->identifier != EmptyString) {
-                        target->symbol = getsymbol(
+                        target->symbol = (target->symbol != NULL) ? target->symbol : getsymbol(
                                 ((target->module == NULL || *target->module == '\0') ? state.global : get_import_scope(target->module)),
                                 target->identifier,
                                 NULL
@@ -1342,13 +1462,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                 symbolize_expression(scope, target->subscript);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                mod_access = to_module_access(scope, target);
-                if (mod_access != NULL) {
-                        *target = *mod_access;
-                        goto ConstAssignment;
-                } else {
-                        symbolize_expression(scope, target->object);
-                }
+                symbolize_expression(scope, target->object);
                 break;
         case EXPRESSION_TUPLE:
                 target->ltmp = tmpsymbol(scope);
@@ -1386,7 +1500,11 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
 
         e->filename = state.filename;
 
+        fixup_access(scope, e);
         try_symbolize_application(scope, e);
+
+        if (e->symbolized)
+                return;
 
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
                 goto Tag;
@@ -1563,12 +1681,14 @@ invoke_fun_macro(Scope *scope, struct expression *e)
 
         vm_push(&raw);
 
+        Scope *mscope = state.macro_scope;
+        state.macro_scope = scope;
+
         for (size_t i = 0;  i < e->args.count; ++i) {
                 value_array_push(raw.array, PTR(e->args.items[i]));
                 Value v = tyexpr(e->args.items[i]);
                 vm_push(&v);
         }
-
 
         Value v = vm_call(&m, e->args.count + 1);
 
@@ -1582,8 +1702,32 @@ invoke_fun_macro(Scope *scope, struct expression *e)
 
         state.mstart = mstart;
         state.mend = mend;
+        state.macro_scope = mscope;
 
         --GC_OFF_COUNT;
+}
+
+static Scope *
+GetNamespace(Namespace *ns)
+{
+        if (ns == NULL)
+                return state.global;
+
+        Scope *scope = GetNamespace(ns->next);
+        Symbol *sym = scope_lookup(scope, ns->id);
+
+        if (sym == NULL) {
+                Scope *sub = scope_new(ns->id, scope, false);
+                sym = scope_add_namespace(scope, ns->id, sub);
+                sym->public = ns->pub;
+#ifdef TY_DEBUG_NAMES
+                LOG("new ns %s (scope=%s) added to %s\n", ns->id, scope_name(sym->scope), scope_name(scope));
+#endif
+        } else if (!sym->namespace) {
+                return state.global;
+        }
+
+        return sym->scope;
 }
 
 static void
@@ -1605,7 +1749,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
         struct expression *func = state.func;
         struct expression *implicit_func = state.implicit_func;
         struct scope *implicit_fscope = state.implicit_fscope;
-        struct expression *mod_access;
+
+        fixup_access(scope, e);
+
+        if (e->symbolized)
+                return;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -1827,42 +1975,16 @@ symbolize_expression(struct scope *scope, struct expression *e)
                 symbolize_expression(scope, e->slice.k);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
-                mod_access = to_module_access(scope, e);
-                if (mod_access != NULL) {
-                        *e = *mod_access;
-                } else {
-                        symbolize_expression(scope, e->object);
-                }
+                symbolize_expression(scope, e->object);
                 break;
         case EXPRESSION_METHOD_CALL:
-                mod_access = to_module_access(scope, e);
-                if (mod_access != NULL) {
-                        struct expression fc = *e;
-
-                        fc.type = EXPRESSION_FUNCTION_CALL;
-                        fc.args = e->method_args;
-                        fc.kwargs = e->method_kwargs;
-                        fc.kws = e->method_kws;
-                        fc.fconds = e->mconds;
-
-                        vec_init(fc.fkwconds);
-                        for (size_t i = 0; i < fc.kws.count; ++i)
-                                VPush(fc.fkwconds, NULL);
-
-                        fc.function = mod_access;
-
-                        *e = fc;
-
-                        symbolize_expression(scope, e);
-                } else {
-                        symbolize_expression(scope, e->object);
-                        for (size_t i = 0;  i < e->method_args.count; ++i)
-                                symbolize_expression(scope, e->method_args.items[i]);
-                        for (size_t i = 0;  i < e->method_args.count; ++i)
-                                symbolize_expression(scope, e->mconds.items[i]);
-                        for (size_t i = 0; i < e->method_kwargs.count; ++i)
-                                symbolize_expression(scope, e->method_kwargs.items[i]);
-                }
+                symbolize_expression(scope, e->object);
+                for (size_t i = 0;  i < e->method_args.count; ++i)
+                        symbolize_expression(scope, e->method_args.items[i]);
+                for (size_t i = 0;  i < e->method_args.count; ++i)
+                        symbolize_expression(scope, e->mconds.items[i]);
+                for (size_t i = 0; i < e->method_kwargs.count; ++i)
+                        symbolize_expression(scope, e->method_kwargs.items[i]);
                 break;
         case EXPRESSION_EQ:
         case EXPRESSION_MAYBE_EQ:
@@ -2011,7 +2133,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
 }
 
 static void
-symbolize_statement(struct scope *scope, struct statement *s)
+symbolize_statement(Scope *scope, Stmt *s)
 {
         if (s == NULL)
                 return;
@@ -2019,15 +2141,14 @@ symbolize_statement(struct scope *scope, struct statement *s)
         state.start = s->start;
         state.end = s->end;
 
-        struct scope *subscope;
-        struct symbol *sym;
+        Scope *subscope;
+
+        if (scope == state.global && s->ns != NULL)
+                scope = GetNamespace(s->ns);
 
         switch (s->type) {
         case STATEMENT_IMPORT:
                 import_module(s);
-                break;
-        case STATEMENT_EXPORT:
-                VPushN(state.exports, s->exports.items, s->exports.count);
                 break;
         case STATEMENT_DEFER:
                 if (state.func == NULL) {
@@ -2040,7 +2161,7 @@ symbolize_statement(struct scope *scope, struct statement *s)
                 symbolize_expression(scope, s->expression);
                 break;
         case STATEMENT_CLASS_DEFINITION:
-                if (!scope_locally_defined(state.global, s->class.name)) {
+                if (!scope_locally_defined(scope, s->class.name)) {
                         define_class(s);
                 }
 
@@ -5222,7 +5343,7 @@ emit_new_globals(void)
                         emit_int(s->i);
                         emit_instr(INSTR_ASSIGN);
                         emit_instr(INSTR_POP);
-                } else if (s->class != -1) {
+                } else if (s->class >= 0) {
                         emit_instr(INSTR_CLASS);
                         emit_int(s->class);
                         emit_instr(INSTR_TARGET_GLOBAL);
@@ -5256,14 +5377,16 @@ get_module_scope(char const *name)
 }
 
 static void
-declare_classes(struct statement *s)
+declare_classes(struct statement *s, Scope *scope)
 {
+        Scope *ns = (scope != NULL) ? scope : GetNamespace(s->ns);
+
         if (s->type == STATEMENT_MULTI) {
                 for (int i = 0; i < s->statements.count; ++i) {
-                        declare_classes(s->statements.items[i]);
+                        declare_classes(s->statements.items[i], ns);
                 }
         } else if (s->type == STATEMENT_CLASS_DEFINITION) {
-                if (scope_locally_defined(state.global, s->class.name)) {
+                if (scope_locally_defined(ns, s->class.name)) {
                         fail(
                                 "redeclaration of class %s%s%s%s%s",
                                 TERM(1),
@@ -5273,14 +5396,10 @@ declare_classes(struct statement *s)
                                 TERM(39)
                         );
                 }
-                struct symbol *sym = addsymbol(state.global, s->class.name);
+                struct symbol *sym = addsymbol(ns, s->class.name);
                 sym->class = class_new(s->class.name, s->class.doc);
                 sym->cnst = true;
                 s->class.symbol = sym->class;
-
-                if (s->class.pub) {
-                        VPush(state.exports, s->class.name);
-                }
         }
 }
 
@@ -5345,13 +5464,6 @@ compile(char const *source)
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(state.global, p[i]);
-        }
-
-        for (int i = 0; i < state.exports.count; ++i) {
-                struct symbol *s = scope_lookup(state.global, state.exports.items[i]);
-                if (s == NULL)
-                        fail("attempt to export non-existent variable '%s'", state.exports.items[i]);
-                s->public = true;
         }
 
         emit_new_globals();
@@ -6002,11 +6114,23 @@ tyexpr(struct expression const *e)
 
         GC_OFF_COUNT += 1;
 
-        fixup_module_access((Expr *)e, state.global);
-        expedite_fun((Expr *)e, state.global);
+        Scope *scope = state.macro_scope == NULL
+                     ? state.global
+                     : state.macro_scope;
+
+        fixup_access(scope, (Expr *)e);
+        expedite_fun((Expr *)e, scope);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+                if (e->namespace != NULL) {
+                        v = value_tuple(2);
+                        v.items[0] = tyexpr(e->namespace);
+                        v.items[1] = STRING_CLONE(e->identifier, strlen(e->identifier));
+                        v.type |= VALUE_TAGGED;
+                        v.tags = tags_push(0, TyMemberAccess);
+                        break;
+                }
                 v = value_named_tuple(
                         "name", STRING_CLONE(e->identifier, strlen(e->identifier)),
                         "module", (e->module == NULL) ? NIL : STRING_CLONE(e->module, strlen(e->module)),
@@ -6016,6 +6140,27 @@ tyexpr(struct expression const *e)
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(0, TyId);
 
+                break;
+        case EXPRESSION_MODULE:
+        case EXPRESSION_NAMESPACE:
+                if (e->parent != NULL) {
+                        v = value_tuple(2);
+                        v.items[0] = tyexpr(e->parent);
+                        v.items[1] = STRING_CLONE(e->name, strlen(e->name));
+                        v.type |= VALUE_TAGGED;
+                        v.tags = tags_push(0, TyMemberAccess);
+                        break;
+                } else {
+                        v = value_named_tuple(
+                                "name", STRING_CLONE(e->name, strlen(e->name)),
+                                "module", NIL,
+                                "constraint", NIL,
+                                NULL
+                        );
+
+                        v.type |= VALUE_TAGGED;
+                        v.tags = tags_push(0, TyId);
+                }
                 break;
         case EXPRESSION_MATCH_ANY:
                 if (e->constraint != NULL) {
@@ -7173,8 +7318,6 @@ cexpr(struct value *v)
                 return NULL;
         }
 
-        //printf("cexpr(): %s\n", value_show_color(v));
-
         Expr *e = Allocate(sizeof *e);
         Expr *src = source_lookup(v->src);
 
@@ -7921,6 +8064,12 @@ cexpr(struct value *v)
                 fail("invalid value passed to cexpr(): %s", value_show_color(v));
         }
 
+        Scope *scope = state.macro_scope == NULL
+                     ? state.global
+                     : state.macro_scope;
+
+        fixup_access(scope, e);
+
         return e;
 }
 
@@ -8064,13 +8213,15 @@ typarse(struct expression *e, struct location const *start, struct location cons
 }
 
 void
-define_tag(struct statement *s)
+define_tag(Stmt *s)
 {
-        if (scope_locally_defined(state.global, s->class.name)) {
+        Scope *scope = GetNamespace(s->ns);
+
+        if (scope_locally_defined(scope, s->class.name)) {
                 fail("redeclaration of tag: %s", s->tag.name);
         }
 
-        Symbol *sym = addsymbol(state.global, s->tag.name);
+        Symbol *sym = addsymbol(scope, s->tag.name);
         sym->cnst = true;
         sym->tag = tags_new(s->tag.name);
         sym->doc = s->tag.doc;
@@ -8078,9 +8229,11 @@ define_tag(struct statement *s)
 }
 
 void
-define_class(struct statement *s)
+define_class(Stmt *s)
 {
-        if (scope_locally_defined(state.global, s->class.name)) {
+        Scope *scope = GetNamespace(s->ns);
+
+        if (scope_locally_defined(scope, s->class.name)) {
                 fail(
                         "redeclaration of class %s%s%s%s%s",
                         TERM(1),
@@ -8091,7 +8244,7 @@ define_class(struct statement *s)
                 );
         }
 
-        struct symbol *sym = addsymbol(state.global, s->class.name);
+        struct symbol *sym = addsymbol(scope, s->class.name);
         sym->class = class_new(s->class.name, s->class.doc);
         sym->doc = s->class.doc;
         sym->cnst = true;
@@ -8101,21 +8254,17 @@ define_class(struct statement *s)
                 struct expression *m = s->class.methods.items[i];
                 class_add_method(sym->class, m->name, PTR(m));
         }
-
-        if (s->class.pub) {
-                VPush(state.exports, s->class.name);
-        }
 }
 
 void
-define_function(struct statement *s)
+define_function(Stmt *s)
 {
-        symbolize_lvalue(state.global, s->target, true, s->pub);
+        symbolize_lvalue(GetNamespace(s->ns), s->target, true, s->pub);
         s->target->symbol->doc = s->doc;
 }
 
 void
-define_macro(struct statement *s, bool fun)
+define_macro(Stmt *s, bool fun)
 {
         symbolize_statement(state.global, s);
         if (fun)

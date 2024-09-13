@@ -2,8 +2,6 @@ import os
 import time (utime)
 import errno (ETIMEDOUT)
 
-export ls, sh, expand
-
 let KILL_SIG = match `os::SIGKILL` {
     Some(x) => x,
     _       => os::SIGTERM
@@ -15,7 +13,7 @@ let SHELL = static_if __windows__ {
     [os.getenv('SHELL'), '-c']
 }
 
-function sh(c, input, timeoutMs, signal=KILL_SIG, combineOutput=false, shareStderr=false, shell=SHELL) {
+pub function sh(c, input, timeoutMs, signal=KILL_SIG, combineOutput=false, shareStderr=false, shell=SHELL) {
     if not let $p = os.spawn(
         [*shell, c],
         detach: timeoutMs != nil,
@@ -121,10 +119,10 @@ static_if __apple__ || __linux__ {
 }
 }
 
-function ls(d, flags) {
+pub function ls(d, flags) {
     return sh("ls '{d}' {flags || ''}").split("\n")
 }
 
-function expand(s) {
+pub function expand(s) {
     return sh("echo -n {s}")
 }

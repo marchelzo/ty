@@ -4,8 +4,6 @@ import bit (shiftLeft, shiftRight, AND)
 import errno
 import json
 
-export FCGIApp
-
 let FCGI_LISTENSOCK_FILENO  = 0;
 
 let FCGI_HEADER_LEN         = 8;
@@ -322,7 +320,7 @@ class FCGIRequest {
     }
 }
 
-class FCGIApp {
+pub class FCGIApp {
     init(socket) {
         self.socket = socket
         @death = Sync([])

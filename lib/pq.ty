@@ -1,6 +1,4 @@
-export Heap
-
-class Heap {
+pub class Heap {
     init() {
         self.keys = [];
         self.values = [];
