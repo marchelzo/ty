@@ -1,5 +1,3 @@
-export make, opt, flag
-
 let bools = %{
     'true': true,
     'false': false,
@@ -11,7 +9,7 @@ let bools = %{
     'no': false
 }
 
-function opt(short, long, pre=true, post=true, convert=id, multi=false, default=nil, help='') {
+pub function opt(short, long, pre=true, post=true, convert=id, multi=false, default=nil, help='') {
     return {
         short,
         long,
@@ -25,7 +23,7 @@ function opt(short, long, pre=true, post=true, convert=id, multi=false, default=
     }
 }
 
-function flag(short, long, help='') {
+pub function flag(short, long, help='') {
     return {
         short,
         long,
@@ -45,7 +43,7 @@ function add(opt, result, value) {
     }
 }
 
-function make(*opts, version, help) {
+pub function make(*opts, version, help) {
     return function (argv) {
         let result = %{}
         let i = 1

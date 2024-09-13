@@ -312,6 +312,29 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
                 }
             },
 
+            '<C-x>' => {
+                let (fd, tmp) = mktemp()
+                close(fd)
+
+                termkey_stop(tk)
+
+                let editor = spawn(
+                    [getenv('EDITOR'), tmp],
+                    :shareStdin,
+                    :shareStdout,
+                    :shareStderr
+                )
+                waitpid(editor.pid)
+
+                termkey_start(tk)
+
+                let out = slurp(tmp).comb(/\r/).sub(/\n+/, ' ').trim()
+                if #out > 0 {
+                    line = out.chars()
+                    i = #line
+                }
+            },
+
             ch => {
                 line.insert(i++, ch.clone())
             }

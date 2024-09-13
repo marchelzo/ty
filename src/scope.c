@@ -36,7 +36,7 @@ scope_name(struct scope const *s)
                 remaining -= n;
         }
 
-        return b;
+        return sclone(b);
 }
 #endif
 
@@ -158,13 +158,32 @@ scope_local_lookup(struct scope const *s, char const *id)
         return local_lookup(s, id);
 }
 
-struct symbol *
-scope_add(struct scope *s, char const *id)
+Symbol *
+scope_add_namespace(Scope *s, char const *id, Scope *ns)
 {
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
 
-        struct symbol *sym = Allocate(sizeof *sym);
+        Symbol *sym = Allocate(sizeof *sym);
+        *sym = (Symbol){0};
+
+        sym->identifier = id;
+        sym->namespace = true;
+        sym->scope = ns;
+        sym->hash = h;
+        sym->next = s->table[i];
+        s->table[i] = sym;
+
+        return sym;
+}
+
+Symbol *
+scope_add(Scope *s, char const *id)
+{
+        uint64_t h = strhash(id);
+        int i = h % SYMBOL_TABLE_SIZE;
+
+        Symbol *sym = Allocate(sizeof *sym);
 
         sym->identifier = id;
         sym->doc = NULL;
@@ -178,6 +197,7 @@ scope_add(struct scope *s, char const *id)
         sym->scope = s;
         sym->captured = false;
         sym->ci = -1;
+        sym->namespace = false;
 
                       // s->function == global, or
         sym->global = s->function->parent == NULL ||
@@ -209,10 +229,10 @@ scope_add(struct scope *s, char const *id)
         return sym;
 }
 
-struct symbol *
-scope_insert_as(struct scope *s, struct symbol *sym, char const *id)
+Symbol *
+scope_insert_as(Scope *s, Symbol *sym, char const *id)
 {
-        struct symbol *new = Allocate(sizeof *new);
+        Symbol *new = Allocate(sizeof *new);
 
         *new = *sym;
         new->identifier = id;
@@ -227,20 +247,22 @@ scope_insert_as(struct scope *s, struct symbol *sym, char const *id)
         return new;
 }
 
-struct symbol *
-scope_insert(struct scope *s, struct symbol *sym)
+Symbol *
+scope_insert(Scope *s, Symbol *sym)
 {
-        struct symbol *newsym = Allocate(sizeof *newsym);
-        *newsym = *sym;
+        Symbol *new = Allocate(sizeof *new);
+        *new = *sym;
 
-        newsym->scope = s;
-        newsym->public = false;
+        if (!sym->namespace) {
+                new->scope = s;
+                new->public = false;
+        }
 
         int i = sym->hash % SYMBOL_TABLE_SIZE;
-        newsym->next = s->table[i];
-        s->table[i] = newsym;
+        new->next = s->table[i];
+        s->table[i] = new;
 
-        return newsym;
+        return new;
 }
 
 char const *

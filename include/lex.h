@@ -8,7 +8,7 @@
 typedef enum LexContext {
         LEX_PREFIX = 1,
         LEX_INFIX  = 2,
-		LEX_FMT    = 3,
+	LEX_FMT    = 3,
         LEX_FAKE   = 4
 } LexContext;
 
@@ -48,7 +48,7 @@ void
 lex_save(LexState *state);
 
 void
-lex_need_nl(void);
+lex_need_nl(bool);
 
 bool
 lex_keep_comments(bool b);
@@ -57,3 +57,5 @@ struct location
 lex_pos(void);
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

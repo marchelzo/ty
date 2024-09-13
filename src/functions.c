@@ -2786,7 +2786,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
 
         if (detached != NULL && detached->type != VALUE_BOOLEAN) {
                 vm_panic(
-                        "os.spawn(): %s%sdetached%s must be a boolean",
+                        "os.spawn(): %s%sdetach%s must be a boolean",
                         TERM(93),
                         TERM(1),
                         TERM(0)

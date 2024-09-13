@@ -24,6 +24,7 @@ typedef struct symbol {
         int i;
         int ci;
         bool global;
+        bool namespace;
 
         struct location loc;
         char const *file;
@@ -68,6 +69,9 @@ _scope_new(
 
 struct symbol *
 scope_add(struct scope *s, char const *id);
+
+Symbol *
+scope_add_namespace(Scope *s, char const *id, Scope *ns);
 
 int
 scope_capture(struct scope *s, struct symbol *sym, int parent_index);

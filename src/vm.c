@@ -4133,8 +4133,6 @@ vm_init(int ac, char **av)
                 return false;
         }
 
-        --GC_OFF_COUNT;
-
         atexit(RunExitHooks);
 
         vm_exec(prelude);
@@ -4142,6 +4140,8 @@ vm_init(int ac, char **av)
         compiler_load_builtin_modules();
 
         sqlite_load();
+
+        --GC_OFF_COUNT;
 
 #ifdef TY_ENABLE_PROFILING
         if (ProfileOut == NULL) {

@@ -103,6 +103,8 @@ static TokenVector tokens;
 
 static expression_vector TemplateExprs;
 
+static Namespace *CurrentNamespace = NULL;
+
 static int TokenIndex = 0;
 LexContext lctx = LEX_PREFIX;
 
@@ -116,7 +118,7 @@ static bool NoEquals = false;
 static bool NoIn = false;
 static bool NoPipe = false;
 
-static struct expression WildCard = {
+static Expr WildCard = {
         .type = EXPRESSION_IDENTIFIER,
         .identifier = "_"
 };
@@ -403,7 +405,7 @@ setctx(int ctx)
         lex_rewind(&start);
 
         if (next_nl)
-                lex_need_nl();
+                lex_need_nl(true);
 
         // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
 
@@ -600,6 +602,23 @@ error(char const *fmt, ...)
         LOG("Parse Error: %s", ERR);
 End:
         longjmp(jb, 1);
+}
+
+inline static Namespace *
+PushNS(char *id, bool pub)
+{
+        Namespace *ns = Allocate(sizeof *ns);
+        ns->id = id;
+        ns->pub = pub;
+        ns->braced = true;
+        ns->next = CurrentNamespace;
+        return CurrentNamespace = ns;
+}
+
+inline static void
+PopNS(void)
+{
+        CurrentNamespace = CurrentNamespace->next;
 }
 
 inline static bool
@@ -3360,7 +3379,6 @@ get_prefix_parser(void)
         case TOKEN_QUESTION:       return prefix_is_nil;
         case TOKEN_BANG:           return prefix_bang;
         case TOKEN_AT:             return prefix_at;
-        case ':':                  return prefix_colon;
         case TOKEN_MINUS:          return prefix_minus;
         case TOKEN_INC:            return prefix_inc;
         case TOKEN_DEC:            return prefix_dec;
@@ -4762,31 +4780,6 @@ parse_try(void)
 }
 
 static struct statement *
-parse_export(void)
-{
-        consume_keyword(KEYWORD_EXPORT);
-
-        struct statement *s = mkstmt();
-        s->type = STATEMENT_EXPORT;
-
-        vec_init(s->exports);
-
-        while (tok()->type == TOKEN_IDENTIFIER || tok()->type == TOKEN_USER_OP) {
-                VPush(s->exports, tok()->identifier);
-                next();
-                if (tok()->type == ',') {
-                        next();
-                } else {
-                        expect(TOKEN_NEWLINE);
-                }
-        }
-
-        consume(TOKEN_NEWLINE);
-
-        return s;
-}
-
-static struct statement *
 parse_import(void)
 {
         struct statement *s = mkstmt();
@@ -4978,6 +4971,21 @@ define_top(struct statement *s, char const *doc)
         }
 }
 
+#ifdef TY_DEBUG_NAMES
+static void
+pns(Namespace const *ns, bool end)
+{
+        if (ns == NULL)
+                return;
+
+        pns(ns->next, false);
+
+        printf("%s[pub=%d, braced=%d]", ns->id, (int)ns->pub, (int)ns->braced);
+
+        putchar(end ? '\n' : '.');
+}
+#endif
+
 bool
 parse_ex(
         char const *source,
@@ -5003,6 +5011,9 @@ parse_ex(
         lex_init(file, source);
         lex_keep_comments(true);
 
+        Namespace *saved_namespace = CurrentNamespace;
+        CurrentNamespace = NULL;
+
         lex_save(&CtxCheckpoint);
         setctx(LEX_PREFIX);
 
@@ -5014,6 +5025,7 @@ parse_ex(
                 if (tok_out != NULL) {
                         *tok_out = tokens;
                 }
+                CurrentNamespace = saved_namespace;
                 return false;
         }
 
@@ -5066,15 +5078,7 @@ parse_ex(
 
         setctx(LEX_INFIX);
         setctx(LEX_PREFIX);
-
         program.count = 0;
-
-        while (have_keyword(KEYWORD_EXPORT) || tok()->type == TOKEN_COMMENT) {
-                if (tok()->type == TOKEN_COMMENT)
-                        next();
-                else
-                        VPush(program, parse_export());
-        }
 
         while (TokenIndex > 0 && token(-1)->type == TOKEN_COMMENT) {
                 TokenIndex -= 1;
@@ -5082,6 +5086,33 @@ parse_ex(
 
         while (tok()->type != TOKEN_END) {
                 char const *doc = NULL;
+
+                while (have_keyword(KEYWORD_NAMESPACE) || have_keywords(KEYWORD_PUB, KEYWORD_NAMESPACE)) {
+                        bool pub = have_keyword(KEYWORD_PUB) && (next(), true);
+
+                        next();
+
+                        expect(TOKEN_IDENTIFIER);
+                        Namespace *ns = PushNS(tok()->identifier, pub);
+                        next();
+
+                        while (tok()->type == '.') {
+                                next();
+                                expect(TOKEN_IDENTIFIER);
+                                PushNS(tok()->identifier, true);
+                                CurrentNamespace->braced = false;
+                                next();
+                        }
+
+                        if (tok()->type == TOKEN_NEWLINE) {
+                                next();
+                                ns->pub |= (ns->next == NULL);
+                                ns->braced = false;
+                        } else {
+                                lex_need_nl(false);
+                                consume('{');
+                        }
+                }
 
                 parse_sync_lex();
                 lex_keep_comments(true);
@@ -5141,7 +5172,23 @@ parse_ex(
                         error("This shouldn't happen.");
                 }
 
+                s->ns = CurrentNamespace;
+
                 define_top(s, doc);
+
+#ifdef TY_DEBUG_NAMES
+                pns(s->ns);
+#endif
+
+                while (tok()->type == '}' && CurrentNamespace != NULL) {
+                        while (CurrentNamespace != NULL && !CurrentNamespace->braced) {
+                                PopNS();
+                        }
+                        if (CurrentNamespace != NULL) {
+                                PopNS();
+                                next();
+                        }
+                }
         }
 
         VPush(program, NULL);
@@ -5150,6 +5197,8 @@ parse_ex(
         if (tok_out != NULL) {
                 *tok_out = tokens;
         }
+
+        CurrentNamespace = saved_namespace;
 
         return true;
 }
