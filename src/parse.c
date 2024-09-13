@@ -5177,7 +5177,7 @@ parse_ex(
                 define_top(s, doc);
 
 #ifdef TY_DEBUG_NAMES
-                pns(s->ns);
+                pns(s->ns, true);
 #endif
 
                 while (tok()->type == '}' && CurrentNamespace != NULL) {

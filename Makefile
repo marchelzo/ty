@@ -30,6 +30,10 @@ ifdef JEMALLOC
         LDFLAGS += -ljemalloc $(shell jemalloc-config --libs)
 endif
 
+ifdef DEBUG_NAMES
+        CFLAGS += -DTY_DEBUG_NAMES
+endif
+
 TEST_FILTER ?= "."
 
 PROG := ty
