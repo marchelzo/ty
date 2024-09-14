@@ -363,7 +363,6 @@ struct expression {
                         expression_vector expressions;
                 };
                 struct {
-                        bool local;
                         union {
                                 struct expression *tagged;
                                 struct expression *aliased;
@@ -373,6 +372,7 @@ struct expression {
                         char *module;
                         char *identifier;
                         Expr *namespace;
+                        bool local;
                 };
                 struct {
                         char const *op_name;

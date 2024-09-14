@@ -49,6 +49,8 @@ Allocate(size_t n)
                 panic("out of memory: couldn't allocate %zu-byte object in %zu-byte arena. avail=%zu", n, (size_t)(A.end - A.base), (size_t)avail);
         }
 
+        memset(A.beg, 0, padding + n);
+
         char *p = A.beg + padding;
         A.beg += padding + n;
 

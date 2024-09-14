@@ -224,7 +224,7 @@ static bool
 emit_catch(struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
 
 inline static void
-emit_tgt(struct symbol const *s, struct scope const *scope, bool def);
+emit_tgt(Symbol *s, struct scope const *scope, bool def);
 
 static void
 emit_return_check(struct expression const *f);
@@ -2545,7 +2545,7 @@ emit_load(struct symbol const *s, struct scope const *scope)
 }
 
 inline static void
-emit_tgt(struct symbol const *s, struct scope const *scope, bool def)
+emit_tgt(Symbol *s, struct scope const *scope, bool def)
 {
         LOG("emit_tgt(%s, def=%d)", s->identifier, def);
 
@@ -2563,6 +2563,8 @@ emit_tgt(struct symbol const *s, struct scope const *scope, bool def)
                 emit_instr(INSTR_TARGET_REF);
                 emit_int(s->i);
         }
+
+        s->init = true;
 }
 
 static void
@@ -2935,9 +2937,11 @@ emit_function(struct expression const *e, int class)
                 if (c->type == EXPRESSION_FUNCTION_CALL) {
                         VInsert(c->args, NULL, 0);
                         VInsert(c->fconds, NULL, 0);
-                } else {
+                } else if (c->type == EXPRESSION_METHOD_CALL) {
                         VInsert(c->method_args, NULL, 0);
                         VInsert(c->mconds, NULL, 0);
+                } else {
+                        fail("bro?");
                 }
                 emit_expression(c);
         }
@@ -4585,6 +4589,9 @@ emit_expr(struct expression const *e, bool need_loc)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
+                if (state.func == NULL && !e->symbol->init) {
+                        fail("%s%s%s is uninitialized here", TERM(93), e->identifier, TERM(0));
+                }
                 emit_load(e->symbol, state.fscope);
                 break;
         case EXPRESSION_IFDEF:
@@ -5752,6 +5759,7 @@ compiler_introduce_symbol(char const *module, char const *name)
 
         struct symbol *sym = addsymbol(s, name);
         sym->public = true;
+        sym->init = true;
         LOG("%s got index %d", name, sym->i);
 
         BuiltinCount += 1;
@@ -8264,6 +8272,7 @@ define_class(Stmt *s)
         sym->class = class_new(s->class.name, s->class.doc);
         sym->doc = s->class.doc;
         sym->cnst = true;
+        sym->init = true;
         s->class.symbol = sym->class;
 
         for (int i = 0; i < s->class.methods.count; ++i) {
@@ -8287,6 +8296,8 @@ define_macro(Stmt *s, bool fun)
                 s->target->symbol->fun_macro = true;
         else
                 s->target->symbol->macro = true;
+
+        s->target->symbol->init = true;
         s->target->symbol->doc = s->doc;
 
         s->type = STATEMENT_FUNCTION_DEFINITION;
