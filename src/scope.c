@@ -53,27 +53,35 @@ local_lookup(struct scope const *s, char const *id)
         return NULL;
 }
 
-struct scope *
+Symbol *
+scope_new_namespace(char const *name, Scope *parent)
+{
+        Scope *s = Allocate0(sizeof *s);
+
+        s->parent = parent;
+        s->function = parent->function;
+        s->namespace = true;
+
+#ifndef TY_RELEASE
+        s->name = name;
+#endif
+
+        return scope_add_namespace(parent, name, s);
+}
+
+Scope *
 _scope_new(
 #ifndef TY_RELEASE
         char const *name,
 #endif
-        struct scope *parent,
+        Scope *parent,
         bool is_function
 )
 {
-        struct scope *s = Allocate(sizeof *s);
+        Scope *s = Allocate0(sizeof *s);
 
         s->parent = parent;
         s->function = (is_function || parent == NULL) ? s : parent->function;
-        s->external = false;
-
-        vec_init(s->owned);
-        vec_init(s->captured);
-        vec_init(s->cap_indices);
-
-        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i)
-                s->table[i] = NULL;
 
 #ifndef TY_RELEASE
         s->name = name;

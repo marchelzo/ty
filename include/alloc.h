@@ -21,5 +21,6 @@ void DestroyArena(Arena arena);
 void ReleaseArena(Arena old);
 
 void *Allocate(size_t n);
+void *Allocate0(size_t n);
 
 #endif

@@ -164,14 +164,14 @@ typedef struct state {
 
         name_vector ns;
 
-        struct scope *global;
+        Scope *global;
 
         char const *filename;
-        struct location start;
-        struct location end;
+        Location start;
+        Location end;
 
-        struct location mstart;
-        struct location mend;
+        Location mstart;
+        Location mend;
 
         location_vector expression_locations;
 } CompileState;
@@ -261,6 +261,28 @@ static char const *StatementTypeNames[] = {
         TY_STATEMENT_TYPES
 };
 #undef X
+
+inline static Expr *
+NewExpr(int t)
+{
+        Expr *e = Allocate0(sizeof *e);
+        e->start = Nowhere;
+        e->end = Nowhere;
+        e->filename = state.filename;
+        e->type = t;
+        return e;
+}
+
+inline static Stmt *
+NewStmt(int t)
+{
+        Stmt *s = Allocate0(sizeof *s);
+        s->start = Nowhere;
+        s->end = Nowhere;
+        s->filename = state.filename;
+        s->type = t;
+        return s;
+}
 
 inline static int
 tag_app_tag(Expr const *e)
@@ -1005,9 +1027,10 @@ resolve_access(Scope const *scope, char **parts, int n, Expr *e)
                 for (size_t i = 0; i < fc.kws.count; ++i)
                         VPush(fc.fkwconds, NULL);
 
-                Expr *f = fc.function = Allocate(sizeof *f);
-                ZERO_EXPR(f);
-                f->type = EXPRESSION_IDENTIFIER;
+                Expr *f = fc.function = NewExpr(EXPRESSION_IDENTIFIER);
+                f->start = left->start;
+                f->end = e->end;
+                f->filename = state.filename;
                 f->identifier = id;
                 f->namespace = left;
                 f->module = NULL;
@@ -1177,13 +1200,11 @@ symbolize_methods(struct scope *scope, struct expression **ms, int n)
         }
 }
 
-static struct expression *
+static Expr *
 mkmulti(char *name, bool setters)
 {
-        struct expression *multi = Allocate(sizeof *multi);
-        *multi = (struct expression){0};
+        Expr *multi = NewExpr(EXPRESSION_MULTI_FUNCTION);
 
-        multi->type = EXPRESSION_MULTI_FUNCTION;
         multi->name = name;
         multi->rest = setters ? -1 : 0;
         multi->ikwargs = -1;
@@ -1306,16 +1327,9 @@ try_symbolize_application(struct scope *scope, struct expression *e)
                         if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
                                 e->tagged = tagged[0];
                         } else {
-                                struct expression *items = Allocate(sizeof *items);
-                                *items = (struct expression){0};
-                                items->type = EXPRESSION_TUPLE;
+                                Expr *items = NewExpr(EXPRESSION_TUPLE);
                                 items->start = e->start;
                                 items->end = e->end;
-                                items->filename = state.filename;
-                                vec_init(items->es);
-                                vec_init(items->tconds);
-                                vec_init(items->required);
-                                vec_init(items->names);
                                 for (int i = 0; i < tagc; ++i) {
                                         VPush(items->es, tagged[i]);
                                         VPush(items->tconds, NULL);
@@ -1717,8 +1731,7 @@ GetNamespace(Namespace *ns)
         Symbol *sym = scope_lookup(scope, ns->id);
 
         if (sym == NULL) {
-                Scope *sub = scope_new(ns->id, scope, false);
-                sym = scope_add_namespace(scope, ns->id, sub);
+                sym = scope_new_namespace(ns->id, scope);
                 sym->public = ns->pub;
 #ifdef TY_DEBUG_NAMES
                 LOG("new ns %s (scope=%s) added to %s\n", ns->id, scope_name(sym->scope), scope_name(scope));
@@ -1795,9 +1808,7 @@ symbolize_expression(struct scope *scope, struct expression *e)
                                         e->type = EXPRESSION_SELF_ACCESS;
                                         e->member_name = id;
                                         e->maybe = false;
-                                        e->object = Allocate(sizeof *e->object);
-                                        *e->object = (struct expression){0};
-                                        e->object->type = EXPRESSION_IDENTIFIER;
+                                        e->object = NewExpr(EXPRESSION_IDENTIFIER);
                                         e->object->identifier = "self";
                                         e->object->start = e->start;
                                         e->object->end = e->end;
@@ -4589,7 +4600,8 @@ emit_expr(struct expression const *e, bool need_loc)
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
-                if (state.func == NULL && !e->symbol->init) {
+                // FIXME
+                if (false) {
                         fail("%s%s%s is uninitialized here", TERM(93), e->identifier, TERM(0));
                 }
                 emit_load(e->symbol, state.fscope);
@@ -5322,9 +5334,7 @@ emit_statement(struct statement const *s, bool want_result)
 
 #ifdef TY_ENABLE_PROFILING
         if (s->type != STATEMENT_BLOCK && s->type != STATEMENT_MULTI && s->type != STATEMENT_EXPRESSION) {
-                Expr *e = Allocate(sizeof *e);
-                *e = (Expr){0};
-                e->type = EXPRESSION_STATEMENT;
+                Expr *e = NewExpr(EXPRESSION_STATEMENT);
                 e->start = s->start;
                 e->end = s->end;
                 e->filename = state.filename;
@@ -5432,11 +5442,9 @@ compile(char const *source)
                         struct expression *multi = mkmulti(p[i]->target->identifier, false);
                         bool pub = p[i]->pub;
 
-                        struct statement *def = Allocate(sizeof *def);
-                        *def = (struct statement){0};
-                        def->type = STATEMENT_FUNCTION_DEFINITION;
+                        Stmt *def = NewStmt(STATEMENT_FUNCTION_DEFINITION);
                         def->target = Allocate(sizeof *def->target);
-                        *def->target = (struct expression) {
+                        *def->target = (Expr) {
                                 .type = EXPRESSION_IDENTIFIER,
                                 .start = p[i]->target->start,
                                 .end = p[i]->target->end,
@@ -5653,7 +5661,7 @@ import_module(struct statement const *s)
                 struct symbol *s = scope_lookup(module_scope, identifiers[i]);
                 if (s == NULL || !s->public)
                         fail("module '%s' does not export '%s'", name, identifiers[i]);
-                if (scope_lookup(state.global, identifiers[i]) != NULL)
+                if (scope_lookup(state.global, aliases[i]) != NULL)
                         fail("module '%s' exports conflicting name '%s'", name, identifiers[i]);
                 scope_insert_as(state.global, s, aliases[i])->public = pub;
         }
@@ -5788,6 +5796,7 @@ compiler_introduce_tag(char const *module, char const *name)
         struct symbol *sym = addsymbol(s, name);
         sym->public = true;
         sym->cnst = true;
+        sym->init = true;
         sym->tag = tags_new(name);
         LOG("tag %s got index %d", name, sym->i);
 
@@ -7025,10 +7034,9 @@ cparts(struct value *v)
 struct statement *
 cstmt(struct value *v)
 {
-        Stmt *s = Allocate(sizeof *s);
+        Stmt *s = Allocate0(sizeof *s);
         Stmt *src = source_lookup(v->src);
 
-        *s = (Stmt){0};
         s->arena = GetArenaAlloc();
 
         //printf("cstmt(): %s\n", value_show_color(v));
@@ -7079,9 +7087,7 @@ cstmt(struct value *v)
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(&f);
                 s->doc = NULL;
-                s->target = Allocate(sizeof *s->target);
-                *s->target = (struct expression){0};
-                s->target->type = EXPRESSION_IDENTIFIER;
+                s->target = NewExpr(EXPRESSION_IDENTIFIER);
                 s->target->identifier = mkcstr(tuple_get(v, "name"));
                 s->target->module = NULL;
                 s->target->constraint = NULL;
@@ -7093,18 +7099,13 @@ cstmt(struct value *v)
                 s->type = STATEMENT_CLASS_DEFINITION;
                 s->class.name = mkcstr(tuple_get(v, "name"));
                 s->class.doc = NULL;
-                struct value *super = tuple_get(v, "super");
+                Value *super = tuple_get(v, "super");
                 s->class.super = (super != NULL && super->type != VALUE_NIL) ? cexpr(super) : NULL;
-                struct value *methods = tuple_get(v, "methods");
-                struct value *getters = tuple_get(v, "getters");
-                struct value *setters = tuple_get(v, "setters");
-                struct value *statics = tuple_get(v, "statics");
-                struct value *fields = tuple_get(v, "fields");
-                vec_init(s->class.methods);
-                vec_init(s->class.getters);
-                vec_init(s->class.setters);
-                vec_init(s->class.statics);
-                vec_init(s->class.fields);
+                Value *methods = tuple_get(v, "methods");
+                Value *getters = tuple_get(v, "getters");
+                Value *setters = tuple_get(v, "setters");
+                Value *statics = tuple_get(v, "statics");
+                Value *fields = tuple_get(v, "fields");
                 if (methods != NULL) for (int i = 0; i < methods->array->count; ++i) {
                         VPush(s->class.methods, cexpr(&methods->array->items[i]));
                 }
@@ -7218,9 +7219,7 @@ cstmt(struct value *v)
         case TyEach:
         {
                 s->type = STATEMENT_EACH_LOOP;
-                s->each.target = Allocate(sizeof (struct expression));
-                s->each.target->type = EXPRESSION_LIST;
-                vec_init(s->each.target->es);
+                s->each.target = NewExpr(EXPRESSION_LIST);
 
                 Value *ps = tuple_get(v, "pattern");
                 if (ps->type == VALUE_ARRAY) {
@@ -7233,9 +7232,9 @@ cstmt(struct value *v)
 
                 s->each.array = cexpr(tuple_get(v, "iter"));
                 s->each.body = cstmt(tuple_get(v, "expr"));
-                struct value *cond = tuple_get(v, "cond");
+                Value *cond = tuple_get(v, "cond");
                 s->each.cond = (cond != NULL && cond->type != VALUE_NIL) ? cexpr(cond) : NULL;
-                struct value *stop = tuple_get(v, "stop");
+                Value *stop = tuple_get(v, "stop");
                 s->each.stop = (stop != NULL && stop->type != VALUE_NIL) ? cexpr(stop) : NULL;
                 break;
         }
@@ -7253,7 +7252,7 @@ cstmt(struct value *v)
                         if (ret->type == EXPRESSION_LIST) {
                                 VPushN(s->returns, ret->es.items, ret->es.count);
                         } else {
-                                VPush(s->returns, cexpr(v));
+                                VPush(s->returns, ret);
                         }
                 }
                 break;
@@ -7332,10 +7331,9 @@ cexpr(struct value *v)
                 return NULL;
         }
 
-        Expr *e = Allocate(sizeof *e);
+        Expr *e = Allocate0(sizeof *e);
         Expr *src = source_lookup(v->src);
 
-        *e = (struct expression){0};
         e->arena = GetArenaAlloc();
 
         if (src == NULL && wrapped_type(v) == VALUE_TUPLE) {
@@ -7384,7 +7382,7 @@ cexpr(struct value *v)
                 return v->ptr;
         case TyValue:
         {
-                struct value *value = Allocate(sizeof *value);
+                Value *value = Allocate(sizeof *value);
                 *value = *v;
                 value->tags = tags_pop(value->tags);
                 if (value->tags == 0) {
@@ -7500,9 +7498,7 @@ cexpr(struct value *v)
                 } if (v->count == 2) {
                         e->tagged = cexpr(&v->items[1]);
                 } else {
-                        e->tagged = Allocate(sizeof *e);
-                        ZERO_EXPR(e->tagged);
-                        e->tagged->type = EXPRESSION_TUPLE;
+                        e->tagged = NewExpr(EXPRESSION_TUPLE);
                         for (int i = 1; i < v->count; ++i) {
                                 VPush(e->tagged->es, cexpr(&v->items[i]));
                         }
@@ -8247,6 +8243,7 @@ define_tag(Stmt *s)
 
         Symbol *sym = addsymbol(scope, s->tag.name);
         sym->cnst = true;
+        sym->init = true;
         sym->tag = tags_new(s->tag.name);
         sym->doc = s->tag.doc;
         s->tag.symbol = sym->tag;
