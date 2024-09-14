@@ -390,8 +390,29 @@ show_string(char const *s, size_t n, bool color)
         return v.items;
 }
 
+static noreturn void
+uninit(Symbol const *s)
+{
+        vm_panic(
+                "use of uninitialized variable %s%s%s%s (defined at %s%s%s:%s%d%s:%s%d%s)",
+                TERM(1),
+                TERM(93),
+                s->identifier,
+                TERM(0),
+                TERM(34),
+                s->file,
+                TERM(0),
+                TERM(33),
+                s->loc.line + 1,
+                TERM(0),
+                TERM(33),
+                s->loc.col + 1,
+                TERM(0)
+        );
+}
+
 char *
-value_show(struct value const *v)
+value_show(Value const *v)
 {
         char buffer[1024];
         char *s = NULL;
@@ -494,6 +515,8 @@ value_show(struct value const *v)
                         snprintf(buffer, 1024, "<%s object at %p>", class_name(v->class), (void *)v->object);
                 }
                 break;
+        case VALUE_UNINITIALIZED:
+                uninit(v->sym);
         default:
                 return sclone("< !!! >");
         }
@@ -732,6 +755,8 @@ value_show_color(struct value const *v)
                         );
                 }
                 break;
+        case VALUE_UNINITIALIZED:
+                uninit(v->sym);
         default:
                 return sclone("< !!! >");
         }

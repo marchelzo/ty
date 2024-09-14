@@ -6,6 +6,7 @@
 extern bool CheckConstraints;
 struct location;
 struct expression;
+typedef struct symbol Symbol;
 
 char const *
 compiler_error(void);
@@ -57,6 +58,9 @@ compiler_has_module(char const *path);
 
 int
 compiler_global_count(void);
+
+Symbol *
+compiler_global_sym(int i);
 
 struct value
 compiler_render_template(struct expression *);
@@ -136,5 +140,20 @@ source_forget_arena(void const *arena);
 
 void
 try_symbolize_application(struct scope *scope, struct expression *e);
+
+int
+WriteExpressionTrace(char *out, int cap, Expr const *e, int etw, bool first);
+
+int
+WriteExpressionOrigin(char *out, int cap, Expr const *e);
+
+int
+CompilationDepth(void);
+
+char *
+CompilationTrace(void);
+
+bool
+IsTopLevel(Symbol const *sym);
 
 #endif

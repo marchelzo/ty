@@ -582,7 +582,11 @@ PopulateGlobals(void)
         int n = compiler_global_count();
 
         while (Globals.count < n) {
-                vec_push_unchecked(Globals, NIL);
+                Symbol *sym = compiler_global_sym(Globals.count);
+                vec_push_unchecked(
+                        Globals,
+                        IsTopLevel(sym) ? UNINITIALIZED(sym) : NIL
+                );
         }
 }
 
@@ -1866,6 +1870,12 @@ vm_exec(char *code)
                         ip += strlen(ip) + 1;
 #endif
                         push(Globals.items[n]);
+                        break;
+                CASE(CHECK_INIT)
+                        if (top()->type == VALUE_UNINITIALIZED) {
+                                // This will panic
+                                value_show(top());
+                        }
                         break;
                 CASE(CAPTURE)
                         READVALUE(i);
@@ -4174,108 +4184,29 @@ vm_panic(char const *fmt, ...)
 
         for (int i = 0; ip != NULL && n < sz; ++i) {
                 Expr const *expr = compiler_find_expr(ip - 1);
-                char buffer[512];
 
-                char const *file = (expr == NULL || expr->filename == NULL) ? "(unknown)" : expr->filename;
-                int line = (expr == NULL) ? 0 : expr->start.line;
-                int col = (expr == NULL) ? 0 : expr->start.col;
-
-                snprintf(
-                        buffer,
-                        sizeof buffer - 1,
-                        "%36s %s%s%s:%s%d%s:%s%d%s",
-                        (i == 0) ? "at" : "from",
-                        TERM(34),
-                        file,
-                        TERM(39),
-                        TERM(33),
-                        line + 1,
-                        TERM(39),
-                        TERM(33),
-                        col + 1,
-                        TERM(39)
-                );
-
-                char const *where = buffer;
-                int m = strlen(buffer) - 6*strlen(TERM(00));
-
-                while (m > 36) {
-                        m -= 1;
-                        where += 1;
+                n += WriteExpressionTrace(ERR + n, sz - n, expr, 0, i == 0);
+                if (expr != NULL && expr->origin != NULL) {
+                        n += WriteExpressionOrigin(ERR + n, sz - n, expr->origin);
                 }
-
-                n += snprintf(
-                        ERR + n,
-                        sz - n,
-                        "\n%s near: ",
-                        where
-                );
-
-                char const *prefix;
-                char const *suffix;
-                char const *source;
-
-                if (expr == NULL) {
-                        source = prefix = suffix = "\n(unknown location)" + 1;
-                } else {
-                        prefix = source = expr->start.s;
-                        suffix = expr->end.s;
-                }
-
-                while (prefix[-1] != '\0' && prefix[-1] != '\n')
-                        --prefix;
-
-                while (isspace(prefix[0]))
-                        ++prefix;
-
-                int before = source - prefix;
-                int length = suffix - source;
-                int after = strcspn(suffix, "\n");
-
-                n += snprintf(
-                        ERR + n,
-                        sz - n,
-                        "%s%.*s%s%s%.*s%s%s%.*s%s",
-                        TERM(32),
-                        before,
-                        prefix,
-                        (i == 0) ? TERM(1) : "",
-                        (i == 0) ? TERM(91) : TERM(31),
-                        length,
-                        source,
-                        TERM(32),
-                        TERM(22),
-                        after,
-                        suffix,
-                        TERM(39)
-                );
-
-                n += snprintf(
-                        ERR + n,
-                        sz - n,
-                        "\n%*s%s%s",
-                        before + 43,
-                        "",
-                        (i == 0) ? TERM(1) : "",
-                        (i == 0) ? TERM(91) : TERM(31)
-                );
-
-                for (int i = 0; i < length && n < sz; ++i)
-                        ERR[n++] = '^';
-
-                n += snprintf(
-                        ERR + n,
-                        sz - n,
-                        "%s%s",
-                        TERM(39),
-                        TERM(22)
-                );
 
                 if (frames.count == 0) {
                         break;
                 }
 
                 ip = vec_pop(frames)->ip;
+        }
+
+        if (n < sz && CompilationDepth() > 1) {
+                snprintf(
+                        ERR + n,
+                        sz - n,
+                        "\n%s%sCompilation context:%s\n%s",
+                        TERM(1),
+                        TERM(34),
+                        TERM(0),
+                        CompilationTrace()
+                );
         }
 
         LOG("VM Error: %s", ERR);
