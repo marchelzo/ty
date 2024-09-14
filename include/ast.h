@@ -14,6 +14,7 @@ typedef vec(int) int_vector;
 typedef vec(struct expression *) expression_vector;
 
 typedef struct scope Scope;
+typedef struct symbol Symbol;
 
 struct expression;
 struct value;
@@ -122,7 +123,7 @@ struct statement {
                 vec(Stmt *) statements;
                 expression_vector returns;
                 vec(char *) exports;
-                vec(struct symbol *) drop;
+                vec(Symbol *) drop;
                 struct {
                         char *module;
                         char *as;
@@ -394,8 +395,8 @@ struct expression {
                         char *name;
                         char const *doc;
                         char const *proto;
-                        struct symbol *function_symbol;
-                        struct scope *scope;
+                        Symbol *function_symbol;
+                        Scope *scope;
                         vec(char *) params;
                         expression_vector dflts;
                         expression_vector constraints;
@@ -405,9 +406,9 @@ struct expression {
                                 Expr *return_type;
                                 Expr *parent;
                         };
-                        vec(struct symbol *) param_symbols;
-                        vec(struct symbol *) bound_symbols;
-                        struct statement *body;
+                        vec(Symbol *) param_symbols;
+                        vec(Symbol *) bound_symbols;
+                        Stmt *body;
                         bool is_method;
                         bool is_overload;
                         bool has_defer;

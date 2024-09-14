@@ -38,6 +38,7 @@ typedef struct symbol {
 
 typedef struct scope {
         bool external;
+        bool namespace;
 
         struct symbol *table[SYMBOL_TABLE_SIZE];
 
@@ -73,6 +74,9 @@ scope_add(struct scope *s, char const *id);
 
 Symbol *
 scope_add_namespace(Scope *s, char const *id, Scope *ns);
+
+Symbol *
+scope_new_namespace(char const *name, Scope *parent);
 
 int
 scope_capture(struct scope *s, struct symbol *sym, int parent_index);

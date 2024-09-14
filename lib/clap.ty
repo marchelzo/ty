@@ -1,7 +1,7 @@
 import ty
 import ty.token (next, peek)
 import ty.lex (peekc, getc)
-import ty.parse (expr, stmt, show)
+import ty.parse (expr, stmt, show as sourceOf)
 import argparse (opt, flag)
 import os
 
@@ -164,7 +164,7 @@ pub macro clap! {
                         next()
                         next()
                         let (p, s) = stmt(0, raw: true)
-                        default = (val: ty.eval(s), show: show(p))
+                        default = (val: ty.eval(s), show: sourceOf(p))
                         next()
                     } else {
                         let e = ty.eval(expr(0))
