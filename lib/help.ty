@@ -235,13 +235,14 @@ pub function sanitizeString(s) {
 }
 
 class Printer {
-    init(width=96, indent=2, colors=defaultColors) {
+    init(width=96, indent=2, colors=defaultColors, color=true) {
         @width = width
         @indent = indent
         @out = Blob()
         @col = 0
         @depth = 0
         @colors = tuple(**members(colors).map([fg, b] -> chalk.fg(fg) |> (b ? chalk.bold : id)))
+        @color = color
     }
 
     save() {
@@ -258,7 +259,7 @@ class Printer {
     write(s, pen=id, force) {
         @col += #s
         if !force && @col > @width { throw TooWideError() }
-        @out.push(pen(s))
+        @out.push(@color ? pen(s) : s)
     }
 
     nl(n=0) {
@@ -399,10 +400,14 @@ C! struct WinSize {
 
 let winSize = WinSize()
 
-pub function prettyPrint(x) {
-    ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get()))
+pub function prettyPrint(x, %kwargs) {
+    if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {
+        winSize.cols = 108
+    }
 
-    let P = Printer@(width: min(winSize.cols, 108))
+    kwargs['width'] ?= min(winSize.cols, 108)
+
+    let P = Printer@(**kwargs)
 
     if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
         print(P(colors=tuple(**json.parse(s))).print(x))

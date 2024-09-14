@@ -326,7 +326,6 @@ mkdef(struct expression *lvalue, char *name)
         s->pub = false;
         s->target = lvalue;
         s->value = value;
-        s->value = value;
 
         return s;
 }

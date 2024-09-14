@@ -21,6 +21,7 @@ typedef struct symbol {
         bool macro;
         bool fun_macro;
         bool captured;
+        bool init;
         int i;
         int ci;
         bool global;
