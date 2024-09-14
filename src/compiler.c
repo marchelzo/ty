@@ -1,4 +1,4 @@
-#include <stdlib.h>
+#include <stdlib.h>;
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -63,6 +63,8 @@
 #define RESTORE_JB \
         memcpy(&jb, &jb_, sizeof jb);
 
+#define CHECK_INIT() if (CheckConstraints) { emit_instr(INSTR_CHECK_INIT); }
+
 #ifdef TY_ENABLE_PROFILING
 #define KEEP_LOCATION(e) true
 #else
@@ -87,6 +89,13 @@ struct eloc {
         struct location end;
         char const *filename;
         struct expression const *e;
+};
+
+typedef struct expr_list ExprList;
+
+struct expr_list {
+        ExprList *next;
+        Expr *e;
 };
 
 struct import {
@@ -152,6 +161,8 @@ typedef struct state {
         Scope *implicit_fscope;
         Expr *implicit_func;
 
+        Expr *origin;
+
         Expr *func;
         int class;
 
@@ -194,7 +205,20 @@ static vec(void *) source_map;
 static struct scope *global;
 static uint64_t t;
 static char const EmptyString[] = { '\0', '\0' };
+static char const UnknownString[] = "\0(unknown location)";
 static struct location Nowhere = { 0, 0, EmptyString + 1 };
+static Location UnknownStart = { 0, 0, UnknownString + 1 };
+static Location UnknownEnd = { 0, 0, UnknownString + sizeof UnknownString - 1 };
+
+typedef struct context_entry ContextEntry;
+
+struct context_entry {
+        ContextEntry *next;
+        char const *info;
+        Expr *e;
+};
+
+static ContextEntry *ContextList;
 
 static void
 symbolize_statement(struct scope *scope, struct statement *s);
@@ -320,15 +344,84 @@ unwrap(Value const *wrapped)
         return v;
 }
 
+static bool
+QualifiedName_(Expr const *e, byte_vector *b)
+{
+        if (e == NULL) {
+                return true;
+        }
+
+        bool good = true;
+
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+                good &= QualifiedName_(e->namespace, b);
+                break;
+        case EXPRESSION_MEMBER_ACCESS:
+                good &= QualifiedName_(e->object, b);
+                break;
+        case EXPRESSION_MODULE:
+        case EXPRESSION_NAMESPACE:
+                good &= QualifiedName_(e->parent, b);
+                break;
+        default:
+                return false;
+        }
+
+        if (b->count > 0) {
+                vec_nogc_push(*b, '.');
+        }
+
+        switch (e->type) {
+        case EXPRESSION_IDENTIFIER:
+                for (char const *m = e->module; m && *m; ++m) {
+                        vec_nogc_push(*b, *m == '/' ? '.' : *m);
+                }
+                vec_nogc_push_n(*b, e->identifier, strlen(e->identifier));
+                break;
+        case EXPRESSION_MEMBER_ACCESS:
+                vec_nogc_push_n(*b, e->member_name, strlen(e->member_name));
+                break;
+        case EXPRESSION_MODULE:
+        case EXPRESSION_NAMESPACE:
+                vec_nogc_push_n(*b, e->name, strlen(e->name));
+                break;
+        }
+
+        return true;
+}
+
+static char const *
+QualifiedName(Expr const *e)
+{
+        _Thread_local static byte_vector name = {0};
+
+        name.count = 0;
+
+        if (QualifiedName_(e, &name)) {
+                vec_nogc_push(name, '\0');
+                return name.items;
+        } else {
+                return "(error)";
+        }
+}
+
+
 char const *
 ExpressionTypeName(Expr const *e)
 {
+        if (e == NULL) {
+                return "(null)";
+        }
+
         if (e->type == EXPRESSION_STATEMENT) {
                 if (e->statement->type == STATEMENT_EXPRESSION) {
                         return ExpressionTypeName(e->statement->expression);
                 } else {
-                        return StatementTypeNames[e->statement->type];
+                        return StatementTypeNames[e->statement->type - (STATEMENT_TYPE_START + 1)];
                 }
+        } else if (e->type > EXPRESSION_MAX_TYPE) {
+                return StatementTypeNames[e->type - (STATEMENT_TYPE_START + 1)];
         } else {
                 return ExpressionTypeNames[e->type];
         }
@@ -384,110 +477,90 @@ colorize_code(
         );
 }
 
+char *
+ContextString(void)
+{
+        char buffer[1024];
+        int i = 0;
+
+        ContextEntry *ctx = ContextList;
+
+        while (ctx != NULL) {
+                i += sprintf(buffer + i, "%p[%p]%s", ctx, ctx->e, ctx->next == NULL ? "\n" : " -> ");
+                ctx = ctx->next;
+        }
+
+        return sclone(buffer);
+}
+
+static void *
+PushContext(void const *ctx)
+{
+        if (ContextList != NULL && ContextList->e == ctx)
+                return ContextList;
+
+        ContextEntry *new = Allocate(sizeof *new);
+        new->next = ContextList;
+        new->info = NULL;
+        new->e = (void *)ctx;
+
+        SWAP(ContextEntry *, new, ContextList);
+
+        //printf("PushContext(%s) -> %p: depth=%d\n", ExpressionTypeName(ctx), ContextList, CompilationDepth());
+
+        return (void *)new;
+}
+
+static void
+CloneContext(void)
+{
+        //printf("Clone(%s): depth=%d\n", ExpressionTypeName(ContextList->e), CompilationDepth());
+
+        if (ContextList->e->type > EXPRESSION_MAX_TYPE) {
+                Stmt *new = Allocate(sizeof *new);
+                *new = *(Stmt *)ContextList->e;
+                ContextList->e = (Expr *)new;
+        } else {
+                Expr *new = Allocate(sizeof *new);
+                *new = *ContextList->e;
+                ContextList->e = new;
+        }
+}
+
+inline static void
+RestoreContext(void *ctx)
+{
+        ContextList = ctx;
+}
+
+static void *
+PushInfo(void const *ctx, char const *fmt, ...)
+{
+        char buffer[1024];
+        va_list ap;
+
+        va_start(ap, fmt);
+        vsnprintf(buffer, sizeof buffer, fmt, ap);
+        va_end(ap);
+
+        void *save = PushContext(ctx);
+        ContextList->info = sclonea(buffer);
+
+        return save;
+}
+
 noreturn static void
 fail(char const *fmt, ...)
 {
         va_list ap;
         va_start(ap, fmt);
 
-        int sz = ERR_SIZE - 1;
-        char *err = ERR;
+        int sz = ERR_SIZE;
         int n = snprintf(ERR, sz, "%s%sCompileError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
-
-        n += vsnprintf(err + n, sz - n, fmt, ap);
+        if (n < sz) n += vsnprintf(ERR + n, sz - n, fmt, ap);
         va_end(ap);
 
-        struct location start = state.start;
-        struct location end = state.end;
-
-        char buffer[512];
-
-        snprintf(
-                buffer,
-                sizeof buffer - 1,
-                "%36s %s%s%s:%s%d%s:%s%d%s",
-                "at",
-                TERM(34),
-                state.filename,
-                TERM(39),
-                TERM(33),
-                start.line + 1,
-                TERM(39),
-                TERM(33),
-                start.col + 1,
-                TERM(39)
-        );
-
-        char const *where = buffer;
-        int m = strlen(buffer) - 6*strlen(TERM(00));
-
-        while (m > 36) {
-                m -= 1;
-                where += 1;
-        }
-
-        n += snprintf(
-                ERR + n,
-                sz - n,
-                "\n\n%s near: ",
-                where
-        );
-
-        char const *prefix = start.s;
-
-        while (prefix[-1] != '\0' && prefix[-1] != '\n')
-                --prefix;
-
-        while (isspace(prefix[0]))
-                ++prefix;
-
-        int before = start.s - prefix;
-        int length = end.s - start.s;
-        int after = strcspn(end.s, "\n");
-
-        if (length == 0) {
-                length = 1;
-                end.s += 1;
-        }
-
-        n += snprintf(
-                ERR + n,
-                sz - n,
-                "%s%.*s%s%s%.*s%s%s%.*s%s",
-                TERM(32),
-                before,
-                prefix,
-                TERM(1),
-                TERM(91),
-                length,
-                start.s,
-                TERM(32),
-                TERM(22),
-                after,
-                end.s,
-                TERM(39)
-        );
-
-        n += snprintf(
-                ERR + n,
-                sz - n,
-                "\n%*s%s%s",
-                before + 43,
-                "",
-                TERM(1),
-                TERM(91)
-        );
-
-        for (int i = 0; i < length && n < sz; ++i)
-                ERR[n++] = '^';
-
-        n += snprintf(
-                ERR + n,
-                sz - n,
-                "%s%s",
-                TERM(39),
-                TERM(22)
-        );
+        if (n < sz) n += snprintf(ERR + n, sz - n, "\n%s", CompilationTrace());
 
         Error = ERR;
 
@@ -874,8 +947,8 @@ freshstate(void)
         s.func = NULL;
         s.implicit_func = NULL;
         s.implicit_fscope = NULL;
-
         s.macro_scope = NULL;
+        s.origin = NULL;
 
         s.function_depth = 0;
 
@@ -1360,18 +1433,19 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
         state.start = target->start;
         state.end = target->end;
 
+        if (target->filename == NULL)
+                target->filename = state.filename;
+
         if (target->symbolized)
                 return;
 
-        target->filename = state.filename;
-
-        struct expression *mod_access;
+        void *ctx = PushContext(target);
 
         fixup_access(scope, target);
         try_symbolize_application(scope, target);
 
         if (target->symbolized)
-                return;
+                goto End;
 
         switch (target->type) {
         case EXPRESSION_RESOURCE_BINDING:
@@ -1461,8 +1535,7 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
                 break;
         case EXPRESSION_DICT:
                 if (target->dflt != NULL) {
-                        state.start = target->dflt->start;
-                        state.end = target->dflt->end;
+                        PushContext(target->dflt);
                         fail("unexpected default clause in dict destructuring");
                 }
                 for (int i = 0; i < target->keys.count; ++i) {
@@ -1490,6 +1563,8 @@ symbolize_lvalue_(struct scope *scope, struct expression *target, bool decl, boo
         }
 
         target->symbolized = true;
+End:
+        RestoreContext(ctx);
 }
 
 static void
@@ -1509,16 +1584,19 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
         if (e == NULL)
                 return;
 
+        if (e->filename == NULL)
+                e->filename = state.filename;
+
         if (e->symbolized)
                 return;
 
-        e->filename = state.filename;
+        void *ctx = PushContext(e);
 
         fixup_access(scope, e);
         try_symbolize_application(scope, e);
 
         if (e->symbolized)
-                return;
+                goto End;
 
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(e))
                 goto Tag;
@@ -1613,6 +1691,8 @@ symbolize_pattern_(struct scope *scope, struct expression *e, struct scope *reus
         }
 
         e->symbolized = true;
+End:
+        RestoreContext(ctx);
 }
 
 static void
@@ -1670,20 +1750,21 @@ comptime(struct scope *scope, struct expression *e)
 static void
 invoke_fun_macro(Scope *scope, struct expression *e)
 {
+        add_location_info();
+        vec_init(state.expression_locations);
+
         byte_vector code_save = state.code;
         vec_init(state.code);
 
-        location_vector locs_save = state.expression_locations;
-        vec_init(state.expression_locations);
+        e->type = EXPRESSION_FUN_MACRO_INVOCATION;
 
         emit_expression(e->function);
         emit_instr(INSTR_HALT);
 
-        add_location_info();
+        vec_init(state.expression_locations);
 
         vm_exec(state.code.items);
 
-        state.expression_locations = locs_save;
         state.code = code_save;
 
         Value m = *vm_get(0);
@@ -1697,6 +1778,8 @@ invoke_fun_macro(Scope *scope, struct expression *e)
 
         Scope *mscope = state.macro_scope;
         state.macro_scope = scope;
+
+        void *ctx = PushInfo(e, "invoking function-like macro %s", QualifiedName(e->function));
 
         for (size_t i = 0;  i < e->args.count; ++i) {
                 value_array_push(raw.array, PTR(e->args.items[i]));
@@ -1712,11 +1795,17 @@ invoke_fun_macro(Scope *scope, struct expression *e)
         state.mstart = e->start;
         state.mend = e->end;
 
+        Expr *origin = state.origin;
+        CloneContext();
+        state.origin = ContextList->e;
         *e = *cexpr(&v);
+        state.origin = origin;
 
         state.mstart = mstart;
         state.mend = mend;
         state.macro_scope = mscope;
+
+        RestoreContext(ctx);
 
         --GC_OFF_COUNT;
 }
@@ -1749,10 +1838,11 @@ symbolize_expression(struct scope *scope, struct expression *e)
         if (e == NULL)
                 return;
 
+        if (e->filename == NULL)
+                e->filename = state.filename;
+
         if (e->symbolized)
                 return;
-
-        e->filename = state.filename;
 
         state.start = e->start;
         state.end = e->end;
@@ -1763,10 +1853,12 @@ symbolize_expression(struct scope *scope, struct expression *e)
         struct expression *implicit_func = state.implicit_func;
         struct scope *implicit_fscope = state.implicit_fscope;
 
+        void *ctx = PushContext(e);
+
         fixup_access(scope, e);
 
         if (e->symbolized)
-                return;
+                goto End;
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -2141,6 +2233,8 @@ symbolize_expression(struct scope *scope, struct expression *e)
         }
 
         e->symbolized = true;
+End:
+        RestoreContext(ctx);
 }
 
 static void
@@ -2156,6 +2250,8 @@ symbolize_statement(Scope *scope, Stmt *s)
 
         if (scope == state.global && s->ns != NULL)
                 scope = GetNamespace(s->ns);
+
+        void *ctx = PushContext(s);
 
         switch (s->type) {
         case STATEMENT_IMPORT:
@@ -2365,6 +2461,8 @@ symbolize_statement(Scope *scope, Stmt *s)
                 symbolize_expression(scope, s->value);
                 break;
         }
+
+        RestoreContext(ctx);
 }
 
 static void
@@ -2377,16 +2475,16 @@ invoke_macro(struct expression *e, struct scope *scope)
 
         symbolize_expression(scope, e->macro.m);
 
+        add_location_info();
+        vec_init(state.expression_locations);
+
         byte_vector code_save = state.code;
         vec_init(state.code);
-
-        location_vector locs_save = state.expression_locations;
-        vec_init(state.expression_locations);
 
         emit_expression(e->macro.m);
         emit_instr(INSTR_HALT);
 
-        add_location_info();
+        vec_init(state.expression_locations);
 
         vm_exec(state.code.items);
 
@@ -2394,7 +2492,6 @@ invoke_macro(struct expression *e, struct scope *scope)
         vm_pop();
 
         state.code = code_save;
-        state.expression_locations = locs_save;
 
         struct value node = tyexpr(e->macro.e);
         vm_push(&node);
@@ -2541,6 +2638,7 @@ emit_load(struct symbol const *s, struct scope const *scope)
 
         if (s->global) {
                 emit_load_instr(s->identifier, INSTR_LOAD_GLOBAL, s->i);
+                CHECK_INIT();
         } else if (local && !s->captured) {
                 emit_load_instr(s->identifier, INSTR_LOAD_LOCAL, s->i);
         } else if (!local && s->captured) {
@@ -2850,7 +2948,9 @@ emit_function(struct expression const *e, int class)
                                 emit_instr(INSTR_SAVE_STACK_POS);
                                 emit_load_instr("@", INSTR_LOAD_LOCAL, 0);
                                 emit_spread(NULL, false);
-                                emit_load_instr("", INSTR_LOAD_GLOBAL, ((struct statement *)e->functions.items[i])->target->symbol->i);
+                                emit_load_instr("", INSTR_LOAD_GLOBAL, ((Stmt *)e->functions.items[i])->target->symbol->i);
+                                CHECK_INIT();
+
                                 emit_instr(INSTR_CALL);
                                 emit_int(-1);
                                 emit_int(0);
@@ -3164,8 +3264,6 @@ emit_try(struct statement const *s, bool want_result)
 
         emit_instr(INSTR_FINALLY);
 
-        end_try();
-
         if (s->try.finally != NULL) {
                 PLACEHOLDER_JUMP(INSTR_JUMP, size_t end_real);
                 PATCH_JUMP(finally_offset);
@@ -3179,6 +3277,7 @@ emit_try(struct statement const *s, bool want_result)
                 returns = false;
         }
 
+        end_try();
 
         return returns;
 }
@@ -3354,8 +3453,7 @@ emit_try_match_(struct expression const *pattern)
                 for (int i = 0; i < pattern->elements.count; ++i) {
                         if (pattern->elements.items[i]->type == EXPRESSION_MATCH_REST) {
                                 if (after) {
-                                        state.start = pattern->elements.items[i]->start;
-                                        state.end = pattern->elements.items[i]->end;
+                                        PushContext(pattern->elements.items[i]);
                                         fail("array pattern cannot contain multiple gather elements");
                                 } else {
                                         after = true;
@@ -3370,8 +3468,7 @@ emit_try_match_(struct expression const *pattern)
                                 emit_instr(INSTR_TRY_INDEX);
                                 if (after) {
                                         if (pattern->optional.items[i]) {
-                                                state.start = pattern->elements.items[i]->start;
-                                                state.end = pattern->elements.items[i]->end;
+                                                PushContext(pattern->elements.items[i]);
                                                 fail("optional element cannot come after a gather element in array pattern");
                                         }
                                         emit_int(i - pattern->elements.count);
@@ -4417,8 +4514,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                 for (int i = 0; i < target->elements.count; ++i) {
                         if (target->elements.items[i]->type == EXPRESSION_MATCH_REST) {
                                 if (after) {
-                                        state.start = target->elements.items[i]->start;
-                                        state.end = target->elements.items[i]->end;
+                                        PushContext(target->elements.items[i]);
                                         fail("array pattern cannot contain multiple gather elements");
                                 } else {
                                         after = true;
@@ -4435,8 +4531,7 @@ emit_assignment2(struct expression *target, bool maybe, bool def)
                                 emit_instr(INSTR_PUSH_ARRAY_ELEM);
                                 if (after) {
                                         if (target->optional.items[i]) {
-                                                state.start = target->elements.items[i]->start;
-                                                state.end = target->elements.items[i]->end;
+                                                PushContext(target->elements.items[i]);
                                                 fail("optional element cannot come after a gather element in array pattern");
                                         }
                                         emit_int(i - target->elements.count);
@@ -4597,6 +4692,8 @@ emit_expr(struct expression const *e, bool need_loc)
         char const *method = NULL;
 
         TryState *try = get_try(0);
+
+        void *ctx = PushContext(e);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -5095,6 +5192,8 @@ emit_expr(struct expression const *e, bool need_loc)
 
         if (KEEP_LOCATION(e) || need_loc)
                 add_location(e, start, state.code.count);
+
+        RestoreContext(ctx);
 }
 
 static void
@@ -5118,6 +5217,8 @@ emit_statement(struct statement const *s, bool want_result)
 #endif
 
         LoopState *loop = get_loop(0);
+
+        void *ctx = PushContext(s);
 
         switch (s->type) {
         case STATEMENT_BLOCK:
@@ -5331,6 +5432,8 @@ emit_statement(struct statement const *s, bool want_result)
 
         if (want_result)
                 emit_instr(INSTR_NIL);
+
+        RestoreContext(ctx);
 
 #ifdef TY_ENABLE_PROFILING
         if (s->type != STATEMENT_BLOCK && s->type != STATEMENT_MULTI && s->type != STATEMENT_EXPRESSION) {
@@ -5999,6 +6102,12 @@ compiler_global_count(void)
         return (int)global->owned.count;
 }
 
+Symbol *
+compiler_global_sym(int i)
+{
+        return global->owned.items[i];
+}
+
 inline static char *
 mkcstr(struct value const *v)
 {
@@ -6127,6 +6236,10 @@ tyexpr(struct expression const *e)
 
         if (e == NULL) {
                 return NIL;
+        }
+
+        if (e->type > EXPRESSION_MAX_TYPE) {
+                return tystmt((Stmt *)e);
         }
 
         GC_OFF_COUNT += 1;
@@ -7321,6 +7434,8 @@ cstmt(struct value *v)
                 break;
         }
 
+        s->origin = state.origin;
+
         return s;
 }
 
@@ -8089,6 +8204,7 @@ cexpr(struct value *v)
                      : state.macro_scope;
 
         fixup_access(scope, e);
+        e->origin = state.origin;
 
         return e;
 }
@@ -8207,6 +8323,8 @@ typarse(struct expression *e, struct location const *start, struct location cons
 
         struct value m = *vm_get(0);
 
+        void *ctx = PushInfo(NULL, "invoking macro %s", name_of(&m));
+
         struct scope *macro_scope_save = state.macro_scope;
         state.macro_scope = state.global;
 
@@ -8228,6 +8346,8 @@ typarse(struct expression *e, struct location const *start, struct location cons
         // Take `m` and `expr` off the stack
         vm_pop();
         vm_pop();
+
+        RestoreContext(ctx);
 
         return e_;
 }
@@ -8299,6 +8419,9 @@ define_macro(Stmt *s, bool fun)
 
         s->type = STATEMENT_FUNCTION_DEFINITION;
 
+        add_location_info();
+        vec_init(state.expression_locations);
+
         byte_vector code_save = state.code;
         vec_init(state.code);
 
@@ -8306,7 +8429,12 @@ define_macro(Stmt *s, bool fun)
 
         emit_instr(INSTR_HALT);
 
+        add_location_info();
+        vec_init(state.expression_locations);
+
+        void *ctx = PushContext(s);
         vm_exec(state.code.items);
+        RestoreContext(ctx);
 
         state.code = code_save;
 }
@@ -8418,6 +8546,336 @@ compiler_swap_jb(void *jb)
         void *u = ujb;
         ujb = jb;
         return u;
+}
+
+int
+CompilationDepth(void)
+{
+        int n = 0;
+
+        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+                n += 1;
+        }
+
+        return n;
+}
+
+inline static int
+ExpressionTypeWidth(Expr const *e)
+{
+        if (
+                e == NULL ||
+                e->type == EXPRESSION_STATEMENT ||
+                e->type == STATEMENT_EXPRESSION
+        ) {
+                return 0;
+        }
+
+        return strlen(ExpressionTypeName(e));
+}
+
+int
+WriteExpressionOrigin(char *out, int cap, Expr const *e)
+{
+        char buffer[512];
+
+        if (
+                e == NULL ||
+                e->type == EXPRESSION_STATEMENT ||
+                e->type == STATEMENT_EXPRESSION
+        ) {
+                return 0;
+        }
+
+        char const *file = (e->filename == NULL) ? "(unknown)" : e->filename;
+        int line = e->start.line;
+        int col = e->start.col;
+
+        if (e->type == EXPRESSION_CTX_INFO) {
+                return snprintf(
+                        out,
+                        cap,
+                        "%43s%s\n",
+                        "",
+                        e->string
+                );
+        }
+
+        int etw = 0;
+        int margin = 44 - etw;
+        bool first = false;
+
+        snprintf(
+                buffer,
+                sizeof buffer - 1,
+                "%*s %s%s%s:%s%d%s:%s%d %s%*s%s",
+                margin,
+                "expanded from",
+                TERM(34),
+                file,
+                TERM(39),
+                TERM(33),
+                line + 1,
+                TERM(39),
+                TERM(33),
+                col + 1,
+                TERM(95),
+                etw + !!etw + !!etw,
+                (etw > 0) ? ExpressionTypeName(e) : " | ",
+                TERM(39)
+        );
+
+        char const *where = buffer;
+        int m = strlen(buffer) - 7*strlen(TERM(00));
+
+        while (m > 54) {
+                m -= 1;
+                where += 1;
+        }
+
+        int n = snprintf(
+                out,
+                cap,
+                "\n%s       ",
+                where
+        );
+
+        char const *prefix;
+        char const *suffix;
+        char const *source;
+
+        prefix = source = e->start.s;
+        suffix = e->end.s;
+
+        char const *eol = strchr(prefix, '\n');
+
+        if (eol != NULL && suffix > eol)
+                suffix = eol;
+
+        while (prefix[-1] != '\0' && prefix[-1] != '\n')
+                --prefix;
+
+        while (isspace(prefix[0]))
+                ++prefix;
+
+        int before = source - prefix;
+        int length = suffix - source;
+        int after = strcspn(suffix, "\n");
+
+        if (n < cap) n += snprintf(
+                out + n,
+                max(0, cap - n),
+                "%s%.*s%s%s%.*s%s%s%.*s",
+                "",
+                before,
+                prefix,
+                "",
+                TERM(34),
+                length,
+                source,
+                TERM(39),
+                TERM(22),
+                after,
+                suffix
+        );
+
+        if (n < cap) n += snprintf(
+                out + n,
+                max(0, cap - n),
+                "\n%*s%s%s",
+                before + 61,
+                "",
+                "",
+                TERM(34)
+        );
+
+        for (int i = 0; i < length && n < cap; ++i)
+                out[n++] = '^';
+
+        if (n < cap) n += snprintf(
+                out + n,
+                cap - n,
+                "%s%s",
+                TERM(39),
+                TERM(22)
+        );
+
+        if (cap > 0 && n >= cap) {
+                out[cap - 1] = '\0';
+        }
+
+        return n;
+}
+
+char *
+CompilationTrace(void)
+{
+        vec(char) out = {0};
+        char buffer[512];
+
+        int etw = 0;
+        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+                etw = max(etw, ExpressionTypeWidth(ctx->e));
+        }
+
+        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+                if (WriteExpressionTrace(buffer, sizeof buffer, ctx->e, etw, ctx == ContextList) == 0) {
+                        continue;
+                }
+                vec_nogc_push_n(out, buffer, strlen(buffer));
+                if (WriteExpressionOrigin(buffer, sizeof buffer, ctx->e->origin) == 0) {
+                        continue;
+                }
+                vec_nogc_push_n(out, buffer, strlen(buffer));
+        }
+
+        vec_nogc_push(out, '\0');
+
+        return out.items;
+}
+
+int
+WriteExpressionTrace(char *out, int cap, Expr const *e, int etw, bool first)
+{
+        char buffer[512];
+
+        if (
+                e == NULL ||
+                e->type == EXPRESSION_STATEMENT ||
+                e->type == STATEMENT_EXPRESSION
+        ) {
+                return 0;
+        }
+
+        char const *file = (e->filename == NULL) ? "(unknown)" : e->filename;
+        int line = e->start.line;
+        int col = e->start.col;
+
+        if (e->type == EXPRESSION_CTX_INFO) {
+                return snprintf(
+                        out,
+                        cap,
+                        "%43s%s\n",
+                        "",
+                        e->string
+                );
+        }
+
+        etw = min(etw, 24);
+        int margin = 44 - etw;
+
+        snprintf(
+                buffer,
+                sizeof buffer - 1,
+                "%*s %s%s%s:%s%d%s:%s%d %s%*s%s",
+                margin,
+                first ? "at" : "from",
+                TERM(34),
+                file,
+                TERM(39),
+                TERM(33),
+                line + 1,
+                TERM(39),
+                TERM(33),
+                col + 1,
+                TERM(95),
+                etw + !!etw + !!etw,
+                (etw > 0) ? ExpressionTypeName(e) : " | ",
+                TERM(39)
+        );
+
+        char const *where = buffer;
+        int m = strlen(buffer) - 7*strlen(TERM(00));
+
+        while (m > 54) {
+                m -= 1;
+                where += 1;
+        }
+
+        int n = snprintf(
+                out,
+                cap,
+                "\n%s near: ",
+                where
+        );
+
+        char const *prefix;
+        char const *suffix;
+        char const *source;
+
+        prefix = source = e->start.s;
+        suffix = e->end.s;
+
+        char const *eol = strchr(prefix, '\n');
+
+        if (eol != NULL && suffix > eol)
+                suffix = eol;
+
+        while (prefix[-1] != '\0' && prefix[-1] != '\n')
+                --prefix;
+
+        while (isspace(prefix[0]))
+                ++prefix;
+
+        int before = source - prefix;
+        int length = suffix - source;
+        int after = strcspn(suffix, "\n");
+
+        if (n < cap) n += snprintf(
+                out + n,
+                max(0, cap - n),
+                "%s%.*s%s%s%.*s%s%s%.*s",
+                TERM(32),
+                before,
+                prefix,
+                first ? TERM(1) : "",
+                first ? TERM(91) : TERM(31),
+                length,
+                source,
+                TERM(32),
+                TERM(22),
+                after,
+                suffix
+        );
+
+        if (n < cap) n += snprintf(
+                out + n,
+                max(0, cap - n),
+                "\n%*s%s%s",
+                before + 61,
+                "",
+                first ? TERM(1) : "",
+                first ? TERM(91) : TERM(31)
+        );
+
+        for (int i = 0; i < length && n < cap; ++i)
+                out[n++] = '^';
+
+        if (n < cap) n += snprintf(
+                out + n,
+                cap - n,
+                "%s%s",
+                TERM(39),
+                TERM(22)
+        );
+
+        if (cap > 0 && n >= cap) {
+                out[cap - 1] = '\0';
+        }
+
+        return n;
+}
+
+bool
+IsTopLevel(Symbol const *sym)
+{
+        Scope *s = sym->scope;
+
+        while (s->namespace)
+                s = s->parent;
+
+        return global == s
+            || global == s->parent;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

@@ -22,6 +22,7 @@ extern _Thread_local int EvalDepth;
         X(LOAD_REF), \
         X(LOAD_CAPTURED), \
         X(LOAD_GLOBAL), \
+        X(CHECK_INIT), \
         X(CAPTURE), \
         X(TARGET_LOCAL), \
         X(TARGET_REF), \

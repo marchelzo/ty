@@ -103,83 +103,6 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(IMPORT), \
         X(EXPORT)
 
-struct statement {
-        void *arena;
-
-#define X(t) STATEMENT_ ## t
-        enum {
-                TY_STATEMENT_TYPES
-        } type;
-#undef X
-        struct location start;
-        struct location end;
-        char const *filename;
-        Namespace *ns;
-        union {
-                struct {
-                        struct expression *expression;
-                        int depth;
-                };
-                vec(Stmt *) statements;
-                expression_vector returns;
-                vec(char *) exports;
-                vec(Symbol *) drop;
-                struct {
-                        char *module;
-                        char *as;
-                        vec(char *) identifiers;
-                        vec(char *) aliases;
-                        bool pub;
-                        bool hiding;
-                } import;
-                union {
-                        struct class_definition tag;
-                        struct class_definition class;
-                };
-                struct {
-                        struct statement *init;
-                        struct expression *cond;
-                        struct expression *next;
-                        struct statement *body;
-                } for_loop;
-                struct {
-                        struct expression *target;
-                        struct expression *array;
-                        struct statement *body;
-                        struct expression *cond;
-                        struct expression *stop;
-                } each;
-                struct {
-                        struct statement *s;
-                        expression_vector patterns;
-                        vec(struct statement *) handlers;
-                        struct statement *finally;
-                } try;
-                struct {
-                        struct expression *e;
-                        expression_vector patterns;
-                        expression_vector conds;
-                        vec(struct statement *) statements;
-                } match;
-                struct {
-                        condpart_vector parts;
-                        struct statement *block;
-                } While;
-                struct {
-                        condpart_vector parts;
-                        struct statement *then;
-                        struct statement *otherwise;
-                        bool neg;
-                } iff;
-                struct {
-                        struct expression *target;
-                        struct expression *value;
-                        char const *doc;
-                        bool pub;
-                };
-        };
-};
-
 #define TY_EXPRESSION_TYPES \
         X(FUNCTION), \
         X(IMPLICIT_FUNCTION), \
@@ -206,7 +129,7 @@ struct statement {
         X(LIST), \
         X(IN), \
         X(NOT_IN), \
-        X(KEEP_LOC), \
+        X(KEEP_LOC), /* Below here we store Location in instruction pointer index */ \
         X(TUPLE), \
         X(IDENTIFIER), \
         X(RESOURCE_BINDING), \
@@ -280,8 +203,10 @@ struct statement {
         X(NONE), \
         X(MULTI_FUNCTION), \
         X(MACRO_INVOCATION), \
+        X(FUN_MACRO_INVOCATION), \
+        X(CTX_INFO), \
         X(VALUE), \
-        X(EXPRESSION_MAX_TYPE)
+        X(MAX_TYPE)
 
 #define ZERO_EXPR(e) memset( \
         ((char *)(e)) + offsetof(Expr, has_resources) + 1, \
@@ -291,6 +216,7 @@ struct statement {
 
 struct expression {
         void *arena;
+        Expr *origin;
 
 #define X(t) EXPRESSION_ ## t
         enum {
@@ -463,6 +389,86 @@ struct expression {
                 };
         };
 };
+
+struct statement {
+        void *arena;
+        Expr *origin;
+
+#define X(t) STATEMENT_ ## t
+        enum {
+                STATEMENT_TYPE_START = EXPRESSION_MAX_TYPE,
+                TY_STATEMENT_TYPES
+        } type;
+#undef X
+        struct location start;
+        struct location end;
+        char const *filename;
+        Namespace *ns;
+        union {
+                struct {
+                        struct expression *expression;
+                        int depth;
+                };
+                vec(Stmt *) statements;
+                expression_vector returns;
+                vec(char *) exports;
+                vec(Symbol *) drop;
+                struct {
+                        char *module;
+                        char *as;
+                        vec(char *) identifiers;
+                        vec(char *) aliases;
+                        bool pub;
+                        bool hiding;
+                } import;
+                union {
+                        struct class_definition tag;
+                        struct class_definition class;
+                };
+                struct {
+                        struct statement *init;
+                        struct expression *cond;
+                        struct expression *next;
+                        struct statement *body;
+                } for_loop;
+                struct {
+                        struct expression *target;
+                        struct expression *array;
+                        struct statement *body;
+                        struct expression *cond;
+                        struct expression *stop;
+                } each;
+                struct {
+                        struct statement *s;
+                        expression_vector patterns;
+                        vec(struct statement *) handlers;
+                        struct statement *finally;
+                } try;
+                struct {
+                        struct expression *e;
+                        expression_vector patterns;
+                        expression_vector conds;
+                        vec(struct statement *) statements;
+                } match;
+                struct {
+                        condpart_vector parts;
+                        struct statement *block;
+                } While;
+                struct {
+                        condpart_vector parts;
+                        struct statement *then;
+                        struct statement *otherwise;
+                        bool neg;
+                } iff;
+                struct {
+                        struct expression *target;
+                        struct expression *value;
+                        char const *doc;
+                        bool pub;
+                };
+        };
+};
+
 
 char const *
 ExpressionTypeName(Expr const *e);

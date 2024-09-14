@@ -12,6 +12,7 @@ struct value;
 #include "gc.h"
 #include "tags.h"
 #include "tthread.h"
+#include "scope.h"
 
 #define V_ALIGN (_Alignof (struct value))
 
@@ -33,6 +34,7 @@ struct value;
 #define EPTR(p, gcp, ep)         ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),                   .tags = 0 })
 #define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
 #define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                                                   .tags = 0 })
+#define UNINITIALIZED(p)         ((struct value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                                   .tags = 0 })
 #define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
 #define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
 #define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
@@ -295,6 +297,7 @@ enum {
         VALUE_SENTINEL         ,
         VALUE_INDEX            ,
         VALUE_NONE             ,
+        VALUE_UNINITIALIZED    ,
         VALUE_PTR              ,
         VALUE_REF              ,
         VALUE_THREAD           ,
@@ -314,6 +317,7 @@ struct value {
                 struct dict *dict;
                 struct blob *blob;
                 Thread *thread;
+                Symbol *sym;
                 struct {
                         void *ptr;
                         void *gcptr;

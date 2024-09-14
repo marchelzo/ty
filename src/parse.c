@@ -992,22 +992,21 @@ prefix_hash(void)
 static struct expression *
 prefix_slash(void)
 {
-        next();
+        Location start = tok()->start;
 
-        /*
         next();
-        Expr *body = parse_expr(0);
-        next();
-        */
 
         Expr *body = parse_expr(99);
 
         Expr *nil = mkexpr();
         nil->type = EXPRESSION_NIL;
+        nil->start = start;
 
         Expr *f = mkcall(nil);
         VPush(f->args, body);
         VPush(f->fconds, NULL);
+
+        nil->end = f->end = End;
 
         return mkpartial(f);
 }
@@ -2390,11 +2389,11 @@ prefix_template(void)
 static struct expression *
 prefix_template_expr(void)
 {
-        next();
-
         struct expression *e = mkexpr();
         e->type = EXPRESSION_TEMPLATE_HOLE;
         e->integer = TemplateExprs.count;
+
+        next();
 
         if (tok()->type == '(') {
                 next();
@@ -2409,7 +2408,7 @@ prefix_template_expr(void)
                 VPush(TemplateExprs, parse_expr(99));
         }
 
-        e->end = vec_last(TemplateExprs)[0]->end;
+        e->end = End;
 
         return e;
 }
@@ -4457,6 +4456,8 @@ parse_block(void)
 
         consume('}');
 
+        block->end = End;
+
         return block;
 }
 
@@ -4784,12 +4785,7 @@ parse_import(void)
         struct statement *s = mkstmt();
         s->type = STATEMENT_IMPORT;
 
-        if (have_keyword(KEYWORD_PUB)) {
-                s->import.pub = true;
-                next();
-        } else {
-                s->import.pub = false;
-        }
+        s->import.pub = have_keyword(KEYWORD_PUB) && (next(), true);
 
         consume_keyword(KEYWORD_IMPORT);
 
