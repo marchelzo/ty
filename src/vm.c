@@ -778,6 +778,55 @@ SpecialTarget(void)
         return (((uintptr_t)targets.items[targets.count - 1].t) & 0x07) != 0;
 }
 
+
+static bool
+co_yield(void)
+{
+        if (frames.count == 0 || stack.count == 0)
+                return false;
+
+        int n = frames.items[0].fp;
+
+        if (stack.items[n - 1].type != VALUE_GENERATOR) {
+                return false;
+        }
+
+        Generator *gen = stack.items[n - 1].gen;
+        gen->ip = ip;
+        gen->frame.count = 0;
+
+        SWAP(SPStack, gen->sps, sp_stack);
+        SWAP(TargetStack, gen->targets, targets);
+        SWAP(CallStack, gen->calls, calls);
+        SWAP(FrameStack, gen->frames, frames);
+        SWAP(ValueVector, gen->deferred, defer_stack);
+        SWAP(ValueVector, gen->to_drop, drop_stack);
+
+        vec_nogc_push_n(gen->frame, stack.items + n, stack.count - n - 1);
+
+        stack.items[n - 1] = peek();
+        stack.count = n;
+
+        vec_pop(frames);
+
+        ip = *vec_pop(calls);
+
+        return true;
+}
+
+
+inline static Generator *
+GetCurrentGenerator(void)
+{
+        int n = frames.items[0].fp;
+
+        if (n == 0 || stack.items[n - 1].type != VALUE_GENERATOR) {
+                return NULL;
+        }
+
+        return stack.items[n - 1].gen;
+}
+
 #ifdef TY_RELEASE
 inline
 #else
@@ -876,7 +925,11 @@ call(struct value const *f, struct value const *pSelf, int n, int nkw, bool exec
         if (exec) {
                 vec_push_unchecked(calls, &halt);
                 gc_push(f);
+                Generator *gen = GetCurrentGenerator();
                 vm_exec(code);
+                if (GetCurrentGenerator() != gen) {
+                        vm_panic("sus usage of coroutine yield");
+                }
                 gc_pop();
         } else {
                 vec_push_unchecked(calls, ip);
@@ -1776,8 +1829,8 @@ vm_exec(char *code)
 
         struct value (*func)(struct value *, int, struct value *);
 
-#if !defined(TY_NO_LOG) && defined(TY_LOG_VERBOSE)
-        struct expression *expr;
+#ifndef TY_RELEASE
+        Expr *expr;
 #endif
 
         PopulateGlobals();
@@ -2688,32 +2741,9 @@ Throw:
                         h = strhash(method);
                         goto CallMethod;
                 CASE(YIELD)
-                        n = frames.items[0].fp;
-
-                        FALSE_OR (stack.items[n - 1].type != VALUE_GENERATOR) {
+                        if (!co_yield()) {
                                 vm_panic("attempt to yield from outside generator context");
                         }
-
-                        v.gen = stack.items[n - 1].gen;
-                        v.gen->ip = ip;
-                        v.gen->frame.count = 0;
-
-                        SWAP(SPStack, v.gen->sps, sp_stack);
-                        SWAP(TargetStack, v.gen->targets, targets);
-                        SWAP(CallStack, v.gen->calls, calls);
-                        SWAP(FrameStack, v.gen->frames, frames);
-                        SWAP(ValueVector, v.gen->deferred, defer_stack);
-                        SWAP(ValueVector, v.gen->to_drop, drop_stack);
-
-                        vec_nogc_push_n(v.gen->frame, stack.items + n, stack.count - n - 1);
-
-                        stack.items[n - 1] = peek();
-                        stack.count = n;
-
-                        vec_pop(frames);
-
-                        ip = *vec_pop(calls);
-
                         break;
                 CASE(MAKE_GENERATOR)
                         v.type = VALUE_GENERATOR;
@@ -4182,6 +4212,8 @@ vm_panic(char const *fmt, ...)
         if (n < sz)
                 ERR[n++] = '\n';
 
+        bool can_yield = false;
+
         for (int i = 0; ip != NULL && n < sz; ++i) {
                 Expr const *expr = compiler_find_expr(ip - 1);
 
@@ -4191,8 +4223,15 @@ vm_panic(char const *fmt, ...)
                 }
 
                 if (frames.count == 0) {
-                        break;
+                        if (can_yield) {
+                                frames.count += 1;
+                                co_yield();
+                        } else {
+                                break;
+                        }
                 }
+
+                can_yield = GetCurrentGenerator() != NULL;
 
                 ip = vec_pop(frames)->ip;
         }

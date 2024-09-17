@@ -5,6 +5,7 @@
 #include <stdbool.h>
 
 #include "vec.h"
+#include "location.h"
 
 enum {
         SYMBOL_TABLE_SIZE = 16
@@ -27,7 +28,7 @@ typedef struct symbol {
         bool global;
         bool namespace;
 
-        struct location loc;
+        Location loc;
         char const *file;
 
         struct scope *scope;
