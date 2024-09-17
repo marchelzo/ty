@@ -1094,8 +1094,9 @@ array_map(struct value *array, int argc, struct value *kwargs)
                 vm_panic("non-function passed to the map method on array");
 
         int n = array->array->count;
-        for (int i = 0; i < n; ++i)
+        for (int i = 0; i < n; ++i) {
                 array->array->items[i] = value_apply_callable(&f, &array->array->items[i]);
+        }
 
         return *array;
 }

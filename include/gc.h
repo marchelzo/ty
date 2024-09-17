@@ -3,12 +3,15 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
 
 #include "polyfill_stdatomic.h"
 #include "vec.h"
 #include "log.h"
 #include "alloc.h"
-#include "value.h"
+
+typedef struct value Value;
 
 void DoGC(void);
 
@@ -166,10 +169,10 @@ void
 gc_register(void *p);
 
 void
-_gc_push(struct value *v);
+_gc_push(Value const *v);
 
 void
-gc_immortalize(struct value *v);
+gc_immortalize(Value const *v);
 
 #if 0
 #define gc_push(v) do { GCLOG("gc_push(): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0)

@@ -1,6 +1,5 @@
 #include <string.h>
 
-#include "value.h"
 #include "gc.h"
 #include "dict.h"
 #include "object.h"
@@ -15,7 +14,9 @@ _Thread_local AllocList allocs;
 _Thread_local size_t MemoryUsed = 0;
 _Thread_local size_t MemoryLimit = GC_INITIAL_LIMIT;
 
-static _Thread_local vec(struct value const *) RootSet;
+typedef struct value Value;
+
+static _Thread_local vec(Value const *) RootSet;
 static vec(Value const *) ImmortalSet;
 
 _Thread_local int GC_OFF_COUNT = 0;
@@ -135,13 +136,13 @@ gc_register(void *p)
 }
 
 void
-_gc_push(struct value *v)
+_gc_push(Value const *v)
 {
         vec_nogc_push(RootSet, v);
 }
 
 void
-gc_immortalize(Value *v)
+gc_immortalize(Value const *v)
 {
         vec_nogc_push(ImmortalSet, v);
 }
