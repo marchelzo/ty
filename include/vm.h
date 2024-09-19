@@ -8,6 +8,7 @@
 
 #include <signal.h>
 
+#include "ty.h"
 #include "value.h"
 #include "tthread.h"
 #include "log.h"
@@ -179,95 +180,95 @@ enum instruction {
 #undef X
 
 bool
-vm_init(int ac, char **av);
+vm_init(Ty *ty, int ac, char **av);
 
 char const *
-vm_error(void);
+vm_error(Ty *ty);
 
 noreturn void
-vm_panic(char const *fmt, ...);
+vm_panic(Ty *ty, char const *fmt, ...);
 
 void
-vm_mark(void);
+vm_mark(Ty *ty);
 
 void
-Forget(struct value *v, AllocList *allocs);
+Forget(Ty *ty, struct value *v, AllocList *allocs);
 
 void
-DoGC(void);
+DoGC(Ty *ty);
 
 void
-NewThread(Thread *thread, struct value *ctx, struct value *name, bool sigma);
+NewThread(Ty *ty, Thread *thread, struct value *ctx, struct value *name, bool sigma);
 
 void
-vm_set_sigfn(int, struct value const *);
+vm_set_sigfn(Ty *ty, int, struct value const *);
 
 void
-vm_del_sigfn(int);
+vm_del_sigfn(Ty *ty, int);
 
 struct value
-vm_get_sigfn(int);
+vm_get_sigfn(Ty *ty, int);
 
 #ifndef _WIN32
 void
-vm_do_signal(int, siginfo_t *, void *);
+vm_do_signal(Ty *ty, int, siginfo_t *, void *);
 #endif
 
 bool
-vm_execute(char const *source, char const *file);
+vm_execute(Ty *ty, char const *source, char const *file);
 
 bool
-vm_execute_file(char const *path);
+vm_execute_file(Ty *ty, char const *path);
 
 void
-vm_push(struct value const *v);
+vm_push(Ty *ty, struct value const *v);
 
 void
-vm_pop(void);
+vm_pop(Ty *ty);
 
 struct value *
-vm_get(int i);
+vm_get(Ty *ty, int i);
 
 _Noreturn void
-vm_throw(struct value const *);
+vm_throw(Ty *ty, struct value const *);
 
 struct value
-vm_call(struct value const *f, int argc);
+vm_call(Ty *ty, struct value const *f, int argc);
 
 Value
-vm_call_ex(Value const *f, int argc, Value const *kwargs, bool collect);
+vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect);
 
 uint64_t
-MyThreadId(void);
+MyThreadId(Ty *ty);
 
 struct value
-vm_call_method(struct value const *self, struct value const *f, int argc);
+vm_call_method(Ty *ty, struct value const *self, struct value const *f, int argc);
 
 struct value
-vm_eval_function(struct value const *f, ...);
+vm_eval_function(Ty *ty, struct value const *f, ...);
 
 void
-vm_load_c_module(char const *name, void *p);
+vm_load_c_module(Ty *ty, char const *name, void *p);
 
 void
-vm_exec(char *ip);
+vm_exec(Ty *ty, char *ip);
 
 struct value
-vm_try_exec(char *ip);
+vm_try_exec(Ty *ty, char *ip);
 
 FrameStack *
-vm_get_frames(void);
+vm_get_frames(Ty *ty);
 
 struct value
-GetMember(struct value v, char const *member, unsigned long h, bool b);
+GetMember(Ty *ty, struct value v, char const *member, unsigned long h, bool b);
 
 extern _Thread_local TyMutex *MyLock;
 
 void
-TakeLock(void);
+TakeLock(Ty *ty);
 
 void
-ReleaseLock(bool blocked);
+ReleaseLock(Ty *ty, bool blocked);
 
 char const *
 GetInstructionName(uint8_t i);

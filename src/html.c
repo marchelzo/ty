@@ -10,28 +10,22 @@
 #include "gc.h"
 
 static struct value
-convert_node(GumboNode const *n, struct table *p);
+convert_node(Ty *ty, GumboNode const *n, struct table *p);
 
 inline static struct value
-S(char const *s)
+convert_text(Ty *ty, GumboText const *t)
 {
-        return STRING_CLONE(s, strlen(s));
+        return vScn(t->text);
 }
 
 inline static struct value
-convert_text(GumboText const *t)
+convert_attr(Ty *ty, GumboAttribute const *a)
 {
-        return S(t->text);
-}
-
-inline static struct value
-convert_attr(GumboAttribute const *a)
-{
-        struct table *t = object_new(0);
+        struct table *t = object_new(ty, 0);
         NOGC(t);
 
-        table_put(t, "name", S(a->name));
-        table_put(t, "value", S(a->value));
+        table_put(ty, t, "name", vScn(a->name));
+        table_put(ty, t, "value", vScn(a->value));
 
         OKGC(t);
 
@@ -39,30 +33,30 @@ convert_attr(GumboAttribute const *a)
 }
 
 static struct value
-convert_elem(GumboElement const *e, struct table *n)
+convert_elem(Ty *ty, GumboElement const *e, struct table *n)
 {
-        struct table *t = object_new(0);
+        struct table *t = object_new(ty, 0);
         NOGC(t);
 
-        struct array *cs = value_array_new();
+        struct array *cs = vA();
         NOGC(cs);
 
         for (int i = 0; i < e->children.length; ++i) {
-                value_array_push(cs, convert_node(e->children.data[i], n));
+                vAp(cs, convert_node(ty, e->children.data[i], n));
         }
 
 
-        table_put(t, "children", ARRAY(cs));
-        table_put(t, "t", S(gumbo_normalized_tagname(e->tag)));
+        table_put(ty, t, "children", ARRAY(cs));
+        table_put(ty, t, "t", vScn(gumbo_normalized_tagname(e->tag)));
 
-        struct array *as = value_array_new();
+        struct array *as = vA();
         NOGC(as);
 
         for (int i = 0; i < e->attributes.length; ++i) {
-                value_array_push(as, convert_attr(e->attributes.data[i]));
+                vAp(as, convert_attr(ty, e->attributes.data[i]));
         }
 
-        table_put(t, "attributes", ARRAY(as));
+        table_put(ty, t, "attributes", ARRAY(as));
 
         OKGC(as);
         OKGC(cs);
@@ -72,38 +66,38 @@ convert_elem(GumboElement const *e, struct table *n)
 }
 
 static struct value
-convert_doc(GumboDocument const *d)
+convert_doc(Ty *ty, GumboDocument const *d)
 {
-        struct table *t = object_new(0);
+        struct table *t = object_new(ty, 0);
         NOGC(t);
 
-        table_put(t, "has_doctype", BOOLEAN(!!d->has_doctype));
-        table_put(t, "name", S(d->name));
-        table_put(t, "public_id", S(d->public_identifier));
-        table_put(t, "system_id", S(d->system_identifier));
+        table_put(ty, t, "has_doctype", BOOLEAN(!!d->has_doctype));
+        table_put(ty, t, "name", vScn(d->name));
+        table_put(ty, t, "public_id", vScn(d->public_identifier));
+        table_put(ty, t, "system_id", vScn(d->system_identifier));
 
         OKGC(t);
         return OBJECT(t, 0);
 }
 
 static struct value
-convert_node(GumboNode const *n, struct table *p)
+convert_node(Ty *ty, GumboNode const *n, struct table *p)
 {
-        struct table *t = object_new(0);
+        struct table *t = object_new(ty, 0);
         NOGC(t);
-        table_put(t, "type", INTEGER(n->type));
-        table_put(t, "parent", (p == NULL) ? NIL : OBJECT(p, 0));
-        table_put(t, "index", INTEGER(n->index_within_parent));
+        table_put(ty, t, "type", INTEGER(n->type));
+        table_put(ty, t, "parent", (p == NULL) ? NIL : OBJECT(p, 0));
+        table_put(ty, t, "index", INTEGER(n->index_within_parent));
 
         switch (n->type) {
         case GUMBO_NODE_DOCUMENT:
-                table_put(t, "document", convert_doc(&n->v.document));
+                table_put(ty, t, "document", convert_doc(ty, &n->v.document));
                 break;
         case GUMBO_NODE_ELEMENT:
-                table_put(t, "element", convert_elem(&n->v.element, t));
+                table_put(ty, t, "element", convert_elem(ty, &n->v.element, t));
                 break;
         default:
-                table_put(t, "text", convert_text(&n->v.text));
+                table_put(ty, t, "text", convert_text(ty, &n->v.text));
         }
 
         OKGC(t);
@@ -111,13 +105,13 @@ convert_node(GumboNode const *n, struct table *p)
 }
 
 static struct value
-convert(GumboOutput const *out)
+convert(Ty *ty, GumboOutput const *out)
 {
-        struct table *t = object_new(0);
+        struct table *t = object_new(ty, 0);
         NOGC(t);
 
-        table_put(t, "root", convert_node(out->root, NULL));
-        table_put(t, "document", convert_node(out->document, NULL));
+        table_put(ty, t, "root", convert_node(ty, out->root, NULL));
+        table_put(ty, t, "document", convert_node(ty, out->document, NULL));
 
         OKGC(t);
 
@@ -125,34 +119,34 @@ convert(GumboOutput const *out)
 }
 
 struct value
-html_parse(int argc, struct value *kwargs)
+html_parse(Ty *ty, int argc, struct value *kwargs)
 {
         if (argc != 1) {
-                vm_panic("gumbo::parse() expects 1 argument but got %d", argc);
+                zP("gumbo::parse(ty) expects 1 argument but got %d", argc);
         }
 
         struct value s = ARG(0);
         vec(char) b = {0};
 
         if (s.type == VALUE_STRING) {
-                vec_push_n(b, s.string, s.bytes);
+                vvPn(b, s.string, s.bytes);
         } else if (s.type == VALUE_BLOB) {
-                vec_push_n(b, s.blob->items, s.blob->count);
+                vvPn(b, s.blob->items, s.blob->count);
         } else {
-                vm_panic("the argument to gumbo::parse() must be a string or a blob");
+                zP("the argument to gumbo::parse(ty) must be a string or a blob");
         }
 
-        vec_push(b, '\0');
+        vvP(b, '\0');
         GumboOutput *out = gumbo_parse(b.items);
 
         if (out == NULL) {
-                vec_empty(b);
+                vec_empty(ty, b);
                 return NIL;
         } else {
-                ++GC_OFF_COUNT;
-                struct value v = convert(out);
-                --GC_OFF_COUNT;
-                vec_empty(b);
+                GC_STOP();
+                struct value v = convert(ty, out);
+                GC_RESUME();
+                vec_empty(ty, b);
                 gumbo_destroy_output(&kGumboDefaultOptions, out);
                 return v;
         }

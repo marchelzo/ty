@@ -6,39 +6,39 @@
 #include "value.h"
 
 void
-tags_init(void);
+tags_init(Ty *ty);
 
 int
-tags_new(char const *);
+tags_new(Ty *ty, char const *);
 
 bool
-tags_same(int t1, int t2);
+tags_same(Ty *ty, int t1, int t2);
 
 int
-tags_push(int n, int tag);
+tags_push(Ty *ty, int n, int tag);
 
 int
-tags_pop(int n);
+tags_pop(Ty *ty, int n);
 
 int
-tags_first(int tags);
+tags_first(Ty *ty, int tags);
 
 char *
-tags_wrap(char const *s, int tags, bool color);
+tags_wrap(Ty *ty, char const *s, int tags, bool color);
 
 char const *
-tags_name(int tag);
+tags_name(Ty *ty, int tag);
 
 int
-tags_lookup(char const *name);
+tags_lookup(Ty *ty, char const *name);
 
 void
-tags_add_method(int tag, char const *name, struct value f);
+tags_add_method(Ty *ty, int tag, char const *name, struct value f);
 
 struct value *
-tags_lookup_method(int tag, char const *name, unsigned long h);
+tags_lookup_method(Ty *ty, int tag, char const *name, unsigned long h);
 
 void
-tags_copy_methods(int dst, int src);
+tags_copy_methods(Ty *ty, int dst, int src);
 
 #endif

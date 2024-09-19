@@ -4,7 +4,7 @@
 #include "util.h"
 
 void
-table_init(struct table *t)
+table_init(Ty *ty, struct table *t)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
                 vec_init(t->buckets[i].hashes);
@@ -17,17 +17,17 @@ table_init(struct table *t)
 }
 
 struct value *
-table_add(struct table *t, char const *name, unsigned long h, struct value f)
+table_add(Ty *ty, struct table *t, char const *name, unsigned long h, struct value f)
 {
         int i = h % TABLE_SIZE;
 
-        struct value *m = table_lookup(t, name, h);
+        struct value *m = table_lookup(ty, t, name, h);
 
         if (m == NULL) {
-                vec_push(t->buckets[i].hashes, h);
-                vec_push(t->buckets[i].names, name);
-                vec_push(t->buckets[i].values, f);
-                return vec_last(t->buckets[i].values);
+                vvP(t->buckets[i].hashes, h);
+                vvP(t->buckets[i].names, name);
+                vvP(t->buckets[i].values, f);
+                return vvL(t->buckets[i].values);
         } else {
                 *m = f;
                 return m;
@@ -35,7 +35,7 @@ table_add(struct table *t, char const *name, unsigned long h, struct value f)
 }
 
 void
-table_copy(struct table *dst, struct table const *src)
+table_copy(Ty *ty, struct table *dst, struct table const *src)
 {
         struct bucket *dt = dst->buckets;
         struct bucket const *st = src->buckets;
@@ -43,17 +43,17 @@ table_copy(struct table *dst, struct table const *src)
         for (int i = 0; i < TABLE_SIZE; ++i) {
                 if (st[i].hashes.count == 0)
                         continue;
-                vec_push_n(
+                vvPn(
                         dt[i].hashes,
                         st[i].hashes.items,
                         st[i].hashes.count
                 );
-                vec_push_n(
+                vvPn(
                         dt[i].names,
                         st[i].names.items,
                         st[i].names.count
                 );
-                vec_push_n(
+                vvPn(
                         dt[i].values,
                         st[i].values.items,
                         st[i].values.count
@@ -62,7 +62,7 @@ table_copy(struct table *dst, struct table const *src)
 }
 
 struct value *
-table_lookup(struct table const *t, char const *name, unsigned long h)
+table_lookup(Ty *ty, struct table const *t, char const *name, unsigned long h)
 {
         int i = h % TABLE_SIZE;
 
@@ -79,7 +79,7 @@ table_lookup(struct table const *t, char const *name, unsigned long h)
 }
 
 char const *
-table_lookup_key(struct table const *t, char const *name, unsigned long h)
+table_lookup_key(Ty *ty, struct table const *t, char const *name, unsigned long h)
 {
         int i = h % TABLE_SIZE;
 
@@ -96,17 +96,17 @@ table_lookup_key(struct table const *t, char const *name, unsigned long h)
 }
 
 void
-table_release(struct table *t)
+table_release(Ty *ty, struct table *t)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
-                gc_free(t->buckets[i].values.items);
-                gc_free(t->buckets[i].names.items);
-                gc_free(t->buckets[i].hashes.items);
+                mF(t->buckets[i].values.items);
+                mF(t->buckets[i].names.items);
+                mF(t->buckets[i].hashes.items);
         }
 }
 
 int
-table_get_completions(struct table const *t, char const *prefix, char **out, int max)
+table_get_completions(Ty *ty, struct table const *t, char const *prefix, char **out, int max)
 {
         int n = 0;
         int prefix_len = strlen(prefix);

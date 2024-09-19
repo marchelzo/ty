@@ -11,16 +11,16 @@
 #include "gc.h"
 
 struct table *
-object_new(int class)
+object_new(Ty *ty, int class)
 {
-        struct table *t =  gc_alloc_object(sizeof *t, GC_OBJECT);
-        table_init(t);
+        struct table *t =  mAo(sizeof *t, GC_OBJECT);
+        table_init(ty, t);
         t->class = class;
         return t;
 }
 
 void
-object_mark(struct table *o)
+object_mark(Ty *ty, struct table *o)
 {
         if (MARKED(o)) return;
 
@@ -28,12 +28,12 @@ object_mark(struct table *o)
 
         for (int i = 0; i < TABLE_SIZE; ++i)
                 for (int v = 0; v < o->buckets[i].values.count; ++v)
-                        value_mark(&o->buckets[i].values.items[v]);
+                        value_mark(ty, &o->buckets[i].values.items[v]);
 
         // FIXME: hmm?
         return;
 
-        value_mark(&o->finalizer);
+        value_mark(ty, &o->finalizer);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -71,36 +71,36 @@ Next:
 }
 
 inline static struct value
-mkmatch(struct value *s, int offset, int *ovec, int n, bool detailed)
+mkmatch(Ty *ty, struct value *s, int offset, int *ovec, int n, bool detailed)
 {
         if (detailed) {
-                Array *groups = value_array_new();
+                Array *groups = vA();
 
                 NOGC(groups);
 
                 for (int i = 0, j = 0; i < n; ++i, j += 2) {
-                        Value group = value_tuple(2);
+                        Value group = vT(2);
                         group.items[0] = INTEGER(offset + ovec[j]);
                         group.items[1] = INTEGER(ovec[j + 1] - ovec[j]);
                         NOGC(group.items);
-                        value_array_push(groups, group);
+                        vAp(groups, group);
                         OKGC(group.items);
                 }
 
-                vm_push(s);
-                vm_push(&ARRAY(groups));
+                vmP(s);
+                vmP(&ARRAY(groups));
 
                 OKGC(groups);
 
-                return vm_call(&CLASS(CLASS_RE_MATCH), 2);
+                return vmC(&CLASS(CLASS_RE_MATCH), 2);
         } else if (n == 1) {
                 return STRING_VIEW(*s, offset + ovec[0], ovec[1] - ovec[0]);
         } else {
-                Value match = ARRAY(value_array_new());
+                Value match = ARRAY(vA());
                 NOGC(match.array);
 
                 for (int i = 0, j = 0; i < n; ++i, j += 2) {
-                        vec_push(*match.array, STRING_VIEW(*s, offset + ovec[j], ovec[j + 1] - ovec[j]));
+                        vvP(*match.array, STRING_VIEW(*s, offset + ovec[j], ovec[j + 1] - ovec[j]));
                 }
 
                 OKGC(match.array);
@@ -110,7 +110,7 @@ mkmatch(struct value *s, int offset, int *ovec, int n, bool detailed)
 }
 
 static struct value
-string_length(struct value *string, int argc, struct value *kwargs)
+string_length(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         char const *s = string->string;
         int size = string->bytes;
@@ -143,17 +143,17 @@ string_length(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_chars(struct value *string, int argc, struct value *kwargs)
+string_chars(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("str.chars() expects no arguments but got %d", argc);
+                zP("str.chars() expects no arguments but got %d", argc);
 
         uint8_t const *s = (uint8_t *)string->string;
         int size = string->bytes;
         int offset = 0;
         int state = 0;
 
-        struct array *r = value_array_new();
+        struct array *r = vA();
         NOGC(r);
 
         while (size > 0) {
@@ -172,7 +172,7 @@ string_chars(struct value *string, int argc, struct value *kwargs)
                                 break;
                         n += m;
                 }
-                value_array_push(r, STRING_VIEW(*string, offset, n));
+                vAp(r, STRING_VIEW(*string, offset, n));
                 size -= n;
                 offset += n;
         }
@@ -183,24 +183,24 @@ string_chars(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_size(struct value *string, int argc, struct value *kwargs)
+string_size(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("str.size() expects no arguments but got %d", argc);
+                zP("str.size() expects no arguments but got %d", argc);
 
         return INTEGER(string->bytes);
 }
 
 static struct value
-string_bslice(struct value *string, int argc, struct value *kwargs)
+string_bslice(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc == 0 || argc > 2)
-                vm_panic("str.bslice() expects 1 or 2 arguments but got %d", argc);
+                zP("str.bslice() expects 1 or 2 arguments but got %d", argc);
 
         struct value start = ARG(0);
 
         if (start.type != VALUE_INTEGER)
-                vm_panic("str.bslice(): expected integer but got: %s", value_show(&start));
+                zP("str.bslice(): expected integer but got: %s", value_show(ty, &start));
 
         int i = start.integer;
         int n;
@@ -212,7 +212,7 @@ string_bslice(struct value *string, int argc, struct value *kwargs)
         if (argc == 2) {
                 struct value len = ARG(1);
                 if (len.type != VALUE_INTEGER)
-                        vm_panic("str.bslice(): expected integer but got: %s", value_show(&len));
+                        zP("str.bslice(): expected integer but got: %s", value_show(ty, &len));
                 n = len.integer;
         } else {
                 n = (int)string->bytes - i;
@@ -225,15 +225,15 @@ string_bslice(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_slice(struct value *string, int argc, struct value *kwargs)
+string_slice(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc == 0 || argc > 2)
-                vm_panic("str.slice() expects 1 or 2 arguments but got %d", argc);
+                zP("str.slice() expects 1 or 2 arguments but got %d", argc);
 
         struct value start = ARG(0);
 
         if (start.type != VALUE_INTEGER)
-                vm_panic("non-integer passed as first argument to str.slice()");
+                zP("non-integer passed as first argument to str.slice()");
 
         char const *s = string->string;
         int i = start.integer;
@@ -244,7 +244,7 @@ string_slice(struct value *string, int argc, struct value *kwargs)
         if (argc == 2) {
                 struct value len = ARG(1);
                 if (len.type != VALUE_INTEGER)
-                        vm_panic("non-integer passed as second argument to str.slice()");
+                        zP("non-integer passed as second argument to str.slice()");
                 n = len.integer;
         } else {
                 n = outpos.graphemes;
@@ -268,15 +268,15 @@ string_slice(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_search_all(struct value *string, int argc, struct value *kwargs)
+string_search_all(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("str.searchAll() expects 1 or 2 arguments but got %d", argc);
+                zP("str.searchAll() expects 1 or 2 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
-                vm_panic("the pattern argument to str.searchAll() must be a string or a regex");
+                zP("the pattern argument to str.searchAll() must be a string or a regex");
 
         int offset;
         if (argc == 1)
@@ -284,7 +284,7 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         else if (ARG(1).type == VALUE_INTEGER)
                 offset = ARG(1).integer;
         else
-                vm_panic("the second argument to str.searchAll() must be an integer");
+                zP("the second argument to str.searchAll() must be an integer");
 
         if (offset < 0) {
                 stringcount(string->string, string->bytes, -1);
@@ -292,7 +292,7 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         }
 
         if (offset < 0)
-                vm_panic("invalid offset passed to str.searchAll()");
+                zP("invalid offset passed to str.searchAll()");
 
         stringcount(string->string, string->bytes, offset);
         if (outpos.graphemes != offset)
@@ -304,8 +304,8 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         int n;
         int off = 0;
 
-        struct value result = ARRAY(value_array_new());
-        gc_push(&result);
+        struct value result = ARRAY(vA());
+        gP(&result);
 
         if (pattern.type == VALUE_STRING) {
                 while (off < bytes) {
@@ -318,7 +318,7 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
 
                         stringcount(s + off, n, -1);
 
-                        value_array_push(result.array, INTEGER(offset + outpos.graphemes));
+                        vAp(result.array, INTEGER(offset + outpos.graphemes));
 
                         stringcount(s + off, n + pattern.bytes, -1);
 
@@ -337,13 +337,13 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
                                 break;
 
                         if (rc < -1)
-                                vm_panic("error executing regular expression: %d", rc);
+                                zP("error executing regular expression: %d", rc);
 
                         n = out[0];
 
                         stringcount(s + off, n, -1);
 
-                        value_array_push(result.array, INTEGER(offset + outpos.graphemes));
+                        vAp(result.array, INTEGER(offset + outpos.graphemes));
 
                         stringcount(s + off, out[1], -1);
 
@@ -353,21 +353,21 @@ string_search_all(struct value *string, int argc, struct value *kwargs)
         }
 
 
-        gc_pop();
+        gX();
 
         return result;
 }
 
 static struct value
-string_bsearch(struct value *string, int argc, struct value *kwargs)
+string_bsearch(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("str.bsearch() expects 1 or 2 arguments but got %d", argc);
+                zP("str.bsearch() expects 1 or 2 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
-                vm_panic("the pattern argument to str.bsearch() must be a string or a regex");
+                zP("the pattern argument to str.bsearch() must be a string or a regex");
 
         int offset;
         if (argc == 1)
@@ -375,14 +375,14 @@ string_bsearch(struct value *string, int argc, struct value *kwargs)
         else if (ARG(1).type == VALUE_INTEGER)
                 offset = ARG(1).integer;
         else
-                vm_panic("the second argument to str.bsearch() must be an integer");
+                zP("the second argument to str.bsearch() must be an integer");
 
         if (offset < 0) {
                 offset += string->bytes;
         }
 
         if (offset < 0)
-                vm_panic("invalid offset passed to str.bsearch()");
+                zP("invalid offset passed to str.bsearch()");
 
         char const *s = string->string + offset;
         int bytes = string->bytes - offset;
@@ -407,7 +407,7 @@ string_bsearch(struct value *string, int argc, struct value *kwargs)
                         return NIL;
 
                 if (rc < -1)
-                        vm_panic("error executing regular expression: %d", rc);
+                        zP("error executing regular expression: %d", rc);
 
                 n = out[0];
         }
@@ -416,15 +416,15 @@ string_bsearch(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_search(struct value *string, int argc, struct value *kwargs)
+string_search(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("str.search() expects 1 or 2 arguments but got %d", argc);
+                zP("str.search() expects 1 or 2 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
-                vm_panic("the pattern argument to str.search() must be a string or a regex");
+                zP("the pattern argument to str.search() must be a string or a regex");
 
         int offset;
         if (argc == 1)
@@ -432,7 +432,7 @@ string_search(struct value *string, int argc, struct value *kwargs)
         else if (ARG(1).type == VALUE_INTEGER)
                 offset = ARG(1).integer;
         else
-                vm_panic("the second argument to str.search() must be an integer");
+                zP("the second argument to str.search() must be an integer");
 
         if (offset < 0) {
                 stringcount(string->string, string->bytes, -1);
@@ -440,7 +440,7 @@ string_search(struct value *string, int argc, struct value *kwargs)
         }
 
         if (offset < 0)
-                vm_panic("invalid offset passed to str.search()");
+                zP("invalid offset passed to str.search()");
 
         stringcount(string->string, string->bytes, offset);
         if (outpos.graphemes != offset)
@@ -469,7 +469,7 @@ string_search(struct value *string, int argc, struct value *kwargs)
                         return NIL;
 
                 if (rc < -1)
-                        vm_panic("error executing regular expression: %d", rc);
+                        zP("error executing regular expression: %d", rc);
 
                 n = out[0];
         }
@@ -480,15 +480,15 @@ string_search(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_contains(struct value *string, int argc, struct value *kwargs)
+string_contains(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("str.contains?() expects 1 or 2 arguments but got %d", argc);
+                zP("str.contains?() expects 1 or 2 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_STRING)
-                vm_panic("the pattern argument to str.contains?() must be a string");
+                zP("the pattern argument to str.contains?() must be a string");
 
         int offset;
         if (argc == 1)
@@ -496,7 +496,7 @@ string_contains(struct value *string, int argc, struct value *kwargs)
         else if (ARG(1).type == VALUE_INTEGER)
                 offset = ARG(1).integer;
         else
-                vm_panic("the second argument to str.contains?() must be an integer");
+                zP("the second argument to str.contains?() must be an integer");
 
         if (offset < 0) {
                 stringcount(string->string, string->bytes, -1);
@@ -504,7 +504,7 @@ string_contains(struct value *string, int argc, struct value *kwargs)
         }
 
         if (offset < 0)
-                vm_panic("invalid offset passed to str.contains?()");
+                zP("invalid offset passed to str.contains?()");
 
         stringcount(string->string, string->bytes, offset);
         if (outpos.graphemes != offset)
@@ -524,14 +524,14 @@ string_contains(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_words(struct value *string, int argc, struct value *kwargs)
+string_words(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("the words method on strings expects no arguments but got %d", argc);
+                zP("the words method on strings expects no arguments but got %d", argc);
 
-        gc_push(string);
+        gP(string);
 
-        struct array *a = value_array_new();
+        struct array *a = vA();
         NOGC(a);
 
         int i = 0;
@@ -568,24 +568,24 @@ string_words(struct value *string, int argc, struct value *kwargs)
                         c = utf8proc_category(cp);
                 } while (i < len && !isspace(s[i]) && c != UTF8PROC_CATEGORY_ZS && c != UTF8PROC_CATEGORY_ZL && c != UTF8PROC_CATEGORY_ZP);
 
-                value_array_push(a, str);
+                vAp(a, str);
         }
 End:
-        gc_pop();
+        gX();
         OKGC(a);
 
         return ARRAY(a);
 }
 
 static struct value
-string_lines(struct value *string, int argc, struct value *kwargs)
+string_lines(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("the lines method on strings expects no arguments but got %d", argc);
+                zP("the lines method on strings expects no arguments but got %d", argc);
 
-        gc_push(string);
+        gP(string);
 
-        struct array *a = value_array_new();
+        struct array *a = vA();
         NOGC(a);
 
         int i = 0;
@@ -593,7 +593,7 @@ string_lines(struct value *string, int argc, struct value *kwargs)
         char const *s = string->string;
 
         if (len == 0) {
-                value_array_push(a, *string);
+                vAp(a, *string);
                 goto End;
         }
 
@@ -605,27 +605,27 @@ string_lines(struct value *string, int argc, struct value *kwargs)
                         ++i;
                 }
 
-                value_array_push(a, str);
+                vAp(a, str);
 
                 if (i < len)
                         i += 1 + (s[i] == '\r');
         }
 End:
-        gc_pop();
+        gX();
         OKGC(a);
 
         return ARRAY(a);
 }
 
 static struct value
-string_split(struct value *string, int argc, struct value *kwargs)
+string_split(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("String.split() expects 1 or 2 arguments but got %d", argc);
+                zP("String.split() expects 1 or 2 arguments but got %d", argc);
 
         char const *s = string->string;
         int len = string->bytes;
-        gc_push(string);
+        gP(string);
 
         struct value pattern = ARG(0);
 
@@ -639,27 +639,27 @@ string_split(struct value *string, int argc, struct value *kwargs)
                 if (i > n)
                         i = n;
                 stringcount(s, len, i);
-                struct array *parts = value_array_new();
+                struct array *parts = vA();
                 NOGC(parts);
-                value_array_push(parts, STRING_VIEW(*string, 0, outpos.bytes));
-                value_array_push(parts, STRING_VIEW(*string, outpos.bytes, len - outpos.bytes));
+                vAp(parts, STRING_VIEW(*string, 0, outpos.bytes));
+                vAp(parts, STRING_VIEW(*string, outpos.bytes, len - outpos.bytes));
                 OKGC(parts);
-                gc_pop();
+                gX();
                 return ARRAY(parts);
         }
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING) {
-                vm_panic(
+                zP(
                         "String.split() expects an Int, String, or Regex but got: %s",
-                        value_show(&pattern)
+                        value_show(ty, &pattern)
                 );
         }
 
         if (argc == 2 && ARG(1).type != VALUE_INTEGER) {
-                vm_panic("the second argument to String.split() must be an Int");
+                zP("the second argument to String.split() must be an Int");
         }
 
-        struct value result = ARRAY(value_array_new());
+        struct value result = ARRAY(vA());
         NOGC(result.array);
 
         if (pattern.type == VALUE_STRING) {
@@ -683,13 +683,13 @@ string_split(struct value *string, int argc, struct value *kwargs)
                                 }
                         }
 
-                        value_array_push(result.array, str);
+                        vAp(result.array, str);
 
                         i += n;
                 }
 
                 if (i == len)
-                        value_array_push(result.array, STRING_EMPTY);
+                        vAp(result.array, STRING_EMPTY);
         } else {
                 pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
@@ -704,27 +704,27 @@ string_split(struct value *string, int argc, struct value *kwargs)
                                 out[1] = len + 1;
                         }
 
-                        value_array_push(result.array, STRING_VIEW(*string, start, out[0] - start));
+                        vAp(result.array, STRING_VIEW(*string, start, out[0] - start));
 
                         pstart = out[1] + (out[0] == out[1]);
                         start = out[1];
                 }
 
                 if (start == len)
-                        value_array_push(result.array, STRING_EMPTY);
+                        vAp(result.array, STRING_EMPTY);
         }
 
 End:
-        gc_pop();
+        gX();
         OKGC(result.array);
         return result;
 }
 
 static struct value
-string_count(struct value *string, int argc, struct value *kwargs)
+string_count(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1) {
-                vm_panic("the count method on strings expects exactly 1 argument");
+                zP("the count method on strings expects exactly 1 argument");
         }
 
         struct value pattern = ARG(0);
@@ -767,7 +767,7 @@ string_count(struct value *string, int argc, struct value *kwargs)
                         len -= ovec[1];
                 }
         } else {
-                vm_panic("the argument to string.count() must be a string or a regex");
+                zP("the argument to string.count() must be a string or a regex");
         }
 
         return INTEGER(count);
@@ -775,17 +775,17 @@ string_count(struct value *string, int argc, struct value *kwargs)
 
 /* copy + paste of replace, can fix later */
 static struct value
-string_comb(struct value *string, int argc, struct value *kwargs)
+string_comb(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         vec(char) chars = {0};
 
         if (argc != 1)
-                vm_panic("the comb method on strings expects 1 arguments but got %d", argc);
+                zP("the comb method on strings expects 1 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
-                vm_panic("the pattern argument to string's comb method must be a regex or a string");
+                zP("the pattern argument to string's comb method must be a regex or a string");
 
         char const *s = string->string;
 
@@ -801,12 +801,12 @@ string_comb(struct value *string, int argc, struct value *kwargs)
                 char const *m;
 
                 while ((m = sfind(s, len, p, plen)) != NULL) {
-                        vec_push_n(chars, s, m - s);
+                        vvPn(chars, s, m - s);
                         len -= (m - s + plen);
                         s = m + plen;
                 }
 
-                vec_push_n(chars, s, len);
+                vvPn(chars, s, len);
         } else {
                 pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
@@ -814,32 +814,32 @@ string_comb(struct value *string, int argc, struct value *kwargs)
                 int out[3];
 
                 while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
-                        vec_push_n(chars, s + start, out[0] - start);
+                        vvPn(chars, s + start, out[0] - start);
                         start = out[1];
                 }
 
-                vec_push_n(chars, s + start, len - start);
+                vvPn(chars, s + start, len - start);
         }
 
-        struct value r = STRING_CLONE(chars.items, chars.count);
+        struct value r = vSc(chars.items, chars.count);
 
-        gc_free(chars.items);
+        mF(chars.items);
 
         return r;
 }
 
 static struct value
-string_repeat(struct value *string, int argc, struct value *kwargs)
+string_repeat(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1) {
-                vm_panic("String.repeat(): expected 1 argument but got %d", argc);
+                zP("String.repeat(): expected 1 argument but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_INTEGER || ARG(0).integer < 0) {
-                vm_panic("String.repeat(): argument mut be a non-negative integer");
+                zP("String.repeat(): argument mut be a non-negative integer");
         }
 
-        char *s = value_string_alloc(string->bytes * ARG(0).integer);
+        char *s = value_string_alloc(ty, string->bytes * ARG(0).integer);
         size_t off = 0;
 
         for (int i = 0; i < ARG(0).integer; ++i) {
@@ -851,28 +851,28 @@ string_repeat(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_replace(struct value *string, int argc, struct value *kwargs)
+string_replace(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         vec(char) chars = {0};
 
         if (argc != 2)
-                vm_panic("the replace method on strings expects 2 arguments but got %d", argc);
+                zP("the replace method on strings expects 2 arguments but got %d", argc);
 
         struct value pattern = ARG(0);
         struct value replacement = ARG(1);
 
         if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
-                vm_panic("the pattern argument to string's replace method must be a regex or a string");
+                zP("the pattern argument to string's replace method must be a regex or a string");
 
         char const *s = string->string;
 
         if (pattern.type == VALUE_STRING) {
-                vm_push(&replacement);
-                replacement = builtin_str(1, NULL);
-                vm_pop();
+                vmP(&replacement);
+                replacement = builtin_str(ty, 1, NULL);
+                vmX();
 
                 if (replacement.type != VALUE_STRING)
-                        vm_panic("non-string replacement passed to string's replace method with a string pattern");
+                        zP("non-string replacement passed to string's replace method with a string pattern");
 
                 char const *p = pattern.string;
                 char const *r = replacement.string;
@@ -882,15 +882,15 @@ string_replace(struct value *string, int argc, struct value *kwargs)
                 char const *m;
 
                 while ((m = sfind(s, len, p, plen)) != NULL) {
-                        vec_push_n(chars, s, m - s);
+                        vvPn(chars, s, m - s);
 
-                        vec_push_n(chars, r, replacement.bytes);
+                        vvPn(chars, r, replacement.bytes);
 
                         len -= (m - s + plen);
                         s = m + plen;
                 }
 
-                vec_push_n(chars, s, len);
+                vvPn(chars, s, len);
         } else if (replacement.type == VALUE_STRING) {
                 pcre *re = pattern.regex->pcre;
                 char const *r = replacement.string;
@@ -900,18 +900,18 @@ string_replace(struct value *string, int argc, struct value *kwargs)
 
                 while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
                         if (out[1] == start) {
-                                vec_push_n(chars, r, replacement.bytes);
-                                vec_push(chars, s[start]);
+                                vvPn(chars, r, replacement.bytes);
+                                vvP(chars, s[start]);
                                 start = out[1] + 1;
                         } else {
-                                vec_push_n(chars, s + start, out[0] - start);
-                                vec_push_n(chars, r, replacement.bytes);
+                                vvPn(chars, s + start, out[0] - start);
+                                vvPn(chars, r, replacement.bytes);
                                 start = out[1];
                         }
                 }
 
                 if (start < len) {
-                        vec_push_n(chars, s + start, len - start);
+                        vvPn(chars, s + start, len - start);
                 }
         } else if (CALLABLE(replacement)) {
                 pcre *re = pattern.regex->pcre;
@@ -922,58 +922,58 @@ string_replace(struct value *string, int argc, struct value *kwargs)
 
                 while ((rc = pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 30)) > 0) {
 
-                        vec_push_n(chars, s + start, out[0] - start);
+                        vvPn(chars, s + start, out[0] - start);
 
                         struct value match;
 
                         if (rc == 1) {
                                 match = STRING_VIEW(*string, out[0], out[1] - out[0]);
                         } else {
-                                match = ARRAY(value_array_new());
+                                match = ARRAY(vA());
                                 NOGC(match.array);
 
                                 int j = 0;
                                 for (int i = 0; i < rc; ++i, j += 2)
-                                        vec_push(*match.array, STRING_VIEW(*string, out[j], out[j + 1] - out[j]));
+                                        vvP(*match.array, STRING_VIEW(*string, out[j], out[j + 1] - out[j]));
                         }
 
-                        struct value repstr = vm_eval_function(&replacement, &match, NULL);
-                        vm_push(&repstr);
-                        repstr = builtin_str(1, NULL);
-                        vm_pop();
+                        struct value repstr = vm_eval_function(ty, &replacement, &match, NULL);
+                        vmP(&repstr);
+                        repstr = builtin_str(ty, 1, NULL);
+                        vmX();
                         if (repstr.type != VALUE_STRING)
-                                vm_panic("non-string returned by the replacement function passed to string's replace method");
+                                zP("non-string returned by the replacement function passed to string's replace method");
 
                         if (match.type == VALUE_ARRAY)
                                 OKGC(match.array);
 
-                        vec_push_n(chars, repstr.string, repstr.bytes);
+                        vvPn(chars, repstr.string, repstr.bytes);
 
                         start = out[1];
                 }
 
-                vec_push_n(chars, s + start, len - start);
+                vvPn(chars, s + start, len - start);
         } else {
-                vm_panic("invalid replacement passed to replace method on string");
+                zP("invalid replacement passed to replace method on string");
         }
 
-        struct value r = STRING_CLONE(chars.items, chars.count);
+        struct value r = vSc(chars.items, chars.count);
 
-        gc_free(chars.items);
+        mF(chars.items);
 
         return r;
 }
 
 static struct value
-string_is_match(struct value *string, int argc, struct value *kwargs)
+string_is_match(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
-                vm_panic("the match? method on strings expects 1 argument but got %d", argc);
+                zP("the match? method on strings expects 1 argument but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX)
-                vm_panic("non-regex passed to the match? method on string");
+                zP("non-regex passed to the match? method on string");
 
         int len = string->bytes;
         int rc;
@@ -990,21 +990,21 @@ string_is_match(struct value *string, int argc, struct value *kwargs)
         );
 
         if (rc < -2)
-                vm_panic("error while executing regular expression: %d", rc);
+                zP("error while executing regular expression: %d", rc);
 
         return BOOLEAN(rc > -1);
 }
 
 static struct value
-string_match(struct value *string, int argc, struct value *kwargs)
+string_match(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
-                vm_panic("the match method on strings expects 1 argument but got %d", argc);
+                zP("the match method on strings expects 1 argument but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX)
-                vm_panic("non-regex passed to the match method on string");
+                zP("non-regex passed to the match method on string");
 
         int ovec[30];
         int len = string->bytes;
@@ -1022,27 +1022,27 @@ string_match(struct value *string, int argc, struct value *kwargs)
         );
 
         if (rc < -2)
-                vm_panic("error while executing regular expression: %d", rc);
+                zP("error while executing regular expression: %d", rc);
 
         if (rc < 0)
                 return NIL;
 
-        return mkmatch(string, 0, ovec, rc, pattern.regex->detailed);
+        return mkmatch(ty, string, 0, ovec, rc, pattern.regex->detailed);
 }
 
 static struct value
-string_matches(struct value *string, int argc, struct value *kwargs)
+string_matches(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
-                vm_panic("the matches method on strings expects 1 argument but got %d", argc);
+                zP("the matches method on strings expects 1 argument but got %d", argc);
 
         struct value pattern = ARG(0);
 
         if (pattern.type != VALUE_REGEX)
-                vm_panic("non-regex passed to the matches method on string");
+                zP("non-regex passed to the matches method on string");
 
-        struct value result = ARRAY(value_array_new());
-        gc_push(&result);
+        struct value result = ARRAY(vA());
+        gP(&result);
 
         int ovec[30];
         char const *s = string->string;
@@ -1062,8 +1062,8 @@ string_matches(struct value *string, int argc, struct value *kwargs)
                         30
                 )) > 0
         ) {
-                value_array_push(result.array, NIL);
-                *vec_last(*result.array) = mkmatch(string, offset, ovec, rc, pattern.regex->detailed);
+                vAp(result.array, NIL);
+                *vvL(*result.array) = mkmatch(ty, string, offset, ovec, rc, pattern.regex->detailed);
 
                 s += ovec[1];
                 offset += ovec[1];
@@ -1071,23 +1071,23 @@ string_matches(struct value *string, int argc, struct value *kwargs)
         }
 
         if (rc < -2)
-                vm_panic("error while executing regular expression: %d", rc);
+                zP("error while executing regular expression: %d", rc);
 
-        gc_pop();
+        gX();
 
         return result;
 }
 
 static struct value
-string_byte(struct value *string, int argc, struct value *kwargs)
+string_byte(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
-                vm_panic("str.byte() expects 1 argument but got %d", argc);
+                zP("str.byte() expects 1 argument but got %d", argc);
 
         struct value i = ARG(0);
 
         if (i.type != VALUE_INTEGER)
-                vm_panic("non-integer passed to str.byte()");
+                zP("non-integer passed to str.byte()");
 
         if (i.integer < 0)
                 i.integer += string->bytes;
@@ -1099,18 +1099,18 @@ string_byte(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_char(struct value *string, int argc, struct value *kwargs)
+string_char(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1)
-                vm_panic("the char method on strings expects 1 argument but got %d", argc);
+                zP("the char method on strings expects 1 argument but got %d", argc);
 
         struct value i = ARG(0);
 
         if (i.type != VALUE_INTEGER)
-                vm_panic("non-integer passed to the char method on string");
+                zP("non-integer passed to the char method on string");
 
         if (i.integer < 0)
-                i.integer += string_length(string, 0, NULL).integer;
+                i.integer += string_length(ty, string, 0, NULL).integer;
 
         int cp;
         int j = i.integer;
@@ -1129,16 +1129,16 @@ string_char(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_bytes(struct value *string, int argc, struct value *kwargs)
+string_bytes(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("str.bytes() expects no arguments but got %d", argc);
+                zP("str.bytes() expects no arguments but got %d", argc);
 
-        struct value result = ARRAY(value_array_new());
+        struct value result = ARRAY(vA());
         NOGC(result.array);
 
         for (int i = 0; i < string->bytes; ++i) {
-                value_array_push(result.array, INTEGER((unsigned char)string->string[i]));
+                vAp(result.array, INTEGER((unsigned char)string->string[i]));
         }
 
         OKGC(result.array);
@@ -1147,10 +1147,10 @@ string_bytes(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_lower(struct value *string, int argc, struct value *kwargs)
+string_lower(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("str.lower() expects no arguments but got %d", argc);
+                zP("str.lower() expects no arguments but got %d", argc);
 
         utf8proc_int32_t c;
 
@@ -1158,7 +1158,7 @@ string_lower(struct value *string, int argc, struct value *kwargs)
         size_t len = string->bytes;
 
         size_t outlen = 0;
-        char *result = value_string_alloc(4 * string->bytes);
+        char *result = value_string_alloc(ty, 4 * string->bytes);
 
         while (len > 0) {
                 int n = utf8proc_iterate(s, len, &c);
@@ -1172,10 +1172,10 @@ string_lower(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_upper(struct value *string, int argc, struct value *kwargs)
+string_upper(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("str.upper() expects no arguments but got %d", argc);
+                zP("str.upper() expects no arguments but got %d", argc);
 
         utf8proc_int32_t c;
 
@@ -1183,7 +1183,7 @@ string_upper(struct value *string, int argc, struct value *kwargs)
         size_t len = string->bytes;
 
         size_t outlen = 0;
-        char *result = value_string_alloc(4 * string->bytes);
+        char *result = value_string_alloc(ty, 4 * string->bytes);
 
         while (len > 0) {
                 int n = utf8proc_iterate(s, len, &c);
@@ -1197,14 +1197,14 @@ string_upper(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_pad_left(struct value *string, int argc, struct value *kwargs)
+string_pad_left(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("str.padLeft() expects 1 or 2 arguments but got %d", argc);
+                zP("str.padLeft() expects 1 or 2 arguments but got %d", argc);
 
         struct value len = ARG(0);
         if (len.type != VALUE_INTEGER)
-                vm_panic("the first argument to str.padLeft() must be an integer");
+                zP("the first argument to str.padLeft() must be an integer");
 
         int string_len = stringwidth(string->string, string->bytes);
         if (string_len >= len.integer)
@@ -1219,7 +1219,7 @@ string_pad_left(struct value *string, int argc, struct value *kwargs)
                 pad_bytes = pad_len = 1;
         } else {
                 if (ARG(1).type != VALUE_STRING)
-                        vm_panic("the second argument to str.padLeft() must be a string");
+                        zP("the second argument to str.padLeft() must be a string");
                 pad = ARG(1).string;
                 pad_bytes = ARG(1).bytes;
                 stringcount(pad, pad_bytes, -1);
@@ -1227,7 +1227,7 @@ string_pad_left(struct value *string, int argc, struct value *kwargs)
         }
 
         int n = (len.integer - string_len) / pad_len + 1;
-        char *result = value_string_alloc(string->bytes + pad_bytes * n);
+        char *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
 
         int current = 0;
         int bytes = 0;
@@ -1250,14 +1250,14 @@ string_pad_left(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_pad_right(struct value *string, int argc, struct value *kwargs)
+string_pad_right(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 1 && argc != 2)
-                vm_panic("str.padRight() expects 1 or 2 arguments but got %d", argc);
+                zP("str.padRight() expects 1 or 2 arguments but got %d", argc);
 
         struct value len = ARG(0);
         if (len.type != VALUE_INTEGER)
-                vm_panic("the first argument to str.padRight() must be an integer");
+                zP("the first argument to str.padRight() must be an integer");
 
         int current = stringwidth(string->string, string->bytes);
         if (current >= len.integer)
@@ -1272,7 +1272,7 @@ string_pad_right(struct value *string, int argc, struct value *kwargs)
                 pad_bytes = pad_len = 1;
         } else {
                 if (ARG(1).type != VALUE_STRING)
-                        vm_panic("the second argument to str.padRight() must be a string");
+                        zP("the second argument to str.padRight() must be a string");
                 pad = ARG(1).string;
                 pad_bytes = ARG(1).bytes;
                 stringcount(pad, pad_bytes, -1);
@@ -1280,7 +1280,7 @@ string_pad_right(struct value *string, int argc, struct value *kwargs)
         }
 
         int n = (len.integer - current) / pad_len + 1;
-        char *result = value_string_alloc(string->bytes + pad_bytes * n);
+        char *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
         int bytes = string->bytes;
         memcpy(result, string->string, bytes);
 
@@ -1300,31 +1300,31 @@ string_pad_right(struct value *string, int argc, struct value *kwargs)
 }
 
 static struct value
-string_cstr(struct value *string, int argc, struct value *kwargs)
+string_cstr(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("String.cstr() expects 0 arguments but got %d", argc);
+                zP("String.cstr() expects 0 arguments but got %d", argc);
 
-        return STRING_CLONE_NUL(string->string, string->bytes);
+        return vSnc(string->string, string->bytes);
 }
 
 static struct value
-string_ptr(struct value *string, int argc, struct value *kwargs)
+string_ptr(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0)
-                vm_panic("String.ptr() expects 0 arguments but got %d", argc);
+                zP("String.ptr() expects 0 arguments but got %d", argc);
 
         return PTR((void *)string->string);
 }
 
 static struct value
-string_clone(struct value *string, int argc, struct value *kwargs)
+string_clone(Ty *ty, struct value *string, int argc, struct value *kwargs)
 {
         if (argc != 0) {
-                vm_panic("String.clone(): expected 0 arguments but got %d", argc);
+                zP("String.clone(): expected 0 arguments but got %d", argc);
         }
 
-        return STRING_CLONE(string->string, string->bytes);
+        return vSc(string->string, string->bytes);
 }
 
 DEFINE_METHOD_TABLE(

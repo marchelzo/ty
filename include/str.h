@@ -3,9 +3,10 @@
 
 #include "value.h"
 
-struct value (*get_string_method(char const *))(struct value *, int, struct value *);
+BuiltinMethod *
+get_string_method(char const *);
 
 int
-string_get_completions(char const *prefix, char **out, int max);
+string_get_completions(Ty *ty, char const *prefix, char **out, int max);
 
 #endif

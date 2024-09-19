@@ -1,56 +1,58 @@
 #ifndef DICT_H_INCLUDED
 #define DICT_H_INCLUDED
 
+#include "ty.h"
 #include "value.h"
 
 struct dict *
-dict_new(void);
+dict_new(Ty *ty);
 
 struct value *
-dict_get_value(struct dict *obj, struct value *key);
+dict_get_value(Ty *ty, struct dict *obj, struct value *key);
 
 void
-dict_put_value(struct dict *obj, struct value key, struct value value);
+dict_put_value(Ty *ty, struct dict *obj, struct value key, struct value value);
 
 bool
-dict_has_value(struct dict *d, struct value *key);
+dict_has_value(Ty *ty, struct dict *d, struct value *key);
 
 struct value *
-dict_get_member(struct dict *obj, char const *key);
+dict_get_member(Ty *ty, struct dict *obj, char const *key);
 
 void
-dict_put_member(struct dict *obj, char const *key, struct value value);
+dict_put_member(Ty *ty, struct dict *obj, char const *key, struct value value);
 
 bool
-dict_same_keys(struct dict const *d, struct dict const *u);
+dict_same_keys(Ty *ty, struct dict const *d, struct dict const *u);
 
 struct value *
-dict_put_key_if_not_exists(struct dict *obj, struct value key);
+dict_put_key_if_not_exists(Ty *ty, struct dict *obj, struct value key);
 
 struct value *
-dict_put_member_if_not_exists(struct dict *obj, char const *member);
+dict_put_member_if_not_exists(Ty *ty, struct dict *obj, char const *member);
 
 struct value
-dict_update(struct value *d, int argc, struct value *kwargs);
+dict_update(Ty *ty, struct value *d, int argc, struct value *kwargs);
 
 struct value
-dict_intersect(struct value *d, int argc, struct value *kwargs);
+dict_intersect(Ty *ty, struct value *d, int argc, struct value *kwargs);
 
 struct value
-dict_subtract(struct value *d, int argc, struct value *kwargs);
+dict_subtract(Ty *ty, struct value *d, int argc, struct value *kwargs);
 
 struct value
-dict_clone(struct value *d, int argc, struct value *kwargs);
+dict_clone(Ty *ty, struct value *d, int argc, struct value *kwargs);
 
 void
-dict_mark(struct dict *obj);
+dict_mark(Ty *ty, struct dict *obj);
 
 void
-dict_free(struct dict *obj);
+dict_free(Ty *ty, struct dict *obj);
 
-struct value (*get_dict_method(char const *))(struct value *, int, struct value *);
+BuiltinMethod *
+get_dict_method(char const *);
 
 int
-dict_get_completions(char const *prefix, char **out, int max);
+dict_get_completions(Ty *ty, char const *prefix, char **out, int max);
 
 #endif

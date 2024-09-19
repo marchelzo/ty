@@ -1,14 +1,14 @@
 #include "ast.h"
 #include "scope.h"
 
-#define V(e) ((e) = visit_expression(e, scope, hooks))
-#define VS(s) ((s) = visit_statement(s, scope, hooks))
-#define VP(e) ((e) = visit_pattern(e, scope, hooks))
-#define VL(d, t) ((t) = visit_lvalue(t, scope, hooks, (d)))
-#define VL_(t) ((t) = visit_lvalue(t, scope, hooks, decl))
-#define VLT(t) ((t) = visit_lvalue(t, scope, hooks, true))
+#define V(e) ((e) = visit_expression(ty, e, scope, hooks))
+#define VS(s) ((s) = visit_statement(ty, s, scope, hooks))
+#define VP(e) ((e) = visit_pattern(ty, e, scope, hooks))
+#define VL(d, t) ((t) = visit_lvalue(ty, t, scope, hooks, (d)))
+#define VL_(t) ((t) = visit_lvalue(ty, t, scope, hooks, decl))
+#define VLT(t) ((t) = visit_lvalue(ty, t, scope, hooks, true))
 
-#define SUB(f, name, ...) do { Scope *tmp_scope = scope; scope = scope_new(name, scope, f); __VA_ARGS__; scope = tmp_scope; } while (0)
+#define SUB(f, name, ...) do { Scope *tmp_scope = scope; scope = scope_new(ty, name, scope, f); __VA_ARGS__; scope = tmp_scope; } while (0)
 
 #define E1(e) ((e) = (hooks->e_pre)(e, scope, hooks->user))
 #define E2(e) ((e) = (hooks->e_post)(e, scope, hooks->user))
@@ -28,7 +28,7 @@ static Stmt *id_s(Stmt *s, Scope *scope, void *u) { return s; }
 static Expr *id_l(Expr *t, bool decl, Scope *scope, void *u) { return t; }
 
 VisitorSet
-visit_identitiy(void)
+visit_identitiy(Ty *ty)
 {
         return (VisitorSet) {
                 id_e, id_e,
@@ -40,7 +40,7 @@ visit_identitiy(void)
 }
 
 Stmt *
-visit_statement(Stmt *s, Scope *scope, VisitorSet const *hooks)
+visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
 {
         if (s == NULL) {
                 return NULL;
@@ -154,17 +154,17 @@ visit_statement(Stmt *s, Scope *scope, VisitorSet const *hooks)
 }
 
 Expr *
-visit_pattern(Expr *p, Scope *scope, VisitorSet const *hooks)
+visit_pattern(Ty *ty, Expr *p, Scope *scope, VisitorSet const *hooks)
 {
         if (p == NULL) {
                 return NULL;
         }
 
-        return visit_expression(p, scope, hooks);
+        return visit_expression(ty, p, scope, hooks);
 }
 
 Expr *
-visit_lvalue(Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
+visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
 {
         Symbol *sym;
 
@@ -182,7 +182,7 @@ visit_lvalue(Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_RESOURCE_BINDING:
-                sym = scope_add(scope, t->identifier);
+                sym = scope_add(ty, scope, t->identifier);
                 sym->file = t->filename;
                 sym->loc = t->start;
                 V(t->constraint);
@@ -227,7 +227,7 @@ visit_lvalue(Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
 }
 
 Expr *
-visit_expression(Expr *e, Scope *scope, VisitorSet const *hooks)
+visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
 {
         if (e == NULL)
                 return NULL;
@@ -296,9 +296,9 @@ visit_expression(Expr *e, Scope *scope, VisitorSet const *hooks)
                 e->type = EXPRESSION_BOOLEAN;
                 if (e->module != NULL) {
                         struct scope *mscope = search_import_scope(e->module);
-                        e->boolean = mscope != NULL && scope_lookup(mscope, e->identifier) != NULL;
+                        e->boolean = mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL;
                 } else {
-                        e->boolean = scope_lookup(scope, e->identifier) != NULL;
+                        e->boolean = scope_lookup(ty, scope, e->identifier) != NULL;
                 }
                 */
                 break;
@@ -306,7 +306,7 @@ visit_expression(Expr *e, Scope *scope, VisitorSet const *hooks)
                 /*
                 if (e->module != NULL) {
                         struct scope *mscope = search_import_scope(e->module);
-                        if (mscope != NULL && scope_lookup(mscope, e->identifier) != NULL) {
+                        if (mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL) {
                                 e->type = EXPRESSION_IDENTIFIER;
                                 V(e);
                                 e->type = EXPRESSION_IFDEF;
@@ -314,7 +314,7 @@ visit_expression(Expr *e, Scope *scope, VisitorSet const *hooks)
                                 e->type = EXPRESSION_NIL;
                         }
                 } else {
-                        if (scope_lookup(scope, e->identifier) != NULL) {
+                        if (scope_lookup(ty, scope, e->identifier) != NULL) {
                                 e->type = EXPRESSION_IDENTIFIER;
                                 V(e);
                                 e->type = EXPRESSION_IFDEF;

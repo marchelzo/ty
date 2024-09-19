@@ -48,19 +48,19 @@ sclone_malloc(char const *s)
 }
 
 char *
-sclone(char const *s)
+sclone(Ty *ty, char const *s)
 {
         size_t n = strlen(s);
-        char *new = gc_alloc(n + 1);
+        char *new = mA(n + 1);
         memcpy(new, s, n + 1);
         return new;
 }
 
 char *
-sclonea(char const *s)
+sclonea(Ty *ty, char const *s)
 {
         size_t n = strlen(s);
-        char *new = Allocate(n + 1);
+        char *new = amA(n + 1);
         memcpy(new, s, n + 1);
         return new;
 }
@@ -72,23 +72,23 @@ contains(char const *s, char c)
 }
 
 char *
-fslurp(FILE *f)
+fslurp(Ty *ty, FILE *f)
 {
         vec(char) s = {0};
 
-        vec_push(s, '\0');
+        vvP(s, '\0');
 
         for (int c; (c = fgetc(f)) != EOF;) {
-                vec_push(s, c);
+                vvP(s, c);
         }
 
-        vec_push(s, '\0');
+        vvP(s, '\0');
 
         return s.items + 1;
 }
 
 char *
-slurp(char const *path)
+slurp(Ty *ty, char const *path)
 {
         int fd = open(path, O_RDONLY);
         if (fd == -1) {
@@ -110,7 +110,7 @@ slurp(char const *path)
                         return NULL;
                 }
 
-                char *s = gc_alloc(n + 2);
+                char *s = mA(n + 2);
                 memcpy(s + 1, p, n);
                 s[0] = s[n + 1] = '\0';
 
@@ -126,25 +126,25 @@ slurp(char const *path)
                 vec(char) s;
                 vec_init(s);
 
-                vec_push(s, '\0');
+                vvP(s, '\0');
 
                 char b[1UL << 14];
                 int r;
 
                 while ((r = read(fd, b, sizeof b)) > 0) {
                         for (int i = 0; i < r; ++i) {
-                                vec_push(s, b[i]);
+                                vvP(s, b[i]);
                         }
                 }
 
-                vec_push(s, '\0');
+                vvP(s, '\0');
 
                 return s.items + 1;
         }
 }
 
 Value
-this_executable(void)
+this_executable(Ty *ty)
 {
 #if defined(__APPLE__)
         pid_t pid = getpid();
@@ -154,19 +154,19 @@ this_executable(void)
                 return NIL;
         }
 
-        return STRING_CLONE(path, strlen(path));
+        return vSc(path, strlen(path));
 #elif defined(__linux__)
         char path[PATH_MAX];
         ssize_t len = readlink("/proc/self/exe", path, sizeof path - 1);
         if (len <= 0)
                 return NIL;
-        return STRING_CLONE(path, len);
+        return vSc(path, len);
 #elif defined(_WIN32)
         char path[MAX_PATH];
         DWORD len = GetModuleFileName(NULL, path, MAX_PATH);
         if (len == 0)
                 return NIL;
-        return STRING_CLONE(path, len);
+        return vSc(path, len);
 #else
         return NIL;
 #endif
