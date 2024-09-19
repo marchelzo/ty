@@ -5,9 +5,9 @@
 #include "table.h"
 
 struct table *
-object_new(int class);
+object_new(Ty *ty, int class);
 
 void
-object_mark(struct table *obj);
+object_mark(Ty *ty, struct table *obj);
 
 #endif

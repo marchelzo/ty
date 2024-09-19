@@ -2,25 +2,31 @@
 #define ALLOC_H_INCLUDED
 
 #include <stdlib.h>
+#include "ty.h"
 #include "panic.h"
 #include "gc.h"
 
-#define Resize(p, n, m) ((p) = memcpy(Allocate(n), (p), (m)))
+#define Resize(p, n, m) ((p) = memcpy(amA(n), (p), (m)))
 
-typedef struct arena {
-	char *base;
-	char *beg;
-	char *end;
-	bool gc;
-} Arena;
+Arena
+NewArena(Ty *ty, size_t cap);
 
-Arena NewArena(size_t cap);
-Arena NewArenaGC(size_t cap);
-void *GetArenaAlloc(void);
-void DestroyArena(Arena arena);
-void ReleaseArena(Arena old);
+Arena
+NewArenaGC(Ty *ty, size_t cap);
 
-void *Allocate(size_t n);
-void *Allocate0(size_t n);
+void *
+GetArenaAlloc(Ty *ty);
+
+void
+DestroyArena(Ty *ty, Arena arena);
+
+void
+ReleaseArena(Ty *ty, Arena old);
+
+void *
+Allocate(Ty *ty, size_t n);
+
+void *
+Allocate0(Ty *ty, size_t n);
 
 #endif

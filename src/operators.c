@@ -10,10 +10,10 @@
 #include "gc.h"
 
 static struct value
-str_concat(struct value const *s1, struct value const *s2)
+str_concat(Ty *ty, struct value const *s1, struct value const *s2)
 {
         size_t n = s1->bytes + s2->bytes;
-        char *s = value_string_alloc(n);
+        char *s = value_string_alloc(ty, n);
 
         memcpy(s, s1->string, s1->bytes);
         memcpy(s + s1->bytes, s2->string, s2->bytes);
@@ -22,20 +22,20 @@ str_concat(struct value const *s1, struct value const *s2)
 }
 
 struct value
-binary_operator_addition(struct value const *left, struct value const *right)
+binary_operator_addition(Ty *ty, struct value const *left, struct value const *right)
 {
 
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_method(left->class, "+");
+                struct value const *f = class_method(ty, left->class, "+");
                 if (f == NULL)
                         goto Fail;
                 struct value method = METHOD("+", f, left);
-                return vm_eval_function(&method, right, NULL);
+                return vm_eval_function(ty, &method, right, NULL);
         }
 
         if (left->type == VALUE_PTR) {
                 if (right->type != VALUE_INTEGER) {
-                        vm_panic("attempt to add non-integer to pointer: %s", value_show_color(right));
+                        zP("attempt to add non-integer to pointer: %s", value_show_color(ty, right));
                 }
 
                 ffi_type *t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
@@ -50,53 +50,53 @@ binary_operator_addition(struct value const *left, struct value const *right)
                 return REAL(left->integer + right->real);
 
         if (left->type != right->type)
-                vm_panic("incompatible operands to +: %s and %s", value_show_color(left), value_show_color(right));
+                zP("incompatible operands to +: %s and %s", value_show_color(ty, left), value_show_color(ty, right));
 
         struct value v;
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer + right->integer);
         case VALUE_REAL:    return REAL(left->real + right->real);
-        case VALUE_STRING:  return str_concat(left, right);
+        case VALUE_STRING:  return str_concat(ty, left, right);
         case VALUE_ARRAY:
-                gc_push((struct value *)left);
-                gc_push((struct value *)right);
-                v = ARRAY(value_array_clone(left->array));
+                gP((struct value *)left);
+                gP((struct value *)right);
+                v = ARRAY(value_array_clone(ty, left->array));
                 NOGC(v.array);
-                value_array_extend(v.array, right->array);
+                value_array_extend(ty, v.array, right->array);
                 OKGC(v.array);
-                gc_pop();
-                gc_pop();
+                gX();
+                gX();
                 return v;
         case VALUE_DICT:
-                gc_push((struct value *)left);
-                gc_push((struct value *)right);
-                struct value v = dict_clone((struct value *)left, 0, NULL);
-                gc_push(&v);
-                vm_push((struct value  *)right);
-                dict_update(&v, 1, NULL);
-                vm_pop();
-                gc_pop();
-                gc_pop();
-                gc_pop();
+                gP((struct value *)left);
+                gP((struct value *)right);
+                struct value v = dict_clone(ty, (struct value *)left, 0, NULL);
+                gP(&v);
+                vmP((struct value  *)right);
+                dict_update(ty, &v, 1, NULL);
+                vmX();
+                gX();
+                gX();
+                gX();
                 return v;
         default:
         Fail:
-                vm_panic("+ applied to operands of invalid type");
+                zP("+ applied to operands of invalid type");
                 break;
         }
 }
 
 struct value
-binary_operator_multiplication(struct value const *left, struct value const *right)
+binary_operator_multiplication(Ty *ty, struct value const *left, struct value const *right)
 {
 
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_method(left->class, "*");
+                struct value const *f = class_method(ty, left->class, "*");
                 if (f == NULL)
                         goto Fail;
                 struct value method = METHOD("*", f, left);
-                return vm_eval_function(&method, right, NULL);
+                return vm_eval_function(ty, &method, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -106,45 +106,45 @@ binary_operator_multiplication(struct value const *left, struct value const *rig
                 return REAL(left->integer * right->real);
 
         if (left->type != right->type)
-                vm_panic("the operands to * must have the same type");
+                zP("the operands to * must have the same type");
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer * right->integer);
         case VALUE_REAL:    return REAL(left->real * right->real);
         case VALUE_ARRAY:;
-                struct value a = ARRAY(value_array_new());
-                gc_push(&a);
-                gc_push(left);
-                gc_push(right);
+                struct value a = ARRAY(vA());
+                gP(&a);
+                gP(left);
+                gP(right);
                 for (int i = 0; i < left->array->count; ++i) {
                         for (int j = 0; j < right->array->count; ++j) {
-                                struct array *pair = value_array_new();
+                                struct array *pair = vA();
                                 NOGC(pair);
-                                value_array_push(pair, left->array->items[i]);
-                                value_array_push(pair, right->array->items[j]);
-                                value_array_push(a.array, ARRAY(pair));
+                                vAp(pair, left->array->items[i]);
+                                vAp(pair, right->array->items[j]);
+                                vAp(a.array, ARRAY(pair));
                                 OKGC(pair);
                         }
                 }
-                gc_pop();
-                gc_pop();
-                gc_pop();
+                gX();
+                gX();
+                gX();
                 return a;
         default:
         Fail:
-                vm_panic("* applied to operands of invalid type");
+                zP("* applied to operands of invalid type");
         }
 }
 
 struct value
-binary_operator_division(struct value const *left, struct value const *right)
+binary_operator_division(Ty *ty, struct value const *left, struct value const *right)
 {
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_method(left->class, "/");
+                struct value const *f = class_method(ty, left->class, "/");
                 if (f == NULL)
                         goto Fail;
                 struct value method = METHOD("/", f, left);
-                return vm_eval_function(&method, right, NULL);
+                return vm_eval_function(ty, &method, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -154,34 +154,34 @@ binary_operator_division(struct value const *left, struct value const *right)
                 return REAL(left->integer / right->real);
 
         if (left->type != right->type)
-                vm_panic("the operands to / must have the same type");
+                zP("the operands to / must have the same type");
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer / right->integer);
         case VALUE_REAL:    return REAL(left->real / right->real);
         default:
         Fail:
-                vm_panic("/ applied to operands of invalid type");
+                zP("/ applied to operands of invalid type");
         }
 }
 
 struct value
-binary_operator_subtraction(struct value const *left, struct value const *right)
+binary_operator_subtraction(Ty *ty, struct value const *left, struct value const *right)
 {
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_method(left->class, "-");
+                struct value const *f = class_method(ty, left->class, "-");
                 if (f == NULL)
                         goto Fail;
                 struct value method = METHOD("-", f, left);
-                return vm_eval_function(&method, right, NULL);
+                return vm_eval_function(ty, &method, right, NULL);
         }
 
         if (left->type == VALUE_STRING) {
-                struct value const *f = class_method(CLASS_STRING, "-");
+                struct value const *f = class_method(ty, CLASS_STRING, "-");
                 if (f == NULL)
                         goto Fail;
                 struct value method = METHOD("-", f, left);
-                return vm_eval_function(&method, right, NULL);
+                return vm_eval_function(ty, &method, right, NULL);
         }
 
         if (left->type == VALUE_REAL && right->type == VALUE_INTEGER)
@@ -196,40 +196,40 @@ binary_operator_subtraction(struct value const *left, struct value const *right)
         }
 
         if (left->type != right->type)
-                vm_panic("the operands to - must have the same type");
+                zP("the operands to - must have the same type");
 
         switch (left->type) {
         case VALUE_INTEGER: return INTEGER(left->integer - right->integer);
         case VALUE_REAL:    return REAL(left->real - right->real);
         case VALUE_PTR:     return INTEGER((char *)left->ptr - (char *)right->ptr);
         case VALUE_DICT:
-                gc_push((struct value *)left);
-                gc_push((struct value *)right);
-                struct value v = dict_clone((struct value *)left, 0, NULL);
-                gc_push(&v);
-                vm_push((struct value  *)right);
-                dict_subtract(&v, 1, NULL);
-                vm_pop();
-                gc_pop();
-                gc_pop();
-                gc_pop();
+                gP((struct value *)left);
+                gP((struct value *)right);
+                struct value v = dict_clone(ty, (struct value *)left, 0, NULL);
+                gP(&v);
+                vmP((struct value  *)right);
+                dict_subtract(ty, &v, 1, NULL);
+                vmX();
+                gX();
+                gX();
+                gX();
                 return v;
         default:
         Fail:
-                vm_panic("- applied to operands of invalid type");
+                zP("- applied to operands of invalid type");
         }
 
 }
 
 struct value
-binary_operator_remainder(struct value const *left, struct value const *right)
+binary_operator_remainder(Ty *ty, struct value const *left, struct value const *right)
 {
         if (left->type == VALUE_OBJECT) {
-                struct value const *f = class_method(left->class, "%");
+                struct value const *f = class_method(ty, left->class, "%");
                 if (f == NULL)
                         goto Fail;
                 struct value method = METHOD("%", f, left);
-                return vm_eval_function(&method, right, NULL);
+                return vm_eval_function(ty, &method, right, NULL);
         }
 
         struct value L = *left;
@@ -242,112 +242,112 @@ binary_operator_remainder(struct value const *left, struct value const *right)
                 R = INTEGER(R.real);
 
         if (L.type != R.type)
-                vm_panic("the operands to %% must have the same type");
+                zP("the operands to %% must have the same type");
 
         switch (L.type) {
         case VALUE_INTEGER:
                 if (R.integer == 0)
-                        vm_panic("attempt to use % with a modulus of 0");
+                        zP("attempt to use % with a modulus of 0");
                 return INTEGER(L.integer % R.integer);
         case VALUE_TUPLE:
-                return vm_eval_function(class_method(CLASS_TUPLE, "%"), right, left, NULL);
+                return vm_eval_function(ty, class_method(ty, CLASS_TUPLE, "%"), right, left, NULL);
         default:
         Fail:
-                vm_panic("the operands to %% must be integers");
+                zP("the operands to %% must be integers");
         }
 
 }
 
 struct value
-binary_operator_equality(struct value const *left, struct value const *right)
+binary_operator_equality(Ty *ty, struct value const *left, struct value const *right)
 {
 
-        return BOOLEAN(value_test_equality(left, right));
+        return BOOLEAN(value_test_equality(ty, left, right));
 }
 
 struct value
-binary_operator_non_equality(struct value const *left, struct value const *right)
+binary_operator_non_equality(Ty *ty, struct value const *left, struct value const *right)
 {
 
-        return BOOLEAN(!value_test_equality(left, right));
+        return BOOLEAN(!value_test_equality(ty, left, right));
 }
 
 struct value
-binary_operator_less_than(struct value const *left, struct value const *right)
+binary_operator_less_than(Ty *ty, struct value const *left, struct value const *right)
 {
 
         if (left->type != right->type)
-                vm_panic("< applied to operands of different types");
+                zP("< applied to operands of different types");
 
         switch (left->type) {
         case VALUE_INTEGER: return BOOLEAN(left->integer < right->integer);
         case VALUE_REAL:    return BOOLEAN(left->real < right->real);
         case VALUE_STRING:  return BOOLEAN(strcmp(left->string, right->string) < 0);
-        default:            vm_panic("< applied to operands of invlalid type");
+        default:            zP("< applied to operands of invlalid type");
         }
 }
 
 struct value
-binary_operator_greater_than(struct value const *left, struct value const *right)
+binary_operator_greater_than(Ty *ty, struct value const *left, struct value const *right)
 {
 
         if (left->type != right->type) {
-                vm_panic("> applied to operands of different types");
+                zP("> applied to operands of different types");
         }
 
         switch (left->type) {
         case VALUE_INTEGER: return BOOLEAN(left->integer > right->integer);
         case VALUE_REAL:    return BOOLEAN(left->real > right->real);
         case VALUE_STRING:  return BOOLEAN(strcmp(left->string, right->string) > 0);
-        default:            vm_panic("> applied to operands of invalid type");
+        default:            zP("> applied to operands of invalid type");
         }
 }
 
 struct value
-binary_operator_less_than_or_equal(struct value const *left, struct value const *right)
+binary_operator_less_than_or_equal(Ty *ty, struct value const *left, struct value const *right)
 {
 
         if (left->type != right->type) {
-                vm_panic("<= applied to operands of different types");
+                zP("<= applied to operands of different types");
         }
 
         switch (left->type) {
         case VALUE_INTEGER: return BOOLEAN(left->integer <= right->integer);
         case VALUE_REAL:    return BOOLEAN(left->real <= right->real);
         case VALUE_STRING:  return BOOLEAN(strcmp(left->string, right->string) <= 0);
-        default:            vm_panic("<= applied to operands of invalid type");
+        default:            zP("<= applied to operands of invalid type");
         }
 }
 
 struct value
-binary_operator_greater_than_or_equal(struct value const *left, struct value const *right)
+binary_operator_greater_than_or_equal(Ty *ty, struct value const *left, struct value const *right)
 {
         if (left->type != right->type) {
-                vm_panic(">= applied to operands of different types");
+                zP(">= applied to operands of different types");
         }
 
         switch (left->type) {
         case VALUE_INTEGER: return BOOLEAN(left->integer >= right->integer);
         case VALUE_REAL:    return BOOLEAN(left->real >= right->real);
         case VALUE_STRING:  return BOOLEAN(strcmp(left->string, right->string) >= 0);
-        default:            vm_panic(">= applied to operands of invalid type");
+        default:            zP(">= applied to operands of invalid type");
         }
 }
 
 struct value
-unary_operator_not(struct value const *operand)
+unary_operator_not(Ty *ty, struct value const *operand)
 {
-        return BOOLEAN(!value_truthy(operand));
+        return BOOLEAN(!value_truthy(ty, operand));
 }
 
 struct value
-unary_operator_negate(struct value const *operand)
+unary_operator_negate(Ty *ty, struct value const *operand)
 {
         if (operand->type == VALUE_INTEGER) {
                 return INTEGER(-operand->integer);
         } else if (operand->type == VALUE_REAL) {
                 return REAL(-operand->real);
         } else {
-                vm_panic("the operand to unary - must be numeric");
+                zP("the operand to unary - must be numeric");
         }
 }

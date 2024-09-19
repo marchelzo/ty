@@ -134,7 +134,7 @@ keyword_show(int kw)
 }
 
 char const *
-token_show_type(int type)
+token_show_type(Ty *ty, int type)
 {
         switch (type) {
         case TOKEN_PLUS:           return "operator '+'";
@@ -181,12 +181,12 @@ token_show_type(int type)
         case TOKEN_END:            return "end of input";
         case TOKEN_COMMENT:        return "comment";
         case TOKEN_ERROR:          return "ERROR";
-        default:                   snprintf(token_show_buffer, 512, "token '%c'", type); return sclone(token_show_buffer);
+        default:                   snprintf(token_show_buffer, 512, "token '%c'", type); return sclone(ty, token_show_buffer);
         }
 }
 
 char const *
-token_show(struct token const *t)
+token_show(Ty *ty, struct token const *t)
 {
         switch (t->type) {
         case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
@@ -195,8 +195,8 @@ token_show(struct token const *t)
         case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
         case TOKEN_KEYWORD:    snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;
         case TOKEN_USER_OP:    snprintf(token_show_buffer, 512, "operator '%s'", t->identifier);           break;
-        default:               return token_show_type(t->type);
+        default:               return token_show_type(ty, t->type);
         }
 
-        return sclone(token_show_buffer);
+        return sclone(ty, token_show_buffer);
 }

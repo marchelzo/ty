@@ -42,8 +42,8 @@ next(void)
         return *json++;
 }
 
-static struct value
-value(void);
+static Value
+value(Ty *ty);
 
 inline static void
 space(void)
@@ -151,7 +151,7 @@ jfalse(void)
 }
 
 static struct value
-string(void)
+string(Ty *ty)
 {
         if (next() != '"')
                 FAIL;
@@ -165,14 +165,14 @@ string(void)
 
         while (peek() != '\0' && peek() != '"') {
                 if (peek() == '\\') switch (next(), next()) {
-                case 't':  vec_push(str, '\t'); break;
-                case 'f':  vec_push(str, '\f'); break;
-                case 'n':  vec_push(str, '\n'); break;
-                case 'r':  vec_push(str, '\r'); break;
-                case 'b':  vec_push(str, '\b'); break;
-                case '"':  vec_push(str, '"');  break;
-                case '/':  vec_push(str, '/');  break;
-                case '\\': vec_push(str, '\\'); break;
+                case 't':  xvP(str, '\t'); break;
+                case 'f':  xvP(str, '\f'); break;
+                case 'n':  xvP(str, '\n'); break;
+                case 'r':  xvP(str, '\r'); break;
+                case 'b':  xvP(str, '\b'); break;
+                case '"':  xvP(str, '"');  break;
+                case '/':  xvP(str, '/');  break;
+                case '\\': xvP(str, '\\'); break;
                 case 'x':
                         b[0] = next();
                         b[1] = next();
@@ -180,7 +180,7 @@ string(void)
                         if (sscanf(b, "%X", &hex) != 1) {
                                 FAIL;
                         }
-                        vec_push(str, (char)hex);
+                        xvP(str, (char)hex);
                         break;
                 case 'u':
                         b[0] = isxdigit(peek()) ? next() : '\0';
@@ -192,9 +192,9 @@ string(void)
                                 FAIL;
                         }
                         n = utf8proc_encode_char(hex, b);
-                        vec_push_n(str, b, n);
+                        xvPn(str, b, n);
                         break;
-                } else vec_push(str, next());
+                } else xvP(str, next());
         }
 
         if (next() != '"')
@@ -205,24 +205,24 @@ string(void)
         if (n == 0)
                 return STRING_NOGC(NULL, 0);
 
-        char *s = value_string_alloc(n);
+        char *s = value_string_alloc(ty, n);
         memcpy(s, str.items, n);
 
-        vec_empty(str);
+        free(str.items);
 
         return STRING(s, n);
 }
 
 static struct value
-array(void)
+array(Ty *ty)
 {
         if (next() != '[')
                 FAIL;
 
-        struct array *a = value_array_new();
+        struct array *a = vA();
 
         while (peek() != '\0' && peek() != ']') {
-                vec_push(*a, value());
+                xvP(*a, value(ty));
                 space();
                 if (peek() != ']' && next() != ',')
                         FAIL;
@@ -235,21 +235,21 @@ array(void)
 }
 
 static struct value
-object(void)
+object(Ty *ty)
 {
         if (next() != '{')
                 FAIL;
 
-        struct dict *obj = dict_new();
+        struct dict *obj = dict_new(ty);
 
         while (peek() != '\0' && peek() != '}') {
                 space();
-                struct value key = string();
+                struct value key = string(ty);
                 space();
                 if (next() != ':')
                         FAIL;
-                struct value val = value();
-                dict_put_value(obj, key, val);
+                struct value val = value(ty);
+                dict_put_value(ty, obj, key, val);
                 space();
                 if (peek() != '}' && next() != ',')
                         FAIL;
@@ -262,14 +262,14 @@ object(void)
 }
 
 static struct value
-value(void)
+value(Ty *ty)
 {
         space();
 
         switch (peek()) {
-        case '{': return object();
-        case '[': return array();
-        case '"': return string();
+        case '{': return object(ty);
+        case '[': return array(ty);
+        case '"': return string(ty);
         case 'n': return null();
         case 't': return jtrue();
         case 'f': return jfalse();
@@ -298,69 +298,69 @@ try_visit(void const *p)
         if (visiting(p)) {
                 return false;
         } else {
-                vec_push(Visiting, p);
+                xvP(Visiting, p);
                 return true;
         }
 }
 
 static bool
-encode(struct value const *v, str *out)
+encode(Ty *ty, Value const *v, str *out)
 {
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_NIL:
-                vec_push_n(*out, "null", 4);
+                xvPn(*out, "null", 4);
                 break;
         case VALUE_STRING:
-                vec_push(*out, '"');
+                xvP(*out, '"');
                 for (int i = 0; i < v->bytes; ++i) {
                         switch (v->string[i]) {
                         case '\t':
-                                vec_push(*out, '\\');
-                                vec_push(*out, 't');
+                                xvP(*out, '\\');
+                                xvP(*out, 't');
                                 break;
                         case '\n':
-                                vec_push(*out, '\\');
-                                vec_push(*out, 'n');
+                                xvP(*out, '\\');
+                                xvP(*out, 'n');
                                 break;
                         case '\\':
                         case '"':
-                                vec_push(*out, '\\');
+                                xvP(*out, '\\');
                         default:
-                                vec_push(*out, v->string[i]);
+                                xvP(*out, v->string[i]);
                                 break;
                         }
                 }
-                vec_push(*out, '"');
+                xvP(*out, '"');
                 break;
         case VALUE_BOOLEAN:
                 if (v->boolean)
-                        vec_push_n(*out, "true", 4);
+                        xvPn(*out, "true", 4);
                 else
-                        vec_push_n(*out, "false", 5);
+                        xvPn(*out, "false", 5);
                 break;
         case VALUE_INTEGER:
-                vec_reserve(*out, out->count + 64);
+                xvR(*out, out->count + 64);
                 out->count += snprintf(out->items + out->count, 64, "%"PRIiMAX, v->integer);
                 break;
         case VALUE_REAL:
-                vec_reserve(*out, out->count + 64);
+                xvR(*out, out->count + 64);
                 out->count += snprintf(out->items + out->count, 64, "%g", v->real);
                 break;
         case VALUE_ARRAY:
-                vec_push(*out, '[');
+                xvP(*out, '[');
                 if (!try_visit(v->array))
                         return false;
                 for (int i = 0; i < v->array->count; ++i) {
-                        if (!encode(&v->array->items[i], out))
+                        if (!encode(ty, &v->array->items[i], out))
                                 return false;
                         if (i + 1 < v->array->count)
-                                vec_push(*out, ',');
+                                xvP(*out, ',');
                 }
-                vec_pop(Visiting);
-                vec_push(*out, ']');
+                vvX(Visiting);
+                xvP(*out, ']');
                 break;
         case VALUE_DICT:
-                vec_push(*out, '{');
+                xvP(*out, '{');
                 int last = -1;
                 for (int i = 0; i < v->dict->size; ++i)
                         if (v->dict->keys[i].type == VALUE_STRING)
@@ -370,94 +370,94 @@ encode(struct value const *v, str *out)
                 for (int i = 0; i < v->dict->size; ++i) {
                         if (v->dict->keys[i].type != VALUE_STRING)
                                 continue;
-                        if (!encode(&v->dict->keys[i], out))
+                        if (!encode(ty, &v->dict->keys[i], out))
                                 return false;
-                        vec_push(*out, ':');
-                        if (!encode(&v->dict->values[i], out))
+                        xvP(*out, ':');
+                        if (!encode(ty, &v->dict->values[i], out))
                                 return false;
                         if (i != last)
-                                vec_push(*out, ',');
+                                xvP(*out, ',');
                 }
-                vec_pop(Visiting);
-                vec_push(*out, '}');
+                vvX(Visiting);
+                xvP(*out, '}');
                 break;
         case VALUE_OBJECT:
         {
                 if (!try_visit(v->object))
                         return false;
 
-                struct value *vp = class_method(v->class, "__json__");
+                struct value *vp = class_method(ty, v->class, "__json__");
 
                 if (vp != NULL) {
                         struct value method = METHOD("__json__", vp, v);
-                        struct value s = vm_eval_function(&method, NULL);
+                        struct value s = vm_eval_function(ty, NULL, &method, NULL);
                         if (s.type == VALUE_STRING) {
-                                gc_push(&s);
-                                vec_push_n(*out, s.string, s.bytes);
-                                gc_pop();
+                                gP(&s);
+                                xvPn(*out, s.string, s.bytes);
+                                gX();
                         } else {
-                                return encode(&s, out);
+                                return encode(ty, &s, out);
                         }
                 } else {
-                        vec_push(*out, '{');
+                        xvP(*out, '{');
                         for (int i = 0; i < TABLE_SIZE; ++i) {
                                 for (int j = 0; j < v->object->buckets[i].names.count; ++j) {
-                                        vec_push(*out, '"');
+                                        xvP(*out, '"');
                                         char const *name = v->object->buckets[i].names.items[j];
-                                        vec_push_n(*out, name, strlen(name));
-                                        vec_push(*out, '"');
-                                        vec_push(*out, ':');
-                                        if (!encode(&v->object->buckets[i].values.items[j], out))
+                                        xvPn(*out, name, strlen(name));
+                                        xvP(*out, '"');
+                                        xvP(*out, ':');
+                                        if (!encode(ty, &v->object->buckets[i].values.items[j], out))
                                                 return false;
-                                        vec_push(*out, ',');
+                                        xvP(*out, ',');
                                 }
                         }
-                        vec_pop(Visiting);
-                        if (*vec_last(*out) == ',')
-                                *vec_last(*out) = '}';
+                        vvX(Visiting);
+                        if (*vvL(*out) == ',')
+                                *vvL(*out) = '}';
                         else
-                                vec_push(*out, '}');
+                                xvP(*out, '}');
                 }
                 break;
         }
         case VALUE_TUPLE:
-                vec_push(*out, '{');
+                xvP(*out, '{');
                 if (!try_visit(v->items))
                         return false;
                 for (int i = 0; i < v->count; ++i) {
-                        vec_push(*out, '"');
+                        xvP(*out, '"');
                         if (v->names != NULL && v->names[i] != NULL) {
-                                vec_push_n(*out, v->names[i], strlen(v->names[i]));
+                                xvPn(*out, v->names[i], strlen(v->names[i]));
                         } else {
                                 char b[32];
                                 snprintf(b, sizeof b - 1, "%d", i);
-                                vec_push_n(*out, b, strlen(b));
+                                xvPn(*out, b, strlen(b));
                         }
-                        vec_push(*out, '"');
-                        vec_push(*out, ':');
-                        if (!encode(&v->items[i], out)) {
+                        xvP(*out, '"');
+                        xvP(*out, ':');
+                        if (!encode(ty, &v->items[i], out)) {
                                 return false;
                         }
-                        vec_push(*out, ',');
+                        xvP(*out, ',');
                 }
-                vec_pop(Visiting);
-                if (*vec_last(*out) == ',') {
-                        *vec_last(*out) = '}';
+                vvX(Visiting);
+                if (*vvL(*out) == ',') {
+                        *vvL(*out) = '}';
                 } else {
-                        vec_push(*out, '}');
+                        xvP(*out, '}');
                 }
                 break;
         case VALUE_BLOB:
-                vec_push(*out, '"');
+                xvP(*out, '"');
                 for (int i = 0; i < v->blob->count; ++i) {
                         char b[3];
                         snprintf(b, sizeof b, "%.2X", (unsigned)v->blob->items[i]);
-                        vec_push(*out, '\\');
-                        vec_push(*out, 'x');
-                        vec_push(*out, b[0]);
-                        vec_push(*out, b[1]);
+                        xvP(*out, '\\');
+                        xvP(*out, 'x');
+                        xvP(*out, b[0]);
+                        xvP(*out, b[1]);
                 }
-                vec_push(*out, '"');
+                xvP(*out, '"');
                 break;
         default:
                 return false;
@@ -468,31 +468,31 @@ encode(struct value const *v, str *out)
 }
 
 struct value
-json_parse(char const *s, int n)
+json_parse(Ty *ty, char const *s, int n)
 {
         json = s;
         len = n;
 
-        ++GC_OFF_COUNT;
+        GC_STOP();
 
         if (setjmp(jb) != 0) {
-                --GC_OFF_COUNT;
+                GC_RESUME();
                 return NIL;
         }
 
-        struct value v = value();
+        struct value v = value(ty);
         space();
 
         if (peek() != '\0')
                 v = NIL;
 
-        --GC_OFF_COUNT;
+        GC_RESUME();
 
         return v;
 }
 
 struct value
-json_encode(struct value const *v)
+json_encode(Ty *ty, struct value const *v)
 {
         str s;
         vec_init(s);
@@ -501,9 +501,9 @@ json_encode(struct value const *v)
 
         Visiting.count = 0;
 
-        if (encode(v, &s)) {
-                r = STRING_CLONE(s.items, s.count);
-                vec_empty(s);
+        if (encode(ty, v, &s)) {
+                r = vSc(s.items, s.count);
+                free(s.items);
         }
 
         return r;

@@ -6,6 +6,7 @@
 
 #include "vec.h"
 #include "location.h"
+#include "ty.h"
 
 enum {
         SYMBOL_TABLE_SIZE = 16
@@ -56,7 +57,7 @@ typedef struct scope {
 } Scope;
 
 struct scope *
-_scope_new(
+_scope_new(Ty *ty, 
 #ifndef TY_RELEASE
         char const *name,
 #endif
@@ -65,68 +66,68 @@ _scope_new(
 );
 
 #ifdef TY_RELEASE
-  #define scope_new(n, p, f) _scope_new(p, f)
+  #define scope_new(ty, n, p, f) _scope_new(ty, p, f)
 #else
-  #define scope_new(n, p, f) _scope_new(n, p, f)
+  #define scope_new(ty, n, p, f) _scope_new(ty, n, p, f)
 #endif
 
 struct symbol *
-scope_add(struct scope *s, char const *id);
+scope_add(Ty *ty, struct scope *s, char const *id);
 
 Symbol *
-scope_add_namespace(Scope *s, char const *id, Scope *ns);
+scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns);
 
 Symbol *
-scope_new_namespace(char const *name, Scope *parent);
+scope_new_namespace(Ty *ty, char const *name, Scope *parent);
 
 int
-scope_capture(struct scope *s, struct symbol *sym, int parent_index);
+scope_capture(Ty *ty, struct scope *s, struct symbol *sym, int parent_index);
 
 bool
-scope_locally_defined(struct scope const *s, char const *id);
+scope_locally_defined(Ty *ty, struct scope const *s, char const *id);
 
 struct symbol *
-scope_lookup(struct scope const *s, char const *id);
+scope_lookup(Ty *ty, struct scope const *s, char const *id);
 
 struct symbol *
-scope_local_lookup(struct scope const *s, char const *id);
+scope_local_lookup(Ty *ty, struct scope const *s, char const *id);
 
 struct symbol *
-scope_insert(struct scope *s, struct symbol *sym);
+scope_insert(Ty *ty, struct scope *s, struct symbol *sym);
 
 struct symbol *
-scope_insert_as(struct scope *s, struct symbol *sym, char const *id);
+scope_insert_as(Ty *ty, struct scope *s, struct symbol *sym, char const *id);
 
 bool
-scope_is_subscope(struct scope const *sub, struct scope const *scope);
+scope_is_subscope(Ty *ty, struct scope const *sub, struct scope const *scope);
 
 char const *
-scope_copy_public(struct scope *dst, struct scope const *src, bool reexport);
+scope_copy_public(Ty *ty, struct scope *dst, struct scope const *src, bool reexport);
 
 char const *
-scope_copy_public_except(struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport);
+scope_copy_public_except(Ty *ty, struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport);
 
 char const *
-scope_copy(struct scope *dst, struct scope const *src);
+scope_copy(Ty *ty, struct scope *dst, struct scope const *src);
 
 int
-scope_get_symbol(void);
+scope_get_symbol(Ty *ty);
 
 void
-scope_set_symbol(int s);
+scope_set_symbol(Ty *ty, int s);
 
 char const *
-scope_symbol_name(int s);
+scope_symbol_name(Ty *ty, int s);
 
 void
-scope_capture_all(struct scope *scope, struct scope const *stop);
+scope_capture_all(Ty *ty, struct scope *scope, struct scope const *stop);
 
 int
-scope_get_completions(struct scope *scope, char const *prefix, char **out, int max);
+scope_get_completions(Ty *ty, struct scope *scope, char const *prefix, char **out, int max);
 
 #ifndef TY_RELEASE
 char const *
-scope_name(struct scope const *s);
+scope_name(Ty *ty, struct scope const *s);
 #endif
 
 #endif

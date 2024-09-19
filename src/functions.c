@@ -26,7 +26,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#define NOT_ON_WINDOWS(name) vm_panic("%s is not implemented in Windows builds of Ty", #name);
+#define NOT_ON_WINDOWS(name) zP("%s is not implemented in Windows builds of Ty", #name);
 
 #ifdef __linux__
 #include <sys/epoll.h>
@@ -62,6 +62,7 @@ typedef struct stat StatStruct;
 extern char **environ;
 #endif
 
+#include "functions.h"
 #include "tags.h"
 #include "value.h"
 #include "parse.h"
@@ -88,17 +89,17 @@ static _Atomic(uint64_t) tid = 1;
 
 #define ASSERT_ARGC(func, ac) \
         if (argc != (ac)) { \
-                vm_panic(func " expects " #ac " argument(s) but got %d", argc); \
+                zP(func " expects " #ac " argument(s) but got %d", argc); \
         }
 
 #define ASSERT_ARGC_2(func, ac1, ac2) \
         if (argc != (ac1) && argc != (ac2)) { \
-                vm_panic(func " expects " #ac1 " or " #ac2 " argument(s) but got %d", argc); \
+                zP(func " expects " #ac1 " or " #ac2 " argument(s) but got %d", argc); \
         }
 
 #define ASSERT_ARGC_3(func, ac1, ac2, ac3) \
         if (argc != (ac1) && argc != (ac2) && argc != (ac3)) { \
-                vm_panic(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
+                zP(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
 
 inline static void
@@ -116,12 +117,12 @@ GetCurrentTimespec(struct timespec* ts)
 }
 
 static void
-doprint(int argc, struct value *kwargs, FILE *f)
+doprint(Ty *ty, int argc, struct value *kwargs, FILE *f)
 {
         struct value *sep = NAMED("sep");
 
         if (sep != NULL && sep->type != VALUE_STRING) {
-                vm_panic(
+                zP(
                         "print(): %s%ssep%s must be a string",
                         TERM(93),
                         TERM(1),
@@ -132,7 +133,7 @@ doprint(int argc, struct value *kwargs, FILE *f)
         struct value *end = NAMED("end");
 
         if (end != NULL && end->type != VALUE_STRING) {
-                vm_panic(
+                zP(
                         "print(): %s%send%s must be a string",
                         TERM(93),
                         TERM(1),
@@ -141,11 +142,11 @@ doprint(int argc, struct value *kwargs, FILE *f)
         }
 
         struct value *flush = NAMED("flush");
-        bool do_flush = flush != NULL && value_truthy(flush);
+        bool do_flush = flush != NULL && value_truthy(ty, flush);
 
-        ReleaseLock(true);
+        lGv(true);
         flockfile(f);
-        TakeLock();
+        lTk();
 
         for (int i = 0; i < argc; ++i) {
                 struct value *v = &ARG(i);
@@ -159,9 +160,9 @@ doprint(int argc, struct value *kwargs, FILE *f)
                 if (v->type == VALUE_STRING) {
                         fwrite(v->string, 1, v->bytes, f);
                 } else {
-                        char *s = value_show_color(&ARG(i));
+                        char *s = value_show_color(ty, &ARG(i));
                         fputs(s, f);
-                        gc_free(s);
+                        mF(s);
                 }
         }
 
@@ -179,24 +180,21 @@ doprint(int argc, struct value *kwargs, FILE *f)
         funlockfile(f);
 }
 
-struct value
-builtin_print(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(print)
 {
-        doprint(argc, kwargs, stdout);
+        doprint(ty, argc, kwargs, stdout);
         return NIL;
 }
 
-struct value
-builtin_eprint(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(eprint)
 {
-        doprint(argc, kwargs, stderr);
+        doprint(ty, argc, kwargs, stderr);
         return NIL;
 }
 
-struct value
-builtin_slurp(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(slurp)
 {
-        ASSERT_ARGC_2("slurp()", 0, 1);
+        ASSERT_ARGC_2("slurp(ty)", 0, 1);
 
 #if defined(_WIN32) && !defined(PATH_MAX)
 #define fstat _fstat
@@ -229,7 +227,7 @@ builtin_slurp(int argc, struct value *kwargs)
         } else if (ARG(0).type == VALUE_INTEGER) {
                 fd = ARG(0).integer;
         } else {
-                vm_panic("the argument to slurp() must be a path or a file descriptor");
+                zP("the argument to slurp(ty) must be a path or a file descriptor");
         }
 
         StatStruct st;
@@ -249,7 +247,7 @@ builtin_slurp(int argc, struct value *kwargs)
 #if !defined(S_ISDIR)
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #endif
-        if ((use_mmap == NULL || value_truthy(use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
+        if ((use_mmap == NULL || value_truthy(ty, use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
                 size_t n = st.st_size;
 #ifdef _WIN32
                 void *m = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
@@ -261,7 +259,7 @@ builtin_slurp(int argc, struct value *kwargs)
                         return NIL;
                 }
 
-                char *s = value_string_alloc(n);
+                char *s = value_string_alloc(ty, n);
                 memcpy(s, m, n);
 
 #ifdef _WIN32
@@ -277,17 +275,17 @@ builtin_slurp(int argc, struct value *kwargs)
                 FILE *f = fdopen(fd, "r");
                 int r;
 
-                ReleaseLock(true);
+                lGv(true);
 
                 B.count = 0;
 
                 while (!feof(f) && (r = fread(buffer, 1, sizeof buffer, f)) > 0) {
-                        vec_push_n(B, buffer, r);
+                        vvPn(B, buffer, r);
                 }
 
-                TakeLock();
+                lTk();
 
-                struct value str = STRING_CLONE(B.items, B.count);
+                struct value str = vSc(B.items, B.count);
 
                 if (need_close)
                         fclose(f);
@@ -298,41 +296,38 @@ builtin_slurp(int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_die(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(die)
 {
         ASSERT_ARGC("die()", 1);
 
         struct value message = ARG(0);
         if (message.type != VALUE_STRING)
-                vm_panic("the argument to die() must be a string");
+                zP("the argument to die() must be a string");
 
-        vm_panic("%.*s", (int) message.bytes, message.string);
+        zP("%.*s", (int) message.bytes, message.string);
 }
 
-struct value
-builtin_read(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(read)
 {
         ASSERT_ARGC("readLine()", 0);
 
         B.count = 0;
 
-        ReleaseLock(true);
+        lGv(true);
 
         int c;
         while (c = getchar(), c != EOF && c != '\n')
-                vec_push(B, c);
+                vvP(B, c);
 
-        TakeLock();
+        lTk();
 
         if (B.count == 0 && c != '\n')
                 return NIL;
 
-        return STRING_CLONE(B.items, B.count);
+        return vSc(B.items, B.count);
 }
 
-struct value
-builtin_rand(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(rand)
 {
         long low, high;
 
@@ -354,7 +349,7 @@ builtin_rand(int argc, struct value *kwargs)
 
         for (int i = 0; i < argc; ++i)
                 if (ARG(i).type != VALUE_INTEGER)
-                        vm_panic("non-integer passed as argument %d to rand", i + 1);
+                        zP("non-integer passed as argument %d to rand", i + 1);
 
         switch (argc) {
         case 1:  low = 0;              high = ARG(0).integer; break;
@@ -365,8 +360,7 @@ builtin_rand(int argc, struct value *kwargs)
 
 }
 
-struct value
-builtin_abs(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(abs)
 {
         ASSERT_ARGC("abs()", 1);
 
@@ -376,12 +370,11 @@ builtin_abs(int argc, struct value *kwargs)
         case VALUE_INTEGER: return INTEGER(llabs(x.integer));
         case VALUE_REAL:    return REAL(fabs(x.real));
         default:
-                vm_panic("the argument to abs() must be a number");
+                zP("the argument to abs() must be a number");
         }
 }
 
-struct value
-builtin_gcd(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(gcd)
 {
         ASSERT_ARGC("gcd()", 2);
 
@@ -392,7 +385,7 @@ builtin_gcd(int argc, struct value *kwargs)
         if (u.type == VALUE_REAL) u = INTEGER(u.real);
 
         if (t.type != VALUE_INTEGER || u.type != VALUE_INTEGER) {
-                vm_panic("both arguments to gcd() must be integers");
+                zP("both arguments to gcd() must be integers");
         }
 
         intmax_t a = t.integer;
@@ -407,8 +400,7 @@ builtin_gcd(int argc, struct value *kwargs)
         return INTEGER(a);
 }
 
-struct value
-builtin_lcm(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(lcm)
 {
         ASSERT_ARGC("lcm()", 2);
 
@@ -419,7 +411,7 @@ builtin_lcm(int argc, struct value *kwargs)
         if (u.type == VALUE_REAL) u = INTEGER(u.real);
 
         if (t.type != VALUE_INTEGER || u.type != VALUE_INTEGER) {
-                vm_panic("both arguments to lcm() must be integers");
+                zP("both arguments to lcm() must be integers");
         }
 
         intmax_t a = t.integer;
@@ -434,8 +426,7 @@ builtin_lcm(int argc, struct value *kwargs)
         return INTEGER(llabs(t.integer * u.integer) / a);
 }
 
-struct value
-builtin_round(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(round)
 {
         ASSERT_ARGC("round()", 1);
 
@@ -445,12 +436,11 @@ builtin_round(int argc, struct value *kwargs)
         case VALUE_INTEGER: return REAL(x.integer);
         case VALUE_REAL:    return REAL(round(x.real));
         default:
-                vm_panic("the argument to round() must be a number");
+                zP("the argument to round() must be a number");
         }
 }
 
-struct value
-builtin_iround(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(iround)
 {
         ASSERT_ARGC("iround()", 1);
 
@@ -460,12 +450,11 @@ builtin_iround(int argc, struct value *kwargs)
         case VALUE_INTEGER: return x;
         case VALUE_REAL:    return INTEGER(llround(x.real));
         default:
-                vm_panic("the argument to iround() must be a number");
+                zP("the argument to iround() must be a number");
         }
 }
 
-struct value
-builtin_ceil(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ceil)
 {
         ASSERT_ARGC("ceil()", 1);
 
@@ -475,12 +464,11 @@ builtin_ceil(int argc, struct value *kwargs)
         case VALUE_INTEGER: return x;
         case VALUE_REAL:    return INTEGER(ceil(x.real));
         default:
-                vm_panic("the argument to ceil() must be a number");
+                zP("the argument to ceil() must be a number");
         }
 }
 
-struct value
-builtin_floor(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(floor)
 {
         ASSERT_ARGC("floor()", 1);
 
@@ -490,19 +478,18 @@ builtin_floor(int argc, struct value *kwargs)
         case VALUE_INTEGER: return x;
         case VALUE_REAL:    return INTEGER(floor(x.real));
         default:
-                vm_panic("the argument to floor() must be a number");
+                zP("the argument to floor() must be a number");
         }
 }
 
-struct value
-builtin_chr(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(chr)
 {
         ASSERT_ARGC("chr()", 1);
 
         struct value k = ARG(0);
 
         if (k.type != VALUE_INTEGER)
-                vm_panic("the argument to chr() must be an integer");
+                zP("the argument to chr() must be an integer");
 
         if (!utf8proc_codepoint_valid(k.integer))
                 return NIL;
@@ -510,18 +497,17 @@ builtin_chr(int argc, struct value *kwargs)
         char b[4];
         int n = utf8proc_encode_char(k.integer, b);
 
-        return STRING_CLONE(b, n);
+        return vSc(b, n);
 }
 
-struct value
-builtin_ord(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ord)
 {
         ASSERT_ARGC("ord()", 1);
 
         struct value c = ARG(0);
 
         if (c.type != VALUE_STRING)
-                vm_panic("the argument to ord() must be a string");
+                zP("the argument to ord() must be a string");
 
         int codepoint;
         int n = utf8proc_iterate(c.string, c.bytes, &codepoint);
@@ -532,15 +518,13 @@ builtin_ord(int argc, struct value *kwargs)
         return INTEGER(codepoint);
 }
 
-struct value
-builtin_hash(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(hash)
 {
         ASSERT_ARGC("hash()", 1);
-        return INTEGER(value_hash(&ARG(0)));
+        return INTEGER(value_hash(ty, &ARG(0)));
 }
 
-struct value
-builtin_float(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(float)
 {
         ASSERT_ARGC("float()", 1);
 
@@ -567,30 +551,27 @@ builtin_float(int argc, struct value *kwargs)
                 return REAL(x);
         }
 
-        vm_panic("invalid type passed to float()");
+        zP("invalid type passed to float()");
 }
 
-struct value
-builtin_isnan(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(isnan)
 {
         ASSERT_ARGC("nan?()", 1);
 
         if (ARG(0).type != VALUE_REAL) {
-                vm_panic("nan?() expects a float but got: %s", value_show(&ARG(0)));
+                zP("nan?() expects a float but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(isnan(ARG(0).real));
 }
 
-struct value
-builtin_blob(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(blob)
 {
         ASSERT_ARGC("blob()", 0);
-        return BLOB(value_blob_new());
+        return BLOB(value_blob_new(ty));
 }
 
-struct value
-builtin_int(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(int)
 {
         struct value v = INTEGER(0), a, s, b;
         int base;
@@ -632,11 +613,11 @@ CustomBase:
         b = ARG(1);
 
         if (s.type != VALUE_STRING)
-                vm_panic("non-string passed as first of two arguments to int()");
+                zP("non-string passed as first of two arguments to int()");
         if (b.type != VALUE_INTEGER)
-                vm_panic("non-integer passed as second argument to int()");
+                zP("non-integer passed as second argument to int()");
         if (b.integer < 0 || b.integer == 1 || b.integer > 36)
-                vm_panic("invalid base passed to int(): expected 0 or 2..36, but got %d", (int) b.integer);
+                zP("invalid base passed to int(): expected 0 or 2..36, but got %d", (int) b.integer);
 
         base = b.integer;
 
@@ -671,25 +652,23 @@ TooBig:
         return NIL;
 }
 
-struct value
-builtin_show(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(show)
 {
         ASSERT_ARGC("show()", 1);
 
         struct value arg = ARG(0);
         Value *color = NAMED("color");
 
-        bool use_color = (color == NULL) ? isatty(1) : value_truthy(color);
+        bool use_color = (color == NULL) ? isatty(1) : value_truthy(ty, color);
 
-        char *str = use_color ? value_show_color(&arg) : value_show(&arg);
-        struct value result = STRING_CLONE(str, strlen(str));
-        gc_free(str);
+        char *str = use_color ? value_show_color(ty, &arg) : value_show(ty, &arg);
+        struct value result = vSc(str, strlen(str));
+        mF(str);
 
         return result;
 }
 
-struct value
-builtin_str(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(str)
 {
         ASSERT_ARGC_2("str()", 0, 1);
 
@@ -700,9 +679,9 @@ builtin_str(int argc, struct value *kwargs)
         if (arg.type == VALUE_STRING) {
                 return arg;
         } else {
-                char *str = value_show(&arg);
-                struct value result = STRING_CLONE(str, strlen(str));
-                gc_free(str);
+                char *str = value_show(ty, &arg);
+                struct value result = vSc(str, strlen(str));
+                mF(str);
                 return result;
         }
 }
@@ -794,14 +773,13 @@ getfmt(char const **s, char const *end, char *out, char const *oend)
         }
 }
 
-struct value
-builtin_fmt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(fmt)
 {
         if (argc == 0)
                 return STRING_EMPTY;
 
         if (ARG(0).type != VALUE_STRING) {
-                vm_panic("fmt(): expected string but got: %s", value_show(&ARG(0)));
+                zP("fmt(): expected string but got: %s", value_show(ty, &ARG(0)));
         }
 
         char const *fmt = ARG(0).string;
@@ -816,7 +794,7 @@ builtin_fmt(int argc, struct value *kwargs)
         for (size_t i = 0; i < n; ++i) {
                 if (fmt[i] == '%') {
                         if (i + 1 < n && fmt[i + 1] == '%') {
-                                vec_push(cs, '%');
+                                vvP(cs, '%');
                                 i += 1;
                                 continue;
                         }
@@ -826,7 +804,7 @@ builtin_fmt(int argc, struct value *kwargs)
                         i = start - fmt - 1;
 
                         if (argc <= ai) {
-                                vm_panic("fmt(): missing argument %d for format specifier %s", ai, spec);
+                                zP("fmt(): missing argument %d for format specifier %s", ai, spec);
                         }
 
                         struct value arg = ARG(ai);
@@ -846,7 +824,7 @@ builtin_fmt(int argc, struct value *kwargs)
                                         break;
                                 default:
                                 BadFmt:
-                                        vm_panic("fmt(): format specifier %s doesn't match value provided: %s", spec, value_show(&arg));
+                                        zP("fmt(): format specifier %s doesn't match value provided: %s", spec, value_show(ty, &arg));
                                 }
                                 break;
                         case 'f':
@@ -872,13 +850,13 @@ builtin_fmt(int argc, struct value *kwargs)
                                 sb.count = 0;
                                 switch (arg.type) {
                                 case VALUE_STRING:
-                                        vec_push_n(sb, arg.string, arg.bytes);
-                                        vec_push(sb, '\0');
+                                        vvPn(sb, arg.string, arg.bytes);
+                                        vvP(sb, '\0');
                                         snprintf(buffer, sizeof buffer - 1, spec, sb.items);
                                         break;
                                 case VALUE_BLOB:
-                                        vec_push_n(sb, arg.blob->items, arg.blob->count);
-                                        vec_push(sb, '\0');
+                                        vvPn(sb, arg.blob->items, arg.blob->count);
+                                        vvP(sb, '\0');
                                         snprintf(buffer, sizeof buffer - 1, spec, sb.items);
                                         break;
                                 case VALUE_PTR:
@@ -916,48 +894,44 @@ builtin_fmt(int argc, struct value *kwargs)
                                 }
                                 break;
                         default:
-                                vm_panic("fmt(): invalid format specifier: %s", spec);
+                                zP("fmt(): invalid format specifier: %s", spec);
 
                         }
 
-                        vec_push_n(cs, buffer, strlen(buffer));
+                        vvPn(cs, buffer, strlen(buffer));
 
                         ai += 1;
                 } else {
-                        vec_push(cs, fmt[i]);
+                        vvP(cs, fmt[i]);
                 }
         }
 
-        struct value s = STRING_CLONE(cs.items, cs.count);
+        struct value s = vSc(cs.items, cs.count);
 
-        gc_free(cs.items);
+        mF(cs.items);
 
         return s;
 }
 
-struct value
-builtin_bool(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bool)
 {
         ASSERT_ARGC("bool()", 1);
-        return BOOLEAN(value_truthy(&ARG(0)));
+        return BOOLEAN(value_truthy(ty, &ARG(0)));
 }
 
-struct value
-builtin_dict(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(dict)
 {
         ASSERT_ARGC("dict()", 0);
-        return DICT(dict_new());
+        return DICT(dict_new(ty));
 }
 
-struct value
-builtin_array(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(array)
 {
         ASSERT_ARGC("array()", 0);
-        return ARRAY(value_array_new());
+        return ARRAY(vA());
 }
 
-struct value
-builtin_tuple(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(tuple)
 {
         int named = 0;
         vec(char) names = {0};
@@ -966,16 +940,16 @@ builtin_tuple(int argc, struct value *kwargs)
         if (d != NULL) for (int i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
                         named += 1;
-                        vec_push_n(names, d->keys[i].string, d->keys[i].bytes);
-                        vec_push(names, '\0');
+                        vvPn(names, d->keys[i].string, d->keys[i].bytes);
+                        vvP(names, '\0');
                 }
         }
 
-        struct value tuple = value_tuple(argc + named);
+        struct value tuple = vT(argc + named);
 
         if (named > 0) {
                 NOGC(tuple.items);
-                tuple.names = gc_alloc_object((argc + named) * sizeof (char *), GC_ANY);
+                tuple.names = mAo((argc + named) * sizeof (char *), GC_ANY);
                 OKGC(tuple.items);
         } else {
                 tuple.gc_names = true;
@@ -1002,8 +976,7 @@ builtin_tuple(int argc, struct value *kwargs)
         return tuple;
 }
 
-struct value
-builtin_regex(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(regex)
 {
         ASSERT_ARGC("regex()", 1);
 
@@ -1013,7 +986,7 @@ builtin_regex(int argc, struct value *kwargs)
                 return pattern;
 
         if (pattern.type != VALUE_STRING)
-                vm_panic("non-string passed to regex()");
+                zP("non-string passed to regex()");
 
         snprintf(buffer, sizeof buffer - 1, "%.*s", (int) pattern.bytes, pattern.string);
 
@@ -1031,53 +1004,50 @@ builtin_regex(int argc, struct value *kwargs)
         if (JITStack != NULL)
                 pcre_assign_jit_stack(extra, NULL, JITStack);
 
-        struct regex *r = gc_alloc_object(sizeof *r, GC_REGEX);
+        struct regex *r = mAo(sizeof *r, GC_REGEX);
         r->pcre = re;
         r->extra = extra;
-        r->pattern = sclone(buffer);
+        r->pattern = sclone(ty, buffer);
         r->gc = true;
 
         return REGEX(r);
 }
 
-struct value
-builtin_min(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(min)
 {
         if (argc < 2)
-                vm_panic("min() expects 2 or more arguments, but got %d", argc);
+                zP("min() expects 2 or more arguments, but got %d", argc);
 
         struct value min, v;
         min = ARG(0);
 
         for (int i = 1; i < argc; ++i) {
                 v = ARG(i);
-                if (value_compare(&v, &min) < 0)
+                if (value_compare(ty, &v, &min) < 0)
                         min = v;
         }
 
         return min;
 }
 
-struct value
-builtin_max(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(max)
 {
         if (argc < 2)
-                vm_panic("max() expects 2 or more arguments, but got %d", argc);
+                zP("max() expects 2 or more arguments, but got %d", argc);
 
         struct value max, v;
         max = ARG(0);
 
         for (int i = 1; i < argc; ++i) {
                 v = ARG(i);
-                if (value_compare(&v, &max) > 0)
+                if (value_compare(ty, &v, &max) > 0)
                         max = v;
         }
 
         return max;
 }
 
-struct value
-builtin_exp(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(exp)
 {
         ASSERT_ARGC("math.exp()", 1);
 
@@ -1085,13 +1055,12 @@ builtin_exp(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math.exp() must be a float");
+                zP("the argument to math.exp() must be a float");
 
         return REAL(exp(x.real));
 }
 
-struct value
-builtin_log(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(log)
 {
         ASSERT_ARGC("math.log()", 1);
 
@@ -1099,13 +1068,12 @@ builtin_log(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math.log() must be a float");
+                zP("the argument to math.log() must be a float");
 
         return REAL(log(x.real));
 }
 
-struct value
-builtin_log2(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(log2)
 {
         ASSERT_ARGC("math.log2()", 1);
 
@@ -1113,13 +1081,12 @@ builtin_log2(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math.log2() must be a float");
+                zP("the argument to math.log2() must be a float");
 
         return REAL(log2(x.real));
 }
 
-struct value
-builtin_log10(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(log10)
 {
         ASSERT_ARGC("math.log10()", 1);
 
@@ -1127,13 +1094,12 @@ builtin_log10(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math.log10() must be a float");
+                zP("the argument to math.log10() must be a float");
 
         return REAL(log10(x.real));
 }
 
-struct value
-builtin_pow(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(pow)
 {
         ASSERT_ARGC("math.pow()", 2);
 
@@ -1141,19 +1107,18 @@ builtin_pow(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the first argument to math.pow() must be a float");
+                zP("the first argument to math.pow() must be a float");
 
         struct value y = ARG(1);
         if (y.type == VALUE_INTEGER)
                 y = REAL(y.integer);
         if (y.type != VALUE_REAL)
-                vm_panic("the second argument to math.pow() must be a float");
+                zP("the second argument to math.pow() must be a float");
 
         return REAL(pow(x.real, y.real));
 }
 
-struct value
-builtin_atan2(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(atan2)
 {
         ASSERT_ARGC("math.atan2()", 2);
 
@@ -1161,20 +1126,20 @@ builtin_atan2(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the first argument to math.atan2() must be a float");
+                zP("the first argument to math.atan2() must be a float");
 
         struct value y = ARG(1);
         if (y.type == VALUE_INTEGER)
                 y = REAL(y.integer);
         if (y.type != VALUE_REAL)
-                vm_panic("the second argument to math.atan2() must be a float");
+                zP("the second argument to math.atan2() must be a float");
 
         return REAL(atan2(x.real, y.real));
 }
 
 #define MATH_WRAP(func)                                 \
         struct value                                    \
-        builtin_ ## func (int argc, struct value *kwargs)           \
+        builtin_ ## func (Ty *ty, int argc, struct value *kwargs)           \
         {                                               \
                 ASSERT_ARGC("math." #func "()", 1);    \
                                                         \
@@ -1182,7 +1147,7 @@ builtin_atan2(int argc, struct value *kwargs)
                 if (x.type == VALUE_INTEGER)            \
                         x = REAL(x.integer);            \
                 if (x.type != VALUE_REAL)               \
-                        vm_panic("the argument to math." #func "() must be a float"); \
+                        zP("the argument to math." #func "() must be a float"); \
                                                         \
                 return REAL(func ## f (x.real));        \
         }
@@ -1197,8 +1162,7 @@ MATH_WRAP(tanh)
 MATH_WRAP(sinh)
 MATH_WRAP(cosh)
 
-struct value
-builtin_sqrt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(sqrt)
 {
         ASSERT_ARGC("math.sqrt()", 1);
 
@@ -1206,13 +1170,12 @@ builtin_sqrt(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math.sqrt() must be a float");
+                zP("the argument to math.sqrt() must be a float");
 
         return REAL(sqrt(x.real));
 }
 
-struct value
-builtin_cbrt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(cbrt)
 {
         ASSERT_ARGC("math.cbrt()", 1);
 
@@ -1220,105 +1183,98 @@ builtin_cbrt(int argc, struct value *kwargs)
         if (x.type == VALUE_INTEGER)
                 x = REAL(x.integer);
         if (x.type != VALUE_REAL)
-                vm_panic("the argument to math.cbrt() must be a float");
+                zP("the argument to math.cbrt() must be a float");
 
         return REAL(cbrt(x.real));
 }
 
-struct value
-builtin_bit_and(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bit_and)
 {
         ASSERT_ARGC("bit.and()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit.and() must be an integer");
+                zP("the first argument to bit.and() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit.and() must be an integer");
+                zP("the second argument to bit.and() must be an integer");
 
         return INTEGER((uintmax_t)a.integer & (uintmax_t)b.integer);
 }
 
-struct value
-builtin_bit_or(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bit_or)
 {
         ASSERT_ARGC("bit.or()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit.or() must be an integer");
+                zP("the first argument to bit.or() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit.or() must be an integer");
+                zP("the second argument to bit.or() must be an integer");
 
         return INTEGER((uintmax_t)a.integer | (uintmax_t)b.integer);
 }
 
-struct value
-builtin_bit_xor(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bit_xor)
 {
         ASSERT_ARGC("bit.xor()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit.xor() must be an integer");
+                zP("the first argument to bit.xor() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit.xor() must be an integer");
+                zP("the second argument to bit.xor() must be an integer");
 
         return INTEGER((uintmax_t)a.integer ^ (uintmax_t)b.integer);
 }
 
-struct value
-builtin_bit_shift_left(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bit_shift_left)
 {
         ASSERT_ARGC("bit.shiftLeft()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit.shiftLeft() must be an integer");
+                zP("the first argument to bit.shiftLeft() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit.shiftLeft() must be an integer");
+                zP("the second argument to bit.shiftLeft() must be an integer");
 
         return INTEGER((uintmax_t)a.integer << (uintmax_t)b.integer);
 }
 
-struct value
-builtin_bit_shift_right(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bit_shift_right)
 {
         ASSERT_ARGC("bit.shiftRight()", 2);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit.shiftRight() must be an integer");
+                zP("the first argument to bit.shiftRight() must be an integer");
 
         struct value b = ARG(1);
         if (b.type != VALUE_INTEGER)
-                vm_panic("the second argument to bit.shiftRight() must be an integer");
+                zP("the second argument to bit.shiftRight() must be an integer");
 
         return INTEGER((uintmax_t)a.integer >> (uintmax_t)b.integer);
 }
 
-struct value
-builtin_bit_complement(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bit_complement)
 {
         ASSERT_ARGC("bit.complement()", 1);
 
         struct value a = ARG(0);
         if (a.type != VALUE_INTEGER)
-                vm_panic("the first argument to bit.complement() must be an integer");
+                zP("the first argument to bit.complement() must be an integer");
 
         return INTEGER(~(uintmax_t)a.integer);
 }
 
-struct value
-builtin_setenv(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(setenv)
 {
         static _Thread_local vec(char) varbuf;
         static _Thread_local vec(char) valbuf;
@@ -1329,13 +1285,13 @@ builtin_setenv(int argc, struct value *kwargs)
         struct value val = ARG(1);
 
         if (var.type != VALUE_STRING || val.type != VALUE_STRING)
-                vm_panic("both arguments to setenv() must be strings");
+                zP("both arguments to setenv() must be strings");
 
-        vec_push_n(varbuf, var.string, var.bytes);
-        vec_push(varbuf, '\0');
+        vvPn(varbuf, var.string, var.bytes);
+        vvP(varbuf, '\0');
 
-        vec_push_n(valbuf, val.string, val.bytes);
-        vec_push(valbuf, '\0');
+        vvPn(valbuf, val.string, val.bytes);
+        vvP(valbuf, '\0');
 
 #ifdef _WIN32
         SetEnvironmentVariableA(varbuf.items, valbuf.items);
@@ -1349,20 +1305,19 @@ builtin_setenv(int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_getenv(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(getenv)
 {
         ASSERT_ARGC("getenv()", 1);
 
         struct value var = ARG(0);
 
         if (var.type != VALUE_STRING)
-                vm_panic("non-string passed to getenv()");
+                zP("non-string passed to getenv()");
 
         char buffer[256];
 
         if (var.bytes >= sizeof buffer)
-                vm_panic("argument to getenv() is too long: '%.10s..'", var.string);
+                zP("argument to getenv() is too long: '%.10s..'", var.string);
 
         memcpy(buffer, var.string, var.bytes);
         buffer[var.bytes] = '\0';
@@ -1375,17 +1330,16 @@ builtin_getenv(int argc, struct value *kwargs)
                 return STRING_NOGC(val, strlen(val));
 }
 
-struct value
-builtin_locale_setlocale(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(locale_setlocale)
 {
         ASSERT_ARGC("locale.setlocale()", 2);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("locale.setlocale(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("locale.setlocale(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         if (ARG(1).type != VALUE_STRING) {
-                vm_panic("locale.setlocale(): expected string but got: %s", value_show(&ARG(0)));
+                zP("locale.setlocale(): expected string but got: %s", value_show(ty, &ARG(0)));
         }
 
         size_t n = min(ARG(1).bytes, sizeof buffer - 1);
@@ -1397,27 +1351,24 @@ builtin_locale_setlocale(int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_json_parse(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(json_parse)
 {
-        ASSERT_ARGC("json.parse()", 1);
+        ASSERT_ARGC("json.parse(ty)", 1);
 
         struct value json = ARG(0);
         if (json.type != VALUE_STRING)
-                vm_panic("non-string passed to json.parse()");
+                zP("non-string passed to json.parse(ty)");
 
-        return json_parse(json.string, json.bytes);
+        return json_parse(ty, json.string, json.bytes);
 }
 
-struct value
-builtin_json_encode(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(json_encode)
 {
-        ASSERT_ARGC("json.parse()", 1);
-        return json_encode(&ARG(0));
+        ASSERT_ARGC("json.parse(ty)", 1);
+        return json_encode(ty, &ARG(0));
 }
 
-struct value
-builtin_sha256(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(sha256)
 {
         ASSERT_ARGC("sha256", 1);
 
@@ -1430,14 +1381,13 @@ builtin_sha256(int argc, struct value *kwargs)
                 SHA256(s.blob->items, s.blob->count, digest);
         }
 
-        struct blob *b = value_blob_new();
-        vec_push_n(*b, digest, sizeof digest);
+        struct blob *b = value_blob_new(ty);
+        vvPn(*b, digest, sizeof digest);
 
         return BLOB(b);
 }
 
-struct value
-builtin_sha1(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(sha1)
 {
         ASSERT_ARGC("sha1", 1);
 
@@ -1449,19 +1399,18 @@ builtin_sha1(int argc, struct value *kwargs)
         } else if (s.type == VALUE_BLOB) {
                 SHA1(s.blob->items, s.blob->count, digest);
         } else {
-                vm_panic("md5(): invalid argument: %s", value_show_color(&s));
+                zP("md5(): invalid argument: %s", value_show_color(ty, &s));
         }
 
-        ++GC_OFF_COUNT;
-        struct blob *b = value_blob_new();
-        vec_push_n(*b, digest, sizeof digest);
-        --GC_OFF_COUNT;
+        GC_STOP();
+        struct blob *b = value_blob_new(ty);
+        vvPn(*b, digest, sizeof digest);
+        GC_RESUME();
 
         return BLOB(b);
 }
 
-struct value
-builtin_md5(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(md5)
 {
         ASSERT_ARGC("md5", 1);
 
@@ -1473,17 +1422,17 @@ builtin_md5(int argc, struct value *kwargs)
         } else if (s.type == VALUE_BLOB) {
                 MD5(s.blob->items, s.blob->count, digest);
         } else {
-                vm_panic("md5(): invalid argument: %s", value_show_color(&s));
+                zP("md5(): invalid argument: %s", value_show_color(ty, &s));
         }
 
-        struct blob *b = value_blob_new();
-        vec_push_n(*b, digest, sizeof digest);
+        struct blob *b = value_blob_new(ty);
+        vvPn(*b, digest, sizeof digest);
 
         return BLOB(b);
 }
 
 static bool
-b64dec(char const *s, size_t n)
+b64dec(Ty *ty, char const *s, size_t n)
 {
         static unsigned char table[256] = {
                 ['A'] =  0, ['B'] =  1, ['C'] =  2, ['D'] =  3, ['E'] =  4, ['F'] =  5,
@@ -1527,9 +1476,9 @@ b64dec(char const *s, size_t n)
                 s2 = table[g[1]];
                 s3 = table[g[2]];
                 s4 = table[g[3]];
-                vec_push(B, (s1 << 2) | (s2 >> 4));
-                vec_push(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
-                vec_push(B, ((s3 & 0x03) << 6) | s4);
+                vvP(B, (s1 << 2) | (s2 >> 4));
+                vvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                vvP(B, ((s3 & 0x03) << 6) | s4);
         }
 
         memset(g, 0, sizeof g);
@@ -1540,17 +1489,17 @@ b64dec(char const *s, size_t n)
                 s1 = table[g[0]];
                 s2 = table[g[1]];
                 s3 = table[g[2]];
-                vec_push(B, (s1 << 2) | (s2 >> 4));
-                vec_push(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
+                vvP(B, (s1 << 2) | (s2 >> 4));
+                vvP(B, ((s2 & 0x0F) << 4) | (s3 >> 2));
                 break;
         case 2:
                 s1 = table[g[0]];
                 s2 = table[g[1]];
-                vec_push(B, (s1 << 2) | (s2 >> 4));
+                vvP(B, (s1 << 2) | (s2 >> 4));
                 break;
         case 1:
                 s1 = table[g[0]];
-                vec_push(B, s1 << 2);
+                vvP(B, s1 << 2);
                 break;
         }
 
@@ -1558,7 +1507,7 @@ b64dec(char const *s, size_t n)
 }
 
 static void
-b64enc(char const *s, size_t n)
+b64enc(Ty *ty, char const *s, size_t n)
 {
         B.count = 0;
 
@@ -1572,10 +1521,10 @@ b64enc(char const *s, size_t n)
 
         for (size_t i = 0; i < d.quot; ++i) {
                 memcpy(g, s + 3*i, 3);
-                vec_push(B, table[g[0] >> 2]);
-                vec_push(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                vec_push(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
-                vec_push(B, table[g[2] & 0x3F]);
+                vvP(B, table[g[0] >> 2]);
+                vvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                vvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                vvP(B, table[g[2] & 0x3F]);
         }
 
         memset(g, 0, sizeof g);
@@ -1583,35 +1532,34 @@ b64enc(char const *s, size_t n)
 
         switch (d.rem) {
         case 2:
-                vec_push(B, table[g[0] >> 2]);
-                vec_push(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                vec_push(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
-                vec_push(B, '=');
+                vvP(B, table[g[0] >> 2]);
+                vvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                vvP(B, table[((g[1] & 0x0F) << 2) | (g[2] >> 6)]);
+                vvP(B, '=');
                 break;
         case 1:
-                vec_push(B, table[g[0] >> 2]);
-                vec_push(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
-                vec_push(B, '=');
-                vec_push(B, '=');
+                vvP(B, table[g[0] >> 2]);
+                vvP(B, table[((g[0] & 0x03) << 4) | (g[1] >> 4)]);
+                vvP(B, '=');
+                vvP(B, '=');
                 break;
         }
 }
 
-struct value
-builtin_base64_encode(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(base64_encode)
 {
         ASSERT_ARGC_2("base64.encode()", 1, 2);
 
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("base64.encode(): the second argument must be an integer");
+                        zP("base64.encode(): the second argument must be an integer");
                 }
 
                 size_t n = ARG(1).integer;
 
                 switch (ARG(0).type) {
                 case VALUE_PTR:
-                        b64enc(ARG(0).ptr, n);
+                        b64enc(ty, ARG(0).ptr, n);
                         break;
                 default:
                         goto Bad;
@@ -1619,83 +1567,80 @@ builtin_base64_encode(int argc, struct value *kwargs)
         } else {
                 switch (ARG(0).type) {
                 case VALUE_STRING:
-                        b64enc(ARG(0).string, ARG(0).bytes);
+                        b64enc(ty, ARG(0).string, ARG(0).bytes);
                         break;
                 case VALUE_BLOB:
-                        b64enc((char *)ARG(0).blob->items, ARG(0).blob->count);
+                        b64enc(ty, (char *)ARG(0).blob->items, ARG(0).blob->count);
                         break;
                 default:
                         goto Bad;
                 }
         }
 
-        return STRING_CLONE(B.items, B.count);
+        return vSc(B.items, B.count);
 
 Bad:
-        vm_panic("base64.encode(): invalid argument(s)");
+        zP("base64.encode(): invalid argument(s)");
 
 }
 
-struct value
-builtin_base64_decode(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(base64_decode)
 {
         ASSERT_ARGC("base64.decode()", 1);
 
         if (ARG(0).type != VALUE_STRING) {
-                vm_panic("base64.decode(): argument must be a string");
+                zP("base64.decode(): argument must be a string");
         }
 
-        if (!b64dec(ARG(0).string, ARG(0).bytes)) {
+        if (!b64dec(ty, ARG(0).string, ARG(0).bytes)) {
                 return NIL;
         }
 
-        struct blob *b = value_blob_new();
+        struct blob *b = value_blob_new(ty);
 
         NOGC(b);
-        vec_push_n(*b, B.items, B.count);
+        vvPn(*b, B.items, B.count);
         OKGC(b);
 
         return BLOB(b);
 }
 
-struct value
-builtin_os_umask(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_umask)
 {
         ASSERT_ARGC("os.umask()", 1);
 
         struct value mask = ARG(0);
         if (mask.type != VALUE_INTEGER) {
-                vm_panic("the argument to os.umask() must be an integer");
+                zP("the argument to os.umask() must be an integer");
         }
 
         return INTEGER(umask(mask.integer));
 }
 
-struct value
-builtin_os_open(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_open)
 {
         ASSERT_ARGC_2("os.open()", 2, 3);
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
-                vm_panic("the path passed to os.open() must be a string");
+                zP("the path passed to os.open() must be a string");
 
         B.count = 0;
 
-        vec_push_n(B, path.string, path.bytes);
-        vec_push(B, '\0');
+        vvPn(B, path.string, path.bytes);
+        vvP(B, '\0');
 
         struct value flags = ARG(1);
         if (flags.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.open() must be an integer (flags)");
+                zP("the second argument to os.open() must be an integer (flags)");
 
         int fd;
 
         if (flags.integer & O_CREAT) {
                 if (argc != 3)
-                        vm_panic("os.open() called with O_CREAT but no third argument");
+                        zP("os.open() called with O_CREAT but no third argument");
                 if (ARG(2).type != VALUE_INTEGER)
-                        vm_panic("the third argument to os.open() must be an integer");
+                        zP("the third argument to os.open() must be an integer");
                 fd = open(B.items, flags.integer, (mode_t) ARG(2).integer);
         } else {
                 fd = open(B.items, flags.integer);
@@ -1705,15 +1650,14 @@ builtin_os_open(int argc, struct value *kwargs)
         return INTEGER(fd);
 }
 
-struct value
-builtin_os_close(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_close)
 {
         ASSERT_ARGC("os.close()", 1);
 
         struct value file = ARG(0);
 
         if (file.type != VALUE_INTEGER)
-                vm_panic("the argument to os.close() must be an integer");
+                zP("the argument to os.close() must be an integer");
 
         return INTEGER(close(file.integer));
 }
@@ -1758,19 +1702,18 @@ make_temp_dir(char *template)
 #endif
 }
 
-struct value
-builtin_os_mkdtemp(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_mkdtemp)
 {
         char template[PATH_MAX + 1] = {0};
 
         if (argc > 1) {
-                vm_panic("os.mkdtemp() expects 0 or 1 arguments but got %d", argc);
+                zP("os.mkdtemp() expects 0 or 1 arguments but got %d", argc);
         }
 
         if (argc == 1 && ARG(0).type != VALUE_NIL) {
                 struct value s = ARG(0);
                 if (s.type != VALUE_STRING)
-                        vm_panic("the first argument to os.mktemp() must be a string");
+                        zP("the first argument to os.mktemp() must be a string");
                 /* -8 to make room for the .XXXXXX suffix and NUL byte */
                 memcpy(template, s.string, min(s.bytes, sizeof template - 8));
         } else {
@@ -1783,7 +1726,7 @@ builtin_os_mkdtemp(int argc, struct value *kwargs)
                 return NIL;
         }
 
-        return STRING_CLONE(template, strlen(template));
+        return vSc(template, strlen(template));
 }
 
 static int
@@ -1816,19 +1759,18 @@ make_temp_file(char *template, int flags)
     return fd;
 }
 
-struct value
-builtin_os_mktemp(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_mktemp)
 {
         char template[PATH_MAX + 1] = {0};
 
         if (argc > 2) {
-                vm_panic("os.mktemp() expects 0, 1, or 2 arguments but got %d", argc);
+                zP("os.mktemp() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
         if (argc >= 1 && ARG(0).type != VALUE_NIL) {
                 struct value s = ARG(0);
                 if (s.type != VALUE_STRING)
-                        vm_panic("the first argument to os.mktemp() must be a string");
+                        zP("the first argument to os.mktemp() must be a string");
                 /* -8 to make room for the .XXXXXX suffix and NUL byte */
                 memcpy(template, s.string, min(s.bytes, sizeof template - 8));
         } else {
@@ -1843,7 +1785,7 @@ builtin_os_mktemp(int argc, struct value *kwargs)
         {
                 struct value flags = ARG(1);
                 if (flags.type != VALUE_INTEGER)
-                        vm_panic("the second argument to os.mktemp() must be an integer");
+                        zP("the second argument to os.mktemp() must be an integer");
                 fd = make_temp_file(template, flags.integer);
         }
         else
@@ -1855,20 +1797,19 @@ builtin_os_mktemp(int argc, struct value *kwargs)
                 return NIL;
         }
 
-        struct value pair = value_tuple(2);
+        struct value pair = vT(2);
 
         NOGC(pair.items);
 
         pair.items[0] = INTEGER(fd);
-        pair.items[1] = STRING_CLONE(template, strlen(template));
+        pair.items[1] = vSc(template, strlen(template));
 
         OKGC(pair.items);
 
         return pair;
 }
 
-struct value
-builtin_os_opendir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_opendir)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.opendir()");
@@ -1889,7 +1830,7 @@ builtin_os_opendir(int argc, struct value *kwargs)
         } else if (path.type == VALUE_INTEGER) {
                 d = fdopendir(path.integer);
         } else {
-                vm_panic("the argument to os.opendir() must be a path or a file descriptor");
+                zP("the argument to os.opendir() must be a path or a file descriptor");
         }
 
         if (d == NULL)
@@ -1899,8 +1840,7 @@ builtin_os_opendir(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_readdir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_readdir)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.readdir()");
@@ -1910,17 +1850,17 @@ builtin_os_readdir(int argc, struct value *kwargs)
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os.readdir() must be a pointer");
+                zP("the argument to os.readdir() must be a pointer");
 
         struct dirent *entry = readdir(d.ptr);
         if (entry == NULL)
                 return NIL;
 
-        Value name = STRING_CLONE(entry->d_name, strlen(entry->d_name));
+        Value name = vSc(entry->d_name, strlen(entry->d_name));
 
         NOGC(name.string);
 
-        Value result = value_named_tuple(
+        Value result = vTn(
                 "d_ino", INTEGER(entry->d_ino),
                 "d_reclen", INTEGER(entry->d_reclen),
                 "d_type", INTEGER(entry->d_type),
@@ -1934,8 +1874,7 @@ builtin_os_readdir(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_rewinddir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_rewinddir)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.rewinddir()");
@@ -1945,7 +1884,7 @@ builtin_os_rewinddir(int argc, struct value *kwargs)
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os.rewinddir() must be a pointer");
+                zP("the argument to os.rewinddir() must be a pointer");
 
         rewinddir(d.ptr);
 
@@ -1953,8 +1892,7 @@ builtin_os_rewinddir(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_seekdir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_seekdir)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.seekdir()");
@@ -1964,11 +1902,11 @@ builtin_os_seekdir(int argc, struct value *kwargs)
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the first argument to os.seekdir() must be a pointer");
+                zP("the first argument to os.seekdir() must be a pointer");
 
         struct value off = ARG(1);
         if (off.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.seekdir() must be an integer");
+                zP("the second argument to os.seekdir() must be an integer");
 
         seekdir(d.ptr, off.integer);
 
@@ -1976,8 +1914,7 @@ builtin_os_seekdir(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_telldir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_telldir)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.telldir()");
@@ -1987,14 +1924,13 @@ builtin_os_telldir(int argc, struct value *kwargs)
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os.telldir() must be a pointer");
+                zP("the argument to os.telldir() must be a pointer");
 
         return INTEGER(telldir(d.ptr));
 #endif
 }
 
-struct value
-builtin_os_closedir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_closedir)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("os.closedir()");
@@ -2004,32 +1940,30 @@ builtin_os_closedir(int argc, struct value *kwargs)
         struct value d = ARG(0);
 
         if (d.type != VALUE_PTR)
-                vm_panic("the argument to os.closedir() must be a pointer");
+                zP("the argument to os.closedir() must be a pointer");
 
         return INTEGER(closedir(d.ptr));
 #endif
 }
 
-struct value
-builtin_os_getcwd(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_getcwd)
 {
         ASSERT_ARGC("os.getcwd()", 0);
 
         if (getcwd(buffer, sizeof buffer) == NULL)
                 return NIL;
 
-        return STRING_CLONE(buffer, strlen(buffer));
+        return vSc(buffer, strlen(buffer));
 }
 
-struct value
-builtin_os_unlink(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_unlink)
 {
         ASSERT_ARGC("os.unlink()", 1);
 
         struct value path = ARG(0);
 
         if (path.type != VALUE_STRING)
-                vm_panic("the argument to os.unlink() must be a string");
+                zP("the argument to os.unlink() must be a string");
 
         if (path.bytes >= sizeof buffer) {
                 errno = ENOENT;
@@ -2042,8 +1976,7 @@ builtin_os_unlink(int argc, struct value *kwargs)
         return INTEGER(unlink(buffer));
 }
 
-struct value
-builtin_os_link(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_link)
 {
         ASSERT_ARGC("os.symlink()", 2);
 
@@ -2060,7 +1993,7 @@ builtin_os_link(int argc, struct value *kwargs)
                 old = STRING_NOGC(old.ptr, strlen(old.ptr));
                 break;
         default:
-                vm_panic("os.link(): invalid argument: %s", value_show(&old));
+                zP("os.link(): invalid argument: %s", value_show(ty, &old));
         }
 
         switch (new.type) {
@@ -2073,7 +2006,7 @@ builtin_os_link(int argc, struct value *kwargs)
                 new = STRING_NOGC(new.ptr, strlen(new.ptr));
                 break;
         default:
-                vm_panic("os.link(): invalid argument: %s", value_show(&new));
+                zP("os.link(): invalid argument: %s", value_show(ty, &new));
         }
 
 
@@ -2095,8 +2028,7 @@ builtin_os_link(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_symlink(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_symlink)
 {
         ASSERT_ARGC("os.symlink()", 2);
 
@@ -2113,7 +2045,7 @@ builtin_os_symlink(int argc, struct value *kwargs)
                 old = STRING_NOGC(old.ptr, strlen(old.ptr));
                 break;
         default:
-                vm_panic("os.symlink(): invalid argument: %s", value_show(&old));
+                zP("os.symlink(): invalid argument: %s", value_show(ty, &old));
         }
 
         switch (new.type) {
@@ -2126,7 +2058,7 @@ builtin_os_symlink(int argc, struct value *kwargs)
                 new = STRING_NOGC(new.ptr, strlen(new.ptr));
                 break;
         default:
-                vm_panic("os.symlink(): invalid argument: %s", value_show(&new));
+                zP("os.symlink(): invalid argument: %s", value_show(ty, &new));
         }
 
 
@@ -2148,8 +2080,7 @@ builtin_os_symlink(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_rename(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_rename)
 {
         ASSERT_ARGC("os.rename()", 2);
 
@@ -2157,11 +2088,11 @@ builtin_os_rename(int argc, struct value *kwargs)
         struct value new = ARG(1);
 
         if (old.type != VALUE_STRING) {
-                vm_panic("os.rename(): expected string but got: %s", value_show(&old));
+                zP("os.rename(): expected string but got: %s", value_show(ty, &old));
         }
 
         if (new.type != VALUE_STRING) {
-                vm_panic("os.rename(): expected string but got: %s", value_show(&new));
+                zP("os.rename(): expected string but got: %s", value_show(ty, &new));
         }
 
         if (old.bytes + new.bytes + 2 > sizeof buffer) {
@@ -2178,30 +2109,29 @@ builtin_os_rename(int argc, struct value *kwargs)
         return INTEGER(rename(buffer, buffer + old.bytes + 1));
 }
 
-struct value
-builtin_os_mkdir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_mkdir)
 {
         ASSERT_ARGC_2("os.mkdir()", 1, 2);
 
         struct value path = ARG(0);
 
         if (path.type != VALUE_STRING) {
-                vm_panic("os.mkdir(): expected string as first argument but got: %s", value_show(&ARG(0)));
+                zP("os.mkdir(): expected string as first argument but got: %s", value_show(ty, &ARG(0)));
         }
 
         mode_t mode = 0777;
 
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("os.mkdir(): expected integer as second argument but got: %s", value_show(&ARG(1)));
+                        zP("os.mkdir(): expected integer as second argument but got: %s", value_show(ty, &ARG(1)));
                 } else {
                         mode = ARG(1).integer;
                 }
         }
 
         B.count = 0;
-        vec_push_n(B, path.string, path.bytes);
-        vec_push(B, '\0');
+        vvPn(B, path.string, path.bytes);
+        vvP(B, '\0');
 
 #ifdef _WIN32
         return INTEGER(mkdir(B.items));
@@ -2210,26 +2140,24 @@ builtin_os_mkdir(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_rmdir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_rmdir)
 {
         ASSERT_ARGC("os.rmdir()", 1);
 
         struct value path = ARG(0);
 
         if (path.type != VALUE_STRING) {
-                vm_panic("os.rmdir(): expected string as first argument but got: %s", value_show(&ARG(0)));
+                zP("os.rmdir(): expected string as first argument but got: %s", value_show(ty, &ARG(0)));
         }
 
         B.count = 0;
-        vec_push_n(B, path.string, path.bytes);
-        vec_push(B, '\0');
+        vvPn(B, path.string, path.bytes);
+        vvP(B, '\0');
 
         return INTEGER(rmdir(B.items));
 }
 
-struct value
-builtin_os_chown(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_chown)
 {
         ASSERT_ARGC("os.chown()", 3);
 
@@ -2254,15 +2182,15 @@ builtin_os_chown(int argc, struct value *kwargs)
                 path = ARG(0).ptr;
                 break;
         default:
-                vm_panic("os.chown(): expected path but got: %s", value_show_color(&ARG(0)));
+                zP("os.chown(): expected path but got: %s", value_show_color(ty, &ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                vm_panic("os.chown(): expected integer but got: %s", value_show_color(&ARG(1)));
+                zP("os.chown(): expected integer but got: %s", value_show_color(ty, &ARG(1)));
         }
 
         if (ARG(2).type != VALUE_INTEGER) {
-                vm_panic("os.chown(): expected integer but got: %s", value_show_color(&ARG(2)));
+                zP("os.chown(): expected integer but got: %s", value_show_color(ty, &ARG(2)));
         }
 
         if (n >= sizeof buffer) {
@@ -2277,8 +2205,7 @@ builtin_os_chown(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_chmod(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_chmod)
 {
         ASSERT_ARGC("os.chmod()", 2);
 #ifdef _WIN32
@@ -2302,11 +2229,11 @@ builtin_os_chmod(int argc, struct value *kwargs)
                 path = ARG(0).ptr;
                 break;
         default:
-                vm_panic("os.chmod(): expected path but got: %s", value_show_color(&ARG(0)));
+                zP("os.chmod(): expected path but got: %s", value_show_color(ty, &ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                vm_panic("os.chmod(): expected integer but got: %s", value_show_color(&ARG(1)));
+                zP("os.chmod(): expected integer but got: %s", value_show_color(ty, &ARG(1)));
         }
 
         if (n >= sizeof buffer) {
@@ -2321,8 +2248,7 @@ builtin_os_chmod(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_chdir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_chdir)
 {
         ASSERT_ARGC("os.chdir()", 1);
 
@@ -2343,14 +2269,13 @@ builtin_os_chdir(int argc, struct value *kwargs)
                 return INTEGER(fchdir(dir.integer));
 #endif
         } else {
-                vm_panic("the argument to os.chdir() must be a path or a file descriptor");
+                zP("the argument to os.chdir() must be a path or a file descriptor");
         }
 
 
 }
 
-struct value
-builtin_os_read(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_read)
 {
         ASSERT_ARGC_2("os.read()", 2, 3);
 
@@ -2363,37 +2288,37 @@ builtin_os_read(int argc, struct value *kwargs)
                 blob = ARG(1);
                 n = ARG(2);
         } else {
-                blob = BLOB(value_blob_new());
+                blob = BLOB(value_blob_new(ty));
                 n = ARG(1);
         }
 
         if (file.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.read() must be an integer");
+                zP("the first argument to os.read() must be an integer");
 
         if (blob.type != VALUE_BLOB)
-                vm_panic("the second argument to os.read() must be a blob");
+                zP("the second argument to os.read() must be a blob");
 
         if (n.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.read() must be an integer");
+                zP("the third argument to os.read() must be an integer");
 
         if (n.integer < 0)
-                vm_panic("the third argument to os.read() must be non-negative");
+                zP("the third argument to os.read() must be non-negative");
 
         NOGC(blob.blob);
-        vec_reserve(*blob.blob, blob.blob->count + n.integer);
+        vec_reserve(ty, *blob.blob, blob.blob->count + n.integer);
 
         Value *all = NAMED("all");
-        bool read_all = all != NULL && value_truthy(all);
+        bool read_all = all != NULL && value_truthy(ty, all);
 
         ssize_t n_read = 0;
         while (n_read < n.integer) {
-                ReleaseLock(true);
+                lGv(true);
                 ssize_t r = read(
                         file.integer,
                         blob.blob->items + blob.blob->count + n_read,
                         n.integer
                 );
-                TakeLock();
+                lTk();
 
                 if (r <= 0) {
                         if (n_read == 0) {
@@ -2422,8 +2347,7 @@ builtin_os_read(int argc, struct value *kwargs)
                 return NIL;
 }
 
-struct value
-builtin_os_write(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_write)
 {
         ASSERT_ARGC_2("os.write()", 2, 3);
 
@@ -2431,7 +2355,7 @@ builtin_os_write(int argc, struct value *kwargs)
         struct value data = ARG(1);
 
         if (file.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.write() must be an integer");
+                zP("the first argument to os.write() must be an integer");
 
         ssize_t n;
         void const *p;
@@ -2453,26 +2377,26 @@ builtin_os_write(int argc, struct value *kwargs)
                 break;
         case VALUE_PTR:
                 if (argc != 3 || ARG(2).type != VALUE_INTEGER) {
-                        vm_panic("os.write(): expected integer as third argument");
+                        zP("os.write(): expected integer as third argument");
                 }
                 p = data.ptr;
                 n = ARG(2).integer;
                 break;
         default:
-                vm_panic("invalid argument to os.write()");
+                zP("invalid argument to os.write()");
         }
 
         struct value *all = NAMED("all");
-        bool write_all = all != NULL && value_truthy(all);
+        bool write_all = all != NULL && value_truthy(ty, all);
 
-        ReleaseLock(true);
+        lGv(true);
 
         size_t off = 0;
 
         while (n > 0) {
                 ssize_t r = write(file.integer, ((unsigned char const *)p) + off, n);
                 if (r < 0) {
-                        TakeLock();
+                        lTk();
                         return INTEGER(r);
                 }
                 if (r == 0) {
@@ -2487,19 +2411,18 @@ builtin_os_write(int argc, struct value *kwargs)
                 }
         }
 
-        TakeLock();
+        lTk();
 
         return INTEGER(off);
 }
 
-struct value
-builtin_os_fsync(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_fsync)
 {
         ASSERT_ARGC("os.fsync()", 1);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER) {
-                vm_panic("os.fsync(): expected integer but got: %s", value_show(&fd));
+                zP("os.fsync(): expected integer but got: %s", value_show(ty, &fd));
         }
 
 #ifdef _WIN32
@@ -2509,8 +2432,7 @@ builtin_os_fsync(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_sync(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_sync)
 {
         ASSERT_ARGC("os.sync()", 0);
 
@@ -2575,21 +2497,20 @@ make_cmdline(Array *args)
         return result.items;
 }
 
-struct value
-builtin_os_spawn(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_spawn)
 {
         ASSERT_ARGC("os.spawn()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os.spawn() must be an array");
+                zP("the argument to os.spawn() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os.spawn()");
+                zP("empty array passed to os.spawn()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os.spawn()");
+                        zP("non-string in array passed to os.spawn()");
 
         struct value *detached = NAMED("detach");
         struct value *combine = NAMED("combineOutput");
@@ -2597,11 +2518,11 @@ builtin_os_spawn(int argc, struct value *kwargs)
         struct value *share_stdout = NAMED("shareStdout");
         struct value *share_stdin = NAMED("shareStdin");
 
-        if (detached != NULL && !value_truthy(detached)) detached = NULL;
-        if (combine != NULL && !value_truthy(combine)) combine = NULL;
-        if (share_stderr != NULL && !value_truthy(share_stderr)) share_stderr = NULL;
-        if (share_stdout != NULL && !value_truthy(share_stdout)) share_stdout = NULL;
-        if (share_stdin != NULL && !value_truthy(share_stdin)) share_stdin = NULL;
+        if (detached != NULL && !value_truthy(ty, detached)) detached = NULL;
+        if (combine != NULL && !value_truthy(ty, combine)) combine = NULL;
+        if (share_stderr != NULL && !value_truthy(ty, share_stderr)) share_stderr = NULL;
+        if (share_stdout != NULL && !value_truthy(ty, share_stdout)) share_stdout = NULL;
+        if (share_stdin != NULL && !value_truthy(ty, share_stdin)) share_stdin = NULL;
 
         HANDLE hChildStdInRead = NULL;
         HANDLE hChildStdInWrite = NULL;
@@ -2744,7 +2665,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
         Value vStdout = share_stdout ? INTEGER(1) : INTEGER(stdout_fd);
         Value vStderr = combine ? vStdout : (share_stderr ? INTEGER(2) : INTEGER(stderr_fd));
 
-        return value_named_tuple(
+        return vTn(
                 "stdin",    vStdin,
                 "stdout",   vStdout,
                 "stderr",   vStderr,
@@ -2757,21 +2678,20 @@ builtin_os_spawn(int argc, struct value *kwargs)
         );
 }
 #else
-struct value
-builtin_os_spawn(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_spawn)
 {
         ASSERT_ARGC("os.spawn()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os.spawn() must be an array");
+                zP("the argument to os.spawn() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os.spawn()");
+                zP("empty array passed to os.spawn()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os.spawn()");
+                        zP("non-string in array passed to os.spawn()");
 
         struct value *detached = NAMED("detach");
         struct value *combine = NAMED("combineOutput");
@@ -2779,13 +2699,13 @@ builtin_os_spawn(int argc, struct value *kwargs)
         struct value *share_stdout = NAMED("shareStdout");
         struct value *share_stdin = NAMED("shareStdin");
 
-        if (combine != NULL && !value_truthy(combine)) combine = NULL;
-        if (share_stderr != NULL && !value_truthy(share_stderr)) share_stderr = NULL;
-        if (share_stdout != NULL && !value_truthy(share_stdout)) share_stdout = NULL;
-        if (share_stdin != NULL && !value_truthy(share_stdin)) share_stdin = NULL;
+        if (combine != NULL && !value_truthy(ty, combine)) combine = NULL;
+        if (share_stderr != NULL && !value_truthy(ty, share_stderr)) share_stderr = NULL;
+        if (share_stdout != NULL && !value_truthy(ty, share_stdout)) share_stdout = NULL;
+        if (share_stdin != NULL && !value_truthy(ty, share_stdin)) share_stdin = NULL;
 
         if (detached != NULL && detached->type != VALUE_BOOLEAN) {
-                vm_panic(
+                zP(
                         "os.spawn(): %s%sdetach%s must be a boolean",
                         TERM(93),
                         TERM(1),
@@ -2892,7 +2812,7 @@ builtin_os_spawn(int argc, struct value *kwargs)
 #undef CloseOnError
 #undef Cleanup
 
-        return value_named_tuple(
+        return vTn(
                 "stdin",   vStdin,
                 "stdout",  vStdout,
                 "stderr",  vStderr,
@@ -2900,21 +2820,20 @@ builtin_os_spawn(int argc, struct value *kwargs)
                 NULL
         );
 }
-struct value
-builtin_os_spawn2(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_spawn2)
 {
         ASSERT_ARGC("os.spawn()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os.spawn() must be an array");
+                zP("the argument to os.spawn() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os.spawn()");
+                zP("empty array passed to os.spawn()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os.spawn()");
+                        zP("non-string in array passed to os.spawn()");
 
         struct value *detached = NAMED("detach");
         struct value *combine = NAMED("combineOutput");
@@ -2922,24 +2841,24 @@ builtin_os_spawn2(int argc, struct value *kwargs)
         struct value *share_stdout = NAMED("shareStdout");
         struct value *share_stdin = NAMED("shareStdin");
 
-        if (combine != NULL && !value_truthy(combine)) {
+        if (combine != NULL && !value_truthy(ty, combine)) {
                 combine = NULL;
         }
 
-        if (share_stderr != NULL && !value_truthy(share_stderr)) {
+        if (share_stderr != NULL && !value_truthy(ty, share_stderr)) {
                 share_stderr = NULL;
         }
 
-        if (share_stdout != NULL && !value_truthy(share_stdout)) {
+        if (share_stdout != NULL && !value_truthy(ty, share_stdout)) {
                 share_stdout = NULL;
         }
 
-        if (share_stdin != NULL && !value_truthy(share_stdin)) {
+        if (share_stdin != NULL && !value_truthy(ty, share_stdin)) {
                 share_stdin = NULL;
         }
 
         if (detached != NULL && detached->type != VALUE_BOOLEAN) {
-                vm_panic(
+                zP(
                         "os.spawn(): %s%sdetached%s must be a boolean",
                         TERM(93),
                         TERM(1),
@@ -3088,7 +3007,7 @@ builtin_os_spawn2(int argc, struct value *kwargs)
 #undef CloseOnError
 #undef CleanupFDs
 
-                return value_named_tuple(
+                return vTn(
                         "stdin",   vStdin,
                         "stdout",  vStdout,
                         "stderr",  vStderr,
@@ -3099,97 +3018,92 @@ builtin_os_spawn2(int argc, struct value *kwargs)
 }
 #endif
 
-struct value
-builtin_thread_join(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_join)
 {
         if (argc == 0 || ARG(0).type != VALUE_THREAD) {
-                vm_panic("non-thread passed to thread.join(): %s", value_show(&ARG(0)));
+                zP("non-thread passed to thread.join(): %s", value_show(ty, &ARG(0)));
         }
 
         if (argc == 1 || ARG(1).type == VALUE_NIL || (ARG(1).type == VALUE_INTEGER && ARG(1).integer == -1)) {
-                ReleaseLock(true);
+                lGv(true);
                 TyThreadJoin(ARG(0).thread->t);
-                TakeLock();
+                lTk();
                 return ARG(0).thread->v;
         } else if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("thread.join(): invalid timeout argument: %s", value_show_color(&ARG(1)));
+                        zP("thread.join(): invalid timeout argument: %s", value_show_color(ty, &ARG(1)));
                 }
 
                 Thread* t = ARG(0).thread;
                 int64_t timeoutMs = ARG(1).integer;
 
-                ReleaseLock(true);
+                lGv(true);
                 TyMutexLock(&t->mutex);
                 while (t->alive) {
                         if (!TyCondVarTimedWaitRelative(&t->cond, &t->mutex, timeoutMs)) {
                                 TyMutexUnlock(&t->mutex);
-                                TakeLock();
+                                lTk();
                                 return None;
                         }
                 }
 
                 TyMutexUnlock(&t->mutex);
                 TyThreadJoin(t->t);
-                TakeLock();
+                lTk();
 
-                return Some(t->v);
+                return Some(ty, t->v);
         } else {
-                vm_panic("thread.join(): expected 2 arguments but got %d", argc);
+                zP("thread.join(): expected 2 arguments but got %d", argc);
         }
 }
 
-struct value
-builtin_thread_detach(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_detach)
 {
         if (argc != 1) {
-                vm_panic("thread.detach() expects one argument but got %d", argc);
+                zP("thread.detach() expects one argument but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_THREAD) {
-                vm_panic("non-thread passed to thread.detach(): %s", value_show(&ARG(0)));
+                zP("non-thread passed to thread.detach(): %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyThreadDetach(ARG(0).thread->t));
 }
 
-struct value
-builtin_thread_mutex(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_mutex)
 {
-        TyMutex *p = gc_alloc_object(sizeof *p, GC_ANY);
+        TyMutex *p = mAo(sizeof *p, GC_ANY);
         TyMutexInit(p);
         return GCPTR(p, p);
 }
 
-struct value
-builtin_thread_cond(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_cond)
 {
-        TyCondVar *p = gc_alloc_object(sizeof *p, GC_ANY);
+        TyCondVar *p = mAo(sizeof *p, GC_ANY);
         TyCondVarInit(p);
         return GCPTR(p, p);
 }
 
-struct value
-builtin_thread_cond_wait(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_cond_wait)
 {
         ASSERT_ARGC_2("thread.waitCond()", 2, 3);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.waitCond() expects a pointer as its first argument but got: %s", value_show(&ARG(0)));
+                zP("thread.waitCond() expects a pointer as its first argument but got: %s", value_show(ty, &ARG(0)));
         }
 
         if (ARG(1).type != VALUE_PTR) {
-                vm_panic("thread.waitCond() expects a pointer as its second argument but got: %s", value_show(&ARG(1)));
+                zP("thread.waitCond() expects a pointer as its second argument but got: %s", value_show(ty, &ARG(1)));
         }
 
         int r;
 
-        ReleaseLock(true);
+        lGv(true);
 
         int64_t usec = -1;
         if (argc == 3) {
                 if (ARG(2).type != VALUE_INTEGER) {
-                        vm_panic("thread.waitCond() expects an integer as its third argument but got: %s", value_show(&ARG(2)));
+                        zP("thread.waitCond() expects an integer as its third argument but got: %s", value_show(ty, &ARG(2)));
                 }
                 usec = ARG(2).integer;
         }
@@ -3200,112 +3114,104 @@ builtin_thread_cond_wait(int argc, struct value *kwargs)
                 r = TyCondVarTimedWaitRelative(ARG(0).ptr, ARG(1).ptr, usec / 1000);
         }
 
-        TakeLock();
+        lTk();
 
         return INTEGER(r);
 }
 
-struct value
-builtin_thread_cond_signal(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_cond_signal)
 {
         ASSERT_ARGC("thread.signalCond()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.signalCond() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.signalCond() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyCondVarSignal(ARG(0).ptr));
 }
 
-struct value
-builtin_thread_cond_broadcast(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_cond_broadcast)
 {
         ASSERT_ARGC("thread.broadcastCond()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.broadcastCond() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.broadcastCond() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyCondVarBroadcast(ARG(0).ptr));
 }
 
-struct value
-builtin_thread_cond_destroy(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_cond_destroy)
 {
         ASSERT_ARGC("thread.destroyCond()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.destroyCond() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.destroyCond() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyCondVarDestroy(ARG(0).ptr));
 }
 
-struct value
-builtin_thread_mutex_destroy(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_mutex_destroy)
 {
         ASSERT_ARGC("thread.destroyMutex()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.destroyMutex() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.destroyMutex() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyMutexDestroy(ARG(0).ptr));
 }
 
-struct value
-builtin_thread_lock(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_lock)
 {
         ASSERT_ARGC("thread.lock()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.lock() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.lock() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
-        ReleaseLock(true);
+        lGv(true);
         int r = TyMutexLock(ARG(0).ptr);
-        TakeLock();
+        lTk();
 
         return INTEGER(r);
 }
 
-struct value
-builtin_thread_trylock(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_trylock)
 {
         ASSERT_ARGC("thread.tryLock()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.tryLock() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.tryLock() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyMutexTryLock(ARG(0).ptr));
 }
 
-struct value
-builtin_thread_unlock(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_unlock)
 {
         ASSERT_ARGC("thread.unlock()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.unlock() expects a pointer but got: %s", value_show(&ARG(0)));
+                zP("thread.unlock() expects a pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return BOOLEAN(TyMutexUnlock(ARG(0).ptr));
 }
 
-struct value
-builtin_thread_create(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_create)
 {
         if (argc == 0) {
-                vm_panic("thread.create() expects at least one argument");
+                zP("thread.create() expects at least one argument");
         }
 
         if (!CALLABLE(ARG(0))) {
-                vm_panic("non-callable value passed to thread.create(): %s", value_show(&ARG(0)));
+                zP("non-callable value passed to thread.create(): %s", value_show(ty, &ARG(0)));
         }
 
-        struct value *ctx = gc_alloc((argc + 1) * sizeof (Value));
-        Thread *t = gc_alloc_object(sizeof *t, GC_THREAD);
+        struct value *ctx = mA((argc + 1) * sizeof (Value));
+        Thread *t = mAo(sizeof *t, GC_THREAD);
 
         NOGC(t);
         t->i = tid++;
@@ -3319,18 +3225,17 @@ builtin_thread_create(int argc, struct value *kwargs)
 
         struct value *isolated = NAMED("isolated");
 
-        NewThread(t, ctx, NAMED("name"), isolated != NULL && value_truthy(isolated));
+        NewThread(ty, t, ctx, NAMED("name"), isolated != NULL && value_truthy(ty, isolated));
 
         return THREAD(t);
 }
 
 
-struct value
-builtin_thread_channel(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_channel)
 {
         ASSERT_ARGC("thread.channel()", 0);
 
-        Channel *c = gc_alloc_object(sizeof *c, GC_ANY);
+        Channel *c = mAo(sizeof *c, GC_ANY);
 
         c->open = true;
         vec_init(c->q);
@@ -3340,24 +3245,23 @@ builtin_thread_channel(int argc, struct value *kwargs)
         return GCPTR(c, c);
 }
 
-struct value
-builtin_thread_send(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_send)
 {
         ASSERT_ARGC("thread.send()", 2);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.send(): expected pointer to channel but got: %s", value_show(&ARG(0)));
+                zP("thread.send(): expected pointer to channel but got: %s", value_show(ty, &ARG(0)));
         }
 
         Channel *chan = ARG(0).ptr;
         ChanVal cv = { .v = ARG(1) };
 
-        Forget(&cv.v, (AllocList *)&cv.as);
+        Forget(ty, &cv.v, (AllocList *)&cv.as);
 
-        ReleaseLock(true);
+        lGv(true);
         TyMutexLock(&chan->m);
-        TakeLock();
-        vec_push(chan->q, cv);
+        lTk();
+        vvP(chan->q, cv);
         TyMutexUnlock(&chan->m);
         TyCondVarSignal(&chan->c);
 
@@ -3366,18 +3270,17 @@ builtin_thread_send(int argc, struct value *kwargs)
 
 
 
-struct value
-builtin_thread_recv(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_recv)
 {
         ASSERT_ARGC_2("thread.recv()", 1, 2);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.recv(): expected pointer to channel but got: %s", value_show(&ARG(0)));
+                zP("thread.recv(): expected pointer to channel but got: %s", value_show(ty, &ARG(0)));
         }
 
         Channel *chan = ARG(0).ptr;
 
-        ReleaseLock(true);
+        lGv(true);
         TyMutexLock(&chan->m);
 
         if (argc == 1) {
@@ -3387,7 +3290,7 @@ builtin_thread_recv(int argc, struct value *kwargs)
         } else {
                 struct value t = ARG(1);
                 if (t.type != VALUE_INTEGER) {
-                        vm_panic("thread.recv(): expected integer but got: %s", value_show(&t));
+                        zP("thread.recv(): expected integer but got: %s", value_show(ty, &t));
                 }
                 while (chan->open && chan->q.count == 0) {
                         if (!TyCondVarTimedWaitRelative(&chan->c, &chan->m, t.integer)) {
@@ -3396,7 +3299,7 @@ builtin_thread_recv(int argc, struct value *kwargs)
                 }
         }
 
-        TakeLock();
+        lTk();
 
         if (chan->q.count == 0) {
                 TyMutexUnlock(&chan->m);
@@ -3405,57 +3308,54 @@ builtin_thread_recv(int argc, struct value *kwargs)
 
         ChanVal v = chan->q.items[0];
 
-        vec_pop_ith(chan->q, 0);
+        vvXi(chan->q, 0);
 
         TyMutexUnlock(&chan->m);
 
-        GCTakeOwnership((AllocList *)&v.as);
+        GCTakeOwnership(ty, (AllocList *)&v.as);
 
-        return Some(v.v);
+        return Some(ty, v.v);
 }
 
-struct value
-builtin_thread_close(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_close)
 {
         ASSERT_ARGC("thread.close()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("thread.close(): expected pointer to channel but got: %s", value_show(&ARG(0)));
+                zP("thread.close(): expected pointer to channel but got: %s", value_show(ty, &ARG(0)));
         }
 
         Channel *chan = ARG(0).ptr;
 
-        ReleaseLock(true);
+        lGv(true);
         TyMutexLock(&chan->m);
-        TakeLock();
+        lTk();
         chan->open = false;
         TyMutexUnlock(&chan->m);
 
         return NIL;
 }
 
-struct value
-builtin_thread_kill(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_kill)
 {
         ASSERT_ARGC("thread.kill()", 2);
 
         struct value t = ARG(0);
 
         if (t.type != VALUE_THREAD) {
-                vm_panic("thread.kill() expects a thread as the first argument but got: %s", value_show(&t));
+                zP("thread.kill() expects a thread as the first argument but got: %s", value_show(ty, &t));
         }
 
         struct value sig = ARG(1);
 
         if (sig.type != VALUE_INTEGER) {
-                vm_panic("thread.kill(): expected integer as second argument but got: %s", value_show(&sig));
+                zP("thread.kill(): expected integer as second argument but got: %s", value_show(ty, &sig));
         }
 
         return BOOLEAN(TyThreadKill(t.thread->t, sig.integer));
 }
 
-struct value
-builtin_thread_setname(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_setname)
 {
         ASSERT_ARGC("thread.setName()", 1);
 #ifdef _WIN32
@@ -3482,7 +3382,7 @@ builtin_thread_setname(int argc, struct value *kwargs)
                 pname = name.ptr;
                 break;
         default:
-                vm_panic("thread.setName(): expected string but got: %s", value_show(&name));
+                zP("thread.setName(): expected string but got: %s", value_show(ty, &name));
         }
 
 #ifdef __APPLE__
@@ -3494,8 +3394,7 @@ builtin_thread_setname(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_thread_getname(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_getname)
 {
         ASSERT_ARGC("thread.getName()", 0);
 
@@ -3507,33 +3406,30 @@ builtin_thread_getname(int argc, struct value *kwargs)
                 return NIL;
         }
 
-        return STRING_CLONE(buffer, strlen(buffer));
+        return vSc(buffer, strlen(buffer));
 #endif
 }
 
-struct value
-builtin_thread_id(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_id)
 {
         ASSERT_ARGC_2("thread.id()", 0, 1);
 
         if (argc == 0 || ARG(0).type == VALUE_NIL) {
-                return INTEGER(MyThreadId());
+                return INTEGER(MyThreadId(ty));
         } else if (ARG(0).type == VALUE_PTR) {
                 return INTEGER(((Thread *)ARG(0).ptr)->i);
         } else {
-                vm_panic("thread.id(): expected thread pointer but got: %s", value_show_color(&ARG(0)));
+                zP("thread.id(): expected thread pointer but got: %s", value_show_color(ty, &ARG(0)));
         }
 }
 
-struct value
-builtin_thread_self(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(thread_self)
 {
         ASSERT_ARGC("thread.self()", 0);
         return PTR((void *)TyThreadSelf());
 }
 
-struct value
-builtin_os_fork(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_fork)
 {
         ASSERT_ARGC("os.fork()", 0);
 #ifdef _WIN32
@@ -3543,8 +3439,7 @@ builtin_os_fork(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_pipe(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_pipe)
 {
         ASSERT_ARGC("os.pipe()", 0);
 #ifdef _WIN32
@@ -3556,7 +3451,7 @@ builtin_os_pipe(int argc, struct value *kwargs)
         if (pipe(p) == -1)
                 return NIL;
 
-        struct value fds = value_tuple(2);
+        struct value fds = vT(2);
 
         fds.items[0] = INTEGER(p[0]);
         fds.items[1] = INTEGER(p[1]);
@@ -3565,21 +3460,19 @@ builtin_os_pipe(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_os_dup(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_dup)
 {
         ASSERT_ARGC("os.dup()", 1);
 
         struct value old = ARG(0);
 
         if (old.type != VALUE_INTEGER)
-                vm_panic("os.dup(): argument must be an integer");
+                zP("os.dup(): argument must be an integer");
 
         return INTEGER(dup(old.integer));
 }
 
-struct value
-builtin_os_dup2(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_dup2)
 {
         ASSERT_ARGC("os.dup2()", 2);
 
@@ -3587,13 +3480,12 @@ builtin_os_dup2(int argc, struct value *kwargs)
         struct value new = ARG(1);
 
         if (old.type != VALUE_INTEGER || new.type != VALUE_INTEGER)
-                vm_panic("the arguments to os.dup2() must be integers");
+                zP("the arguments to os.dup2() must be integers");
 
         return INTEGER(dup2(old.integer, new.integer));
 }
 
-struct value
-builtin_os_socket(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_socket)
 {
         ASSERT_ARGC("os.socket()", 3);
 
@@ -3602,34 +3494,33 @@ builtin_os_socket(int argc, struct value *kwargs)
         struct value protocol = ARG(2);
 
         if (domain.type != VALUE_INTEGER || type.type != VALUE_INTEGER || protocol.type != VALUE_INTEGER)
-                vm_panic("the arguments to os.socket() must be integers");
+                zP("the arguments to os.socket() must be integers");
 
         return INTEGER(socket(domain.integer, type.integer, protocol.integer));
 }
 
-struct value
-builtin_os_setsockopt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_setsockopt)
 {
         ASSERT_ARGC_2("os.setsockopt()", 3, 4);
 
         struct value sock = ARG(0);
         if (sock.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.setsockopt() must be an integer (socket fd)");
+                zP("the first argument to os.setsockopt() must be an integer (socket fd)");
 
         struct value level = ARG(1);
         if (level.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.setsockopt() must be an integer (level)");
+                zP("the second argument to os.setsockopt() must be an integer (level)");
 
         struct value option = ARG(2);
         if (level.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.setsockopt() must be an integer (option)");
+                zP("the third argument to os.setsockopt() must be an integer (option)");
 
         int o;
 
         if (argc == 4) {
                 struct value v = ARG(3);
                 if (v.type != VALUE_INTEGER)
-                        vm_panic("the fourth argument to os.setsockopt() must be an integer (opt value)");
+                        zP("the fourth argument to os.setsockopt() must be an integer (opt value)");
                 o = v.integer;
         } else {
                 o = 1;
@@ -3638,22 +3529,21 @@ builtin_os_setsockopt(int argc, struct value *kwargs)
         return INTEGER(setsockopt(sock.integer, level.integer, option.integer, &o, sizeof o));
 }
 
-struct value
-builtin_os_getsockopt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_getsockopt)
 {
         ASSERT_ARGC("os.getsockopt()", 3);
 
         struct value sock = ARG(0);
         if (sock.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.getsockopt() must be an integer (socket fd)");
+                zP("the first argument to os.getsockopt() must be an integer (socket fd)");
 
         struct value level = ARG(1);
         if (level.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.getsockopt() must be an integer (level)");
+                zP("the second argument to os.getsockopt() must be an integer (level)");
 
         struct value option = ARG(2);
         if (level.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.getsockopt() must be an integer (option)");
+                zP("the third argument to os.getsockopt() must be an integer (option)");
 
         int o;
         socklen_t n = sizeof o;
@@ -3665,8 +3555,7 @@ builtin_os_getsockopt(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_os_getnameinfo(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_getnameinfo)
 {
         ASSERT_ARGC("os.getnameinfo()", 2);
 
@@ -3683,11 +3572,11 @@ builtin_os_getnameinfo(int argc, struct value *kwargs)
                 alen = ARG(0).blob->count;
                 break;
         default:
-                vm_panic("os.getnameinfo(): invalid address argument: %s", value_show(&ARG(0)));
+                zP("os.getnameinfo(): invalid address argument: %s", value_show(ty, &ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                vm_panic("os.getnameinfo(): invalid flags argument: %s", value_show(&ARG(1)));
+                zP("os.getnameinfo(): invalid flags argument: %s", value_show(ty, &ARG(1)));
         }
 
         char host[128];
@@ -3696,69 +3585,66 @@ builtin_os_getnameinfo(int argc, struct value *kwargs)
         int r = getnameinfo(addr, alen, host, sizeof host, serv, sizeof serv, ARG(1).integer);
 
         if (r == 0) {
-                struct value v = value_tuple(2);
-                v.items[0] = STRING_CLONE(host, strlen(host));
-                v.items[1] = STRING_CLONE(serv, strlen(serv));
+                struct value v = vT(2);
+                v.items[0] = vSc(host, strlen(host));
+                v.items[1] = vSc(serv, strlen(serv));
                 return v;
         }
 
         return INTEGER(r);
 }
 
-struct value
-builtin_os_getpeername(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_getpeername)
 {
         ASSERT_ARGC("os.getpeername()", 1);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("os.getpeername(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("os.getpeername(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
-        ReleaseLock(true);
+        lGv(true);
         int r = getpeername(ARG(0).integer, (void *)&addr, &addr_size);
-        TakeLock();
+        lTk();
 
         if (r < 0) {
                 return NIL;
         }
 
-        struct blob *b = value_blob_new();
-        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
+        struct blob *b = value_blob_new(ty);
+        vec_push_n_unchecked(ty, *b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
 }
 
-struct value
-builtin_os_getsockname(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_getsockname)
 {
         ASSERT_ARGC("os.getsockname()", 1);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("os.getsockname(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("os.getsockname(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
-        ReleaseLock(true);
+        lGv(true);
         int r = getsockname(ARG(0).integer, (void *)&addr, &addr_size);
-        TakeLock();
+        lTk();
 
         if (r < 0) {
                 return NIL;
         }
 
-        struct blob *b = value_blob_new();
-        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
+        struct blob *b = value_blob_new(ty);
+        vec_push_n_unchecked(ty, *b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
 }
 
-struct value
-builtin_os_shutdown(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_shutdown)
 {
         ASSERT_ARGC("os.shutdown()", 2);
 
@@ -3766,13 +3652,12 @@ builtin_os_shutdown(int argc, struct value *kwargs)
         struct value how = ARG(1);
 
         if (fd.type != VALUE_INTEGER || how.type != VALUE_INTEGER)
-                vm_panic("the arguments to os.shutdown() must be integers");
+                zP("the arguments to os.shutdown() must be integers");
 
         return INTEGER(shutdown(fd.integer, how.integer));
 }
 
-struct value
-builtin_os_listen(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_listen)
 {
         ASSERT_ARGC("os.listen()", 2);
 
@@ -3780,13 +3665,12 @@ builtin_os_listen(int argc, struct value *kwargs)
         struct value backlog = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER || backlog.type != VALUE_INTEGER)
-                vm_panic("the arguments to os.listen() must be integers");
+                zP("the arguments to os.listen() must be integers");
 
         return INTEGER(listen(sockfd.integer, backlog.integer));
 }
 
-struct value
-builtin_os_connect(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_connect)
 {
         ASSERT_ARGC("os.connect()", 2);
 
@@ -3794,14 +3678,14 @@ builtin_os_connect(int argc, struct value *kwargs)
         struct value addr = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.connect() must be an integer");
+                zP("the first argument to os.connect() must be an integer");
 
         if (addr.type != VALUE_TUPLE)
-                vm_panic("the second argument to os.connect() must be a tuple");
+                zP("the second argument to os.connect() must be a tuple");
 
         struct value *v = tuple_get(&addr, "family");
         if (v == NULL || v->type != VALUE_INTEGER)
-                vm_panic("missing or invalid address family in dict passed to os.connect()");
+                zP("missing or invalid address family in dict passed to os.connect()");
 
 #ifndef _WIN32
         struct sockaddr_un un_addr;
@@ -3819,7 +3703,7 @@ builtin_os_connect(int argc, struct value *kwargs)
                         un_addr.sun_family = AF_UNIX;
                         v = tuple_get(&addr, "path");
                         if (v == NULL || v->type != VALUE_STRING)
-                                vm_panic("missing or invalid path in dict passed to os.connect()");
+                                zP("missing or invalid path in dict passed to os.connect()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(connect(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
 #endif
@@ -3828,22 +3712,21 @@ builtin_os_connect(int argc, struct value *kwargs)
                         in_addr.sin_family = AF_INET;
                         v = tuple_get(&addr, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid address in dict passed to os.connect()");
+                                zP("missing or invalid address in dict passed to os.connect()");
                         ia.s_addr = htonl(v->integer);
                         in_addr.sin_addr = ia;
                         v = tuple_get(&addr, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid port in dict passed to os.connect()");
+                                zP("missing or invalid port in dict passed to os.connect()");
                         unsigned short p = htons(v->integer);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
                         return INTEGER(connect(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
                 default:
-                        vm_panic("invalid arguments to os.connect()");
+                        zP("invalid arguments to os.connect()");
         }
 }
 
-struct value
-builtin_os_bind(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_bind)
 {
         ASSERT_ARGC("os.bind()", 2);
 
@@ -3851,14 +3734,14 @@ builtin_os_bind(int argc, struct value *kwargs)
         struct value addr = ARG(1);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.bind() must be an integer");
+                zP("the first argument to os.bind() must be an integer");
 
         if (addr.type != VALUE_TUPLE)
-                vm_panic("the second argument to os.bind() must be a named tuple");
+                zP("the second argument to os.bind() must be a named tuple");
 
         struct value *v = tuple_get(&addr, "family");
         if (v == NULL || v->type != VALUE_INTEGER)
-                vm_panic("missing or invalid address family in address passed to os.bind()");
+                zP("missing or invalid address family in address passed to os.bind()");
 
 #ifndef _WIN32
         struct sockaddr_un un_addr;
@@ -3876,7 +3759,7 @@ builtin_os_bind(int argc, struct value *kwargs)
                         un_addr.sun_family = AF_UNIX;
                         v = tuple_get(&addr, "path");
                         if (v == NULL || v->type != VALUE_STRING)
-                                vm_panic("missing or invalid path in tuple passed to os.bind()");
+                                zP("missing or invalid path in tuple passed to os.bind()");
                         memcpy(un_addr.sun_path, v->string, min(v->bytes, sizeof un_addr.sun_path));
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&un_addr, sizeof un_addr));
 #endif
@@ -3885,54 +3768,53 @@ builtin_os_bind(int argc, struct value *kwargs)
                         in_addr.sin_family = AF_INET;
                         v = tuple_get(&addr, "address");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid address in tuple passed to os.bind()");
+                                zP("missing or invalid address in tuple passed to os.bind()");
                         ia.s_addr = htonl(v->integer);
                         in_addr.sin_addr = ia;
                         v = tuple_get(&addr, "port");
                         if (v == NULL || v->type != VALUE_INTEGER)
-                                vm_panic("missing or invalid port in tuple passed to os.bind()");
+                                zP("missing or invalid port in tuple passed to os.bind()");
                         unsigned short p = htons(v->integer);
                         memcpy(&in_addr.sin_port, &p, sizeof in_addr.sin_port);
                         return INTEGER(bind(sockfd.integer, (struct sockaddr *)&in_addr, sizeof in_addr));
                 default:
-                        vm_panic("invalid arguments to os.bind()");
+                        zP("invalid arguments to os.bind()");
         }
 }
 
-struct value
-builtin_os_getaddrinfo(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_getaddrinfo)
 {
         ASSERT_ARGC_2("os.getaddrinfo()", 5, 6);
 
         struct value host = ARG(0);
         if (host.type != VALUE_STRING && host.type != VALUE_NIL)
-                vm_panic("the first argument to os.getaddrinfo() (node) must be a string or nil");
+                zP("the first argument to os.getaddrinfo() (node) must be a string or nil");
 
         struct value port = ARG(1);
         if (port.type != VALUE_STRING && port.type != VALUE_INTEGER && port.type != VALUE_NIL)
-                vm_panic("the second argument to os.getaddrinfo() (service) must be a string, an integer, or nil");
+                zP("the second argument to os.getaddrinfo() (service) must be a string, an integer, or nil");
 
         if (host.type == VALUE_NIL && port.type == VALUE_NIL) {
-                vm_panic("os.getaddrinfo(): the first and second arguments (node and service) cannot both be nil");
+                zP("os.getaddrinfo(): the first and second arguments (node and service) cannot both be nil");
         }
 
         struct value family = ARG(2);
         if (family.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.getaddrinfo() (family) must be an integer");
+                zP("the third argument to os.getaddrinfo() (family) must be an integer");
 
         struct value type = ARG(3);
         if (type.type != VALUE_INTEGER)
-                vm_panic("the fourth argument to os.getaddrinfo() (type) must be an integer");
+                zP("the fourth argument to os.getaddrinfo() (type) must be an integer");
 
         struct value protocol = ARG(4);
         if (protocol.type != VALUE_INTEGER)
-                vm_panic("the fifth argument to os.getaddrinfo() (protocol) must be an integer");
+                zP("the fifth argument to os.getaddrinfo() (protocol) must be an integer");
 
         // Default to the flags used when hints == NULL in glibc getaddrinfo()
         int flags = AI_V4MAPPED | AI_ADDRCONFIG;
         if (argc == 6 && ARG(5).type != VALUE_NIL) {
                 if (ARG(5).type != VALUE_INTEGER)
-                        vm_panic("the sixth argument to os.getaddrinfo() (flags) must be an integer");
+                        zP("the sixth argument to os.getaddrinfo() (flags) must be an integer");
                 flags = ARG(5).integer;
         }
 
@@ -3947,30 +3829,30 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
         }
 
         if (host.type != VALUE_NIL) {
-                vec_push_n(B, host.string, host.bytes);
-                vec_push(B, '\0');
+                vvPn(B, host.string, host.bytes);
+                vvP(B, '\0');
 
-                vec_push_n(B, port.string, port.bytes);
-                vec_push(B, '\0');
+                vvPn(B, port.string, port.bytes);
+                vvP(B, '\0');
 
                 node = B.items;
                 service = B.items + host.bytes + 1;
         } else if (port.type == VALUE_NIL) {
-                vec_push_n(B, host.string, host.bytes);
-                vec_push(B, '\0');
+                vvPn(B, host.string, host.bytes);
+                vvP(B, '\0');
 
                 node = B.items;
                 service = NULL;
         } else {
-                vec_push_n(B, port.string, port.bytes);
-                vec_push(B, '\0');
+                vvPn(B, port.string, port.bytes);
+                vvP(B, '\0');
 
                 node = NULL;
                 service = B.items;
         }
 
-        struct value results = ARRAY(value_array_new());
-        gc_push(&results);
+        struct value results = ARRAY(vA());
+        gP(&results);
 
         struct addrinfo *res;
         struct addrinfo hints;
@@ -3984,11 +3866,11 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
         int r = getaddrinfo(node, service, &hints, &res);
         if (r == 0) {
                 for (struct addrinfo *it = res; it != NULL; it = it->ai_next) {
-                        struct blob *b = value_blob_new();
+                        struct blob *b = value_blob_new(ty);
 
                         NOGC(b);
 
-                        struct value entry = value_named_tuple(
+                        struct value entry = vTn(
                                 "family",    INTEGER(it->ai_family),
                                 "type",      INTEGER(it->ai_socktype),
                                 "protocol",  INTEGER(it->ai_protocol),
@@ -4000,37 +3882,36 @@ builtin_os_getaddrinfo(int argc, struct value *kwargs)
                         NOGC(entry.items);
                         NOGC(entry.names);
 
-                        value_array_push(results.array, entry);
+                        vAp(results.array, entry);
 
                         OKGC(entry.items);
                         OKGC(entry.names);
                         OKGC(b);
 
-                        vec_push_n(*b, (char *)it->ai_addr, it->ai_addrlen);
+                        vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
 
                         if (it->ai_canonname != NULL) {
-                                entry.items[4] = STRING_CLONE(it->ai_canonname, strlen(it->ai_canonname));
+                                entry.items[4] = vSc(it->ai_canonname, strlen(it->ai_canonname));
                         }
                 }
 
-                gc_pop();
+                gX();
 
                 freeaddrinfo(res);
 
-                return Ok(results);
+                return Ok(ty, results);
 
         } else {
-                return Err(INTEGER(r));
+                return Err(ty, INTEGER(r));
         }
 }
 
-struct value
-builtin_os_gai_strerror(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_gai_strerror)
 {
         ASSERT_ARGC("os.gai_strerror()", 1);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("os.gai_strerror(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("os.gai_strerror(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         char const *msg = gai_strerror(ARG(0).integer);
@@ -4038,31 +3919,30 @@ builtin_os_gai_strerror(int argc, struct value *kwargs)
         return STRING_NOGC(msg, strlen(msg));
 }
 
-struct value
-builtin_os_accept(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_accept)
 {
         ASSERT_ARGC("os.accept()", 1);
 
         struct value sockfd = ARG(0);
 
         if (sockfd.type != VALUE_INTEGER)
-                vm_panic("the argument to os.accept() must be an integer");
+                zP("the argument to os.accept() must be an integer");
 
         struct sockaddr a;
         socklen_t n = sizeof a;
 
-        ReleaseLock(true);
+        lGv(true);
         int r = accept(sockfd.integer, &a, &n);
-        TakeLock();
+        lTk();
         if (r == -1)
                 return NIL;
 
-        struct blob *b = value_blob_new();
+        struct blob *b = value_blob_new(ty);
         NOGC(b);
 
-        vec_push_n(*b, (char *)&a, n);
+        vvPn(*b, (char *)&a, n);
 
-        struct value v = value_named_tuple(
+        struct value v = vTn(
                 "fd",   INTEGER(r),
                 "addr", BLOB(b),
                 NULL
@@ -4073,21 +3953,20 @@ builtin_os_accept(int argc, struct value *kwargs)
         return v;
 }
 
-struct value
-builtin_os_recvfrom(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_recvfrom)
 {
         ASSERT_ARGC_2("os.recvfrom()", 3, 4);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.recvfrom() must be an integer");
+                zP("the first argument to os.recvfrom() must be an integer");
 
         struct value buffer;
         struct value size;
         struct value flags;
 
         if (argc == 3) {
-                buffer = BLOB(value_blob_new());
+                buffer = BLOB(value_blob_new(ty));
                 size = ARG(1);
                 flags = ARG(2);
         } else {
@@ -4097,24 +3976,24 @@ builtin_os_recvfrom(int argc, struct value *kwargs)
         }
 
         if (buffer.type != VALUE_BLOB)
-                vm_panic("the buffer argument to os.recvfrom() must be a blob");
+                zP("the buffer argument to os.recvfrom() must be a blob");
 
         if (size.type != VALUE_INTEGER || size.integer < 0)
-                vm_panic("the size argument to os.recvfrom() must be a non-negative integer");
+                zP("the size argument to os.recvfrom() must be a non-negative integer");
 
         if (flags.type != VALUE_INTEGER)
-                vm_panic("the flags argument to os.recvfrom() must be an integer");
+                zP("the flags argument to os.recvfrom() must be an integer");
 
         NOGC(buffer.blob);
 
-        vec_reserve(*buffer.blob, size.integer);
+        vec_reserve(ty, *buffer.blob, size.integer);
 
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
 
-        ReleaseLock(true);
+        lGv(true);
         ssize_t r = recvfrom(fd.integer, buffer.blob->items, size.integer, flags.integer, (void *)&addr, &addr_size);
-        TakeLock();
+        lTk();
         if (r < 0) {
                 OKGC(buffer.blob);
                 return NIL;
@@ -4122,11 +4001,11 @@ builtin_os_recvfrom(int argc, struct value *kwargs)
 
         buffer.blob->count = r;
 
-        struct blob *b = value_blob_new();
+        struct blob *b = value_blob_new(ty);
         NOGC(b);
-        vec_push_n(*b, &addr, min(addr_size, sizeof addr));
+        vvPn(*b, &addr, min(addr_size, sizeof addr));
 
-        struct value result = value_tuple(2);
+        struct value result = vT(2);
 
         result.items[0] = buffer;
         result.items[1] = BLOB(b);
@@ -4137,45 +4016,43 @@ builtin_os_recvfrom(int argc, struct value *kwargs)
         return result;
 }
 
-struct value
-builtin_os_sendto(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_sendto)
 {
         ASSERT_ARGC_2("os.sendto()", 3, 4);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.sendto() must be an integer (fd)");
+                zP("the first argument to os.sendto() must be an integer (fd)");
 
         struct value buffer = ARG(1);
         if (buffer.type != VALUE_BLOB && buffer.type != VALUE_STRING) {
-                vm_panic(
+                zP(
                         "os.sendto(): expected Blob or String as second argument but got: %s%s%s%s",
                         TERM(1),
                         TERM(93),
-                        value_show(&buffer),
+                        value_show(ty, &buffer),
                         TERM(0)
                 );
         }
 
         struct value flags = ARG(2);
         if (flags.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.sendto() must be an integer (flags)");
+                zP("the third argument to os.sendto() must be an integer (flags)");
 
         struct value addr = ARG(3);
         if (addr.type != VALUE_BLOB)
-                vm_panic("the fourth argument to os.sendto() must be a blob (sockaddr)");
+                zP("the fourth argument to os.sendto() must be a blob (sockaddr)");
 
-        ReleaseLock(true);
+        lGv(true);
         ssize_t r = (buffer.type == VALUE_BLOB)
                   ? sendto(fd.integer, buffer.blob->items, buffer.blob->count, flags.integer, (void *)addr.blob->items, addr.blob->count)
                   : sendto(fd.integer, buffer.string, buffer.bytes, flags.integer, (void *)addr.blob->items, addr.blob->count);
-        TakeLock();
+        lTk();
 
         return INTEGER(r);
 }
 
-struct value
-builtin_os_poll(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_poll)
 {
         ASSERT_ARGC("os.poll()", 2);
 
@@ -4183,23 +4060,23 @@ builtin_os_poll(int argc, struct value *kwargs)
         struct value timeout = ARG(1);
 
         if (fds.type != VALUE_ARRAY)
-                vm_panic("the first argument to os.poll() must be an array");
+                zP("the first argument to os.poll() must be an array");
 
         if (timeout.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.poll() must be an integer");
+                zP("the second argument to os.poll() must be an integer");
 
         static _Thread_local vec(struct pollfd) pfds;
         pfds.count = 0;
 
-        vec_reserve(pfds, fds.array->count);
+        vec_reserve(ty, pfds, fds.array->count);
 
         struct value *v;
         for (int i = 0; i < fds.array->count; ++i) {
                 if (fds.array->items[i].type != VALUE_TUPLE)
-                        vm_panic("non-tuple in fds array passed to os.poll()");
+                        zP("non-tuple in fds array passed to os.poll()");
                 v = tuple_get(&fds.array->items[i], "fd");
                 if (v == NULL || v->type != VALUE_INTEGER)
-                        vm_panic("all tuples in the fds array passed to os.poll() must have an integer value under the key 'fd'");
+                        zP("all tuples in the fds array passed to os.poll() must have an integer value under the key 'fd'");
                 pfds.items[i].fd = v->integer;
                 v = tuple_get(&fds.array->items[i], "events");
                 if (v != NULL && v->type == VALUE_INTEGER)
@@ -4210,19 +4087,19 @@ builtin_os_poll(int argc, struct value *kwargs)
 
         pfds.count = fds.array->count;
 
-        ReleaseLock(true);
+        lGv(true);
 #ifdef _WIN32
         int ret = WSAPoll(pfds.items, pfds.count, timeout.integer);
 #else
         int ret = poll(pfds.items, pfds.count, timeout.integer);
 #endif
-        TakeLock();
+        lTk();
 
         if (ret < 0)
                 return INTEGER(ret);
 
         for (int i = 0; i < fds.array->count; ++i) {
-                fds.array->items[i] = value_named_tuple(
+                fds.array->items[i] = vTn(
                         "fd",      *tuple_get(&fds.array->items[i], "fd"),
                         "events",  *tuple_get(&fds.array->items[i], "events"),
                         "revents", INTEGER(pfds.items[i].revents),
@@ -4234,38 +4111,36 @@ builtin_os_poll(int argc, struct value *kwargs)
 }
 
 #ifdef __linux__
-struct value
-builtin_os_epoll_create(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_epoll_create)
 {
         ASSERT_ARGC("os.epoll_create()", 1);
 
         struct value flags = ARG(0);
         if (flags.type != VALUE_INTEGER)
-                vm_panic("the argument to os.epoll_create() must be an integer");
+                zP("the argument to os.epoll_create() must be an integer");
 
         return INTEGER(epoll_create1(flags.integer));
 }
 
-struct value
-builtin_os_epoll_ctl(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_epoll_ctl)
 {
         ASSERT_ARGC("os.epoll_ctl()", 4);
 
         struct value efd = ARG(0);
         if (efd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.epoll_ctl() must be an integer");
+                zP("the first argument to os.epoll_ctl() must be an integer");
 
         struct value op = ARG(1);
         if (op.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.epoll_ctl() must be an integer");
+                zP("the second argument to os.epoll_ctl() must be an integer");
 
         struct value fd = ARG(2);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the third argument to os.epoll_ctl() must be an integer");
+                zP("the third argument to os.epoll_ctl() must be an integer");
 
         struct value events = ARG(3);
         if (events.type != VALUE_INTEGER)
-                vm_panic("the fourth argument to os.epoll_ctl() must be an integer");
+                zP("the fourth argument to os.epoll_ctl() must be an integer");
 
         struct epoll_event ev = {
                 .events = events.integer,
@@ -4275,49 +4150,47 @@ builtin_os_epoll_ctl(int argc, struct value *kwargs)
         return INTEGER(epoll_ctl(efd.integer, op.integer, fd.integer, &ev));
 }
 
-struct value
-builtin_os_epoll_wait(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_epoll_wait)
 {
         ASSERT_ARGC("os.epoll_wait()", 2);
 
         struct value efd = ARG(0);
         if (efd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.epoll_wait() must be an integer (epoll fd)");
+                zP("the first argument to os.epoll_wait() must be an integer (epoll fd)");
 
         struct value timeout = ARG(1);
         if (timeout.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.epoll_wait() must be an integer (timeout in ms)");
+                zP("the second argument to os.epoll_wait() must be an integer (timeout in ms)");
 
         struct epoll_event events[32];
 
-        ReleaseLock(true);
+        lGv(true);
         int n = epoll_wait(efd.integer, events, sizeof events / sizeof events[0], timeout.integer);
-        TakeLock();
+        lTk();
 
         if (n == -1)
                 return NIL;
 
-        struct array *result = value_array_new();
+        struct array *result = vA();
 
-        gc_push(&ARRAY(result));
+        gP(&ARRAY(result));
 
         for (int i = 0; i < n; ++i) {
-                struct value ev = value_tuple(2);
+                struct value ev = vT(2);
                 NOGC(ev.items);
                 ev.items[0] = INTEGER(events[i].data.fd);
                 ev.items[1] = INTEGER(events[i].events);
-                value_array_push(result, ev);
+                vAp(result, ev);
                 OKGC(ev.items);
         }
 
-        gc_pop();
+        gX();
 
         return ARRAY(result);
 }
 #endif
 
-struct value
-builtin_os_waitpid(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_waitpid)
 {
         ASSERT_ARGC_2("os.waitpid()", 1, 2);
 #ifdef _WIN32
@@ -4336,7 +4209,7 @@ builtin_os_waitpid(int argc, struct value *kwargs)
 
         if (pid.type != VALUE_INTEGER) {
 Bad:
-                vm_panic("both arguments to os.waitpid() must be integers");
+                zP("both arguments to os.waitpid() must be integers");
         }
 
         int status;
@@ -4359,13 +4232,13 @@ Bad:
 #else
 #define WAITMACRO(name) \
         struct value \
-        builtin_os_ ## name(int argc, struct value *kwargs) \
+        builtin_os_ ## name(Ty *ty, int argc, struct value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 1); \
         \
                 struct value status = ARG(0); \
                 if (status.type != VALUE_INTEGER) \
-                        vm_panic("the argument to os." #name "() must be an integer"); \
+                        zP("the argument to os." #name "() must be an integer"); \
         \
                 int s = status.integer; \
         \
@@ -4389,20 +4262,20 @@ WAITMACRO(WCOREDUMP)
 #ifdef _WIN32
 #define GETID(name) \
         struct value \
-        builtin_os_ ## name (int argc, struct value *kwargs) \
+        builtin_os_ ## name (Ty *ty, int argc, struct value *kwargs) \
         { \
                 NOT_ON_WINDOWS("os." #name); \
         }
 #define SETID(name) \
         struct value \
-        builtin_os_ ## name (int argc, struct value *kwargs) \
+        builtin_os_ ## name (Ty *ty, int argc, struct value *kwargs) \
         { \
                 NOT_ON_WINDOWS("os." #name); \
         }
 #else
 #define GETID(name) \
         struct value \
-        builtin_os_ ## name (int argc, struct value *kwargs) \
+        builtin_os_ ## name (Ty *ty, int argc, struct value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 0); \
                 return INTEGER(name()); \
@@ -4410,12 +4283,12 @@ WAITMACRO(WCOREDUMP)
 
 #define SETID(name) \
         struct value \
-        builtin_os_ ## name (int argc, struct value *kwargs) \
+        builtin_os_ ## name (Ty *ty, int argc, struct value *kwargs) \
         { \
                 ASSERT_ARGC("os." #name, 1); \
                 struct value id = ARG(0); \
                 if (id.type != VALUE_INTEGER) \
-                        vm_panic("the argument to os." #name "() must be an integer"); \
+                        zP("the argument to os." #name "() must be an integer"); \
                 return INTEGER(name(id.integer)); \
         }
 #endif
@@ -4431,51 +4304,48 @@ SETID(seteuid)
 SETID(setgid)
 SETID(setegid)
 
-noreturn struct value
-builtin_os_exit(int argc, struct value *kwargs)
+noreturn BUILTIN_FUNCTION(os_exit)
 {
         ASSERT_ARGC("os.exit()", 1);
 
         struct value status = ARG(0);
         if (status.type != VALUE_INTEGER)
-                vm_panic("the argument to os.exit() must be an integer");
+                zP("the argument to os.exit() must be an integer");
 
         exit(status.integer);
 }
 
-struct value
-builtin_os_exec(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_exec)
 {
         ASSERT_ARGC("os.exec()", 1);
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                vm_panic("the argument to os.exec() must be an array");
+                zP("the argument to os.exec() must be an array");
 
         if (cmd.array->count == 0)
-                vm_panic("empty array passed to os.exec()");
+                zP("empty array passed to os.exec()");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        vm_panic("non-string in array passed to os.exec()");
+                        zP("non-string in array passed to os.exec()");
 
         vec(char *) argv;
         vec_init(argv);
 
         for (int i = 0; i < cmd.array->count; ++i) {
-                char *arg = gc_alloc(cmd.array->items[i].bytes + 1);
+                char *arg = mA(cmd.array->items[i].bytes + 1);
                 memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
                 arg[cmd.array->items[i].bytes] = '\0';
-                vec_push(argv, arg);
+                vvP(argv, arg);
         }
 
-        vec_push(argv, NULL);
+        vvP(argv, NULL);
 
         return INTEGER(execvp(argv.items[0], argv.items));
 }
 
-struct value
-builtin_os_signal(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_signal)
 {
         ASSERT_ARGC_2("os.signal()", 1, 2);
 #ifdef _WIN32
@@ -4485,7 +4355,7 @@ builtin_os_signal(int argc, struct value *kwargs)
         struct value num = ARG(0);
 
         if (num.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.signal() must be an integer");
+                zP("the first argument to os.signal() must be an integer");
 
         if (argc == 2) {
                 struct value f = ARG(1);
@@ -4493,29 +4363,28 @@ builtin_os_signal(int argc, struct value *kwargs)
                 struct sigaction act = {0};
 
                 if (f.type == VALUE_NIL) {
-                        vm_del_sigfn(num.integer);
+                        vm_del_sigfn(ty, num.integer);
                         act.sa_handler = SIG_DFL;
                 } else if (CALLABLE(f)) {
                         act.sa_flags = SA_SIGINFO;
                         act.sa_sigaction = vm_do_signal;
                 } else {
-                        vm_panic("the second argument to os.signal() must be callable");
+                        zP("the second argument to os.signal() must be callable");
                 }
 
                 int r = sigaction(num.integer, &act, NULL);
                 if (r == 0)
-                        vm_set_sigfn(num.integer, &f);
+                        vm_set_sigfn(ty, num.integer, &f);
 
                 return INTEGER(r);
         } else {
-                return vm_get_sigfn(num.integer);
+                return vm_get_sigfn(ty, num.integer);
         }
 
 #endif
 }
 
-struct value
-builtin_os_kill(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_kill)
 {
         ASSERT_ARGC("os.kill()", 2);
 
@@ -4523,7 +4392,7 @@ builtin_os_kill(int argc, struct value *kwargs)
         struct value sig = ARG(1);
 
         if (pid.type != VALUE_INTEGER || sig.type != VALUE_INTEGER)
-                vm_panic("both arguments to os.kill() must be integers");
+                zP("both arguments to os.kill() must be integers");
 
 
 #ifdef _WIN32
@@ -4538,9 +4407,9 @@ builtin_os_kill(int argc, struct value *kwargs)
 }
 
 static struct value
-timespec_tuple(struct timespec const *ts)
+timespec_tuple(Ty *ty, struct timespec const *ts)
 {
-        return value_named_tuple(
+        return vTn(
                 "tv_sec",  INTEGER(ts->tv_sec),
                 "tv_nsec", INTEGER(ts->tv_nsec),
                 NULL
@@ -4548,16 +4417,16 @@ timespec_tuple(struct timespec const *ts)
 }
 
 static struct timespec
-tuple_timespec(char const *func, struct value const *v)
+tuple_timespec(Ty *ty, char const *func, struct value const *v)
 {
         struct value *sec = tuple_get(v, "tv_sec");
 
         if (sec == NULL || sec->type != VALUE_INTEGER) {
-                vm_panic(
+                zP(
                         "%s: expected timespec %s%s%s to have Int field %s%s%s",
                         func,
                         TERM(93),
-                        value_show(v),
+                        value_show(ty, v),
                         TERM(0),
                         TERM(92),
                         "tv_sec",
@@ -4568,11 +4437,11 @@ tuple_timespec(char const *func, struct value const *v)
         struct value *nsec = tuple_get(v, "tv_nsec");
 
         if (nsec == NULL || nsec->type != VALUE_INTEGER) {
-                vm_panic(
+                zP(
                         "%s: expected timespec %s%s%s to have Int field %s%s%s",
                         func,
                         TERM(93),
-                        value_show(v),
+                        value_show(ty, v),
                         TERM(0),
                         TERM(92),
                         "tv_nsec",
@@ -4587,8 +4456,7 @@ tuple_timespec(char const *func, struct value const *v)
 }
 
 #if !defined(__APPLE__)
-struct value
-builtin_os_sleep(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_sleep)
 {
         ASSERT_ARGC("os.sleep()", 1);
 
@@ -4638,32 +4506,31 @@ builtin_os_sleep(int argc, struct value *kwargs)
                         dur.tv_nsec = (duration.real - dur.tv_sec) * 1000000000ULL;
                 }
         } else if (duration.type == VALUE_TUPLE) {
-                dur = tuple_timespec("os.sleep()", &duration);
+                dur = tuple_timespec(ty, "os.sleep()", &duration);
         } else {
-                vm_panic("the argument to os.sleep() must be an integer or a float");
+                zP("the argument to os.sleep() must be an integer or a float");
         }
 
-        ReleaseLock(true);
+        lGv(true);
 #ifdef _WIN32
         Sleep(dur.tv_sec * 1000 + dur.tv_nsec / 1000000);
         int ret = 0;
 #else
         int ret = clock_nanosleep(clk, flags, &dur, &rem);
 #endif
-        TakeLock();
+        lTk();
 
         switch (ret) {
         case 0:
                 return NIL;
         case EINTR:
-                return timespec_tuple(&rem);
+                return timespec_tuple(ty, &rem);
         default:
-                vm_panic("os.sleep(): invalid argument: clock_nanosleep() returned EINVAL");
+                zP("os.sleep(): invalid argument: clock_nanosleep() returned EINVAL");
         }
 }
 #else
-struct value
-builtin_os_sleep(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_sleep)
 {
         ASSERT_ARGC("os.sleep()", 1);
 
@@ -4696,23 +4563,23 @@ builtin_os_sleep(int argc, struct value *kwargs)
                         dur.tv_nsec = (duration.real - dur.tv_sec) * 1000000000ULL;
                 }
         } else if (duration.type == VALUE_TUPLE) {
-                dur = tuple_timespec("os.sleep()", &duration);
+                dur = tuple_timespec(ty, "os.sleep()", &duration);
         } else {
-                vm_panic("the argument to os.sleep() must be an integer or a float");
+                zP("the argument to os.sleep() must be an integer or a float");
         }
 
-        ReleaseLock(true);
+        lGv(true);
         int ret = nanosleep(&dur, &rem);
-        TakeLock();
+        lTk();
 
         switch (ret) {
         case 0:
                 return NIL;
         case -1:
                 if (errno == EINTR) {
-                        return timespec_tuple(&rem);
+                        return timespec_tuple(ty, &rem);
                 } else {
-                        vm_panic("os.sleep(): invalid argument: nanosleep() returned EINVAL");
+                        zP("os.sleep(): invalid argument: nanosleep() returned EINVAL");
                 }
         }
 }
@@ -4738,48 +4605,46 @@ microsleep(int64_t usec)
 }
 
 // https://stackoverflow.com/questions/5801813/c-usleep-is-obsolete-workarounds-for-windows-mingw
-struct value
-builtin_os_usleep(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_usleep)
 {
         ASSERT_ARGC("os.usleep()", 1);
 
         struct value duration = ARG(0);
         if (duration.type != VALUE_INTEGER)
-                vm_panic("the argument to os.usleep() must be an integer");
+                zP("the argument to os.usleep() must be an integer");
 
         if (duration.integer < 0)
-                vm_panic("negative argument passed to os.usleep()");
+                zP("negative argument passed to os.usleep()");
 
         return INTEGER(microsleep(duration.integer));
 }
 
 #ifdef _WIN32
-struct value
-builtin_os_listdir(int argc, struct value* kwargs)
+BUILTIN_FUNCTION(os_listdir)
 {
         ASSERT_ARGC("os.listdir()", 1);
         struct value dir = ARG(0);
         if (dir.type != VALUE_STRING)
-                vm_panic("the argument to os.listdir() must be a string");
+                zP("the argument to os.listdir() must be a string");
 
         // Prepare the search path
         B.count = 0;
-        vec_push_n(B, dir.string, dir.bytes);
-        vec_push_n(B, "\\*", 2); // Add wildcard for all files
-        vec_push(B, '\0');
+        vvPn(B, dir.string, dir.bytes);
+        vvPn(B, "\\*", 2); // Add wildcard for all files
+        vvP(B, '\0');
 
         WIN32_FIND_DATAA findData;
         HANDLE hFind = FindFirstFileA(B.items, &findData);
         if (hFind == INVALID_HANDLE_VALUE)
                 return NIL;
 
-        struct array* files = value_array_new();
+        struct array* files = vA();
         struct value vFiles = ARRAY(files);
-        gc_push(&vFiles);
+        gP(&vFiles);
 
         do {
                 if (strcmp(findData.cFileName, ".") != 0 && strcmp(findData.cFileName, "..") != 0) {
-                        vec_push(*files, STRING_CLONE(findData.cFileName, strlen(findData.cFileName)));
+                        vvP(*files, vSc(findData.cFileName, strlen(findData.cFileName)));
                 }
         } while (FindNextFileA(hFind, &findData) != 0);
 
@@ -4790,43 +4655,42 @@ builtin_os_listdir(int argc, struct value* kwargs)
 
         FindClose(hFind);
 
-        gc_pop();
+        gX();
 
         return vFiles;
 }
 #else
-struct value
-builtin_os_listdir(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_listdir)
 {
         ASSERT_ARGC("os.listdir()", 1);
 
         struct value dir = ARG(0);
         if (dir.type != VALUE_STRING)
-                vm_panic("the argument to os.listdir() must be a string");
+                zP("the argument to os.listdir() must be a string");
 
         B.count = 0;
-        vec_push_n(B, dir.string, dir.bytes);
-        vec_push(B, '\0');
+        vvPn(B, dir.string, dir.bytes);
+        vvP(B, '\0');
 
         DIR *d = opendir(B.items);
         if (d == NULL)
                 return NIL;
 
 
-        struct array *files = value_array_new();
+        struct array *files = vA();
         struct value vFiles = ARRAY(files);
 
-        gc_push(&vFiles);
+        gP(&vFiles);
 
         struct dirent *e;
 
         while (e = readdir(d), e != NULL)
                 if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0)
-                        vec_push(*files, STRING_CLONE(e->d_name, strlen(e->d_name)));
+                        vvP(*files, vSc(e->d_name, strlen(e->d_name)));
 
         closedir(d);
 
-        gc_pop();
+        gX();
 
         return vFiles;
 }
@@ -4853,14 +4717,13 @@ resolve_path(char const *in, char *out)
 }
 
 
-struct value
-builtin_os_realpath(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_realpath)
 {
         ASSERT_ARGC("os.realpath()", 1);
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
-                vm_panic("the argument to os.realpath() must be a string");
+                zP("the argument to os.realpath() must be a string");
 
         if (path.bytes >= PATH_MAX)
                 return NIL;
@@ -4876,21 +4739,20 @@ builtin_os_realpath(int argc, struct value *kwargs)
         if (resolved == NULL)
                 return NIL;
 
-        return STRING_CLONE(out, strlen(out));
+        return vSc(out, strlen(out));
 }
 
-struct value
-builtin_os_ftruncate(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_ftruncate)
 {
         ASSERT_ARGC("os.ftruncate()", 2);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("os.ftruncate(): expected integer as first argument but got: %s", value_show(&fd));
+                zP("os.ftruncate(): expected integer as first argument but got: %s", value_show(ty, &fd));
 
         struct value size = ARG(1);
         if (size.type != VALUE_INTEGER)
-                vm_panic("os.truncate(): expected integer as second argumnet but got: %s", value_show(&size));
+                zP("os.truncate(): expected integer as second argumnet but got: %s", value_show(ty, &size));
 
         return INTEGER(ftruncate(fd.integer, size.integer));
 }
@@ -4934,28 +4796,26 @@ truncate_file(const char* filename, size_t size)
 #endif
 }
 
-struct value
-builtin_os_truncate(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_truncate)
 {
         ASSERT_ARGC("os.truncate()", 2);
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
-                vm_panic("the first argument to os.truncate() must be a string");
+                zP("the first argument to os.truncate() must be a string");
 
         B.count = 0;
-        vec_push_n(B, path.string, path.bytes);
-        vec_push(B, '\0');
+        vvPn(B, path.string, path.bytes);
+        vvP(B, '\0');
 
         struct value size = ARG(1);
         if (size.type != VALUE_INTEGER)
-                vm_panic("os.truncate(): expected integer as second argumnet but got: %s", value_show(&size));
+                zP("os.truncate(): expected integer as second argumnet but got: %s", value_show(ty, &size));
 
         return INTEGER(truncate_file(B.items, size.integer));
 }
 
-struct value
-builtin_os_stat(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_stat)
 {
         ASSERT_ARGC("os.stat()", 1);
 
@@ -4963,17 +4823,17 @@ builtin_os_stat(int argc, struct value *kwargs)
 
         struct value path = ARG(0);
         if (path.type != VALUE_STRING)
-                vm_panic("the argument to os.stat() must be a string");
+                zP("the argument to os.stat() must be a string");
 
         B.count = 0;
-        vec_push_n(B, path.string, path.bytes);
-        vec_push(B, '\0');
+        vvPn(B, path.string, path.bytes);
+        vvP(B, '\0');
 
         int r = stat(B.items, &s);
         if (r != 0)
                return NIL;
 
-        return value_named_tuple(
+        return vTn(
                 "st_dev", INTEGER(s.st_dev),
                 "st_ino", INTEGER(s.st_ino),
                 "st_mode", INTEGER(s.st_mode),
@@ -4987,13 +4847,13 @@ builtin_os_stat(int argc, struct value *kwargs)
                 "st_blksize", INTEGER(s.st_blksize),
 #endif
 #ifdef __APPLE__
-                "st_atim", timespec_tuple(&s.st_atimespec),
-                "st_mtim", timespec_tuple(&s.st_mtimespec),
-                "st_ctim", timespec_tuple(&s.st_ctimespec),
+                "st_atim", timespec_tuple(ty, &s.st_atimespec),
+                "st_mtim", timespec_tuple(ty, &s.st_mtimespec),
+                "st_ctim", timespec_tuple(ty, &s.st_ctimespec),
 #elif defined(__linux__)
-                "st_atim", timespec_tuple(&s.st_atim),
-                "st_mtim", timespec_tuple(&s.st_mtim),
-                "st_ctim", timespec_tuple(&s.st_ctim),
+                "st_atim", timespec_tuple(ty, &s.st_atim),
+                "st_mtim", timespec_tuple(ty, &s.st_mtim),
+                "st_ctim", timespec_tuple(ty, &s.st_ctim),
 #elif defined(_WIN32)
                 "st_atim", INTEGER(s.st_atime),
                 "st_mtim", INTEGER(s.st_mtime),
@@ -5044,24 +4904,22 @@ lock_file(int fd, int operation)
 }
 
 
-struct value
-builtin_os_flock(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_flock)
 {
         ASSERT_ARGC("os.flock()", 2);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.fcntl() must be an integer");
+                zP("the first argument to os.fcntl() must be an integer");
 
         struct value cmd = ARG(1);
         if (cmd.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.fcntl() must be an integer");
+                zP("the second argument to os.fcntl() must be an integer");
 
         return INTEGER(lock_file(fd.integer, cmd.integer));
 }
 
-struct value
-builtin_os_fcntl(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_fcntl)
 {
         ASSERT_ARGC_2("os.fcntl()", 2, 3);
 #ifdef _WIN32
@@ -5070,11 +4928,11 @@ builtin_os_fcntl(int argc, struct value *kwargs)
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to os.fcntl() must be an integer");
+                zP("the first argument to os.fcntl() must be an integer");
 
         struct value cmd = ARG(1);
         if (cmd.type != VALUE_INTEGER)
-                vm_panic("the second argument to os.fcntl() must be an integer");
+                zP("the second argument to os.fcntl() must be an integer");
 
         if (argc == 2)
                 return INTEGER(fcntl(fd.integer, cmd.integer));
@@ -5091,32 +4949,30 @@ builtin_os_fcntl(int argc, struct value *kwargs)
         case F_SETSIG:
 #endif
                 if (arg.type != VALUE_INTEGER)
-                        vm_panic("expected the third argument to be an integer in call to os.fcntl()");
+                        zP("expected the third argument to be an integer in call to os.fcntl()");
                 return INTEGER(fcntl(fd.integer, cmd.integer, (int) arg.integer));
         }
 
-        vm_panic("os.fcntl() functionality not implemented yet");
+        zP("os.fcntl() functionality not implemented yet");
 #endif
 }
 
-struct value
-builtin_os_isatty(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(os_isatty)
 {
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("os.isatty(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("os.isatty(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         return INTEGER(isatty(ARG(0).integer));
 }
 
-struct value
-builtin_termios_tcgetattr(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(termios_tcgetattr)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("termios.tcgetattr()");
 #else
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("termios.tcgetattr(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("termios.tcgetattr(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         struct termios t;
@@ -5125,16 +4981,16 @@ builtin_termios_tcgetattr(int argc, struct value *kwargs)
                 return NIL;
         }
 
-        struct blob *cc = value_blob_new();
+        struct blob *cc = value_blob_new(ty);
         NOGC(cc);
 
         for (int i = 0; i < sizeof t.c_cc; ++i) {
-                vec_push(*cc, t.c_cc[i]);
+                vvP(*cc, t.c_cc[i]);
         }
 
         OKGC(cc);
 
-        return value_named_tuple(
+        return vTn(
                 "iflag", INTEGER(t.c_iflag),
                 "oflag", INTEGER(t.c_oflag),
                 "cflag", INTEGER(t.c_cflag),
@@ -5147,14 +5003,13 @@ builtin_termios_tcgetattr(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_termios_tcsetattr(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(termios_tcsetattr)
 {
 #ifdef _WIN32
         NOT_ON_WINDOWS("termios.tcsetattr()");
 #else
         if (ARG(0).type != VALUE_INTEGER) {
-                vm_panic("termios.tcsetattr(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("termios.tcsetattr(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
         struct termios t;
@@ -5164,11 +5019,11 @@ builtin_termios_tcsetattr(int argc, struct value *kwargs)
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                vm_panic("termios.tcsetattr(_, flags, _): expected integer but got: %s", value_show(&ARG(1)));
+                zP("termios.tcsetattr(_, flags, _): expected integer but got: %s", value_show(ty, &ARG(1)));
         }
 
         if (ARG(2).type != VALUE_TUPLE) {
-                vm_panic("termios.tcsetattr(_, _, t): expected tuple but got: %s", value_show(&ARG(2)));
+                zP("termios.tcsetattr(_, _, t): expected tuple but got: %s", value_show(ty, &ARG(2)));
         }
 
         struct value *iflag = tuple_get(&ARG(2), "iflag");
@@ -5196,15 +5051,13 @@ builtin_termios_tcsetattr(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_errno_get(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(errno_get)
 {
         ASSERT_ARGC("errno.get()", 0);
         return INTEGER(errno);
 }
 
-struct value
-builtin_errno_str(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(errno_str)
 {
         ASSERT_ARGC_2("errno.str()", 0, 1);
 
@@ -5214,17 +5067,16 @@ builtin_errno_str(int argc, struct value *kwargs)
                 e = errno;
         } else {
                 if (ARG(0).type != VALUE_INTEGER)
-                        vm_panic("the argument to errno.str() must be an integer");
+                        zP("the argument to errno.str() must be an integer");
                 e = ARG(0).integer;
         }
 
         char const *s = strerror(e);
 
-        return STRING_CLONE(s, strlen(s));
+        return vSc(s, strlen(s));
 }
 
-struct value
-builtin_time_gettime(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_gettime)
 {
         ASSERT_ARGC_2("time.gettime()", 0, 1);
 
@@ -5232,7 +5084,7 @@ builtin_time_gettime(int argc, struct value *kwargs)
         if (argc == 1) {
                 struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER)
-                        vm_panic("the argument to time.gettime() must be an integer");
+                        zP("the argument to time.gettime() must be an integer");
                 clk = v.integer;
         } else {
                 clk = CLOCK_REALTIME;
@@ -5241,11 +5093,10 @@ builtin_time_gettime(int argc, struct value *kwargs)
         struct timespec t = {0};
         clock_gettime(clk, &t);
 
-        return timespec_tuple(&t);
+        return timespec_tuple(ty, &t);
 }
 
-struct value
-builtin_time_utime(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_utime)
 {
         struct timespec t;
 #ifdef _WIN32
@@ -5258,7 +5109,7 @@ builtin_time_utime(int argc, struct value *kwargs)
         if (argc == 1) {
                 struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER)
-                        vm_panic("the argument to time.utime() must be an integer");
+                        zP("the argument to time.utime() must be an integer");
                 clk = v.integer;
         } else {
                 clk = CLOCK_REALTIME;
@@ -5269,8 +5120,7 @@ builtin_time_utime(int argc, struct value *kwargs)
         return INTEGER((uint64_t)t.tv_sec * 1000 * 1000 + (uint64_t)t.tv_nsec / 1000);
 }
 
-struct value
-builtin_time_localtime(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_localtime)
 {
         ASSERT_ARGC_2("time.localtime()", 0, 1);
 
@@ -5279,7 +5129,7 @@ builtin_time_localtime(int argc, struct value *kwargs)
         if (argc == 1) {
                 struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER) {
-                        vm_panic("the argument to time.localtime() must be an integer");
+                        zP("the argument to time.localtime() must be an integer");
                 }
                 t = v.integer;
         } else {
@@ -5289,7 +5139,7 @@ builtin_time_localtime(int argc, struct value *kwargs)
         struct tm r = {0};
         localtime_r(&t, &r);
 
-        return value_named_tuple(
+        return vTn(
                 "sec",   INTEGER(r.tm_sec),
                 "min",   INTEGER(r.tm_min),
                 "hour",  INTEGER(r.tm_hour),
@@ -5303,8 +5153,7 @@ builtin_time_localtime(int argc, struct value *kwargs)
         );
 }
 
-struct value
-builtin_time_gmtime(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_gmtime)
 {
         ASSERT_ARGC_2("time.gmtime()", 0, 1);
 
@@ -5313,7 +5162,7 @@ builtin_time_gmtime(int argc, struct value *kwargs)
         if (argc == 1) {
                 struct value v = ARG(0);
                 if (v.type != VALUE_INTEGER) {
-                        vm_panic("the argument to time.gmtime() must be an integer");
+                        zP("the argument to time.gmtime() must be an integer");
                 }
                 t = v.integer;
         } else {
@@ -5323,7 +5172,7 @@ builtin_time_gmtime(int argc, struct value *kwargs)
         struct tm r = {0};
         gmtime_r(&t, &r);
 
-        return value_named_tuple(
+        return vTn(
                 "sec",   INTEGER(r.tm_sec),
                 "min",   INTEGER(r.tm_min),
                 "hour",  INTEGER(r.tm_hour),
@@ -5337,8 +5186,7 @@ builtin_time_gmtime(int argc, struct value *kwargs)
         );
 }
 
-struct value
-builtin_time_strftime(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_strftime)
 {
         ASSERT_ARGC_2("time.strftime()", 1, 2);
 
@@ -5346,7 +5194,7 @@ builtin_time_strftime(int argc, struct value *kwargs)
 
         struct value fmt = ARG(0);
         if (fmt.type != VALUE_STRING) {
-                vm_panic("the first argument to time.strftime() must be a string");
+                zP("the first argument to time.strftime() must be a string");
         }
 
         if (argc == 2) {
@@ -5376,7 +5224,7 @@ builtin_time_strftime(int argc, struct value *kwargs)
                                 t.tm_isdst = vp->boolean;
 
                 } else {
-                        vm_panic("the second argument to time.strftime() must be an integer or named tuple");
+                        zP("the second argument to time.strftime() must be an integer or named tuple");
                 }
         } else {
                 time_t sec = time(NULL);
@@ -5384,20 +5232,19 @@ builtin_time_strftime(int argc, struct value *kwargs)
         }
 
         B.count = 0;
-        vec_push_n(B, fmt.string, fmt.bytes);
-        vec_push(B, '\0');
+        vvPn(B, fmt.string, fmt.bytes);
+        vvP(B, '\0');
 
         int n = strftime(buffer, sizeof buffer, B.items, &t);
 
         if (n > 0) {
-                return STRING_CLONE(buffer, n);
+                return vSc(buffer, n);
         } else {
                 return NIL;
         }
 }
 
-struct value
-builtin_time_strptime(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_strptime)
 {
         ASSERT_ARGC("time.strptime()", 2);
 #ifdef _WIN32
@@ -5408,16 +5255,16 @@ builtin_time_strptime(int argc, struct value *kwargs)
         struct value fmt = ARG(1);
 
         if (s.type != VALUE_STRING || fmt.type != VALUE_STRING) {
-                vm_panic("both arguments to time.strptime() must be strings");
+                zP("both arguments to time.strptime() must be strings");
         }
 
         B.count = 0;
 
-        vec_push_n(B, s.string, s.bytes);
-        vec_push(B, '\0');
+        vvPn(B, s.string, s.bytes);
+        vvP(B, '\0');
 
-        vec_push_n(B, fmt.string, fmt.bytes);
-        vec_push(B, '\0');
+        vvPn(B, fmt.string, fmt.bytes);
+        vvP(B, '\0');
 
         char const *sp = B.items;
         char const *fp = B.items + s.bytes + 1;
@@ -5425,7 +5272,7 @@ builtin_time_strptime(int argc, struct value *kwargs)
         struct tm r = {0};
         strptime(sp, fp, &r);
 
-        return value_named_tuple(
+        return vTn(
                 "sec",   INTEGER(r.tm_sec),
                 "min",   INTEGER(r.tm_min),
                 "hour",  INTEGER(r.tm_hour),
@@ -5440,8 +5287,7 @@ builtin_time_strptime(int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-builtin_time_time(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(time_time)
 {
         ASSERT_ARGC_2("time.time()", 0, 1);
 
@@ -5453,7 +5299,7 @@ builtin_time_time(int argc, struct value *kwargs)
         struct value v = ARG(0);
 
         if (v.type != VALUE_TUPLE) {
-                vm_panic("the argument to time.time() must be a named tuple");
+                zP("the argument to time.time() must be a named tuple");
         }
 
         struct value *vp;
@@ -5480,40 +5326,38 @@ builtin_time_time(int argc, struct value *kwargs)
         struct value *utc = NAMED("utc");
 
         return INTEGER(
-                utc != NULL && value_truthy(utc)
+                utc != NULL && value_truthy(ty, utc)
                 ? timegm(&t)
                 : mktime(&t)
         );
 }
 
-struct value
-builtin_stdio_fileno(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fileno)
 {
         ASSERT_ARGC("stdio.fileno()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("the argument to stdio.fileno() must be a pointer");
+                zP("the argument to stdio.fileno() must be a pointer");
         }
 
         return INTEGER(fileno(ARG(0).ptr));
 }
 
-struct value
-builtin_stdio_fdopen(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fdopen)
 {
         ASSERT_ARGC_2("stdio.fdopen()", 1, 2);
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                vm_panic("the first argument to stdio.fdopen() must be an integer");
+                zP("the first argument to stdio.fdopen() must be an integer");
 
         char mode[16] = "a+";
         if (argc == 2) {
                 struct value m = ARG(1);
                 if (m.type != VALUE_STRING)
-                        vm_panic("the second argument to stdio.fdopen() must be a string");
+                        zP("the second argument to stdio.fdopen() must be a string");
                 if (m.bytes >= sizeof mode)
-                        vm_panic("invalid mode string %s passed to stdio.fdopen()", value_show(&m));
+                        zP("invalid mode string %s passed to stdio.fdopen()", value_show(ty, &m));
                 memcpy(mode, m.string, m.bytes);
                 mode[m.bytes] = '\0';
         }
@@ -5525,8 +5369,7 @@ builtin_stdio_fdopen(int argc, struct value *kwargs)
         return PTR(f);
 }
 
-struct value
-builtin_stdio_tmpfile(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_tmpfile)
 {
         ASSERT_ARGC("stdio.tmpfile()", 0);
 
@@ -5535,14 +5378,13 @@ builtin_stdio_tmpfile(int argc, struct value *kwargs)
         return (f == NULL) ? NIL : PTR(f);
 }
 
-struct value
-builtin_stdio_fgets(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fgets)
 {
         ASSERT_ARGC("stdio.fgets()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.fgets() must be a pointer");
+                zP("the argument to stdio.fgets() must be a pointer");
 
         FILE *fp = f.ptr;
 
@@ -5550,11 +5392,11 @@ builtin_stdio_fgets(int argc, struct value *kwargs)
 
         int c;
 
-        ReleaseLock(true);
+        lGv(true);
         while ((c = fgetc_unlocked(fp)) != EOF && c != '\n') {
-                vec_push(B, c);
+                vvP(B, c);
         }
-        TakeLock();
+        lTk();
 
         if (B.count == 0 && c == EOF)
                 return NIL;
@@ -5564,27 +5406,26 @@ builtin_stdio_fgets(int argc, struct value *kwargs)
         if (B.count == 0) {
                 s = (c == EOF) ? NIL : STRING_EMPTY;
         } else {
-                s = STRING_CLONE(B.items, B.count);
+                s = vSc(B.items, B.count);
         }
 
         return s;
 }
 
-struct value
-builtin_stdio_read_signed(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_read_signed)
 {
         ASSERT_ARGC_2("stdio.readSigned()", 1, 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.readSigned() must be a pointer");
+                zP("the first argument to stdio.readSigned() must be a pointer");
 
         FILE *fp = f.ptr;
 
         int size;
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("expected intger as second argument to stdio.readSigned() but got: %s", value_show(&ARG(1)));
+                        zP("expected intger as second argument to stdio.readSigned() but got: %s", value_show(ty, &ARG(1)));
                 }
                 size = ARG(1).integer;
         } else {
@@ -5594,12 +5435,12 @@ builtin_stdio_read_signed(int argc, struct value *kwargs)
         char b[sizeof (intmax_t)];
         int n = min(sizeof b, size);
 
-        ReleaseLock(true);
+        lGv(true);
         if (fread(b, n, 1, fp) != 1) {
-                TakeLock();
+                lTk();
                 return NIL;
         }
-        TakeLock();
+        lTk();
 
         switch (size) {
         case (sizeof (char)):      return INTEGER(*(char *)b);
@@ -5610,14 +5451,13 @@ builtin_stdio_read_signed(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_stdio_write_signed(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_write_signed)
 {
         ASSERT_ARGC_2("stdio.writeSigned()", 2, 3);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.writeSigned() must be a pointer");
+                zP("the first argument to stdio.writeSigned() must be a pointer");
 
         FILE *fp = f.ptr;
 
@@ -5626,7 +5466,7 @@ builtin_stdio_write_signed(int argc, struct value *kwargs)
 
         if (argc == 3) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("expected intger as second argument to stdio.writeSigned() but got: %s", value_show(&ARG(1)));
+                        zP("expected intger as second argument to stdio.writeSigned() but got: %s", value_show(ty, &ARG(1)));
                 }
                 size = ARG(1).integer;
                 x = ARG(2);
@@ -5636,7 +5476,7 @@ builtin_stdio_write_signed(int argc, struct value *kwargs)
         }
 
         if (x.type != VALUE_INTEGER) {
-                vm_panic("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(&x));
+                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(ty, &x));
         }
 
         char b[sizeof (intmax_t)];
@@ -5649,28 +5489,27 @@ builtin_stdio_write_signed(int argc, struct value *kwargs)
         default: return BOOLEAN(false);
         }
 
-        ReleaseLock(true);
+        lGv(true);
         size_t n = fwrite_unlocked(b, size, 1, fp);
-        TakeLock();
+        lTk();
 
         return BOOLEAN(n == 1);
 }
 
-struct value
-builtin_stdio_read_unsigned(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_read_unsigned)
 {
         ASSERT_ARGC_2("stdio.readUnsigned()", 1, 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.readUnsigned() must be a pointer");
+                zP("the first argument to stdio.readUnsigned() must be a pointer");
 
         FILE *fp = f.ptr;
 
         int size;
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("expected intger as second argument to stdio.readUnsigned() but got: %s", value_show(&ARG(1)));
+                        zP("expected intger as second argument to stdio.readUnsigned() but got: %s", value_show(ty, &ARG(1)));
                 }
                 size = ARG(1).integer;
         } else {
@@ -5686,14 +5525,13 @@ builtin_stdio_read_unsigned(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_stdio_write_unsigned(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_write_unsigned)
 {
         ASSERT_ARGC_2("stdio.writeUnsigned()", 2, 3);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.writeUnsigned() must be a pointer");
+                zP("the first argument to stdio.writeUnsigned() must be a pointer");
 
         FILE *fp = f.ptr;
 
@@ -5702,7 +5540,7 @@ builtin_stdio_write_unsigned(int argc, struct value *kwargs)
 
         if (argc == 3) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        vm_panic("expected intger as second argument to stdio.writeUnsigned() but got: %s", value_show(&ARG(1)));
+                        zP("expected intger as second argument to stdio.writeUnsigned() but got: %s", value_show(ty, &ARG(1)));
                 }
                 size = ARG(1).integer;
                 x = ARG(2);
@@ -5712,7 +5550,7 @@ builtin_stdio_write_unsigned(int argc, struct value *kwargs)
         }
 
         if (x.type != VALUE_INTEGER) {
-                vm_panic("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(&x));
+                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(ty, &x));
         }
 
         char b[sizeof (uintmax_t)];
@@ -5725,132 +5563,127 @@ builtin_stdio_write_unsigned(int argc, struct value *kwargs)
         default: return BOOLEAN(false);
         }
 
-        ReleaseLock(true);
+        lGv(true);
         size_t n = fwrite_unlocked(b, size, 1, fp);
-        TakeLock();
+        lTk();
 
         return BOOLEAN(n == 1);
 }
 
-struct value
-builtin_stdio_read_double(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_read_double)
 {
         ASSERT_ARGC("stdio.readDouble()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.readDouble() must be a pointer");
+                zP("the first argument to stdio.readDouble() must be a pointer");
 
         double x;
         FILE *fp = f.ptr;
 
-        ReleaseLock(true);
+        lGv(true);
 
         if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
-                TakeLock();
+                lTk();
                 return REAL(x);
         } else {
-                TakeLock();
+                lTk();
                 return NIL;
         }
 }
 
-struct value
-builtin_stdio_read_float(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_read_float)
 {
         ASSERT_ARGC("stdio.readFloat()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.readFloat() must be a pointer");
+                zP("the first argument to stdio.readFloat() must be a pointer");
 
         float x;
         FILE *fp = f.ptr;
 
-        ReleaseLock(true);
+        lGv(true);
 
         if (fread_unlocked(&x, sizeof x, 1, fp) == 1) {
-                TakeLock();
+                lTk();
                 return REAL(x);
         } else {
-                TakeLock();
+                lTk();
                 return NIL;
         }
 }
 
-struct value
-builtin_stdio_write_float(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_write_float)
 {
         ASSERT_ARGC("stdio.writeFloat()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.writeFloat() must be a pointer");
+                zP("the first argument to stdio.writeFloat() must be a pointer");
 
         struct value x = ARG(1);
         if (x.type != VALUE_REAL)
-                vm_panic("the second argument to stdio.writeFloat() must be a float");
+                zP("the second argument to stdio.writeFloat() must be a float");
 
         FILE *fp = f.ptr;
         float fx = (float)x.real;
 
-        ReleaseLock(true);
+        lGv(true);
 
         size_t n = fwrite_unlocked(&fx, sizeof fx, 1, fp);
 
-        TakeLock();
+        lTk();
 
         return BOOLEAN(n > 0);
 }
 
-struct value
-builtin_stdio_write_double(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_write_double)
 {
         ASSERT_ARGC("stdio.writeDouble()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.writeDouble() must be a pointer");
+                zP("the first argument to stdio.writeDouble() must be a pointer");
 
         struct value x = ARG(1);
         if (x.type != VALUE_REAL)
-                vm_panic("the second argument to stdio.writeDouble() must be a float");
+                zP("the second argument to stdio.writeDouble() must be a float");
 
         FILE *fp = f.ptr;
         double fx = x.real;
 
-        ReleaseLock(true);
+        lGv(true);
 
         size_t n = fwrite_unlocked(&fx, sizeof fx, 1, fp);
 
-        TakeLock();
+        lTk();
 
         return BOOLEAN(n > 0);
 }
 
-struct value
-builtin_stdio_fread(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fread)
 {
         ASSERT_ARGC_2("stdio.fread()", 2, 3);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.fread() must be a pointer");
+                zP("the first argument to stdio.fread() must be a pointer");
 
         struct value n = ARG(1);
         if (n.type != VALUE_INTEGER || n.integer < 0)
-                vm_panic("the second argument to stdio.fread() must be a non-negative integer");
+                zP("the second argument to stdio.fread() must be a non-negative integer");
 
         struct blob *b;
         bool existing_blob = (argc == 3) && ARG(2).type != VALUE_NIL;
 
         if (existing_blob) {
                 if (ARG(2).type != VALUE_BLOB) {
-                        vm_panic("stdio.fread() expects a blob as the third argument but got: %s", value_show(&ARG(2)));
+                        zP("stdio.fread() expects a blob as the third argument but got: %s", value_show(ty, &ARG(2)));
                 }
                 b = ARG(2).blob;
         } else {
-                b = value_blob_new();
+                b = value_blob_new(ty);
         }
 
         NOGC(b);
@@ -5859,12 +5692,12 @@ builtin_stdio_fread(int argc, struct value *kwargs)
         intmax_t bytes = 0;
         int c;
 
-        ReleaseLock(true);
+        lGv(true);
         while (bytes < n.integer && (c = fgetc_unlocked(fp)) != EOF) {
-                vec_push(*b, c);
+                vvP(*b, c);
                 bytes += 1;
         }
-        TakeLock();
+        lTk();
 
         OKGC(b);
 
@@ -5878,46 +5711,44 @@ builtin_stdio_fread(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_stdio_slurp(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_slurp)
 {
-        ASSERT_ARGC("stdio.slurp()", 1);
+        ASSERT_ARGC("stdio.slurp(ty)", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.slurp() must be a pointer");
+                zP("the argument to stdio.slurp(ty) must be a pointer");
 
         FILE *fp = f.ptr;
         int c;
 
         B.count = 0;
 
-        ReleaseLock(true);
+        lGv(true);
         while ((c = fgetc_unlocked(fp)) != EOF) {
-                vec_push(B, c);
+                vvP(B, c);
         }
-        TakeLock();
+        lTk();
 
         if (c == EOF && B.count == 0)
                 return NIL;
 
-        struct value s = STRING_CLONE(B.items, B.count);
+        struct value s = vSc(B.items, B.count);
 
         return s;
 }
 
-struct value
-builtin_stdio_fgetc(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fgetc)
 {
         ASSERT_ARGC("stdio.fgetc()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.fgetc() must be a pointer");
+                zP("the argument to stdio.fgetc() must be a pointer");
 
-        ReleaseLock(true);
+        lGv(true);
         int c = fgetc_unlocked(f.ptr);
-        TakeLock();
+        lTk();
 
         if (c == EOF)
                 return NIL;
@@ -5925,22 +5756,21 @@ builtin_stdio_fgetc(int argc, struct value *kwargs)
                 return INTEGER(c);
 }
 
-struct value
-builtin_stdio_fputc(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fputc)
 {
         ASSERT_ARGC("stdio.fputc()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.fputc() must be a pointer");
+                zP("the first argument to stdio.fputc() must be a pointer");
 
         if (ARG(1).type != VALUE_INTEGER) {
-                vm_panic("the second argument to stdio.fputc() must be an integer");
+                zP("the second argument to stdio.fputc() must be an integer");
         }
 
-        ReleaseLock(true);
+        lGv(true);
         int c = fputc_unlocked((int)ARG(1).integer, f.ptr);
-        TakeLock();
+        lTk();
 
         if (c == EOF)
                 return NIL;
@@ -5948,14 +5778,13 @@ builtin_stdio_fputc(int argc, struct value *kwargs)
                 return INTEGER(c);
 }
 
-struct value
-builtin_stdio_fwrite(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fwrite)
 {
         ASSERT_ARGC("stdio.fwrite()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.fwrite() must be a pointer");
+                zP("the argument to stdio.fwrite() must be a pointer");
 
         struct value s = ARG(1);
 
@@ -5967,18 +5796,17 @@ builtin_stdio_fwrite(int argc, struct value *kwargs)
         case VALUE_INTEGER:
                 return INTEGER(fputc_unlocked((unsigned char)s.integer, f.ptr));
         default:
-                vm_panic("invalid type for second argument passed to stdio.fwrite()");
+                zP("invalid type for second argument passed to stdio.fwrite()");
         }
 }
 
-struct value
-builtin_stdio_puts(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_puts)
 {
         ASSERT_ARGC("stdio.puts()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.puts() must be a pointer");
+                zP("the argument to stdio.puts() must be a pointer");
 
         struct value s = ARG(1);
 
@@ -5997,7 +5825,7 @@ builtin_stdio_puts(int argc, struct value *kwargs)
                         return NIL;
                 break;
         default:
-                vm_panic("the second argument to stdio.puts() must be a string or a blob");
+                zP("the second argument to stdio.puts() must be a string or a blob");
         }
 
         if (fputc_unlocked('\n', f.ptr) == EOF)
@@ -6006,14 +5834,13 @@ builtin_stdio_puts(int argc, struct value *kwargs)
         return INTEGER(r + 1);
 }
 
-struct value
-builtin_stdio_fflush(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fflush)
 {
         ASSERT_ARGC("stdio.fflush()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.fflush() must be a pointer");
+                zP("the argument to stdio.fflush() must be a pointer");
 
         if (fflush(f.ptr) == EOF)
                 return NIL;
@@ -6021,14 +5848,13 @@ builtin_stdio_fflush(int argc, struct value *kwargs)
         return INTEGER(0);
 }
 
-struct value
-builtin_stdio_fclose(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fclose)
 {
         ASSERT_ARGC("stdio.fclose()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.fclose() must be a pointer");
+                zP("the argument to stdio.fclose() must be a pointer");
 
         if (fclose(f.ptr) == EOF)
                 return NIL;
@@ -6036,82 +5862,76 @@ builtin_stdio_fclose(int argc, struct value *kwargs)
         return INTEGER(0);
 }
 
-struct value
-builtin_stdio_clearerr(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_clearerr)
 {
         ASSERT_ARGC("stdio.clearerr()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the argument to stdio.clearerr() must be a pointer");
+                zP("the argument to stdio.clearerr() must be a pointer");
 
         clearerr(f.ptr);
 
         return NIL;
 }
 
-struct value
-builtin_stdio_setvbuf(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_setvbuf)
 {
         ASSERT_ARGC("stdio.setvbuf()", 2);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.setvbuf() must be a pointer");
+                zP("the first argument to stdio.setvbuf() must be a pointer");
 
         struct value mode = ARG(1);
         if (mode.type != VALUE_INTEGER)
-                vm_panic("the second argument to stdio.setvbuf() must be an integer");
+                zP("the second argument to stdio.setvbuf() must be an integer");
 
         return INTEGER(setvbuf(f.ptr, NULL, mode.integer, 0));
 }
 
-struct value
-builtin_stdio_ftell(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_ftell)
 {
         ASSERT_ARGC("stdio.ftell()", 1);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.ftell() must be a pointer");
+                zP("the first argument to stdio.ftell() must be a pointer");
 
         return INTEGER(ftell(f.ptr));
 }
 
-struct value
-builtin_stdio_fseek(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(stdio_fseek)
 {
         ASSERT_ARGC("stdio.fseek()", 3);
 
         struct value f = ARG(0);
         if (f.type != VALUE_PTR)
-                vm_panic("the first argument to stdio.fseek() must be a pointer");
+                zP("the first argument to stdio.fseek() must be a pointer");
 
         struct value off = ARG(1);
         if (off.type != VALUE_INTEGER)
-                vm_panic("the second argument to stdio.fseek() must be an integer");
+                zP("the second argument to stdio.fseek() must be an integer");
 
         struct value whence = ARG(2);
         if (whence.type != VALUE_INTEGER)
-                vm_panic("the third argument to stdio.fseek() must be an integer");
+                zP("the third argument to stdio.fseek() must be an integer");
 
         return INTEGER(fseek(f.ptr, off.integer, whence.integer));
 }
 
-struct value
-builtin_object(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(object)
 {
         ASSERT_ARGC("object()", 1);
 
         struct value class = ARG(0);
         if (class.type != VALUE_CLASS)
-                vm_panic("the argument to object() must be a class");
+                zP("the argument to object() must be a class");
 
-        return OBJECT(object_new(class.class), class.class);
+        return OBJECT(object_new(ty, class.class), class.class);
 }
 
-struct value
-builtin_bind(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(bind)
 {
         ASSERT_ARGC("bindMethod()", 2);
 
@@ -6122,16 +5942,16 @@ builtin_bind(int argc, struct value *kwargs)
         struct value *fp;
 
         if (f.type == VALUE_METHOD) {
-                this = gc_alloc_object(sizeof x, GC_VALUE);
+                this = mAo(sizeof x, GC_VALUE);
                 *this = x;
                 return METHOD(f.name, f.method, this);
         }
 
         if (f.type == VALUE_FUNCTION) {
-                this = gc_alloc_object(sizeof x, GC_VALUE);
+                this = mAo(sizeof x, GC_VALUE);
                 NOGC(this);
                 *this = x;
-                fp = gc_alloc_object(sizeof x, GC_VALUE);
+                fp = mAo(sizeof x, GC_VALUE);
                 *fp = f;
                 OKGC(this);
                 return METHOD(f.name, fp, this);
@@ -6140,8 +5960,7 @@ builtin_bind(int argc, struct value *kwargs)
         return f;
 }
 
-struct value
-builtin_doc_ref(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(doc_ref)
 {
         ASSERT_ARGC("docRef()", 1);
 
@@ -6156,8 +5975,7 @@ builtin_doc_ref(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_unbind(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(unbind)
 {
         ASSERT_ARGC("unbindMethod()", 1);
 
@@ -6170,8 +5988,7 @@ builtin_unbind(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_define_method(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(define_method)
 {
         ASSERT_ARGC("defineMethod()", 3);
 
@@ -6180,29 +5997,28 @@ builtin_define_method(int argc, struct value *kwargs)
         struct value f = ARG(2);
 
         if (class.type != VALUE_CLASS) {
-                vm_panic("the first argument to defineMethod() must be a class");
+                zP("the first argument to defineMethod() must be a class");
         }
 
         if (name.type != VALUE_STRING) {
-                vm_panic("the second argument to defineMethod() must be a string");
+                zP("the second argument to defineMethod() must be a string");
         }
 
         if (f.type != VALUE_FUNCTION) {
-                vm_panic("the third argument to defineMethod() must be a function");
+                zP("the third argument to defineMethod() must be a function");
         }
 
         snprintf(buffer, sizeof buffer - 1, "%*s", (int)name.bytes, name.string);
 
-        class_add_method(class.class, sclone(buffer), f);
+        class_add_method(ty, class.class, sclone(ty, buffer), f);
 
         return NIL;
 }
 
-struct value
-builtin_apply(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(apply)
 {
         if (argc == 0) {
-                vm_panic("apply() expects at least 1 argument but got %d", argc);
+                zP("apply() expects at least 1 argument but got %d", argc);
         }
 
         Value g = ARG(0);
@@ -6214,23 +6030,23 @@ builtin_apply(int argc, struct value *kwargs)
         Value f = (self == NULL || g.type != VALUE_METHOD) ? g : METHOD(g.name, &g, self);
 
         if (!CALLABLE(f)) {
-                vm_panic("apply(): non-callable argument: %s", value_show_color(&f));
+                zP("apply(): non-callable argument: %s", value_show_color(ty, &f));
         }
 
         for (int i = 1; i < argc; ++i) {
-                vm_push(&ARG(1));
+                vmP(&ARG(1));
         }
 
         return vm_call_ex(
+                ty,
                 &f,
                 argc - 1,
                 kws,
-                collect != NULL && value_truthy(collect)
+                collect != NULL && value_truthy(ty, collect)
         );
 }
 
-struct value
-builtin_type(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(type)
 {
         ASSERT_ARGC("type()", 1);
 
@@ -6243,14 +6059,14 @@ builtin_type(int argc, struct value *kwargs)
                         return v;
                 }
 
-                struct value *types = gc_alloc_object(n * sizeof (Value), GC_TUPLE);
+                struct value *types = mAo(n * sizeof (Value), GC_TUPLE);
 
                 NOGC(types);
 
                 for (int i = 0; i < n; ++i) {
-                        vm_push(&v.items[i]);
-                        types[i] = builtin_type(1, NULL);
-                        vm_pop();
+                        vmP(&v.items[i]);
+                        types[i] = builtin_type(ty, 1, NULL);
+                        vmX();
                 }
 
                 OKGC(types);
@@ -6259,7 +6075,7 @@ builtin_type(int argc, struct value *kwargs)
         }
 
         if (v.tags != 0) {
-                return TAG(tags_first(v.tags));
+                return TAG(tags_first(ty, v.tags));
         }
 
         switch (v.type) {
@@ -6285,8 +6101,7 @@ builtin_type(int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_subclass(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(subclass)
 {
         ASSERT_ARGC("subclass?()", 2);
 
@@ -6294,35 +6109,34 @@ builtin_subclass(int argc, struct value *kwargs)
         struct value super = ARG(1);
 
         if (sub.type != VALUE_CLASS || super.type != VALUE_CLASS) {
-                vm_panic("the arguments to subclass?() must be classes");
+                zP("the arguments to subclass?() must be classes");
         }
 
-        return BOOLEAN(class_is_subclass(sub.class, super.class));
+        return BOOLEAN(class_is_subclass(ty, sub.class, super.class));
 }
 
-struct value
-builtin_members_list(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(members_list)
 {
         ASSERT_ARGC("members()", 1);
 
         struct value o = ARG(0);
 
-        Array *a = value_array_new();
+        Array *a = vA();
         Value items = ARRAY(a);
 
-        gc_push(&items);
+        gP(&items);
 
         switch (o.type) {
         case VALUE_OBJECT:
                 for (int i = 0; i < TABLE_SIZE; ++i) {
                         for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
                                 char const *key = o.object->buckets[i].names.items[v];
-                                Value member = value_tuple(2);
+                                Value member = vT(2);
                                 NOGC(member.items);
-                                member.items[0] = STRING_CLONE(key, strlen(key));
+                                member.items[0] = vSc(key, strlen(key));
                                 member.items[1] = o.object->buckets[i].values.items[v];
                                 NOGC(member.items[0].string);
-                                value_array_push(a, member);
+                                vAp(a, member);
                                 OKGC(member.items[0].string);
                                 OKGC(member.items);
                         }
@@ -6331,12 +6145,12 @@ builtin_members_list(int argc, struct value *kwargs)
                 break;
         case VALUE_TUPLE:
                 for (int i = 0; i < o.count; ++i) {
-                        Value entry = value_tuple(2);
+                        Value entry = vT(2);
                         Value *pair = entry.items;
                         NOGC(pair);
-                        value_array_push(a, entry);
+                        vAp(a, entry);
                         if (o.names != NULL && o.names[i] != NULL) {
-                                pair[0] = STRING_CLONE(o.names[i], strlen(o.names[i]));
+                                pair[0] = vSc(o.names[i], strlen(o.names[i]));
                                 pair[1] = o.items[i];
                         } else {
                                 pair[0] = INTEGER(i);
@@ -6347,38 +6161,37 @@ builtin_members_list(int argc, struct value *kwargs)
 
                 break;
         default:
-                gc_pop();
+                gX();
                 return NIL;
         }
 
-        gc_pop();
+        gX();
 
         return items;
 }
 
-struct value
-builtin_members(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(members)
 {
         ASSERT_ARGC("members()", 1);
 
         Value *list = NAMED("list");
-        if (list != NULL && value_truthy(list)) {
-                return builtin_members_list(argc, NULL);
+        if (list != NULL && value_truthy(ty, list)) {
+                return builtin_members_list(ty, argc, NULL);
         }
 
         struct value o = ARG(0);
 
-        struct dict *members = dict_new();
+        struct dict *members = dict_new(ty);
         struct value vMembers = DICT(members);
 
-        gc_push(&vMembers);
+        gP(&vMembers);
 
         switch (o.type) {
         case VALUE_OBJECT:
                 for (int i = 0; i < TABLE_SIZE; ++i) {
                         for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
                                 char const *key = o.object->buckets[i].names.items[v];
-                                dict_put_member(members, key, o.object->buckets[i].values.items[v]);
+                                dict_put_member(ty, members, key, o.object->buckets[i].values.items[v]);
                         }
                 }
 
@@ -6386,28 +6199,27 @@ builtin_members(int argc, struct value *kwargs)
         case VALUE_TUPLE:
                 for (int i = 0; i < o.count; ++i) {
                         if (o.names != NULL && o.names[i] != NULL) {
-                                struct value key = STRING_CLONE(o.names[i], strlen(o.names[i]));
+                                struct value key = vSc(o.names[i], strlen(o.names[i]));
                                 NOGC(key.string);
-                                dict_put_value(members, key, o.items[i]);
+                                dict_put_value(ty, members, key, o.items[i]);
                                 OKGC(key.string);
                         } else {
-                                dict_put_value(members, INTEGER(i), o.items[i]);
+                                dict_put_value(ty, members, INTEGER(i), o.items[i]);
                         }
                 }
 
                 break;
         default:
-                gc_pop();
+                gX();
                 return NIL;
         }
 
-        gc_pop();
+        gX();
 
         return DICT(members);
 }
 
-struct value
-builtin_member(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(member)
 {
         ASSERT_ARGC_2("member()", 2, 3);
 
@@ -6415,7 +6227,7 @@ builtin_member(int argc, struct value *kwargs)
         struct value name = ARG(1);
 
         if (name.type != VALUE_STRING) {
-                vm_panic("the second argument to member() must be a string");
+                zP("the second argument to member() must be a string");
         }
 
         if (name.bytes >= sizeof buffer) {
@@ -6427,36 +6239,36 @@ builtin_member(int argc, struct value *kwargs)
         buffer[name.bytes] = '\0';
 
         if (argc == 2) {
-                struct value v = GetMember(o, buffer, strhash(buffer), false);
+                struct value v = GetMember(ty, o, buffer, strhash(buffer), false);
                 return (v.type == VALUE_NONE) ? NIL : v;
         } else if (o.type == VALUE_OBJECT) {
                 static _Thread_local struct table NameTable;
 
-                struct value *np = table_look(&NameTable, buffer);
+                struct value *np = table_look(ty, &NameTable, buffer);
 
                 table_put(
+                        ty,
                         o.object,
-                        ((np == NULL) ? table_put(&NameTable, buffer, PTR(sclone(buffer))) : np)->ptr,
+                        ((np == NULL) ? table_put(ty, &NameTable, buffer, PTR(sclone(ty, buffer))) : np)->ptr,
                         ARG(2)
                 );
 
                 return NIL;
         } else {
-                vm_panic("member(o, _, _): expected object but got: %s", value_show(&o));
+                zP("member(o, _, _): expected object but got: %s", value_show(ty, &o));
         }
 }
 
-struct value
-builtin_finalizer(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(finalizer)
 {
         ASSERT_ARGC("setFinalizer()", 2);
 
         if (ARG(0).type != VALUE_OBJECT) {
-                vm_panic("the first argument to setFinalizer() must be an object");
+                zP("the first argument to setFinalizer() must be an object");
         }
 
         if (!CALLABLE(ARG(1))) {
-                vm_panic("the second argument to setFinalizer() must be callable");
+                zP("the second argument to setFinalizer() must be callable");
         }
 
         ARG(0).object->finalizer = ARG(1);
@@ -6465,7 +6277,7 @@ builtin_finalizer(int argc, struct value *kwargs)
 }
 
 static struct value
-fdoc(struct value const *f)
+fdoc(Ty *ty, struct value const *f)
 {
         char name_buf[512] = {0};
 
@@ -6473,68 +6285,67 @@ fdoc(struct value const *f)
         char const *name = name_of(f);
         char const *proto = proto_of(f);
 
-        GC_OFF_COUNT += 1;
+        GC_STOP();
 
         struct value n;
         if (f->info[6] != -1) {
-                snprintf(name_buf, sizeof name_buf, "%s.%s", class_name(f->info[6]), name);
-                n = STRING_CLONE(name_buf, strlen(name_buf));
+                snprintf(name_buf, sizeof name_buf, "%s.%s", class_name(ty, f->info[6]), name);
+                n = vSc(name_buf, strlen(name_buf));
         } else if (name != NULL) {
-                n = STRING_CLONE(name, strlen(name));
+                n = vSc(name, strlen(name));
         } else {
                 n = NIL;
         }
-        struct value p = (proto == NULL) ? NIL : STRING_CLONE(proto, strlen(proto));
-        struct value doc = (s == NULL) ? NIL : STRING_CLONE(s, strlen(s));
-        struct value v = value_tuple(3);
+        struct value p = (proto == NULL) ? NIL : vSc(proto, strlen(proto));
+        struct value doc = (s == NULL) ? NIL : vSc(s, strlen(s));
+        struct value v = vT(3);
         v.items[0] = n;
         v.items[1] = p;
         v.items[2] = doc;
 
-        GC_OFF_COUNT -= 1;
+        GC_RESUME();
 
         return v;
 }
 
 static void
-mdocs(struct table const *t, struct array *a)
+mdocs(Ty *ty, struct table const *t, struct array *a)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
                 for (int j = 0; j < t->buckets[i].values.count; ++j) {
-                        value_array_push(a, fdoc(&t->buckets[i].values.items[j]));
+                        vAp(a, fdoc(ty, &t->buckets[i].values.items[j]));
                 }
         }
 }
 
-struct value
-builtin_doc(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(doc)
 {
         char mod[256];
         char id[256];
 
         if (argc == 0 || argc > 2) {
-                vm_panic("doc(): expected 1 or 2 arguments but got: %d", argc);
+                zP("doc(): expected 1 or 2 arguments but got: %d", argc);
         }
 
         if (ARG(0).type == VALUE_FUNCTION) {
-                return fdoc(&ARG(0));
+                return fdoc(ty, &ARG(0));
         }
 
         if (ARG(0).type == VALUE_CLASS) {
-                GC_OFF_COUNT += 1;
+                GC_STOP();
 
-                char const *s = class_doc(ARG(0).class);
-                char const *name = class_name(ARG(0).class);
-                struct value v = value_tuple(3);
+                char const *s = class_doc(ty, ARG(0).class);
+                char const *name = class_name(ty, ARG(0).class);
+                struct value v = vT(3);
                 v.items[0] = STRING_NOGC(name, strlen(name));
-                v.items[1] = (s == NULL) ? NIL : STRING_CLONE(s, strlen(s));
-                v.items[2] = ARRAY(value_array_new());
-                mdocs(class_methods(ARG(0).class), v.items[2].array);
-                mdocs(class_static_methods(ARG(0).class), v.items[2].array);
-                mdocs(class_getters(ARG(0).class), v.items[2].array);
-                mdocs(class_setters(ARG(0).class), v.items[2].array);
+                v.items[1] = (s == NULL) ? NIL : vSc(s, strlen(s));
+                v.items[2] = ARRAY(vA());
+                mdocs(ty, class_methods(ty, ARG(0).class), v.items[2].array);
+                mdocs(ty, class_static_methods(ty, ARG(0).class), v.items[2].array);
+                mdocs(ty, class_getters(ty, ARG(0).class), v.items[2].array);
+                mdocs(ty, class_setters(ty, ARG(0).class), v.items[2].array);
 
-                GC_OFF_COUNT -= 1;
+                GC_RESUME();
 
                 return v;
         }
@@ -6549,37 +6360,35 @@ builtin_doc(int argc, struct value *kwargs)
 
         if (argc == 2) {
                 if (ARG(1).type != VALUE_STRING) {
-                        vm_panic("doc(): expected function or string but got: %s", value_show_color(&ARG(1)));
+                        zP("doc(): expected function or string but got: %s", value_show_color(ty, &ARG(1)));
                 }
                 snprintf(mod, sizeof mod, "%.*s", (int)ARG(1).bytes, ARG(1).string);
-                s = compiler_lookup(mod, id);
+                s = compiler_lookup(ty, mod, id);
         } else {
-                s = compiler_lookup(NULL, id);
+                s = compiler_lookup(ty, NULL, id);
         }
 
         if (s == NULL || s->doc == NULL)
                 return NIL;
 
-        return STRING_CLONE(s->doc, strlen(s->doc));
+        return vSc(s->doc, strlen(s->doc));
 }
 
-struct value
-builtin_ty_gc(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_gc)
 {
         ASSERT_ARGC("ty.gc()", 0);
-        DoGC();
+        DoGC(ty);
         return NIL;
 }
 
-struct value
-builtin_ty_bt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_bt)
 {
         ASSERT_ARGC("ty.bt()", 0);
 
-        FrameStack *frames = vm_get_frames();
-        Array *avFrames = value_array_new();
+        FrameStack *frames = vm_get_frames(ty);
+        Array *avFrames = vA();
 
-        ++GC_OFF_COUNT;
+        GC_STOP();
 
         for (size_t i = 0; i < frames->count; ++i) {
                 if (frames->items[i].ip == NULL) {
@@ -6589,9 +6398,9 @@ builtin_ty_bt(int argc, struct value *kwargs)
                 Value *f = &frames->items[i].f;
                 char const *name = name_of(f);
                 char const *ip = frames->items[i].ip;
-                Expr const *e = compiler_find_expr(ip - 1);
+                Expr const *e = compiler_find_expr(ty, ip - 1);
 
-                Value entry = value_tuple(5);
+                Value entry = vT(5);
 
                 entry.items[0] = *f;
                 entry.items[1] = STRING_NOGC(name, strlen(name));
@@ -6599,34 +6408,31 @@ builtin_ty_bt(int argc, struct value *kwargs)
                 entry.items[3] = (e == NULL) ? NIL : INTEGER(e->start.line);
                 entry.items[4] = (e == NULL) ? NIL : INTEGER(e->start.col);
 
-                value_array_push(avFrames, entry);
+                vAp(avFrames, entry);
         }
 
-        --GC_OFF_COUNT;
+        GC_RESUME();
 
         return ARRAY(avFrames);
 }
 
-struct value
-builtin_ty_unlock(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_unlock)
 {
-        ReleaseLock(true);
+        lGv(true);
         return NIL;
 }
 
-struct value
-builtin_ty_lock(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_lock)
 {
-        TakeLock();
+        lTk();
         return NIL;
 }
 
-struct value
-builtin_ty_gensym(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_gensym)
 {
-        ASSERT_ARGC("ty.gensym()", 0);
+        ASSERT_ARGC("ty.gensym(ty)", 0);
 
-        char const *s = gensym();
+        char const *s = gensym(ty);
 
         return STRING_NOGC(s, strlen(s));
 }
@@ -6639,13 +6445,13 @@ beginning_of(char const *s)
 }
 
 static Value
-make_location(Location const *loc, char const *start)
+make_location(Ty *ty, Location const *loc, char const *start)
 {
         if (loc->s == NULL) {
                 return NIL;
         }
 
-        return value_named_tuple(
+        return vTn(
                 "line", INTEGER(loc->line),
                 "col",  INTEGER(loc->col),
                 "byte", INTEGER(loc->s - start),
@@ -6654,18 +6460,18 @@ make_location(Location const *loc, char const *start)
 }
 
 Value
-make_token(Token const *t)
+make_token(Ty *ty, Token const *t)
 {
         char *type = NULL;
 
         char const *s = beginning_of(t->start.s);
-        Value start = make_location(&t->start, s);
-        Value end = make_location(&t->end, s);
+        Value start = make_location(ty, &t->start, s);
+        Value end = make_location(ty, &t->end, s);
 
 #define T(name) (STRING_NOGC(#name, strlen(#name)))
         switch (t->type) {
         case TOKEN_IDENTIFIER:
-                return value_named_tuple(
+                return vTn(
                         "type",   T(id),
                         "start",  start,
                         "end",    end,
@@ -6674,7 +6480,7 @@ make_token(Token const *t)
                         NULL
                 );
         case TOKEN_INTEGER:
-                return value_named_tuple(
+                return vTn(
                         "type",   T(int),
                         "start",  start,
                         "end",    end,
@@ -6682,7 +6488,7 @@ make_token(Token const *t)
                         NULL
                 );
         case TOKEN_STRING:
-                return value_named_tuple(
+                return vTn(
                         "type",   T(string),
                         "start",  start,
                         "end",    end,
@@ -6690,7 +6496,7 @@ make_token(Token const *t)
                         NULL
                 );
         case TOKEN_COMMENT:
-                return value_named_tuple(
+                return vTn(
                         "type",    T(comment),
                         "start",   start,
                         "end",     end,
@@ -6761,10 +6567,10 @@ make_token(Token const *t)
 #undef T
 
         if (type == NULL) {
-                type = sclonea((char const []){(char)t->type, '\0'});
+                type = sclonea(ty, (char const []){(char)t->type, '\0'});
         }
 
-        return value_named_tuple(
+        return vTn(
                 "type",   STRING_NOGC(type, strlen(type)),
                 "start",  start,
                 "end",    end,
@@ -6773,25 +6579,24 @@ make_token(Token const *t)
 }
 
 static Value
-make_tokens(TokenVector const *ts)
+make_tokens(Ty *ty, TokenVector const *ts)
 {
-        Array *a = value_array_new();
+        Array *a = vA();
 
-        GC_OFF_COUNT += 1;
+        GC_STOP();
 
         for (int i = 0; i < ts->count; ++i) {
                 if (ts->items[i].ctx != LEX_FAKE) {
-                        value_array_push(a, make_token(&ts->items[i]));
+                        vAp(a, make_token(ty, &ts->items[i]));
                 }
         }
 
-        GC_OFF_COUNT -= 1;
+        GC_RESUME();
 
         return ARRAY(a);
 }
 
-struct value
-builtin_eval(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(eval)
 {
         ASSERT_ARGC_2("ty.eval()", 1, 2);
 
@@ -6806,48 +6611,49 @@ builtin_eval(int argc, struct value *kwargs)
 
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
-                vec_push_unchecked(B, '\0');
-                vec_push_n_unchecked(B, PRE, strlen(PRE));
-                vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-                vec_push_n_unchecked(B, POST, (sizeof POST));
-                Arena old = NewArenaGC(1 << 22);
-                struct statement **prog = parse(B.items + 1, "(eval)");
+                vec_push_unchecked(ty, B, '\0');
+                vec_push_n_unchecked(ty, B, PRE, strlen(PRE));
+                vec_push_n_unchecked(ty, B, ARG(0).string, ARG(0).bytes);
+                vec_push_n_unchecked(ty, B, POST, (sizeof POST));
+                Arena old = amNg(1 << 22);
+                struct statement **prog = parse(ty, B.items + 1, "(eval)");
 
                 if (prog == NULL) {
-                        char const *msg = parse_error();
-                        struct value e = Err(STRING_CLONE(msg, strlen(msg)));
-                        ReleaseArena(old);
-                        vm_throw(&e);
+                        char const *msg = parse_error(ty);
+                        struct value e = Err(ty, vSc(msg, strlen(msg)));
+                        ReleaseArena(ty, old);
+                        vmE(&e);
                 }
 
                 struct expression *e = prog[0]->expression;
 
-                if (!compiler_symbolize_expression(e, scope))
+                if (!compiler_symbolize_expression(ty, e, scope))
                 Err1: {
-                        char const *msg = compiler_error();
-                        struct value e = Err(STRING_CLONE(msg, strlen(msg)));
-                        ReleaseArena(old);
-                        vm_throw(&e);
+                        char const *msg = compiler_error(ty);
+                        struct value e = Err(ty, vSc(msg, strlen(msg)));
+                        ReleaseArena(ty, old);
+                        vmE(&e);
                 }
 
-                struct value v = tyeval(e);
+                struct value v = tyeval(ty, e);
                 if (v.type == VALUE_NONE) {
                         goto Err1;
                 }
 
-                ReleaseArena(old);
+                ReleaseArena(ty, old);
 
                 return v;
         } else {
-                compiler_clear_location();
-                struct expression *e = TyToCExpr(&ARG(0));
-                if (e == NULL || !compiler_symbolize_expression(e, scope))
-                Err2: {
-                        char const *msg = compiler_error();
-                        struct value e = Err(STRING_CLONE(msg, strlen(msg)));
-                        vm_throw(&e);
+                compiler_clear_location(ty);
+                struct expression *e = TyToCExpr(ty, &ARG(0));
+                if (e == NULL || !compiler_symbolize_expression(ty, e, scope))
+                Err2:
+                {
+                        char const *msg = compiler_error(ty);
+                        struct value e = Err(ty, vSc(msg, strlen(msg)));
+                        vmE(&e);
                 }
-                struct value v = tyeval(e);
+                Value v = tyeval(ty, e);
                 if (v.type == VALUE_NONE) {
                         goto Err2;
                 }
@@ -6858,24 +6664,23 @@ builtin_eval(int argc, struct value *kwargs)
 #undef POST
 }
 
-struct value
-builtin_ty_parse(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_parse)
 {
-        ASSERT_ARGC("ty.parse()", 1);
+        ASSERT_ARGC("ty.parse(ty)", 1);
 
         struct scope *scope = NULL;
 
 
         if (ARG(0).type != VALUE_STRING) {
-                vm_panic("ty.parse(): expected string but got: %s", value_show_color(&ARG(0)));
+                zP("ty.parse(ty): expected string but got: %s", value_show_color(ty, &ARG(0)));
         }
 
         B.count = 0;
-        vec_push_unchecked(B, '\0');
-        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-        vec_push_unchecked(B, '\0');
+        vec_push_unchecked(ty, B, '\0');
+        vec_push_n_unchecked(ty, B, ARG(0).string, ARG(0).bytes);
+        vec_push_unchecked(ty, B, '\0');
 
-        Arena old = NewArenaGC(1 << 22);
+        Arena old = amNg(1 << 22);
 
         struct statement **prog;
         Location stop;
@@ -6884,22 +6689,23 @@ builtin_ty_parse(int argc, struct value *kwargs)
 
         Value *want_tokens = NAMED("tokens");
 
-        char const *tokens_key = (want_tokens && value_truthy(want_tokens)) ? "tokens" : NULL;
+        char const *tokens_key = (want_tokens && value_truthy(ty, want_tokens)) ? "tokens" : NULL;
         Value vTokens = NIL;
 
         Value result;
 
-        GC_OFF_COUNT += 1;
+        GC_STOP();
 
         jmp_buf cjb;
         jmp_buf *cjb_save;
 
         if (setjmp(cjb) != 0) {
-                char const *msg = compiler_error();
+                char const *msg = compiler_error(ty);
 
                 result = Err(
-                        value_named_tuple(
-                                "msg", STRING_CLONE(msg, strlen(msg)),
+                        ty,
+                        vTn(
+                                "msg", vSc(msg, strlen(msg)),
                                 NULL
                         )
                 );
@@ -6907,81 +6713,80 @@ builtin_ty_parse(int argc, struct value *kwargs)
                 goto Return;
         }
 
-        cjb_save = compiler_swap_jb(&cjb);
+        cjb_save = compiler_swap_jb(ty, &cjb);
 
-        if (!parse_ex(B.items + 1, "(eval)", &prog, &stop, &tokens)) {
-                char const *msg = parse_error();
+        if (!parse_ex(ty, B.items + 1, "(eval)", &prog, &stop, &tokens)) {
+                char const *msg = parse_error(ty);
 
                 if (tokens_key) {
-                        vTokens = make_tokens(&tokens);
+                        vTokens = make_tokens(ty, &tokens);
                 }
 
-                extra = value_named_tuple(
-                        "where",    make_location(&stop, beginning_of(stop.s)),
-                        "msg",      STRING_CLONE(msg, strlen(msg)),
+                extra = vTn(
+                        "where",    make_location(ty, &stop, beginning_of(stop.s)),
+                        "msg",      vSc(msg, strlen(msg)),
                         tokens_key, vTokens,
                         NULL
                 );
         } else if (tokens_key) {
-                vTokens = make_tokens(&tokens);
-                extra = value_named_tuple(
+                vTokens = make_tokens(ty, &tokens);
+                extra = vTn(
                         tokens_key, vTokens,
                         NULL
                 );
         }
 
         if (prog == NULL || prog[0] == NULL) {
-                result = Err(extra);
+                result = Err(ty, extra);
                 goto Return;
         }
 
         if (prog[1] == NULL && prog[0]->type == STATEMENT_EXPRESSION) {
-                Value v = CToTyExpr(prog[0]->expression);
+                Value v = CToTyExpr(ty, prog[0]->expression);
                 if (v.type == VALUE_NONE) {
-                        result = Err(extra);
+                        result = Err(ty, extra);
                 } else {
-                        result = Ok(PAIR(v, extra));
+                        result = Ok(ty, PAIR(v, extra));
                 }
                 goto Return;
         }
 
         if (prog[1] == NULL) {
-                Value v = CToTyStmt(prog[0]);
+                Value v = CToTyStmt(ty, prog[0]);
                 if (v.type == VALUE_NONE) {
-                        result = Err(extra);
+                        result = Err(ty, extra);
                 } else {
-                        result = Ok(PAIR(v, extra));
+                        result = Ok(ty, PAIR(v, extra));
                 }
                 goto Return;
         }
 
-        struct statement *multi = Allocate(sizeof *multi);
+        struct statement *multi = amA(sizeof *multi);
         multi->type = STATEMENT_MULTI;
-        multi->arena = GetArenaAlloc();
+        multi->arena = GetArenaAlloc(ty);
         vec_init(multi->statements);
 
         for (int i = 0; prog[i] != NULL; ++i) {
-                VPush(multi->statements, prog[i]);
+                avP(multi->statements, prog[i]);
         }
 
-        Value v = CToTyStmt(multi);
+        Value v = CToTyStmt(ty, multi);
         if (v.type == VALUE_NONE) {
-                result = Err(extra);
+                result = Err(ty, extra);
         } else {
-                result = Ok(PAIR(v, extra));
+                result = Ok(ty, PAIR(v, extra));
         }
 
 Return:
-        ReleaseArena(old);
-        GC_OFF_COUNT -= 1;
+        ReleaseArena(ty, old);
+        GC_RESUME();
 
-        compiler_swap_jb(cjb_save);
+        compiler_swap_jb(ty, cjb_save);
 
         return result;
 }
 
-struct value
-builtin_ty_copy_source(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_copy_source)
 {
         ASSERT_ARGC("ty.copySource()", 2);
 
@@ -6993,23 +6798,22 @@ builtin_ty_copy_source(int argc, struct value *kwargs)
         return to;
 }
 
-struct value
-builtin_ty_get_source(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_get_source)
 {
         ASSERT_ARGC("ty.getSource()", 1);
 
         Value expr = ARG(0);
-        Expr *src = source_lookup(expr.src);
+        Expr *src = source_lookup(ty, expr.src);
 
         if (src == NULL) {
                 return NIL;
         }
 
-        GC_OFF_COUNT += 1;
+        GC_STOP();
 
         Value file = (src->filename == NULL)
                    ? NIL
-                   : STRING_CLONE(src->filename, strlen(src->filename));
+                   : vSc(src->filename, strlen(src->filename));
 
         char const *start = beginning_of(src->start.s);
 
@@ -7017,21 +6821,20 @@ builtin_ty_get_source(int argc, struct value *kwargs)
                    ? NIL
                    : STRING_NOGC(start, strlen(start));
 
-        Value result = value_named_tuple(
-                "start", make_location(&src->start, start),
-                "end",   make_location(&src->end, start),
+        Value result = vTn(
+                "start", make_location(ty, &src->start, start),
+                "end",   make_location(ty, &src->end, start),
                 "file",  file,
                 "src",   text,
                 NULL
         );
 
-        GC_OFF_COUNT -= 1;
+        GC_RESUME();
 
         return result;
 }
 
-struct value
-builtin_ty_strip_source(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ty_strip_source)
 {
         ASSERT_ARGC("ty.stripSource()", 1);
 
@@ -7041,72 +6844,67 @@ builtin_ty_strip_source(int argc, struct value *kwargs)
         return e;
 }
 
-struct value
-builtin_lex_peek_char(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(lex_peek_char)
 {
         ASSERT_ARGC("ty.lex.peekc()", 0);
 
-        parse_sync_lex();
+        parse_sync_lex(ty);
 
         char b[128];
-        int n = lex_peek_char(b);
+        int n = lex_peek_char(ty, b);
 
         if (n == 0) {
                 return NIL;
         }
 
-        return STRING_CLONE(b, n);
+        return vSc(b, n);
 }
 
-struct value
-builtin_lex_next_char(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(lex_next_char)
 {
         ASSERT_ARGC("ty.lex.getc()", 0);
 
-        parse_sync_lex();
+        parse_sync_lex(ty);
 
         char b[128];
 
-        if (!lex_next_char(b)) {
+        if (!lex_next_char(ty, b)) {
                 return NIL;
         }
 
-        return STRING_CLONE(b, strlen(b));
+        return vSc(b, strlen(b));
 }
 
-struct value
-builtin_token_peek(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(token_peek)
 {
         ASSERT_ARGC_2("ty.token.peek()", 0, 1);
 
         if (argc == 1 && ARG(0).type != VALUE_INTEGER) {
-                vm_panic("ty.token.peek(): expected integer but got: %s", value_show(&ARG(0)));
+                zP("ty.token.peek(): expected integer but got: %s", value_show(ty, &ARG(0)));
         }
 
-        GC_OFF_COUNT += 1;
+        GC_STOP();
 
-        Token t = parse_get_token(argc == 0 ? 0 : ARG(0).integer);
-        Value v = make_token(&t);
+        Token t = parse_get_token(ty, argc == 0 ? 0 : ARG(0).integer);
+        Value v = make_token(ty, &t);
 
-        GC_OFF_COUNT -= 1;
+        GC_RESUME();
 
         return v;
 }
 
-struct value
-builtin_token_next(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(token_next)
 {
         ASSERT_ARGC("ty.token.next()", 0);
 
-        struct value v = builtin_token_peek(0, NULL);
+        Value v = builtin_token_peek(ty, 0, NULL);
 
-        parse_next();
+        parse_next(ty);
 
         return v;
 }
 
-struct value
-builtin_parse_source(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(parse_source)
 {
         ASSERT_ARGC_2("ty.parse.source()", 0, 1);
 
@@ -7123,22 +6921,21 @@ builtin_parse_source(int argc, struct value *kwargs)
                 n = ARG(0).blob->count;
                 break;
         default:
-                vm_panic("ty.parse.source(): expected Blob or String but got: %s", value_show(&ARG(0)));
+                zP("ty.parse.source(): expected Blob or String but got: %s", value_show(ty, &ARG(0)));
         }
 
-        char *src = ((char *)gc_alloc(n + 2)) + 1;
+        char *src = ((char *)mA(n + 2)) + 1;
         memcpy(src, s, n);
         src[-1] = '\0';
         src[n] = '\0';
 
-        struct statement **p = parse(src, NULL);
+        struct statement **p = parse(ty, src, NULL);
 
-        return tyexpr(p[0]->expression);
+        return tyexpr(ty, p[0]->expression);
 }
 
 
-struct value
-builtin_parse_expr(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(parse_expr)
 {
         ASSERT_ARGC_2("ty.parse.expr()", 0, 1);
 
@@ -7146,7 +6943,7 @@ builtin_parse_expr(int argc, struct value *kwargs)
 
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
-                        vm_panic("ty.parse.expr(): expected integer but got: %s", value_show(&ARG(0)));
+                        zP("ty.parse.expr(): expected integer but got: %s", value_show(ty, &ARG(0)));
                 }
                 prec = ARG(0).integer;
         } else {
@@ -7156,11 +6953,10 @@ builtin_parse_expr(int argc, struct value *kwargs)
         struct value *resolve = NAMED("resolve");
         Value *raw = NAMED("raw");
 
-        return parse_get_expr(prec, resolve != NULL && value_truthy(resolve), raw != NULL && value_truthy(raw));
+        return parse_get_expr(ty, prec, resolve != NULL && value_truthy(ty, resolve), raw != NULL && value_truthy(ty, raw));
 }
 
-struct value
-builtin_parse_stmt(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(parse_stmt)
 {
         ASSERT_ARGC_2("ty.parse.stmt()", 0, 1);
 
@@ -7170,71 +6966,67 @@ builtin_parse_stmt(int argc, struct value *kwargs)
 
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
-                        vm_panic("ty.parse.stmt(): expected integer but got: %s", value_show(&ARG(0)));
+                        zP("ty.parse.stmt(): expected integer but got: %s", value_show(ty, &ARG(0)));
                 }
                 prec = ARG(0).integer;
         } else {
                 prec = -1;
         }
 
-        return parse_get_stmt(prec, raw != NULL && value_truthy(raw));
+        return parse_get_stmt(ty, prec, raw != NULL && value_truthy(ty, raw));
 }
 
-struct value
-builtin_parse_show(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(parse_show)
 {
         ASSERT_ARGC("ty.parse.show()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("ty.parse.show(): expected pointer but got: %s", value_show(&ARG(0)));
+                zP("ty.parse.show(): expected pointer but got: %s", value_show(ty, &ARG(0)));
         }
 
         struct statement const *s = ARG(0).ptr;
 
         int n = s->end.s - s->start.s;
 
-        return STRING_CLONE(s->start.s, n);
+        return vSc(s->start.s, n);
 }
 
-struct value
-builtin_parse_fail(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(parse_fail)
 {
-        ASSERT_ARGC("ty.parse.fail()", 1);
+        ASSERT_ARGC("ty.parse.fail(ty)", 1);
 
         if (ARG(0).type != VALUE_STRING) {
-                vm_panic("ty.parse.fail(): expected string but got: %s", value_show(&ARG(0)));
+                zP("ty.parse.fail(ty): expected string but got: %s", value_show(ty, &ARG(0)));
         }
 
-        parse_fail(ARG(0).string, ARG(0).bytes);
+        parse_fail(ty, ARG(0).string, ARG(0).bytes);
 
         // Unreachable
 }
 
-struct value
-builtin_ptr_typed(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ptr_typed)
 {
         ASSERT_ARGC("ptr.typed()", 2);
 
         if (ARG(0).type != VALUE_PTR) {
-                vm_panic("ptr.typed(): expected pointer as first argument but got: %s", value_show(&ARG(0)));
+                zP("ptr.typed(): expected pointer as first argument but got: %s", value_show(ty, &ARG(0)));
         }
 
         if (ARG(1).type != VALUE_PTR) {
-                vm_panic("ptr.typed(): expected pointer as second argument but got: %s", value_show(&ARG(1)));
+                zP("ptr.typed(): expected pointer as second argument but got: %s", value_show(ty, &ARG(1)));
         }
 
         return TGCPTR(ARG(0).ptr, ARG(1).ptr, ARG(0).gcptr);
 }
 
-struct value
-builtin_ptr_untyped(int argc, struct value *kwargs)
+BUILTIN_FUNCTION(ptr_untyped)
 {
         ASSERT_ARGC("ptr.untyped()", 1);
 
         struct value p = ARG(0);
 
         if (p.type != VALUE_PTR) {
-                vm_panic("ptr.untyped(): expected pointer as first argument but got: %s", value_show_color(&p));
+                zP("ptr.untyped(): expected pointer as first argument but got: %s", value_show_color(ty, &p));
         }
 
         return GCPTR(p.ptr, p.gcptr);

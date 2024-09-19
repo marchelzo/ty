@@ -3,15 +3,14 @@
 #include "panic.h"
 
 #define align (_Alignof(void *))
-
-static Arena A;
+#define A ty->arena
 
 Arena
-NewArenaGC(size_t cap)
+NewArenaGC(Ty *ty, size_t cap)
 {
         Arena old = A;
 
-        A.base = gc_alloc_object(cap, GC_ARENA);
+        A.base = mAo(cap, GC_ARENA);
         A.gc = true;
         A.beg = A.base;
         A.end = A.base + cap;
@@ -22,7 +21,7 @@ NewArenaGC(size_t cap)
 }
 
 Arena
-NewArena(size_t cap)
+NewArena(Ty *ty, size_t cap)
 {
         Arena old = A;
 
@@ -40,7 +39,7 @@ NewArena(size_t cap)
 }
 
 void *
-Allocate(size_t n)
+Allocate(Ty *ty, size_t n)
 {
         ptrdiff_t avail = A.end - A.beg;
         ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
@@ -56,13 +55,13 @@ Allocate(size_t n)
 }
 
 void *
-Allocate0(size_t n)
+Allocate0(Ty *ty, size_t n)
 {
-        return memset(Allocate(n), 0, n);
+        return memset(amA(n), 0, n);
 }
 
 void
-ReleaseArena(Arena old)
+ReleaseArena(Ty *ty, Arena old)
 {
         if (A.gc) {
                 OKGC(A.base);
@@ -72,14 +71,14 @@ ReleaseArena(Arena old)
 }
 
 void
-DestroyArena(Arena old)
+DestroyArena(Ty *ty, Arena old)
 {
         free(A.base);
         A = old;
 }
 
 void *
-GetArenaAlloc(void)
+GetArenaAlloc(Ty *ty)
 {
         return A.gc ? A.base : NULL;
 }

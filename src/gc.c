@@ -10,12 +10,6 @@
 #include "tthread.h"
 #include "compiler.h"
 
-_Thread_local AllocList allocs;
-_Thread_local size_t MemoryUsed = 0;
-_Thread_local size_t MemoryLimit = GC_INITIAL_LIMIT;
-
-typedef struct value Value;
-
 static _Thread_local vec(Value const *) RootSet;
 static vec(Value const *) ImmortalSet;
 
@@ -25,7 +19,7 @@ _Thread_local int GC_OFF_COUNT = 0;
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
 
 inline static void
-collect(struct alloc *a)
+collect(Ty *ty, struct alloc *a)
 {
         void *p = a->data;
 
@@ -35,17 +29,17 @@ collect(struct alloc *a)
         Thread *t;
 
         switch (a->type) {
-        case GC_ARRAY:     gc_free(((struct array *)p)->items);    break;
-        case GC_BLOB:      gc_free(((struct blob *)p)->items);     break;
-        case GC_DICT:      dict_free(p);                           break;
+        case GC_ARRAY:     mF(((struct array *)p)->items);    break;
+        case GC_BLOB:      mF(((struct blob *)p)->items);     break;
+        case GC_DICT:      dict_free(ty, p);                           break;
         case GC_GENERATOR:
-                gc_free(((Generator *)p)->frame.items);
-                gc_free(((Generator *)p)->calls.items);
-                gc_free(((Generator *)p)->frames.items);
-                gc_free(((Generator *)p)->targets.items);
-                gc_free(((Generator *)p)->sps.items);
-                gc_free(((Generator *)p)->deferred.items);
-                gc_free(((Generator *)p)->to_drop.items);
+                mF(((Generator *)p)->frame.items);
+                mF(((Generator *)p)->calls.items);
+                mF(((Generator *)p)->frames.items);
+                mF(((Generator *)p)->targets.items);
+                mF(((Generator *)p)->sps.items);
+                mF(((Generator *)p)->deferred.items);
+                mF(((Generator *)p)->to_drop.items);
                 break;
         case GC_THREAD:
                 t = p;
@@ -57,18 +51,18 @@ collect(struct alloc *a)
                 break;
         case GC_OBJECT:
                 o = OBJECT((struct table *)p, ((struct table *)p)->class);
-                finalizer = class_get_finalizer(o.class);
+                finalizer = class_get_finalizer(ty, o.class);
                 if (finalizer.type != VALUE_NONE) {
-                        GCLOG("Calling finalizer for: %s", value_show(&o));
-                        vm_call_method(&o, &finalizer, 0);
+                        GCLOG("Calling finalizer for: %s", value_show(ty, &o));
+                        vm_call_method(ty, &o, &finalizer, 0);
                 }
-                table_release(p);
+                table_release(ty, p);
                 break;
         case GC_REGEX:
                 re = p;
                 pcre_free_study(re->extra);
                 pcre_free(re->pcre);
-                gc_free((char *)re->pattern);
+                mF((char *)re->pattern);
                 break;
         case GC_ARENA:
                 source_forget_arena(p);
@@ -77,7 +71,7 @@ collect(struct alloc *a)
 }
 
 void
-GCForget(AllocList *allocs, size_t *used)
+GCForget(Ty *ty, AllocList *allocs, size_t *used)
 {
         size_t n = 0;
 
@@ -96,14 +90,14 @@ GCForget(AllocList *allocs, size_t *used)
 }
 
 void
-GCSweep(AllocList *allocs, size_t *used)
+GCSweep(Ty *ty, AllocList *allocs, size_t *used)
 {
         size_t n = 0;
 
         for (int i = 0; i < allocs->count; ++i) {
                 if (!A_LOAD(&allocs->items[i]->mark) && A_LOAD(&allocs->items[i]->hard) == 0) {
                         *used -= min(allocs->items[i]->size, *used);
-                        collect(allocs->items[i]);
+                        collect(ty, allocs->items[i]);
                         free(allocs->items[i]);
                 } else {
                         A_STORE(&allocs->items[i]->mark, false);
@@ -115,46 +109,46 @@ GCSweep(AllocList *allocs, size_t *used)
 }
 
 void
-GCTakeOwnership(AllocList *new)
+GCTakeOwnership(Ty *ty, AllocList *new)
 {
         for (size_t i = 0; i < new->count; ++i) {
-                vec_nogc_push(allocs, new->items[i]);
+                vec_nogc_push(ty->allocs, new->items[i]);
                 MemoryUsed += new->items[i]->size;
         }
 }
 
 void
-gc(void)
+gc(Ty *ty)
 {
-        DoGC();
+        DoGC(ty);
 }
 
 void
-gc_register(void *p)
+gc_register(Ty *ty, void *p)
 {
-        vec_nogc_push(allocs, ALLOC_OF(p));
+        vec_nogc_push(ty->allocs, ALLOC_OF(p));
 }
 
 void
-_gc_push(Value const *v)
+_gc_push(Ty *ty, Value const *v)
 {
         vec_nogc_push(RootSet, v);
 }
 
 void
-gc_immortalize(Value const *v)
+gc_immortalize(Ty *ty, Value const *v)
 {
         vec_nogc_push(ImmortalSet, v);
 }
 
 void
-gc_pop(void)
+gc_pop(Ty *ty)
 {
         --RootSet.count;
 }
 
 void
-gc_remove(struct value *v)
+gc_remove(Ty *ty, struct value *v)
 {
         for (int i = 0; i < RootSet.count; ++i) {
                 if (RootSet.items[i] == v) {
@@ -166,31 +160,31 @@ gc_remove(struct value *v)
 }
 
 void
-gc_clear_root_set(void)
+gc_clear_root_set(Ty *ty)
 {
         RootSet.count = 0;
 }
 
 void
-gc_truncate_root_set(size_t n)
+gc_truncate_root_set(Ty *ty, size_t n)
 {
         RootSet.count = n;
 }
 
 size_t
-gc_root_set_count(void)
+gc_root_set_count(Ty *ty)
 {
         return RootSet.count;
 }
 
 void *
-GCRootSet(void)
+GCRootSet(Ty *ty)
 {
         return &RootSet;
 }
 
 void *
-GCImmortalSet(void)
+GCImmortalSet(Ty *ty)
 {
         return &ImmortalSet;
 }

@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include "ty.h"
 #include "value.h"
 #include "alloc.h"
 #include "log.h"
@@ -44,20 +45,20 @@ mklist(int tag, struct tags *next)
 }
 
 void
-tags_init(void)
+tags_init(Ty *ty)
 {
         mklist(tagcount++, NULL);
 }
 
 int
-tags_new(char const *tag)
+tags_new(Ty *ty, char const *tag)
 {
         LOG("making new tag: %s -> %d", tag, tagcount);
 
         vec_nogc_push(names, tag);
 
         struct table table;
-        table_init(&table);
+        table_init(ty, &table);
         vec_nogc_push(tables, table);
 
         mklist(tagcount, lists.items[0]);
@@ -65,13 +66,13 @@ tags_new(char const *tag)
 }
 
 bool
-tags_same(int t1, int t2)
+tags_same(Ty *ty, int t1, int t2)
 {
         return (lists.items[t1]->tag == lists.items[t2]->tag);
 }
 
 int
-tags_push(int n, int tag)
+tags_push(Ty *ty, int n, int tag)
 {
 
         LOG("tags_push: n = %d, tag = %d", n, tag);
@@ -89,13 +90,13 @@ tags_push(int n, int tag)
 }
 
 int
-tags_pop(int n)
+tags_pop(Ty *ty, int n)
 {
         return lists.items[n]->next->n;
 }
 
 int
-tags_first(int tags)
+tags_first(Ty *ty, int tags)
 {
         return lists.items[tags]->tag;
 }
@@ -104,44 +105,44 @@ tags_first(int tags)
  * Wraps a string in the tag labels specified by 'tags'.
  */
 char *
-tags_wrap(char const *s, int tags, bool color)
+tags_wrap(Ty *ty, char const *s, int tags, bool color)
 {
         vec(char) cs = {0};
 
         if (color)
-                vec_push_n(cs, TERM(94), strlen(TERM(94)));
+                vvPn(cs, TERM(94), strlen(TERM(94)));
 
         struct tags *list = lists.items[tags];
         int n = 0;
         while (list->tag != 0) {
                 char const *name = names.items[list->tag - 1];
-                vec_push_n(cs, name, strlen(name));
-                vec_push(cs, '(');
+                vvPn(cs, name, strlen(name));
+                vvP(cs, '(');
                 list = list->next;
                 ++n;
         }
 
         if (color)
-                vec_push_n(cs, TERM(0), strlen(TERM(0)));
+                vvPn(cs, TERM(0), strlen(TERM(0)));
 
-        vec_push_n(cs, s, strlen(s));
+        vvPn(cs, s, strlen(s));
 
         if (color)
-                vec_push_n(cs, TERM(94), strlen(TERM(94)));
+                vvPn(cs, TERM(94), strlen(TERM(94)));
 
         while (n --> 0)
-                vec_push(cs, ')');
+                vvP(cs, ')');
 
         if (color)
-                vec_push_n(cs, TERM(0), strlen(TERM(0)));
+                vvPn(cs, TERM(0), strlen(TERM(0)));
 
-        vec_push(cs, '\0');
+        vvP(cs, '\0');
 
         return cs.items;
 }
 
 int
-tags_lookup(char const *name)
+tags_lookup(Ty *ty, char const *name)
 {
         for (int i = 0; i < names.count; ++i)
                 if (strcmp(names.items[i], name) == 0)
@@ -151,30 +152,30 @@ tags_lookup(char const *name)
 }
 
 char const *
-tags_name(int tag)
+tags_name(Ty *ty, int tag)
 {
         return names.items[tag - 1];
 }
 
 void
-tags_add_method(int tag, char const *name, struct value f)
+tags_add_method(Ty *ty, int tag, char const *name, struct value f)
 {
         LOG("tag = %d", tag);
         LOG("adding method %s to tag %s", name, names.items[tag - 1]);
-        table_add(&tables.items[tag - 1], name, strhash(name), f);
+        table_add(ty, &tables.items[tag - 1], name, strhash(name), f);
 }
 
 void
-tags_copy_methods(int dst, int src)
+tags_copy_methods(Ty *ty, int dst, int src)
 {
         struct table *dt = &tables.items[dst - 1];
         struct table const *st = &tables.items[src - 1];
-        table_copy(dt, st);
+        table_copy(ty, dt, st);
 }
 
 struct value *
-tags_lookup_method(int tag, char const *name, unsigned long h)
+tags_lookup_method(Ty *ty, int tag, char const *name, unsigned long h)
 {
         struct table const *t = &tables.items[tag - 1];
-        return table_lookup(t, name, h);
+        return table_lookup(ty, t, name, h);
 }

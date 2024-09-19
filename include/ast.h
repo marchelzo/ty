@@ -474,19 +474,19 @@ char const *
 ExpressionTypeName(Expr const *e);
 
 Stmt *
-visit_statement(Stmt *s, Scope *, VisitorSet const *);
+visit_statement(Ty *ty, Stmt *s, Scope *, VisitorSet const *);
 
 Expr *
-visit_pattern(Expr *e, Scope *, VisitorSet const *);
+visit_pattern(Ty *ty, Expr *e, Scope *, VisitorSet const *);
 
 Expr *
-visit_lvalue(Expr *e, Scope *, VisitorSet const *, bool);
+visit_lvalue(Ty *ty, Expr *e, Scope *, VisitorSet const *, bool);
 
 Expr *
-visit_expression(Expr *e, Scope *, VisitorSet const *);
+visit_expression(Ty *ty, Expr *e, Scope *, VisitorSet const *);
 
 VisitorSet
-visit_identitiy(void);
+visit_identitiy(Ty *ty);
 
 #endif
 

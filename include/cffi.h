@@ -6,72 +6,72 @@
 #include "value.h"
 
 struct value
-cffi_cif(int argc, struct value *kwargs);
+cffi_cif(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_new(int argc, struct value *kwargs);
+cffi_new(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_size(int argc, struct value *kwargs);
+cffi_size(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_alloc(int argc, struct value *kwargs);
+cffi_alloc(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_realloc(int argc, struct value *kwargs);
+cffi_realloc(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_clone(int argc, struct value *kwargs);
+cffi_clone(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_as_str(int argc, struct value *kwargs);
+cffi_as_str(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_free(int argc, struct value *kwargs);
+cffi_free(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_addr(int argc, struct value *kwargs);
+cffi_addr(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_member(int argc, struct value *kwargs);
+cffi_member(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_pmember(int argc, struct value *kwargs);
+cffi_pmember(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_load(int argc, struct value *kwargs);
+cffi_load(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_load_n(int argc, struct value *kwargs);
+cffi_load_n(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_call(int argc, struct value *kwargs);
+cffi_call(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_dlsym(int argc, struct value *kwargs);
+cffi_dlsym(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_dlopen(int argc, struct value *kwargs);
+cffi_dlopen(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_dlerror(int argc, struct value *kwargs);
+cffi_dlerror(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_struct(int argc, struct value *kwargs);
+cffi_struct(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_blob(int argc, struct value *kwargs);
+cffi_blob(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_store(int argc, struct value *kwargs);
+cffi_store(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_str(int argc, struct value *kwargs);
+cffi_str(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_closure(int argc, struct value *kwargs);
+cffi_closure(Ty *ty, int argc, struct value *kwargs);
 
 struct value
-cffi_closure_free(int argc, struct value *kwargs);
+cffi_closure_free(Ty *ty, int argc, struct value *kwargs);
 
 #endif

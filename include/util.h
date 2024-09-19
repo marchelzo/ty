@@ -76,10 +76,10 @@ min(intmax_t a, intmax_t b)
 }
 
 char *
-sclone(char const *s);
+sclone(Ty *ty, char const *s);
 
 char *
-sclonea(char const *s);
+sclonea(Ty *ty, char const *s);
 
 char *
 sclone_malloc(char const *s);
@@ -87,8 +87,11 @@ sclone_malloc(char const *s);
 bool
 contains(char const *s, char c);
 
-char *slurp(char const *path);
-char *fslurp(FILE *f);
+char *
+slurp(Ty *ty, char const *path);
+
+char *
+fslurp(Ty *ty, FILE *f);
 
 /* memmem. maybe change this to Knuth-Morris-Pratt or Boyer-Moore at some point */
 inline static char const *
@@ -126,6 +129,6 @@ gcd(int a, int b)
 }
 
 Value
-this_executable();
+this_executable(Ty *ty);
 
 #endif

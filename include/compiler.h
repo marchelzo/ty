@@ -9,112 +9,112 @@ struct expression;
 typedef struct symbol Symbol;
 
 char const *
-compiler_error(void);
+compiler_error(Ty *ty);
 
 void
-compiler_init(void);
+compiler_init(Ty *ty);
 
 int
-compiler_get_completions(char const *mod, char const *prefix, char **out, int max);
+compiler_get_completions(Ty *ty, char const *mod, char const *prefix, char **out, int max);
 
 void
-compiler_load_builtin_modules(void);
+compiler_load_builtin_modules(Ty *ty);
 
 void
-compiler_introduce_symbol(char const *, char const *);
+compiler_introduce_symbol(Ty *ty, char const *, char const *);
 
 void
-compiler_introduce_tag(char const *module, char const *name);
+compiler_introduce_tag(Ty *ty, char const *module, char const *name);
 
 bool
-compiler_symbolize_expression(struct expression *e, struct scope *scope);
+compiler_symbolize_expression(Ty *ty, struct expression *e, struct scope *scope);
 
 void
-compiler_clear_location(void);
+compiler_clear_location(Ty *ty);
 
 char *
-compiler_compile_source(char const *source, char const *filename);
+compiler_compile_source(Ty *ty, char const *source, char const *filename);
 
 int
-compiler_symbol_count(void);
+compiler_symbol_count(Ty *ty);
 
 struct symbol *
-compiler_lookup(char const *module, char const *name);
+compiler_lookup(Ty *ty, char const *module, char const *name);
 
 int
-gettag(char const *module, char const *name);
+gettag(Ty *ty, char const *module, char const *name);
 
 char *
-compiler_load_prelude(void);
+compiler_load_prelude(Ty *ty);
 
 struct location
-compiler_find_definition(char const *file, int line, int col);
+compiler_find_definition(Ty *ty, char const *file, int line, int col);
 
 Expr const *
-compiler_find_expr(char const *ip);
+compiler_find_expr(Ty *ty, char const *ip);
 
 bool
-compiler_has_module(char const *path);
+compiler_has_module(Ty *ty, char const *path);
 
 int
-compiler_global_count(void);
+compiler_global_count(Ty *ty);
 
 Symbol *
-compiler_global_sym(int i);
+compiler_global_sym(Ty *ty, int i);
 
 struct value
-compiler_render_template(struct expression *);
+compiler_render_template(Ty *ty, struct expression *);
 
 bool
-compiler_import_module(struct statement const *);
+compiler_import_module(Ty *ty, struct statement const *);
 
 void
-define_macro(struct statement *, bool fun);
+define_macro(Ty *ty, struct statement *, bool fun);
 
 void
-define_class(struct statement *);
+define_class(Ty *ty, struct statement *);
 
 void
-define_tag(struct statement *s);
+define_tag(Ty *ty, struct statement *s);
 
 void
-define_function(struct statement *);
+define_function(Ty *ty, struct statement *);
 
 bool
-is_macro(char const *module, char const *id);
+is_macro(Ty *ty, char const *module, char const *id);
 
 bool
-is_fun_macro(char const *module, char const *id);
+is_fun_macro(Ty *ty, char const *module, char const *id);
 
 struct value
-tyexpr(struct expression const *);
+tyexpr(Ty *ty, struct expression const *);
 
 struct value
-tyeval(struct expression *e);
+tyeval(Ty *ty, struct expression *e);
 
 struct value
-tystmt(struct statement *s);
+tystmt(Ty *ty, struct statement *s);
 
 struct expression *
-cexpr(struct value *);
+cexpr(Ty *ty, struct value *);
 
 struct expression *
-TyToCExpr(struct value *v);
+TyToCExpr(Ty *ty, struct value *v);
 
 Value
-CToTyExpr(Expr *);
+CToTyExpr(Ty *ty, Expr *);
 
 Value
-CToTyStmt(Stmt *);
+CToTyStmt(Ty *ty, Stmt *);
 
 struct expression *
-typarse(struct expression *, struct location const *start, struct location const *end);
+typarse(Ty *ty, struct expression *, struct location const *start, struct location const *end);
 
 struct statement *
-cstmt(struct value *);
+cstmt(Ty *ty, struct value *);
 
 void *
-compiler_swap_jb(void *);
+compiler_swap_jb(Ty *ty, void *);
 
 void
 colorize_code(
@@ -127,31 +127,31 @@ colorize_code(
 );
 
 char const *
-show_expr_type(Expr const *e);
+show_expr_type(Ty *ty, Expr const *e);
 
 uint32_t
-source_register(void const *src);
+source_register(Ty *ty, void const *src);
 
 void *
-source_lookup(uint32_t src);
+source_lookup(Ty *ty, uint32_t src);
 
 void
 source_forget_arena(void const *arena);
 
 void
-try_symbolize_application(struct scope *scope, struct expression *e);
+try_symbolize_application(Ty *ty, struct scope *scope, struct expression *e);
 
 int
-WriteExpressionTrace(char *out, int cap, Expr const *e, int etw, bool first);
+WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool first);
 
 int
-WriteExpressionOrigin(char *out, int cap, Expr const *e);
+WriteExpressionOrigin(Ty *ty, char *out, int cap, Expr const *e);
 
 int
-CompilationDepth(void);
+CompilationDepth(Ty *ty);
 
 char *
-CompilationTrace(void);
+CompilationTrace(Ty *ty);
 
 bool
 IsTopLevel(Symbol const *sym);

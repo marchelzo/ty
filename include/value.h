@@ -7,6 +7,7 @@ struct value;
 #include <stdint.h>
 #include <string.h>
 
+#include "ty.h"
 #include "vec.h"
 #include "ast.h"
 #include "gc.h"
@@ -198,12 +199,12 @@ enum {
 #define DEFINE_METHOD_TABLE(...) \
         static struct { \
                 char const *name; \
-                struct value (*func)(struct value *, int, struct value *); \
+                BuiltinMethod *func; \
         } funcs[] = { __VA_ARGS__ }; \
         static size_t const nfuncs = sizeof funcs / sizeof funcs[0]
 
 #define DEFINE_METHOD_LOOKUP(type) \
-        struct value (*get_ ## type ## _method(char const *name))(struct value *, int, struct value *) \
+        BuiltinMethod *get_ ## type ## _method(char const *name) \
         { \
                 int lo = 0, \
                     hi = nfuncs - 1; \
@@ -221,7 +222,7 @@ enum {
 
 #define DEFINE_METHOD_COMPLETER(type) \
         int \
-        type ## _get_completions(char const *prefix, char **out, int max) \
+        type ## _get_completions(Ty *ty, char const *prefix, char **out, int max) \
         { \
                 int n = 0; \
                 int len = strlen(prefix); \
@@ -235,14 +236,14 @@ enum {
                 return n; \
         }
 
-#define ARG(i) (*vm_get(argc - 1 - (i)))
-#define NAMED(s) ((kwargs != NULL) ? dict_get_member(kwargs->dict, (s)) : NULL)
+#define ARG(i) (*vm_get(ty, argc - 1 - (i)))
+#define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
 
-//#define value_mark(v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
+//#define value_mark(ty, v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 #define value_mark _value_mark
 
 typedef struct array {
-        struct value *items;
+        Value *items;
         size_t count;
         size_t capacity;
 } Array;
@@ -252,24 +253,6 @@ typedef struct blob {
         size_t count;
         size_t capacity;
 } Blob;
-
-struct target {
-        struct {
-                struct value *t;
-                void *gc;
-        };
-};
-
-typedef struct target Target;
-
-struct frame;
-typedef struct frame Frame;
-
-typedef vec(struct value) ValueVector;
-typedef vec(Target) TargetStack;
-typedef vec(size_t) SPStack;
-typedef vec(char *) CallStack;
-typedef vec(Frame) FrameStack;
 
 typedef struct generator Generator;
 typedef struct thread Thread;
@@ -305,6 +288,9 @@ enum {
         VALUE_TAGGED           = 1 << 7
 };
 
+typedef Value BuiltinFunction(Ty *, int, Value *);
+typedef Value BuiltinMethod(Ty *, Value *, int, Value *);
+
 struct value {
         uint8_t type;
         uint16_t tags;
@@ -337,11 +323,11 @@ struct value {
                                         struct value *this;
                                         union {
                                                 struct value *method;
-                                                struct value (*builtin_method)(struct value *, int, struct value *);
+                                                BuiltinMethod *builtin_method;
                                         };
                                 };
                                 struct {
-                                        struct value (*builtin_function)(int, struct value *);
+                                        BuiltinFunction *builtin_function;
                                         char const *module;
                                 };
                         };
@@ -430,78 +416,78 @@ typedef struct dict {
 } Dict;
 
 unsigned long
-value_hash(struct value const *val);
+value_hash(Ty *ty, struct value const *val);
 
 bool
-value_test_equality(struct value const *v1, struct value const *v2);
+value_test_equality(Ty *ty, struct value const *v1, struct value const *v2);
 
 int
-value_compare(void const *v1, void const *v2);
+value_compare(Ty *ty, void const *v1, void const *v2);
 
 bool
-value_truthy(struct value const *v);
+value_truthy(Ty *ty, struct value const *v);
 
 bool
-value_apply_predicate(struct value *p, struct value *v);
+value_apply_predicate(Ty *ty, struct value *p, struct value *v);
 
 struct value
-value_apply_callable(struct value *f, struct value *v);
+value_apply_callable(Ty *ty, struct value *f, struct value *v);
 
 char *
-value_show(struct value const *v);
+value_show(Ty *ty, struct value const *v);
 
 char *
-value_show_color(struct value const *v);
+value_show_color(Ty *ty, struct value const *v);
 
 char *
-value_string_alloc(int n);
+value_string_alloc(Ty *ty, int n);
 
 char *
-value_string_clone(char const *s, int n);
+value_string_clone(Ty *ty, char const *s, int n);
 
 char *
-value_string_clone_nul(char const *src, int n);
+value_string_clone_nul(Ty *ty, char const *src, int n);
 
 struct array *
-value_array_new(void);
+value_array_new(Ty *ty);
 
 struct array *
-value_array_clone(struct array const *);
+value_array_clone(Ty *ty, struct array const *);
 
 void
-value_array_extend(struct array *, struct array const *);
+value_array_extend(Ty *ty, struct array *, struct array const *);
 
 struct blob *
-value_blob_new(void);
+value_blob_new(Ty *ty);
 
 struct value
-value_tuple(int n);
+value_tuple(Ty *ty, int n);
 
 struct value
-value_named_tuple(char const *first, ...);
+value_named_tuple(Ty *ty, char const *first, ...);
 
 struct value *
 tuple_get(struct value *tuple, char const *name);
 
 int
-tuple_get_completions(struct value const *v, char const *prefix, char **out, int max);
+tuple_get_completions(Ty *ty, struct value const *v, char const *prefix, char **out, int max);
 
 void
-_value_mark(struct value const *v);
+_value_mark(Ty *ty, struct value const *v);
 
 inline static void
-value_array_push(struct array *a, struct value v)
+value_array_push(Ty *ty, struct array *a, struct value v)
 {
         if (a->count == a->capacity) {
                 a->capacity = a->capacity ? a->capacity * 2 : 4;
-                a->items = gc_resize(a->items, a->capacity * sizeof (struct value));
+                mRE(a->items, a->capacity * sizeof (struct value));
         }
 
         a->items[a->count++] = v;
 }
 
 inline static void
-value_array_reserve(struct array *a, int count)
+value_array_reserve(Ty *ty, struct array *a, int count)
 {
         if (a->capacity >= count)
                 return;
@@ -512,13 +498,13 @@ value_array_reserve(struct array *a, int count)
         while (a->capacity < count)
                 a->capacity *= 2;
 
-        a->items = gc_resize(a->items, a->capacity * sizeof (struct value));
+        mRE(a->items, a->capacity * sizeof (struct value));
 }
 
 inline static struct value
-STRING_CLONE(char const *s, int n)
+STRING_CLONE(Ty *ty, char const *s, int n)
 {
-        char *clone = value_string_clone(s, n);
+        char *clone = value_string_clone(ty, s, n);
 
         return (struct value) {
                 .type = VALUE_STRING,
@@ -530,9 +516,39 @@ STRING_CLONE(char const *s, int n)
 }
 
 inline static struct value
-STRING_CLONE_NUL(char const *s, int n)
+STRING_CLONE_C(Ty *ty, char const *s)
 {
-        char *clone = value_string_clone_nul(s, n);
+        int n = strlen(s);
+        char *clone = value_string_clone(ty, s, n);
+
+        return (struct value) {
+                .type = VALUE_STRING,
+                .tags = 0,
+                .string = clone,
+                .bytes = n,
+                .gcstr = clone,
+        };
+}
+
+inline static struct value
+STRING_C_CLONE_C(Ty *ty, char const *s)
+{
+        int n = strlen(s);
+        char *clone = value_string_clone_nul(ty, s, n);
+
+        return (struct value) {
+                .type = VALUE_STRING,
+                .tags = 0,
+                .string = clone,
+                .bytes = n,
+                .gcstr = clone,
+        };
+}
+
+inline static struct value
+STRING_C_CLONE(Ty *ty, char const *s, int n)
+{
+        char *clone = value_string_clone_nul(ty, s, n);
 
         return (struct value) {
                 .type = VALUE_STRING,
@@ -582,18 +598,18 @@ STRING_NOGC(char const *s, int n)
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))
 
 inline static struct value
-PAIR(struct value a, struct value b)
+PAIR_(Ty *ty, struct value a, struct value b)
 {
-        struct value v = value_tuple(2);
+        struct value v = vT(2);
         v.items[0] = a;
         v.items[1] = b;
         return v;
 }
 
 inline static struct value
-TRIPLE(struct value a, struct value b, struct value c)
+TRIPLE_(Ty *ty, struct value a, struct value b, struct value c)
 {
-        struct value v = value_tuple(3);
+        struct value v = vT(3);
         v.items[0] = a;
         v.items[1] = b;
         v.items[2] = c;
@@ -602,29 +618,30 @@ TRIPLE(struct value a, struct value b, struct value c)
 
 #define None                     TAG(TAG_NONE)
 
-int tags_push(int, int);
+int
+tags_push(Ty *ty, int, int);
 
 inline static struct value
-Ok(struct value v)
+Ok(Ty *ty, struct value v)
 {
         v.type |= VALUE_TAGGED;
-        v.tags = tags_push(v.tags, TAG_OK);
+        v.tags = tags_push(ty, v.tags, TAG_OK);
         return v;
 }
 
 inline static struct value
-Err(struct value v)
+Err(Ty *ty, struct value v)
 {
         v.type |= VALUE_TAGGED;
-        v.tags = tags_push(v.tags, TAG_ERR);
+        v.tags = tags_push(ty, v.tags, TAG_ERR);
         return v;
 }
 
 inline static struct value
-Some(struct value v)
+Some(Ty *ty, struct value v)
 {
         v.type |= VALUE_TAGGED;
-        v.tags = tags_push(v.tags, TAG_SOME);
+        v.tags = tags_push(ty, v.tags, TAG_SOME);
         return v;
 }
 

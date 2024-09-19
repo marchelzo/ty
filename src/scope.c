@@ -11,7 +11,7 @@ static int SYMBOL;
 
 #ifndef TY_RELEASE
 char const *
-scope_name(struct scope const *s)
+scope_name(Ty *ty, struct scope const *s)
 {
         _Thread_local static char b[4096];
 
@@ -36,7 +36,7 @@ scope_name(struct scope const *s)
                 remaining -= n;
         }
 
-        return sclone(b);
+        return sclone(ty, b);
 }
 #endif
 
@@ -54,9 +54,9 @@ local_lookup(struct scope const *s, char const *id)
 }
 
 Symbol *
-scope_new_namespace(char const *name, Scope *parent)
+scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 {
-        Scope *s = Allocate0(sizeof *s);
+        Scope *s = amA0(sizeof *s);
 
         s->parent = parent;
         s->function = parent->function;
@@ -66,11 +66,11 @@ scope_new_namespace(char const *name, Scope *parent)
         s->name = name;
 #endif
 
-        return scope_add_namespace(parent, name, s);
+        return scope_add_namespace(ty, parent, name, s);
 }
 
 Scope *
-_scope_new(
+_scope_new(Ty *ty, 
 #ifndef TY_RELEASE
         char const *name,
 #endif
@@ -78,7 +78,7 @@ _scope_new(
         bool is_function
 )
 {
-        Scope *s = Allocate0(sizeof *s);
+        Scope *s = amA0(sizeof *s);
 
         s->parent = parent;
         s->function = (is_function || parent == NULL) ? s : parent->function;
@@ -91,7 +91,7 @@ _scope_new(
 }
 
 int
-scope_capture(struct scope *s, struct symbol *sym, int parent_index)
+scope_capture(Ty *ty, struct scope *s, struct symbol *sym, int parent_index)
 {
                 for (int i = 0; i < s->captured.count; ++i) {
                         if (s->captured.items[i] == sym) {
@@ -101,13 +101,13 @@ scope_capture(struct scope *s, struct symbol *sym, int parent_index)
 
                 sym->captured = true;
 
-                VPush(s->captured, sym);
-                VPush(s->cap_indices, parent_index);
+                avP(s->captured, sym);
+                avP(s->cap_indices, parent_index);
 
                 LOG(
-                        "scope_capture(sym=%s, scope=%s (%p), cap_index=%d)",
+                        "scope_capture(ty, sym=%s, scope=%s (%p), cap_index=%d)",
                         sym->identifier,
-                        scope_name(s),
+                        scope_name(ty, s),
                         s,
                         parent_index
                 );
@@ -116,7 +116,7 @@ scope_capture(struct scope *s, struct symbol *sym, int parent_index)
 }
 
 struct symbol *
-scope_lookup(struct scope const *s, char const *id)
+scope_lookup(Ty *ty, struct scope const *s, char const *id)
 {
         if (s == NULL) {
                 return NULL;
@@ -128,7 +128,7 @@ scope_lookup(struct scope const *s, char const *id)
                 return sym;
         }
 
-        sym = scope_lookup(s->parent, id);
+        sym = scope_lookup(ty, s->parent, id);
 
         if (sym == NULL) {
                 return NULL;
@@ -140,14 +140,14 @@ scope_lookup(struct scope const *s, char const *id)
                 struct scope *scope = s->function;
 
                 while (scope->parent->function != sym->scope->function) {
-                        VPush(scopes, scope);
+                        avP(scopes, scope);
                         scope = scope->parent->function;
                 }
 
-                int parent_index = scope_capture(scope, sym, -1);
+                int parent_index = scope_capture(ty, scope, sym, -1);
 
                 for (int i = scopes.count - 1; i >= 0; --i) {
-                        parent_index = scope_capture(scopes.items[i], sym, parent_index);
+                        parent_index = scope_capture(ty, scopes.items[i], sym, parent_index);
                 }
         }
 
@@ -155,24 +155,24 @@ scope_lookup(struct scope const *s, char const *id)
 }
 
 bool
-scope_locally_defined(struct scope const *s, char const *id)
+scope_locally_defined(Ty *ty, struct scope const *s, char const *id)
 {
         return local_lookup(s, id) != NULL;
 }
 
 struct symbol *
-scope_local_lookup(struct scope const *s, char const *id)
+scope_local_lookup(Ty *ty, struct scope const *s, char const *id)
 {
         return local_lookup(s, id);
 }
 
 Symbol *
-scope_add_namespace(Scope *s, char const *id, Scope *ns)
+scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
 {
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
 
-        Symbol *sym = Allocate(sizeof *sym);
+        Symbol *sym = amA(sizeof *sym);
         *sym = (Symbol){0};
 
         sym->identifier = id;
@@ -186,12 +186,12 @@ scope_add_namespace(Scope *s, char const *id, Scope *ns)
 }
 
 Symbol *
-scope_add(Scope *s, char const *id)
+scope_add(Ty *ty, Scope *s, char const *id)
 {
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
 
-        Symbol *sym = Allocate(sizeof *sym);
+        Symbol *sym = amA(sizeof *sym);
 
         sym->identifier = id;
         sym->doc = NULL;
@@ -230,7 +230,7 @@ scope_add(Scope *s, char const *id)
 
         LOG("Symbol %d (%s) is getting i = %d in scope %p", sym->symbol, id, sym->i, s);
 
-        VPush(owner->owned, sym);
+        avP(owner->owned, sym);
 
         s->table[i] = sym;
 
@@ -238,9 +238,9 @@ scope_add(Scope *s, char const *id)
 }
 
 Symbol *
-scope_insert_as(Scope *s, Symbol *sym, char const *id)
+scope_insert_as(Ty *ty, Scope *s, Symbol *sym, char const *id)
 {
-        Symbol *new = Allocate(sizeof *new);
+        Symbol *new = amA(sizeof *new);
 
         *new = *sym;
         new->identifier = id;
@@ -256,9 +256,9 @@ scope_insert_as(Scope *s, Symbol *sym, char const *id)
 }
 
 Symbol *
-scope_insert(Scope *s, Symbol *sym)
+scope_insert(Ty *ty, Scope *s, Symbol *sym)
 {
-        Symbol *new = Allocate(sizeof *new);
+        Symbol *new = amA(sizeof *new);
         *new = *sym;
 
         if (!sym->namespace) {
@@ -274,11 +274,11 @@ scope_insert(Scope *s, Symbol *sym)
 }
 
 char const *
-scope_copy(struct scope *dst, struct scope const *src)
+scope_copy(Ty *ty, struct scope *dst, struct scope const *src)
 {
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        struct symbol *conflict = scope_lookup(dst, s->identifier);
+                        struct symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (conflict != NULL && conflict->scope != src && conflict->public)
                                 return conflict->identifier;
                 }
@@ -286,7 +286,7 @@ scope_copy(struct scope *dst, struct scope const *src)
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        scope_insert(dst, s);
+                        scope_insert(ty, dst, s);
                 }
         }
 
@@ -306,14 +306,14 @@ should_skip(char const *id, char const **skip, int n)
 }
 
 char const *
-scope_copy_public_except(struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport)
+scope_copy_public_except(Ty *ty, struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport)
 {
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (should_skip(s->identifier, skip, n)) {
                                 continue;
                         }
-                        struct symbol *conflict = scope_lookup(dst, s->identifier);
+                        struct symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (conflict != NULL && conflict->scope != src && conflict->public) {
                                 return conflict->identifier;
                         }
@@ -326,7 +326,7 @@ scope_copy_public_except(struct scope *dst, struct scope const *src, char const 
                                 continue;
                         }
                         if (s->public) {
-                                scope_insert(dst, s)->public |= reexport;
+                                scope_insert(ty, dst, s)->public |= reexport;
                         }
                 }
         }
@@ -335,11 +335,11 @@ scope_copy_public_except(struct scope *dst, struct scope const *src, char const 
 }
 
 char const *
-scope_copy_public(struct scope *dst, struct scope const *src, bool reexport)
+scope_copy_public(Ty *ty, struct scope *dst, struct scope const *src, bool reexport)
 {
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        struct symbol *conflict = scope_lookup(dst, s->identifier);
+                        struct symbol *conflict = scope_lookup(ty, dst, s->identifier);
                         if (conflict != NULL && conflict->scope != src && conflict->public)
                                 return conflict->identifier;
                 }
@@ -348,7 +348,7 @@ scope_copy_public(struct scope *dst, struct scope const *src, bool reexport)
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (struct symbol *s = src->table[i]; s != NULL; s = s->next) {
                         if (s->public) {
-                                scope_insert(dst, s)->public |= reexport;
+                                scope_insert(ty, dst, s)->public |= reexport;
                         }
                 }
         }
@@ -357,7 +357,7 @@ scope_copy_public(struct scope *dst, struct scope const *src, bool reexport)
 }
 
 bool
-scope_is_subscope(struct scope const *sub, struct scope const *scope)
+scope_is_subscope(Ty *ty, struct scope const *sub, struct scope const *scope)
 {
         while (sub != NULL) {
                 if (sub->parent == scope)
@@ -369,7 +369,7 @@ scope_is_subscope(struct scope const *sub, struct scope const *scope)
 }
 
 void
-scope_capture_all(struct scope *scope, struct scope const *stop)
+scope_capture_all(Ty *ty, struct scope *scope, struct scope const *stop)
 {
         if (scope->function->parent == NULL)
                 return;
@@ -378,8 +378,8 @@ scope_capture_all(struct scope *scope, struct scope const *stop)
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (struct symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
                                 LOG(
-                                        "scope_capture_all(scope=%s (%p)): capturing %s",
-                                        scope_name(scope),
+                                        "scope_capture_all(ty, scope=%s (%p)): capturing %s",
+                                        scope_name(ty, scope),
                                         scope,
                                         sym->identifier
                                 );
@@ -393,14 +393,14 @@ scope_capture_all(struct scope *scope, struct scope const *stop)
                                         fscope->function != sym->scope->function &&
                                         fscope->parent->function != sym->scope->function
                                 ) {
-                                        VPush(scopes, fscope);
+                                        avP(scopes, fscope);
                                         fscope = fscope->parent->function;
                                 }
 
-                                int parent_index = scope_capture(fscope, sym, -1);
+                                int parent_index = scope_capture(ty, fscope, sym, -1);
 
                                 for (int i = scopes.count - 1; i >= 0; --i) {
-                                        parent_index = scope_capture(scopes.items[i], sym, parent_index);
+                                        parent_index = scope_capture(ty, scopes.items[i], sym, parent_index);
                                 }
 
                                 LOG("scope_capture_all: DONE capturing %s", sym->identifier);
@@ -410,19 +410,19 @@ scope_capture_all(struct scope *scope, struct scope const *stop)
 }
 
 int
-scope_get_symbol(void)
+scope_get_symbol(Ty *ty)
 {
         return SYMBOL;
 }
 
 void
-scope_set_symbol(int s)
+scope_set_symbol(Ty *ty, int s)
 {
         SYMBOL = s;
 }
 
 int
-scope_get_completions(struct scope *scope, char const *prefix, char **out, int max)
+scope_get_completions(Ty *ty, struct scope *scope, char const *prefix, char **out, int max)
 {
         int n = 0;
         int prefix_len = strlen(prefix);

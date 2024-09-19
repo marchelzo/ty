@@ -21,43 +21,43 @@ struct table {
 };
 
 void
-table_init(struct table *t);
+table_init(Ty *ty, struct table *t);
 
 struct value *
-table_add(struct table *t, char const *name, unsigned long h, struct value f);
+table_add(Ty *ty, struct table *t, char const *name, unsigned long h, struct value f);
 
 inline static struct value *
-table_put(struct table *t, char const *name, struct value f)
+table_put(Ty *ty, struct table *t, char const *name, struct value f)
 {
-        return table_add(t, name, strhash(name), f);
+        return table_add(ty, t, name, strhash(name), f);
 }
 
 void
-table_copy(struct table *dst, struct table const *src);
+table_copy(Ty *ty, struct table *dst, struct table const *src);
 
 struct value *
-table_lookup(struct table const *t, char const *name, unsigned long h);
+table_lookup(Ty *ty, struct table const *t, char const *name, unsigned long h);
 
 inline static struct value *
-table_look(struct table const *t, char const *name)
+table_look(Ty *ty, struct table const *t, char const *name)
 {
-        return table_lookup(t, name, strhash(name));
+        return table_lookup(ty, t, name, strhash(name));
 }
 
 char const *
-table_lookup_key(struct table const *t, char const *name, unsigned long h);
+table_lookup_key(Ty *ty, struct table const *t, char const *name, unsigned long h);
 
 inline static char const *
-table_look_key(struct table const *t, char const *name)
+table_look_key(Ty *ty, struct table const *t, char const *name)
 {
-        return table_lookup_key(t, name, strhash(name));
+        return table_lookup_key(ty, t, name, strhash(name));
 }
 
 int
-table_get_completions(struct table const *t, char const *prefix, char **out, int max);
+table_get_completions(Ty *ty, struct table const *t, char const *prefix, char **out, int max);
 
 void
-table_release(struct table *t);
+table_release(Ty *ty, struct table *t);
 
 #endif
 

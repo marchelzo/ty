@@ -99,7 +99,7 @@ add_version_info_target(NAME ${_tgt_ty_interface_version_info} LANGUAGE C)
 target_compile_options(${_tgt_ty_interface}
   INTERFACE
     $<$<C_COMPILER_ID:GNU>:-Wall -Wno-switch -Wno-unused-value -Wno-unused-function>
-    $<$<C_COMPILER_ID:AppleClang>:-Weverything -mcpu=native -flto>
+    $<$<C_COMPILER_ID:AppleClang>:-Weverything -mcpu=native -flto -ferror-limit=3>
     $<$<C_COMPILER_ID:Clang>:-Weverything -mcpu=native -flto>
     $<$<C_COMPILER_ID:MSVC>:/W4>
 )

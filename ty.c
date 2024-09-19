@@ -32,6 +32,8 @@
 #include "VersionInfo.h"
 #endif
 
+Ty MainTy;
+
 static char const usage_string[] =
         "usage: ty [options] [script [args]]\n"
         "Available options are:\n"
@@ -75,13 +77,13 @@ readln(void)
 }
 
 inline static bool
-repl_exec(char const *code)
+repl_exec(Ty *ty, char const *code)
 {
-        return vm_execute(code, "(repl)");
+        return vm_execute(&MainTy, code, "(repl)");
 }
 
 static bool
-execln(char *line)
+execln(Ty *ty, char *line)
 {
         static char buffer[8192];
         bool good = true;
@@ -100,29 +102,29 @@ execln(char *line)
         if (line[0] == ':') {
                 if (line[1] == '!') {
                         system(line + 2) || 0;
-                } else if (!vm_execute_file(line + 1)) {
-                        fprintf(stderr, "%s\n", vm_error());
+                } else if (!vm_execute_file(&MainTy, line + 1)) {
+                        fprintf(stderr, "%s\n", vm_error(&MainTy));
                         good = false;
                 }
                 goto End;
 
         } else if (strncmp(line, "help ", 5) == 0) {
                 snprintf(buffer + 1, sizeof buffer - 2, "help(%s);", line + 5);
-                if (repl_exec(buffer + 1))
+                if (repl_exec(&MainTy, buffer + 1))
                         goto End;
                 else
                         goto Bad;
         }
 
         snprintf(buffer + 1, sizeof buffer - 2, "%s(%s);", print_function, line);
-        if (repl_exec(buffer + 1))
+        if (repl_exec(&MainTy, buffer + 1))
                 goto End;
         snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
-        if (strstr(vm_error(), "ParseError") != NULL && repl_exec(buffer + 1))
+        if (strstr(vm_error(&MainTy), "ParseError") != NULL && repl_exec(&MainTy, buffer + 1))
                 goto End;
 Bad:
         good = false;
-        fprintf(stderr, "%s\n", vm_error());
+        fprintf(stderr, "%s\n", vm_error(&MainTy));
 End:
 
         fflush(stdout);
@@ -131,7 +133,7 @@ End:
 }
 
 noreturn static void
-repl(void);
+repl(Ty *ty);
 
 static jmp_buf InterruptJB;
 
@@ -143,14 +145,14 @@ sigint(int signal)
 }
 
 noreturn static void
-repl(void)
+repl(Ty *ty)
 {
         rl_attempted_completion_function = complete;
         rl_basic_word_break_characters = ".\t\n\r ";
 
         signal(SIGINT, sigint);
 
-        execln("import help (..)");
+        execln(&MainTy, "import help (..)");
         print_function = "prettyPrint";
 
         use_readline = true;
@@ -162,7 +164,7 @@ repl(void)
                         if (line == NULL) {
                                 exit(EXIT_SUCCESS);
                         }
-                        execln(line);
+                        execln(&MainTy, line);
                 }
         }
 }
@@ -187,7 +189,7 @@ complete(char const *s, int start, int end)
         rl_completion_append_character = '\0';
 
         if (start == 0 || rl_line_buffer[start - 1] != '.') {
-                int n = compiler_get_completions(NULL, s, completions, 99);
+                int n = compiler_get_completions(&MainTy, NULL, s, completions, 99);
                 if (n == 0) {
                         return NULL;
                 } else {
@@ -208,36 +210,36 @@ complete(char const *s, int start, int end)
          * First check if it's a module name, otherwise treat it as an expression that
          * will evaluate to an object and then complete its members.
          */
-        if (compiler_has_module(before + 1)) {
-                n = compiler_get_completions(before + 1, s, completions, MAX_COMPLETIONS);
+        if (compiler_has_module(&MainTy, before + 1)) {
+                n = compiler_get_completions(&MainTy, before + 1, s, completions, MAX_COMPLETIONS);
         } else {
-                repl_exec(before + 1);
+                repl_exec(&MainTy, before + 1);
 
-                struct value *v = vm_get(-1);
+                struct value *v = vm_get(&MainTy, -1);
 
                 switch (v->type) {
                 case VALUE_OBJECT:
-                        n += class_get_completions(v->class, s, completions, MAX_COMPLETIONS);
-                        n += table_get_completions(v->object, s, completions + n, MAX_COMPLETIONS - n);
+                        n += class_get_completions(&MainTy, v->class, s, completions, MAX_COMPLETIONS);
+                        n += table_get_completions(&MainTy, v->object, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_ARRAY:
-                        n += array_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
+                        n += array_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(&MainTy, CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_DICT:
-                        n += dict_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
+                        n += dict_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(&MainTy, CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_STRING:
-                        n += string_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
+                        n += string_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(&MainTy, CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_BLOB:
-                        n += blob_get_completions(s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
+                        n += blob_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(&MainTy, CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_TUPLE:
-                        n += tuple_get_completions(v, s, completions, MAX_COMPLETIONS);
+                        n += tuple_get_completions(&MainTy, v, s, completions, MAX_COMPLETIONS);
                         break;
                 }
         }
@@ -288,13 +290,13 @@ set_profile_out(char const *path)
 int
 main(int argc, char **argv)
 {
-        if (!vm_init(argc, argv)) {
-                fprintf(stderr, "%s\n", vm_error());
+        if (!vm_init(&MainTy, argc, argv)) {
+                fprintf(stderr, "%s\n", vm_error(&MainTy));
                 return -1;
         }
 
         if (argc <= 1 && stdin_is_tty())
-                repl();
+                repl(&MainTy);
 
         char SymbolLocation[512] = {0};
 
@@ -369,9 +371,9 @@ main(int argc, char **argv)
                                                         fprintf(stderr, "Missing argument for -e\n");
                                                         return 1;
                                                 }
-                                                return (int)!execln(argv[++argi]);
+                                                return (int)!execln(&MainTy, argv[++argi]);
                                         } else {
-                                                return (int)!execln((char *)(opt + 1));
+                                                return (int)!execln(&MainTy, (char *)(opt + 1));
                                         }
                                         break;
                                 case 'm':
@@ -385,7 +387,7 @@ main(int argc, char **argv)
                                                 snprintf(buffer, sizeof buffer - 1, "import %s\n", opt + 1);
                                                 while (opt[1] != '\0') ++opt;
                                         }
-                                        if (!execln(buffer)) {
+                                        if (!execln(&MainTy, buffer)) {
                                                 return 1;
                                         }
                                         break;
@@ -434,7 +436,7 @@ main(int argc, char **argv)
                 return 1;
         }
 
-        char *source = fslurp(file);
+        char *source = fslurp(&MainTy, file);
 
         if (*SymbolLocation != '\0') {
                 char *colon = strchr(SymbolLocation, ':');
@@ -445,11 +447,11 @@ main(int argc, char **argv)
                 int col = atoi(colon + 1);
 
                 CompileOnly = true;
-                if (!vm_execute(source, filename)) {
+                if (!vm_execute(&MainTy, source, filename)) {
                         return 1;
                 }
 
-                struct location loc = compiler_find_definition(filename, line - 1, col - 1);
+                struct location loc = compiler_find_definition(&MainTy, filename, line - 1, col - 1);
 
                 if (loc.s == NULL) {
                         return -1;
@@ -459,8 +461,8 @@ main(int argc, char **argv)
                 }
         }
 
-        if (!vm_execute(source, filename)) {
-                fprintf(stderr, "%s\n", vm_error());
+        if (!vm_execute(&MainTy, source, filename)) {
+                fprintf(stderr, "%s\n", vm_error(&MainTy));
                 return -1;
         }
 

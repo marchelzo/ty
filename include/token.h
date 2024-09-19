@@ -144,10 +144,10 @@ typedef struct token {
 } Token;
 
 char const *
-token_show(struct token const *t);
+token_show(Ty *ty, struct token const *t);
 
 char const *
-token_show_type(int type);
+token_show_type(Ty *ty, int type);
 
 char const *
 keyword_show(int t);

@@ -13,15 +13,16 @@
 
 typedef struct value Value;
 
-void DoGC(void);
+void
+DoGC(Ty *ty);
 
 uint64_t
-MyThreadId(void);
+MyThreadId(Ty *ty);
 
 #define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
 
-#define resize(ptr, n) ((ptr) = gc_resize((ptr), (n)))
-#define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked((ptr), (n)))
+#define resize(ptr, n) ((ptr) = gc_resize(ty, (ptr), (n)))
+#define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked(ty, (ptr), (n)))
 #define resize_nogc(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 
 //#define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
@@ -35,14 +36,6 @@ MyThreadId(void);
 #define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 
 #define GC_INITIAL_LIMIT (1ULL << 22)
-
-typedef vec(struct alloc *) AllocList;
-
-extern _Thread_local AllocList allocs;
-extern _Thread_local int GC_OFF_COUNT;
-
-extern _Thread_local size_t MemoryUsed;
-extern _Thread_local size_t MemoryLimit;
 
 struct alloc {
         union {
@@ -74,13 +67,13 @@ enum {
 };
 
 void
-gc(void);
+gc(Ty *ty);
 
 inline static void *
 mrealloc(void *p, size_t n);
 
 inline static void *
-gc_resize_unchecked(void *p, size_t n) {
+gc_resize_unchecked(Ty *ty, void *p, size_t n) {
         struct alloc *a;
 
         if (p != NULL) {
@@ -104,17 +97,17 @@ gc_resize_unchecked(void *p, size_t n) {
 
 
 inline static void
-CheckUsed(void)
+CheckUsed(Ty *ty)
 {
         if (
-                GC_OFF_COUNT == 0
+                ty->GC_OFF_COUNT == 0
 #if 1
                 && MemoryUsed > MemoryLimit
 #endif
         ) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
-                DoGC();
-                GCLOG("DoGC() returned: %zu MB still in use", MemoryUsed / 1000000);
+                DoGC(ty);
+                GCLOG("DoGC(ty) returned: %zu MB still in use", MemoryUsed / 1000000);
                 while (MemoryUsed >= MemoryLimit) {
                         MemoryLimit <<= 1;
                         GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
@@ -123,10 +116,10 @@ CheckUsed(void)
 }
 
 inline static void *
-gc_alloc(size_t n)
+gc_alloc(Ty *ty, size_t n)
 {
         MemoryUsed += n;
-        CheckUsed();
+        CheckUsed(ty);
 
         struct alloc *a = malloc(sizeof *a + n);
         if (a == NULL) {
@@ -142,13 +135,13 @@ gc_alloc(size_t n)
 }
 
 inline static void *
-gc_alloc_object(size_t n, char type)
+gc_alloc_object(Ty *ty, size_t n, char type)
 {
         if (n == 0)
                 return NULL;
 
         MemoryUsed += n;
-        CheckUsed();
+        CheckUsed(ty);
 
         struct alloc *a = malloc(sizeof *a + n);
         if (a == NULL) {
@@ -160,43 +153,43 @@ gc_alloc_object(size_t n, char type)
         a->type = type;
         a->size = n;
 
-        vec_nogc_push(allocs, a);
+        xvP(ty->allocs, a);
 
         return a->data;
 }
 
 void
-gc_register(void *p);
+gc_register(Ty *ty, void *p);
 
 void
-_gc_push(Value const *v);
+_gc_push(Ty *ty, Value const *v);
 
 void
-gc_immortalize(Value const *v);
+gc_immortalize(Ty *ty, Value const *v);
 
 #if 0
-#define gc_push(v) do { GCLOG("gc_push(): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0)
+#define gc_push(ty, v) do { GCLOG("gc_push(ty): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0)
 #else
 #define gc_push _gc_push
 #endif
 
 void
-gc_pop(void);
+gc_pop(Ty *ty);
 
 void
-gc_clear_root_set(void);
+gc_clear_root_set(Ty *ty);
 
 void
-gc_truncate_root_set(size_t n);
+gc_truncate_root_set(Ty *ty, size_t n);
 
 size_t
-gc_root_set_count(void);
+gc_root_set_count(Ty *ty);
 
 void
-gc_notify(size_t n);
+gc_notify(Ty *ty, size_t n);
 
 inline static void
-gc_free(void *p)
+gc_free(Ty *ty, void *p)
 {
         if (p != NULL) {
                 struct alloc *a = ALLOC_OF(p);
@@ -222,7 +215,7 @@ mrealloc(void *p, size_t n)
 }
 
 inline static void *
-gc_resize(void *p, size_t n) {
+gc_resize(Ty *ty, void *p, size_t n) {
         struct alloc *a;
 
         if (p != NULL) {
@@ -238,7 +231,7 @@ gc_resize(void *p, size_t n) {
 
         MemoryUsed += n;
 
-        CheckUsed();
+        CheckUsed(ty);
 
         a = realloc(a, sizeof *a + n);
         if (a == NULL) {
@@ -251,20 +244,30 @@ gc_resize(void *p, size_t n) {
 }
 
 inline static void *
-gc_alloc_unregistered(size_t n, char type)
+gc_alloc_unregistered(Ty *ty, size_t n, char type)
 {
-        void *p = gc_alloc(n);
+        void *p = mA(n);
         ALLOC_OF(p)->type = type;
         return p;
 }
 
-void GCMark(void);
-void GCSweep(AllocList *allocs, size_t *used);
-void GCForget(AllocList *allocs, size_t *used);
-void GCTakeOwnership(AllocList *new);
+void
+GCMark(Ty *ty);
 
-void *GCRootSet(void);
-void *GCImmortalSet(void);
+void
+GCSweep(Ty *ty, AllocList *allocs, size_t *used);
+
+void
+GCForget(Ty *ty, AllocList *allocs, size_t *used);
+
+void
+GCTakeOwnership(Ty *ty, AllocList *new);
+
+void *
+GCRootSet(Ty *ty);
+
+void *
+GCImmortalSet(Ty *ty);
 
 #endif
 

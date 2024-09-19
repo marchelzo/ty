@@ -3,9 +3,10 @@
 
 #include "value.h"
 
-struct value (*get_blob_method(char const *))(struct value *, int, struct value *);
+BuiltinMethod *
+get_blob_method(char const *);
 
 int
-blob_get_completions(char const *prefix, char **out, int max);
+blob_get_completions(Ty *ty, char const *prefix, char **out, int max);
 
 #endif

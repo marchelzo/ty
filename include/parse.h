@@ -8,13 +8,14 @@
 typedef vec(struct token) TokenVector;
 
 char const *
-parse_error(void);
+parse_error(Ty *ty);
 
 struct statement **
-parse(char const *source, char const *file);
+parse(Ty *ty, char const *source, char const *file);
 
 bool
 parse_ex(
+        Ty *,
         char const *source,
         char const *file,
         struct statement ***prog_out,
@@ -23,27 +24,27 @@ parse_ex(
 );
 
 Token
-parse_get_token(int i);
+parse_get_token(Ty *ty, int i);
 
 struct value
-parse_get_expr(int prec, bool resolve, bool want_raw);
+parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw);
 
 struct value
-parse_get_stmt(int prec, bool want_raw);
+parse_get_stmt(Ty *ty, int prec, bool want_raw);
 
 void
-parse_next(void);
+parse_next(Ty *ty);
 
 noreturn void
-parse_fail(char const *s, size_t n);
+parse_fail(Ty *ty, char const *s, size_t n);
 
 void
-parse_sync_lex(void);
+parse_sync_lex(Ty *ty);
 
 void
-make_with(struct expression *e, statement_vector defs, struct statement *body);
+make_with(Ty *ty, struct expression *e, statement_vector defs, struct statement *body);
 
 char *
-gensym(void);
+gensym(Ty *ty);
 
 #endif

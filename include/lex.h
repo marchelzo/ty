@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 
+#include "ty.h"
 #include "location.h"
 
 typedef enum LexContext {
@@ -21,40 +22,40 @@ typedef struct LexState {
 } LexState;
 
 char const *
-lex_error(void);
+lex_error(Ty *ty);
 
 void
-lex_init(char const *file, char const *src);
+lex_init(Ty *ty, char const *file, char const *src);
 
 void
-lex_start(LexState const *state);
+lex_start(Ty *ty, LexState const *state);
 
 void
-lex_rewind(struct location const *where);
+lex_rewind(Ty *ty, struct location const *where);
 
 void
-lex_end(void);
+lex_end(Ty *ty);
 
 struct token
-lex_token(LexContext ctx);
+lex_token(Ty *ty, LexContext ctx);
 
 int
-lex_peek_char(char *out);
+lex_peek_char(Ty *ty, char *out);
 
 bool
-lex_next_char(char *out);
+lex_next_char(Ty *ty, char *out);
 
 void
-lex_save(LexState *state);
+lex_save(Ty *ty, LexState *state);
 
 void
-lex_need_nl(bool);
+lex_need_nl(Ty *ty, bool);
 
 bool
-lex_keep_comments(bool b);
+lex_keep_comments(Ty *ty, bool b);
 
 struct location
-lex_pos(void);
+lex_pos(Ty *ty);
 
 #endif
 
