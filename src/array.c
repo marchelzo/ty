@@ -32,15 +32,25 @@ typedef struct {
         Ty *ty;
 } SortContext;
 
+static int
+compare_default(void *ty, void const *v1, void const *v2)
+{
+        return value_compare(ty, v1, v2);
+}
+
 #if defined(__APPLE__)
 #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
-#elif define(__linux__)
+#elif defined(__linux__)
 #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
 #else
 #endif
 
 static int
+#if defined(__APPLE__)
 compare_by(void *ctx_, void const *v1, void const *v2)
+#elif defined(__linux__)
+compare_by(void const *v1, void const *v2, void *ctx_)
+#endif
 {
         SortContext *ctx = ctx_;
         Ty *ty = ctx->ty;
@@ -60,13 +70,11 @@ compare_by(void *ctx_, void const *v1, void const *v2)
 }
 
 static int
-compare_default(void *ty, void const *v1, void const *v2)
-{
-        return value_compare(ty, v1, v2);
-}
-
-static int
+#if defined(__APPLE__)
 compare_by2(void *ctx_, void const *v1, void const *v2)
+#elif defined(__linux__)
+compare_by2(void const *v1, void const *v2, void *ctx_)
+#endif
 {
         SortContext *ctx = ctx_;
         Ty *ty = ctx->ty;
