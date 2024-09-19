@@ -341,7 +341,7 @@ pub class FCGIApp {
                 pollFds.push((fd: client, events: os.POLLIN))
             }
 
-            let (t, n) = timed!(os.poll(pollFds, 50))
+            let (t, n) = timed(os.poll(pollFds, 50))
             if n == 0 {
                 continue
             }
