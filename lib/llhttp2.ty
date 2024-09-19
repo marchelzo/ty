@@ -294,28 +294,28 @@ let llhttp_get_version = parser -> (
 
 let llhttp_get_flags = parser -> c.member(llhttp_internal, parser, 17)
 
-let llhttp_content_length = parser -> {
+let llhttp_content_length = parser -> do {
     if llhttp_get_flags(parser) .&. F_CONTENT_LENGTH {
         c.member(llhttp_internal, parser, 8)
     }
 }
 
-let onMessageComplete = (parser) -> {
+let onMessageComplete = (parser) -> do {
     print("Message complete")
     return 0
 }
 
-let onMessageBegin = (parser) -> {
+let onMessageBegin = (parser) -> do {
     print("Message begin")
     return 0
 }
 
-let printData = (parser, data, len) -> {
+let printData = (parser, data, len) -> do {
     print("Data = '{c.as_str(data, len)}'")
     return 0
 }
 
-let onHeaderField = (parser, data, len) -> {
+let onHeaderField = (parser, data, len) -> do {
 }
 
 class HttpParser {

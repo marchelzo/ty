@@ -82,6 +82,7 @@ class HttpServer {
     init(*args, backlog=64) {
         @handlers = %{*:[]}
         @conns = []
+        @stopping = false
         match args {
             [addr, port] => {
                 @sock = socket(AF_INET, SOCK_STREAM, 0)
@@ -112,6 +113,8 @@ class HttpServer {
             }
         }
     }
+
+    stop() { @stopping = true }
 
     handleConnection(conn) {
         let p = HttpParser(HTTP_REQUEST)
@@ -157,7 +160,7 @@ class HttpServer {
     run() {
         let b = Blob()
 
-        while true {
+        while !@stopping {
             let pollFds = [(fd: @sock, events: POLLIN)]
 
             for conn in @conns {

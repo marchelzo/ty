@@ -2104,13 +2104,7 @@ macro time! {
     }$$]
 }
 
-macro timed! {
-    // (
-    lex.next()
-
-    let e = parse.stmt(0)
-
-    // )
+macro timed(e) {
     lex.next()
 
     ty.Block([

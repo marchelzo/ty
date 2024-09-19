@@ -155,7 +155,7 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
         let before = line.slice(0, i).str() ?? ''
         let all = line.str() ?? ''
 
-        write(1, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
+        write(termFd, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
 
         termkey_waitkey(tk, pKey)
         termkey_strfkey(tk, keyBuffer, 256, pKey, TERMKEY_FORMAT_VIM)
@@ -177,9 +177,9 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
                 }
 
                 if erase {
-                    write(1, "{ERASE_LINE}\r")
+                    write(termFd, "{ERASE_LINE}\r")
                 } else {
-                    write(1, '\n')
+                    write(termFd, '\n')
                 }
 
                 return text
@@ -202,7 +202,7 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
             },
 
             '<C-l>' => {
-                write(1, "\x1b[2J\x1b[H")
+                write(termFd, "\x1b[2J\x1b[H")
             },
 
             '<C-w>' => {
@@ -285,7 +285,7 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
                         },
 
                         ListCompletions(cs) => {
-                            write(1, "{ERASE_LINE}\r")
+                            write(termFd, "{ERASE_LINE}\r")
 
                             let (h, w) = termDimensions()
 
