@@ -70,7 +70,7 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 }
 
 Scope *
-_scope_new(Ty *ty, 
+_scope_new(Ty *ty,
 #ifndef TY_RELEASE
         char const *name,
 #endif

@@ -209,10 +209,10 @@ TyThreadSelf(void)
         HANDLE hSelf;
 
         DuplicateHandle(
-                GetCurrentProcess(), 
+                GetCurrentProcess(),
                 TyThreadSelf(),
                 GetCurrentProcess(),
-                &hSelf, 
+                &hSelf,
                 0,
                 FALSE,
                 DUPLICATE_SAME_ACCESS

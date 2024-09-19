@@ -57,7 +57,7 @@ typedef struct scope {
 } Scope;
 
 struct scope *
-_scope_new(Ty *ty, 
+_scope_new(Ty *ty,
 #ifndef TY_RELEASE
         char const *name,
 #endif
