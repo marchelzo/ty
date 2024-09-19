@@ -48,7 +48,7 @@ builtin_curl_init(Ty *ty, int argc, struct value *kwargs)
         }
 
         CURL *c = curl_easy_init();
-        
+
         if (c == NULL) {
                 zP("curl_easy_init returned NULL");
         }
@@ -339,7 +339,7 @@ builtin_curl_perform(Ty *ty, int argc, struct value *kwargs)
         if (curl.type != VALUE_PTR) {
                 zP("the argument to curl::perform() must be a pointer");
         }
-        
+
         vec_init(Buffer);
 
         CURLcode r = curl_easy_perform(curl.ptr);
@@ -398,7 +398,7 @@ builtin_curl_url_strerror(Ty *ty, int argc, struct value *kwargs)
         if (ARG(0).type != VALUE_INTEGER) {
                 zP("curl.url.strerror(): expected integer but got: %s", value_show_color(ty, &ARG(0)));
         }
-        
+
 #if LIBCURL_VERSION_NUM >= 0x075000
         char const *s = curl_url_strerror(ARG(0).integer);
 #else
