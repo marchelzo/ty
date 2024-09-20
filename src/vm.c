@@ -139,11 +139,11 @@ static _Thread_local ValueStack defer_stack;
 static _Thread_local ValueStack drop_stack;
 static _Thread_local int rc;
 
-#define STACK (ty->stack)
-#define IP (ty->ip)
-#define CALLS (ty->calls)
+#define STACK   (ty->stack)
+#define IP      (ty->ip)
+#define CALLS   (ty->calls)
 #define TARGETS (ty->targets)
-#define FRAMES (ty->frames)
+#define FRAMES  (ty->frames)
 
 #ifdef TY_ENABLE_PROFILING
 
@@ -835,7 +835,7 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
         struct value kwargs = (nkw > 0) ? pop(ty) : NIL;
 
         /*
-         * This is the index of the beginning of the STACK frame for this call to f.
+         * This is the index of the beginning of the stack frame for this call to f.
          */
         int fp = STACK.count - n;
 
@@ -3784,9 +3784,9 @@ BadContainer:
                                 break;
                         case VALUE_BUILTIN_FUNCTION:
                                 /*
-                                 * Builtin functions may not preserve the STACK size, so instead
+                                 * Builtin functions may not preserve the stack size, so instead
                                  * of subtracting `n` after calling the builtin function, we compute
-                                 * the desired final STACK size in advance.
+                                 * the desired final stack size in advance.
                                  */
                                 if (nkw > 0) {
                                         container = pop(ty);
@@ -4752,7 +4752,7 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
                 value_mark(ty, root_set->items[i]);
         }
 
-        GCLOG("Marking STACK");
+        GCLOG("Marking stack");
         for (int i = 0; i < storage->stack->count; ++i) {
                 value_mark(ty, &storage->stack->items[i]);
         }
@@ -4762,12 +4762,12 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
                 value_mark(ty, &storage->defer_stack->items[i]);
         }
 
-        GCLOG("Marking drop STACK");
+        GCLOG("Marking drop stack");
         for (int i = 0; i < storage->drop_stack->count; ++i) {
                 value_mark(ty, &storage->drop_stack->items[i]);
         }
 
-        GCLOG("Marking TARGETS");
+        GCLOG("Marking targets");
         for (int i = 0; i < storage->targets->count; ++i) {
                 if ((((uintptr_t)storage->targets->items[i].t) & 0x07) == 0) {
                         value_mark(ty, storage->targets->items[i].t);
