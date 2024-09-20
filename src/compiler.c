@@ -205,7 +205,7 @@ static vec(location_vector) location_lists;
 static vec(void *) source_map;
 static struct scope *global;
 static uint64_t t;
-static char const EmptyString[] = { '\0', '\0' };
+static char const EmptyString[] = "\0";
 static char const UnknownString[] = "\0(unknown location)";
 static struct location Nowhere = { 0, 0, EmptyString + 1 };
 static Location UnknownStart = { 0, 0, UnknownString + 1 };
@@ -291,8 +291,8 @@ inline static Expr *
 NewExpr(Ty *ty, int t)
 {
         Expr *e = amA0(sizeof *e);
-        e->start = Nowhere;
-        e->end = Nowhere;
+        e->start = UnknownStart;
+        e->end = UnknownEnd;
         e->filename = state.filename;
         e->type = t;
         return e;
@@ -302,8 +302,8 @@ inline static Stmt *
 NewStmt(Ty *ty, int t)
 {
         Stmt *s = amA0(sizeof *s);
-        s->start = Nowhere;
-        s->end = Nowhere;
+        s->start = UnknownStart;
+        s->end = UnknownEnd;
         s->filename = state.filename;
         s->type = t;
         return s;
@@ -962,6 +962,19 @@ freshstate(Ty *ty)
         vec_init(s.expression_locations);
 
         return s;
+}
+
+inline static bool
+is_simple_condition(condpart_vector const *parts)
+{
+        for (int i = 0; i < parts->count; ++i) {
+                struct condpart *p = parts->items[i];
+                if (p->target != NULL) {
+                        return false;
+                }
+        }
+
+        return true;
 }
 
 inline static bool
@@ -2945,18 +2958,6 @@ emit_function(Ty *ty, struct expression const *e, int class)
                 emit_instr(ty, INSTR_POP);
                 JUMP(end);
                 patch_jumps_to(&state.generator_returns, end);
-        } else if (false && !emit_statement(ty, body, false)) {
-                /*
-                 * Add an implicit 'return nil;' if the function
-                 * doesn't explicitly return in its body.
-                 */
-                struct statement empty = {
-                        .type = STATEMENT_RETURN,
-                        .start = e->end,
-                        .end = e->end
-                };
-                vec_init(empty.returns);
-                emit_statement(ty, &empty, false);
         } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
                 for (int i = 0; i < e->functions.count; ++i) {
                         if (!e->is_method) {
@@ -3880,9 +3881,16 @@ emit_while(Ty *ty, struct statement const *s, bool want_result)
 
         bool has_resources = false;
 
+        bool simple = is_simple_condition(&s->iff.parts);
+
         for (int i = 0; i < s->While.parts.count; ++i) {
                 struct condpart *p = s->While.parts.items[i];
-                if (p->target == NULL) {
+                if (simple) {
+                        emit_expression(ty, p->e);
+                        emit_instr(ty, INSTR_JUMP_IF_NOT);
+                        avP(state.match_fails, state.code.count);
+                        emit_int(ty, 0);
+                } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                         emit_expression(ty, p->e);
                         emit_instr(ty, INSTR_JUMP_IF_NOT);
@@ -3913,7 +3921,7 @@ emit_while(Ty *ty, struct statement const *s, bool want_result)
         JUMP(start);
 
         patch_jumps_to(&state.match_fails, state.code.count);
-        emit_instr(ty, INSTR_RESTORE_STACK_POS);
+        if (!simple) emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
         if (want_result) {
                 emit_instr(ty, INSTR_NIL);
@@ -3953,9 +3961,16 @@ emit_if_not(Ty *ty, struct statement const *s, bool want_result)
                 state.resources += 1;
         }
 
+        bool simple = is_simple_condition(&s->iff.parts);
+
         for (int i = 0; i < s->iff.parts.count; ++i) {
                 struct condpart *p = s->iff.parts.items[i];
-                if (p->target == NULL) {
+                if (simple) {
+                        emit_expression(ty, p->e);
+                        emit_instr(ty, INSTR_JUMP_IF);
+                        avP(state.match_fails, state.code.count);
+                        emit_int(ty, 0);
+                } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                         emit_expression(ty, p->e);
                         emit_instr(ty, INSTR_JUMP_IF);
@@ -3982,7 +3997,7 @@ emit_if_not(Ty *ty, struct statement const *s, bool want_result)
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t done);
 
         patch_jumps_to(&state.match_fails, state.code.count);
-        emit_instr(ty, INSTR_RESTORE_STACK_POS);
+        if (!simple) emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
         returns &= emit_statement(ty, s->iff.then, want_result);
 
@@ -4040,9 +4055,16 @@ emit_if(Ty *ty, struct statement const *s, bool want_result)
                 state.resources += 1;
         }
 
+        bool simple = is_simple_condition(&s->iff.parts);
+
         for (int i = 0; i < s->iff.parts.count; ++i) {
                 struct condpart *p = s->iff.parts.items[i];
-                if (p->target == NULL) {
+                if (simple) {
+                        emit_expression(ty, p->e);
+                        emit_instr(ty, INSTR_JUMP_IF_NOT);
+                        avP(state.match_fails, state.code.count);
+                        emit_int(ty, 0);
+                } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                         emit_expression(ty, p->e);
                         emit_instr(ty, INSTR_JUMP_IF_NOT);
@@ -4062,7 +4084,7 @@ emit_if(Ty *ty, struct statement const *s, bool want_result)
         PLACEHOLDER_JUMP(INSTR_JUMP, size_t done);
 
         patch_jumps_to(&state.match_fails, state.code.count);
-        emit_instr(ty, INSTR_RESTORE_STACK_POS);
+        if (!simple) emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
         if (s->iff.otherwise != NULL) {
                 returns &= emit_statement(ty, s->iff.otherwise, want_result);
