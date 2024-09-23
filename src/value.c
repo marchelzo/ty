@@ -56,7 +56,7 @@ tuples_equal(Ty *ty, struct value const *v1, struct value const *v2)
 }
 
 inline static unsigned long
-str_hash(Ty *ty, char const *str, int n)
+str_hash(char const *str, int n)
 {
         unsigned long hash = 2166136261UL;
 
@@ -159,14 +159,14 @@ hash(Ty *ty, struct value const *val)
         switch (val->type & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADBEEFULL;
         case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
-        case VALUE_STRING:            return str_hash(ty, val->string, val->bytes);
+        case VALUE_STRING:            return str_hash(val->string, val->bytes);
         case VALUE_INTEGER:           return int_hash(ty, val->integer);
         case VALUE_REAL:              return flt_hash(ty, val->real);
         case VALUE_ARRAY:             return ary_hash(ty, val);
         case VALUE_TUPLE:             return tpl_hash(ty, val);
         case VALUE_DICT:              return ptr_hash(ty, val->dict);
         case VALUE_OBJECT:            return obj_hash(ty, val);
-        case VALUE_METHOD:            return ptr_hash(ty, val->method) ^ str_hash(ty, (void *)val->this, sizeof (Value));
+        case VALUE_METHOD:            return ptr_hash(ty, val->method) ^ str_hash((void *)val->this, sizeof (Value));
         case VALUE_BUILTIN_METHOD:    return ptr_hash(ty, val->builtin_method) ^ ptr_hash(ty, val->this);
         case VALUE_FUNCTION:          return ptr_hash(ty, val->builtin_function);
         case VALUE_BUILTIN_FUNCTION:  return ptr_hash(ty, val->info) ^ ptr_hash(ty, val->env);
@@ -767,69 +767,79 @@ value_show_color(Ty *ty, struct value const *v)
         return result;
 }
 
-int
-value_compare(Ty *ty, void const *_v1, void const *_v2)
+inline static int
+check_cmp_result(Ty *ty, Value const *v1, Value const *v2, Value v)
 {
-        struct value const *v1 = _v1;
-        struct value const *v2 = _v2;
-        struct value v;
-
-        if (v1->type == VALUE_REAL && v2->type == VALUE_INTEGER) {
-                v = REAL(v2->integer);
-                v2 = &v;
-        }
-
-        if (v1->type == VALUE_INTEGER && v2->type == VALUE_REAL) {
-                v = REAL(v1->integer);
-                v1 = &v;
-        }
-
-        if (v1->type != v2->type && v1->type != VALUE_OBJECT) {
+        if (v.type == VALUE_NONE) {
                 zP(
-                        "attempt to compare values of different types: %s%s%s and %s%s%s",
-                        TERM(33),
-                        value_show(ty, v1),
-                        TERM(0),
-                        TERM(33),
-                        value_show(ty, v2),
-                        TERM(0)
+                        "attempt to compare incomparable values\n"
+                        FMT_MORE " %sleft%s: %s"
+                        FMT_MORE "%sright%s: %s\n",
+                        TERM(95), TERM(0),
+                        value_show_color(ty, v1),
+                        TERM(95), TERM(0),
+                        value_show_color(ty, v2)
                 );
         }
 
-        switch (v1->type & ~VALUE_TAGGED) {
-        case VALUE_INTEGER: return (v1->integer < v2->integer) ? -1 : (v1->integer != v2->integer);
-        case VALUE_REAL:    return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
-        case VALUE_STRING:;
-                int c = memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
-                if (c == 0) return ((int)v1->bytes - (int)v2->bytes);
-                return c;
-        case VALUE_ARRAY:
+        if (v.type != VALUE_INTEGER) {
+                zP(
+                        "non-integer returned by user-defined <=> operator\n"
+                        FMT_MORE "  %sleft%s: %s"
+                        FMT_MORE " %sright%s: %s"
+                        FMT_MORE "%sresult%s: %s\n",
+                        TERM(95), TERM(0),
+                        value_show_color(ty, v1),
+                        TERM(95), TERM(0),
+                        value_show_color(ty, v2),
+                        TERM(95), TERM(0),
+                        value_show_color(ty, &v)
+                );
+        }
+
+        return v.integer;
+}
+
+int
+value_compare(Ty *ty, Value const *v1, Value const *v2)
+{
+        int c;
+
+        switch (PACK_TYPES(v1->type & ~VALUE_TAGGED, v2->type & ~VALUE_TAGGED)) {
+        case PAIR_OF(VALUE_INTEGER):
+                return (v1->integer < v2->integer) ? -1 : (v1->integer != v2->integer);
+
+        case PAIR_OF(VALUE_REAL):
+                return (v1->real < v2->real) ? -1 : (v1->real != v2->real);
+
+        case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
+                return (v1->real < v2->integer) ? -1 : (v1->real != v2->integer);
+
+        case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
+                return (v1->integer < v2->real) ? -1 : (v1->integer != v2->real);
+
+        case PAIR_OF(VALUE_STRING):;
+                c = memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
+                return (c != 0) ? c : ((int)v1->bytes - (int)v2->bytes);
+
+        case PAIR_OF(VALUE_ARRAY):
                 for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {
                         int o = value_compare(ty, &v1->array->items[i], &v2->array->items[i]);
                         if (o != 0)
                                 return o;
                 }
-                return ((int)v1->array->count) - ((int)v2->array->count);
-        case VALUE_TUPLE:
+                return ((ptrdiff_t)v1->array->count) - ((ptrdiff_t)v2->array->count);
+
+        case PAIR_OF(VALUE_TUPLE):
                 for (int i = 0; i < v1->count && i < v2->count; ++i) {
                         int o = value_compare(ty, &v1->items[i], &v2->items[i]);
                         if (o != 0)
                                 return o;
                 }
                 return ((int)v1->count) - ((int)v2->count);
-        case VALUE_OBJECT:;
-                struct value const *cmpfn = class_method(ty, v1->class, "<=>");
-                struct value method = METHOD("<=>", cmpfn, v1);
-                if (cmpfn == NULL)
-                        goto Fail;
-                struct value v = vm_eval_function(ty, &method, v2, NULL);
-                if (v.type != VALUE_INTEGER)
-                        zP("user-defined %s.<=> method returned non-integer", class_name(ty, v1->class));
-                return v.integer;
-        default:
-        Fail:
-                zP("attempt to compare values of invalid types: %s and %s", value_show(ty, v1), value_show(ty, v2));
         }
+
+        return check_cmp_result(ty, v1, v2, vm_try_2op(ty, OP_CMP, v1, v2));
 }
 
 bool
@@ -965,46 +975,76 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v)
 }
 
 bool
-value_test_equality(Ty *ty, struct value const *v1, struct value const *v2)
+value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 {
-        if (v1->type != v2->type && v1->type != VALUE_OBJECT)
-                return false;
-
-        struct value *f;
-
-        switch (v1->type & ~VALUE_TAGGED) {
-        case VALUE_REAL:             if (v1->real != v2->real)                                                      return false; break;
-        case VALUE_BOOLEAN:          if (v1->boolean != v2->boolean)                                                return false; break;
-        case VALUE_INTEGER:          if (v1->integer != v2->integer)                                                return false; break;
-        case VALUE_STRING:           if (v1->bytes != v2->bytes || memcmp(v1->string, v2->string, v1->bytes) != 0)  return false; break;
-        case VALUE_ARRAY:            if (!arrays_equal(ty, v1, v2))                                                     return false; break;
-        case VALUE_TUPLE:            if (!tuples_equal(ty, v1, v2))                                                     return false; break;
-        case VALUE_REGEX:            if (v1->regex != v2->regex)                                                    return false; break;
-        case VALUE_FUNCTION:         if (v1->info != v2->info)                                                      return false; break;
-        case VALUE_BUILTIN_FUNCTION: if (v1->builtin_function != v2->builtin_function)                              return false; break;
-        case VALUE_DICT:             if (v1->dict != v2->dict)                                                      return false; break;
-        case VALUE_METHOD:           if (v1->method != v2->method || v1->this != v2->this)                          return false; break;
-        case VALUE_BUILTIN_METHOD:   if (v1->builtin_method != v2->builtin_method || memcmp(v1->this, v2->this, sizeof (Value)) != 0) return false; break;
-        case VALUE_TAG:              if (v1->tag != v2->tag)                                                        return false; break;
-        case VALUE_CLASS:            if (v1->class != v2->class)                                                    return false; break;
-        case VALUE_BLOB:             if (v1->blob->items != v2->blob->items)                                        return false; break;
-        case VALUE_PTR:              if (v1->ptr != v2->ptr)                                                        return false; break;
-        case VALUE_NIL:                                                                                                           break;
-        case VALUE_OBJECT:
-                f = class_method(ty, v1->class, "<=>");
-                if (f != NULL) {
-                        if (value_compare(ty, v1, v2) != 0) {
-                                return false;
-                        }
-                } else if (v2->type != VALUE_OBJECT || v1->object != v2->object) {
-                        return false;
-                }
-        }
-
         if (v1->tags != v2->tags)
                 return false;
 
-        return true;
+        switch (PACK_TYPES(v1->type & ~VALUE_TAGGED, v2->type & ~VALUE_TAGGED)) {
+        case PAIR_OF(VALUE_INTEGER):
+                return v1->integer == v2->integer;
+
+        case PAIR_OF(VALUE_STRING):
+                return v1->bytes == v2->bytes
+                    && memcmp(v1->string, v2->string, v1->bytes) == 0;
+
+        case PAIR_OF(VALUE_BOOLEAN):
+                return v1->boolean == v2->boolean;
+
+        case PAIR_OF(VALUE_ARRAY):
+                return arrays_equal(ty, v1, v2);
+
+        case PAIR_OF(VALUE_TUPLE):
+                return tuples_equal(ty, v1, v2);
+
+        case PAIR_OF(VALUE_DICT):
+                return v1->dict == v2->dict;
+
+        case PAIR_OF(VALUE_CLASS):
+                return v1->class == v2->class;
+
+        case PAIR_OF(VALUE_TAG):
+                return v1->tag == v2->tag;
+
+        case PAIR_OF(VALUE_PTR):
+                return v1->ptr == v2->ptr;
+
+        case PAIR_OF(VALUE_BLOB):
+                return v1->blob == v2->blob;
+
+        case PAIR_OF(VALUE_FUNCTION):
+                return v1->info == v2->info;
+
+        case PAIR_OF(VALUE_BUILTIN_FUNCTION):
+                return v1->builtin_function == v2->builtin_function;
+
+        case PAIR_OF(VALUE_BUILTIN_METHOD):
+                return v1->builtin_method == v2->builtin_method
+                    && memcmp(v1->this, v2->this, sizeof (Value)) == 0;
+
+        case PAIR_OF(VALUE_REGEX):
+                return v1->regex == v2->regex;
+
+        case PAIR_OF(VALUE_REAL):
+                return v1->real == v2->real;
+
+        case PAIR_OF(VALUE_NIL):
+                return true;
+        }
+
+        Value v = vm_try_2op(ty, OP_EQL, v1, v2);
+
+        if (v.type != VALUE_NONE) {
+                return value_truthy(ty, &v);
+        }
+
+        v = vm_try_2op(ty, OP_CMP, v1, v1);
+
+        if (v.type == VALUE_NONE) {
+                return false;
+        }
+
+        return check_cmp_result(ty, v1, v2, v) == 0;
 }
 
 inline static void
@@ -1175,14 +1215,6 @@ value_blob_new(Ty *ty)
         return blob;
 }
 
-struct array *
-value_array_new(Ty *ty)
-{
-        struct array *a = mAo(sizeof *a, GC_ARRAY);
-        vec_init(*a);
-        return a;
-}
-
 struct value
 value_tuple(Ty *ty, int n)
 {
@@ -1248,28 +1280,10 @@ tuple_get(struct value *tuple, char const *name)
         return NULL;
 }
 
-struct array *
-value_array_clone(Ty *ty, struct array const *a)
+Array *
+value_array_clone(Ty *ty, Array const *a)
 {
-        struct array *new = vA();
-
-        /*
-         * If a is empty, then we'd end up passing a null pointer
-         * to memcpy which is UB, so we handle it specially.
-         */
-        if (a->count == 0)
-                return new;
-
-        NOGC(new);
-
-        new->count = a->count;
-        new->capacity = a->count;
-        new->items = mA(sizeof *new->items * new->count);
-        memcpy(new->items, a->items, sizeof *new->items * new->count);
-
-        OKGC(new);
-
-        return new;
+        return ArrayClone(ty, a);
 }
 
 void

@@ -33,7 +33,11 @@ typedef struct {
 } SortContext;
 
 static int
+#if defined(__APPLE__)
 compare_default(void *ty, void const *v1, void const *v2)
+#elif defined(__linux__)
+compare_default(void const *v1, void const *v2, void *ty)
+#endif
 {
         return value_compare(ty, v1, v2);
 }
@@ -730,7 +734,7 @@ array_sum(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         for (int i = 1; i < array->array->count; ++i) {
                 v = array->array->items[i];
-                sum = binary_operator_addition(ty, &sum, &v);
+                sum = vm_2op(ty, OP_ADD, &sum, &v);
         }
 
         gX();
@@ -763,8 +767,8 @@ array_join(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 vmP(&array->array->items[i]);
                 v = builtin_str(ty, 1, NULL);
                 vmX();
-                sum = binary_operator_addition(ty, &sum, &sep);
-                sum = binary_operator_addition(ty, &sum, &v);
+                sum = vm_2op(ty, OP_ADD, &sum, &sep);
+                sum = vm_2op(ty, OP_ADD, &sum, &v);
         }
 
         gX();
@@ -1266,6 +1270,7 @@ array_bsearch_strict(Ty *ty, struct value *array, int argc, struct value *kwargs
 
         struct value v = ARG(0);
 
+        // FIXME: is it ok to subtract 1 here when count is 0? implementation-defined?
         int lo = 0,
             hi = array->array->count - 1;
 

@@ -128,6 +128,17 @@ gcd(int a, int b)
         return a;
 }
 
+inline static unsigned long
+StrHash(char const *s)
+{
+        unsigned long hash = 2166136261UL;
+
+        while (*s != '\0')
+                hash = (hash ^ *s++) * 16777619UL;
+
+        return hash;
+}
+
 Value
 this_executable(Ty *ty);
 

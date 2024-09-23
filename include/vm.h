@@ -148,6 +148,7 @@ extern _Thread_local int EvalDepth;
         X(ENSURE_CONTAINS), \
         X(ENSURE_SAME_KEYS), \
         X(RENDER_TEMPLATE), \
+        X(BINARY_OP), \
         X(TRAP), \
         X(ADD), \
         X(SUB), \
@@ -234,6 +235,12 @@ vm_throw(Ty *ty, struct value const *);
 
 struct value
 vm_call(Ty *ty, struct value const *f, int argc);
+
+Value
+vm_2op(Ty *ty, int op, Value const *a, Value const *b);
+
+Value
+vm_try_2op(Ty *ty, int op, Value const *a, Value const *b);
 
 Value
 vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect);

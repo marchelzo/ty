@@ -76,6 +76,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(EACH_LOOP), \
         X(DEFINITION), \
         X(FUNCTION_DEFINITION), \
+        X(OPERATOR_DEFINITION), \
         X(MACRO_DEFINITION), \
         X(FUN_MACRO_DEFINITION), \
         X(TAG_DEFINITION), \
@@ -323,7 +324,7 @@ struct expression {
                         char const *proto;
                         Symbol *function_symbol;
                         Scope *scope;
-                        vec(char *) params;
+                        name_vector params;
                         expression_vector dflts;
                         expression_vector constraints;
                         expression_vector decorators;

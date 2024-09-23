@@ -15,19 +15,19 @@
 
 #define INITIAL_SIZE 16
 
-struct dict *
+Dict *
 dict_new(Ty *ty)
 {
-        struct dict *d = mAo(sizeof *d, GC_DICT);
+        Dict *d = mAo(sizeof *d, GC_DICT);
         NOGC(d);
 
         d->size = INITIAL_SIZE;
         d->hashes = mA(sizeof (unsigned long [INITIAL_SIZE]));
-        d->keys = mA(sizeof (struct value [INITIAL_SIZE]));
-        d->values = mA(sizeof (struct value [INITIAL_SIZE]));
+        d->keys = mA(sizeof (Value [INITIAL_SIZE]));
+        d->values = mA(sizeof (Value [INITIAL_SIZE]));
         d->count = 0;
         d->dflt = NONE;
-        memset(d->keys, 0, sizeof (struct value [INITIAL_SIZE]));
+        memset(d->keys, 0, sizeof (Value [INITIAL_SIZE]));
 
         OKGC(d);
 
@@ -35,7 +35,7 @@ dict_new(Ty *ty)
 }
 
 inline static size_t
-find_spot(Ty *ty, size_t size, unsigned long const *hs, struct value const *vs, unsigned long h, struct value const *v)
+find_spot(Ty *ty, size_t size, unsigned long const *hs, Value const *vs, unsigned long h, Value const *v)
 {
         size_t mask = size - 1;
         size_t i = h & mask;
@@ -77,13 +77,13 @@ delete(Dict *d, size_t i)
 }
 
 inline static void
-grow(Ty *ty, struct dict *d)
+grow(Ty *ty, Dict *d)
 {
         size_t new_size = d->size << 1;
 
         unsigned long *hashes = mA(new_size * sizeof (unsigned long));
-        struct value *keys = mA(new_size * sizeof (Value));
-        struct value *values = mA(new_size * sizeof (Value));
+        Value *keys = mA(new_size * sizeof (Value));
+        Value *values = mA(new_size * sizeof (Value));
 
         memset(keys, 0, new_size * sizeof (Value));
 
@@ -107,8 +107,8 @@ grow(Ty *ty, struct dict *d)
         d->size = new_size;
 }
 
-inline static struct value *
-put(Ty *ty, struct dict *d, size_t i, unsigned long h, struct value k, struct value v)
+inline static Value *
+put(Ty *ty, Dict *d, size_t i, unsigned long h, Value k, Value v)
 {
         if (9*d->count >= 4*d->size) {
                 grow(ty, d);
@@ -123,8 +123,8 @@ put(Ty *ty, struct dict *d, size_t i, unsigned long h, struct value k, struct va
         return &d->values[i];
 }
 
-struct value *
-dict_get_value(Ty *ty, struct dict *d, struct value *key)
+Value *
+dict_get_value(Ty *ty, Dict *d, Value *key)
 {
         unsigned long h = value_hash(ty, key);
         size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
@@ -133,9 +133,9 @@ dict_get_value(Ty *ty, struct dict *d, struct value *key)
                 return &d->values[i];
 
         if (d->dflt.type != VALUE_NONE) {
-                struct value dflt = value_apply_callable(ty, &d->dflt, key);
+                Value dflt = value_apply_callable(ty, &d->dflt, key);
                 GC_STOP();
-                struct value *v = put(ty, d, i, h, *key, dflt);
+                Value *v = put(ty, d, i, h, *key, dflt);
                 GC_RESUME();
                 return v;
         }
@@ -144,7 +144,7 @@ dict_get_value(Ty *ty, struct dict *d, struct value *key)
 }
 
 bool
-dict_has_value(Ty *ty, struct dict *d, struct value *key)
+dict_has_value(Ty *ty, Dict *d, Value *key)
 {
         unsigned long h = value_hash(ty, key);
         size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
@@ -156,7 +156,7 @@ dict_has_value(Ty *ty, struct dict *d, struct value *key)
 }
 
 void
-dict_put_value(Ty *ty, struct dict *d, struct value key, struct value value)
+dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 {
         unsigned long h = value_hash(ty, &key);
         size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
@@ -167,8 +167,8 @@ dict_put_value(Ty *ty, struct dict *d, struct value key, struct value value)
                 put(ty, d, i, h, key, value);
 }
 
-struct value *
-dict_put_value_with(Ty *ty, struct dict *d, struct value key, struct value v, struct value const *f)
+Value *
+dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 {
         unsigned long h = value_hash(ty, &key);
         size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
@@ -180,8 +180,8 @@ dict_put_value_with(Ty *ty, struct dict *d, struct value key, struct value v, st
         }
 }
 
-struct value *
-dict_put_key_if_not_exists(Ty *ty, struct dict *d, struct value key)
+Value *
+dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 {
         unsigned long h = value_hash(ty, &key);
         size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
@@ -195,28 +195,28 @@ dict_put_key_if_not_exists(Ty *ty, struct dict *d, struct value key)
         }
 }
 
-struct value *
-dict_put_member_if_not_exists(Ty *ty, struct dict *d, char const *member)
+Value *
+dict_put_member_if_not_exists(Ty *ty, Dict *d, char const *member)
 {
         return dict_put_key_if_not_exists(ty, d, STRING_NOGC(member, strlen(member)));
 }
 
-struct value *
-dict_get_member(Ty *ty, struct dict *d, char const *key)
+Value *
+dict_get_member(Ty *ty, Dict *d, char const *key)
 {
-        struct value string = STRING_NOGC(key, strlen(key));
+        Value string = STRING_NOGC(key, strlen(key));
         return dict_get_value(ty, d, &string);
 }
 
 void
-dict_put_member(Ty *ty, struct dict *d, char const *key, struct value value)
+dict_put_member(Ty *ty, Dict *d, char const *key, Value value)
 {
-        struct value string = STRING_NOGC(key, strlen(key));
+        Value string = STRING_NOGC(key, strlen(key));
         dict_put_value(ty, d, string, value);
 }
 
 void
-dict_mark(Ty *ty, struct dict *d)
+dict_mark(Ty *ty, Dict *d)
 {
         if (MARKED(d)) return;
 
@@ -234,15 +234,15 @@ dict_mark(Ty *ty, struct dict *d)
 }
 
 void
-dict_free(Ty *ty, struct dict *d)
+dict_free(Ty *ty, Dict *d)
 {
         mF(d->hashes);
         mF(d->keys);
         mF(d->values);
 }
 
-static struct value
-dict_default(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_default(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc == 0) {
                 if (d->dict->dflt.type == VALUE_NONE) {
@@ -263,26 +263,26 @@ dict_default(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return *d;
 }
 
-static struct value
-dict_contains(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("dict.contains() expects 1 argument but got %d", argc);
 
-        struct value *key = &ARG(0);
+        Value *key = &ARG(0);
         unsigned long h = value_hash(ty, key);
         size_t i = find_spot(ty, d->dict->size, d->dict->hashes, d->dict->keys, h, key);
 
         return BOOLEAN(d->dict->keys[i].type != 0);
 }
 
-static struct value
-dict_keys(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_keys(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("dict.keys() expects 0 arguments but got %d", argc);
 
-        struct value keys = ARRAY(vA());
+        Value keys = ARRAY(vA());
 
         gP(&keys);
 
@@ -295,13 +295,13 @@ dict_keys(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return keys;
 }
 
-static struct value
-dict_values(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_values(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("dict.values() expects 0 arguments but got %d", argc);
 
-        struct value values = ARRAY(vA());
+        Value values = ARRAY(vA());
 
         gP(&values);
 
@@ -314,26 +314,36 @@ dict_values(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return values;
 }
 
-struct value
-dict_clone(Ty *ty, struct value *d, int argc, struct value *kwargs)
+Dict *
+DictClone(Ty *ty, Dict const *d)
+{
+        Dict *new = dict_new(ty);
+        new->dflt = d->dflt;
+
+        NOGC(new);
+
+        for (size_t i = 0; i < d->size; ++i) {
+                if (d->keys[i].type != 0) {
+                        dict_put_value(ty, new, d->keys[i], d->values[i]);
+                }
+        }
+
+        OKGC(new);
+
+        return new;
+}
+
+static Value
+dict_clone(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("dict.clone() expects 0 arguments but got %d", argc);
 
-        struct dict *new = dict_new(ty);
-        new->dflt = d->dict->dflt;
-        NOGC(new);
-
-        for (size_t i = 0; i < d->dict->size; ++i)
-                if (d->dict->keys[i].type != 0)
-                        dict_put_value(ty, new, d->dict->keys[i], d->dict->values[i]);
-
-        OKGC(new);
-        return DICT(new);
+        return DICT(DictClone(ty, d));
 }
 
 bool
-dict_same_keys(Ty *ty, struct dict const *d, struct dict const *u)
+dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
 {
         if (d->count != u->count)
                 return false;
@@ -361,7 +371,7 @@ dict_same_keys(Ty *ty, struct dict const *d, struct dict const *u)
 }
 
 inline static void
-copy_unique(Ty *ty, struct dict *diff, struct dict const *d, struct dict const *u)
+copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
 {
         for (size_t i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0) {
@@ -392,19 +402,19 @@ copy_unique(Ty *ty, struct dict *diff, struct dict const *d, struct dict const *
         }
 }
 
-struct value
-dict_diff(Ty *ty, struct value *d, int argc, struct value *kwargs)
+Value
+dict_diff(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("Dict.diff(): expected 1 argument but got %d", argc);
         }
 
-        struct value u = ARG(0);
+        Value u = ARG(0);
         if (u.type != VALUE_DICT) {
                 zP("Dict.diff(): expected Dict but got %s", value_show(ty, &u));
         }
 
-        struct dict *diff = dict_new(ty);
+        Dict *diff = dict_new(ty);
 
         NOGC(diff);
 
@@ -416,14 +426,14 @@ dict_diff(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return DICT(diff);
 }
 
-struct value
-dict_intersect(Ty *ty, struct value *d, int argc, struct value *kwargs)
+Value
+dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 zP("dict.intersect() expects 1 or 2 arguments but got %d", argc);
         }
 
-        struct value u = ARG(0);
+        Value u = ARG(0);
         if (u.type != VALUE_DICT)
                 zP("the first argument to dict.intersect() must be a dict");
 
@@ -448,7 +458,7 @@ dict_intersect(Ty *ty, struct value *d, int argc, struct value *kwargs)
                         }
                 }
         } else {
-                struct value f = ARG(1);
+                Value f = ARG(1);
                 if (!CALLABLE(f)) {
                         zP("the second argument to dict.intersect() must be callable");
                 }
@@ -484,60 +494,71 @@ dict_intersect(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return *d;
 }
 
-struct value
-dict_intersect_copy(Ty *ty, struct value *d, int argc, struct value *kwargs)
+Value
+dict_intersect_copy(Ty *ty, Value *d, int argc, Value *kwargs)
 {
-        struct value copy = dict_clone(ty, d, 0, NULL);
+        Value copy = dict_clone(ty, d, 0, NULL);
         return dict_intersect(ty, &copy, argc, kwargs);
 }
 
-struct value
-dict_update(Ty *ty, struct value *d, int argc, struct value *kwargs)
+Dict *
+DictUpdate(Ty *ty, Dict *d, Dict const *u)
 {
-        if (argc != 1 && argc != 2) {
-                zP("dict.update() expects 1 or 2 arguments but got %d", argc);
+        for (size_t i = 0; i < u->size; ++i) {
+                if (u->keys[i].type != 0) {
+                        dict_put_value(ty, d, u->keys[i], u->values[i]);
+                }
         }
 
-        struct value u = ARG(0);
-        if (u.type != VALUE_DICT)
-                zP("the first argument to dict.update() must be a dict");
-
-        if (argc == 1) {
-                for (size_t i = 0; i < u.dict->size; ++i) {
-                        if (u.dict->keys[i].type != 0) {
-                                dict_put_value(ty, d->dict, u.dict->keys[i], u.dict->values[i]);
-                        }
-                }
-        } else {
-                struct value f = ARG(1);
-                if (!CALLABLE(f)) {
-                        zP("the second argument to dict.update() must be callable");
-                }
-                for (size_t i = 0; i < u.dict->size; ++i) {
-                        if (u.dict->keys[i].type != 0) {
-                                dict_put_value_with(
-                                        ty,
-                                        d->dict,
-                                        u.dict->keys[i],
-                                        u.dict->values[i],
-                                        &f
-                                );
-                        }
-                }
-
-        }
-
-        return *d;
+        return d;
 }
 
-struct value
-dict_subtract(Ty *ty, struct value *d, int argc, struct value *kwargs)
+Dict *
+DictUpdateWith(Ty *ty, Dict *d, Dict const *u, Value const *f)
+{
+        for (size_t i = 0; i < u->size; ++i) {
+                if (u->keys[i].type != 0) {
+                        dict_put_value_with(
+                                ty,
+                                d,
+                                u->keys[i],
+                                u->values[i],
+                                f
+                        );
+                }
+        }
+
+        return d;
+}
+
+static Value
+dict_update(Ty *ty, Value *d, int argc, Value *kwargs)
+{
+        if (argc != 1 && argc != 2) {
+                zP("dict.update(): expected 1 or 2 arguments but got %d", argc);
+        }
+
+        Value u = ARG(0);
+
+        if (u.type != VALUE_DICT) {
+                zP("dict.update(): expected Dict but got: %s", VSC(&u));
+        }
+
+        return DICT(
+                (argc == 1)
+              ? DictUpdate(ty, d->dict, u.dict)
+              : DictUpdateWith(ty, d->dict, u.dict, &ARG(1))
+        );
+}
+
+Value
+dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 zP("dict.subtract() expects 1 or 2 arguments but got %d", argc);
         }
 
-        struct value u = ARG(0);
+        Value u = ARG(0);
         if (u.type != VALUE_DICT)
                 zP("the first argument to dict.subtract() must be a dict");
 
@@ -558,7 +579,7 @@ dict_subtract(Ty *ty, struct value *d, int argc, struct value *kwargs)
                         }
                 }
         } else {
-                struct value f = ARG(1);
+                Value f = ARG(1);
                 if (!CALLABLE(f)) {
                         zP("the second argument to dict.subtract() must be callable");
                 }
@@ -590,8 +611,8 @@ dict_subtract(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return *d;
 }
 
-static struct value
-dict_put(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_put(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc == 0)
                 zP("dict.put(ty) expects at least 1 argument but got 0");
@@ -603,13 +624,13 @@ dict_put(Ty *ty, struct value *d, int argc, struct value *kwargs)
         return *d;
 }
 
-static struct value
-dict_remove(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("dict.remove() expects 1 argument but got %d", argc);
 
-        struct value k = ARG(0);
+        Value k = ARG(0);
         unsigned long h = value_hash(ty, &k);
 
         size_t i = find_spot(
@@ -624,14 +645,14 @@ dict_remove(Ty *ty, struct value *d, int argc, struct value *kwargs)
         if (d->dict->keys[i].type == 0) {
                 return NIL;
         } else {
-                struct value v = d->dict->values[i];
+                Value v = d->dict->values[i];
                 delete(d->dict, i);
                 return v;
         }
 }
 
-static struct value
-dict_len(Ty *ty, struct value *d, int argc, struct value *kwargs)
+static Value
+dict_len(Ty *ty, Value *d, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("dict.len() expects 0 arguments but got %d", argc);

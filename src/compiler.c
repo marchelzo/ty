@@ -1,4 +1,4 @@
-#include <stdlib.h>;
+#include <stdlib.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -12,6 +12,7 @@
 #include "ty.h"
 #include "alloc.h"
 #include "location.h"
+#include "operators.h"
 #include "log.h"
 #include "util.h"
 #include "value.h"
@@ -163,6 +164,8 @@ typedef struct state {
         Expr *implicit_func;
 
         Expr *origin;
+
+        statement_vector class_ops;
 
         Expr *func;
         int class;
@@ -575,8 +578,8 @@ fail(Ty *ty, char const *fmt, ...)
 static int
 eloc_cmp(void const *a_, void const *b_)
 {
-        struct eloc *a = a_;
-        struct eloc *b = b_;
+        struct eloc const *a = a_;
+        struct eloc const *b = b_;
 
         if (a->p_start < b->p_start) return -1;
         if (a->p_start > b->p_start) return  1;
@@ -688,9 +691,14 @@ add_location_info(Ty *ty)
                 locs[i].p_end = (uintptr_t)(state.code.items + locs[i].end_off);
         }
 
-        qsort(state.expression_locations.items, state.expression_locations.count, sizeof (struct eloc), eloc_cmp);
+        qsort(
+                state.expression_locations.items,
+                state.expression_locations.count,
+                sizeof (struct eloc),
+                eloc_cmp
+        );
 
-        vec_nogc_push(location_lists, state.expression_locations);
+        xvP(location_lists, state.expression_locations);
 }
 
 inline static void
@@ -925,41 +933,11 @@ tmpsymbol(Ty *ty, struct scope *scope)
 static struct state
 freshstate(Ty *ty)
 {
-        struct state s;
+        CompileState s = {0};
 
-        vec_init(s.code);
-
-        vec_init(s.selfs);
-        vec_init(s.bound_symbols);
-
-        vec_init(s.loops);
-        vec_init(s.tries);
-        vec_init(s.generator_returns);
-
-        s.resources = 0;
-        s.function_resources = 0;
-
-        vec_init(s.imports);
-
-        vec_init(s.ns);
-
-        s.method = NULL;
         s.global = scope_new(ty, "(global)", global, false);
-        s.fscope = NULL;
         s.class = -1;
-
-        s.func = NULL;
-        s.implicit_func = NULL;
-        s.implicit_fscope = NULL;
-        s.macro_scope = NULL;
-        s.origin = NULL;
-
-        s.function_depth = 0;
-
-        s.filename = NULL;
         s.start = s.end = s.mstart = s.mend = Nowhere;
-
-        vec_init(s.expression_locations);
 
         return s;
 }
@@ -989,6 +967,90 @@ is_loop(Ty *ty, struct statement const *s)
         default:
                 return false;
         }
+}
+
+inline static void
+resolve_class_choices(Ty *ty, Scope *scope, Expr *e, int_vector *cs)
+{
+        if (e->type == EXPRESSION_IDENTIFIER && e->symbol->class != -1) {
+                avP(*cs, e->symbol->class);
+        } else if (e->type == EXPRESSION_BIT_OR) {
+                resolve_class_choices(ty, scope, e->left, cs);
+                resolve_class_choices(ty, scope, e->right, cs);
+        } else {
+                fail(ty, "bad operator signature");
+        }
+}
+
+inline static int
+op_signature(Ty *ty, Scope *scope, Expr *e, int_vector *t1, int_vector *t2)
+{
+        if (e->constraints.count > 0 && e->constraints.items[0] != NULL) {
+                symbolize_expression(ty, scope, e->constraints.items[0]);
+                resolve_class_choices(ty, scope, e->constraints.items[0], t1);
+        } else {
+                avP(*t1, CLASS_TOP);
+        }
+
+        if (e->constraints.count > 1 && e->constraints.items[1] != NULL) {
+                symbolize_expression(ty, scope, e->constraints.items[1]);
+                resolve_class_choices(ty, scope, e->constraints.items[1], t2);
+        } else {
+                avP(*t2, CLASS_TOP);
+        }
+
+        if (
+                e->params.count == 0 ||
+                e->params.count > 2  ||
+                e->ikwargs != -1     ||
+                e->rest != -1
+        ) {
+                fail(ty, "bad operator signature");
+        }
+
+        return e->params.count;
+}
+
+static void
+symbolize_op_def(Ty *ty, Scope *scope, Stmt *def)
+{
+        int_vector t1 = {0};
+        int_vector t2 = {0};
+
+        Expr *target = def->target;
+        Expr *func = def->value;
+
+        int arity = op_signature(ty, scope, func, &t1, &t2);
+
+        InternSet *set = (arity == 1) ? &xD.u_ops : &xD.b_ops;
+        InternEntry *e = intern(set, target->identifier);
+
+        target->symbol = scope_add(ty, global, target->identifier);
+
+        for (int i = 0; i < t1.count; ++i) {
+                for (int j = 0; j < t2.count; ++j) {
+                        dont_printf(
+                                "  %4s :: (%3d) %8s x %-8s (%3d) :: %d\n",
+                                e->name,
+                                t1.items[i],
+                                class_name(ty, t1.items[i]),
+                                class_name(ty, t2.items[j]),
+                                t2.items[j],
+                                target->symbol->i
+                        );
+                        op_add(e->id, t1.items[i], t2.items[j], target->symbol->i);
+                }
+        }
+
+        /*
+         * We can strip away the constraints now. The checks will only ever be
+         * reached when the operands are already known to satisfy them.
+         */
+        for (int i = 0; i < func->constraints.count; ++i) {
+                func->constraints.items[i] = NULL;
+        }
+
+        symbolize_expression(ty, scope, func);
 }
 
 inline static Expr *
@@ -2309,11 +2371,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         class_set_super(ty, s->class.symbol, s->class.super->symbol->class);
 
                         for (int i = 0; i < s->class.methods.count; ++i) {
-                                struct expression *m = s->class.methods.items[i];
+                                Expr *m = s->class.methods.items[i];
                                 if (m->return_type == NULL) {
-                                        struct value *v = class_method(ty, s->class.super->symbol->class, m->name);
+                                        Value *v = class_method(ty, s->class.super->symbol->class, m->name);
                                         if (v != NULL && v->type == VALUE_PTR) {
-                                                m->return_type = ((struct expression *)v->ptr)->return_type;
+                                                m->return_type = ((Expr *)v->ptr)->return_type;
                                         }
                                 }
                         }
@@ -2328,6 +2390,54 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 apply_decorator_macros(ty, subscope, s->class.getters.items, s->class.getters.count);
                 apply_decorator_macros(ty, subscope, s->class.setters.items, s->class.setters.count);
                 apply_decorator_macros(ty, subscope, s->class.statics.items, s->class.statics.count);
+
+                /*
+                 * We have to move all of the operator methods out of the class and just
+                 * treat them as top-level operator definitions. We want
+                 *
+                 *     class Foo {
+                 *          <%>(other: Bar) {
+                 *                  ...
+                 *          }
+                 *     }
+                 *
+                 * to be equivalent to
+                 *
+                 *     class Foo {
+                 *     }
+                 *
+                 *     function <%>(self: Foo, other: Bar) {
+                 *          ...
+                 *     }
+                 *
+                 * TODO: Do we want to keep them defined as methods as well? As it stands now, these
+                 *       definitions won't be found if you look them up dynamically on an object at runtime
+                 *       using member() -- feels a bit leaky
+                 */
+                int n_remaining = 0;
+
+                for (int i = 0; i < s->class.methods.count; ++i) {
+                        Expr *fun = s->class.methods.items[i];
+                        if (contains(OperatorCharset, *fun->name) && fun->params.count > 0) {
+                                Stmt *def = NewStmt(ty, STATEMENT_OPERATOR_DEFINITION);
+                                def->target = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                                def->target->identifier = fun->name;
+                                def->value = fun;
+                                def->value->is_method = false;
+
+                                Expr *this = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                                this->identifier = s->class.name;
+
+                                avI(fun->params, "self", 0);
+                                avI(fun->constraints, this, 0);
+
+                                avP(state.class_ops, def);
+                        } else {
+                                s->class.methods.items[n_remaining++] = fun;
+                        }
+                }
+
+                s->class.methods.count = n_remaining;
 
                 aggregate_overloads(ty, &s->class.methods, false);
                 aggregate_overloads(ty, &s->class.setters, true);
@@ -2481,6 +2591,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_expression(ty, scope, s->value);
                 }
                 symbolize_lvalue(ty, scope, s->target, true, s->pub);
+                break;
+        case STATEMENT_OPERATOR_DEFINITION:
+                symbolize_op_def(ty, scope, s);
                 break;
         case STATEMENT_FUNCTION_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
@@ -4993,39 +5106,21 @@ emit_expr(Ty *ty, struct expression const *e, bool need_loc)
                 break;
         case EXPRESSION_USER_OP:
                 emit_expression(ty, e->left);
-                size_t sc;
-                if (e->sc != NULL) {
-                        emit_instr(ty, INSTR_DUP);
-                        emit_expression(ty, e->sc);
-                        emit_instr(ty, INSTR_CHECK_MATCH);
-                        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, sc);
-                }
                 emit_expression(ty, e->right);
-                emit_instr(ty, INSTR_SWAP);
-                emit_instr(ty, INSTR_CALL_METHOD);
-                emit_int(ty, 1);
-                emit_string(ty, e->op_name);
-                emit_ulong(ty, strhash(e->op_name));
-                emit_int(ty, 0);
-                if (e->sc != NULL) {
-                        PATCH_JUMP(sc);
-                }
+                emit_instr(ty, INSTR_BINARY_OP);
+                emit_int(ty, intern(&xD.b_ops, e->op_name)->id);
                 break;
         case EXPRESSION_BIT_OR:
-                if (method == NULL) method = "|";
-        case EXPRESSION_BIT_AND:
-                if (method == NULL) method = "&";
-        case EXPRESSION_KW_OR:
-                if (method == NULL) method = "__or__";
-        case EXPRESSION_KW_AND:
-                if (method == NULL) method = "__and__";
-                emit_expression(ty, e->right);
                 emit_expression(ty, e->left);
-                emit_instr(ty, INSTR_CALL_METHOD);
-                emit_int(ty, 1);
-                emit_string(ty, method);
-                emit_ulong(ty, strhash(method));
-                emit_int(ty, 0);
+                emit_expression(ty, e->right);
+                emit_instr(ty, INSTR_BINARY_OP);
+                emit_int(ty, OP_BIT_OR);
+                break;
+        case EXPRESSION_BIT_AND:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                emit_instr(ty, INSTR_BINARY_OP);
+                emit_int(ty, OP_BIT_AND);
                 break;
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
@@ -5304,6 +5399,7 @@ emit_statement(Ty *ty, struct statement const *s, bool want_result)
                         want_result = false;
                 }
                 break;
+        case STATEMENT_OPERATOR_DEFINITION:
         case STATEMENT_DEFINITION:
         case STATEMENT_FUNCTION_DEFINITION:
         case STATEMENT_MACRO_DEFINITION:
@@ -5561,6 +5657,13 @@ declare_classes(Ty *ty, struct statement *s, Scope *scope)
         }
 }
 
+inline static bool
+is_proc_def(Stmt const *s)
+{
+        return s->type == STATEMENT_FUNCTION_DEFINITION ||
+               s->type == STATEMENT_OPERATOR_DEFINITION;
+}
+
 static void
 compile(Ty *ty, char const *source)
 {
@@ -5622,6 +5725,10 @@ compile(Ty *ty, char const *source)
                 symbolize_statement(ty, state.global, p[i]);
         }
 
+        for (int i = 0; i < state.class_ops.count; ++i) {
+                symbolize_statement(ty, state.global, state.class_ops.items[i]);
+        }
+
         emit_new_globals(ty);
 
         /*
@@ -5641,13 +5748,19 @@ compile(Ty *ty, char const *source)
          * without getting an error due to f and g being referenced before they're defined.
          *
          */
+        int end_of_defs = 0;
         for (int i = 0; p[i] != NULL; ++i) {
-                if (p[i]->type == STATEMENT_FUNCTION_DEFINITION) {
-                        for (int j = i - 1; j >= 0 && p[j]->type != STATEMENT_FUNCTION_DEFINITION
-                                                 && p[j]->type != STATEMENT_IMPORT; --j) {
+                if (is_proc_def(p[i])) {
+                        for (
+                                int j = i - 1;
+
+                                (j >= 0) && !is_proc_def(p[j]) && p[j]->type != STATEMENT_IMPORT;
+
+                                j -= 1
+                        ) {
                                 struct statement *s = p[j];
                                 p[j] = p[j + 1];
-                                p[j + 1] = s;
+                                p[end_of_defs = j + 1] = s;
                         }
                 }
         }
@@ -5656,7 +5769,15 @@ compile(Ty *ty, char const *source)
                 emit_statement(ty, multi_functions.items[i], false);
         }
 
-        for (int i = 0; p[i] != NULL; ++i) {
+        for (int i = 0; i < end_of_defs; ++i) {
+                emit_statement(ty, p[i], false);
+        }
+
+        for (int i = 0; i < state.class_ops.count; ++i) {
+                emit_statement(ty, state.class_ops.items[i], false);
+        }
+
+        for (int i = end_of_defs; p[i] != NULL; ++i) {
                 emit_statement(ty, p[i], false);
         }
 
@@ -5668,10 +5789,16 @@ compile(Ty *ty, char const *source)
         emit_instr(ty, INSTR_HALT);
 
         /*
+         * We can re-use this vec(Stmt *) for further compilation but it's important
+         * that we empty it here. Because we stripped the constraints out of the
+         * functions, passing them to symbolize_op_def() again will provide new
+         * implementations of the operators that match /any/ operands.
+         */
+        state.class_ops.count = 0;
+
+        /*
          * Add all of the location information from this compliation unit to the global list.
          */
-        //struct location end = { 0 };
-        //add_location(ty, end, end, state);
         add_location_info(ty);
 
         state.generator_returns.count = 0;
@@ -8447,7 +8574,7 @@ define_class(Ty *ty, Stmt *s)
                 );
         }
 
-        struct symbol *sym = addsymbol(ty, scope, s->class.name);
+        Symbol *sym = addsymbol(ty, scope, s->class.name);
         sym->class = class_new(ty, s->class.name, s->class.doc);
         sym->doc = s->class.doc;
         sym->cnst = true;
@@ -8455,8 +8582,13 @@ define_class(Ty *ty, Stmt *s)
         s->class.symbol = sym->class;
 
         for (int i = 0; i < s->class.methods.count; ++i) {
-                struct expression *m = s->class.methods.items[i];
-                class_add_method(ty, sym->class, m->name, PTR(m));
+                Expr *m = s->class.methods.items[i];
+
+                // FIXME: we're doing the same check again in the CLASS_DEFINITION case of
+                // symbolize_statement... we should probably just handle everything right here
+                if (!contains(OperatorCharset, *m->name) || m->params.count == 0) {
+                        class_add_method(ty, sym->class, m->name, PTR(m));
+                }
         }
 }
 

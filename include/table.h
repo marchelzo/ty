@@ -4,7 +4,7 @@
 #include "vec.h"
 #include "util.h"
 
-#define TABLE_SIZE 16
+enum { TABLE_SIZE = 16 };
 
 struct value;
 
@@ -14,11 +14,11 @@ struct bucket {
         vec(struct value) values;
 };
 
-struct table {
+typedef struct table {
         struct bucket buckets[TABLE_SIZE];
         struct value finalizer;
         int class;
-};
+} ValueTable;
 
 void
 table_init(Ty *ty, struct table *t);

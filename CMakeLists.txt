@@ -73,6 +73,7 @@ set(_src_files
   src/functions.c
   src/gc.c
   src/html.c
+  src/intern.c
   src/json.c
   src/lex.c
   src/object.c
@@ -94,7 +95,7 @@ set(_tgt_ty_interface "${PROJECT_NAME}_Objects")
 add_library(${_tgt_ty_interface} INTERFACE)
 
 set(_tgt_ty_interface_version_info "${_tgt_ty_interface}_VersionInfo")
-add_version_info_target(NAME ${_tgt_ty_interface_version_info} LANGUAGE C)
+add_version_info_target(NAME ${_tgt_ty_interface_version_info} GIT_WORK_TREE . LANGUAGE C)
 
 target_compile_options(${_tgt_ty_interface}
   INTERFACE
