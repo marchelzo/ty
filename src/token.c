@@ -65,6 +65,7 @@ static struct {
         { "/",   TOKEN_DIV            },
         { "%",   TOKEN_PERCENT        },
         { "^",   '^'                  },
+        { "~",   '~'                  },
         { "!=",  TOKEN_NOT_EQ         },
         { "!",   TOKEN_BANG           },
         { "==",  TOKEN_DBL_EQ         },

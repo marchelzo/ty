@@ -19,7 +19,7 @@
 #include "log.h"
 
 enum {
-        MAX_OP_LEN   = 8,
+        MAX_OP_LEN = 8,
 };
 
 static char const *filename;
@@ -40,8 +40,6 @@ C(int n)
                 return SRC[n];
         return '\0';
 }
-
-static char const *opchars = "/=<~|!@%^&*-+>?.$";
 
 noreturn static void
 error(Ty *ty, char const *fmt, ...)
@@ -993,14 +991,14 @@ lexop(Ty *ty)
         size_t i = 0;
 
         while (
-                contains(opchars, C(0)) ||
+                contains(OperatorCharset, C(0)) ||
                 (
                         C(0) == ':' &&
                         (
                                 C(-1) != '*' ||
                                 i > 1 ||
                                 (
-                                        contains(opchars, C(1)) &&
+                                        contains(OperatorCharset, C(1)) &&
                                         C(1) != '-'
                                 )
                         )
@@ -1154,7 +1152,7 @@ lex_token(Ty *ty, LexContext ctx)
                         return lexregex(ty);
                 } else if (haveid(ty)) {
                         return lexword(ty);
-                } else if (C(0) == ':' && C(1) == ':' && !contains(opchars, C(2))) {
+                } else if (C(0) == ':' && C(1) == ':' && !contains(OperatorCharset, C(2))) {
                         nextchar(ty);
                         nextchar(ty);
                         return mktoken(ty, TOKEN_CHECK_MATCH);
@@ -1197,7 +1195,7 @@ lex_token(Ty *ty, LexContext ctx)
                 } else if (C(0) == '$' && ctx == LEX_PREFIX) {
                         nextchar(ty);
                         return mktoken(ty, '$');
-                } else if (contains(opchars, C(0)) || (C(0) == ':' && contains(opchars, C(1)) && C(1) != '-')) {
+                } else if (contains(OperatorCharset, C(0)) || (C(0) == ':' && contains(OperatorCharset, C(1)) && C(1) != '-')) {
                         return lexop(ty);
                 } else if (isdigit(C(0))) {
                         return lexnum(ty);

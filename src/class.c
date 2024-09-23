@@ -7,6 +7,14 @@
 #include "util.h"
 #include "vec.h"
 #include "table.h"
+#include "class.h"
+
+typedef struct {
+        int_vector types;
+        int_vector funs;
+} DispatchSet;
+
+typedef vec(DispatchSet) OperatorTable;
 
 static int class = 0;
 static vec(char const *) names;
@@ -17,6 +25,7 @@ static vec(struct table) mtables;
 static vec(struct table) gtables;
 static vec(struct table) stables;
 static vec(struct table) ctables;
+static vec(OperatorTable) b_op_tables;
 
 int
 class_new(Ty *ty, char const *name, char const *doc)
@@ -28,10 +37,14 @@ class_new(Ty *ty, char const *name, char const *doc)
 
         struct table t;
         table_init(ty, &t);
+
         vvP(mtables, t);
         vvP(gtables, t);
         vvP(stables, t);
         vvP(ctables, t);
+
+        OperatorTable ops = {0};
+        xvP(b_op_tables, ops);
 
         return class++;
 }
@@ -61,7 +74,7 @@ class_lookup(Ty *ty, char const *name)
 char const *
 class_name(Ty *ty, int class)
 {
-        return names.items[class];
+        return (class == CLASS_TOP) ? "(top)" : names.items[class];
 }
 
 void
@@ -175,12 +188,13 @@ class_get_finalizer(Ty *ty, int class)
 bool
 class_is_subclass(Ty *ty, int sub, int super)
 {
-        do {
-                if (sub == super) return true;
+        for (;;) {
+                if (sub == super)
+                        return true;
+                if (sub == CLASS_TOP)
+                        return false;
                 sub = supers.items[sub];
-        } while (sub != -1);
-
-        return false;
+        }
 }
 
 int

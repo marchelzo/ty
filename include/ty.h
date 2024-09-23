@@ -4,8 +4,10 @@
 #include <stddef.h>
 #include <setjmp.h>
 #include <stdbool.h>
+#include <inttypes.h>
 
 #include "vec.h"
+#include "intern.h"
 
 typedef struct value Value;
 
@@ -29,6 +31,8 @@ struct frame;
 typedef struct frame Frame;
 
 typedef vec(Target) TargetStack;
+
+typedef struct table ValueTable;
 
 struct try {
         jmp_buf jb;
@@ -55,7 +59,10 @@ typedef vec(Frame) FrameStack;
 
 typedef vec(struct alloc *) AllocList;
 
-typedef void TY;
+typedef struct {
+        InternSet u_ops;
+        InternSet b_ops;
+} TY;
 
 typedef struct thread_group ThreadGroup;
 
@@ -90,6 +97,9 @@ typedef struct {
 #define MyGroup (ty->my_group)
 
 extern Ty MainTy;
+extern TY xD;
+
+#define dont_printf(...) do { } while (0)
 
 #define GC_STOP() (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
@@ -99,6 +109,7 @@ extern Ty MainTy;
 #define mREu(...) resize_unchecked(__VA_ARGS__)
 #define mA(...) gc_alloc(ty, __VA_ARGS__)
 #define mAo(...) gc_alloc_object(ty, __VA_ARGS__)
+#define mAo0(...) gc_alloc_object0(ty, __VA_ARGS__)
 #define mF(p) gc_free(ty, p)
 
 #define amA(n) Allocate(ty, n)
@@ -114,8 +125,9 @@ extern Ty MainTy;
 #define vScn(s)    STRING_CLONE_C(ty, s)
 #define vSncn(s)    STRING_C_CLONE_C(ty, s)
 
-#define vA()      value_array_new(ty)
-#define vAp(a, x) value_array_push(ty, a, x)
+#define vA()       value_array_new(ty)
+#define vAn(n)     value_array_new_sized(ty, n)
+#define vAp(a, x)  value_array_push(ty, a, x)
 
 #define vT(n)    value_tuple(ty, n)
 #define vTn(...)  value_named_tuple(ty, __VA_ARGS__, NULL)
@@ -156,5 +168,39 @@ extern Ty MainTy;
 #define PAIR(a, b)    PAIR_(ty, a, b)
 #define TRIPLE(a, b, c) TRIPLE_(ty, a, b, c)
 
+#define TY_BINARY_OPERATORS  \
+        X(ADD,       "+"),   \
+        X(SUB,       "-"),   \
+        X(MUL,       "*"),   \
+        X(DIV,       "/"),   \
+        X(MOD,       "%"),   \
+        X(AND,      "&&"),   \
+        X(OR,       "||"),   \
+        X(BIT_OR,    "|"),   \
+        X(BIT_AND,   "&"),   \
+        X(BIT_XOR,   "^"),   \
+        X(EQL,      "=="),   \
+        X(NEQ,      "!="),   \
+        X(CMP,     "<=>"),   \
+        X(GT,        ">"),   \
+        X(LT,        "<"),   \
+        X(GEQ,      ">="),   \
+        X(LEQ,      "<=")
+
+#define X(op, id) OP_ ## op
+enum {
+        TY_BINARY_OPERATORS
+};
+#undef X
+
+#define FMT_MORE "\n                 "
+#define FMT_CS   "%s%s%s"
+
+#define FMT_MAGENTA2(s) TERM(95), (s), TERM(0)
+
+#define VSC(v) value_show_color(ty, v)
+
+#define pT(p) ((uintptr_t)p &  7)
+#define pP(p) ((uintptr_t)p & ~7)
 
 #endif

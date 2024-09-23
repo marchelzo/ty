@@ -88,9 +88,9 @@
 #define READVALUE(s) (memcpy(&s, IP, sizeof s), (IP += sizeof s))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
-  #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, ip); LOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); LOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
 #else
-  #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, ip); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
@@ -144,6 +144,9 @@ static _Thread_local int rc;
 #define CALLS   (ty->calls)
 #define TARGETS (ty->targets)
 #define FRAMES  (ty->frames)
+
+
+#define topN(i) ((topN)(ty, i))
 
 #ifdef TY_ENABLE_PROFILING
 
@@ -306,6 +309,20 @@ static TyThreadReturnValue
 vm_run_thread(void *p);
 
 static void
+InitializeTY(void)
+{
+#define X(op, id) intern(&xD.b_ops, id)
+        TY_BINARY_OPERATORS;
+#undef X
+}
+
+int
+AbortVM(void)
+{
+        vm_panic(&MainTy, "oops!");
+}
+
+static void
 InitializeTy(Ty *ty)
 {
         memset(ty, 0, sizeof *ty);
@@ -332,6 +349,13 @@ inline static void
 SetState(Ty *ty, bool blocking)
 {
         *MyState = blocking;
+}
+
+inline static bool
+TryFlipTo(atomic_bool *state, bool blocking)
+{
+        bool expected = !blocking;
+        return atomic_compare_exchange_strong(state, &expected, blocking);
 }
 
 void
@@ -386,8 +410,7 @@ WaitGC(Ty *ty)
 #endif
 
         while (!*MyState) {
-                if (!MyGroup->WantGC) {
-                        SetState(ty, true);
+                if (!MyGroup->WantGC && TryFlipTo(MyState, true)) {
                         lTk();
 #ifdef TY_ENABLE_PROFILING
                         LastThreadGCTime = TyThreadTime() - start;
@@ -416,6 +439,8 @@ WaitGC(Ty *ty)
 #ifdef TY_ENABLE_PROFILING
         LastThreadGCTime = TyThreadTime() - start;
 #endif
+
+        dont_printf("Thread %-3llu: %lluus\n", TID, (TyThreadTime() - start) / 1000);
 }
 
 void
@@ -465,13 +490,12 @@ DoGC(Ty *ty)
                 }
                 //GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
                 TyMutexLock(MyGroup->ThreadLocks.items[i]);
-                if (*MyGroup->ThreadStates.items[i]) {
-                        //GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
-                        blockedThreads[nBlocked++] = i;
-                } else {
+                if (TryFlipTo(MyGroup->ThreadStates.items[i], true)) {
                         //GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
-                        *MyGroup->ThreadStates.items[i] = true;
+                } else {
+                        //GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        blockedThreads[nBlocked++] = i;
                 }
         }
 
@@ -546,6 +570,8 @@ DoGC(Ty *ty)
 #ifdef TY_ENABLE_PROFILING
         LastThreadGCTime = TyThreadTime() - start;
 #endif
+
+        dont_printf("Thread %-3llu: %lluus\n", TID, (TyThreadTime() - start) / 1000);
 }
 
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
@@ -611,7 +637,7 @@ add_builtins(Ty *ty, int ac, char **av)
         vvP(Globals, INTEGER(SIGRTMIN));
 #endif
 
-        // Add FFI types here because they aren't constant expressions on Windows.
+        /* Add FFI types here because they aren't constant expressions on Windows. */
         compiler_introduce_symbol(ty, "ffi", "char");
         vvP(Globals, PTR(&ffi_type_schar));
         compiler_introduce_symbol(ty, "ffi", "short");
@@ -669,7 +695,7 @@ vm_load_c_module(Ty *ty, char const *name, void *p)
 {
         struct {
                 char const *name;
-                struct value value;
+                Value value;
         } *mod = p;
 
         int n = 0;
@@ -682,10 +708,16 @@ vm_load_c_module(Ty *ty, char const *name, void *p)
         }
 }
 
-inline static struct value *
+inline static Value *
+(topN)(Ty *ty, int n)
+{
+        return &STACK.items[STACK.count - n];
+}
+
+inline static Value *
 top(Ty *ty)
 {
-        return &STACK.items[STACK.count] - 1;
+        return topN(1);
 }
 
 inline static void
@@ -703,36 +735,36 @@ print_stack(Ty *ty, int n)
 #endif
 }
 
-inline static struct value
+inline static Value
 pop(Ty *ty)
 {
-        LOG("POP: %s", value_show(ty, top(ty)));
-        struct value v = *vvX(STACK);
+        Value v = *vvX(STACK);
+        LOG("POP: %s", VSC(&v));
         print_stack(ty, 15);
         return v;
 }
 
-inline static struct value
+inline static Value
 peek(Ty *ty)
 {
-        return STACK.items[STACK.count - 1];
+        return *topN(1);
 }
 
 inline static void
-push(Ty *ty, struct value v)
+push(Ty *ty, Value v)
 {
-        vec_nogc_push(STACK, v);
+        xvP(STACK, v);
         LOG("PUSH: %s", value_show(ty, &v));
         print_stack(ty, 10);
 }
 
-inline static struct value *
+inline static Value *
 local(Ty *ty, int i)
 {
         return &STACK.items[vvL(FRAMES)->fp + i];
 }
 
-inline static struct value *
+inline static Value *
 poptarget(Ty *ty)
 {
         Target t = *vvX(TARGETS);
@@ -741,7 +773,7 @@ poptarget(Ty *ty)
         return t.t;
 }
 
-inline static struct value *
+inline static Value *
 peektarget(Ty *ty)
 {
         return TARGETS.items[TARGETS.count - 1].t;
@@ -755,7 +787,7 @@ pushtarget(Ty *ty, struct value *v, void *gc)
         vvP(TARGETS, t);
         LOG("TARGETS: (%zu)", TARGETS.count);
         for (int i = 0; i < TARGETS.count; ++i) {
-                LOG("\t%d: %p", i + 1, (void *)TARGETS.items[i].t);
+                LOG("    %d: %p", i + 1, (void *)TARGETS.items[i].t);
         }
 }
 
@@ -789,7 +821,7 @@ co_yield(Ty *ty)
         SWAP(ValueVector, gen->deferred, defer_stack);
         SWAP(ValueVector, gen->to_drop, drop_stack);
 
-        vec_nogc_push_n(gen->frame, STACK.items + n, STACK.count - n - 1);
+        xvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
 
         STACK.items[n - 1] = peek(ty);
         STACK.count = n;
@@ -820,7 +852,7 @@ inline
 __attribute__((optnone, noinline))
 #endif
 static void
-call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, bool exec)
+call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 {
         int bound = f->info[3];
         int np = f->info[4];
@@ -830,9 +862,9 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
         char *code = code_of(f);
         int argc = n;
 
-        struct value self = (pSelf == NULL) ? NONE : *pSelf;
+        Value self = (pSelf == NULL) ? NONE : *pSelf;
 
-        struct value kwargs = (nkw > 0) ? pop(ty) : NIL;
+        Value kwargs = (nkw > 0) ? pop(ty) : NIL;
 
         /*
          * This is the index of the beginning of the stack frame for this call to f.
@@ -854,10 +886,12 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
          * create an array and add any extra arguments to it.
          */
         if (irest != -1) {
-                struct array *extra = vA();
+                int nExtra = argc - irest;
+
+                Array *extra = vAn(nExtra * (nExtra > 0));
 
                 for (int i = irest; i < argc; ++i) {
-                        vAp(extra, STACK.items[fp + i]);
+                        extra->items[i - irest] = STACK.items[fp + i];
                 }
 
                 for (int i = irest; i < argc; ++i) {
@@ -868,6 +902,7 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
         }
 
         if (ikwargs != -1) {
+                // FIXME: don't allocate a dict when there are no kwargs
                 STACK.items[fp + ikwargs] = (nkw > 0) ? kwargs : DICT(dict_new(ty));
         }
 
@@ -876,9 +911,8 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
         /*
          * Throw away extra arguments.
          */
-        while (n > bound) {
-                pop(ty);
-                n -= 1;
+        if (n > bound) {
+                STACK.count -= (n - bound);
         }
 
         /*
@@ -893,13 +927,14 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
+                // FIXME: intern parameter names!!!
                 char const *name = name_of(f);
                 for (int i = 0; i < np; ++i) {
                         name += strlen(name) + 1;
                         if (i == irest || i == ikwargs) {
                                 continue;
                         }
-                        struct value *arg = dict_get_member(ty, kwargs.dict, name);
+                        Value *arg = dict_get_member(ty, kwargs.dict, name);
                         if (arg != NULL) {
                                 *local(ty, i) = *arg;
                         }
@@ -925,7 +960,7 @@ call(Ty *ty, struct value const *f, struct value const *pSelf, int n, int nkw, b
 }
 
 inline static void
-call_co(Ty *ty, struct value *v, int n)
+call_co(Ty *ty, Value *v, int n)
 {
         if (v->gen->ip != code_of(&v->gen->f)) {
                 if (n == 0) {
@@ -1488,7 +1523,7 @@ DoMutDiv(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = binary_operator_division(ty, vp, &x);
+                        *vp = vm_2op(ty, OP_DIV, vp, &x);
                 }
                 push(ty, *vp);
                 break;
@@ -1504,7 +1539,7 @@ DoMutDiv(Ty *ty)
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget(ty);
                 call(ty, vp, &OBJECT(o, c), 0, 0, true);
-                top(ty)[-1] = binary_operator_division(ty, top(ty), top(ty) - 1);
+                top(ty)[-1] = vm_2op(ty, OP_DIV, top(ty), top(ty) - 1);
                 pop(ty);
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
@@ -1530,7 +1565,7 @@ DoMutMul(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = binary_operator_multiplication(ty, vp, &x);
+                        *vp = vm_2op(ty, OP_MUL, vp, &x);
                 }
                 push(ty, *vp);
                 break;
@@ -1546,7 +1581,7 @@ DoMutMul(Ty *ty)
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget(ty);
                 call(ty, vp, &OBJECT(o, c), 0, 0, true);
-                top(ty)[-1] = binary_operator_multiplication(ty, top(ty), top(ty) - 1);
+                top(ty)[-1] = vm_2op(ty, OP_MUL, top(ty), top(ty) - 1);
                 pop(ty);
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
@@ -1578,7 +1613,7 @@ DoMutSub(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = binary_operator_subtraction(ty, vp, &x);
+                        *vp = vm_2op(ty, OP_SUB, vp, &x);
                 }
                 push(ty, *vp);
                 break;
@@ -1594,7 +1629,7 @@ DoMutSub(Ty *ty)
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget(ty);
                 call(ty, vp, &OBJECT(o, c), 0, 0, true);
-                top(ty)[-1] = binary_operator_subtraction(ty, top(ty), top(ty) - 1);
+                top(ty)[-1] = vm_2op(ty, OP_SUB, top(ty), top(ty) - 1);
                 pop(ty);
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
@@ -1622,16 +1657,11 @@ DoMutAdd(Ty *ty)
                 } else if (vp->type == VALUE_DICT) {
                         FALSE_OR (top(ty)->type != VALUE_DICT)
                                 zP("attempt to add non-dict to dict");
-                        dict_update(ty, vp, 1, NULL);
-                        pop(ty);
-                } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "+=")) != NULL) {
-                        gP(vp);
-                        call(ty, vp2, vp, 1, 0, true);
-                        gX();
+                        DictUpdate(ty, vp->dict, top(ty)->dict);
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = binary_operator_addition(ty, vp, &x);
+                        *vp = vm_2op(ty, OP_ADD, vp, &x);
                 }
                 push(ty, *vp);
                 break;
@@ -1647,7 +1677,7 @@ DoMutAdd(Ty *ty)
                 o = TARGETS.items[TARGETS.count].gc;
                 vp = poptarget(ty);
                 call(ty, vp, &OBJECT(o, c), 0, 0, true);
-                top(ty)[-1] = binary_operator_addition(ty, top(ty), top(ty) - 1);
+                top(ty)[-1] = vm_2op(ty, OP_ADD, top(ty), top(ty) - 1);
                 pop(ty);
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
@@ -1729,12 +1759,8 @@ DoDrop(Ty *ty)
 static void
 splat(Ty *ty, Dict *d, Value *v)
 {
-        size_t n;
-
         if (v->type == VALUE_DICT) {
-                n = STACK.count;
-                dict_update(ty, &DICT(d), 1, NULL);
-                STACK.count = n;
+                DictUpdate(ty, d, v->dict);
                 return;
         }
 
@@ -1915,6 +1941,7 @@ vm_exec(Ty *ty, char *code)
                         LOG("Loading global: %s (%d)", IP, n);
                         IP += strlen(IP) + 1;
 #endif
+                        //printf("n=%d\n", n);
                         push(ty, Globals.items[n]);
                         break;
                 CASE(CHECK_INIT)
@@ -2088,7 +2115,7 @@ vm_exec(Ty *ty, char *code)
                                 if (subscript.type != VALUE_INTEGER) {
                                         zP("non-integer pointer offset used in subscript assignment: %s", value_show_color(ty, &subscript));
                                 }
-                                struct value p = binary_operator_addition(ty, &container, &subscript);
+                                Value p = vm_2op(ty, OP_ADD, &container, &subscript);
                                 pop(ty);
                                 pop(ty);
                                 v = pop(ty);
@@ -2586,27 +2613,20 @@ Throw:
                         push(ty, v);
                         break;
                 CASE(ARRAY)
-                        v = ARRAY(vA());
                         n = STACK.count - *vvX(sp_stack);
 
-                        NOGC(v.array);
+                        v = ARRAY(n > 0 ? vAn(n) : vA());
+                        v.array->count = n;
 
-                        if (n > 0) {
-                                vec_reserve(ty, *v.array, n);
+                        if (n > 0) memcpy(
+                                v.array->items,
+                                topN(n),
+                                n * sizeof (Value)
+                        );
 
-                                memcpy(
-                                        v.array->items,
-                                        STACK.items + STACK.count - n,
-                                        n * sizeof (Value)
-                                );
-
-                                v.array->count = n;
-
-                                STACK.count -= n;
-                        }
+                        STACK.count -= n;
 
                         push(ty, v);
-                        OKGC(v.array);
 
                         break;
                 CASE(TUPLE)
@@ -3322,7 +3342,7 @@ BadContainer:
                         break;
                 CASE(NOT)
                         v = pop(ty);
-                        push(ty, unary_operator_not(ty, &v));
+                        push(ty, BOOLEAN(!value_truthy(ty, &v)));
                         break;
                 CASE(QUESTION)
                         if (top(ty)->type == VALUE_NIL) {
@@ -3337,7 +3357,13 @@ BadContainer:
                         break;
                 CASE(NEG)
                         v = pop(ty);
-                        push(ty, unary_operator_negate(ty, &v));
+                        if (v.type == VALUE_INTEGER) {
+                                push(ty, INTEGER(-v.integer));
+                        } else if (v.type == VALUE_REAL) {
+                                push(ty, REAL(-v.real));
+                        } else {
+                                zP("unary - applied to non-numeric operand: %s", VSC(&v));
+                        }
                         break;
                 CASE(COUNT)
                         v = pop(ty);
@@ -3359,47 +3385,46 @@ BadContainer:
                         }
                         break;
                 CASE(ADD)
-                        v = binary_operator_addition(ty, top(ty) - 1, top(ty));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        if (!op_builtin_add(ty)) {
+                                n = OP_ADD;
+                                goto BinaryOp;
+                        }
                         break;
                 CASE(SUB)
-                        v = binary_operator_subtraction(ty, top(ty) - 1, top(ty));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        if (!op_builtin_sub(ty)) {
+                                n = OP_SUB;
+                                goto BinaryOp;
+                        }
                         break;
                 CASE(MUL)
-                        v = binary_operator_multiplication(ty, top(ty) - 1, top(ty));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        if (!op_builtin_mul(ty)) {
+                                n = OP_MUL;
+                                goto BinaryOp;
+                        }
                         break;
                 CASE(DIV)
-                        v = binary_operator_division(ty, top(ty) - 1, top(ty));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        if (!op_builtin_div(ty)) {
+                                n = OP_DIV;
+                                goto BinaryOp;
+                        }
                         break;
                 CASE(MOD)
-                        v = binary_operator_remainder(ty, top(ty) - 1, top(ty));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        if (!op_builtin_mod(ty)) {
+                                n = OP_MOD;
+                                goto BinaryOp;
+                        }
                         break;
                 CASE(EQ)
-                        v = binary_operator_equality(ty, top(ty) - 1, top(ty));
+                        v = BOOLEAN(value_test_equality(ty, top(ty) - 1, top(ty)));
                         pop(ty);
                         pop(ty);
                         push(ty, v);
                         break;
                 CASE(NEQ)
-                        v = binary_operator_equality(ty, top(ty) - 1, top(ty));
+                        v = BOOLEAN(!value_test_equality(ty, top(ty) - 1, top(ty)));
                         pop(ty);
                         pop(ty);
                         push(ty, v);
-                        top(ty)->boolean = !top(ty)->boolean;
                         break;
                 CASE(CHECK_MATCH)
                         if (top(ty)->type == VALUE_CLASS) {
@@ -3573,6 +3598,32 @@ BadContainer:
                 CASE(MUT_SUB)
                         DoMutSub(ty);
                         break;
+                CASE(BINARY_OP)
+                        READVALUE(n);
+                BinaryOp:
+                        i = op_dispatch(n, ClassOf(top(ty) - 1), ClassOf(top(ty)));
+
+                        if (i == -1) zP(
+                                "no matching implementation of %s%s%s\n"
+                                FMT_MORE "%s left%s: %s"
+                                FMT_MORE "%sright%s: %s\n",
+                                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0),
+                                TERM(95), TERM(0), VSC(top(ty) - 1),
+                                TERM(95), TERM(0), VSC(top(ty))
+                        );
+
+                        dont_printf(
+                                "matching implementation of %s%s%s: %d\n"
+                                FMT_MORE "%s left%s (%d): %s"
+                                FMT_MORE "%sright%s (%d): %s\n",
+                                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0), i,
+                                TERM(95), TERM(0), ClassOf(top(ty) - 1), VSC(top(ty) - 1),
+                                TERM(95), TERM(0), ClassOf(top(ty)),     VSC(top(ty))
+                        );
+
+                        call(ty, &Globals.items[i], NULL, 2, 0, false);
+
+                        break;
                 CASE(DEFINE_TAG)
                 {
                         int tag, super, n;
@@ -3734,7 +3785,7 @@ BadContainer:
                                 for (int i = 0; i < nkw; ++i) {
                                         if (IP[0] == '*') {
                                                 if (top(ty)->type == VALUE_DICT) {
-                                                        dict_update(ty, &container, 1, NULL);
+                                                        DictUpdate(ty, container.dict, top(ty)->dict);
                                                         pop(ty);
                                                 } else if (top(ty)->type == VALUE_TUPLE && top(ty)->names != NULL) {
                                                         for (int i = 0; i < top(ty)->count; ++i) {
@@ -4135,6 +4186,7 @@ RunExitHooks(void)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
+        InitializeTY();
         InitializeTy(ty);
 
         GC_STOP();
@@ -4252,7 +4304,14 @@ vm_execute_file(Ty *ty, char const *path)
 {
         char *source = slurp(ty, path);
         if (source == NULL) {
-                Error = "failed to read source file";
+                snprintf(
+                        ERR,
+                        sizeof ERR,
+                        "%s%s%s: failed to read source file: %s%s%s",
+                        TERM(91;1), "Error", TERM(0),
+                        TERM(95), path, TERM(0)
+                );
+                Error = ERR;
                 return false;
         }
 
@@ -4740,6 +4799,69 @@ vm_eval_function(Ty *ty, struct value const *f, ...)
         default:
                 zP("Non-callable value passed to vm_eval_function(ty): %s", value_show_color(ty, f));
         }
+}
+
+Value
+vm_2op(Ty *ty, int op, Value const *a, Value const *b)
+{
+        push(ty, *a);
+        push(ty, *b);
+
+        uint8_t code[1 + sizeof (int) + 1] = {
+                [1               ] = INSTR_HALT,
+                [1 + sizeof (int)] = INSTR_HALT
+        };
+
+        switch (op) {
+        case OP_ADD: code[0] = INSTR_ADD; break;
+        case OP_SUB: code[0] = INSTR_SUB; break;
+        case OP_MUL: code[0] = INSTR_MUL; break;
+        case OP_DIV: code[0] = INSTR_DIV; break;
+        case OP_MOD: code[0] = INSTR_MOD; break;
+        case OP_CMP: code[0] = INSTR_CMP; break;
+        case OP_EQL: code[0] = INSTR_EQ;  break;
+        case OP_NEQ: code[0] = INSTR_NEQ; break;
+        case OP_LEQ: code[0] = INSTR_LEQ; break;
+        case OP_GEQ: code[0] = INSTR_GEQ; break;
+        case OP_LT:  code[0] = INSTR_LT;  break;
+        case OP_GT:  code[0] = INSTR_GT;  break;
+        }
+
+        if (!code[0]) {
+                code[0] = INSTR_BINARY_OP;
+                memcpy(&code[1], &op, sizeof op);
+        }
+
+        vm_exec(ty, (char *)code);
+
+        return pop(ty);
+}
+
+Value
+vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
+{
+
+        int i = op_dispatch(op, ClassOf(a), ClassOf(b));
+
+        if (i == -1) {
+                return NONE;
+        }
+
+        dont_printf(
+                "matching implementation of %s%s%s: %d\n"
+                FMT_MORE "%s left%s (%d): %s"
+                FMT_MORE "%sright%s (%d): %s\n",
+                TERM(95;1), intern_entry(&xD.b_ops, op)->name, TERM(0), i,
+                TERM(95), TERM(0), ClassOf(a), VSC(a),
+                TERM(95), TERM(0), ClassOf(b), VSC(b)
+        );
+
+        push(ty, *a);
+        push(ty, *b);
+
+        call(ty, &Globals.items[i], NULL, 2, 0, true);
+
+        return pop(ty);
 }
 
 void

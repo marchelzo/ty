@@ -32,16 +32,19 @@ struct value *
 dict_put_member_if_not_exists(Ty *ty, struct dict *obj, char const *member);
 
 struct value
-dict_update(Ty *ty, struct value *d, int argc, struct value *kwargs);
-
-struct value
 dict_intersect(Ty *ty, struct value *d, int argc, struct value *kwargs);
 
 struct value
 dict_subtract(Ty *ty, struct value *d, int argc, struct value *kwargs);
 
-struct value
-dict_clone(Ty *ty, struct value *d, int argc, struct value *kwargs);
+Dict *
+DictClone(Ty *ty, Dict const *d);
+
+Dict *
+DictUpdateWith(Ty *ty, Dict *d, Dict const *u, Value const *f);
+
+Dict *
+DictUpdate(Ty *ty, Dict *d, Dict const *u);
 
 void
 dict_mark(Ty *ty, struct dict *obj);

@@ -10,13 +10,13 @@
 #include "location.h"
 #include "lex.h"
 
-struct regex {
+typedef struct regex {
         pcre *pcre;
         pcre_extra *extra;
         char const *pattern;
         bool gc;
         bool detailed;
-};
+} Regex;
 
 typedef struct token {
         enum {

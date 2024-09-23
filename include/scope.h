@@ -24,10 +24,10 @@ typedef struct symbol {
         bool fun_macro;
         bool captured;
         bool init;
-        int i;
-        int ci;
         bool global;
         bool namespace;
+        int i;
+        int ci;
 
         Location loc;
         char const *file;

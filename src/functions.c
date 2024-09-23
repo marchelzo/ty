@@ -2684,41 +2684,40 @@ BUILTIN_FUNCTION(os_spawn)
 
         struct value cmd = ARG(0);
         if (cmd.type != VALUE_ARRAY)
-                zP("the argument to os.spawn() must be an array");
+                zP("os.spawn(): expected array but got: %s", VSC(&cmd));
 
         if (cmd.array->count == 0)
-                zP("empty array passed to os.spawn()");
+                zP("os.spawn(): argv empty");
 
         for (int i = 0; i < cmd.array->count; ++i)
                 if (cmd.array->items[i].type != VALUE_STRING)
-                        zP("non-string in array passed to os.spawn()");
+                        zP("os.spawn(): non-string present in argv: %s", VSC(&cmd));
 
-        struct value *detached = NAMED("detach");
-        struct value *combine = NAMED("combineOutput");
-        struct value *share_stderr = NAMED("shareStderr");
-        struct value *share_stdout = NAMED("shareStdout");
-        struct value *share_stdin = NAMED("shareStdin");
+        Value      *combine = NAMED("combineOutput");
+        Value *share_stderr = NAMED("shareStderr");
+        Value *share_stdout = NAMED("shareStdout");
+        Value  *share_stdin = NAMED("shareStdin");
+        Value       *detach = NAMED("detach");
 
-        if (combine != NULL && !value_truthy(ty, combine)) combine = NULL;
+        if      (combine != NULL && !value_truthy(ty, combine))           combine = NULL;
         if (share_stderr != NULL && !value_truthy(ty, share_stderr)) share_stderr = NULL;
         if (share_stdout != NULL && !value_truthy(ty, share_stdout)) share_stdout = NULL;
-        if (share_stdin != NULL && !value_truthy(ty, share_stdin)) share_stdin = NULL;
-
-        if (detached != NULL && detached->type != VALUE_BOOLEAN) {
-                zP(
-                        "os.spawn(): %s%sdetach%s must be a boolean",
-                        TERM(93),
-                        TERM(1),
-                        TERM(0)
-                );
-        }
+        if  (share_stdin != NULL && !value_truthy(ty, share_stdin))   share_stdin = NULL;
+        if       (detach != NULL && !value_truthy(ty, detach))             detach = NULL;
 
         int in[2], out[2], err[2];
         int nToClose = 0;
         int aToClose[6];
 
+/* ========================================================================= */
 #define CloseOnError(fd) do { aToClose[nToClose++] = (fd); } while (0)
-#define Cleanup() do { TyMutexUnlock(&spawn_lock); for (int i = 0; i < nToClose; ++i) close(aToClose[i]); } while (0)
+#define Cleanup()                                  \
+        do {                                       \
+                TyMutexUnlock(&spawn_lock);        \
+                for (int i = 0; i < nToClose; ++i) \
+                        close(aToClose[i]);        \
+        } while (0)
+/* ========================================================================= */
 
         static TyMutex spawn_lock;
         static atomic_bool init = false;
@@ -2731,12 +2730,12 @@ BUILTIN_FUNCTION(os_spawn)
 
         TyMutexLock(&spawn_lock);
 
-        if (!share_stdin && pipe(in) == -1) { Cleanup(); return NIL; }
-        if (!share_stdout && pipe(out) == -1) { Cleanup(); return NIL; }
+        if (!share_stdin  && pipe(in)  == -1)             { Cleanup(); return NIL; }
+        if (!share_stdout && pipe(out) == -1)             { Cleanup(); return NIL; }
         if (!share_stderr && !combine && pipe(err) == -1) { Cleanup(); return NIL; }
 
-        if (!share_stdin) { CloseOnError(in[0]); CloseOnError(in[1]); }
-        if (!share_stdout) { CloseOnError(out[0]); CloseOnError(out[1]); }
+        if (!share_stdin)              {  CloseOnError(in[0]);  CloseOnError(in[1]); }
+        if (!share_stdout)             { CloseOnError(out[0]); CloseOnError(out[1]); }
         if (!share_stderr && !combine) { CloseOnError(err[0]); CloseOnError(err[1]); }
 
         posix_spawn_file_actions_t actions;
@@ -2766,7 +2765,7 @@ BUILTIN_FUNCTION(os_spawn)
         posix_spawnattr_t attr;
         posix_spawnattr_init(&attr);
 
-        if (detached && detached->boolean) {
+        if (detach) {
                 posix_spawnattr_setpgroup(&attr, 0);
                 posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
         }
@@ -2777,10 +2776,10 @@ BUILTIN_FUNCTION(os_spawn)
                 char *arg = mrealloc(NULL, cmd.array->items[i].bytes + 1);
                 memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
                 arg[cmd.array->items[i].bytes] = '\0';
-                vec_nogc_push(args, arg);
+                xvP(args, arg);
         }
 
-        vec_nogc_push(args, NULL);
+        xvP(args, NULL);
 
         pid_t pid;
         int status = posix_spawnp(&pid, args.items[0], &actions, &attr, args.items, environ);
@@ -2801,13 +2800,14 @@ BUILTIN_FUNCTION(os_spawn)
 
         TyMutexUnlock(&spawn_lock);
 
-        if (!share_stdin) close(in[0]);
-        if (!share_stdout) close(out[1]);
+        if              (!share_stdin) close(in[0]);
+        if             (!share_stdout) close(out[1]);
         if (!share_stderr && !combine) close(err[1]);
 
-        Value vStdin = share_stdin ? INTEGER(0) : INTEGER(in[1]);
+        Value  vStdin =  share_stdin ? INTEGER(0) : INTEGER(in[1]);
         Value vStdout = share_stdout ? INTEGER(1) : INTEGER(out[0]);
-        Value vStderr = combine ? vStdout : (share_stderr ? INTEGER(2) : INTEGER(err[0]));
+        Value vStderr =      combine ? vStdout
+                                     : share_stderr ? INTEGER(2) : INTEGER(err[0]);
 
 #undef CloseOnError
 #undef Cleanup
@@ -2819,202 +2819,6 @@ BUILTIN_FUNCTION(os_spawn)
                 "pid",     INTEGER(pid),
                 NULL
         );
-}
-BUILTIN_FUNCTION(os_spawn2)
-{
-        ASSERT_ARGC("os.spawn()", 1);
-
-        struct value cmd = ARG(0);
-        if (cmd.type != VALUE_ARRAY)
-                zP("the argument to os.spawn() must be an array");
-
-        if (cmd.array->count == 0)
-                zP("empty array passed to os.spawn()");
-
-        for (int i = 0; i < cmd.array->count; ++i)
-                if (cmd.array->items[i].type != VALUE_STRING)
-                        zP("non-string in array passed to os.spawn()");
-
-        struct value *detached = NAMED("detach");
-        struct value *combine = NAMED("combineOutput");
-        struct value *share_stderr = NAMED("shareStderr");
-        struct value *share_stdout = NAMED("shareStdout");
-        struct value *share_stdin = NAMED("shareStdin");
-
-        if (combine != NULL && !value_truthy(ty, combine)) {
-                combine = NULL;
-        }
-
-        if (share_stderr != NULL && !value_truthy(ty, share_stderr)) {
-                share_stderr = NULL;
-        }
-
-        if (share_stdout != NULL && !value_truthy(ty, share_stdout)) {
-                share_stdout = NULL;
-        }
-
-        if (share_stdin != NULL && !value_truthy(ty, share_stdin)) {
-                share_stdin = NULL;
-        }
-
-        if (detached != NULL && detached->type != VALUE_BOOLEAN) {
-                zP(
-                        "os.spawn(): %s%sdetached%s must be a boolean",
-                        TERM(93),
-                        TERM(1),
-                        TERM(0)
-                );
-        }
-
-        int in[2];
-        int out[2];
-        int err[2];
-        int exc[2];
-
-        int nToClose = 0;
-        int aToClose[8];
-
-#define CloseOnError(fd) do { aToClose[nToClose++] = (fd); } while (0)
-#define CleanupFDs() for (int i = 0; i < nToClose; ++i) close(aToClose[i]);
-
-        if (!share_stdin) {
-                if (pipe(in) == -1) {
-                        CleanupFDs();
-                        return NIL;
-                } else {
-                        CloseOnError(in[0]);
-                        CloseOnError(in[1]);
-                }
-        }
-
-        if (!share_stdout) {
-                if (pipe(out) == -1) {
-                        CleanupFDs();
-                        return NIL;
-                } else {
-                        CloseOnError(out[0]);
-                        CloseOnError(out[1]);
-                }
-        }
-
-        if (!share_stderr) {
-                if (pipe(err) == -1) {
-                        CleanupFDs();
-                        return NIL;
-                } else {
-                        CloseOnError(err[0]);
-                        CloseOnError(err[1]);
-                }
-        }
-
-        if (pipe(exc) == -1) {
-                CleanupFDs();
-                return NIL;
-        } else {
-                CloseOnError(exc[0]);
-                CloseOnError(exc[1]);
-        }
-
-        pid_t pid = fork();
-        switch (pid) {
-        case -1:
-                CleanupFDs();
-                return NIL;
-        case 0:
-                if (!share_stdin) {
-                        close(in[1]);
-                }
-                if (!share_stdout) {
-                        close(out[0]);
-                }
-                if (!share_stderr) {
-                        close(err[0]);
-                }
-
-                int errfd = err[1];
-
-                if (combine) {
-                        errfd = share_stdout ? 1 : out[1];
-                        close(err[1]);
-                }
-
-                if ((!share_stdin && dup2(in[0], STDIN_FILENO) == -1)
-                ||  (!share_stdout && dup2(out[1], STDOUT_FILENO) == -1)
-                ||  (!share_stderr && dup2(errfd, STDERR_FILENO) == -1)) {
-                        write(exc[1], &errno, sizeof errno);
-                        exit(EXIT_FAILURE);
-                }
-
-                fcntl(exc[1], F_SETFD, FD_CLOEXEC);
-
-                if (detached && detached->boolean) {
-                        setpgid(0, 0);
-                }
-
-                vec(char *) args;
-                vec_init(args);
-
-                for (int i = 0; i < cmd.array->count; ++i) {
-                        char *arg = NULL;
-                        resize_nogc(arg, cmd.array->items[i].bytes + 1);
-                        memcpy(arg, cmd.array->items[i].string, cmd.array->items[i].bytes);
-                        arg[cmd.array->items[i].bytes] = '\0';
-                        vec_nogc_push(args, arg);
-                }
-
-                vec_nogc_push(args, NULL);
-
-                if (execvp(args.items[0], args.items) == -1) {
-                        write(exc[1], &errno, sizeof errno);
-                        exit(EXIT_FAILURE);
-                }
-
-                return NIL;
-        default:
-                if (!share_stdin) {
-                        close(in[0]);
-                }
-                if (!share_stdout) {
-                        close(out[1]);
-                }
-                if (!share_stderr) {
-                        close(err[1]);
-                }
-                close(exc[1]);
-
-                int status;
-                if (read(exc[0], &status, sizeof status) != 0) {
-                        errno = status;
-                        if (!share_stdin) {
-                                close(in[1]);
-                        }
-                        if (!share_stdout) {
-                                close(out[0]);
-                        }
-                        if (!share_stderr) {
-                                close(err[0]);
-                        }
-                        close(exc[0]);
-                        return NIL;
-                }
-
-                close(exc[0]);
-
-                Value vStdin = share_stdin ? INTEGER(0) : INTEGER(in[1]);
-                Value vStdout = share_stdout ? INTEGER(1) : INTEGER(out[0]);
-                Value vStderr = combine ? vStdout : (share_stderr ? INTEGER(2) : INTEGER(err[0]));
-
-#undef CloseOnError
-#undef CleanupFDs
-
-                return vTn(
-                        "stdin",   vStdin,
-                        "stdout",  vStdout,
-                        "stderr",  vStderr,
-                        "pid",     INTEGER(pid),
-                        NULL
-                );
-        }
 }
 #endif
 

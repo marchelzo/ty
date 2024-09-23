@@ -6,7 +6,6 @@
 #include "log.h"
 #include "util.h"
 
-static int GLOBAL;
 static int SYMBOL;
 
 #ifndef TY_RELEASE
@@ -222,11 +221,7 @@ scope_add(Ty *ty, Scope *s, char const *id)
                 owner = owner->parent;
         }
 
-        if (sym->global) {
-                sym->i = GLOBAL++;
-        } else {
-                sym->i = owner->owned.count;
-        }
+        sym->i = owner->owned.count;
 
         LOG("Symbol %d (%s) is getting i = %d in scope %p", sym->symbol, id, sym->i, s);
 

@@ -13,6 +13,7 @@ struct value;
 #include "gc.h"
 #include "tags.h"
 #include "tthread.h"
+#include "token.h"
 #include "scope.h"
 
 #define V_ALIGN (_Alignof (struct value))
@@ -60,6 +61,7 @@ struct value;
 
 #define ARITY(f) ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
 
+#define CLASS_TOP      -1
 #define CLASS_OBJECT    0
 #define CLASS_CLASS     1
 #define CLASS_FUNCTION  2
@@ -254,6 +256,8 @@ typedef struct blob {
         size_t capacity;
 } Blob;
 
+typedef struct dict Dict;
+
 typedef struct generator Generator;
 typedef struct thread Thread;
 typedef struct channel Channel;
@@ -299,9 +303,9 @@ struct value {
                 short tag;
                 double real;
                 bool boolean;
-                struct array *array;
-                struct dict *dict;
-                struct blob *blob;
+                Array *array;
+                Dict *dict;
+                Blob *blob;
                 Thread *thread;
                 Symbol *sym;
                 struct {
@@ -349,7 +353,7 @@ struct value {
                         int count;
                         bool gc_names;
                 };
-                struct regex const *regex;
+                Regex const *regex;
                 struct {
                         int *info;
                         struct value **env;
@@ -406,14 +410,14 @@ struct channel {
         vec(ChanVal) q;
 };
 
-typedef struct dict {
+struct dict {
         unsigned long *hashes;
         struct value *keys;
         struct value *values;
         size_t size;
         size_t count;
         struct value dflt;
-} Dict;
+};
 
 unsigned long
 value_hash(Ty *ty, struct value const *val);
@@ -422,7 +426,7 @@ bool
 value_test_equality(Ty *ty, struct value const *v1, struct value const *v2);
 
 int
-value_compare(Ty *ty, void const *v1, void const *v2);
+value_compare(Ty *ty, Value const *v1, Value const *v2);
 
 bool
 value_truthy(Ty *ty, struct value const *v);
@@ -448,8 +452,6 @@ value_string_clone(Ty *ty, char const *s, int n);
 char *
 value_string_clone_nul(Ty *ty, char const *src, int n);
 
-struct array *
-value_array_new(Ty *ty);
 
 struct array *
 value_array_clone(Ty *ty, struct array const *);
@@ -474,6 +476,31 @@ tuple_get_completions(Ty *ty, struct value const *v, char const *prefix, char **
 
 void
 _value_mark(Ty *ty, struct value const *v);
+
+inline static Array *
+value_array_new(Ty *ty)
+{
+        return mAo0(sizeof (Array), GC_ARRAY);
+}
+
+inline static Array *
+value_array_new_sized(Ty *ty, size_t n)
+{
+        Array *a = mAo(sizeof (Array), GC_ARRAY);
+
+        if (n == 0)
+                return memset(a, 0, sizeof *a);
+
+        NOGC(a);
+
+        a->items = mA(n * sizeof (Value));
+        a->capacity = n;
+        a->count = n;
+
+        OKGC(a);
+
+        return a;
+}
 
 inline static void
 value_array_push(Ty *ty, struct array *a, struct value v)
@@ -679,6 +706,66 @@ from_eval(struct value const *f)
         return (char *)(f->info + 7);
 }
 
-#endif
+#define PACK_TYPES(t1, t2) (((t1) << 8) | (t2))
+#define    PAIR_OF(t)      PACK_TYPES(t, t)
 
-/* vim: set sts=8 sw=8 expandtab: */
+inline static int
+ClassOf(Value const *v)
+{
+        switch (v->type) {
+        case VALUE_OBJECT:            return v->class;
+        case VALUE_INTEGER:           return CLASS_INT;
+        case VALUE_REAL:              return CLASS_FLOAT;
+        case VALUE_STRING:            return CLASS_STRING;
+        case VALUE_BLOB:              return CLASS_BLOB;
+        case VALUE_ARRAY:             return CLASS_ARRAY;
+        case VALUE_DICT:              return CLASS_DICT;
+        case VALUE_TUPLE:             return CLASS_TUPLE;
+        case VALUE_GENERATOR:         return CLASS_GENERATOR;
+        case VALUE_REGEX:             return CLASS_REGEX;
+        case VALUE_CLASS:             return CLASS_CLASS;
+        case VALUE_FUNCTION:          return CLASS_FUNCTION;
+        case VALUE_METHOD:            return CLASS_FUNCTION;
+        case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;
+        case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
+        }
+
+        return CLASS_TOP;
+}
+
+inline static bool
+ArrayIsSmall(Array const *a)
+{
+        return ((uintptr_t)a & 7);
+}
+
+inline static Value *
+ArrayItems(Array *a)
+{
+        uintptr_t p = (uintptr_t)a;
+        return (p & 7)
+             ? (Value *)(p & ~7)
+             : a->items;
+}
+
+inline static size_t
+ArrayCount(Array *a)
+{
+        uintptr_t p = (uintptr_t)a & ~7;
+        return (p > 0) ? (p - 1) : a->count;
+}
+
+inline static Array *
+ArrayClone(Ty *ty, Array const *a)
+{
+        if (a->count == 0)
+                return vA();
+
+        Array *new = vAn(a->count);
+
+        memcpy(new->items, a->items, a->count * sizeof (Value));
+
+        return new;
+}
+
+#endif

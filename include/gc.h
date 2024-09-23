@@ -158,6 +158,12 @@ gc_alloc_object(Ty *ty, size_t n, char type)
         return a->data;
 }
 
+inline static void *
+gc_alloc_object0(Ty *ty, size_t n, char type)
+{
+        return memset(gc_alloc_object(ty, n, type), 0, n);
+}
+
 void
 gc_register(Ty *ty, void *p);
 

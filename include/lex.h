@@ -9,7 +9,7 @@
 typedef enum LexContext {
         LEX_PREFIX = 1,
         LEX_INFIX  = 2,
-	LEX_FMT    = 3,
+        LEX_FMT    = 3,
         LEX_FAKE   = 4
 } LexContext;
 
@@ -20,6 +20,8 @@ typedef struct LexState {
         bool keep_comments;
         int ctx;
 } LexState;
+
+#define OperatorCharset "/=<~|!@%^&*-+>?.$"
 
 char const *
 lex_error(Ty *ty);

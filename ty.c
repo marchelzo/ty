@@ -33,26 +33,7 @@
 #endif
 
 Ty MainTy;
-
-static char const usage_string[] =
-        "usage: ty [options] [script [args]]\n"
-        "Available options are:\n"
-        "  -c            Exit after compilation without executing the program\n"
-        "  -e EXPR       Evaluate and print EXPR\n"
-        "  -m MODULE     Import module MODULE\n"
-        "  -p            Print the value of the last-evaluated expression before exiting\n"
-        "  -q            Ignore constraints on function parameters and return values\n"
-        "  -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL\n"
-        "                in the specified source file\n"
-#ifdef TY_ENABLE_PROFILING
-        "  -o FILE       Write profile data to FILE instead of stdout\n"
-        "                 (if FILE is @ then stderr will be used)\n"
-        "  --wall        Profile based on wall time instead of CPU time\n"
-#endif
-        "  --            Stop handling options\n"
-        "  --version     Print ty version information and exit\n"
-        "  --help        Print this help message and exit\n"
-;
+TY xD;
 
 #define MAX_COMPLETIONS 240
 
@@ -65,6 +46,35 @@ bool EnableLogging = false;
 
 static char **
 complete(char const *s, int start, int end);
+
+static void
+usage(void)
+{
+        char *u = (char[]) {
+                "usage: ty [options] [script [args]]                                                      \0"
+                "Available options are:                                                                   \0"
+                "    -c            Exit after compilation without executing the program                   \0"
+                "    -e EXPR       Evaluate and print EXPR                                                \0"
+                "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
+                "                  top-level symbols from FILE will be visible, not just public ones      \0"
+                "    -m MODULE     Import module MODULE before continuing                                 \0"
+                "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
+                "    -p            Print the value of the last-evaluated expression before exiting        \0"
+                "    -q            Ignore constraints on function parameters and return values            \0"
+                "    -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL             \0"
+                "                  in the specified source file                                           \0"
+#ifdef TY_ENABLE_PROFILING
+                "    -o FILE       Write profile data to FILE instead of stdout                           \0"
+                "                                (-o@ is interpreted as stderr)                           \0"
+                "    --wall        Profile based on wall time instead of CPU time                         \0"
+#endif
+                "    --            Stop handling options                                                  \0"
+                "    --version     Print ty version information and exit                                  \0"
+                "    --help        Print this help message and exit                                       \0"
+        };
+
+        do do putchar(*u++); while (u[u[-1] = strspn(u, " ")]); while (putchar('\n'), 1[u += u[-1]] && ++u);
+}
 
 static char *
 readln(void)
@@ -310,11 +320,12 @@ main(int argc, char **argv)
                 if (strcmp(argv[argi], "--version") == 0) {
 #ifdef TY_HAVE_VERSION_INFO
                         printf(
-                                "%s version %s\n"
+                                "%s version %s (%s)\n"
                                 "Compiler: %s %s\n"
                                 "Platform: %s-%s\n",
                                 VersionInfo_ProjectName,
                                 VersionInfo_ProjectVersion,
+                                VersionInfo_GitCommitDate,
                                 VersionInfo_CompilerId,
                                 VersionInfo_CompilerVersion,
                                 VersionInfo_Architecture,
@@ -327,7 +338,7 @@ main(int argc, char **argv)
                 }
 
                 if (strcmp(argv[argi], "--help") == 0) {
-                        fputs(usage_string, stdout);
+                        usage();
                         return 0;
                 }
 
@@ -376,21 +387,33 @@ main(int argc, char **argv)
                                                 return (int)!execln(&MainTy, (char *)(opt + 1));
                                         }
                                         break;
+                                case 'f':
                                 case 'm':
-                                        if (opt[1] == '\0') {
-                                                if (argv[argi + 1] == NULL) {
-                                                        fprintf(stderr, "Missing argument for -m\n");
-                                                        return 1;
-                                                }
-                                                snprintf(buffer, sizeof buffer - 1, "import %s\n", argv[++argi]);
+                                case 'M':
+                                {
+                                        char const *fmt = (*opt == 'M') ? "import %s (..)\n"
+                                                        : (*opt == 'm') ? "import %s\n"
+                                                        :                 ":%s";
+
+                                        char const *module;
+
+                                        if (opt[1] != '\0') {
+                                                module = opt + 1;
+                                        } else if (argv[argi + 1] != NULL) {
+                                                module = argv[++argi];
                                         } else {
-                                                snprintf(buffer, sizeof buffer - 1, "import %s\n", opt + 1);
-                                                while (opt[1] != '\0') ++opt;
+                                                fprintf(stderr, "Missing argument for -%c\n", *opt);
+                                                return 1;
                                         }
+
+                                        snprintf(buffer, sizeof buffer, fmt, module);
+
                                         if (!execln(&MainTy, buffer)) {
                                                 return 1;
                                         }
-                                        break;
+
+                                        goto NextOption;
+                                }
 #ifdef TY_ENABLE_PROFILING
                                 case 'o':
                                         if (opt[1] == '\0') {
@@ -414,7 +437,7 @@ main(int argc, char **argv)
                         fprintf(stderr, "Unrecognized option %s\n", argv[argi]);
                         return 1;
                 }
-
+NextOption:
                 argi += 1;
         }
 
