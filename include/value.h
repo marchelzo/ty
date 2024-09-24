@@ -468,8 +468,57 @@ value_tuple(Ty *ty, int n);
 struct value
 value_named_tuple(Ty *ty, char const *first, ...);
 
-struct value *
-tuple_get(struct value *tuple, char const *name);
+Value *
+tuple_get(Value const *tuple, char const *name);
+
+inline static Value *
+tget_or_null(Value const *tuple, uintptr_t k)
+{
+        if (k < 16) {
+                return (k >= tuple->count) ? NULL : &tuple->items[k];
+        }
+
+        char const *name = (char const *)k;
+
+        if (tuple->names != NULL) for (int i = 0; i < tuple->count; ++i) {
+                if (tuple->names[i] != NULL && strcmp(tuple->names[i], name) == 0) {
+                        return &tuple->items[i];
+                }
+        }
+
+        return NULL;
+}
+
+inline static Value
+tget_or(Value const *tuple, uintptr_t k, Value _)
+{
+        Value *v = tget_or_null(tuple, k);
+        return (v != NULL) ? *v : _;
+}
+
+inline static Value *
+tget_t(Value const *tuple, uintptr_t k, uint32_t t)
+{
+        Value *v = tget_or_null(tuple, k);
+        return (v == NULL || v->type != t) ? NULL : v;
+}
+
+inline static Value *
+tget_nn(Value const *tuple, uintptr_t k)
+{
+        Value *v = tget_or_null(tuple, k);
+        return (v == NULL || v->type == VALUE_NIL) ? NULL : v;
+}
+
+inline static Value
+tget_tagged(Value const *tuple, uintptr_t k)
+{
+        return NONE;
+}
+
+#define tget_or(t, i, v) ((tget_or)((t), (uintptr_t)(i), (v)))
+#define tget_nn(t, i   ) ((tget_nn)((t), (uintptr_t)(i)     ))
+#define  tget_t(t, i, v) ((tget_t) ((t), (uintptr_t)(i), (v)))
 
 int
 tuple_get_completions(Ty *ty, struct value const *v, char const *prefix, char **out, int max);
