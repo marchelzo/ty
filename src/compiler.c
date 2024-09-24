@@ -345,8 +345,6 @@ unwrap(Ty *ty, Value const *wrapped)
                 v.type &= ~VALUE_TAGGED;
         }
 
-        int x = (emit_instr(ty, INSTR_NIL), 4);
-
         return v;
 }
 
