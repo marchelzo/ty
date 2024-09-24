@@ -85,6 +85,8 @@
 
 #define TY_LOG_VERBOSE 1
 
+#define SKIPSTR()    (IP += strlen(IP) + 1)
+#define READSTR(s)   do { (s) = IP; SKIPSTR(); } while (0)
 #define READVALUE(s) (memcpy(&s, IP, sizeof s), (IP += sizeof s))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
@@ -125,7 +127,7 @@ static ValueVector Globals;
 
 struct sigfn {
         int sig;
-        struct value f;
+        Value f;
 };
 
 #define FRAME(n, fn, from) ((Frame){ .fp = (n), .f = (fn), .ip = (from) })
@@ -281,8 +283,8 @@ typedef struct thread_group {
 
 typedef struct {
         atomic_bool *created;
-        struct value *ctx;
-        struct value *name;
+        Value *ctx;
+        Value *name;
         Thread *t;
         ThreadGroup *group;
         Ty *ty;
@@ -359,7 +361,7 @@ TryFlipTo(atomic_bool *state, bool blocking)
 }
 
 void
-Forget(Ty *ty, struct value *v, AllocList *allocs)
+Forget(Ty *ty, Value *v, AllocList *allocs)
 {
         size_t n = MyStorage.allocs->count;
 
@@ -615,7 +617,7 @@ add_builtins(Ty *ty, int ac, char **av)
                 vvP(Globals, builtins[i].value);
         }
 
-        struct array *args = vA();
+        Array *args = vA();
         NOGC(args);
 
         for (int i = 1; i < ac; ++i)
@@ -780,7 +782,7 @@ peektarget(Ty *ty)
 }
 
 inline static void
-pushtarget(Ty *ty, struct value *v, void *gc)
+pushtarget(Ty *ty, Value *v, void *gc)
 {
         Target t = { .t = v, .gc = gc };
         if (gc != NULL) NOGC(gc);
@@ -1027,7 +1029,7 @@ ReleaseLock(Ty *ty, bool blocked)
 }
 
 void
-NewThread(Ty *ty, Thread *t, struct value *call, struct value *name, bool isolated)
+NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 {
         lGv(true);
 
@@ -1156,7 +1158,7 @@ CleanupThread(void *ctx)
         mF(drop_stack.items);
         free(ty->allocs.items);
 
-        vec(struct value const *) *root_set = GCRootSet(ty);
+        vec(Value const *) *root_set = GCRootSet(ty);
         free(root_set->items);
 
         if (group_remaining == 0) {
@@ -1179,8 +1181,8 @@ static TyThreadReturnValue
 vm_run_thread(void *p)
 {
         NewThreadCtx *ctx = p;
-        struct value *call = ctx->ctx;
-        struct value *name = ctx->name;
+        Value *call = ctx->ctx;
+        Value *name = ctx->name;
         Thread *t = ctx->t;
 
         Ty *ty = mrealloc(NULL, sizeof *ty);
@@ -1264,7 +1266,7 @@ vm_del_sigfn(Ty *ty, int sig)
 }
 
 void
-vm_set_sigfn(Ty *ty, int sig, struct value const *f)
+vm_set_sigfn(Ty *ty, int sig, Value const *f)
 {
 #ifndef _WIN32
         pthread_rwlock_wrlock(&SigLock);
@@ -1283,10 +1285,10 @@ End:
 #endif
 }
 
-struct value
+Value
 vm_get_sigfn(Ty *ty, int sig)
 {
-        struct value f = NIL;
+        Value f = NIL;
 #ifndef _WIN32
         pthread_rwlock_rdlock(&SigLock);
 
@@ -1306,7 +1308,7 @@ vm_get_sigfn(Ty *ty, int sig)
 void
 vm_do_signal(Ty *ty, int sig, siginfo_t *info, void *ctx)
 {
-        struct value f = NIL;
+        Value f = NIL;
 
         pthread_rwlock_rdlock(&SigLock);
 
@@ -1341,7 +1343,7 @@ vm_do_signal(Ty *ty, int sig, siginfo_t *info, void *ctx)
 #endif
 
 inline static void
-AddTupleEntry(Ty *ty, StringVector *names, ValueVector *values, char const *name, struct value const *v)
+AddTupleEntry(Ty *ty, StringVector *names, ValueVector *values, char const *name, Value const *v)
 {
         for (int i = 0; i < names->count; ++i) {
                 if (names->items[i] != NULL && strcmp(names->items[i], name) == 0) {
@@ -1354,18 +1356,18 @@ AddTupleEntry(Ty *ty, StringVector *names, ValueVector *values, char const *name
         vvP(*values, *v);
 }
 
-struct value
-GetMember(Ty *ty, struct value v, char const *member, unsigned long h, bool b)
+Value
+GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
 {
 
         int n;
-        struct value *vp = NULL, *this;
+        Value *vp = NULL, *this;
         BuiltinMethod *func;
 
         if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(ty, tags)) {
                 vp = tags_lookup_method(ty, tags_first(ty, tags), member, h);
                 if (vp != NULL)  {
-                        struct value *this = mAo(sizeof *this, GC_VALUE);
+                        Value *this = mAo(sizeof *this, GC_VALUE);
                         *this = v;
                         this->tags = tags;
                         return METHOD(member, vp, this);
@@ -1491,7 +1493,7 @@ ClassLookup:
                 }
                 vp = b ? class_method(ty, n, MISSING) : NULL;
                 if (vp != NULL) {
-                        this = mAo(sizeof (struct value [3]), GC_VALUE);
+                        this = mAo(sizeof (Value [3]), GC_VALUE);
                         this[0] = v;
                         this[1] = STRING_NOGC(member, strlen(member));
                         return METHOD(MISSING, vp, this);
@@ -1509,8 +1511,8 @@ inline static void
 DoMutDiv(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        struct table *o;
-        struct value *vp, *vp2, x;
+        ValueTable *o;
+        Value *vp, *vp2, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1551,8 +1553,8 @@ inline static void
 DoMutMul(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        struct table *o;
-        struct value *vp, *vp2, x;
+        ValueTable *o;
+        Value *vp, *vp2, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1594,8 +1596,8 @@ inline static void
 DoMutSub(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        struct table *o;
-        struct value *vp, *vp2, x;
+        ValueTable *o;
+        Value *vp, *vp2, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1642,8 +1644,8 @@ inline static void
 DoMutAdd(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        struct table *o;
-        struct value *vp, *vp2, x;
+        ValueTable *o;
+        Value *vp, *vp2, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1696,11 +1698,11 @@ DoAssign(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         void *v = (void *)(p & ~0x07);
-        struct table *o;
+        ValueTable *o;
 
         switch (p & 0x07) {
         case 0:
-                *(struct value *)v = peek(ty);
+                *(Value *)v = peek(ty);
                 break;
         case 1:
                 ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)v >> 3)] = peek(ty).integer;
@@ -1791,7 +1793,7 @@ GetCurrentTry(Ty *ty)
         return NULL;
 }
 
-struct value
+Value
 vm_try_exec(Ty *ty, char *code)
 {
         jmp_buf jb_;
@@ -1909,7 +1911,7 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
 #ifndef TY_NO_LOG
                         LOG("Loading local: %s (%d)", IP, n);
-                        IP += strlen(IP) + 1;
+                        SKIPSTR();
 #endif
                         push(ty, *local(ty, n));
                         break;
@@ -1917,11 +1919,11 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
 #ifndef TY_NO_LOG
                         LOG("Loading ref: %s (%d)", IP, n);
-                        IP += strlen(IP) + 1;
+                        SKIPSTR();
 #endif
                         vp = local(ty, n);
                         if (vp->type == VALUE_REF) {
-                                push(ty, *(struct value *)vp->ptr);
+                                push(ty, *(Value *)vp->ptr);
                         } else {
                                 push(ty, *vp);
                         }
@@ -1930,7 +1932,7 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
 #ifndef TY_NO_LOG
                         LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
-                        IP += strlen(IP) + 1;
+                        SKIPSTR();
 #endif
 
                         push(ty, *vvL(FRAMES)->f.env[n]);
@@ -1939,7 +1941,7 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
 #ifndef TY_NO_LOG
                         LOG("Loading global: %s (%d)", IP, n);
-                        IP += strlen(IP) + 1;
+                        SKIPSTR();
 #endif
                         //printf("n=%d\n", n);
                         push(ty, Globals.items[n]);
@@ -1953,7 +1955,7 @@ vm_exec(Ty *ty, char *code)
                 CASE(CAPTURE)
                         READVALUE(i);
                         READVALUE(j);
-                        vp = mAo(sizeof (struct value), GC_VALUE);
+                        vp = mAo(sizeof (Value), GC_VALUE);
                         *vp = *local(ty, i);
                         *local(ty, i) = REF(vp);
                         vvL(FRAMES)->f.env[j] = vp;
@@ -2015,7 +2017,7 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
                         vp = local(ty, n);
                         if (vp->type == VALUE_REF) {
-                                pushtarget(ty, (struct value *)vp->ptr, NULL);
+                                pushtarget(ty, (Value *)vp->ptr, NULL);
                         } else {
                                 pushtarget(ty, vp, NULL);
                         }
@@ -2024,15 +2026,16 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
 #ifndef TY_NO_LOG
                         LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
-                        IP += strlen(IP) + 1;
+                        SKIPSTR();
 #endif
                         pushtarget(ty, vvL(FRAMES)->f.env[n], NULL);
                         break;
                 CASE(TARGET_MEMBER)
-                        v = pop(ty);
-                        member = IP;
-                        IP += strlen(IP) + 1;
+                        READSTR(member);
                         READVALUE(h);
+
+                        v = pop(ty);
+
                         if (v.type == VALUE_OBJECT) {
                                 vp = class_lookup_setter(ty, v.class, member, h);
                                 if (vp != NULL) {
@@ -2058,8 +2061,8 @@ vm_exec(Ty *ty, char *code)
                                                 );
                                         }
                                         pushtarget(ty, vp2, NULL);
-                                        pushtarget(ty, (struct value *)(uintptr_t)v.class, v.object);
-                                        pushtarget(ty, (struct value *)(((uintptr_t)vp) | 2), NULL);
+                                        pushtarget(ty, (Value *)(uintptr_t)v.class, v.object);
+                                        pushtarget(ty, (Value *)(((uintptr_t)vp) | 2), NULL);
                                         break;
                                 }
                                 vp = table_lookup(ty, v.object, member, h);
@@ -2110,7 +2113,7 @@ vm_exec(Ty *ty, char *code)
                                         goto Throw;
                                         zP("blob index out of range in subscript expression");
                                 }
-                                pushtarget(ty, (struct value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
+                                pushtarget(ty, (Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
                         } else if (container.type == VALUE_PTR && IP[0] == INSTR_ASSIGN) {
                                 if (subscript.type != VALUE_INTEGER) {
                                         zP("non-integer pointer offset used in subscript assignment: %s", value_show_color(ty, &subscript));
@@ -2155,7 +2158,7 @@ vm_exec(Ty *ty, char *code)
                         if (top(ty)->type != VALUE_ARRAY || top(ty)->array->count < i + j) {
                                 IP += n;
                         } else {
-                                struct array *rest = vA();
+                                Array *rest = vA();
                                 NOGC(rest);
                                 vvPn(*rest, top(ty)->array->items + i, top(ty)->array->count - (i + j));
                                 *poptarget(ty) = ARRAY(rest);
@@ -2170,7 +2173,7 @@ vm_exec(Ty *ty, char *code)
                                 IP += n;
                         } else {
                                 int count = top(ty)->count - i;
-                                struct value *rest = mAo(count * sizeof (Value), GC_TUPLE);
+                                Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
                                 memcpy(rest, top(ty)->items + i, count * sizeof (Value));
                                 *vp = TUPLE(rest, NULL, count, false);
                         }
@@ -2260,8 +2263,9 @@ vm_exec(Ty *ty, char *code)
                         goto Throw;
                 CASE(BAD_CALL)
                         v = peek(ty);
-                        str = IP;
-                        IP += strlen(IP) + 1;
+
+                        READSTR(str);
+
                         zP(
                                 "constraint on %s%s%s%s%s violated in call to %s%s%s%s%s: %s%s%s = %s%s%s",
                                 TERM(34),
@@ -2536,12 +2540,8 @@ Throw:
                         }
                         break;
                 CASE(TRY_TUPLE_MEMBER)
-                        // b => required
                         READVALUE(b);
-
-                        str = IP;
-                        IP += strlen(str) + 1;
-
+                        READSTR(str);
                         READVALUE(n);
 
                         if (top(ty)->type != VALUE_TUPLE) {
@@ -2641,8 +2641,8 @@ Throw:
 
                         n = STACK.count - *vvX(sp_stack);
 
-                        for (int i = 0; i < n; ++i, IP += strlen(IP) + 1) {
-                                struct value *v = &STACK.items[STACK.count - n + i];
+                        for (int i = 0; i < n; ++i, SKIPSTR()) {
+                                Value *v = &STACK.items[STACK.count - n + i];
                                 if (strcmp(IP, "*") == 0) {
                                         if (v->type != VALUE_TUPLE) {
                                                 zP(
@@ -2779,7 +2779,7 @@ Throw:
                         goto Return;
                 CASE(VALUE)
                         READVALUE(s);
-                        push(ty, *(struct value *)s);
+                        push(ty, *(Value *)s);
                         break;
                 CASE(EVAL)
                         READVALUE(s);
@@ -3055,9 +3055,7 @@ Throw:
                         break;
                 CASE(PUSH_TUPLE_MEMBER)
                         READVALUE(b);
-
-                        member = IP;
-                        IP += strlen(member) + 1;
+                        READSTR(member);
 
                         v = peek(ty);
 
@@ -3132,23 +3130,15 @@ Throw:
                         break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
-                        value = peek(ty);
-
                         b = IP[-1] == INSTR_TRY_MEMBER_ACCESS;
 
-                        member = IP;
-                        IP += strlen(IP) + 1;
-
+                        READSTR(member);
                         READVALUE(h);
 
-                        push(ty, NIL);
-                        v = GetMember(ty, value, member, h, true);
-                        pop(ty);
+                        v = GetMember(ty, peek(ty), member, h, true);
 
-                        if (v.type != VALUE_NONE) {
+                        if (b || v.type != VALUE_NONE) {
                                 *top(ty) = v;
-                                break;
-                        } else if (b) {
                                 break;
                         }
 
@@ -3192,7 +3182,7 @@ Throw:
                                 if (subscript.type == VALUE_GENERATOR) {
                                         gP(&subscript);
                                         gP(&container);
-                                        struct array *a = vA();
+                                        Array *a = vA();
                                         NOGC(a);
                                         str = IP;
                                         for (;;) {
@@ -3200,7 +3190,7 @@ Throw:
                                                 *vvL(subscript.gen->calls) = &halt;
                                                 vec_push_unchecked(ty, subscript.gen->calls, next_fix);
                                                 vm_exec(ty, IP);
-                                                struct value r = pop(ty);
+                                                Value r = pop(ty);
                                                 if (r.type == VALUE_NONE)
                                                         break;
                                                 FALSE_OR (r.type != VALUE_INTEGER)
@@ -3231,12 +3221,12 @@ Throw:
                                                 gX();
                                                 goto ArraySubscript;
                                         }
-                                        struct array *a = vA();
+                                        Array *a = vA();
                                         NOGC(a);
                                         for (int i = 0; ; ++i) {
                                                 push(ty, INTEGER(i));
                                                 call(ty, vp, &subscript, 1, 0, true);
-                                                struct value r = pop(ty);
+                                                Value r = pop(ty);
                                                 if (r.type == VALUE_NIL)
                                                         break;
                                                 FALSE_OR (r.type != VALUE_INTEGER)
@@ -3256,7 +3246,7 @@ Throw:
                                                 subscript.integer += container.array->count;
                                         }
                                         if (subscript.integer < 0 || subscript.integer >= container.array->count) {
-                        OutOfRange:
+                                OutOfRange:
                                                 push(ty, TAG(gettag(ty, NULL, "IndexError")));
                                                 goto Throw;
                                                 zP("array index out of range in subscript expression");
@@ -3336,7 +3326,7 @@ Throw:
                                 push(ty, NIL);
                                 break;
                         default:
-BadContainer:
+                        BadContainer:
                                 zP("invalid container in subscript expression: %s", value_show(ty, &container));
                         }
                         break;
@@ -3633,7 +3623,7 @@ BadContainer:
                         while (n --> 0) {
                                 v = pop(ty);
                                 tags_add_method(ty, tag, IP, v);
-                                IP += strlen(IP) + 1;
+                                SKIPSTR();
                         }
                         if (super != -1)
                                 tags_copy_methods(ty, tag, super);
@@ -3650,22 +3640,22 @@ BadContainer:
                         while (c --> 0) {
                                 v = pop(ty);
                                 class_add_static(ty, class, IP, v);
-                                IP += strlen(IP) + 1;
+                                SKIPSTR();
                         }
                         while (n --> 0) {
                                 v = pop(ty);
                                 class_add_method(ty, class, IP, v);
-                                IP += strlen(IP) + 1;
+                                SKIPSTR();
                         }
                         while (g --> 0) {
                                 v = pop(ty);
                                 class_add_getter(ty, class, IP, v);
-                                IP += strlen(IP) + 1;
+                                SKIPSTR();
                         }
                         while (s --> 0) {
                                 v = pop(ty);
                                 class_add_setter(ty, class, IP, v);
-                                IP += strlen(IP) + 1;
+                                SKIPSTR();
                         }
                         break;
                 }
@@ -3707,8 +3697,8 @@ BadContainer:
 
                         if (nEnv > 0) {
                                 LOG("Allocating ENV for %d caps", nEnv);
-                                v.env = mAo(nEnv * sizeof (struct value *), GC_ENV);
-                                memset(v.env, 0, nEnv * sizeof (struct value *));
+                                v.env = mAo(nEnv * sizeof (Value *), GC_ENV);
+                                memset(v.env, 0, nEnv * sizeof (Value *));
                         } else {
                                 v.env = NULL;
                         }
@@ -3718,14 +3708,14 @@ BadContainer:
                         for (int i = 0; i < ncaps; ++i) {
                                 READVALUE(b);
                                 READVALUE(j);
-                                struct value *p = poptarget(ty);
+                                Value *p = poptarget(ty);
                                 if (b) {
                                         if (p->type == VALUE_REF) {
                                                 /* This variable was already captured, just refer to the same object */
                                                 v.env[j] = p->ptr;
                                         } else {
                                                 // TODO: figure out if this is getting freed too early
-                                                struct value *new = mAo(sizeof (struct value), GC_VALUE);
+                                                Value *new = mAo(sizeof (Value), GC_VALUE);
                                                 *new = *p;
                                                 *p = REF(new);
                                                 v.env[j] = new;
@@ -3773,7 +3763,7 @@ BadContainer:
                          * Move all the keyword args into a dict.
                          */
                         if (nkw > 0) {
-        CallKwArgs:
+                        CallKwArgs:
                                 if (!AutoThis) {
                                         gP(&v);
                                 } else {
@@ -3812,13 +3802,13 @@ BadContainer:
                                         } else {
                                                 dict_put_member(ty, container.dict, IP, pop(ty));
                                         }
-                                        IP += strlen(IP) + 1;
+                                        SKIPSTR();
                                 }
                                 push(ty, container);
                                 GC_RESUME();
                         } else {
                                 container = NIL;
-        Call:
+                        Call:
                                 if (!AutoThis) {
                                         gP(&v);
                                 } else {
@@ -3887,7 +3877,7 @@ BadContainer:
                         case VALUE_METHOD:
                                 if (v.name == MISSING) {
                                         push(ty, NIL);
-                                        memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (struct value));
+                                        memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (Value));
                                         top(ty)[-n++] = v.this[1];
                                 }
                                 call(ty, v.method, v.this, n, nkw, false);
@@ -3932,12 +3922,8 @@ BadContainer:
                         b = IP[-1] == INSTR_TRY_CALL_METHOD;
 
                         READVALUE(n);
-
-                        method = IP;
-                        IP += strlen(IP) + 1;
-
+                        READSTR(method);
                         READVALUE(h);
-
                         READVALUE(nkw);
 
                         if (n == -1) {
@@ -3954,7 +3940,7 @@ BadContainer:
                         value = peek(ty);
                         vp = NULL;
                         func = NULL;
-                        struct value *self = NULL;
+                        Value *self = NULL;
 
                         if (tco) {
                                 vvX(FRAMES);
@@ -4093,7 +4079,7 @@ BadContainer:
                                         if (vp != NULL) {
                                                 v = pop(ty);
                                                 push(ty, NIL);
-                                                memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (struct value));
+                                                memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (Value));
                                                 top(ty)[-n++] = STRING_NOGC(method, strlen(method));
                                                 push(ty, v);
                                                 self = &value;
@@ -4158,7 +4144,7 @@ RunExitHooks(void)
         if (iExitHooks == -1 || Globals.items[iExitHooks].type != VALUE_ARRAY)
                 return;
 
-        struct array *hooks = Globals.items[iExitHooks].array;
+        Array *hooks = Globals.items[iExitHooks].array;
 
         vec(char *) msgs = {0};
         char *first = (Error == NULL) ? NULL : sclone_malloc(Error);
@@ -4169,7 +4155,7 @@ RunExitHooks(void)
                 if (setjmp(jb) != 0) {
                         vvP(msgs, sclone_malloc(ERR));
                 } else {
-                        struct value v = vmC(&hooks->items[i], 0);
+                        Value v = vmC(&hooks->items[i], 0);
                         bReprintFirst = bReprintFirst || value_truthy(ty, &v);
                 }
         }
@@ -4620,8 +4606,8 @@ vm_get_frames(Ty *ty)
         return &FRAMES;
 }
 
-struct value
-vm_call_method(Ty *ty, struct value const *self, struct value const *f, int argc)
+Value
+vm_call_method(Ty *ty, Value const *self, Value const *f, int argc)
 {
         call(ty, f, self, argc, 0, true);
         return pop(ty);
@@ -4708,10 +4694,10 @@ Collect:
         return xs;
 }
 
-struct value
-vm_call(Ty *ty, struct value const *f, int argc)
+Value
+vm_call(Ty *ty, Value const *f, int argc)
 {
-        struct value r, *init;
+        Value r, *init;
         size_t n = STACK.count - argc;
 
         switch (f->type) {
@@ -4758,18 +4744,18 @@ vm_call(Ty *ty, struct value const *f, int argc)
         }
 }
 
-struct value
-vm_eval_function(Ty *ty, struct value const *f, ...)
+Value
+vm_eval_function(Ty *ty, Value const *f, ...)
 {
         int argc;
         va_list ap;
-        struct value r;
-        struct value const *v;
+        Value r;
+        Value const *v;
 
         va_start(ap, f);
         argc = 0;
 
-        while ((v = va_arg(ap, struct value const *)) != NULL) {
+        while ((v = va_arg(ap, Value const *)) != NULL) {
                 push(ty, *v);
                 argc += 1;
         }
@@ -4867,7 +4853,7 @@ vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
 void
 MarkStorage(Ty *ty, ThreadStorage const *storage)
 {
-        vec(struct value const *) *root_set = storage->root_set;
+        vec(Value const *) *root_set = storage->root_set;
 
         GCLOG("Marking root set (%zu items)", gc_root_set_count(ty));
         for (int i = 0; i < root_set->count; ++i) {
@@ -4907,7 +4893,7 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
         GCLOG("Marking finalizers");
         for (int i = 0; i < storage->allocs->count; ++i) {
                 if (storage->allocs->items[i]->type == GC_OBJECT) {
-                        value_mark(ty, &((struct table *)storage->allocs->items[i]->data)->finalizer);
+                        value_mark(ty, &((ValueTable *)storage->allocs->items[i]->data)->finalizer);
                 }
         }
 }

@@ -164,10 +164,13 @@ TyBarrierWait(TyBarrier *b)
 typedef pthread_t            TyThread;
 typedef pthread_mutex_t      TyMutex;
 typedef pthread_cond_t       TyCondVar;
+typedef pthread_rwlock_t     TyRwLock;
 typedef pthread_barrier_t    TyBarrier;
 typedef void                *TyThreadFunc(void *);
 typedef void                *TyThreadReturnValue;
-#define TY_THREAD_OK NULL
+
+#define TY_THREAD_OK   NULL
+#define TY_RWLOCK_INIT PTHREAD_RWLOCK_INITIALIZER
 
 inline static int
 TyThreadCreate(TyThread *t, TyThreadFunc *f, void *arg)
@@ -322,6 +325,48 @@ inline static bool
 TyBarrierWait(TyBarrier *b)
 {
         return pthread_barrier_wait(b) == 0;
+}
+
+inline static void
+TyRwLockInit(TyRwLock *m)
+{
+        pthread_rwlock_init(m, NULL);
+}
+
+inline static bool
+TyRwLockDestroy(TyRwLock* m)
+{
+        return pthread_rwlock_destroy(m) == 0;
+}
+
+inline static bool
+TyRwLockRdLock(TyRwLock *m)
+{
+        return pthread_rwlock_rdlock(m) == 0;
+}
+
+inline static bool
+TyRwLockTryRdLock(TyRwLock *m)
+{
+        return pthread_rwlock_tryrdlock(m) == 0;
+}
+
+inline static bool
+TyRwLockWrLock(TyRwLock *m)
+{
+        return pthread_rwlock_wrlock(m) == 0;
+}
+
+inline static bool
+TyRwLockTryWrLock(TyRwLock *m)
+{
+        return pthread_rwlock_trywrlock(m) == 0;
+}
+
+inline static bool
+TyRwLockUnlock(TyRwLock *m)
+{
+        return pthread_rwlock_unlock(m) == 0;
 }
 
 #endif

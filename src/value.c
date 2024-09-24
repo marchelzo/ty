@@ -1264,8 +1264,8 @@ value_named_tuple(Ty *ty, char const *first, ...)
         return TUPLE(items, (char **)names, n, false);
 }
 
-struct value *
-tuple_get(struct value *tuple, char const *name)
+Value *
+tuple_get(Value const *tuple, char const *name)
 {
         if (tuple->names == NULL) {
                 return NULL;

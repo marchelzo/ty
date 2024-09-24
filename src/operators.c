@@ -12,23 +12,32 @@
 #include "gc.h"
 
 typedef struct {
-        vec(int) refs;
-        vec(uint64_t) keys;
-        int64_t t;
-} DispatchCache;
-
-typedef struct {
         uint32_t t1;
         uint32_t t2;
-        int ref;
+        int      ref;
 } OperatorSpec;
 
+typedef struct {
+        uint64_t key;
+        int      ref;
+} CacheEntry;
+
 typedef vec(OperatorSpec) DispatchList;
+typedef vec(CacheEntry)   DispatchCache;
 
-typedef vec(DispatchList) DispatchTable;
+typedef struct {
+        TyRwLock      lock;
+        DispatchCache cache;
+        DispatchList  defs;
+} DispatchGroup;
 
-static DispatchTable OpTable;
-static vec(DispatchCache) OpCache;
+
+static struct {
+        TyRwLock             lock;
+        vec(DispatchGroup *) ops;
+} _2 = {
+        .lock = TY_RWLOCK_INIT
+};
 
 inline static uint64_t
 forge_key(int t1, int t2)
@@ -42,16 +51,27 @@ check_cache(DispatchCache const *c, uint64_t key)
         _Static_assert(CHAR_BIT * sizeof (int) <= 32, "this isn't gonna work");
 
         int lo = 0,
-            hi = c->keys.count - 1;
+            hi = c->count - 1;
 
         while (lo <= hi) {
                 int m = (lo + hi) / 2;
-                if      (key < c->keys.items[m]) hi = m - 1;
-                else if (key > c->keys.items[m]) lo = m + 1;
-                else                             return c->refs.items[m];
+                if      (key < c->items[m].key) hi = m - 1;
+                else if (key > c->items[m].key) lo = m + 1;
+                else                            return c->items[m].ref;
         }
 
         return -1;
+}
+
+
+inline static void
+update_cache(DispatchCache *c, uint64_t key, int ref)
+{
+        xvP(*c, ((CacheEntry) { .key = key, .ref = ref }));
+
+        for (int i = c->count - 1; i > 0 && c->items[i - 1].key > key; --i) {
+                SWAP(CacheEntry, c->items[i], c->items[i - 1]);
+        }
 }
 
 inline static bool
@@ -95,50 +115,66 @@ check_slow(DispatchList const *list, int t1, int t2)
 void
 op_add(int op, int t1, int t2, int ref)
 {
-        static DispatchList EmptyDispatchList;
-        static DispatchCache EmptyDispatchCache;
+        if (op >= _2.ops.count) {
+                TyRwLockWrLock(&_2.lock);
 
-        while (OpTable.count <= op) {
-                xvP(OpTable, EmptyDispatchList);
-                xvP(OpCache, EmptyDispatchCache);
+                do {
+                        DispatchGroup *NEW(group);
+                        *group = (DispatchGroup) { .lock = TY_RWLOCK_INIT };
+                        xvP(_2.ops, group);
+
+                } while (_2.ops.count <= op || _2.ops.count < _2.ops.capacity);
+
+                TyRwLockUnlock(&_2.lock);
         }
 
+        DispatchGroup *group = _2.ops.items[op];
+
+        TyRwLockWrLock(&group->lock);
+
         xvP(
-                OpTable.items[op],
-                ((OperatorSpec){
+                group->defs,
+                ((OperatorSpec) {
                         .t1  = t1,
                         .t2  = t2,
                         .ref = ref
                 })
         );
+
+        group->cache.count = 0;
+
+        TyRwLockUnlock(&group->lock);
 }
 
 int
 op_dispatch(int op, int t1, int t2)
 {
-        if (OpTable.count <= op)
-                return -1;
-
-        DispatchList *list = &OpTable.items[op];
-        DispatchCache *cache = &OpCache.items[op];
-
         uint64_t key = forge_key(t1, t2);
 
-        if (cache->t != list->count) {
-                cache->keys.count = 0;
-                cache->refs.count = 0;
-                cache->t = list->count;
-        } else {
-                int ref = check_cache(cache, key);
-                if (ref != -1) {
-                        return ref;
-                }
+        TyRwLockRdLock(&_2.lock);
+
+        if (_2.ops.count <= op) {
+                TyRwLockUnlock(&_2.lock);
+                return -1;
         }
 
-        int ref = check_slow(list, t1, t2);
+        DispatchGroup *group = _2.ops.items[op];
 
-        xvP(cache->keys, key);
-        xvP(cache->refs, ref);
+        TyRwLockUnlock(&_2.lock);
+        TyRwLockRdLock(&group->lock);
+
+        int ref = check_cache(&group->cache, key);
+
+        TyRwLockUnlock(&group->lock);
+
+        if (ref == -1) {
+                TyRwLockWrLock(&group->lock);
+
+                ref = check_slow(&group->defs, t1, t2);
+                update_cache(&group->cache, key,ref);
+
+                TyRwLockUnlock(&group->lock);
+        }
 
         return ref;
 }

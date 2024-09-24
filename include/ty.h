@@ -203,4 +203,6 @@ enum {
 #define pT(p) ((uintptr_t)p &  7)
 #define pP(p) ((uintptr_t)p & ~7)
 
+#define NEW(x) x = mrealloc(NULL, sizeof *(x))
+
 #endif

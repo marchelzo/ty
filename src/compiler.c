@@ -87,10 +87,10 @@ struct eloc {
                 uintptr_t p_end;
                 size_t end_off;
         };
-        struct location start;
-        struct location end;
+        Location start;
+        Location end;
         char const *filename;
-        struct expression const *e;
+        Expr const *e;
 };
 
 typedef struct expr_list ExprList;
@@ -103,7 +103,7 @@ struct expr_list {
 struct import {
         bool pub;
         char const *name;
-        struct scope *scope;
+        Scope *scope;
 };
 
 typedef vec(struct import)    import_vector;
@@ -111,12 +111,12 @@ typedef vec(struct import)    import_vector;
 struct module {
         char const *path;
         char *code;
-        struct scope *scope;
+        Scope *scope;
         import_vector imports;
 };
 
 typedef vec(struct eloc)      location_vector;
-typedef vec(struct symbol *)  symbol_vector;
+typedef vec(Symbol *)  symbol_vector;
 typedef vec(size_t)           offset_vector;
 typedef vec(offset_vector *)  jumplist_stack;
 typedef vec(char)             byte_vector;
@@ -206,11 +206,11 @@ static vec(struct module) modules;
 static CompileState state;
 static vec(location_vector) location_lists;
 static vec(void *) source_map;
-static struct scope *global;
+static Scope *global;
 static uint64_t t;
 static char const EmptyString[] = "\0";
 static char const UnknownString[] = "\0(unknown location)";
-static struct location Nowhere = { 0, 0, EmptyString + 1 };
+static Location Nowhere = { 0, 0, EmptyString + 1 };
 static Location UnknownStart = { 0, 0, UnknownString + 1 };
 static Location UnknownEnd = { 0, 0, UnknownString + sizeof UnknownString - 1 };
 
@@ -225,58 +225,58 @@ struct context_entry {
 static ContextEntry *ContextList;
 
 static void
-symbolize_statement(Ty *ty, struct scope *scope, struct statement *s);
+symbolize_statement(Ty *ty, Scope *scope, Stmt *s);
 
 static void
-symbolize_pattern(Ty *ty, struct scope *scope, struct expression *e, struct scope *reuse, bool def);
+symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def);
 
 static void
-symbolize_expression(Ty *ty, struct scope *scope, struct expression *e);
+symbolize_expression(Ty *ty, Scope *scope, Expr *e);
 
 static bool
-emit_statement(Ty *ty, struct statement const *s, bool want_result);
+emit_statement(Ty *ty, Stmt const *s, bool want_result);
 
 static void
-emit_expression(Ty *ty, struct expression const *e);
+emit_expression(Ty *ty, Expr const *e);
 
 static void
-emit_expr(Ty *ty, struct expression const *e, bool need_loc);
+emit_expr(Ty *ty, Expr const *e, bool need_loc);
 
 static void
-emit_assignment(Ty *ty, struct expression *target, struct expression const *e, bool maybe, bool def);
+emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def);
 
 static bool
-emit_case(Ty *ty, struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
+emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result);
 
 static bool
-emit_catch(Ty *ty, struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result);
+emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result);
 
 inline static void
-emit_tgt(Ty *ty, Symbol *s, struct scope const *scope, bool def);
+emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def);
 
 static void
-emit_return_check(Ty *ty, struct expression const *f);
+emit_return_check(Ty *ty, Expr const *f);
 
-static struct scope *
+static Scope *
 get_import_scope(Ty *ty, char const *);
 
-static struct scope *
+static Scope *
 search_import_scope(char const *);
 
 void
-import_module(Ty *ty, struct statement const *s);
+import_module(Ty *ty, Stmt const *s);
 
-static struct scope *
+static Scope *
 get_module_scope(char const *name);
 
 static void
-invoke_macro(Ty *ty, struct expression *e, struct scope *scope);
+invoke_macro(Ty *ty, Expr *e, Scope *scope);
 
 static void
 invoke_fun_macro(Ty *ty, Scope *, Expr *e);
 
 static void
-emit_spread(Ty *ty, struct expression const *e, bool nils);
+emit_spread(Ty *ty, Expr const *e, bool nils);
 
 static void
 compile(Ty *ty, char const *source);
@@ -344,6 +344,8 @@ unwrap(Ty *ty, Value const *wrapped)
         if (v.tags == 0) {
                 v.type &= ~VALUE_TAGGED;
         }
+
+        int x = (emit_instr(ty, INSTR_NIL), 4);
 
         return v;
 }
@@ -601,7 +603,7 @@ show_expr_type(Ty *ty, Expr const *e)
 }
 
 static char *
-show_expr(struct expression const *e)
+show_expr(Expr const *e)
 {
         char buffer[4096];
         colorize_code(TERM(93), TERM(0), &e->start, &e->end, buffer, sizeof buffer);
@@ -617,8 +619,8 @@ _emit_instr(Ty *ty, int c)
 static int
 method_cmp(void const *a_, void const *b_)
 {
-        struct expression const *a = *(struct expression const **)a_;
-        struct expression const *b = *(struct expression const **)b_;
+        Expr const *a = *(Expr const **)a_;
+        Expr const *b = *(Expr const **)b_;
 
         int o = (a->name == NULL || b->name == NULL) ? 0 : strcmp(a->name, b->name);
 
@@ -662,7 +664,7 @@ slurp_module(Ty *ty, char const *name)
 }
 
 static void
-add_location(Ty *ty, struct expression const *e, size_t start_off, size_t end_off)
+add_location(Ty *ty, Expr const *e, size_t start_off, size_t end_off)
 {
         if (e->start.line == -1 && e->start.col == -1)
                 return;
@@ -776,36 +778,36 @@ end_loop(Ty *ty)
 }
 
 inline static bool
-is_call(struct expression const *e)
+is_call(Expr const *e)
 {
         return e->type == EXPRESSION_METHOD_CALL || e->type == EXPRESSION_FUNCTION_CALL;
 }
 
 inline static bool
-is_tag(Ty *ty, struct expression const *e)
+is_tag(Ty *ty, Expr const *e)
 {
         assert(e->type == EXPRESSION_IDENTIFIER);
 
-        struct scope const *scope = (e->module == NULL || *e->module == '\0') ? state.global : get_import_scope(ty, e->module);
-        struct symbol *sym = scope_lookup(ty, scope, e->identifier);
+        Scope const *scope = (e->module == NULL || *e->module == '\0') ? state.global : get_import_scope(ty, e->module);
+        Symbol *sym = scope_lookup(ty, scope, e->identifier);
 
         return sym != NULL && sym->tag != -1;
 }
 
 inline static bool
-is_const(Ty *ty, struct scope const *scope, char const *name)
+is_const(Ty *ty, Scope const *scope, char const *name)
 {
-        struct symbol const *s = scope_lookup(ty, scope, name);
+        Symbol const *s = scope_lookup(ty, scope, name);
 
         return s != NULL && s->cnst;
 }
 
 static bool
-is_variadic(struct expression const *e)
+is_variadic(Expr const *e)
 {
         int n = 0;
-        struct expression * const *args = NULL;
-        struct expression * const *conds = NULL;
+        Expr * const *args = NULL;
+        Expr * const *conds = NULL;
 
         if (e->type == EXPRESSION_FUNCTION_CALL) {
                 n = e->args.count;
@@ -826,8 +828,8 @@ is_variadic(struct expression const *e)
         return false;
 }
 
-inline static struct symbol *
-addsymbol(Ty *ty, struct scope *scope, char const *name)
+inline static Symbol *
+addsymbol(Ty *ty, Scope *scope, char const *name)
 {
         assert(name != NULL);
 
@@ -846,7 +848,7 @@ addsymbol(Ty *ty, struct scope *scope, char const *name)
                 );
         }
 
-        struct symbol *s = scope_add(ty, scope, name);
+        Symbol *s = scope_add(ty, scope, name);
         s->file = state.filename;
         s->loc = state.start;
 
@@ -859,8 +861,8 @@ addsymbol(Ty *ty, struct scope *scope, char const *name)
         return s;
 }
 
-inline static struct symbol *
-getsymbol(Ty *ty, struct scope const *scope, char const *name, bool *local)
+inline static Symbol *
+getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
 {
         if (strcmp(name, "_") == 0) {
                 fail(
@@ -886,7 +888,7 @@ getsymbol(Ty *ty, struct scope const *scope, char const *name, bool *local)
                 for (int i = state.implicit_func->params.count + 1; i <= n; ++i) {
                         char b[] = { '_', i + '0', '\0' };
                         char *id = sclonea(ty, b);
-                        struct symbol *sym = addsymbol(ty, state.implicit_fscope, id);
+                        Symbol *sym = addsymbol(ty, state.implicit_fscope, id);
                         avP(state.implicit_func->params, id);
                         avP(state.implicit_func->param_symbols, sym);
                         avP(state.implicit_func->dflts, NULL);
@@ -894,7 +896,7 @@ getsymbol(Ty *ty, struct scope const *scope, char const *name, bool *local)
                 }
         }
 
-        struct symbol *s = scope_lookup(ty, scope, name);
+        Symbol *s = scope_lookup(ty, scope, name);
         if (s == NULL || s->namespace) {
                 fail(
                         ty,
@@ -917,8 +919,8 @@ getsymbol(Ty *ty, struct scope const *scope, char const *name, bool *local)
         return s;
 }
 
-inline static struct symbol *
-tmpsymbol(Ty *ty, struct scope *scope)
+inline static Symbol *
+tmpsymbol(Ty *ty, Scope *scope)
 {
         static int i;
         static char idbuf[16];
@@ -956,7 +958,7 @@ is_simple_condition(condpart_vector const *parts)
 }
 
 inline static bool
-is_loop(Ty *ty, struct statement const *s)
+is_loop(Ty *ty, Stmt const *s)
 {
         switch (s->type) {
         case STATEMENT_FOR_LOOP:
@@ -1294,7 +1296,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e)
 #endif
 }
 
-static struct scope *
+static Scope *
 search_import_scope(char const *name)
 {
         for (int i = 0; i < state.imports.count; ++i)
@@ -1304,10 +1306,10 @@ search_import_scope(char const *name)
         return NULL;
 }
 
-static struct scope *
+static Scope *
 get_import_scope(Ty *ty, char const *name)
 {
-        struct scope *scope = search_import_scope(name);
+        Scope *scope = search_import_scope(name);
 
         if (scope == NULL) {
                 fail(
@@ -1324,7 +1326,7 @@ get_import_scope(Ty *ty, char const *name)
 }
 
 static void
-apply_decorator_macros(Ty *ty, struct scope *scope, struct expression **ms, int n)
+apply_decorator_macros(Ty *ty, Scope *scope, Expr **ms, int n)
 {
         for (int i = 0; i < n; ++i) {
                 if (
@@ -1347,7 +1349,7 @@ apply_decorator_macros(Ty *ty, struct scope *scope, struct expression **ms, int 
 }
 
 static void
-symbolize_methods(Ty *ty, struct scope *scope, struct expression **ms, int n)
+symbolize_methods(Ty *ty, Scope *scope, Expr **ms, int n)
 {
         for (int i = 0; i < n; ++i) {
                 ms[i]->is_method = true;
@@ -1384,7 +1386,7 @@ aggregate_overloads(Ty *ty, expression_vector *ms, bool setters)
                 }
 
                 char buffer[1024];
-                struct expression *multi = mkmulti(ty, ms->items[i]->name, setters);
+                Expr *multi = mkmulti(ty, ms->items[i]->name, setters);
 
                 int m = 0;
                 do {
@@ -1400,7 +1402,7 @@ aggregate_overloads(Ty *ty, expression_vector *ms, bool setters)
 }
 
 static void
-add_captures(Ty *ty, struct expression *pattern, struct scope *scope)
+add_captures(Ty *ty, Expr *pattern, Scope *scope)
 {
         /*
          * /(\w+) = (\d+)/ => _0, _1, _2
@@ -1445,7 +1447,7 @@ add_captures(Ty *ty, struct expression *pattern, struct scope *scope)
 }
 
 void
-try_symbolize_application(Ty *ty, struct scope *scope, struct expression *e)
+try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
 {
         if (scope == NULL) {
                 scope = state.global;
@@ -1466,12 +1468,12 @@ try_symbolize_application(Ty *ty, struct scope *scope, struct expression *e)
                         e->type = EXPRESSION_TAG_PATTERN;
                 }
                 if (tag_pattern || e->function->symbol->tag != -1) {
-                        struct expression f = *e;
+                        Expr f = *e;
                         char *identifier = e->function->identifier;
                         char *module = e->function->module;
-                        struct expression **tagged = e->args.items;
+                        Expr **tagged = e->args.items;
                         int tagc = e->args.count;
-                        struct symbol *symbol = e->function->symbol;
+                        Symbol *symbol = e->function->symbol;
                         if (!tag_pattern) {
                                 e->type = EXPRESSION_TAG_APPLICATION;
                         }
@@ -1511,7 +1513,7 @@ try_symbolize_application(Ty *ty, struct scope *scope, struct expression *e)
 }
 
 static void
-symbolize_lvalue_(Ty *ty, struct scope *scope, struct expression *target, bool decl, bool pub)
+symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
 {
         state.start = target->start;
         state.end = target->end;
@@ -1654,7 +1656,7 @@ End:
 }
 
 static void
-symbolize_lvalue(Ty *ty, struct scope *scope, struct expression *target, bool decl, bool pub)
+symbolize_lvalue(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
 {
         symbolize_lvalue_(ty, scope, target, decl, pub);
 
@@ -1665,7 +1667,7 @@ symbolize_lvalue(Ty *ty, struct scope *scope, struct expression *target, bool de
 }
 
 static void
-symbolize_pattern_(Ty *ty, struct scope *scope, struct expression *e, struct scope *reuse, bool def)
+symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 {
         if (e == NULL)
                 return;
@@ -1690,7 +1692,7 @@ symbolize_pattern_(Ty *ty, struct scope *scope, struct expression *e, struct sco
         state.start = e->start;
         state.end = e->end;
 
-        struct symbol *existing;
+        Symbol *existing;
 
         switch (e->type) {
         case EXPRESSION_RESOURCE_BINDING:
@@ -1700,7 +1702,7 @@ symbolize_pattern_(Ty *ty, struct scope *scope, struct expression *e, struct sco
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(e->identifier, "_") != 0 && (is_const(ty, scope, e->identifier) || scope_locally_defined(ty, scope, e->identifier) || e->module != NULL)) {
                         e->type = EXPRESSION_MUST_EQUAL;
-                        struct scope *s = (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(ty, e->module);
+                        Scope *s = (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(ty, e->module);
                         e->symbol = getsymbol(ty, s, e->identifier, NULL);
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
@@ -1782,7 +1784,7 @@ End:
 }
 
 static void
-symbolize_pattern(Ty *ty, struct scope *scope, struct expression *e, struct scope *reuse, bool def)
+symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 {
         symbolize_pattern_(ty, scope, e, reuse, def);
 
@@ -1819,10 +1821,10 @@ expedite_fun(Ty *ty, Expr *e, void *ctx)
 }
 
 static void
-comptime(Ty *ty, struct scope *scope, struct expression *e)
+comptime(Ty *ty, Scope *scope, Expr *e)
 {
         symbolize_expression(ty, scope, e->operand);
-        struct value v = tyeval(ty, e->operand);
+        Value v = tyeval(ty, e->operand);
         Location mstart = state.mstart;
         Location mend = state.mend;
         state.mstart = state.start;
@@ -1834,7 +1836,7 @@ comptime(Ty *ty, struct scope *scope, struct expression *e)
 }
 
 static void
-invoke_fun_macro(Ty *ty, Scope *scope, struct expression *e)
+invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
 {
         add_location_info(ty);
         vec_init(state.expression_locations);
@@ -1919,7 +1921,7 @@ GetNamespace(Ty *ty, Namespace *ns)
 }
 
 static void
-symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
+symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 {
         if (e == NULL)
                 return;
@@ -1933,11 +1935,11 @@ symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
         state.start = e->start;
         state.end = e->end;
 
-        struct scope *subscope;
+        Scope *subscope;
 
-        struct expression *func = state.func;
-        struct expression *implicit_func = state.implicit_func;
-        struct scope *implicit_fscope = state.implicit_fscope;
+        Expr *func = state.func;
+        Expr *implicit_func = state.implicit_func;
+        Scope *implicit_fscope = state.implicit_fscope;
 
         void *ctx = PushContext(ty, e);
 
@@ -1979,7 +1981,7 @@ symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
                 }
                 // This turned out to be cringe
                 if (false && state.class != -1 && e->module == NULL) {
-                        struct symbol *sym = scope_lookup(ty, scope, e->identifier);
+                        Symbol *sym = scope_lookup(ty, scope, e->identifier);
                         if (sym == NULL || sym->scope == state.global || sym->scope == global) {
                                 if (class_method(ty, state.class, e->identifier)) {
                                         char const *id = e->identifier;
@@ -2043,7 +2045,7 @@ symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
         case EXPRESSION_MATCH:
                 symbolize_expression(ty, scope, e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
-                        struct scope *shared = scope_new(ty, "(match-shared)", scope, false);
+                        Scope *shared = scope_new(ty, "(match-shared)", scope, false);
                         if (e->patterns.items[i]->type == EXPRESSION_LIST) {
                                 for (int j = 0; j < e->patterns.items[i]->es.count; ++j) {
                                         subscope = scope_new(ty, "(match-branch)", scope, false);
@@ -2090,7 +2092,7 @@ symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
         case EXPRESSION_DEFINED:
                 e->type = EXPRESSION_BOOLEAN;
                 if (e->module != NULL) {
-                        struct scope *mscope = search_import_scope(e->module);
+                        Scope *mscope = search_import_scope(e->module);
                         e->boolean = mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL;
                 } else {
                         e->boolean = scope_lookup(ty, scope, e->identifier) != NULL;
@@ -2098,7 +2100,7 @@ symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
                 break;
         case EXPRESSION_IFDEF:
                 if (e->module != NULL) {
-                        struct scope *mscope = search_import_scope(e->module);
+                        Scope *mscope = search_import_scope(e->module);
                         if (mscope != NULL && scope_lookup(ty, mscope, e->identifier) != NULL) {
                                 e->type = EXPRESSION_IDENTIFIER;
                                 symbolize_expression(ty, scope, e);
@@ -2251,7 +2253,7 @@ symbolize_expression(Ty *ty, struct scope *scope, struct expression *e)
                 subscope = scope_new(ty, "(with)", scope, false);
                 symbolize_statement(ty, subscope, e->with.block);
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
-                        for (struct symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
+                        for (Symbol *sym = subscope->table[i]; sym != NULL; sym = sym->next) {
                                 // Make sure it's not a tmpsymbol(ty) symbol
                                 if (!isdigit(sym->identifier[0])) {
                                         avP(vvL(e->with.block->statements)[0]->try.finally->drop, sym);
@@ -2503,7 +2505,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_statement(ty, scope, s->try.s);
 
                 for (int i = 0; i < s->try.patterns.count; ++i) {
-                        struct scope *catch = scope_new(ty, "(catch)", scope, false);
+                        Scope *catch = scope_new(ty, "(catch)", scope, false);
                         symbolize_pattern(ty, catch, s->try.patterns.items[i], NULL, true);
                         symbolize_statement(ty, catch, s->try.handlers.items[i]);
                 }
@@ -2607,9 +2609,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 }
 
 static void
-invoke_macro(Ty *ty, struct expression *e, struct scope *scope)
+invoke_macro(Ty *ty, Expr *e, Scope *scope)
 {
-        struct scope *macro_scope_save = state.macro_scope;
+        Scope *macro_scope_save = state.macro_scope;
         state.macro_scope = scope;
 
         Arena old = amN(1 << 20);
@@ -2629,19 +2631,19 @@ invoke_macro(Ty *ty, struct expression *e, struct scope *scope)
 
         vm_exec(ty, state.code.items);
 
-        struct value m = *vm_get(ty, 0);
+        Value m = *vm_get(ty, 0);
         vmX();
 
         state.code = code_save;
 
-        struct value node = tyexpr(ty, e->macro.e);
+        Value node = tyexpr(ty, e->macro.e);
         vmP(&node);
 
         node = vmC(&m, 1);
 
         state.macro_scope = macro_scope_save;
 
-        struct expression *result = cexpr(ty, &node);
+        Expr *result = cexpr(ty, &node);
 
         amX(old);
 
@@ -2757,7 +2759,7 @@ emit_string(Ty *ty, char const *s)
 #endif
 
 inline static void
-target_captured(Ty *ty, struct scope const *scope, struct symbol const *s)
+target_captured(Ty *ty, Scope const *scope, Symbol const *s)
 {
         int i = 0;
         while (scope->function->captured.items[i] != s) {
@@ -2771,7 +2773,7 @@ target_captured(Ty *ty, struct scope const *scope, struct symbol const *s)
 }
 
 inline static void
-emit_load(Ty *ty, struct symbol const *s, struct scope const *scope)
+emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 {
         LOG("Emitting LOAD for %s", s->identifier);
 
@@ -2795,7 +2797,7 @@ emit_load(Ty *ty, struct symbol const *s, struct scope const *scope)
 }
 
 inline static void
-emit_tgt(Ty *ty, Symbol *s, struct scope const *scope, bool def)
+emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
 {
         LOG("emit_tgt(ty, %s, def=%d)", s->identifier, def);
 
@@ -2818,7 +2820,7 @@ emit_tgt(Ty *ty, Symbol *s, struct scope const *scope, bool def)
 }
 
 static void
-emit_list(Ty *ty, struct expression const *e)
+emit_list(Ty *ty, Expr const *e)
 {
         emit_instr(ty, INSTR_SENTINEL);
         emit_instr(ty, INSTR_CLEAR_RC);
@@ -2839,7 +2841,7 @@ emit_list(Ty *ty, struct expression const *e)
 }
 
 static void
-emit_constraint(Ty *ty, struct expression const *c)
+emit_constraint(Ty *ty, Expr const *c)
 {
         size_t sc;
         emit_expression(ty, c);
@@ -2868,7 +2870,7 @@ emit_constraint(Ty *ty, struct expression const *c)
 }
 
 static void
-emit_function(Ty *ty, struct expression const *e, int class)
+emit_function(Ty *ty, Expr const *e, int class)
 {
         /*
          * Save the current reference and bound-symbols vectors so we can
@@ -2890,13 +2892,13 @@ emit_function(Ty *ty, struct expression const *e, int class)
         int t_save = t;
         t = 0;
 
-        struct scope *fs_save = state.fscope;
+        Scope *fs_save = state.fscope;
         state.fscope = e->scope;
 
-        struct expression *func_save = state.func;
+        Expr *func_save = state.func;
         state.func = e;
 
-        struct symbol **caps = e->scope->captured.items;
+        Symbol **caps = e->scope->captured.items;
         int *cap_indices = e->scope->cap_indices.items;
         int ncaps = e->scope->captured.count;
         int bound_caps = 0;
@@ -2998,7 +3000,7 @@ emit_function(Ty *ty, struct expression const *e, int class)
         for (int i = 0; i < e->param_symbols.count; ++i) {
                 if (e->dflts.items[i] == NULL)
                         continue;
-                struct symbol const *s = e->param_symbols.items[i];
+                Symbol const *s = e->param_symbols.items[i];
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t need_dflt);
                 PLACEHOLDER_JUMP(INSTR_JUMP, size_t skip_dflt);
@@ -3014,7 +3016,7 @@ emit_function(Ty *ty, struct expression const *e, int class)
         for (int i = 0; i < e->param_symbols.count; ++i) {
                 if (e->constraints.items[i] == NULL || (!e->is_overload && !CheckConstraints))
                         continue;
-                struct symbol const *s = e->param_symbols.items[i];
+                Symbol const *s = e->param_symbols.items[i];
                 size_t start = state.code.count;
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                 emit_constraint(ty, e->constraints.items[i]);
@@ -3040,9 +3042,9 @@ emit_function(Ty *ty, struct expression const *e, int class)
         int function_resources = state.function_resources;
         state.function_resources = state.resources;
 
-        struct statement *body = e->body;
-        struct statement try;
-        struct statement cleanup;
+        Stmt *body = e->body;
+        Stmt try;
+        Stmt cleanup;
 
         if (e->has_defer) {
                 try.type = STATEMENT_TRY_CLEAN;
@@ -3079,7 +3081,6 @@ emit_function(Ty *ty, struct expression const *e, int class)
                                 emit_spread(ty, NULL, false);
                                 emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)e->functions.items[i])->target->symbol->i);
                                 CHECK_INIT();
-
                                 emit_instr(ty, INSTR_CALL);
                                 emit_int(ty, -1);
                                 emit_int(ty, 0);
@@ -3173,7 +3174,7 @@ emit_function(Ty *ty, struct expression const *e, int class)
         state.func = func_save;
 
         for (int i = 0; i < e->decorators.count; ++i) {
-                struct expression *c = e->decorators.items[i];
+                Expr *c = e->decorators.items[i];
                 if (c->type == EXPRESSION_FUNCTION_CALL) {
                         avI(c->args, NULL, 0);
                         avI(c->fconds, NULL, 0);
@@ -3188,7 +3189,7 @@ emit_function(Ty *ty, struct expression const *e, int class)
 }
 
 static void
-emit_and(Ty *ty, struct expression const *left, struct expression const *right)
+emit_and(Ty *ty, Expr const *left, Expr const *right)
 {
         emit_expression(ty, left);
         emit_instr(ty, INSTR_DUP);
@@ -3202,7 +3203,7 @@ emit_and(Ty *ty, struct expression const *left, struct expression const *right)
 }
 
 static void
-emit_or(Ty *ty, struct expression const *left, struct expression const *right)
+emit_or(Ty *ty, Expr const *left, Expr const *right)
 {
         emit_expression(ty, left);
         emit_instr(ty, INSTR_DUP);
@@ -3216,7 +3217,7 @@ emit_or(Ty *ty, struct expression const *left, struct expression const *right)
 }
 
 static void
-emit_coalesce(Ty *ty, struct expression const *left, struct expression const *right)
+emit_coalesce(Ty *ty, Expr const *left, Expr const *right)
 {
         emit_expression(ty, left);
         emit_instr(ty, INSTR_DUP);
@@ -3233,7 +3234,7 @@ emit_coalesce(Ty *ty, struct expression const *left, struct expression const *ri
 }
 
 static void
-emit_special_string(Ty *ty, struct expression const *e)
+emit_special_string(Ty *ty, Expr const *e)
 {
         emit_instr(ty, INSTR_STRING);
         emit_string(ty, e->strings.items[0]);
@@ -3254,13 +3255,13 @@ emit_special_string(Ty *ty, struct expression const *e)
 }
 
 static void
-emit_with(Ty *ty, struct expression const *e)
+emit_with(Ty *ty, Expr const *e)
 {
         emit_statement(ty, e->with.block, true);
 }
 
 static void
-emit_yield(Ty *ty, struct expression const * const *es, int n, bool wrap)
+emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
 {
         if (state.function_depth == 0) {
                 fail(ty, "invalid yield expression (not inside of a function)");
@@ -3282,7 +3283,7 @@ emit_yield(Ty *ty, struct expression const * const *es, int n, bool wrap)
 }
 
 static void
-emit_return_check(Ty *ty, struct expression const *f)
+emit_return_check(Ty *ty, Expr const *f)
 {
         size_t start = state.code.count;
 
@@ -3304,7 +3305,7 @@ emit_return_check(Ty *ty, struct expression const *f)
 }
 
 static bool
-emit_return(Ty *ty, struct statement const *s)
+emit_return(Ty *ty, Stmt const *s)
 {
         if (inside_finally(ty)) {
                 fail(ty, "invalid return statement (occurs in a finally block)");
@@ -3351,7 +3352,7 @@ emit_return(Ty *ty, struct statement const *s)
 }
 
 static bool
-emit_try(Ty *ty, struct statement const *s, bool want_result)
+emit_try(Ty *ty, Stmt const *s, bool want_result)
 {
         emit_instr(ty, INSTR_TRY);
 
@@ -3412,7 +3413,7 @@ emit_try(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static void
-emit_for_loop(Ty *ty, struct statement const *s, bool want_result)
+emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
 {
         begin_loop(ty, want_result, false);
 
@@ -3502,7 +3503,7 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
 }
 
 static void
-emit_try_match_(Ty *ty, struct expression const *pattern)
+emit_try_match_(Ty *ty, Expr const *pattern)
 {
         size_t start = state.code.count;
         bool need_loc = false;
@@ -3756,13 +3757,13 @@ emit_try_match_(Ty *ty, struct expression const *pattern)
 }
 
 static void
-emit_try_match(Ty *ty, struct expression const *pattern)
+emit_try_match(Ty *ty, Expr const *pattern)
 {
         emit_try_match_(ty, pattern);
 }
 
 static bool
-emit_catch(Ty *ty, struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result)
+emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result)
 {
         offset_vector fails_save = state.match_fails;
         vec_init(state.match_fails);
@@ -3805,7 +3806,7 @@ emit_catch(Ty *ty, struct expression const *pattern, struct expression const *co
 }
 
 static bool
-emit_case(Ty *ty, struct expression const *pattern, struct expression const *cond, struct statement const *s, bool want_result)
+emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result)
 {
         if (pattern->type == EXPRESSION_LIST) {
                 bool returns = false;
@@ -3862,7 +3863,7 @@ emit_case(Ty *ty, struct expression const *pattern, struct expression const *con
 }
 
 static void
-emit_expression_case(Ty *ty, struct expression const *pattern, struct expression const *e)
+emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
 {
         if (pattern->type == EXPRESSION_LIST) {
                 for (int i = 0; i < pattern->es.count; ++i) {
@@ -3909,7 +3910,7 @@ emit_expression_case(Ty *ty, struct expression const *pattern, struct expression
 }
 
 static bool
-emit_match_statement(Ty *ty, struct statement const *s, bool want_result)
+emit_match_statement(Ty *ty, Stmt const *s, bool want_result)
 {
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -3938,7 +3939,7 @@ emit_match_statement(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static void
-emit_while_match(Ty *ty, struct statement const *s, bool want_result)
+emit_while_match(Ty *ty, Stmt const *s, bool want_result)
 {
         begin_loop(ty, want_result, false);
 
@@ -3980,7 +3981,7 @@ emit_while_match(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static bool
-emit_while(Ty *ty, struct statement const *s, bool want_result)
+emit_while(Ty *ty, Stmt const *s, bool want_result)
 {
         begin_loop(ty, want_result, false);
 
@@ -4051,7 +4052,7 @@ emit_while(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static bool
-emit_if_not(Ty *ty, struct statement const *s, bool want_result)
+emit_if_not(Ty *ty, Stmt const *s, bool want_result)
 {
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -4128,7 +4129,7 @@ emit_if_not(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static bool
-emit_if(Ty *ty, struct statement const *s, bool want_result)
+emit_if(Ty *ty, Stmt const *s, bool want_result)
 {
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -4222,7 +4223,7 @@ emit_if(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static void
-emit_match_expression(Ty *ty, struct expression const *e)
+emit_match_expression(Ty *ty, Expr const *e)
 {
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -4262,7 +4263,7 @@ emit_match_expression(Ty *ty, struct expression const *e)
 }
 
 static void
-emit_target(Ty *ty, struct expression *target, bool def)
+emit_target(Ty *ty, Expr *target, bool def)
 {
         size_t start = state.code.count;
 
@@ -4297,7 +4298,7 @@ emit_target(Ty *ty, struct expression *target, bool def)
 }
 
 static void
-emit_dict_compr2(Ty *ty, struct expression const *e)
+emit_dict_compr2(Ty *ty, Expr const *e)
 {
         begin_loop(ty, false, true);
 
@@ -4382,7 +4383,7 @@ emit_dict_compr2(Ty *ty, struct expression const *e)
 }
 
 static void
-emit_array_compr2(Ty *ty, struct expression const *e)
+emit_array_compr2(Ty *ty, Expr const *e)
 {
         begin_loop(ty, false, true);
 
@@ -4471,7 +4472,7 @@ emit_array_compr2(Ty *ty, struct expression const *e)
 }
 
 static void
-emit_spread(Ty *ty, struct expression const *e, bool nils)
+emit_spread(Ty *ty, Expr const *e, bool nils)
 {
         emit_instr(ty, INSTR_PUSH_INDEX);
         emit_int(ty, 1);
@@ -4522,7 +4523,7 @@ emit_spread(Ty *ty, struct expression const *e, bool nils)
 }
 
 static void
-emit_conditional(Ty *ty, struct expression const *e)
+emit_conditional(Ty *ty, Expr const *e)
 {
         emit_expression(ty, e->cond);
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t otherwise);
@@ -4534,7 +4535,7 @@ emit_conditional(Ty *ty, struct expression const *e)
 }
 
 static void
-emit_for_each2(Ty *ty, struct statement const *s, bool want_result)
+emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
 {
         begin_loop(ty, want_result, true);
 
@@ -4634,7 +4635,7 @@ emit_for_each2(Ty *ty, struct statement const *s, bool want_result)
 }
 
 static bool
-check_multi(struct expression *target, struct expression const *e, int *n)
+check_multi(Expr *target, Expr const *e, int *n)
 {
         if (is_call(e))
                 return true;
@@ -4651,7 +4652,7 @@ check_multi(struct expression *target, struct expression const *e, int *n)
 }
 
 static void
-emit_assignment2(Ty *ty, struct expression *target, bool maybe, bool def)
+emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
 {
         char instr = maybe ? INSTR_MAYBE_ASSIGN : INSTR_ASSIGN;
 
@@ -4794,7 +4795,7 @@ emit_assignment2(Ty *ty, struct expression *target, bool maybe, bool def)
 }
 
 static void
-emit_assignment(Ty *ty, struct expression *target, struct expression const *e, bool maybe, bool def)
+emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def)
 {
         if (target->has_resources) {
                 emit_instr(ty, INSTR_PUSH_DROP_GROUP);
@@ -4818,7 +4819,7 @@ emit_assignment(Ty *ty, struct expression *target, struct expression const *e, b
 }
 
 static void
-emit_non_nil_expr(Ty *ty, struct expression const *e, bool none)
+emit_non_nil_expr(Ty *ty, Expr const *e, bool none)
 {
         emit_expression(ty, e);
         emit_instr(ty, INSTR_DUP);
@@ -4833,7 +4834,7 @@ emit_non_nil_expr(Ty *ty, struct expression const *e, bool none)
 }
 
 static void
-emit_expr(Ty *ty, struct expression const *e, bool need_loc)
+emit_expr(Ty *ty, Expr const *e, bool need_loc)
 {
         state.start = e->start;
         state.end = e->end;
@@ -5092,7 +5093,7 @@ emit_expr(Ty *ty, struct expression const *e, bool need_loc)
                 emit_with(ty, e);
                 break;
         case EXPRESSION_YIELD:
-                emit_yield(ty, (struct expression const **)e->es.items, e->es.count, true);
+                emit_yield(ty, (Expr const **)e->es.items, e->es.count, true);
                 break;
         case EXPRESSION_THROW:
                 if (try != NULL && try->finally) {
@@ -5329,13 +5330,13 @@ emit_expr(Ty *ty, struct expression const *e, bool need_loc)
 }
 
 static void
-emit_expression(Ty *ty, struct expression const *e)
+emit_expression(Ty *ty, Expr const *e)
 {
         emit_expr(ty, e, false);
 }
 
 static bool
-emit_statement(Ty *ty, struct statement const *s, bool want_result)
+emit_statement(Ty *ty, Stmt const *s, bool want_result)
 {
         state.start = s->start;
         state.end = s->end;
@@ -5476,7 +5477,7 @@ emit_statement(Ty *ty, struct statement const *s, bool want_result)
                 returns |= emit_return(ty, s);
                 break;
         case STATEMENT_GENERATOR_RETURN:
-                emit_yield(ty, (struct expression const **)s->returns.items, s->returns.count, false);
+                emit_yield(ty, (Expr const **)s->returns.items, s->returns.count, false);
                 emit_instr(ty, INSTR_JUMP);
                 avP(state.generator_returns, state.code.count);
                 emit_int(ty, 0);
@@ -5586,7 +5587,7 @@ static void
 emit_new_globals(Ty *ty)
 {
         for (size_t i = GlobalCount; i < global->owned.count; ++i) {
-                struct symbol *s = global->owned.items[i];
+                Symbol *s = global->owned.items[i];
                 if (s->i < BuiltinCount)
                         continue;
                 if (s->tag != -1) {
@@ -5619,7 +5620,7 @@ get_module_public_imports(char const *name)
         return (import_vector){0};
 }
 
-static struct scope *
+static Scope *
 get_module_scope(char const *name)
 {
         for (int i = 0; i < modules.count; ++i)
@@ -5630,7 +5631,7 @@ get_module_scope(char const *name)
 }
 
 static void
-declare_classes(Ty *ty, struct statement *s, Scope *scope)
+declare_classes(Ty *ty, Stmt *s, Scope *scope)
 {
         Scope *ns = (scope != NULL) ? scope : GetNamespace(ty, s->ns);
 
@@ -5650,7 +5651,7 @@ declare_classes(Ty *ty, struct statement *s, Scope *scope)
                                 TERM(39)
                         );
                 }
-                struct symbol *sym = addsymbol(ty, ns, s->class.name);
+                Symbol *sym = addsymbol(ty, ns, s->class.name);
                 sym->class = class_new(ty, s->class.name, s->class.doc);
                 sym->cnst = true;
                 s->class.symbol = sym->class;
@@ -5667,7 +5668,7 @@ is_proc_def(Stmt const *s)
 static void
 compile(Ty *ty, char const *source)
 {
-        struct statement **p = parse(ty, source, state.filename);
+        Stmt **p = parse(ty, source, state.filename);
         if (p == NULL) {
                 Error = parse_error(ty);
                 longjmp(jb, 1);
@@ -5683,7 +5684,7 @@ compile(Ty *ty, char const *source)
                         strcmp(p[i]->target->identifier, p[i + 1]->target->identifier) == 0
                 ) {
                         char buffer[1024];
-                        struct expression *multi = mkmulti(ty, p[i]->target->identifier, false);
+                        Expr *multi = mkmulti(ty, p[i]->target->identifier, false);
                         bool pub = p[i]->pub;
 
                         Stmt *def = NewStmt(ty, STATEMENT_FUNCTION_DEFINITION);
@@ -5707,7 +5708,7 @@ compile(Ty *ty, char const *source)
                                 p[i + m]->value->is_overload = true;
                                 snprintf(buffer, sizeof buffer - 1, "%s#%d", multi->name, m + 1);
                                 p[i + m]->target->identifier = p[i + m]->value->name = sclonea(ty, buffer);
-                                avP(multi->functions, (struct expression *)p[i + m]);
+                                avP(multi->functions, (Expr *)p[i + m]);
                                 define_function(ty, p[i + m]);
                                 symbolize_statement(ty, state.global, p[i + m]);
                                 m += 1;
@@ -5758,7 +5759,7 @@ compile(Ty *ty, char const *source)
 
                                 j -= 1
                         ) {
-                                struct statement *s = p[j];
+                                Stmt *s = p[j];
                                 p[j] = p[j + 1];
                                 p[end_of_defs = j + 1] = s;
                         }
@@ -5806,8 +5807,8 @@ compile(Ty *ty, char const *source)
         state.loops.count = 0;
 }
 
-static struct scope *
-load_module(Ty *ty, char const *name, struct scope *scope)
+static Scope *
+load_module(Ty *ty, char const *name, Scope *scope)
 {
         char *source = slurp_module(ty, name);
 
@@ -5825,7 +5826,7 @@ load_module(Ty *ty, char const *name, struct scope *scope)
 
         compile(ty, source);
 
-        struct scope *module_scope;
+        Scope *module_scope;
         char *code = state.code.items;
 
         if (scope != NULL) {
@@ -5857,7 +5858,7 @@ load_module(Ty *ty, char const *name, struct scope *scope)
 }
 
 bool
-compiler_import_module(Ty *ty, struct statement const *s)
+compiler_import_module(Ty *ty, Stmt const *s)
 {
         SAVE_JB;
 
@@ -5874,7 +5875,7 @@ compiler_import_module(Ty *ty, struct statement const *s)
 }
 
 void
-import_module(Ty *ty, struct statement const *s)
+import_module(Ty *ty, Stmt const *s)
 {
         char const *name = s->import.module;
         char const *as = s->import.as;
@@ -5883,7 +5884,7 @@ import_module(Ty *ty, struct statement const *s)
         state.start = s->start;
         state.end = s->end;
 
-        struct scope *module_scope = get_module_scope(name);
+        Scope *module_scope = get_module_scope(name);
 
         /* First make sure we haven't already imported this module, or imported another module
          * with the same local alias.
@@ -5926,7 +5927,7 @@ import_module(Ty *ty, struct statement const *s)
                 if (id != NULL)
                         fail(ty, "module '%s' exports conflcting name '%s'", name, id);
         } else for (int i = 0; i < n; ++i) {
-                struct symbol *s = scope_lookup(ty, module_scope, identifiers[i]);
+                Symbol *s = scope_lookup(ty, module_scope, identifiers[i]);
                 if (s == NULL || !s->public)
                         fail(ty, "module '%s' does not export '%s'", name, identifiers[i]);
                 if (scope_lookup(ty, state.global, aliases[i]) != NULL)
@@ -5988,7 +5989,7 @@ compiler_load_prelude(Ty *ty)
 int
 gettag(Ty *ty, char const *module, char const *name)
 {
-        struct symbol *sym = compiler_lookup(ty, module, name);
+        Symbol *sym = compiler_lookup(ty, module, name);
         if (!(sym != NULL && sym->cnst && sym->tag != -1)) {
                 fprintf(stderr, "failed to find tag %s%s%s\n", module ? module : "", module ? "." : "", name);
                 exit(1);
@@ -5996,10 +5997,10 @@ gettag(Ty *ty, char const *module, char const *name)
         return sym->tag;
 }
 
-struct symbol *
+Symbol *
 compiler_lookup(Ty *ty, char const *module, char const *name)
 {
-        struct scope *mscope;
+        Scope *mscope;
 
         if (module == NULL) {
                 return scope_lookup(ty, state.global, name);
@@ -6016,7 +6017,7 @@ compiler_lookup(Ty *ty, char const *module, char const *name)
 void
 compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
 {
-        struct scope *s;
+        Scope *s;
         if (module == NULL) {
                 s = global;
         } else {
@@ -6033,7 +6034,7 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
                 }
         }
 
-        struct symbol *sym = addsymbol(ty, s, name);
+        Symbol *sym = addsymbol(ty, s, name);
         sym->public = true;
         sym->init = true;
         LOG("%s got index %d", name, sym->i);
@@ -6044,7 +6045,7 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
 void
 compiler_introduce_tag(Ty *ty, char const *module, char const *name)
 {
-        struct scope *s;
+        Scope *s;
         if (module == NULL) {
                 s = global;
         } else {
@@ -6061,7 +6062,7 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name)
                 }
         }
 
-        struct symbol *sym = addsymbol(ty, s, name);
+        Symbol *sym = addsymbol(ty, s, name);
         sym->public = true;
         sym->cnst = true;
         sym->init = true;
@@ -6101,7 +6102,7 @@ compiler_symbol_count(Ty *ty)
         return scope_get_symbol(ty);
 }
 
-struct location
+Location
 compiler_find_definition(Ty *ty, char const *file, int line, int col)
 {
         location_vector *locs = NULL;
@@ -6116,14 +6117,14 @@ compiler_find_definition(Ty *ty, char const *file, int line, int col)
         }
 
         if (locs == NULL) {
-                return (struct location) {0};
+                return (Location) {0};
         }
 
         for (int i = 0; i < locs->count; ++i) {
                 if (locs->items[i].e->type == EXPRESSION_IDENTIFIER &&
                     locs->items[i].start.line == line &&
                     locs->items[i].start.col == col) {
-                        return (struct location) {
+                        return (Location) {
                                 .line = locs->items[i].e->symbol->loc.line,
                                 .col = locs->items[i].e->symbol->loc.col,
                                 .s = locs->items[i].e->symbol->file
@@ -6131,7 +6132,7 @@ compiler_find_definition(Ty *ty, char const *file, int line, int col)
                 }
         }
 
-        return (struct location) {0};
+        return (Location) {0};
 }
 
 Expr const *
@@ -6274,7 +6275,7 @@ compiler_global_sym(Ty *ty, int i)
 }
 
 inline static char *
-mkcstr(Ty *ty, struct value const *v)
+mkcstr(Ty *ty, Value const *v)
 {
         char *s = amA(v->bytes + 1);
 
@@ -6320,17 +6321,17 @@ source_forget_arena(void const *arena)
         }
 }
 
-struct value
-tagged(Ty *ty, int tag, struct value v, ...)
+Value
+tagged(Ty *ty, int tag, Value v, ...)
 {
         va_list ap;
 
         va_start(ap, v);
 
-        static vec(struct value) vs;
+        static vec(Value) vs;
         vs.count = 0;
 
-        struct value next = va_arg(ap, struct value);
+        Value next = va_arg(ap, Value);
 
         if (next.type == VALUE_NONE) {
                 goto TagAndReturn;
@@ -6340,7 +6341,7 @@ tagged(Ty *ty, int tag, struct value v, ...)
 
         while (next.type != VALUE_NONE) {
                 avP(vs, next);
-                next = va_arg(ap, struct value);
+                next = va_arg(ap, Value);
         }
 
         v = vT(vs.count);
@@ -6354,10 +6355,10 @@ TagAndReturn:
         return v;
 }
 
-static struct value
+static Value
 typarts(Ty *ty, condpart_vector const *parts)
 {
-        struct value v = ARRAY(vA());
+        Value v = ARRAY(vA());
 
         for (int i = 0; i < parts->count; ++i) {
                 struct condpart *part = parts->items[i];
@@ -6603,7 +6604,7 @@ tyexpr(Ty *ty, Expr const *e)
                 }
 
                 for (int i = 0; i < e->params.count; ++i) {
-                        struct value name = vSc(e->params.items[i], strlen(e->params.items[i]));
+                        Value name = vSc(e->params.items[i], strlen(e->params.items[i]));
                         if (i == e->rest) {
                                 vAp(
                                         params,
@@ -6615,7 +6616,7 @@ tyexpr(Ty *ty, Expr const *e)
                                         tagged(ty, TyKwargs, name, NONE)
                                 );
                         } else {
-                                struct value p = vTn(
+                                Value p = vTn(
                                         "name", name,
                                         "constraint", e->constraints.items[i] != NULL ? tyexpr(ty, e->constraints.items[i]) : NIL,
                                         "default", e->dflts.items[i] != NULL ? tyexpr(ty, e->dflts.items[i]) : NIL,
@@ -6710,7 +6711,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v.items[0] = tyexpr(ty, e->subject);
                 v.items[1] = ARRAY(vA());
                 for (int i = 0; i < e->patterns.count; ++i) {
-                        struct value case_ = vT(2);
+                        Value case_ = vT(2);
                         case_.items[0] = tyexpr(ty, e->patterns.items[i]);
                         case_.items[1] = tyexpr(ty, e->thens.items[i]);
                         vAp(
@@ -6911,11 +6912,11 @@ tyexpr(Ty *ty, Expr const *e)
                 vAp(v.array, vSc(e->strings.items[0], strlen(e->strings.items[0])));
 
                 for (int i = 0; i < e->expressions.count; ++i) {
-                        struct value expr = tyexpr(ty, e->expressions.items[i]);
+                        Value expr = tyexpr(ty, e->expressions.items[i]);
                         if (e->fmts.items[i] == NULL) {
                                 vAp(v.array, expr);
                         } else {
-                                struct value s = vSc(e->fmts.items[i], strlen(e->fmts.items[i]));
+                                Value s = vSc(e->fmts.items[i], strlen(e->fmts.items[i]));
                                 vAp(v.array, PAIR(expr, s));
                         }
                         vAp(v.array, vSc(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
@@ -7088,7 +7089,7 @@ tyexpr(Ty *ty, Expr const *e)
 Value
 tystmt(Ty *ty, Stmt *s)
 {
-        struct value v;
+        Value v;
 
         if (s == NULL) {
                 return NIL;
@@ -7170,7 +7171,7 @@ tystmt(Ty *ty, Stmt *s)
                 v.items[0] = tyexpr(ty, s->match.e);
                 v.items[1] = ARRAY(vA());
                 for (int i = 0; i < s->match.patterns.count; ++i) {
-                        struct value case_ = vT(2);
+                        Value case_ = vT(2);
                         case_.items[0] = tyexpr(ty, s->match.patterns.items[i]);
                         case_.items[1] = tystmt(ty, s->match.statements.items[i]);
                         vAp(
@@ -7186,7 +7187,7 @@ tystmt(Ty *ty, Stmt *s)
                 v.items[0] = tyexpr(ty, s->match.e);
                 v.items[1] = ARRAY(vA());
                 for (int i = 0; i < s->match.patterns.count; ++i) {
-                        struct value case_ = vT(2);
+                        Value case_ = vT(2);
                         case_.items[0] = tyexpr(ty, s->match.patterns.items[i]);
                         case_.items[1] = tystmt(ty, s->match.statements.items[i]);
                         vAp(
@@ -7304,12 +7305,12 @@ tystmt(Ty *ty, Stmt *s)
 }
 
 condpart_vector
-cparts(Ty *ty, struct value *v)
+cparts(Ty *ty, Value *v)
 {
         condpart_vector parts = {0};
 
         for (int i = 0; i < v->array->count; ++i) {
-                struct value *part = &v->array->items[i];
+                Value *part = &v->array->items[i];
                 struct condpart *cp = amA(sizeof *cp);
                 int tag = tags_first(ty, part->tags);
                 if (tag == TyLet) {
@@ -7373,7 +7374,7 @@ cstmt(Ty *ty, Value *v)
                 return v->ptr;
         case TyLet:
         {
-                struct value *pub = tuple_get(v, "public");
+                Value *pub = tuple_get(v, "public");
                 s->type = STATEMENT_DEFINITION;
                 s->pub = pub != NULL && value_truthy(ty, pub);
                 s->target = cexpr(ty, &v->items[0]);
@@ -7382,7 +7383,7 @@ cstmt(Ty *ty, Value *v)
         }
         case TyFuncDef:
         {
-                struct value f = *v;
+                Value f = *v;
                 f.tags = tags_push(ty, 0, TyFunc);
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(ty, &f);
@@ -7479,9 +7480,9 @@ cstmt(Ty *ty, Value *v)
                 vec_init(s->match.patterns);
                 vec_init(s->match.statements);
                 vec_init(s->match.conds);
-                struct value *cases = &v->items[1];
+                Value *cases = &v->items[1];
                 for (int i = 0; i < cases->array->count; ++i) {
-                        struct value *_case = &cases->array->items[i];
+                        Value *_case = &cases->array->items[i];
                         avP(s->match.patterns, cexpr(ty, &_case->items[0]));
                         avP(s->match.statements, cstmt(ty, &_case->items[1]));
                         avP(s->match.conds, NULL);
@@ -7495,9 +7496,9 @@ cstmt(Ty *ty, Value *v)
                 vec_init(s->match.patterns);
                 vec_init(s->match.statements);
                 vec_init(s->match.conds);
-                struct value *cases = &v->items[1];
+                Value *cases = &v->items[1];
                 for (int i = 0; i < cases->array->count; ++i) {
-                        struct value *_case = &cases->array->items[i];
+                        Value *_case = &cases->array->items[i];
                         avP(s->match.patterns, cexpr(ty, &_case->items[0]));
                         avP(s->match.statements, cstmt(ty, &_case->items[1]));
                         avP(s->match.conds, NULL);
@@ -7738,7 +7739,7 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_MATCH_NOT_NIL;
                 e->identifier = mkcstr(ty, tuple_get(v, "name"));
-                struct value *mod = tuple_get(v, "module");
+                Value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 break;
         }
@@ -7759,13 +7760,13 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_RESOURCE_BINDING;
                 e->identifier = mkcstr(ty, tuple_get(v, "name"));
-                struct value *mod = tuple_get(v, "module");
+                Value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 break;
         }
         case TySpread:
         {
-                struct value v_ = *v;
+                Value v_ = *v;
                 v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_SPREAD;
                 e->value = cexpr(ty, &v_);
@@ -7773,7 +7774,7 @@ cexpr(Ty *ty, Value *v)
         }
         case TySplat:
         {
-                struct value v_ = *v;
+                Value v_ = *v;
                 v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_SPLAT;
                 e->value = cexpr(ty, &v_);
@@ -7819,7 +7820,7 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->expressions);
                 vec_init(e->fmts);
                 for (int i = 0; i < v->array->count; ++i) {
-                        struct value *x = &v->array->items[i];
+                        Value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
                                 avP(e->strings, mkcstr(ty, x));
                         } else if (x->type == VALUE_TUPLE) {
@@ -7845,9 +7846,9 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->optional);
 
                 for (int i = 0; i < v->array->count; ++i) {
-                        struct value *entry = &v->array->items[i];
-                        struct value *optional = tuple_get(entry, "optional");
-                        struct value *cond = tuple_get(entry, "cond");
+                        Value *entry = &v->array->items[i];
+                        Value *optional = tuple_get(entry, "optional");
+                        Value *cond = tuple_get(entry, "cond");
                         avP(e->elements, cexpr(ty, tuple_get(entry, "item")));
                         avP(e->optional, optional != NULL ? optional->boolean : false);
                         avP(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(ty, cond) : NULL);
@@ -7863,11 +7864,11 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->required);
                 vec_init(e->tconds);
                 for (int i = 0; i < v->array->count; ++i) {
-                        struct value *entry = &v->array->items[i];
-                        struct value *item = tuple_get(entry, "item");
-                        struct value *name = tuple_get(entry, "name");
-                        struct value *optional = tuple_get(entry, "optional");
-                        struct value *cond = tuple_get(entry, "cond");
+                        Value *entry = &v->array->items[i];
+                        Value *item = tuple_get(entry, "item");
+                        Value *name = tuple_get(entry, "name");
+                        Value *optional = tuple_get(entry, "optional");
+                        Value *cond = tuple_get(entry, "cond");
                         avP(e->es, cexpr(ty, item));
                         avP(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(ty, name) : NULL);
                         avP(e->required, optional != NULL ? !optional->boolean : true);
@@ -7883,8 +7884,8 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->keys);
                 vec_init(e->values);
 
-                struct value *items = tuple_get(v, "items");
-                struct value *dflt = tuple_get(v, "default");
+                Value *items = tuple_get(v, "items");
+                Value *dflt = tuple_get(v, "default");
 
                 e->dflt = (dflt != NULL && dflt->type != VALUE_NIL) ? cexpr(ty, dflt) : NULL;
 
@@ -7904,15 +7905,15 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->kwargs);
                 vec_init(e->fkwconds);
 
-                struct value *func = tuple_get(v, "func");
+                Value *func = tuple_get(v, "func");
                 e->function = cexpr(ty, func);
 
-                struct value *args = tuple_get(v, "args");
+                Value *args = tuple_get(v, "args");
 
                 for (int i = 0; i < args->array->count; ++i) {
-                        struct value *arg = &args->array->items[i];
-                        struct value *name = tuple_get(arg, "name");
-                        struct value *cond = tuple_get(arg, "cond");
+                        Value *arg = &args->array->items[i];
+                        Value *name = tuple_get(arg, "name");
+                        Value *cond = tuple_get(arg, "cond");
                         if (cond != NULL && cond->type == VALUE_NIL) {
                                 cond = NULL;
                         }
@@ -7936,25 +7937,23 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->method_kwargs);
                 vec_init(e->mconds);
 
-                struct value *maybe = tuple_get(v, "maybe");
+                Value *maybe = tuple_get(v, "maybe");
                 e->maybe = maybe != NULL && value_truthy(ty, maybe);
 
-                struct value *object = tuple_get(v, "object");
+                Value *object = tuple_get(v, "object");
                 e->object = cexpr(ty, object);
 
-                struct value *method = tuple_get(v, "method");
+                Value *method = tuple_get(v, "method");
                 e->method_name = mkcstr(ty, method);
 
-                struct value *args = tuple_get(v, "args");
+                Value *args = tuple_get(v, "args");
 
                 for (int i = 0; i < args->array->count; ++i) {
-                        struct value *arg = &args->array->items[i];
-                        struct value *name = tuple_get(arg, "name");
-                        struct value *cond = tuple_get(arg, "cond");
-                        if (cond != NULL && cond->type == VALUE_NIL) {
-                                cond = NULL;
-                        }
-                        if (name == NULL || name->type == VALUE_NIL) {
+                        Value *arg = &args->array->items[i];
+                        Value *cond = tget_nn(v, "cond");
+                        Value *name = tget_t(v, "name", VALUE_STRING);
+
+                        if (name == NULL) {
                                 avP(e->method_args, cexpr(ty, tuple_get(arg, "arg")));
                                 avP(e->mconds, cond != NULL ? cexpr(ty, cond) : NULL);
                         } else {
@@ -7966,7 +7965,7 @@ cexpr(Ty *ty, Value *v)
         }
         case TyGenerator:
         {
-                struct value v_ = *v;
+                Value v_ = *v;
                 v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_GENERATOR;
                 e->ikwargs = -1;
@@ -7990,9 +7989,9 @@ cexpr(Ty *ty, Value *v)
                 e->ikwargs = -1;
                 e->rest = -1;
                 e->ftype = FT_NONE;
-                struct value *name = tuple_get(v, "name");
-                struct value *params = tuple_get(v, "params");
-                struct value *rt = tuple_get(v, "rt");
+                Value *name = tuple_get(v, "name");
+                Value *params = tuple_get(v, "params");
+                Value *rt = tuple_get(v, "rt");
                 Value *decorators = tuple_get(v, "decorators");
                 e->name = (name != NULL && name->type != VALUE_NIL) ? mkcstr(ty, name) : NULL;
                 e->doc = NULL;
@@ -8008,13 +8007,13 @@ cexpr(Ty *ty, Value *v)
                         }
                 }
                 for (int i = 0; i < params->array->count; ++i) {
-                        struct value *p = &params->array->items[i];
+                        Value *p = &params->array->items[i];
                         switch (tags_first(ty, p->tags)) {
                         case TyParam:
                         {
                                 avP(e->params, mkcstr(ty, tuple_get(p, "name")));
-                                struct value *c = tuple_get(p, "constraint");
-                                struct value *d = tuple_get(p, "default");
+                                Value *c = tuple_get(p, "constraint");
+                                Value *d = tuple_get(p, "default");
                                 avP(e->constraints, (c != NULL && c->type != VALUE_NIL) ? cexpr(ty, c) : NULL);
                                 avP(e->dflts, (d != NULL && d->type != VALUE_NIL) ? cexpr(ty, d) : NULL);
                                 break;
@@ -8056,9 +8055,9 @@ cexpr(Ty *ty, Value *v)
                 vec_init(e->optional);
 
                 for (int i = 0; i < items->array->count; ++i) {
-                        struct value *entry = &items->array->items[i];
-                        struct value *optional = tuple_get(entry, "optional");
-                        struct value *cond = tuple_get(entry, "cond");
+                        Value *entry = &items->array->items[i];
+                        Value *optional = tuple_get(entry, "optional");
+                        Value *cond = tuple_get(entry, "cond");
                         avP(e->elements, cexpr(ty, tuple_get(entry, "item")));
                         avP(e->optional, optional != NULL ? optional->boolean : false);
                         avP(e->aconds, (cond != NULL && cond->type != VALUE_NIL) ? cexpr(ty, cond) : NULL);
@@ -8085,7 +8084,7 @@ cexpr(Ty *ty, Value *v)
                 break;
         case TyEval:
         {
-                struct value v_ = *v;
+                Value v_ = *v;
                 v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_EVAL;
                 e->operand = cexpr(ty, &v_);
@@ -8099,7 +8098,7 @@ cexpr(Ty *ty, Value *v)
                                 avP(e->es, cexpr(ty, &v->array->items[i]));
                         }
                 } else {
-                        struct value v_ = *v;
+                        Value v_ = *v;
                         v_.tags = tags_pop(ty, v_.tags);
                         avP(e->es, cexpr(ty, &v_));
                 }
@@ -8113,7 +8112,7 @@ cexpr(Ty *ty, Value *v)
         }
         case TyWith:
         {
-                struct value *lets = &v->items[0];
+                Value *lets = &v->items[0];
                 statement_vector defs = {0};
 
                 for (int i = 0; i < lets->array->count; ++i) {
@@ -8267,7 +8266,7 @@ cexpr(Ty *ty, Value *v)
                 break;
         case TyCount:
         {
-                struct value v_ = *v;
+                Value v_ = *v;
                 v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_PREFIX_HASH;
                 e->operand = cexpr(ty, &v_);
@@ -8333,7 +8332,7 @@ cexpr(Ty *ty, Value *v)
         }
         case TyCompileTime:
         {
-                struct value v_ = *v;
+                Value v_ = *v;
                 v_.tags = tags_pop(ty, v_.tags);
                 e->type = EXPRESSION_COMPILE_TIME;
                 e->operand = cexpr(ty, &v_);
@@ -8343,7 +8342,7 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_IFDEF;
                 e->identifier = mkcstr(ty, tuple_get(v, "name"));
-                struct value *mod = tuple_get(v, "module");
+                Value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 break;
         }
@@ -8351,7 +8350,7 @@ cexpr(Ty *ty, Value *v)
         {
                 e->type = EXPRESSION_DEFINED;
                 e->identifier = mkcstr(ty, tuple_get(v, "name"));
-                struct value *mod = tuple_get(v, "module");
+                Value *mod = tuple_get(v, "module");
                 e->module = (mod != NULL && mod->type != VALUE_NIL) ? mkcstr(ty, mod) : NULL;
                 break;
         }
@@ -8430,8 +8429,8 @@ CToTyStmt(Ty *ty, Stmt *s)
         return v;
 }
 
-struct expression *
-TyToCExpr(Ty *ty, struct value *v)
+Expr *
+TyToCExpr(Ty *ty, Value *v)
 {
         SAVE_JB;
 
@@ -8440,15 +8439,15 @@ TyToCExpr(Ty *ty, struct value *v)
                 return NULL;
         }
 
-        struct expression *e = cexpr(ty, v);
+        Expr *e = cexpr(ty, v);
 
         RESTORE_JB;
 
         return e;
 }
 
-struct value
-tyeval(Ty *ty, struct expression *e)
+Value
+tyeval(Ty *ty, Expr *e)
 {
         SAVE_JB;
 
@@ -8476,7 +8475,7 @@ tyeval(Ty *ty, struct expression *e)
         add_location_info(ty);
 
         EvalDepth += 1;
-        struct value v = vm_try_exec(ty, state.code.items);
+        Value v = vm_try_exec(ty, state.code.items);
         EvalDepth -= 1;
 
         state.code = code_save;
@@ -8487,9 +8486,9 @@ tyeval(Ty *ty, struct expression *e)
         return v;
 }
 
-struct expression *
-typarse(Ty *ty, struct expression *e, struct location const *start,
-        struct location const *end)
+Expr *
+typarse(Ty *ty, Expr *e, Location const *start,
+        Location const *end)
 {
         symbolize_expression(ty, state.global, e);
 
@@ -8509,24 +8508,24 @@ typarse(Ty *ty, struct expression *e, struct location const *start,
         state.code = code_save;
         state.expression_locations = locs_save;
 
-        struct value m = *vm_get(ty, 0);
+        Value m = *vm_get(ty, 0);
 
         void *ctx = PushInfo(ty, NULL, "invoking macro %s", name_of(&m));
 
-        struct scope *macro_scope_save = state.macro_scope;
+        Scope *macro_scope_save = state.macro_scope;
         state.macro_scope = state.global;
 
-        struct location const mstart = state.mstart;
-        struct location const mend = state.mend;
+        Location const mstart = state.mstart;
+        Location const mend = state.mend;
         state.mstart = *start;
         state.mend = *end;
 
-        struct value expr = vmC(&m, 0);
+        Value expr = vmC(&m, 0);
         vmP(&expr);
 
         state.macro_scope = macro_scope_save;
 
-        struct expression *e_ = cexpr(ty, &expr);
+        Expr *e_ = cexpr(ty, &expr);
 
         state.mstart = mstart;
         state.mend = mend;
@@ -8636,12 +8635,12 @@ define_macro(Ty *ty, Stmt *s, bool fun)
 bool
 is_fun_macro(Ty *ty, char const *module, char const *id)
 {
-        struct symbol *s = NULL;
+        Symbol *s = NULL;
 
         if (module == NULL) {
                 s = scope_lookup(ty, state.global, id);
         } else {
-                struct scope *mod = search_import_scope(module);
+                Scope *mod = search_import_scope(module);
                 if (mod != NULL) {
                         s = scope_lookup(ty, mod, id);
                 }
@@ -8653,12 +8652,12 @@ is_fun_macro(Ty *ty, char const *module, char const *id)
 bool
 is_macro(Ty *ty, char const *module, char const *id)
 {
-        struct symbol *s = NULL;
+        Symbol *s = NULL;
 
         if (module == NULL) {
                 s = scope_lookup(ty, state.global, id);
         } else {
-                struct scope *mod = search_import_scope(module);
+                Scope *mod = search_import_scope(module);
                 if (mod != NULL) {
                         s = scope_lookup(ty, mod, id);
                 }
@@ -8668,7 +8667,7 @@ is_macro(Ty *ty, char const *module, char const *id)
 }
 
 bool
-compiler_symbolize_expression(Ty *ty, struct expression *e, struct scope *scope)
+compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 {
         SAVE_JB;
 
@@ -8698,7 +8697,7 @@ compiler_clear_location(Ty *ty)
 }
 
 Value
-compiler_render_template(Ty *ty, struct expression *e)
+compiler_render_template(Ty *ty, Expr *e)
 {
         Value v;
 
