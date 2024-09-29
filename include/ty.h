@@ -36,17 +36,19 @@ typedef struct table ValueTable;
 
 struct try {
         jmp_buf jb;
+        bool executing;
+        uint8_t state;
         int sp;
         int gc;
         int cs;
         int ts;
         int ds;
         int ctxs;
+        int nsp;
         char *catch;
         char *finally;
         char *end;
-        bool executing;
-        enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY } state;
+        enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
 };
 
 typedef struct ThrowCtx {

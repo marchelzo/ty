@@ -33,7 +33,35 @@
 
 #define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
 
-#define P_ALIGN (_Alignof (uintptr_t))
+inline static size_t
+P_ALIGN(void const *p)
+{
+        return ((uintptr_t)p & 7)[(size_t []) {
+                [0] = 8,
+                [1] = 1,
+                [2] = 2,
+                [3] = 1,
+                [4] = 4,
+                [5] = 1,
+                [6] = 2,
+                [7] = 1,
+        }];
+}
+
+inline static void *
+ALIGNED_TO(void const *p, size_t align)
+{
+        return (void *)(((uintptr_t)p + (align - 1)) & ~(align - 1));
+}
+
+inline static bool
+IS_ALIGNED_TO(void const *p, size_t align)
+{
+        return ((uintptr_t)p & (align - 1)) == 0;
+}
+
+#define ALIGNED_FOR(T, p) (ALIGNED_TO((p), _Alignof (T)))
+#define IS_ALIGNED_FOR(T, p) (IS_ALIGNED_TO((p), _Alignof (T)))
 
 #ifdef TY_UNSAFE
 #define FALSE_OR(x) if (false)

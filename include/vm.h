@@ -277,6 +277,9 @@ TakeLock(Ty *ty);
 void
 ReleaseLock(Ty *ty, bool blocked);
 
+bool
+MaybeTakeLock(Ty *ty);
+
 char const *
 GetInstructionName(uint8_t i);
 

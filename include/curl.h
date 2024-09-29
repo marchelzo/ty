@@ -5,6 +5,9 @@ struct value
 builtin_curl_init(Ty *ty, int argc, struct value *kwargs);
 
 struct value
+builtin_curl_trace(Ty *ty, int argc, struct value *kwargs);
+
+struct value
 builtin_curl_free(Ty *ty, int argc, struct value *kwargs);
 
 struct value
