@@ -1,4 +1,4 @@
-#include <stdlib.h>
+
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -106,7 +106,7 @@ struct import {
         Scope *scope;
 };
 
-typedef vec(struct import)    import_vector;
+typedef vec(struct import) import_vector;
 
 struct module {
         char const *path;
@@ -116,11 +116,9 @@ struct module {
 };
 
 typedef vec(struct eloc)      location_vector;
-typedef vec(Symbol *)  symbol_vector;
+typedef vec(Symbol *)         symbol_vector;
 typedef vec(size_t)           offset_vector;
-typedef vec(offset_vector *)  jumplist_stack;
 typedef vec(char)             byte_vector;
-typedef vec(unsigned)         info_vector;
 
 typedef struct loop_state {
         offset_vector continues;
@@ -280,6 +278,9 @@ emit_spread(Ty *ty, Expr const *e, bool nils);
 
 static void
 compile(Ty *ty, char const *source);
+
+char const *
+DumpProgram(Ty *ty, byte_vector *out, char const *code, char const *end);
 
 #define X(t) #t
 static char const *ExpressionTypeNames[] = {
@@ -2867,6 +2868,14 @@ emit_constraint(Ty *ty, Expr const *c)
         }
 }
 
+inline static void
+align_code_to(Ty *ty, size_t n)
+{
+        while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
+                avP(state.code, 0x00);
+        avP(state.code, 0xFF);
+}
+
 static void
 emit_function(Ty *ty, Expr const *e, int class)
 {
@@ -2926,9 +2935,9 @@ emit_function(Ty *ty, Expr const *e, int class)
 
         emit_instr(ty, INSTR_FUNCTION);
 
-        while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
-                avP(state.code, 0x00);
-        avP(state.code, 0xFF);
+        while (!IS_ALIGNED_FOR(int, vec_last(state.code) + 1)) {
+                avP(state.code, 0);
+        }
 
         emit_int(ty, bound_caps);
 
@@ -2947,7 +2956,7 @@ emit_function(Ty *ty, Expr const *e, int class)
         emit_int16(ty, e->ikwargs);
 
         for (int i = 0; i < sizeof (int) - 2 * sizeof (int16_t); ++i) {
-                avP(state.code, 0x00);
+                avP(state.code, 0);
         }
 
         emit_int(ty, class);
@@ -3124,10 +3133,6 @@ emit_function(Ty *ty, Expr const *e, int class)
         }
 
         state.function_resources = function_resources;
-
-        while ((state.code.count - start_offset) % P_ALIGN != 0) {
-                avP(state.code, 0x00);
-        }
 
         int bytes = state.code.count - start_offset;
         memcpy(state.code.items + size_offset, &bytes, sizeof bytes);
@@ -5279,7 +5284,6 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_instr(ty, INSTR_MUT_SUB);
                 break;
         case EXPRESSION_TUPLE:
-                emit_instr(ty, INSTR_SAVE_STACK_POS);
                 for (int i = 0; i < e->es.count; ++i) {
                         if (e->tconds.items[i] != NULL) {
                                 emit_expression(ty, e->tconds.items[i]);
@@ -5302,6 +5306,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         }
                 }
                 emit_instr(ty, INSTR_TUPLE);
+                emit_int(ty, e->es.count);
                 for (int i = 0; i < e->names.count; ++i) {
                         if (e->names.items[i] != NULL) {
                                 emit_string(ty, e->names.items[i]);
@@ -6086,6 +6091,7 @@ compiler_compile_source(Ty *ty, char const *source, char const *filename)
         }
 
         compile(ty, source);
+        DumpProgram(ty, state.code.items, state.code.items + state.code.count);
 
         char *code = state.code.items;
 
@@ -9054,6 +9060,544 @@ WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool fi
         }
 
         return n;
+}
+
+static void
+dump(byte_vector *b, char const *fmt, ...)
+{
+        va_list ap;
+        int need, avail;
+
+Retry:
+        avail = b->capacity - b->count;
+
+        va_start(ap, fmt);
+        need = vsnprintf(b->items + b->count, avail, fmt, ap);
+        va_end(ap);
+
+        if (need >= avail) {
+                xvR(*b, max(b->capacity * 2, 256));
+                goto Retry;
+        }
+
+        b->count += need;
+}
+
+char const *
+DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end)
+{
+#define CASE(i) case INSTR_ ## i:
+#define PRINTVALUE(x)                                  \
+        _Generic(                                      \
+            (x),                                       \
+            int:         dump(out, " %d", (x)),        \
+            intmax_t:    dump(out, " %"PRIiMAX, (x)),  \
+            double:      dump(out, " %f", (x)),        \
+            float:       dump(out, " %f", (x)),        \
+            bool:        dump(out, " %d", (x)),        \
+            uintptr_t:   dump(out, " %"PRIuPTR, (x))   \
+        )
+
+        byte_vector after = {0};
+
+#define SKIPSTR()    (dump(out, " \"%s\"", c), (c += strlen(c) + 1))
+#define READSTR(s)   (((s) = c), SKIPSTR())
+#define READVALUE(x) (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
+
+        uintptr_t s, off;
+        intmax_t k;
+        bool b = false, tco = false;
+        float f;
+        int n, nkw = 0, i, j, tag;
+        unsigned long h;
+
+        bool AutoThis = false;
+
+        Value v, key, value, container, subscript, *vp, *vp2;
+        char *str;
+        char const *method, *member;
+
+        dump(out, "%s:\n", name);
+
+        for (char const *c = code; c != end; xvP(*out, '\n')) {
+                dump(out, "    %s", GetInstructionName(*c));
+                switch ((unsigned char)*c++) {
+                CASE(NOP)
+                        break;
+                CASE(LOAD_LOCAL)
+                        READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading local: %s (%d)", IP, n);
+                        SKIPSTR();
+#endif
+                        break;
+                CASE(LOAD_REF)
+                        READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading ref: %s (%d)", IP, n);
+                        SKIPSTR();
+#endif
+                        break;
+                CASE(LOAD_CAPTURED)
+                        READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
+                        SKIPSTR();
+#endif
+
+                        break;
+                CASE(LOAD_GLOBAL)
+                        READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading global: %s (%d)", IP, n);
+                        SKIPSTR();
+#endif
+                        break;
+                CASE(CHECK_INIT)
+                        break;
+                CASE(CAPTURE)
+                        READVALUE(i);
+                        READVALUE(j);
+                        break;
+                CASE(EXEC_CODE)
+                        READVALUE(s);
+                        break;
+                CASE(DUP)
+                        break;
+                CASE(JUMP)
+                        READVALUE(n);
+                        break;
+                CASE(JUMP_IF)
+                        READVALUE(n);
+                        break;
+                CASE(JUMP_IF_NOT)
+                        READVALUE(n);
+                        break;
+                CASE(JUMP_IF_NONE)
+                        READVALUE(n);
+                        break;
+                CASE(JUMP_IF_NIL)
+                        READVALUE(n);
+                        break;
+                CASE(TARGET_GLOBAL)
+                        READVALUE(n);
+                        break;
+                CASE(TARGET_LOCAL)
+                        READVALUE(n);
+                        break;
+                CASE(TARGET_REF)
+                        READVALUE(n);
+                        break;
+                CASE(TARGET_CAPTURED)
+                        READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
+                        SKIPSTR();
+#endif
+                        break;
+                CASE(TARGET_MEMBER)
+                        READSTR(member);
+                        READVALUE(h);
+                        break;
+                CASE(TARGET_SUBSCRIPT)
+                        break;
+                CASE(ASSIGN)
+                        break;
+                CASE(MAYBE_ASSIGN)
+                        break;
+                CASE(TAG_PUSH)
+                        READVALUE(tag);
+                        break;
+                CASE(ARRAY_REST)
+                        READVALUE(i);
+                        READVALUE(j);
+                        READVALUE(n);
+                        break;
+                CASE(TUPLE_REST)
+                        READVALUE(i);
+                        READVALUE(n);
+                        break;
+                CASE(RECORD_REST)
+                        READVALUE(n);
+                        READVALUE(j);
+                        c += j;
+                        break;
+                CASE(THROW_IF_NIL)
+                        break;
+                CASE(UNTAG_OR_DIE)
+                        READVALUE(tag);
+                        break;
+                CASE(STEAL_TAG)
+                        break;
+                CASE(TRY_STEAL_TAG)
+                        READVALUE(n);
+                        break;
+                CASE(BAD_MATCH)
+                        break;
+                CASE(BAD_DISPATCH);
+                        break;
+                CASE(BAD_CALL)
+                        SKIPSTR();
+                        SKIPSTR();
+                        break;
+                CASE(BAD_ASSIGN)
+                        SKIPSTR();
+                        break;
+                CASE(THROW)
+                CASE(RETHROW)
+                        break;
+                CASE(FINALLY)
+                {
+                        break;
+                }
+                CASE(POP_TRY)
+                        break;
+                CASE(RESUME_TRY)
+                        break;
+                CASE(CATCH)
+                        break;
+                CASE(TRY)
+                {
+                        READVALUE(n);
+                        READVALUE(n);
+                        READVALUE(n);
+                        break;
+                }
+                CASE(DROP)
+                        break;
+                CASE(PUSH_DROP_GROUP)
+                        break;
+                CASE(PUSH_DROP)
+                        break;
+                CASE(PUSH_DEFER_GROUP)
+                        break;
+                CASE(DEFER)
+                        break;
+                CASE(CLEANUP)
+                        break;
+                CASE(ENSURE_LEN)
+                        READVALUE(n);
+                        READVALUE(n);
+                        break;
+                CASE(ENSURE_LEN_TUPLE)
+                        READVALUE(n);
+                        READVALUE(n);
+                        break;
+                CASE(ENSURE_EQUALS_VAR)
+                        READVALUE(n);
+                        break;
+                CASE(TRY_ASSIGN_NON_NIL)
+                        READVALUE(n);
+                        break;
+                CASE(TRY_REGEX)
+                        READVALUE(s);
+                        READVALUE(n);
+                        break;
+                CASE(ENSURE_DICT)
+                        READVALUE(n);
+                        break;
+                CASE(ENSURE_CONTAINS)
+                        READVALUE(n);
+                        break;
+                CASE(ENSURE_SAME_KEYS)
+                        READVALUE(n);
+                        break;
+                CASE(TRY_INDEX)
+                        READVALUE(i);
+                        READVALUE(b);
+                        READVALUE(n);
+                        break;
+                CASE(TRY_INDEX_TUPLE)
+                        READVALUE(i);
+                        READVALUE(n);
+                        break;
+                CASE(TRY_TUPLE_MEMBER)
+                        READVALUE(b);
+                        READSTR(str);
+                        READVALUE(n);
+                        break;
+                CASE(TRY_TAG_POP)
+                        READVALUE(tag);
+                        READVALUE(n);
+                        break;
+                CASE(POP)
+                        break;
+                CASE(UNPOP)
+                        break;
+                CASE(INTEGER)
+                        READVALUE(k);
+                        break;
+                CASE(REAL)
+                        READVALUE(f);
+                        break;
+                CASE(BOOLEAN)
+                        READVALUE(b);
+                        break;
+                CASE(STRING)
+                        SKIPSTR();
+                        break;
+                CASE(CLASS)
+                        READVALUE(tag);
+                        break;
+                CASE(TAG)
+                        READVALUE(tag);
+                        break;
+                CASE(REGEX)
+                        READVALUE(s);
+                        break;
+                CASE(ARRAY)
+                        break;
+                CASE(TUPLE)
+                        READVALUE(n);
+
+                        while (n --> 0) {
+                                SKIPSTR();
+                        }
+
+                        break;
+                CASE(DICT)
+                        break;
+                CASE(DICT_DEFAULT)
+                        break;
+                CASE(SELF)
+                        break;
+                CASE(NIL)
+                        break;
+                CASE(TO_STRING)
+                        SKIPSTR();
+                        break;
+                CASE(YIELD)
+                        break;
+                CASE(MAKE_GENERATOR)
+                        break;
+                CASE(VALUE)
+                        READVALUE(s);
+                        break;
+                CASE(EVAL)
+                        READVALUE(s);
+                        break;
+                CASE(RENDER_TEMPLATE)
+                        READVALUE(s);
+                        break;
+                CASE(TRAP)
+                        break;
+                CASE(GET_NEXT)
+                        break;
+                CASE(ARRAY_COMPR)
+                        break;
+                CASE(DICT_COMPR)
+                        READVALUE(n);
+                        break;
+                CASE(PUSH_INDEX)
+                        READVALUE(n);
+                        break;
+                CASE(READ_INDEX)
+                        break;
+                CASE(SENTINEL)
+                        break;
+                CASE(NONE)
+                        break;
+                CASE(NONE_IF_NIL)
+                        break;
+                CASE(CLEAR_RC)
+                        break;
+                CASE(GET_EXTRA)
+                        break;
+                CASE(FIX_EXTRA)
+                        break;
+                CASE(FIX_TO)
+                        READVALUE(n);
+                        break;
+                CASE(SWAP)
+                        break;
+                CASE(REVERSE)
+                        READVALUE(n);
+                        break;
+                CASE(MULTI_ASSIGN)
+                        READVALUE(n);
+                        break;
+                CASE(MAYBE_MULTI)
+                        READVALUE(n);
+                        break;
+                CASE(JUMP_IF_SENTINEL)
+                        READVALUE(n);
+                        break;
+                CASE(CLEAR_EXTRA)
+                        break;
+                CASE(PUSH_NTH)
+                        READVALUE(n);
+                        break;
+                CASE(PUSH_ARRAY_ELEM)
+                        READVALUE(n);
+                        READVALUE(b);
+                        break;
+                CASE(PUSH_TUPLE_ELEM)
+                        READVALUE(n);
+                        break;
+                CASE(PUSH_TUPLE_MEMBER)
+                        READVALUE(b);
+                        READSTR(member);
+                        break;
+                CASE(PUSH_ALL)
+                        break;
+                CASE(CONCAT_STRINGS)
+                        READVALUE(n);
+                        break;
+                CASE(RANGE)
+                CASE(INCRANGE)
+                        break;
+                CASE(TRY_MEMBER_ACCESS)
+                CASE(MEMBER_ACCESS)
+                        READSTR(member);
+                        READVALUE(h);
+                        break;
+                CASE(SLICE)
+                CASE(SUBSCRIPT)
+                CASE(NOT)
+                CASE(QUESTION)
+                CASE(NEG)
+                CASE(COUNT)
+                CASE(ADD)
+                CASE(SUB)
+                CASE(MUL)
+                CASE(DIV)
+                CASE(MOD)
+                CASE(EQ)
+                CASE(NEQ)
+                CASE(CHECK_MATCH)
+                CASE(LT)
+                CASE(GT)
+                CASE(LEQ)
+                CASE(GEQ)
+                        break;
+                CASE(CMP)
+                        break;
+                CASE(GET_TAG)
+                        break;
+                CASE(LEN)
+                        break;
+                CASE(PRE_INC)
+                        break;
+                CASE(POST_INC)
+                        break;
+                CASE(PRE_DEC)
+                        break;
+                CASE(POST_DEC)
+                        break;
+                CASE(MUT_ADD)
+                        break;
+                CASE(MUT_MUL)
+                        break;
+                CASE(MUT_DIV)
+                        break;
+                CASE(MUT_SUB)
+                         break;
+                CASE(BINARY_OP)
+                        READVALUE(n);
+                        break;
+                CASE(DEFINE_TAG)
+                {
+                        int tag, super, n;
+                        READVALUE(tag);
+                        READVALUE(super);
+                        READVALUE(n);
+                        while (n --> 0) {
+                                SKIPSTR();
+                        }
+                        break;
+                }
+                CASE(DEFINE_CLASS)
+                {
+                        int class, t, n, g, s;
+                        READVALUE(class);
+                        READVALUE(t);
+                        READVALUE(n);
+                        READVALUE(g);
+                        READVALUE(s);
+                        while (t --> 0) {
+                                SKIPSTR();
+                        }
+                        while (n --> 0) {
+                                SKIPSTR();
+                        }
+                        while (g --> 0) {
+                                SKIPSTR();
+                        }
+                        while (s --> 0) {
+                                SKIPSTR();
+                        }
+                        break;
+                }
+                CASE(FUNCTION)
+                {
+                        Value v;
+
+                        c = ALIGNED_FOR(int, c);
+
+                        // n: bound_caps
+                        READVALUE(n);
+
+                        v.info = (int *) c;
+
+                        int hs = v.info[0];
+                        int size  = v.info[1];
+                        int nEnv = v.info[2];
+                        int bound = v.info[3];
+
+                        int ncaps = (n > 0) ? nEnv - n : nEnv;
+
+                        LOG("Header size: %d", hs);
+                        LOG("Code size: %d", size);
+                        LOG("Bound: %d", bound);
+                        LOG("ncaps: %d", ncaps);
+
+                        c = DumpProgram(ty, &after, c + hs, c + hs + size);
+
+                        for (int i = 0; i < ncaps; ++i) {
+                                READVALUE(b);
+                                READVALUE(j);
+                        }
+
+                        break;
+                }
+                CASE(PATCH_ENV)
+                        READVALUE(n);
+                        break;
+                CASE(TAIL_CALL)
+                        tco = true;
+                        break;
+                CASE(CALL)
+                        READVALUE(n);
+                        READVALUE(nkw);
+                        for (int i = 0; i < nkw; ++i) {
+                                SKIPSTR();
+                        }
+                        break;
+                CASE(TRY_CALL_METHOD)
+                CASE(CALL_METHOD)
+                        READVALUE(n);
+                        READSTR(method);
+                        READVALUE(h);
+                        READVALUE(nkw);
+                        break;
+                CASE(SAVE_STACK_POS)
+                        break;
+                CASE(RESTORE_STACK_POS)
+                        break;
+                CASE(MULTI_RETURN)
+                        READVALUE(n);
+                        break;
+                CASE(RETURN_IF_NOT_NONE)
+                CASE(RETURN)
+                CASE(RETURN_PRESERVE_CTX)
+                CASE(HALT)
+                        break;
+                }
+        }
+
+        xvPn(*out, after.items, after.count);
+
+        return end;
 }
 
 bool

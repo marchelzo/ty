@@ -167,7 +167,7 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         Value *f = &ctx->items[0];
         Ty *ty = ctx->items[1].ptr;
 
-        TakeLock(ty);
+        bool need_unlock = MaybeTakeLock(ty);
 
         for (int i = 0; i < cif->nargs; ++i) {
                 struct value arg = load(ty, cif->arg_types[i], args[i]);
@@ -194,7 +194,9 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
                 store(ty, cif->rtype, ret, &rv);
         }
 
-        lGv(true);
+        if (need_unlock) {
+                ReleaseLock(ty, true);
+        }
 }
 
 struct value

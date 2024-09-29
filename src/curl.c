@@ -40,6 +40,30 @@ builtin_curl_free(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
+
+Value
+builtin_curl_trace(Ty *ty, int argc, Value *kwargs)
+{
+        char buffer[1024];
+
+        if (argc != 1) {
+                zP("curl.core.trace(): expected 1 argument but got %d", argc);
+        }
+
+        Value cfg = ARG(0);
+
+        if (cfg.type != VALUE_STRING) {
+                zP("curl.core.trace(): expected String but got: %s", VSC(&cfg));
+        }
+        
+        int n = min(sizeof buffer - 1, cfg.bytes);
+
+        memcpy(buffer, cfg.string, n);
+        buffer[n] = '\0';
+
+        return INTEGER(curl_global_trace(buffer));
+}
+
 struct value
 builtin_curl_init(Ty *ty, int argc, struct value *kwargs)
 {
@@ -312,15 +336,22 @@ builtin_curl_setopt(Ty *ty, int argc, struct value *kwargs)
                 if (s.type != VALUE_PTR) {
                         zP("the value of CURLOPT_HTTPHEADER must be an pointer");
                 }
-                curl_easy_setopt(curl.ptr, CURLOPT_HTTPHEADER, s.ptr);
-                break;
+                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_HTTPHEADER, s.ptr));
         case CURLOPT_FOLLOWLOCATION:
                 s = ARG(2);
                 if (s.type != VALUE_BOOLEAN) {
                         zP("the value of CURLOPT_FOLLOWLOCATION must be a boolean");
                 }
-                curl_easy_setopt(curl.ptr, CURLOPT_FOLLOWLOCATION, (long)s.boolean);
-                break;
+                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_FOLLOWLOCATION, (long)s.boolean));
+        case CURLOPT_VERBOSE:
+                s = ARG(2);
+                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_VERBOSE, (long)s.boolean));
+        case CURLOPT_DEBUGFUNCTION:
+                s = ARG(2);
+                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_DEBUGFUNCTION, s.ptr));
+        case CURLOPT_HTTP_VERSION:
+                s = ARG(2);
+                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_HTTP_VERSION, (long)s.integer));
         default:
                 zP("invalid option passed to curl::setopt(): %d", opt.integer);
         }

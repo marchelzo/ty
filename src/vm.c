@@ -1019,6 +1019,12 @@ TakeLock(Ty *ty)
         HaveLock = true;
 }
 
+bool
+MaybeTakeLock(Ty *ty)
+{
+        return HaveLock ? false : (TakeLock(ty), true);
+}
+
 void
 ReleaseLock(Ty *ty, bool blocked)
 {
@@ -2362,10 +2368,12 @@ Throw:
                         push(ty, SENTINEL);
                         push(ty, v);
 
+                        sp_stack.count = t->nsp;
                         FRAMES.count = t->ctxs;
                         TARGETS.count = t->ts;
                         CALLS.count = t->cs;
                         IP = t->catch;
+
 
                         gc_truncate_root_set(ty, t->gc);
 
@@ -2417,6 +2425,7 @@ Throw:
                         t->ts = TARGETS.count;
                         t->ds = drop_stack.count;
                         t->ctxs = FRAMES.count;
+                        t->nsp = sp_stack.count;
                         t->executing = false;
                         t->state = TRY_TRY;
                         break;
@@ -2639,7 +2648,7 @@ Throw:
 
                         bool have_names = false;
 
-                        n = STACK.count - *vvX(sp_stack);
+                        READVALUE(n);
 
                         for (int i = 0; i < n; ++i, SKIPSTR()) {
                                 Value *v = &STACK.items[STACK.count - n + i];
@@ -3664,9 +3673,7 @@ Throw:
                         v.tags = 0;
                         v.type = VALUE_FUNCTION;
 
-                        while (*IP != ((char)0xFF))
-                                ++IP;
-                        ++IP;
+                        IP = ALIGNED_FOR(int, IP);
 
                         // n: bound_caps
                         READVALUE(n);
