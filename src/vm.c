@@ -727,6 +727,19 @@ top(Ty *ty)
 }
 
 inline static void
+xprint_stack(Ty *ty, int n)
+{
+        XLOG("STACK: (%zu)", STACK.count);
+        for (int i = 0; i < n && i < STACK.count; ++i) {
+                if (FRAMES.count > 0 && STACK.count - (i + 1) == vvL(FRAMES)->fp) {
+                        XLOG(" -->  %s", value_show(ty, top(ty) - i));
+                } else {
+                        XLOG("      %s", value_show(ty, top(ty) - i));
+                }
+        }
+}
+
+inline static void
 print_stack(Ty *ty, int n)
 {
 #ifndef TY_NO_LOG
@@ -1589,7 +1602,7 @@ DoNeq(Ty *ty)
 }
 
 inline static void
-DoBinaryOp(Ty *ty, int n)
+DoBinaryOp(Ty *ty, int n, bool exec)
 {
         int i = op_dispatch(n, ClassOf(top(ty) - 1), ClassOf(top(ty)));
 
@@ -1611,7 +1624,7 @@ DoBinaryOp(Ty *ty, int n)
                 TERM(95), TERM(0), ClassOf(top(ty)),     VSC(top(ty))
         );
 
-        call(ty, &Globals.items[i], NULL, 2, 0, false);
+        call(ty, &Globals.items[i], NULL, 2, 0, exec);
 }
 
 inline static void
@@ -1619,7 +1632,7 @@ DoMutDiv(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         ValueTable *o;
-        Value *vp, *vp2, x;
+        Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1632,7 +1645,11 @@ DoMutDiv(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = vm_2op(ty, OP_DIV, vp, &x);
+                        if ((val = vm_try_2op(ty, OP_MUT_DIV, vp, &x)).type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_DIV, vp, &x);
+                        }
                 }
                 push(ty, *vp);
                 break;
@@ -1661,7 +1678,7 @@ DoMutMul(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         ValueTable *o;
-        Value *vp, *vp2, x;
+        Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1674,7 +1691,11 @@ DoMutMul(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = vm_2op(ty, OP_MUL, vp, &x);
+                        if ((val = vm_try_2op(ty, OP_MUT_MUL, vp, &x)).type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_MUL, vp, &x);
+                        }
                 }
                 push(ty, *vp);
                 break;
@@ -1704,7 +1725,7 @@ DoMutSub(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         ValueTable *o;
-        Value *vp, *vp2, x;
+        Value *vp, *vp2, x, val;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1722,7 +1743,11 @@ DoMutSub(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = vm_2op(ty, OP_SUB, vp, &x);
+                        if ((val = vm_try_2op(ty, OP_MUT_SUB, vp, &x)).type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_SUB, vp, &x);
+                        }
                 }
                 push(ty, *vp);
                 break;
@@ -1752,7 +1777,7 @@ DoMutAdd(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         ValueTable *o;
-        Value *vp, *vp2, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
 
@@ -1770,7 +1795,11 @@ DoMutAdd(Ty *ty)
                         pop(ty);
                 } else {
                         x = pop(ty);
-                        *vp = vm_2op(ty, OP_ADD, vp, &x);
+                        if ((val = vm_try_2op(ty, OP_MUT_ADD, vp, &x)).type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_ADD, vp, &x);
+                        }
                 }
                 push(ty, *vp);
                 break;
@@ -3686,28 +3715,7 @@ Throw:
                 CASE(BINARY_OP)
                         READVALUE(n);
                 BinaryOp:
-                        i = op_dispatch(n, ClassOf(top(ty) - 1), ClassOf(top(ty)));
-
-                        if (i == -1) zP(
-                                "no matching implementation of %s%s%s\n"
-                                FMT_MORE "%s left%s: %s"
-                                FMT_MORE "%sright%s: %s\n",
-                                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0),
-                                TERM(95), TERM(0), VSC(top(ty) - 1),
-                                TERM(95), TERM(0), VSC(top(ty))
-                        );
-
-                        dont_printf(
-                                "matching implementation of %s%s%s: %d\n"
-                                FMT_MORE "%s left%s (%d): %s"
-                                FMT_MORE "%sright%s (%d): %s\n",
-                                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0), i,
-                                TERM(95), TERM(0), ClassOf(top(ty) - 1), VSC(top(ty) - 1),
-                                TERM(95), TERM(0), ClassOf(top(ty)),     VSC(top(ty))
-                        );
-
-                        call(ty, &Globals.items[i], NULL, 2, 0, false);
-
+                        DoBinaryOp(ty, n, false);
                         break;
                 CASE(DEFINE_TAG)
                 {
@@ -4937,7 +4945,7 @@ vm_2op(Ty *ty, int op, Value const *a, Value const *b)
         case OP_MOD: if (op_builtin_mod(ty)) return pop(ty); break;
         }
 
-        DoBinaryOp(ty, op);
+        DoBinaryOp(ty, op, true);
 
         return pop(ty);
 }

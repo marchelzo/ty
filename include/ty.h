@@ -177,6 +177,11 @@ extern TY xD;
         X(MUL,       "*"),   \
         X(DIV,       "/"),   \
         X(MOD,       "%"),   \
+        X(MUT_ADD,   "+="),  \
+        X(MUT_SUB,   "-="),  \
+        X(MUT_MUL,   "*="),  \
+        X(MUT_DIV,   "/="),  \
+        X(MUT_MOD,   "%="),  \
         X(AND,      "&&"),   \
         X(OR,       "||"),   \
         X(BIT_OR,    "|"),   \
