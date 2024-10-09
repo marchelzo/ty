@@ -385,6 +385,10 @@ class Dict : Iterable {
         return new
     }
 
+    <<(x) {
+        self[x] ?= nil
+    }
+
     iterValues*() {
         for _, v in self {
             yield v
