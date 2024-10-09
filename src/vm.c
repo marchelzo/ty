@@ -4350,7 +4350,6 @@ vm_panic(Ty *ty, char const *fmt, ...)
 
                 Expr const *expr = compiler_find_expr(ty, IP - 1);
 
-                n += snprintf(ERR + n, sz - n,"(ip=%07ju)  ", (uintptr_t)IP & 0xFFFFFF);
                 n += WriteExpressionTrace(ty, ERR + n, sz - n, expr, 0, i == 0);
                 if (expr != NULL && expr->origin != NULL) {
                         n += WriteExpressionOrigin(ty, ERR + n, sz - n, expr->origin);

@@ -9290,7 +9290,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         dump(out, "            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
                 }
 
-                //ptrdiff_t pc = c - state.code.items;
                 ptrdiff_t pc = (uintptr_t)c;
 
 #ifdef TY_ENABLE_PROFILING
@@ -9327,7 +9326,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0)
                 );
-                //printf("??%5td            %s%s", pc, GetInstructionName(*c), caption == NULL ? "\n" : "");
 #endif
 
                 switch ((unsigned char)*c++) {
@@ -9722,7 +9720,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         READVALUE(g);
                         READVALUE(s);
-                        printf("class=%d. t=%d. n=%d, g=%d, s=%d\n", class, t, n, g, s);
                         while (t --> 0) {
                                 SKIPSTR();
                         }
@@ -9821,7 +9818,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         }
 
                         dump(out, "  %s#  %s%s", TERM(34;1), caption, TERM(0));
-                        //printf("  #  %s\n", caption);
                 }
         }
 End:
