@@ -11,6 +11,7 @@
 
 typedef struct value Value;
 
+typedef vec(char) byte_vector;
 typedef vec(char *) CallStack;
 typedef vec(Value) ValueVector;
 typedef ValueVector ValueStack;

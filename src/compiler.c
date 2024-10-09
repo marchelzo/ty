@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -26,44 +25,59 @@
 #include "class.h"
 #include "vm.h"
 #include "compiler.h"
+#include "istat.h"
 
-#define emit_instr(ty, i) do { LOG("emitting instr: %s", #i); _emit_instr(ty, i); } while (false)
+#define PLACEHOLDER_JUMP(t, name) JumpPlaceholder name = (PLACEHOLDER_JUMP)(ty, (t))
+#define LABEL(name) JumpLabel name = (LABEL)(ty)
 
-#define PLACEHOLDER_JUMP(t, name) \
-        emit_instr(ty, t); \
-        name = state.code.count; \
-        emit_int(ty, 0);
 
-#define PATCH_JUMP(name) \
-        do { \
-                jumpdistance = state.code.count - name - sizeof (int); \
-                memcpy(state.code.items + name, &jumpdistance, sizeof jumpdistance); \
-        } while (false)
+#define PATCH_OFFSET(i)                                           \
+        do {                                                      \
+                int dist = state.code.count - i - sizeof dist;    \
+                memcpy(state.code.items + i, &dist, sizeof dist); \
+        } while (0)
 
-#define JUMP(loc) \
-        do { \
-                emit_instr(ty, INSTR_JUMP); \
-                emit_int(ty, loc - state.code.count - sizeof (int)); \
-        } while (false)
+#define PATCH_JUMP(name)                            \
+        do {                                        \
+                PATCH_OFFSET((name).off);           \
+                annotate(":L%d", (name).label + 1); \
+        } while (0)
 
-#define JUMP_IF(loc) \
-        do { \
-                emit_instr(ty, INSTR_JUMP_IF); \
-                emit_int(ty, loc - state.code.count - sizeof (int)); \
-        } while (false)
+#define JUMP(loc)                                                          \
+        do {                                                               \
+                annotate("L%d", (loc).label + 1);                          \
+                emit_instr(ty, INSTR_JUMP);                                \
+                emit_int(ty, (loc).off - state.code.count - sizeof (int)); \
+        } while (0)
 
-#define JUMP_IF_NOT(loc) \
-        do { \
-                emit_instr(ty, INSTR_JUMP_IF_NOT); \
-                emit_int(ty, loc - state.code.count - sizeof (int)); \
-        } while (false)
+#define JUMP_IF_NOT(loc)                                                   \
+        do {                                                               \
+                annotate("L%d", (loc).label + 1);                          \
+                emit_instr(ty, INSTR_JUMP_IF_NOT);                         \
+                emit_int(ty, (loc).off - state.code.count - sizeof (int)); \
+        } while (0)
 
-#define SAVE_JB \
-        jmp_buf jb_; \
-        memcpy(&jb_, &jb, sizeof jb);
+#define EMIT_GROUP_LABEL(g, s)  \
+        annotate(               \
+                (g).label == 0  \
+              ? s               \
+              : s "%d",         \
+                (g).label + 1   \
+        );
 
-#define RESTORE_JB \
-        memcpy(&jb, &jb_, sizeof jb);
+#define FAIL_MATCH_IF(instr)                                 \
+        do{                                                  \
+                EMIT_GROUP_LABEL(state.match_fails, "Fail"); \
+                emit_instr(ty, INSTR_ ## instr);             \
+                avP(state.match_fails, state.code.count);    \
+                emit_int(ty, 0);                             \
+        } while (0)
+
+#define SAVE_JB                        \
+        jmp_buf jb_;                   \
+        memcpy(&jb_, &jb, sizeof jb)
+
+#define RESTORE_JB memcpy(&jb, &jb_, sizeof jb)
 
 #define CHECK_INIT() if (CheckConstraints) { emit_instr(ty, INSTR_CHECK_INIT); }
 
@@ -117,8 +131,18 @@ struct module {
 
 typedef vec(struct eloc)      location_vector;
 typedef vec(Symbol *)         symbol_vector;
-typedef vec(size_t)           offset_vector;
-typedef vec(char)             byte_vector;
+
+typedef struct {
+        intrusive_vec(size_t);
+        int label;
+} JumpGroup;
+
+typedef JumpGroup offset_vector;
+
+typedef struct {
+        size_t off;
+        int label;
+} JumpPlaceholder, JumpLabel;
 
 typedef struct loop_state {
         offset_vector continues;
@@ -137,21 +161,39 @@ typedef struct try_state {
 typedef vec(LoopState) LoopStates;
 typedef vec(TryState) TryStates;
 
+typedef struct {
+        int i;
+        bool patched;
+        byte_vector text;
+        vec(char const *) captions;
+        vec(char const *) map;
+        uintptr_t start;
+        uintptr_t end;
+        char const *name;
+        char const *module;
+} ProgramAnnotation;
+
 /*
  * State which is local to a single compilation unit.
  */
 typedef struct state {
         byte_vector code;
 
+        ProgramAnnotation annotation;
+
         offset_vector selfs;
-        offset_vector match_fails;
-        offset_vector match_successes;
+
+        JumpGroup match_fails;
+        JumpGroup match_successes;
+
         offset_vector generator_returns;
 
         symbol_vector bound_symbols;
 
         int function_resources;
         int resources;
+
+        int label;
 
         Scope *method;
         Scope *fscope;
@@ -190,6 +232,7 @@ typedef struct state {
 } CompileState;
 
 bool CheckConstraints = true;
+bool ProduceAnnotation = false;
 size_t GlobalCount = 0;
 
 static jmp_buf *ujb;
@@ -199,8 +242,8 @@ static char const *Error;
 static int builtin_modules;
 static int BuiltinCount;
 
-static int jumpdistance;
 static vec(struct module) modules;
+static vec(ProgramAnnotation) annotations;
 static CompileState state;
 static vec(location_vector) location_lists;
 static vec(void *) source_map;
@@ -280,7 +323,7 @@ static void
 compile(Ty *ty, char const *source);
 
 char const *
-DumpProgram(Ty *ty, byte_vector *out, char const *code, char const *end);
+DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end);
 
 #define X(t) #t
 static char const *ExpressionTypeNames[] = {
@@ -290,6 +333,62 @@ static char const *StatementTypeNames[] = {
         TY_STATEMENT_TYPES
 };
 #undef X
+
+static void
+dump(byte_vector *b, char const *fmt, ...)
+{
+        va_list ap;
+        int need, avail;
+
+Retry:
+        avail = b->capacity - b->count;
+
+        va_start(ap, fmt);
+        need = vsnprintf(b->items + b->count, avail, fmt, ap);
+        va_end(ap);
+
+        if (need >= avail) {
+                xvR(*b, max(b->capacity * 2, 256));
+                goto Retry;
+        }
+
+        b->count += need;
+}
+
+#define annotate(...)                                                        \
+        if (ProduceAnnotation) do {                                          \
+                xvP(                                                         \
+                        state.annotation.map,                                \
+                        (void const *)(uintptr_t)state.code.count            \
+                );                                                           \
+                xvP(                                                         \
+                        state.annotation.captions,                           \
+                        (void const *)(uintptr_t)state.annotation.text.count \
+                );                                                           \
+                dump(&state.annotation.text, __VA_ARGS__);                   \
+                xvP(state.annotation.text, '\0');                            \
+        } while (0)
+
+static void
+PatchAnnotation(ProgramAnnotation *annotation, void const *base)
+{
+        for (int i = 0; i < annotation->map.count; ++i) {
+                annotation->map.items[i] = (void const *)(
+                                (uintptr_t)annotation->map.items[i]
+                              + (uintptr_t)base
+                );
+        }
+
+        for (int i = 0; i < annotation->captions.count; ++i) {
+                annotation->captions.items[i] = (void const *)(
+                                (uintptr_t)annotation->captions.items[i]
+                              + (uintptr_t)annotation->text.items
+                );
+        }
+
+        annotation->start += (uintptr_t)base;
+        annotation->end += (uintptr_t)base;
+}
 
 inline static Expr *
 NewExpr(Ty *ty, int t)
@@ -609,8 +708,22 @@ show_expr(Expr const *e)
         return sclone_malloc(buffer);
 }
 
+
+static void
+dump_source_of(Expr const *e, byte_vector *out)
+{
+        ptrdiff_t n = e->end.s - e->start.s;
+
+        if (n > 0) {
+                xvPn(*out, e->start.s, n);
+        } else {
+                xvPn(*out, "(it's over)", 11);
+        }
+
+}
+
 inline static void
-_emit_instr(Ty *ty, int c)
+emit_instr(Ty *ty, int c)
 {
         avP(state.code, (char)c);
 }
@@ -2667,6 +2780,13 @@ patch_loop_jumps(Ty *ty, size_t begin, size_t end)
         patch_jumps_to(&get_loop(ty, 0)->breaks, end);
 }
 
+inline static void
+InitJumpGroup(JumpGroup *jg)
+{
+        vec_init(*jg);
+        jg->label = state.label++;
+}
+
 inline static char
 last_instr(void)
 {
@@ -2778,6 +2898,8 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 
         bool local = !s->global && (s->scope->function == scope->function);
 
+        annotate("%s", s->identifier);
+
         if (s->global) {
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_GLOBAL, s->i);
                 CHECK_INIT();
@@ -2839,10 +2961,43 @@ emit_list(Ty *ty, Expr const *e)
         }
 }
 
+inline static JumpPlaceholder
+(PLACEHOLDER_JUMP)(Ty *ty, int t)
+{
+        int label = state.label++;
+
+        annotate("L%d", label + 1);
+
+        emit_instr(ty, t);
+
+        JumpPlaceholder jmp = {
+                .off = state.code.count,
+                .label = label
+        };
+
+        emit_int(ty, 0);
+
+        return jmp;
+}
+
+inline static JumpLabel
+(LABEL)(Ty *ty)
+{
+        JumpLabel label = {
+                .off = state.code.count,
+                .label = state.label++
+        };
+
+        annotate(":L%d", label.label + 1);
+
+        return label;
+}
+
 static void
 emit_constraint(Ty *ty, Expr const *c)
 {
-        size_t sc;
+        JumpPlaceholder sc;
+
         emit_expression(ty, c);
         emit_instr(ty, INSTR_CHECK_MATCH);
         return;
@@ -2850,7 +3005,7 @@ emit_constraint(Ty *ty, Expr const *c)
                 emit_instr(ty, INSTR_DUP);
                 emit_constraint(ty, c->left);
                 emit_instr(ty, INSTR_DUP);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, sc);
+                sc = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
                 emit_instr(ty, INSTR_POP);
                 emit_constraint(ty, c->right);
                 PATCH_JUMP(sc);
@@ -2858,7 +3013,7 @@ emit_constraint(Ty *ty, Expr const *c)
                 emit_instr(ty, INSTR_DUP);
                 emit_constraint(ty, c->left);
                 emit_instr(ty, INSTR_DUP);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF, sc);
+                sc = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
                 emit_instr(ty, INSTR_POP);
                 emit_constraint(ty, c->right);
                 PATCH_JUMP(sc);
@@ -2877,6 +3032,38 @@ align_code_to(Ty *ty, size_t n)
 }
 
 static void
+add_annotation(Ty *ty, char const *name, uintptr_t start, uintptr_t end)
+{
+        ProgramAnnotation annotation = state.annotation;
+
+        annotation.patched = false;
+        annotation.name = name;
+        annotation.module = state.filename;
+        annotation.start = start;
+        annotation.end = end;
+
+        xvP(annotations, annotation);
+}
+
+static void
+PatchAnnotations(Ty *ty)
+{
+        for (int i = 0; i < annotations.count; ++i) {
+                ProgramAnnotation *annotation = vvL(annotations) - i;
+
+                if (annotation->patched) {
+                        /*
+                         * We've seen all of the new annotations, everthing from here back
+                         * came from an earlier module and has already been patched.
+                         */
+                        break;
+                }
+
+                PatchAnnotation(annotation, state.code.items);
+        }
+}
+
+static void
 emit_function(Ty *ty, Expr const *e, int class)
 {
         /*
@@ -2888,7 +3075,7 @@ emit_function(Ty *ty, Expr const *e, int class)
         symbol_vector syms_save = state.bound_symbols;
         state.bound_symbols.items = e->bound_symbols.items;
         state.bound_symbols.count = e->bound_symbols.count;
-        ++state.function_depth;
+        state.function_depth += 1;
 
         LoopStates loops = state.loops;
         vec_init(state.loops);
@@ -2898,6 +3085,12 @@ emit_function(Ty *ty, Expr const *e, int class)
 
         int t_save = t;
         t = 0;
+
+        int label_save = state.label;
+        state.label = 0;
+
+        ProgramAnnotation annotation = state.annotation;
+        state.annotation = (ProgramAnnotation) {0};
 
         Scope *fs_save = state.fscope;
         state.fscope = e->scope;
@@ -2964,6 +3157,9 @@ emit_function(Ty *ty, Expr const *e, int class)
         // Need to GC code?
         avP(state.code, 0);
 
+        // Is this function hidden (i.e. omitted from stack trace messages)?
+        avP(state.code, e->type == EXPRESSION_MULTI_FUNCTION);
+
         emit_symbol(ty, (uintptr_t)e->proto);
         emit_symbol(ty, (uintptr_t)e->doc);
 
@@ -3009,8 +3205,8 @@ emit_function(Ty *ty, Expr const *e, int class)
                         continue;
                 Symbol const *s = e->param_symbols.items[i];
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t need_dflt);
-                PLACEHOLDER_JUMP(INSTR_JUMP, size_t skip_dflt);
+                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, need_dflt);
+                PLACEHOLDER_JUMP(INSTR_JUMP, skip_dflt);
                 PATCH_JUMP(need_dflt);
                 emit_instr(ty, INSTR_TARGET_LOCAL);
                 emit_int(ty, s->i);
@@ -3027,7 +3223,7 @@ emit_function(Ty *ty, Expr const *e, int class)
                 size_t start = state.code.count;
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
                 emit_constraint(ty, e->constraints.items[i]);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+                PLACEHOLDER_JUMP(INSTR_JUMP_IF, good);
                 if (e->is_overload) {
                         emit_instr(ty, INSTR_POP);
                         emit_instr(ty, INSTR_NONE);
@@ -3073,13 +3269,13 @@ emit_function(Ty *ty, Expr const *e, int class)
         if (e->type == EXPRESSION_GENERATOR) {
                 emit_instr(ty, INSTR_MAKE_GENERATOR);
                 emit_statement(ty, body, false);
-                size_t end = state.code.count;
+                LABEL(end);
                 emit_instr(ty, INSTR_TAG);
                 emit_int(ty, TAG_NONE);
                 emit_instr(ty, INSTR_YIELD);
                 emit_instr(ty, INSTR_POP);
                 JUMP(end);
-                patch_jumps_to(&state.generator_returns, end);
+                patch_jumps_to(&state.generator_returns, end.off);
         } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
                 for (int i = 0; i < e->functions.count; ++i) {
                         if (!e->is_method) {
@@ -3134,6 +3330,8 @@ emit_function(Ty *ty, Expr const *e, int class)
 
         state.function_resources = function_resources;
 
+        add_annotation(ty, e->proto, start_offset, state.code.count);
+
         int bytes = state.code.count - start_offset;
         memcpy(state.code.items + size_offset, &bytes, sizeof bytes);
         LOG("bytes in func = %d", bytes);
@@ -3154,10 +3352,12 @@ emit_function(Ty *ty, Expr const *e, int class)
                 emit_int(ty, i);
         }
 
+        state.annotation = annotation;
+        state.label = label_save;
         state.fscope = fs_save;
         state.selfs = selfs_save;
         state.bound_symbols = syms_save;
-        --state.function_depth;
+        state.function_depth -= 1;
         state.loops = loops;
         state.tries = tries;
         t = t_save;
@@ -3197,7 +3397,7 @@ emit_and(Ty *ty, Expr const *left, Expr const *right)
         emit_expression(ty, left);
         emit_instr(ty, INSTR_DUP);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t left_false);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, left_false);
 
         emit_instr(ty, INSTR_POP);
         emit_expression(ty, right);
@@ -3211,7 +3411,7 @@ emit_or(Ty *ty, Expr const *left, Expr const *right)
         emit_expression(ty, left);
         emit_instr(ty, INSTR_DUP);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t left_true);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, left_true);
 
         emit_instr(ty, INSTR_POP);
         emit_expression(ty, right);
@@ -3225,8 +3425,8 @@ emit_coalesce(Ty *ty, Expr const *left, Expr const *right)
         emit_expression(ty, left);
         emit_instr(ty, INSTR_DUP);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t left_nil);
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t left_good);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, left_nil);
+        PLACEHOLDER_JUMP(INSTR_JUMP, left_good);
 
         PATCH_JUMP(left_nil);
 
@@ -3292,7 +3492,7 @@ emit_return_check(Ty *ty, Expr const *f)
 
         emit_instr(ty, INSTR_DUP);
         emit_constraint(ty, f->return_type);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF, good);
         emit_instr(ty, INSTR_BAD_CALL);
 
         if (f->name != NULL)
@@ -3376,12 +3576,12 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
 
         bool returns = emit_statement(ty, s->try.s, want_result);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
+        PLACEHOLDER_JUMP(INSTR_JUMP, end);
 
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        PATCH_JUMP(catch_offset);
+        PATCH_OFFSET(catch_offset);
 
         for (int i = 0; i < s->try.patterns.count; ++i) {
                 returns &= emit_catch(ty, s->try.patterns.items[i], NULL, s->try.handlers.items[i], want_result);
@@ -3398,12 +3598,12 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
         emit_instr(ty, INSTR_FINALLY);
 
         if (s->try.finally != NULL) {
-                PLACEHOLDER_JUMP(INSTR_JUMP, size_t end_real);
-                PATCH_JUMP(finally_offset);
+                PLACEHOLDER_JUMP(INSTR_JUMP, end_real);
+                PATCH_OFFSET(finally_offset);
                 begin_finally(ty);
                 returns &= emit_statement(ty, s->try.finally, false);
                 end_finally(ty);
-                PATCH_JUMP(end_offset);
+                PATCH_OFFSET(end_offset);
                 emit_instr(ty, INSTR_HALT);
                 PATCH_JUMP(end_real);
         } else {
@@ -3423,9 +3623,9 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
         if (s->for_loop.init != NULL)
                 emit_statement(ty, s->for_loop.init, false);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t skip_next);
+        PLACEHOLDER_JUMP(INSTR_JUMP, skip_next);
 
-        size_t begin = state.code.count;
+        LABEL(begin);
 
         if (s->for_loop.next != NULL) {
                 emit_expression(ty, s->for_loop.next);
@@ -3434,10 +3634,10 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
 
         PATCH_JUMP(skip_next);
 
-        size_t end_jump = 0;
+        JumpPlaceholder end_jump;
         if (s->for_loop.cond != NULL) {
                 emit_expression(ty, s->for_loop.cond);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, end_jump);
+                end_jump = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
         }
 
         emit_statement(ty, s->for_loop.body, false);
@@ -3450,7 +3650,7 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
         if (want_result)
                 emit_instr(ty, INSTR_NIL);
 
-        patch_loop_jumps(ty, begin, state.code.count);
+        patch_loop_jumps(ty, begin.off, state.code.count);
 
         end_loop(ty);
 }
@@ -3471,19 +3671,16 @@ static void
 emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
 {
         emit_tgt(ty, rec->es.items[i]->symbol, state.fscope, true);
-        emit_instr(ty, INSTR_RECORD_REST);
 
         size_t bad_assign_jump;
 
         if (!is_assignment) {
-                avP(state.match_fails, state.code.count);
+                FAIL_MATCH_IF(RECORD_REST);
         } else {
+                emit_instr(ty, INSTR_RECORD_REST);
                 bad_assign_jump = state.code.count;
+                emit_int(ty, 0);
         }
-
-        // How far to jump in case this fails (i.e. the subject is not a record).
-        // Overwritten later.
-        emit_int(ty, 0);
 
         size_t sz_off = state.code.count;
         emit_int(ty, 0);
@@ -3495,12 +3692,12 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
                 }
         }
 
-        PATCH_JUMP(sz_off);
+        PATCH_OFFSET(sz_off);
 
         if (is_assignment) {
                 emit_instr(ty, INSTR_JUMP);
                 emit_int(ty, 1);
-                PATCH_JUMP(bad_assign_jump);
+                PATCH_OFFSET(bad_assign_jump);
                 emit_instr(ty, INSTR_BAD_MATCH);
         }
 }
@@ -3530,9 +3727,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 if (pattern->constraint != NULL) {
                         emit_instr(ty, INSTR_DUP);
                         emit_constraint(ty, pattern->constraint);
-                        emit_instr(ty, INSTR_JUMP_IF_NOT);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF_NOT);
                 }
                 if (pattern->type == EXPRESSION_ALIAS_PATTERN) {
                         emit_try_match_(ty, pattern->aliased);
@@ -3540,37 +3735,27 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 break;
         case EXPRESSION_TAG_PATTERN:
                 emit_tgt(ty, pattern->symbol, state.fscope, true);
-                emit_instr(ty, INSTR_TRY_STEAL_TAG);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(TRY_STEAL_TAG);
                 emit_try_match_(ty, pattern->tagged);
                 break;
         case EXPRESSION_CHECK_MATCH:
                 emit_try_match_(ty, pattern->left);
                 emit_instr(ty, INSTR_DUP);
                 emit_constraint(ty, pattern->right);
-                emit_instr(ty, INSTR_JUMP_IF_NOT);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(JUMP_IF_NOT);
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 emit_tgt(ty, pattern->symbol, state.fscope, true);
-                emit_instr(ty, INSTR_TRY_ASSIGN_NON_NIL);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(TRY_ASSIGN_NON_NIL);
                 break;
         case EXPRESSION_MUST_EQUAL:
                 emit_load(ty, pattern->symbol, state.fscope);
-                emit_instr(ty, INSTR_ENSURE_EQUALS_VAR);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(ENSURE_EQUALS_VAR);
                 need_loc = true;
                 break;
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 emit_instr(ty, INSTR_DUP);
-                emit_instr(ty, INSTR_JUMP_IF_NIL);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(JUMP_IF_NIL);
                 // Fallthrough
         case EXPRESSION_VIEW_PATTERN:
                 emit_instr(ty, INSTR_DUP);
@@ -3592,13 +3777,11 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                         after = true;
                                 }
                                 emit_tgt(ty, pattern->elements.items[i]->symbol, state.fscope, true);
-                                emit_instr(ty, INSTR_ARRAY_REST);
+                                FAIL_MATCH_IF(ARRAY_REST);
                                 emit_int(ty, i);
                                 emit_int(ty, pattern->elements.count - i - 1);
-                                avP(state.match_fails, state.code.count);
-                                emit_int(ty, 0);
                         } else {
-                                emit_instr(ty, INSTR_TRY_INDEX);
+                                FAIL_MATCH_IF(TRY_INDEX);
                                 if (after) {
                                         if (pattern->optional.items[i]) {
                                                 PushContext(ty, pattern->elements.items[i]);
@@ -3609,8 +3792,6 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                         emit_int(ty, i);
                                 }
                                 emit_boolean(ty, !pattern->optional.items[i]);
-                                avP(state.match_fails, state.code.count);
-                                emit_int(ty, 0);
 
                                 emit_try_match_(ty, pattern->elements.items[i]);
 
@@ -3619,10 +3800,8 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 }
 
                 if (!after) {
-                        emit_instr(ty, INSTR_ENSURE_LEN);
+                        FAIL_MATCH_IF(ENSURE_LEN);
                         emit_int(ty, pattern->elements.count);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
                 }
 
                 break;
@@ -3647,13 +3826,9 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 }
                 if (set) {
                         emit_expression(ty, pattern);
-                        emit_instr(ty, INSTR_ENSURE_SAME_KEYS);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(ENSURE_SAME_KEYS);
                 } else {
-                        emit_instr(ty, INSTR_ENSURE_DICT);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(ENSURE_DICT);
                         for (int i = 0; i < pattern->keys.count; ++i) {
                                 if (pattern->values.items[i] != NULL) {
                                         emit_instr(ty, INSTR_DUP);
@@ -3663,19 +3838,15 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                         emit_instr(ty, INSTR_POP);
                                 } else {
                                         emit_expression(ty, pattern->keys.items[i]);
-                                        emit_instr(ty, INSTR_ENSURE_CONTAINS);
-                                        avP(state.match_fails, state.code.count);
-                                        emit_int(ty, 0);
+                                        FAIL_MATCH_IF(ENSURE_CONTAINS);
                                 }
                         }
                 }
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 emit_instr(ty, INSTR_DUP);
-                emit_instr(ty, INSTR_TRY_TAG_POP);
+                FAIL_MATCH_IF(TRY_TAG_POP);
                 emit_int(ty, tag_app_tag(pattern));
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
 
                 emit_try_match_(ty, pattern->tagged);
 
@@ -3683,10 +3854,8 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 break;
         case EXPRESSION_REGEX:
                 emit_tgt(ty, pattern->match_symbol, state.fscope, true);
-                emit_instr(ty, INSTR_TRY_REGEX);
+                FAIL_MATCH_IF(TRY_REGEX);
                 emit_symbol(ty, (uintptr_t) pattern->regex);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
                 need_loc = true;
                 break;
         case EXPRESSION_TUPLE:
@@ -3696,37 +3865,29 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                                         emit_record_rest(ty, pattern, i, false);
                                 } else {
                                         emit_tgt(ty, pattern->es.items[i]->symbol, state.fscope, true);
-                                        emit_instr(ty, INSTR_TUPLE_REST);
+                                        FAIL_MATCH_IF(TUPLE_REST);
                                         emit_int(ty, i);
-                                        avP(state.match_fails, state.code.count);
-                                        emit_int(ty, 0);
 
                                         if (i + 1 != pattern->es.count)
                                                 fail(ty, "the *<id> tuple-matching pattern must be the last pattern in the tuple");
                                 }
                         } else if (pattern->names.items[i] != NULL) {
-                                emit_instr(ty, INSTR_TRY_TUPLE_MEMBER);
+                                FAIL_MATCH_IF(TRY_TUPLE_MEMBER);
                                 emit_boolean(ty, pattern->required.items[i]);
                                 emit_string(ty, pattern->names.items[i]);
-                                avP(state.match_fails, state.code.count);
-                                emit_int(ty, 0);
                                 emit_try_match_(ty, pattern->es.items[i]);
                                 emit_instr(ty, INSTR_POP);
                         } else {
-                                emit_instr(ty, INSTR_TRY_INDEX_TUPLE);
+                                FAIL_MATCH_IF(TRY_INDEX_TUPLE);
                                 emit_int(ty, i);
-                                avP(state.match_fails, state.code.count);
-                                emit_int(ty, 0);
                                 emit_try_match_(ty, pattern->es.items[i]);
                                 emit_instr(ty, INSTR_POP);
                         }
                 }
 
                 if (pattern->es.count == 0 || pattern->es.items[pattern->es.count - 1]->type != EXPRESSION_MATCH_REST) {
-                        emit_instr(ty, INSTR_ENSURE_LEN_TUPLE);
+                        FAIL_MATCH_IF(ENSURE_LEN_TUPLE);
                         emit_int(ty, pattern->es.count);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
                 }
 
                 break;
@@ -3734,9 +3895,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 for (int i = 0; i < pattern->es.count; ++i) {
                         emit_instr(ty, INSTR_PUSH_NTH);
                         emit_int(ty, i);
-                        emit_instr(ty, INSTR_JUMP_IF_SENTINEL);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF_SENTINEL);
                         emit_try_match_(ty, pattern->es.items[i]);
                         emit_instr(ty, INSTR_POP);
                 }
@@ -3749,9 +3908,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 emit_expression(ty, pattern);
                 //emit_instr(ty, INSTR_CHECK_MATCH);
                 emit_instr(ty, INSTR_EQ);
-                emit_instr(ty, INSTR_JUMP_IF_NOT);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(JUMP_IF_NOT);
                 need_loc = true;
         }
 
@@ -3768,17 +3925,16 @@ emit_try_match(Ty *ty, Expr const *pattern)
 static bool
 emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result)
 {
-        offset_vector fails_save = state.match_fails;
-        vec_init(state.match_fails);
+        JumpGroup fails_save = state.match_fails;
+
+        InitJumpGroup(&state.match_fails);
 
         emit_instr(ty, INSTR_SAVE_STACK_POS);
         emit_try_match(ty, pattern);
 
         if (cond != NULL) {
                 emit_expression(ty, cond);
-                emit_instr(ty, INSTR_JUMP_IF_NOT);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(JUMP_IF_NOT);
         }
 
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
@@ -3800,7 +3956,9 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
         avP(state.match_successes, state.code.count);
         emit_int(ty, 0);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
+
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
         state.match_fails = fails_save;
@@ -3819,8 +3977,8 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
                 return returns;
         }
 
-        offset_vector fails_save = state.match_fails;
-        vec_init(state.match_fails);
+        JumpGroup fails_save = state.match_fails;
+        InitJumpGroup(&state.match_fails);
 
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_PUSH_DROP_GROUP);
@@ -3832,9 +3990,7 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
 
         if (cond != NULL) {
                 emit_expression(ty, cond);
-                emit_instr(ty, INSTR_JUMP_IF_NOT);
-                avP(state.match_fails, state.code.count);
-                emit_int(ty, 0);
+                FAIL_MATCH_IF(JUMP_IF_NOT);
         }
 
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
@@ -3857,6 +4013,7 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         avP(state.match_successes, state.code.count);
         emit_int(ty, 0);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
@@ -3875,8 +4032,8 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
                 return;
         }
 
-        offset_vector fails_save = state.match_fails;
-        vec_init(state.match_fails);
+        JumpGroup fails_save = state.match_fails;
+        InitJumpGroup(&state.match_fails);
 
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_PUSH_DROP_GROUP);
@@ -3906,6 +4063,7 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         avP(state.match_successes, state.code.count);
         emit_int(ty, 0);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
@@ -3949,7 +4107,7 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        size_t begin = state.code.count;
+        LABEL(begin);
 
         emit_list(ty, s->match.e);
         emit_instr(ty, INSTR_FIX_EXTRA);
@@ -3963,7 +4121,7 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
          * If nothing matches, we jump out of the loop.
          */
         emit_instr(ty, INSTR_CLEAR_EXTRA);
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t finished);
+        PLACEHOLDER_JUMP(INSTR_JUMP, finished);
 
         /*
          * Something matched, so we iterate again.
@@ -3976,7 +4134,7 @@ emit_while_match(Ty *ty, Stmt const *s, bool want_result)
         if (want_result)
                 emit_instr(ty, INSTR_NIL);
 
-        patch_loop_jumps(ty, begin, state.code.count);
+        patch_loop_jumps(ty, begin.off, state.code.count);
 
         state.match_successes = successes_save;
 
@@ -3991,10 +4149,10 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        offset_vector fails_save = state.match_fails;
-        vec_init(state.match_fails);
+        JumpGroup fails_save = state.match_fails;
+        InitJumpGroup(&state.match_fails);
 
-        size_t start = state.code.count;
+        LABEL(start);
 
         bool has_resources = false;
 
@@ -4004,15 +4162,11 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
                 struct condpart *p = s->While.parts.items[i];
                 if (simple) {
                         emit_expression(ty, p->e);
-                        emit_instr(ty, INSTR_JUMP_IF_NOT);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF_NOT);
                 } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                         emit_expression(ty, p->e);
-                        emit_instr(ty, INSTR_JUMP_IF_NOT);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF_NOT);
                         emit_instr(ty, INSTR_RESTORE_STACK_POS);
                 } else {
                         if (p->target->has_resources && !has_resources) {
@@ -4037,6 +4191,7 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
 
         JUMP(start);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         if (!simple) emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
@@ -4044,7 +4199,7 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
                 emit_instr(ty, INSTR_NIL);
         }
 
-        patch_loop_jumps(ty, start, state.code.count);
+        patch_loop_jumps(ty, start.off, state.code.count);
 
         end_loop(ty);
 
@@ -4060,8 +4215,8 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
 
-        offset_vector fails_save = state.match_fails;
-        vec_init(state.match_fails);
+        JumpGroup fails_save = state.match_fails;
+        InitJumpGroup(&state.match_fails);
 
         bool has_resources = false;
 
@@ -4084,15 +4239,11 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                 struct condpart *p = s->iff.parts.items[i];
                 if (simple) {
                         emit_expression(ty, p->e);
-                        emit_instr(ty, INSTR_JUMP_IF);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF);
                 } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                         emit_expression(ty, p->e);
-                        emit_instr(ty, INSTR_JUMP_IF);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF);
                         emit_instr(ty, INSTR_RESTORE_STACK_POS);
                 } else {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -4111,8 +4262,9 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
                 emit_instr(ty, INSTR_NIL);
         }
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t done);
+        PLACEHOLDER_JUMP(INSTR_JUMP, done);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         if (!simple) emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
@@ -4154,8 +4306,8 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                 return returns;
         }
 
-        offset_vector fails_save = state.match_fails;
-        vec_init(state.match_fails);
+        JumpGroup fails_save = state.match_fails;
+        InitJumpGroup(&state.match_fails);
 
         bool has_resources = false;
 
@@ -4178,15 +4330,11 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                 struct condpart *p = s->iff.parts.items[i];
                 if (simple) {
                         emit_expression(ty, p->e);
-                        emit_instr(ty, INSTR_JUMP_IF_NOT);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF_NOT);
                 } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                         emit_expression(ty, p->e);
-                        emit_instr(ty, INSTR_JUMP_IF_NOT);
-                        avP(state.match_fails, state.code.count);
-                        emit_int(ty, 0);
+                        FAIL_MATCH_IF(JUMP_IF_NOT);
                         emit_instr(ty, INSTR_RESTORE_STACK_POS);
                 } else {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -4198,8 +4346,9 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
         }
 
         bool returns = emit_statement(ty, s->iff.then, want_result);
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t done);
+        PLACEHOLDER_JUMP(INSTR_JUMP, done);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         if (!simple) emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
@@ -4306,9 +4455,9 @@ emit_dict_compr2(Ty *ty, Expr const *e)
         begin_loop(ty, false, true);
 
         offset_vector successes_save = state.match_successes;
-        offset_vector fails_save = state.match_fails;
+        JumpGroup fails_save = state.match_fails;
         vec_init(state.match_successes);
-        vec_init(state.match_fails);
+        InitJumpGroup(&state.match_fails);
 
         emit_instr(ty, INSTR_SAVE_STACK_POS);
         emit_instr(ty, INSTR_DICT);
@@ -4322,16 +4471,15 @@ emit_dict_compr2(Ty *ty, Expr const *e)
 
         emit_expression(ty, e->dcompr.iter);
 
-        size_t start = state.code.count;
+        LABEL(start);
         emit_instr(ty, INSTR_SAVE_STACK_POS);
         emit_instr(ty, INSTR_SENTINEL);
         emit_instr(ty, INSTR_CLEAR_RC);
         emit_instr(ty, INSTR_GET_NEXT);
         emit_instr(ty, INSTR_READ_INDEX);
 
-        add_location(ty, e, start, state.code.count);
+        add_location(ty, e, start.off, state.code.count);
 
-        size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
 
         emit_instr(ty, INSTR_FIX_TO);
@@ -4344,14 +4492,15 @@ emit_dict_compr2(Ty *ty, Expr const *e)
                 emit_instr(ty, INSTR_POP);
         }
 
-        size_t cond_fail = 0;
+        JumpPlaceholder cond_fail;
         if (e->dcompr.cond != NULL) {
                 emit_expression(ty, e->dcompr.cond);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, cond_fail);
+                cond_fail = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
         if (e->dcompr.cond != NULL)
@@ -4375,7 +4524,7 @@ emit_dict_compr2(Ty *ty, Expr const *e)
         JUMP(start);
         PATCH_JUMP(done);
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
-        patch_loop_jumps(ty, start, state.code.count);
+        patch_loop_jumps(ty, start.off, state.code.count);
         emit_instr(ty, INSTR_POP);
         emit_instr(ty, INSTR_POP);
 
@@ -4391,9 +4540,9 @@ emit_array_compr2(Ty *ty, Expr const *e)
         begin_loop(ty, false, true);
 
         offset_vector successes_save = state.match_successes;
-        offset_vector fails_save = state.match_fails;
+        JumpGroup fails_save = state.match_fails;
         vec_init(state.match_successes);
-        vec_init(state.match_fails);
+        InitJumpGroup(&state.match_fails);
 
         emit_instr(ty, INSTR_SAVE_STACK_POS);
         emit_instr(ty, INSTR_ARRAY);
@@ -4407,17 +4556,16 @@ emit_array_compr2(Ty *ty, Expr const *e)
 
         emit_expression(ty, e->compr.iter);
 
-        size_t start = state.code.count;
+        LABEL(start);
         emit_instr(ty, INSTR_SAVE_STACK_POS);
         emit_instr(ty, INSTR_SENTINEL);
         emit_instr(ty, INSTR_CLEAR_RC);
         emit_instr(ty, INSTR_GET_NEXT);
         emit_instr(ty, INSTR_READ_INDEX);
 
-        size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
 
-        add_location(ty, e, start, state.code.count);
+        add_location(ty, e, start.off, state.code.count);
 
         emit_instr(ty, INSTR_FIX_TO);
         emit_int(ty, (int)e->compr.pattern->es.count);
@@ -4429,14 +4577,15 @@ emit_array_compr2(Ty *ty, Expr const *e)
                 emit_instr(ty, INSTR_POP);
         }
 
-        size_t cond_fail = 0;
+        JumpPlaceholder cond_fail;
         if (e->compr.cond != NULL) {
                 emit_expression(ty, e->compr.cond);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, cond_fail);
+                cond_fail = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
         if (e->compr.cond != NULL)
@@ -4452,7 +4601,7 @@ emit_array_compr2(Ty *ty, Expr const *e)
         for (int i = e->elements.count - 1; i >= 0; --i) {
                 if (e->aconds.items[i] != NULL) {
                         emit_expression(ty, e->aconds.items[i]);
-                        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
                         emit_expression(ty, e->elements.items[i]);
                         PATCH_JUMP(skip);
                 } else {
@@ -4464,7 +4613,7 @@ emit_array_compr2(Ty *ty, Expr const *e)
         JUMP(start);
         PATCH_JUMP(done);
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
-        patch_loop_jumps(ty, start, state.code.count);
+        patch_loop_jumps(ty, start.off, state.code.count);
         emit_instr(ty, INSTR_POP);
         emit_instr(ty, INSTR_POP);
 
@@ -4486,13 +4635,12 @@ emit_spread(Ty *ty, Expr const *e, bool nils)
                 emit_instr(ty, INSTR_SWAP);
         }
 
-        size_t start = state.code.count;
+        LABEL(start);
         emit_instr(ty, INSTR_SENTINEL);
         emit_instr(ty, INSTR_CLEAR_RC);
         emit_instr(ty, INSTR_GET_NEXT);
         emit_instr(ty, INSTR_READ_INDEX);
 
-        size_t done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
 
         emit_instr(ty, INSTR_FIX_TO);
@@ -4529,9 +4677,9 @@ static void
 emit_conditional(Ty *ty, Expr const *e)
 {
         emit_expression(ty, e->cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t otherwise);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, otherwise);
         emit_expression(ty, e->then);
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t end);
+        PLACEHOLDER_JUMP(INSTR_JUMP, end);
         PATCH_JUMP(otherwise);
         emit_expression(ty, e->otherwise);
         PATCH_JUMP(end);
@@ -4543,16 +4691,16 @@ emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
         begin_loop(ty, want_result, true);
 
         offset_vector successes_save = state.match_successes;
-        offset_vector fails_save = state.match_fails;
+        JumpGroup fails_save = state.match_fails;
         vec_init(state.match_successes);
-        vec_init(state.match_fails);
+        InitJumpGroup(&state.match_fails);
 
         emit_instr(ty, INSTR_PUSH_INDEX);
         emit_int(ty, (int)s->each.target->es.count);
 
         emit_expression(ty, s->each.array);
 
-        size_t start = state.code.count;
+        LABEL(start);
         emit_instr(ty, INSTR_SAVE_STACK_POS);
         emit_instr(ty, INSTR_SENTINEL);
         emit_instr(ty, INSTR_CLEAR_RC);
@@ -4560,10 +4708,9 @@ emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
         emit_instr(ty, INSTR_READ_INDEX);
 
 #ifndef TY_ENABLE_PROFILING
-        add_location(ty, s->each.array, start, state.code.count);
+        add_location(ty, s->each.array, start.off, state.code.count);
 #endif
 
-        size_t match, done;
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
 
         emit_instr(ty, INSTR_FIX_TO);
@@ -4581,14 +4728,15 @@ emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
                 emit_instr(ty, INSTR_POP);
         }
 
-        size_t should_stop = 0;
+        JumpPlaceholder should_stop;
         if (s->each.stop != NULL) {
                 emit_expression(ty, s->each.stop);
-                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, should_stop);
+                should_stop = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
 
+        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
 
         // FIXME: are these useless?
@@ -4629,7 +4777,7 @@ emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
         if (want_result)
                 emit_instr(ty, INSTR_NIL);
 
-        patch_loop_jumps(ty, start, state.code.count);
+        patch_loop_jumps(ty, start.off, state.code.count);
 
         state.match_successes = successes_save;
         state.match_fails = fails_save;
@@ -4781,7 +4929,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         emit_instr(ty, INSTR_DUP);
                         emit_expression(ty, target->constraint);
                         emit_instr(ty, INSTR_CHECK_MATCH);
-                        PLACEHOLDER_JUMP(INSTR_JUMP_IF, size_t good);
+                        PLACEHOLDER_JUMP(INSTR_JUMP_IF, good);
                         emit_instr(ty, INSTR_BAD_ASSIGN);
                         emit_string(ty, target->identifier);
                         PATCH_JUMP(good);
@@ -4826,8 +4974,8 @@ emit_non_nil_expr(Ty *ty, Expr const *e, bool none)
 {
         emit_expression(ty, e);
         emit_instr(ty, INSTR_DUP);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, size_t skip);
-        PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
+        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, skip);
+        PLACEHOLDER_JUMP(INSTR_JUMP, good);
         PATCH_JUMP(skip);
         emit_instr(ty, INSTR_POP);
         if (none) {
@@ -4944,7 +5092,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 for (int i = 0; i < e->elements.count; ++i) {
                         if (e->aconds.items[i] != NULL) {
                                 emit_expression(ty, e->aconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
                                 if (e->optional.items[i]) {
                                         emit_non_nil_expr(ty, e->elements.items[i], false);
                                 } else {
@@ -5033,7 +5181,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 continue;
                         } else if (e->fconds.items[i] != NULL) {
                                 emit_expression(ty, e->fconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
                                 emit_expression(ty, e->args.items[i]);
                                 PATCH_JUMP(skip);
                         } else {
@@ -5064,7 +5212,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 continue;
                         } else if (e->mconds.items[i] != NULL) {
                                 emit_expression(ty, e->mconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
                                 emit_expression(ty, e->method_args.items[i]);
                                 PATCH_JUMP(skip);
                         } else {
@@ -5287,13 +5435,13 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 for (int i = 0; i < e->es.count; ++i) {
                         if (e->tconds.items[i] != NULL) {
                                 emit_expression(ty, e->tconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, size_t skip);
+                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
                                 if (!e->required.items[i]) {
                                         emit_non_nil_expr(ty, e->es.items[i], true);
                                 } else {
                                         emit_expression(ty, e->es.items[i]);
                                 }
-                                PLACEHOLDER_JUMP(INSTR_JUMP, size_t good);
+                                PLACEHOLDER_JUMP(INSTR_JUMP, good);
                                 PATCH_JUMP(skip);
                                 emit_instr(ty, INSTR_NONE);
                                 PATCH_JUMP(good);
@@ -5573,7 +5721,11 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
         RestoreContext(ty, ctx);
 
 #ifdef TY_ENABLE_PROFILING
-        if (s->type != STATEMENT_BLOCK && s->type != STATEMENT_MULTI && s->type != STATEMENT_EXPRESSION) {
+        if (
+                s->type != STATEMENT_BLOCK &&
+                s->type != STATEMENT_MULTI &&
+                (s->type != STATEMENT_EXPRESSION || !want_result)
+        ) {
                 Expr *e = NewExpr(ty, EXPRESSION_STATEMENT);
                 e->start = s->start;
                 e->end = s->end;
@@ -5808,6 +5960,9 @@ compile(Ty *ty, char const *source)
         state.generator_returns.count = 0;
         state.tries.count = 0;
         state.loops.count = 0;
+
+        add_annotation(ty, "(top)", 0, state.code.count);
+        PatchAnnotations(ty);
 }
 
 static Scope *
@@ -6082,6 +6237,8 @@ compiler_compile_source(Ty *ty, char const *source, char const *filename)
         vec_init(state.selfs);
         vec_init(state.expression_locations);
 
+        state.annotation = (ProgramAnnotation) {0};
+
         state.filename = filename;
         int symbol_count = scope_get_symbol(ty);
 
@@ -6091,7 +6248,6 @@ compiler_compile_source(Ty *ty, char const *source, char const *filename)
         }
 
         compile(ty, source);
-        DumpProgram(ty, state.code.items, state.code.items + state.code.count);
 
         char *code = state.code.items;
 
@@ -8622,9 +8778,14 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         byte_vector code_save = state.code;
         vec_init(state.code);
 
+        ProgramAnnotation an = state.annotation;
+        state.annotation = (ProgramAnnotation){0};
+
         emit_statement(ty, s, false);
 
         emit_instr(ty, INSTR_HALT);
+
+        state.annotation = an;
 
         add_location_info(ty);
         vec_init(state.expression_locations);
@@ -9062,47 +9223,47 @@ WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool fi
         return n;
 }
 
-static void
-dump(byte_vector *b, char const *fmt, ...)
+char const *
+NextCaption(ProgramAnnotation *annotation, char const *pc)
 {
-        va_list ap;
-        int need, avail;
-
-Retry:
-        avail = b->capacity - b->count;
-
-        va_start(ap, fmt);
-        need = vsnprintf(b->items + b->count, avail, fmt, ap);
-        va_end(ap);
-
-        if (need >= avail) {
-                xvR(*b, max(b->capacity * 2, 256));
-                goto Retry;
+        while (
+                annotation->i < annotation->map.count &&
+                pc > annotation->map.items[annotation->i]
+        ) {
+                annotation->i += 1;
         }
 
-        b->count += need;
+        if (
+                annotation->i == annotation->map.count ||
+                pc != annotation->map.items[annotation->i]
+        ) {
+                return NULL;
+        }
+
+        return annotation->captions.items[annotation->i++];
 }
 
 char const *
 DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end)
 {
 #define CASE(i) case INSTR_ ## i:
-#define PRINTVALUE(x)                                  \
-        _Generic(                                      \
-            (x),                                       \
-            int:         dump(out, " %d", (x)),        \
-            intmax_t:    dump(out, " %"PRIiMAX, (x)),  \
-            double:      dump(out, " %f", (x)),        \
-            float:       dump(out, " %f", (x)),        \
-            bool:        dump(out, " %d", (x)),        \
-            uintptr_t:   dump(out, " %"PRIuPTR, (x))   \
+#define PRINTVALUE(x)                                                                      \
+        _Generic(                                                                          \
+            (x),                                                                           \
+            int:         dump(out, " %s%d%s", TERM(32), (x), TERM(0)),                     \
+            intmax_t:    dump(out, " %s%"PRIiMAX"%s", TERM(32), (x), TERM(0)),             \
+            double:      dump(out, " %s%f%s", TERM(32), (x), TERM(0)),                     \
+            float:       dump(out, " %s%f%s", TERM(32), (x), TERM(0)),                     \
+            bool:        dump(out, " %s%s%s", TERM(32), (x) ? "true" : "false", TERM(0)),  \
+            uintptr_t:   dump(out, " %"PRIuPTR, (x))                                       \
         )
 
         byte_vector after = {0};
 
-#define SKIPSTR()    (dump(out, " \"%s\"", c), (c += strlen(c) + 1))
+#define SKIPSTR()    (dump(out, " %s\"%s\"%s", TERM(92), c, TERM(0)), (c += strlen(c) + 1))
 #define READSTR(s)   (((s) = c), SKIPSTR())
 #define READVALUE(x) (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
+#define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
 
         uintptr_t s, off;
         intmax_t k;
@@ -9117,31 +9278,76 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
         char *str;
         char const *method, *member;
 
-        dump(out, "%s:\n", name);
+        dump(out, "        %s%s:%s\n", TERM(34), name, TERM(0));
+
+        char const *caption;
 
         for (char const *c = code; c != end; xvP(*out, '\n')) {
-                dump(out, "    %s", GetInstructionName(*c));
+                while (
+                        (caption = NextCaption(&state.annotation, c)) != NULL &&
+                        caption[0] == ':'
+                ) {
+                        dump(out, "            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
+                }
+
+                //ptrdiff_t pc = c - state.code.items;
+                ptrdiff_t pc = (uintptr_t)c;
+
+#ifdef TY_ENABLE_PROFILING
+                extern istat prof;
+
+                void
+                color_sequence(float p, char *out);
+
+                char color_buffer[64] = {0};
+                istat_entry *stat = istat_lookup(&prof, c);
+
+                int64_t max_ticks, total_ticks;
+                istat_count(&prof, &max_ticks, &total_ticks);
+
+                color_sequence(stat == NULL ? 0.0 : 0.75 * stat->t / (double)max_ticks, color_buffer);
+
+                bool exact = (stat == NULL) || stat->n < 1000000;
+
+                dump(
+                        out,
+                        "%s%7td%s            %s%5.2f%% %6d%s  %8dK %s%s%s",
+                        TERM(94), pc, TERM(0),
+                        color_buffer,
+                        (stat == NULL) ? 0 : 100.0 * stat->t / (double)total_ticks,
+                        (stat == NULL) ? 0 : exact ? stat->n : stat->n / 1000,
+                        exact ? " " : "K",
+                        (stat == NULL) ? 0 : stat->t / 1000,
+                        TERM(93), GetInstructionName(*c), TERM(0)
+                );
+#else
+                dump(
+                        out,
+                        "%s%7td%s            %s%s%s",
+                        TERM(94), pc, TERM(0),
+                        TERM(93), GetInstructionName(*c), TERM(0)
+                );
+                //printf("??%5td            %s%s", pc, GetInstructionName(*c), caption == NULL ? "\n" : "");
+#endif
+
                 switch ((unsigned char)*c++) {
                 CASE(NOP)
                         break;
                 CASE(LOAD_LOCAL)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading local: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
                         break;
                 CASE(LOAD_REF)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading ref: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
                         break;
                 CASE(LOAD_CAPTURED)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
                         SKIPSTR();
 #endif
 
@@ -9149,7 +9355,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(LOAD_GLOBAL)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading global: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
                         break;
@@ -9191,7 +9396,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(TARGET_CAPTURED)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
+                        // TODO
                         SKIPSTR();
 #endif
                         break;
@@ -9209,13 +9414,13 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(tag);
                         break;
                 CASE(ARRAY_REST)
+                        READVALUE(n);
                         READVALUE(i);
                         READVALUE(j);
-                        READVALUE(n);
                         break;
                 CASE(TUPLE_REST)
-                        READVALUE(i);
                         READVALUE(n);
+                        READVALUE(i);
                         break;
                 CASE(RECORD_REST)
                         READVALUE(n);
@@ -9290,8 +9495,8 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         break;
                 CASE(TRY_REGEX)
-                        READVALUE(s);
                         READVALUE(n);
+                        READVALUE(s);
                         break;
                 CASE(ENSURE_DICT)
                         READVALUE(n);
@@ -9303,22 +9508,22 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         break;
                 CASE(TRY_INDEX)
+                        READVALUE(n);
                         READVALUE(i);
                         READVALUE(b);
-                        READVALUE(n);
                         break;
                 CASE(TRY_INDEX_TUPLE)
-                        READVALUE(i);
                         READVALUE(n);
+                        READVALUE(i);
                         break;
                 CASE(TRY_TUPLE_MEMBER)
+                        READVALUE(n);
                         READVALUE(b);
                         READSTR(str);
-                        READVALUE(n);
                         break;
                 CASE(TRY_TAG_POP)
-                        READVALUE(tag);
                         READVALUE(n);
+                        READVALUE(tag);
                         break;
                 CASE(POP)
                         break;
@@ -9371,13 +9576,16 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(MAKE_GENERATOR)
                         break;
                 CASE(VALUE)
-                        READVALUE(s);
+                        READVALUE_(s);
+                        dump(out, " %s", VSC((Value *)s));
                         break;
                 CASE(EVAL)
                         READVALUE(s);
                         break;
                 CASE(RENDER_TEMPLATE)
-                        READVALUE(s);
+                        READVALUE_(s);
+                        xvP(*out, ' ');
+                        dump_source_of((Expr *)s, out);
                         break;
                 CASE(TRAP)
                         break;
@@ -9449,7 +9657,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
                         READSTR(member);
-                        READVALUE(h);
+                        READVALUE_(h);
                         break;
                 CASE(SLICE)
                 CASE(SUBSCRIPT)
@@ -9514,6 +9722,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         READVALUE(g);
                         READVALUE(s);
+                        printf("class=%d. t=%d. n=%d, g=%d, s=%d\n", class, t, n, g, s);
                         while (t --> 0) {
                                 SKIPSTR();
                         }
@@ -9535,7 +9744,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         c = ALIGNED_FOR(int, c);
 
                         // n: bound_caps
-                        READVALUE(n);
+                        READVALUE_(n);
 
                         v.info = (int *) c;
 
@@ -9551,11 +9760,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
 
-                        c = DumpProgram(ty, &after, c + hs, c + hs + size);
+                        dump(out, " %s%s%s", TERM(96), name_of(&v), TERM(0));
+                        c = DumpProgram(ty, &after, name_of(&v), c + hs, c + hs + size);
 
                         for (int i = 0; i < ncaps; ++i) {
-                                READVALUE(b);
-                                READVALUE(j);
+                                READVALUE_(b);
+                                READVALUE_(j);
                         }
 
                         break;
@@ -9577,8 +9787,11 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(CALL_METHOD)
                         READVALUE(n);
                         READSTR(method);
-                        READVALUE(h);
+                        READVALUE_(h);
                         READVALUE(nkw);
+                        for (int i = 0; i < nkw; ++i) {
+                                SKIPSTR();
+                        }
                         break;
                 CASE(SAVE_STACK_POS)
                         break;
@@ -9590,12 +9803,33 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(RETURN_IF_NOT_NONE)
                 CASE(RETURN)
                 CASE(RETURN_PRESERVE_CTX)
-                CASE(HALT)
                         break;
+                CASE(HALT)
+                        if (end == NULL) goto End;
+                }
+
+                if (caption != NULL) {
+                        int width = 0;
+
+                        while (vec_last(*out)[-width] != '\n') {
+                                width += 1;
+                        }
+
+                        while (width < 44) {
+                                xvP(*out, ' ');
+                                width += 1;
+                        }
+
+                        dump(out, "  %s#  %s%s", TERM(34;1), caption, TERM(0));
+                        //printf("  #  %s\n", caption);
                 }
         }
-
-        xvPn(*out, after.items, after.count);
+End:
+        if (after.count > 0) {
+                xvP(*out, '\n');
+                xvP(*out, '\n');
+                xvPn(*out, after.items, after.count);
+        }
 
         return end;
 }
