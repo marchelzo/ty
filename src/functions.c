@@ -6200,6 +6200,11 @@ BUILTIN_FUNCTION(ty_bt)
                 }
 
                 Value *f = &frames->items[i].f;
+
+                if (((char *)f->info)[FUN_HIDDEN]) {
+                        continue;
+                }
+
                 char const *name = name_of(f);
                 char const *ip = frames->items[i].ip;
                 Expr const *e = compiler_find_expr(ty, ip - 1);

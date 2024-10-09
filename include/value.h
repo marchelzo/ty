@@ -295,6 +295,22 @@ enum {
 typedef Value BuiltinFunction(Ty *, int, Value *);
 typedef Value BuiltinMethod(Ty *, Value *, int, Value *);
 
+enum {
+        FUN_HEADER_SIZE = 0,
+        FUN_TOTAL_SIZE  = FUN_HEADER_SIZE + sizeof (int),
+        FUN_CAPTURES    = FUN_TOTAL_SIZE  + sizeof (int),
+        FUN_BOUND       = FUN_CAPTURES    + sizeof (int),
+        FUN_PARAM_COUNT = FUN_BOUND       + sizeof (int),
+        FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (int),
+        FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (int16_t),
+        FUN_CLASS       = FUN_REST_IDX    + sizeof (int),
+        FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
+        FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
+        FUN_PROTO       = FUN_HIDDEN      + 1,
+        FUN_DOC         = FUN_PROTO       + sizeof (uintptr_t),
+        FUN_NAME        = FUN_DOC         + sizeof (uintptr_t)
+};
+
 struct value {
         uint8_t type;
         uint16_t tags;
@@ -731,7 +747,7 @@ inline static char const *
 proto_of(struct value const *f)
 {
         uintptr_t p;
-        memcpy(&p, (char *)(f->info + 7) + 1, sizeof p);
+        memcpy(&p, (char *)f->info + FUN_PROTO, sizeof p);
         return (char const *)p;
 }
 
@@ -739,20 +755,20 @@ inline static char const *
 doc_of(struct value const *f)
 {
         uintptr_t p;
-        memcpy(&p, (char *)(f->info + 7) + 1 + sizeof (uintptr_t), sizeof p);
+        memcpy(&p, (char *)f->info + FUN_DOC, sizeof p);
         return (char const *)p;
 }
 
 inline static char const *
 name_of(struct value const *f)
 {
-        return (char *)(f->info + 7) + 1 + 2 * sizeof (uintptr_t);
+        return (char *)f->info + FUN_NAME;
 }
 
 inline static char *
 from_eval(struct value const *f)
 {
-        return (char *)(f->info + 7);
+        return (char *)f->info + FUN_FROM_EVAL;
 }
 
 #define PACK_TYPES(t1, t2) (((t1) << 8) | (t2))

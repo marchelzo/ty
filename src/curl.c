@@ -55,7 +55,7 @@ builtin_curl_trace(Ty *ty, int argc, Value *kwargs)
         if (cfg.type != VALUE_STRING) {
                 zP("curl.core.trace(): expected String but got: %s", VSC(&cfg));
         }
-        
+
         int n = min(sizeof buffer - 1, cfg.bytes);
 
         memcpy(buffer, cfg.string, n);

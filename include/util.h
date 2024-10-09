@@ -79,6 +79,12 @@ enum {
         JIT_STACK_MAX   = 1 << 22
 };
 
+static inline int
+load_int(void const *p)
+{
+        return *(int const *)memcpy(&(int){0}, p, sizeof (int));
+}
+
 static inline uintmax_t
 umax(uintmax_t a, uintmax_t b)
 {

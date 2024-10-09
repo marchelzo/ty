@@ -76,6 +76,7 @@
 #include "blob.h"
 #include "tags.h"
 #include "object.h"
+#include "istat.h"
 #include "class.h"
 #include "utf8.h"
 #include "functions.h"
@@ -88,9 +89,11 @@
 #define SKIPSTR()    (IP += strlen(IP) + 1)
 #define READSTR(s)   do { (s) = IP; SKIPSTR(); } while (0)
 #define READVALUE(s) (memcpy(&s, IP, sizeof s), (IP += sizeof s))
+#define READJUMP(c)  (((c) = IP), (IP += sizeof (int)))
+#define DOJUMP(c)    (IP = (c) + load_int((c)) + sizeof (int))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
-  #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); LOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP - 1); LOG("%07ju:%s:%d:%d: " #i, (uintptr_t)(IP - 1) & 0xFFFFFF, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
 #else
   #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
@@ -246,6 +249,7 @@ static _Thread_local uint64_t LastThreadGCTime;
 static TyMutex ProfileMutex;
 static Dict *Samples;
 static Dict *FuncSamples;
+istat prof;
 #endif
 
 typedef struct {
@@ -1514,6 +1518,103 @@ ClassLookup:
 }
 
 inline static void
+DoGeq(Ty *ty)
+{
+        Value v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) >= 0);
+        pop(ty);
+        pop(ty);
+        push(ty, v);
+}
+
+inline static void
+DoGt(Ty *ty)
+{
+        Value v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) > 0);
+        pop(ty);
+        pop(ty);
+        push(ty, v);
+}
+
+inline static void
+DoLeq(Ty *ty)
+{
+        Value v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) <= 0);
+        pop(ty);
+        pop(ty);
+        push(ty, v);
+}
+
+inline static void
+DoLt(Ty *ty)
+{
+        Value v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) < 0);
+        pop(ty);
+        pop(ty);
+        push(ty, v);
+}
+
+inline static void
+DoCmp(Ty *ty)
+{
+
+        int i = value_compare(ty, top(ty) - 1, top(ty));
+
+        pop(ty);
+        pop(ty);
+
+        if (i < 0)
+                push(ty, INTEGER(-1));
+        else if (i > 0)
+                push(ty, INTEGER(1));
+        else
+                push(ty, INTEGER(0));
+}
+
+inline static void
+DoEq(Ty *ty)
+{
+        Value v = BOOLEAN(value_test_equality(ty, top(ty) - 1, top(ty)));
+        pop(ty);
+        pop(ty);
+        push(ty, v);
+}
+
+inline static void
+DoNeq(Ty *ty)
+{
+        Value v = BOOLEAN(!value_test_equality(ty, top(ty) - 1, top(ty)));
+        pop(ty);
+        pop(ty);
+        push(ty, v);
+}
+
+inline static void
+DoBinaryOp(Ty *ty, int n)
+{
+        int i = op_dispatch(n, ClassOf(top(ty) - 1), ClassOf(top(ty)));
+
+        if (i == -1) zP(
+                "no matching implementation of %s%s%s\n"
+                FMT_MORE "%s left%s: %s"
+                FMT_MORE "%sright%s: %s\n",
+                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0),
+                TERM(95), TERM(0), VSC(top(ty) - 1),
+                TERM(95), TERM(0), VSC(top(ty))
+        );
+
+        dont_printf(
+                "matching implementation of %s%s%s: %d\n"
+                FMT_MORE "%s left%s (%d): %s"
+                FMT_MORE "%sright%s (%d): %s\n",
+                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0), i,
+                TERM(95), TERM(0), ClassOf(top(ty) - 1), VSC(top(ty) - 1),
+                TERM(95), TERM(0), ClassOf(top(ty)),     VSC(top(ty))
+        );
+
+        call(ty, &Globals.items[i], NULL, 2, 0, false);
+}
+
+inline static void
 DoMutDiv(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
@@ -1875,9 +1976,20 @@ vm_exec(Ty *ty, char *code)
 #ifdef TY_ENABLE_PROFILING
                 if (Samples != NULL) {
                         uint64_t now = TyThreadTime();
-                        if (StartIPLocal != LastIP && LastThreadTime != 0 && *LastIP != INSTR_HALT && LastIP != next_fix && LastIP != iter_fix && LastIP != next_fix + 1 && LastIP != iter_fix + 1 && LastIP != &throw) {
+
+                        if (StartIPLocal != LastIP && LastThreadTime != 0 && *LastIP != INSTR_HALT &&
+                            LastIP != next_fix && LastIP != iter_fix && LastIP != next_fix + 1 &&
+                            LastIP != iter_fix + 1 && LastIP != &throw) {
+
                                 uint64_t dt = now - LastThreadTime;
+
                                 TyMutexLock(&ProfileMutex);
+
+                                istat_add(&prof, LastIP, dt);
+
+                                if (llabs((intptr_t)LastIP - (intptr_t)10754527022) > 10000000L) {
+                                        //raise(SIGTRAP);
+                                }
 
                                 if (LastThreadGCTime > 0) {
                                         Value *count = dict_put_key_if_not_exists(ty, FuncSamples, PTR((void *)GC_ENTRY));
@@ -2158,11 +2270,11 @@ vm_exec(Ty *ty, char *code)
                         top(ty)->type |= VALUE_TAGGED;
                         break;
                 CASE(ARRAY_REST)
+                        READJUMP(code);
                         READVALUE(i);
                         READVALUE(j);
-                        READVALUE(n);
                         if (top(ty)->type != VALUE_ARRAY || top(ty)->array->count < i + j) {
-                                IP += n;
+                                DOJUMP(code);
                         } else {
                                 Array *rest = vA();
                                 NOGC(rest);
@@ -2172,11 +2284,11 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(TUPLE_REST)
+                        READJUMP(code);
                         READVALUE(i);
-                        READVALUE(n);
                         vp = poptarget(ty);
                         if (top(ty)->type != VALUE_TUPLE) {
-                                IP += n;
+                                DOJUMP(code);
                         } else {
                                 int count = top(ty)->count - i;
                                 Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
@@ -2185,10 +2297,10 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(RECORD_REST)
-                        READVALUE(n);
+                        READJUMP(code);
                         READVALUE(j);
                         if (top(ty)->type != VALUE_TUPLE) {
-                                IP += n;
+                                DOJUMP(code);
                         } else {
                                 v = peek(ty);
 
@@ -2454,18 +2566,18 @@ Throw:
                         vvX(defer_stack);
                         break;
                 CASE(ENSURE_LEN)
-                        READVALUE(n);
-                        b = top(ty)->type == VALUE_ARRAY && top(ty)->array->count <= n;
-                        READVALUE(n);
-                        if (!b)
-                                IP += n;
+                        READJUMP(code);
+                        READVALUE(i);
+                        if (top(ty)->type != VALUE_ARRAY || top(ty)->array->count > i) {
+                                DOJUMP(code);
+                        }
                         break;
                 CASE(ENSURE_LEN_TUPLE)
-                        READVALUE(n);
-                        b = top(ty)->type == VALUE_TUPLE && top(ty)->count <= n;
-                        READVALUE(n);
-                        if (!b)
-                                IP += n;
+                        READJUMP(code);
+                        READVALUE(i);
+                        if (top(ty)->type != VALUE_TUPLE || top(ty)->count > i) {
+                                DOJUMP(code);
+                        }
                         break;
                 CASE(ENSURE_EQUALS_VAR)
                         v = pop(ty);
@@ -2482,13 +2594,13 @@ Throw:
                                 *vp = peek(ty);
                         break;
                 CASE(TRY_REGEX)
+                        READJUMP(code);
                         READVALUE(s);
-                        READVALUE(n);
                         v = REGEX((struct regex *) s);
                         value = value_apply_callable(ty, &v, top(ty));
                         vp = poptarget(ty);
                         if (value.type == VALUE_NIL) {
-                                IP += n;
+                                DOJUMP(code);
                         } else if (value.type == VALUE_STRING) {
                                 *vp = value;
                         } else {
@@ -2518,12 +2630,12 @@ Throw:
                         }
                         break;
                 CASE(TRY_INDEX)
+                        READJUMP(code);
                         READVALUE(i);
                         READVALUE(b);
-                        READVALUE(n);
                         //LOG("trying to index: %s", value_show(ty, top(ty)));
                         if (top(ty)->type != VALUE_ARRAY) {
-                                IP += n;
+                                DOJUMP(code);
                                 break;
                         }
                         if (i < 0) {
@@ -2531,7 +2643,7 @@ Throw:
                         }
                         if (top(ty)->array->count <= i) {
                                 if (b) {
-                                        IP += n;
+                                        DOJUMP(code);
                                 } else {
                                         push(ty, NIL);
                                 }
@@ -2540,21 +2652,21 @@ Throw:
                         }
                         break;
                 CASE(TRY_INDEX_TUPLE)
+                        READJUMP(code);
                         READVALUE(i);
-                        READVALUE(n);
                         if (top(ty)->type != VALUE_TUPLE || top(ty)->count <= i) {
-                                IP += n;
+                                DOJUMP(code);
                         } else {
                                 push(ty, top(ty)->items[i]);
                         }
                         break;
                 CASE(TRY_TUPLE_MEMBER)
+                        READJUMP(code);
                         READVALUE(b);
                         READSTR(str);
-                        READVALUE(n);
 
                         if (top(ty)->type != VALUE_TUPLE) {
-                                IP += n;
+                                DOJUMP(code);
                                 break;
                         }
 
@@ -2570,14 +2682,14 @@ Throw:
                                 goto NextInstruction;
                         }
 
-                        IP += n;
+                        DOJUMP(code);
 
                         break;
                 CASE(TRY_TAG_POP)
+                        READJUMP(code);
                         READVALUE(tag);
-                        READVALUE(n);
                         if (!(top(ty)->type & VALUE_TAGGED) || tags_first(ty, top(ty)->tags) != tag) {
-                                IP += n;
+                                DOJUMP(code);
                         } else {
                                 top(ty)->tags = tags_pop(ty, top(ty)->tags);
                                 if (top(ty)->tags == 0) {
@@ -3414,16 +3526,10 @@ Throw:
                         }
                         break;
                 CASE(EQ)
-                        v = BOOLEAN(value_test_equality(ty, top(ty) - 1, top(ty)));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        DoEq(ty);
                         break;
                 CASE(NEQ)
-                        v = BOOLEAN(!value_test_equality(ty, top(ty) - 1, top(ty)));
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        DoNeq(ty);
                         break;
                 CASE(CHECK_MATCH)
                         if (top(ty)->type == VALUE_CLASS) {
@@ -3464,39 +3570,19 @@ Throw:
                         }
                         break;
                 CASE(LT)
-                        v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) < 0);
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        DoLt(ty);
                         break;
                 CASE(GT)
-                        v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) > 0);
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        DoGt(ty);
                         break;
                 CASE(LEQ)
-                        v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) <= 0);
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        DoLeq(ty);
                         break;
                 CASE(GEQ)
-                        v = BOOLEAN(value_compare(ty, top(ty) - 1, top(ty)) >= 0);
-                        pop(ty);
-                        pop(ty);
-                        push(ty, v);
+                        DoGeq(ty);
                         break;
                 CASE(CMP)
-                        i = value_compare(ty, top(ty) - 1, top(ty));
-                        pop(ty);
-                        pop(ty);
-                        if (i < 0)
-                                push(ty, INTEGER(-1));
-                        else if (i > 0)
-                                push(ty, INTEGER(1));
-                        else
-                                push(ty, INTEGER(0));
+                        DoCmp(ty);
                         break;
                 CASE(GET_TAG)
                         v = pop(ty);
@@ -4254,8 +4340,17 @@ vm_panic(Ty *ty, char const *fmt, ...)
         bool can_yield = false;
 
         for (int i = 0; IP != NULL && n < sz; ++i) {
+                if (FRAMES.count > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
+                        /*
+                         * This code is part of a hidden function; we don't want it
+                         * to show up in stack traces.
+                         */
+                        goto Next;
+                }
+
                 Expr const *expr = compiler_find_expr(ty, IP - 1);
 
+                n += snprintf(ERR + n, sz - n,"(ip=%07ju)  ", (uintptr_t)IP & 0xFFFFFF);
                 n += WriteExpressionTrace(ty, ERR + n, sz - n, expr, 0, i == 0);
                 if (expr != NULL && expr->origin != NULL) {
                         n += WriteExpressionOrigin(ty, ERR + n, sz - n, expr->origin);
@@ -4271,7 +4366,7 @@ vm_panic(Ty *ty, char const *fmt, ...)
                 }
 
                 can_yield = GetCurrentGenerator(ty) != NULL;
-
+Next:
                 IP = vvX(FRAMES)->ip;
         }
 
@@ -4336,7 +4431,7 @@ ilerp(int lo, int hi, float a, float x, float b)
         return lo + p * (hi - lo);
 }
 
-static void
+void
 color_sequence(float p, char *out)
 {
         int r, g, b;
@@ -4510,7 +4605,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 if (expr == NULL) {
                         fprintf(
                                 ProfileOut,
-                                "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source avilable>%s\n",
+                                "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source available>%s %llu : %s\n",
                                 color_buffer,
                                 entry->count / total_ticks * 100.0,
                                 entry->count,
@@ -4521,7 +4616,28 @@ vm_execute(Ty *ty, char const *source, char const *file)
                                 "",
                                 PTERM(92),
                                 PTERM(91),
-                                PTERM(0)
+                                PTERM(0),
+                                (uintptr_t)entry->ctx,
+                                ""
+                        );
+                        fprintf(ProfileOut, "   &halt = %lu\n", (uintptr_t)&halt);
+                        fprintf(ProfileOut, "   &IP = %lu\n", (uintptr_t)&IP);
+                        fprintf(
+                                ProfileOut,
+                                "   %s%5.1f%%  %-13lld %s%16s %s%18s%6s%s  |  %s<no source available>%s %llu : %s\n",
+                                color_buffer,
+                                entry->count / total_ticks * 100.0,
+                                entry->count,
+                                PTERM(95),
+                                "",
+                                PTERM(91),
+                                "(unknown)",
+                                "",
+                                PTERM(92),
+                                PTERM(91),
+                                PTERM(0),
+                                (uintptr_t)entry->ctx,
+                                GetInstructionName(*(uint8_t const *)entry->ctx)
                         );
                         continue;
                 }
@@ -4556,7 +4672,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
 
                 fprintf(
                         ProfileOut,
-                        "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s\n",
+                        "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s  %lu\n",
                         color_buffer,
                         entry->count / total_ticks * 100.0,
                         entry->count,
@@ -4568,10 +4684,17 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         PTERM(94),
                         start.line + 1,
                         PTERM(92),
-                        code_buffer
+                        code_buffer,
+                        (uintptr_t)entry->ctx
                 );
         }
 
+        fputc('\n', ProfileOut);
+
+        byte_vector prog_text = {0};
+        DumpProgram(ty, &prog_text, filename, code, NULL);
+        fwrite(prog_text.items, 1, prog_text.count, stdout);
+        fputc('\n', ProfileOut);
         fputc('\n', ProfileOut);
 #endif
 
@@ -4800,32 +4923,22 @@ vm_2op(Ty *ty, int op, Value const *a, Value const *b)
         push(ty, *a);
         push(ty, *b);
 
-        uint8_t code[1 + sizeof (int) + 1] = {
-                [1               ] = INSTR_HALT,
-                [1 + sizeof (int)] = INSTR_HALT
-        };
-
         switch (op) {
-        case OP_ADD: code[0] = INSTR_ADD; break;
-        case OP_SUB: code[0] = INSTR_SUB; break;
-        case OP_MUL: code[0] = INSTR_MUL; break;
-        case OP_DIV: code[0] = INSTR_DIV; break;
-        case OP_MOD: code[0] = INSTR_MOD; break;
-        case OP_CMP: code[0] = INSTR_CMP; break;
-        case OP_EQL: code[0] = INSTR_EQ;  break;
-        case OP_NEQ: code[0] = INSTR_NEQ; break;
-        case OP_LEQ: code[0] = INSTR_LEQ; break;
-        case OP_GEQ: code[0] = INSTR_GEQ; break;
-        case OP_LT:  code[0] = INSTR_LT;  break;
-        case OP_GT:  code[0] = INSTR_GT;  break;
+        case OP_CMP: DoCmp(ty); return pop(ty);
+        case OP_EQL: DoEq(ty);  return pop(ty);
+        case OP_NEQ: DoNeq(ty); return pop(ty);
+        case OP_GEQ: DoGeq(ty); return pop(ty);
+        case OP_LEQ: DoLeq(ty); return pop(ty);
+        case OP_GT:  DoGt(ty);  return pop(ty);
+        case OP_LT:  DoLt(ty);  return pop(ty);
+        case OP_ADD: if (op_builtin_add(ty)) return pop(ty); break;
+        case OP_SUB: if (op_builtin_sub(ty)) return pop(ty); break;
+        case OP_MUL: if (op_builtin_mul(ty)) return pop(ty); break;
+        case OP_DIV: if (op_builtin_div(ty)) return pop(ty); break;
+        case OP_MOD: if (op_builtin_mod(ty)) return pop(ty); break;
         }
 
-        if (!code[0]) {
-                code[0] = INSTR_BINARY_OP;
-                memcpy(&code[1], &op, sizeof op);
-        }
-
-        vm_exec(ty, (char *)code);
+        DoBinaryOp(ty, op);
 
         return pop(ty);
 }

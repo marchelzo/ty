@@ -156,4 +156,7 @@ CompilationTrace(Ty *ty);
 bool
 IsTopLevel(Symbol const *sym);
 
+char const *
+DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end);
+
 #endif

@@ -339,7 +339,7 @@ dict_clone(Ty *ty, Value *d, int argc, Value *kwargs)
         if (argc != 0)
                 zP("dict.clone() expects 0 arguments but got %d", argc);
 
-        return DICT(DictClone(ty, d));
+        return DICT(DictClone(ty, d->dict));
 }
 
 bool

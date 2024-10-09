@@ -8,6 +8,19 @@
                 size_t capacity; \
         }
 
+#define intrusive_vec(T) \
+        T *items;        \
+        size_t count;    \
+        size_t capacity;
+
+#define augmented_vec(T, ...)    \
+        struct {                 \
+                T *items;        \
+                size_t count;    \
+                size_t capacity; \
+                __VA_ARGS__      \
+        }
+
 #define vec_get(v, idx) \
         ((v).items + idx)
 
