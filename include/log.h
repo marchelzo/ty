@@ -15,7 +15,7 @@ extern _Bool EnableLogging;
                         GC_STOP(); \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \
-                        fprintf(stderr, "(%14llu) ", TID), \
+                        fprintf(stderr, "(%4llu) ", TID), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
                         funlockfile(stderr); \
@@ -42,7 +42,7 @@ extern _Bool EnableLogging;
 #if 0
 #define GCLOG(...) if (EnableLogging) do { \
                         flockfile(stderr), \
-                        fprintf(stderr, "(%14llu) ", TID), \
+                        fprintf(stderr, "(%4llu) ", TID), \
                         fprintf(stderr, __VA_ARGS__), \
                         fprintf(stderr, "\n"), \
                         funlockfile(stderr); \
