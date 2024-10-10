@@ -3862,6 +3862,14 @@ Throw:
 
                         /*
                          * Move all the keyword args into a dict.
+                         *
+                         *   TODO: find a better way of handling kwargs
+                         *
+                         *   Right now there's way too much branching on (nkw > 0), and we have
+                         *   to worry about popping the kwargs dict from the stack for any cases
+                         *   that don't use call()
+                         *
+                         *   Overall very cringe...
                          */
                         if (nkw > 0) {
                         CallKwArgs:
@@ -3892,7 +3900,7 @@ Throw:
                                                         pop(ty);
                                                 } else {
                                                         zP(
-                                                                "Attempt to splat invalid value in function call: %s%s%s%s%s",
+                                                                "attempt to splat invalid value in function call: %s%s%s%s%s",
                                                                 TERM(34),
                                                                 TERM(1),
                                                                 value_show(ty, top(ty)),
@@ -3944,6 +3952,7 @@ Throw:
                                 push(ty, v);
                                 break;
                         case VALUE_GENERATOR:
+                                if (nkw > 0) { pop(ty); }
                                 call_co(ty, &v, n);
                                 break;
                         case VALUE_TAG:
@@ -3970,7 +3979,7 @@ Throw:
                                                 gX();
                                                 pop(ty);
                                         } else {
-                                                STACK.count -= n;
+                                                STACK.count -= n + (nkw > 0);
                                         }
                                         push(ty, value);
                                 }
@@ -3984,6 +3993,9 @@ Throw:
                                 call(ty, v.method, v.this, n, nkw, false);
                                 break;
                         case VALUE_REGEX:
+                                if (nkw > 0) {
+                                        pop(ty);
+                                }
                                 if (n != 1)
                                         zP("attempt to apply a regex to an invalid number of values");
                                 value = peek(ty);
@@ -4009,7 +4021,7 @@ Throw:
                                 push(ty, v);
                                 break;
                         case VALUE_NIL:
-                                STACK.count -= n;
+                                STACK.count -= n + (nkw > 0);
                                 push(ty, NIL);
                                 break;
                         default:
@@ -4476,13 +4488,15 @@ vm_execute(Ty *ty, char const *source, char const *file)
         try_stack.count = 0;
         TARGETS.count = 0;
 
+        char * volatile code = NULL;
+
         if (setjmp(jb) != 0) {
                 Error = ERR;
                 filename = NULL;
                 return false;
         }
 
-        char *code = compiler_compile_source(ty, source, filename);
+        code = compiler_compile_source(ty, source, filename);
         if (code == NULL) {
                 filename = NULL;
                 Error = compiler_error(ty);

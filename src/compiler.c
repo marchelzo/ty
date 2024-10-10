@@ -232,7 +232,7 @@ typedef struct state {
 } CompileState;
 
 bool CheckConstraints = true;
-bool ProduceAnnotation = false;
+bool ProduceAnnotation = true;
 size_t GlobalCount = 0;
 
 static jmp_buf *ujb;
@@ -388,6 +388,8 @@ PatchAnnotation(ProgramAnnotation *annotation, void const *base)
 
         annotation->start += (uintptr_t)base;
         annotation->end += (uintptr_t)base;
+
+        annotation->patched = true;
 }
 
 inline static Expr *
@@ -9260,10 +9262,24 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         byte_vector after = {0};
 
-#define SKIPSTR()    (dump(out, " %s\"%s\"%s", TERM(92), c, TERM(0)), (c += strlen(c) + 1))
-#define READSTR(s)   (((s) = c), SKIPSTR())
-#define READVALUE(x) (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
+#define SKIPSTR()     (dump(out, " %s\"%s\"%s", TERM(92), c, TERM(0)), (c += strlen(c) + 1))
+#define READSTR(s)    (((s) = c), SKIPSTR())
+#define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
 #define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
+
+        if (code == NULL) {
+                for (int i = 0; i < annotations.count; ++i) {
+                        state.annotation = annotations.items[i];
+                        DumpProgram(
+                                ty,
+                                out,
+                                annotations.items[i].name,
+                                (char const *)annotations.items[i].start,
+                                (char const *)annotations.items[i].end
+                        );
+                }
+                return end;
+        }
 
         uintptr_t s, off;
         intmax_t k;
@@ -9279,6 +9295,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
         char const *method, *member;
 
         dump(out, "        %s%s:%s\n", TERM(34), name, TERM(0));
+        dont_printf("        %s%s:%s\n", TERM(34), name, TERM(0));
 
         char const *caption;
 
@@ -9288,6 +9305,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         caption[0] == ':'
                 ) {
                         dump(out, "            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
+                        dont_printf("            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
                 }
 
                 ptrdiff_t pc = (uintptr_t)c;
@@ -9320,6 +9338,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         TERM(93), GetInstructionName(*c), TERM(0)
                 );
 #else
+                dont_printf(
+                        "%s%7td%s            %s%s%s %s\n",
+                        TERM(94), pc, TERM(0),
+                        TERM(93), GetInstructionName(*c), TERM(0),
+                        name
+                );
                 dump(
                         out,
                         "%s%7td%s            %s%s%s",
@@ -9576,6 +9600,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(VALUE)
                         READVALUE_(s);
                         dump(out, " %s", VSC((Value *)s));
+                        dont_printf(" %s", VSC((Value *)s));
                         break;
                 CASE(EVAL)
                         READVALUE(s);
