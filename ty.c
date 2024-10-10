@@ -41,6 +41,7 @@ static bool use_readline;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
 static char const *print_function = "print";
+static char SymbolLocation[512];
 
 bool EnableLogging = false;
 
@@ -297,19 +298,10 @@ set_profile_out(char const *path)
 }
 #endif
 
-int
-main(int argc, char **argv)
+
+static int
+ProcessArgs(char *argv[], bool first)
 {
-        if (!vm_init(&MainTy, argc, argv)) {
-                fprintf(stderr, "%s\n", vm_error(&MainTy));
-                return -1;
-        }
-
-        if (argc <= 1 && stdin_is_tty())
-                repl(&MainTy);
-
-        char SymbolLocation[512] = {0};
-
         int argi = 1;
         while (argv[argi] != NULL && argv[argi][0] == '-') {
                 if (strcmp(argv[argi], "--") == 0) {
@@ -334,12 +326,12 @@ main(int argc, char **argv)
 #else
                         printf("ty version 0.1\n");
 #endif
-                        return 0;
+                        exit(0);
                 }
 
                 if (strcmp(argv[argi], "--help") == 0) {
                         usage();
-                        return 0;
+                        exit(0);
                 }
 
 #ifdef TY_ENABLE_PROFILING
@@ -382,9 +374,9 @@ main(int argc, char **argv)
                                                         fprintf(stderr, "Missing argument for -e\n");
                                                         return 1;
                                                 }
-                                                return (int)!execln(&MainTy, argv[++argi]);
+                                                if (!first) exit((int)!execln(&MainTy, argv[++argi]));
                                         } else {
-                                                return (int)!execln(&MainTy, (char *)(opt + 1));
+                                                if (!first) exit((int)!execln(&MainTy, (char *)(opt + 1)));
                                         }
                                         break;
                                 case 'f':
@@ -403,23 +395,23 @@ main(int argc, char **argv)
                                                 module = argv[++argi];
                                         } else {
                                                 fprintf(stderr, "Missing argument for -%c\n", *opt);
-                                                return 1;
+                                                exit(1);
                                         }
 
                                         snprintf(buffer, sizeof buffer, fmt, module);
 
-                                        if (!execln(&MainTy, buffer)) {
-                                                return 1;
+                                        if (!first && !execln(&MainTy, buffer)) {
+                                                exit(1);
                                         }
 
                                         goto NextOption;
                                 }
 #ifdef TY_ENABLE_PROFILING
-                                case 'o':
+                                case 'o'
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
                                                         fprintf(stderr, "Missing argument for -o\n");
-                                                        return 1;
+                                                        exit(1);
                                                 }
                                                 set_profile_out(argv[++argi]);
                                         } else {
@@ -430,19 +422,34 @@ main(int argc, char **argv)
 #endif
                                 default:
                                         fprintf(stderr, "Unrecognized option -%c\n", *opt);
-                                        return 1;
+                                        exit(1);
                                 }
                         }
                 } else {
                         fprintf(stderr, "Unrecognized option %s\n", argv[argi]);
-                        return 1;
+                        exit(1);
                 }
 NextOption:
                 argi += 1;
         }
 
-        argc -= argi;
-        argv += argi;
+        return argi;
+}
+
+int
+main(int argc, char **argv)
+{
+        int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
+
+        if (!vm_init(&MainTy, argc - nopt, argv + nopt)) {
+                fprintf(stderr, "%s\n", vm_error(&MainTy));
+                return -1;
+        }
+
+        if (argc <= 1 && stdin_is_tty())
+                repl(&MainTy);
+
+        argv += ProcessArgs(argv, false);
 
         FILE *file;
         char const *filename;
