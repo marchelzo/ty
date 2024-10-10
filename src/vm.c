@@ -624,7 +624,7 @@ add_builtins(Ty *ty, int ac, char **av)
         Array *args = vA();
         NOGC(args);
 
-        for (int i = 1; i < ac; ++i)
+        for (int i = 0; i < ac; ++i)
                 vAp(args, STRING_NOGC(av[i], strlen(av[i])));
 
         compiler_introduce_symbol(ty, "os", "args");
@@ -4714,7 +4714,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
 
         byte_vector prog_text = {0};
         DumpProgram(ty, &prog_text, filename, code, NULL);
-        fwrite(prog_text.items, 1, prog_text.count, stdout);
+        fwrite(prog_text.items, 1, prog_text.count, ProfileOut);
         fputc('\n', ProfileOut);
         fputc('\n', ProfileOut);
 #endif

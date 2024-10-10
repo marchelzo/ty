@@ -407,7 +407,7 @@ ProcessArgs(char *argv[], bool first)
                                         goto NextOption;
                                 }
 #ifdef TY_ENABLE_PROFILING
-                                case 'o'
+                                case 'o':
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
                                                         fprintf(stderr, "Missing argument for -o\n");
