@@ -3332,7 +3332,8 @@ emit_function(Ty *ty, Expr const *e, int class)
 
         state.function_resources = function_resources;
 
-        add_annotation(ty, e->proto, start_offset, state.code.count);
+        // TODO: what to do here?
+        //add_annotation(ty, e->proto, start_offset, state.code.count);
 
         int bytes = state.code.count - start_offset;
         memcpy(state.code.items + size_offset, &bytes, sizeof bytes);
@@ -9312,6 +9313,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
 #ifdef TY_ENABLE_PROFILING
                 extern istat prof;
+                extern FILE *ProfileOut;
 
                 void
                 color_sequence(float p, char *out);
@@ -9322,7 +9324,9 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 int64_t max_ticks, total_ticks;
                 istat_count(&prof, &max_ticks, &total_ticks);
 
-                color_sequence(stat == NULL ? 0.0 : 0.75 * stat->t / (double)max_ticks, color_buffer);
+                if (*PTERM(0)) {
+                        color_sequence(stat == NULL ? 0.0 : 0.75 * stat->t / (double)max_ticks, color_buffer);
+                }
 
                 bool exact = (stat == NULL) || stat->n < 1000000;
 
@@ -9782,8 +9786,18 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
 
-                        dump(out, " %s%s%s", TERM(96), name_of(&v), TERM(0));
-                        c = DumpProgram(ty, &after, name_of(&v), c + hs, c + hs + size);
+                        char signature[256];
+
+                        snprintf(
+                                signature,
+                                sizeof signature,
+                                "%s%s",
+                                name_of(&v),
+                                (proto_of(&v) == NULL) ? "()" : proto_of(&v)
+                        );
+
+                        dump(out, " %s%s%s", TERM(96), signature, TERM(0));
+                        c = DumpProgram(ty, &after, signature, c + hs, c + hs + size);
 
                         for (int i = 0; i < ncaps; ++i) {
                                 READVALUE_(b);
