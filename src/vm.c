@@ -4693,7 +4693,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
 
                 fprintf(
                         ProfileOut,
-                        "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s  %lu\n",
+                        "   %s%5.1f%%  %-13lld %s%16s %s%18s%s:%s%-5d%s  |  %s\n",
                         color_buffer,
                         entry->count / total_ticks * 100.0,
                         entry->count,
@@ -4705,15 +4705,14 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         PTERM(94),
                         start.line + 1,
                         PTERM(92),
-                        code_buffer,
-                        (uintptr_t)entry->ctx
+                        code_buffer
                 );
         }
 
         fputc('\n', ProfileOut);
 
         byte_vector prog_text = {0};
-        DumpProgram(ty, &prog_text, filename, code, NULL);
+        DumpProgram(ty, &prog_text, filename, NULL, NULL);
         fwrite(prog_text.items, 1, prog_text.count, ProfileOut);
         fputc('\n', ProfileOut);
         fputc('\n', ProfileOut);
