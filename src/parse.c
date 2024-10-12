@@ -1064,13 +1064,6 @@ prefix_dollar(Ty *ty)
                 return prefix_implicit_lambda(ty);
         }
 
-        if (next_without_nl(ty, '(')) {
-                unconsume(TOKEN_IDENTIFIER);
-                tok()->module = NULL;
-                tok()->identifier = "id";
-                return prefix_identifier(ty);
-        }
-
         struct expression *e = mkexpr(ty);
 
         consume('$');
