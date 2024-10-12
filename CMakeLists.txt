@@ -74,6 +74,7 @@ set(_src_files
   src/gc.c
   src/html.c
   src/intern.c
+  src/itable.c
   src/json.c
   src/lex.c
   src/object.c

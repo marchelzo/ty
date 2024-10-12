@@ -78,23 +78,6 @@ table_lookup(Ty *ty, struct table const *t, char const *name, unsigned long h)
         return NULL;
 }
 
-char const *
-table_lookup_key(Ty *ty, struct table const *t, char const *name, unsigned long h)
-{
-        int i = h % TABLE_SIZE;
-
-        struct bucket const *b = &t->buckets[i];
-
-        for (int i = 0; i < b->hashes.count; ++i) {
-                if (b->hashes.items[i] != h)
-                        continue;
-                if (strcmp(b->names.items[i], name) == 0)
-                        return b->names.items[i];
-        }
-
-        return NULL;
-}
-
 void
 table_release(Ty *ty, struct table *t)
 {

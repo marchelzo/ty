@@ -7,7 +7,7 @@
 #include "log.h"
 #include "util.h"
 #include "vec.h"
-#include "table.h"
+#include "itable.h"
 
 struct tags;
 
@@ -26,7 +26,7 @@ struct tags {
 static int tagcount = 0;
 static vec(struct tags *) lists;
 static vec(char const *) names;
-static vec(struct table) tables;
+static vec(struct itable) tables;
 
 static struct tags *
 mklist(int tag, struct tags *next)
@@ -57,8 +57,8 @@ tags_new(Ty *ty, char const *tag)
 
         vec_nogc_push(names, tag);
 
-        struct table table;
-        table_init(ty, &table);
+        struct itable table;
+        itable_init(ty, &table);
         vec_nogc_push(tables, table);
 
         mklist(tagcount, lists.items[0]);
@@ -162,20 +162,28 @@ tags_add_method(Ty *ty, int tag, char const *name, struct value f)
 {
         LOG("tag = %d", tag);
         LOG("adding method %s to tag %s", name, names.items[tag - 1]);
-        table_add(ty, &tables.items[tag - 1], name, strhash(name), f);
+        itable_put(ty, &tables.items[tag - 1], name, f);
 }
 
 void
 tags_copy_methods(Ty *ty, int dst, int src)
 {
-        struct table *dt = &tables.items[dst - 1];
-        struct table const *st = &tables.items[src - 1];
-        table_copy(ty, dt, st);
+        struct itable *dt = &tables.items[dst - 1];
+        struct itable const *st = &tables.items[src - 1];
+        itable_copy(ty, dt, st);
 }
 
-struct value *
+Value *
 tags_lookup_method(Ty *ty, int tag, char const *name, unsigned long h)
 {
-        struct table const *t = &tables.items[tag - 1];
-        return table_lookup(ty, t, name, h);
+        struct itable const *t = &tables.items[tag - 1];
+        InternEntry *e = intern(&xD.members, name);
+        return itable_lookup(ty, t, e->id);
+}
+
+Value *
+tags_lookup_method_i(Ty *ty, int tag, int i)
+{
+        struct itable const *t = &tables.items[tag - 1];
+        return itable_lookup(ty, t, i);
 }

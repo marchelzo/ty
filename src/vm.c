@@ -119,7 +119,8 @@ static char throw = INSTR_THROW;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 
-static char const *MISSING = "__missing__";
+struct member_names NAMES;
+
 static int iExitHooks = -1;
 
 static _Thread_local jmp_buf jb;
@@ -301,6 +302,7 @@ static ThreadGroup MainGroup;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 #endif
 
+static _Thread_local Ty *MyTy;
 _Thread_local TyMutex *MyLock;
 static _Thread_local atomic_bool *MyState;
 static _Thread_local ThreadStorage MyStorage;
@@ -615,7 +617,7 @@ add_builtins(Ty *ty, int ac, char **av)
         for (int i = 0; i < builtin_count; ++i) {
                 compiler_introduce_symbol(ty, builtins[i].module, builtins[i].name);
                 if (builtins[i].value.type == VALUE_BUILTIN_FUNCTION) {
-                        builtins[i].value.name = builtins[i].name;
+                        builtins[i].value.name = M_ID(builtins[i].name);
                         builtins[i].value.module = builtins[i].module;
                 }
                 vvP(Globals, builtins[i].value);
@@ -946,7 +948,6 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
-                // FIXME: intern parameter names!!!
                 char const *name = name_of(f);
                 for (int i = 0; i < np; ++i) {
                         name += strlen(name) + 1;
@@ -1211,6 +1212,7 @@ vm_run_thread(void *p)
         Ty *ty = mrealloc(NULL, sizeof *ty);
         InitializeTy(ty);
 
+        MyTy = ty;
         MyId = t->i;
 
         int argc = 0;
@@ -1329,8 +1331,9 @@ vm_get_sigfn(Ty *ty, int sig)
 
 #ifndef _WIN32
 void
-vm_do_signal(Ty *ty, int sig, siginfo_t *info, void *ctx)
+vm_do_signal(int sig, siginfo_t *info, void *ctx)
 {
+        Ty const *ty = MyTy;
         Value f = NIL;
 
         pthread_rwlock_rdlock(&SigLock);
@@ -1567,21 +1570,31 @@ Error:
 }
 
 inline static void
-AddTupleEntry(Ty *ty, StringVector *names, ValueVector *values, char const *name, Value const *v)
+AddTupleEntry(Ty *ty, int_vector *ids, ValueVector *values, int id, Value const *v)
 {
-        for (int i = 0; i < names->count; ++i) {
-                if (names->items[i] != NULL && strcmp(names->items[i], name) == 0) {
+        for (int i = 0; i < ids->count; ++i) {
+                if (ids->items[i] == id) {
                         values->items[i] = *v;
                         return;
                 }
         }
 
-        vvP(*names, name);
+        vvP(*ids, id);
         vvP(*values, *v);
 }
 
+inline static bool
+search_int(int const *zs, int z)
+{
+        while (*zs != -1) {
+                if (*zs++ == z) return true;
+        }
+
+        return false;
+}
+
 Value
-GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
+GetMember(Ty *ty, Value v, int member, bool b)
 {
 
         int n;
@@ -1589,7 +1602,7 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
         BuiltinMethod *func;
 
         if (v.type & VALUE_TAGGED) for (int tags = v.tags; tags != 0; tags = tags_pop(ty, tags)) {
-                vp = tags_lookup_method(ty, tags_first(ty, tags), member, h);
+                vp = tags_lookup_method_i(ty, tags_first(ty, tags), member);
                 if (vp != NULL)  {
                         Value *this = mAo(sizeof *this, GC_VALUE);
                         *this = v;
@@ -1600,10 +1613,10 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
 
         switch (v.type & ~VALUE_TAGGED) {
         case VALUE_TUPLE:
-                vp = tuple_get(&v, member);
+                vp = tuple_get_i(&v, member);
                 return (vp == NULL) ? NONE : *vp;
         case VALUE_DICT:
-                func = get_dict_method(member);
+                func = get_dict_method_i(member);
                 if (func == NULL) {
                         n = CLASS_DICT;
                         goto ClassLookup;
@@ -1614,7 +1627,7 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
         case VALUE_ARRAY:
-                func = get_array_method(member);
+                func = get_array_method_i(member);
                 if (func == NULL) {
                         n = CLASS_ARRAY;
                         goto ClassLookup;
@@ -1625,7 +1638,7 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
         case VALUE_STRING:
-                func = get_string_method(member);
+                func = get_string_method_i(member);
                 if (func == NULL) {
                         n = CLASS_STRING;
                         goto ClassLookup;
@@ -1636,7 +1649,7 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
                 *this = v;
                 return BUILTIN_METHOD(member, func, this);
         case VALUE_BLOB:
-                func = get_blob_method(member);
+                func = get_blob_method_i(member);
                 if (func == NULL) {
                         n = CLASS_BLOB;
                         goto ClassLookup;
@@ -1667,29 +1680,29 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
         case VALUE_CLASS:
                 switch (v.class) {
                 case CLASS_ARRAY:
-                        if ((func = get_array_method(member)) != NULL) {
+                        if ((func = get_array_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
                 case CLASS_STRING:
-                        if ((func = get_string_method(member)) != NULL) {
+                        if ((func = get_string_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
                 case CLASS_DICT:
-                        if ((func = get_dict_method(member)) != NULL) {
+                        if ((func = get_dict_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
                 case CLASS_BLOB:
-                        if ((func = get_blob_method(member)) != NULL) {
+                        if ((func = get_blob_method_i(member)) != NULL) {
                                 return PTR((void *)func);
                         }
                         break;
                 }
-                vp = class_lookup_static(ty, v.class, member, h);
+                vp = class_lookup_static_i(ty, v.class, member);
                 if (vp == NULL) {
-                        vp = class_lookup_method(ty, v.class, member, h);
+                        vp = class_lookup_method_i(ty, v.class, member);
                 }
                 if (vp == NULL) {
                         n = CLASS_CLASS;
@@ -1699,32 +1712,33 @@ GetMember(Ty *ty, Value v, char const *member, unsigned long h, bool b)
                 }
                 break;
         case VALUE_OBJECT:
-                vp = table_lookup(ty, v.object, member, h);
+                vp = itable_lookup(ty, v.object, member);
                 if (vp != NULL) {
                         return *vp;
                 }
                 n = v.class;
 ClassLookup:
-                vp = class_lookup_getter(ty, n, member, h);
+                vp = class_lookup_getter_i(ty, n, member);
                 if (vp != NULL) {
                         return vmC(&METHOD(member, vp, &v), 0);
                 }
-                vp = class_lookup_method(ty, n, member, h);
+                vp = class_lookup_method_i(ty, n, member);
                 if (vp != NULL) {
                         this = mAo(sizeof *this, GC_VALUE);
                         *this = v;
                         return METHOD(member, vp, this);
                 }
-                vp = b ? class_method(ty, n, MISSING) : NULL;
+                vp = b ? class_lookup_method_i(ty, n, NAMES.missing) : NULL;
                 if (vp != NULL) {
+                        char const *name = M_NAME(member);
                         this = mAo(sizeof (Value [3]), GC_VALUE);
                         this[0] = v;
-                        this[1] = STRING_NOGC(member, strlen(member));
-                        return METHOD(MISSING, vp, this);
+                        this[1] = STRING_NOGC(name, strlen(name));
+                        return METHOD(NAMES.missing, vp, this);
                 }
                 break;
         case VALUE_TAG:
-                vp = tags_lookup_method(ty, v.tag, member, h);
+                vp = tags_lookup_method_i(ty, v.tag, member);
                 return (vp == NULL) ? NIL : *vp;
         }
 
@@ -1832,7 +1846,7 @@ inline static void
 DoMutDiv(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        ValueTable *o;
+        struct itable *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
@@ -1878,7 +1892,7 @@ inline static void
 DoMutMul(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        ValueTable *o;
+        struct itable *o;
         Value *vp, *vp2, val, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
@@ -1925,7 +1939,7 @@ inline static void
 DoMutSub(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        ValueTable *o;
+        struct itable *o;
         Value *vp, *vp2, x, val;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
@@ -1977,7 +1991,7 @@ inline static void
 DoMutAdd(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        ValueTable *o;
+        struct itable *o;
         Value *vp, val, x;
         void *v = vp = (void *)(p & ~0x07);
         unsigned char b;
@@ -2035,7 +2049,7 @@ DoAssign(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         void *v = (void *)(p & ~0x07);
-        ValueTable *o;
+        struct itable *o;
 
         switch (p & 0x07) {
         case 0:
@@ -2082,10 +2096,11 @@ splat(Ty *ty, Dict *d, Value *v)
 
         if (v->type == VALUE_TUPLE) {
                 for (int i = 0; i < v->count; ++i) {
-                        if (v->names == NULL || v->names[i] == NULL) {
+                        if (v->ids == NULL || v->ids[i] == -1) {
                                 dict_put_value(ty, d, INTEGER(i), v->items[i]);
                         } else {
-                                dict_put_member(ty, d, v->names[i], v->items[i]);
+                                char const *name = M_NAME(v->ids[i]);
+                                dict_put_member(ty, d, name, v->items[i]);
                         }
                 }
                 return;
@@ -2140,12 +2155,12 @@ vm_exec(Ty *ty, char *code)
         intmax_t k;
         bool b = false, tco = false;
         float f;
-        int n, nkw = 0, i, j, tag;
+        int n, nkw = 0, i, j, z, tag;
         unsigned long h;
 
         bool AutoThis = false;
 
-        Value v, key, value, container, subscript, *vp, *vp2;
+        Value v, key, value, container, subscript, *vp, *vp2, *self;
         char *str;
         char const *method, *member;
 
@@ -2343,24 +2358,14 @@ vm_exec(Ty *ty, char *code)
                         pushtarget(ty, vvL(FRAMES)->f.env[n], NULL);
                         break;
                 CASE(TARGET_MEMBER)
-                        READSTR(member);
-                        READVALUE(h);
+                        READVALUE(z);
 
                         v = pop(ty);
 
                         if (v.type == VALUE_OBJECT) {
-                                vp = class_lookup_setter(ty, v.class, member, h);
+                                vp = class_lookup_setter_i(ty, v.class, z);
                                 if (vp != NULL) {
-                                        char const *pound = strchr(member, '#');
-                                        if (pound == NULL) {
-                                                vp2 = class_lookup_getter(ty, v.class, member, h);
-                                        } else {
-                                                char buffer[128];
-                                                int n = min(pound - member, 127);
-                                                memcpy(buffer, member, n);
-                                                buffer[n] = '\0';
-                                                vp2 = class_lookup_getter(ty, v.class, buffer, strhash(buffer));
-                                        }
+                                        vp2 = class_lookup_getter_i(ty, v.class, z);
                                         FALSE_OR (vp2 == NULL) {
                                                 zP(
                                                         "class %s%s%s needs a getter for %s%s%s!",
@@ -2368,7 +2373,7 @@ vm_exec(Ty *ty, char *code)
                                                         class_name(ty, v.class),
                                                         TERM(0),
                                                         TERM(34),
-                                                        member,
+                                                        M_NAME(z),
                                                         TERM(0)
                                                 );
                                         }
@@ -2377,14 +2382,14 @@ vm_exec(Ty *ty, char *code)
                                         pushtarget(ty, (Value *)(((uintptr_t)vp) | 2), NULL);
                                         break;
                                 }
-                                vp = table_lookup(ty, v.object, member, h);
+                                vp = itable_lookup(ty, v.object, z);
                                 if (vp != NULL) {
                                         pushtarget(ty, vp, v.object);
                                 } else {
-                                        pushtarget(ty, table_add(ty, v.object, member, h, NIL), v.object);
+                                        pushtarget(ty, itable_add(ty, v.object, z, NIL), v.object);
                                 }
                         } else if (v.type == VALUE_TUPLE) {
-                                vp = tuple_get(&v, member);
+                                vp = tuple_get_i(&v, z);
                                 if (vp == NULL) {
                                         value = v;
                                         goto BadTupleMember;
@@ -2492,33 +2497,32 @@ vm_exec(Ty *ty, char *code)
                         break;
                 CASE(RECORD_REST)
                         READJUMP(code);
-                        READVALUE(j);
                         if (top(ty)->type != VALUE_TUPLE) {
                                 DOJUMP(code);
                         } else {
                                 v = peek(ty);
 
-                                vec(char const *) names = {0};
+                                vec(int) ids = {0};
                                 vec(int) indices = {0};
 
+                                IP = ALIGNED_FOR(int, IP);
+
                                 for (int i = 0; i < v.count; ++i) {
-                                        if (v.names == NULL || v.names[i] == NULL)
+                                        if (v.ids == NULL || v.ids[i] == -1)
                                                 continue;
-                                        char const *name = memmem(IP, j, v.names[i], strlen(v.names[i]) + 1);
-                                        if (name == NULL) {
-                                                vvP(names, v.names[i]);
+                                        if (!search_int((int const *)IP, v.ids[i])) {
+                                                vvP(ids, v.ids[i]);
                                                 vvP(indices, i);
                                         }
                                 }
 
-                                value = vT(names.count);
+                                value = vT(ids.count);
 
                                 if (value.items != NULL) { NOGC(value.items); }
-                                value.names = mAo(value.count * sizeof (char *), GC_TUPLE);
+                                value.ids = mAo(value.count * sizeof (int), GC_TUPLE);
                                 if (value.items != NULL) { NOGC(value.items); }
 
-                                memcpy(value.names, names.items, value.count * sizeof (char *));
-                                // FIXME: i think we may need to clone all of the individual names
+                                memcpy(value.ids, ids.items, value.count * sizeof (int));
 
                                 for (int i = 0; i < value.count; ++i) {
                                         value.items[i] = v.items[indices.items[i]];
@@ -2526,7 +2530,8 @@ vm_exec(Ty *ty, char *code)
 
                                 *poptarget(ty) = value;
 
-                                IP += j;
+                                while (*(int const *)IP != -1) IP += sizeof (int);
+                                IP += sizeof (int);
                         }
                         break;
                 CASE(THROW_IF_NIL)
@@ -2799,15 +2804,15 @@ Throw:
                 CASE(TRY_TUPLE_MEMBER)
                         READJUMP(code);
                         READVALUE(b);
-                        READSTR(str);
+                        READVALUE(z);
 
                         if (top(ty)->type != VALUE_TUPLE) {
                                 DOJUMP(code);
                                 break;
                         }
 
-                        for (int i = 0; top(ty)->names != NULL && i < top(ty)->count; ++i) {
-                                if (top(ty)->names[i] != NULL && strcmp(top(ty)->names[i], str) == 0) {
+                        if (top(ty)->ids != NULL) for (int i = 0; i < top(ty)->count; ++i) {
+                                if (top(ty)->ids[i] == z) {
                                         push(ty, top(ty)->items[i]);
                                         goto NextInstruction;
                                 }
@@ -2888,19 +2893,20 @@ Throw:
                         break;
                 CASE(TUPLE)
                 {
-                        static _Thread_local StringVector names;
+                        static _Thread_local int_vector ids;
                         static _Thread_local ValueVector values;
 
-                        names.count = 0;
+                        ids.count = 0;
                         values.count = 0;
 
                         bool have_names = false;
 
                         READVALUE(n);
 
-                        for (int i = 0; i < n; ++i, SKIPSTR()) {
+                        for (int i = 0; i < n; ++i) {
                                 Value *v = &STACK.items[STACK.count - n + i];
-                                if (strcmp(IP, "*") == 0) {
+                                READVALUE(z);
+                                if (z == -2) {
                                         if (v->type != VALUE_TUPLE) {
                                                 zP(
                                                         "attempt to spread non-tuple in tuple expression: %s",
@@ -2908,20 +2914,20 @@ Throw:
                                                 );
                                         }
                                         for (int j = 0; j < v->count; ++j) {
-                                                if (v->names != NULL && v->names[j] != NULL) {
-                                                        AddTupleEntry(ty, &names, &values, v->names[j], &v->items[j]);
+                                                if (v->ids != NULL && v->ids[j] != -1) {
+                                                        AddTupleEntry(ty, &ids, &values, v->ids[j], &v->items[j]);
                                                         have_names = true;
                                                 } else {
-                                                        vvP(names, NULL);
+                                                        vvP(ids, -1);
                                                         vvP(values, v->items[j]);
                                                 }
                                         }
                                 } else if (v->type != VALUE_NONE) {
-                                        if (IP[0] == '\0') {
-                                                vvP(names, NULL);
+                                        if (z == -1) {
+                                                vvP(ids, -1);
                                                 vvP(values, *v);
                                         } else {
-                                                AddTupleEntry(ty, &names, &values, IP, v);
+                                                AddTupleEntry(ty, &ids, &values, z, v);
                                                 have_names = true;
                                         }
                                 }
@@ -2937,8 +2943,8 @@ Throw:
                         if (k > 0) {
                                 memcpy(vp, values.items, k * sizeof (Value));
                                 if (have_names) {
-                                        v.names = mAo(k * sizeof (char *), GC_TUPLE);
-                                        memcpy(v.names, names.items, k * sizeof (char *));
+                                        v.ids = mAo(k * sizeof (int), GC_TUPLE);
+                                        memcpy(v.ids, ids.items, k * sizeof (int));
                                 }
                         }
 
@@ -3002,13 +3008,12 @@ Throw:
                                 push(ty, STRING_NOGC(str, n));
                                 push(ty, v);
                                 n = 1;
-                                method = "__fmt__";
+                                i = NAMES.fmt;
                         } else {
                                 n = 0;
-                                method = "__str__";
+                                i = NAMES.str;
                         }
                         b = false;
-                        h = strhash(method);
                         goto CallMethod;
                 CASE(YIELD)
                         if (!co_yield(ty)) {
@@ -3312,17 +3317,17 @@ Throw:
                         break;
                 CASE(PUSH_TUPLE_MEMBER)
                         READVALUE(b);
-                        READSTR(member);
+                        READVALUE(z);
 
                         v = peek(ty);
 
-                        if (v.type != VALUE_TUPLE || v.names == NULL) {
+                        if (v.type != VALUE_TUPLE || v.ids == NULL) {
                                 value = v;
                                 goto BadTupleMember;
                         }
 
                         for (int i = 0; i < v.count; ++i) {
-                                if (v.names[i] != NULL && strcmp(v.names[i], member) == 0) {
+                                if (v.ids[i] == z) {
                                         push(ty, v.items[i]);
                                         goto NextInstruction;
                                 }
@@ -3389,10 +3394,9 @@ Throw:
                 CASE(MEMBER_ACCESS)
                         b = IP[-1] == INSTR_TRY_MEMBER_ACCESS;
 
-                        READSTR(member);
-                        READVALUE(h);
+                        READVALUE(z);
 
-                        v = GetMember(ty, peek(ty), member, h, true);
+                        v = GetMember(ty, peek(ty), z, true);
 
                         if (b || v.type != VALUE_NONE) {
                                 *top(ty) = v;
@@ -3404,7 +3408,7 @@ Throw:
                                 zP(
                                         "attempt to access non-existent field %s'%s'%s of %s%s%s",
                                         TERM(34),
-                                        member,
+                                        M_NAME(z),
                                         TERM(39),
                                         TERM(97),
                                         value_show_color(ty, &value),
@@ -3414,7 +3418,7 @@ Throw:
                                 zP(
                                         "attempt to access non-existent member %s'%s'%s of %s%s%s",
                                         TERM(34),
-                                        member,
+                                        M_NAME(z),
                                         TERM(39),
                                         TERM(97),
                                         value_show_color(ty, &value),
@@ -3426,8 +3430,7 @@ Throw:
                 CASE(SLICE)
                         n = 3;
                         nkw = 0;
-                        method = "__slice__";
-                        h = strhash(method);
+                        i = NAMES.slice;
                         goto CallMethod;
                 CASE(SUBSCRIPT)
                         subscript = pop(ty);
@@ -3485,8 +3488,7 @@ Throw:
                                 push(ty, container);
                                 n = 1;
                                 b = false;
-                                method = "__subscript__";
-                                h = strhash(method);
+                                i = NAMES.subscript;
                                 goto CallMethod;
                         case VALUE_PTR:
                                 FALSE_OR (subscript.type != VALUE_INTEGER) {
@@ -3518,8 +3520,7 @@ Throw:
                         } else {
                                 n = 0;
                                 b = false;
-                                method = "__question__";
-                                h = strhash(method);
+                                i = NAMES.question;
                                 goto CallMethod;
                         }
                         break;
@@ -3546,8 +3547,7 @@ Throw:
                                 push(ty, v);
                                 n = 0;
                                 b = false;
-                                method = "__len__";
-                                h = strhash(method);
+                                i = NAMES.len;
                                 goto CallMethod;
                         default: zP("# applied to operand of invalid type: %s", value_show(ty, &v));
                         }
@@ -3621,8 +3621,7 @@ Throw:
                                 n = 1;
                                 nkw = 0;
                                 b = false;
-                                method = "__match__";
-                                h = strhash(method);
+                                i = NAMES.match;
                                 goto CallMethod;
                         }
                         break;
@@ -3914,13 +3913,13 @@ Throw:
                                                 if (top(ty)->type == VALUE_DICT) {
                                                         DictUpdate(ty, container.dict, top(ty)->dict);
                                                         pop(ty);
-                                                } else if (top(ty)->type == VALUE_TUPLE && top(ty)->names != NULL) {
+                                                } else if (top(ty)->type == VALUE_TUPLE && top(ty)->ids != NULL) {
                                                         for (int i = 0; i < top(ty)->count; ++i) {
-                                                                if (top(ty)->names[i] != NULL) {
+                                                                if (top(ty)->ids[i] != -1) {
                                                                         dict_put_member(
                                                                                 ty,
                                                                                 container.dict,
-                                                                                top(ty)->names[i],
+                                                                                intern_entry(&xD.members, top(ty)->ids[i])->name,
                                                                                 top(ty)->items[i]
                                                                         );
                                                                 }
@@ -4013,7 +4012,7 @@ Throw:
                                 }
                                 break;
                         case VALUE_METHOD:
-                                if (v.name == MISSING) {
+                                if (v.name == NAMES.missing) {
                                         push(ty, NIL);
                                         memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (Value));
                                         top(ty)[-n++] = v.this[1];
@@ -4083,34 +4082,21 @@ Throw:
                         b = IP[-1] == INSTR_TRY_CALL_METHOD;
 
                         READVALUE(n);
-                        READSTR(method);
-                        READVALUE(h);
+                        READVALUE(i);
                         READVALUE(nkw);
 
+CallMethod:
                         if (n == -1) {
                                 n = STACK.count - *vvX(sp_stack) - nkw - 1;
                         }
 
-                /*
-                 * b, n, nkw, h, and method must all be correctly set when jumping here
-                 */
-                CallMethod:
-                        LOG("METHOD = %s, n = %d", method, n);
-                        print_stack(ty, 5);
-
                         value = peek(ty);
                         vp = NULL;
                         func = NULL;
-                        Value *self = NULL;
-
-                        if (tco) {
-                                vvX(FRAMES);
-                                IP = *vvX(CALLS);
-                                tco = false;
-                        }
+                        self = NULL;
 
                         for (int tags = value.tags; tags != 0; tags = tags_pop(ty, tags)) {
-                                vp = tags_lookup_method(ty, tags_first(ty, tags), method, h);
+                                vp = tags_lookup_method_i(ty, tags_first(ty, tags), i);
                                 if (vp != NULL) {
                                         value.tags = tags_pop(ty, tags);
                                         if (value.tags == 0)
@@ -4127,75 +4113,75 @@ Throw:
                          */
                         if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
-                                vp = tags_lookup_method(ty, value.tag, method, h);
+                                vp = tags_lookup_method_i(ty, value.tag, i);
                                 if (vp == NULL) {
-                                        vp = class_lookup_method(ty, CLASS_TAG, method, h);
+                                        vp = class_lookup_method_i(ty, CLASS_TAG, i);
                                 } else {
                                         self = NULL;
                                 }
                                 break;
                         case VALUE_STRING:
-                                func = get_string_method(method);
+                                func = get_string_method_i(i);
                                 if (func == NULL)
-                                        vp = class_lookup_method(ty, CLASS_STRING, method, h);
+                                        vp = class_lookup_method_i(ty, CLASS_STRING, i);
                                 break;
                         case VALUE_DICT:
-                                func = get_dict_method(method);
+                                func = get_dict_method_i(i);
                                 if (func == NULL)
-                                        vp = class_lookup_method(ty, CLASS_DICT, method, h);
+                                        vp = class_lookup_method_i(ty, CLASS_DICT, i);
                                 break;
                         case VALUE_ARRAY:
-                                func = get_array_method(method);
+                                func = get_array_method_i(i);
                                 if (func == NULL)
-                                        vp = class_lookup_method(ty, CLASS_ARRAY, method, h);
+                                        vp = class_lookup_method_i(ty, CLASS_ARRAY, i);
                                 break;
                         case VALUE_BLOB:
-                                func = get_blob_method(method);
+                                func = get_blob_method_i(i);
                                 if (func == NULL)
-                                        vp = class_lookup_method(ty, CLASS_BLOB, method, h);
+                                        vp = class_lookup_method_i(ty, CLASS_BLOB, i);
                                 break;
                         case VALUE_INTEGER:
-                                vp = class_lookup_method(ty, CLASS_INT, method, h);
+                                vp = class_lookup_method_i(ty, CLASS_INT, i);
                                 break;
                         case VALUE_REAL:
-                                vp = class_lookup_method(ty, CLASS_FLOAT, method, h);
+                                vp = class_lookup_method_i(ty, CLASS_FLOAT, i);
                                 break;
                         case VALUE_BOOLEAN:
-                                vp = class_lookup_method(ty, CLASS_BOOL, method, h);
+                                vp = class_lookup_method_i(ty, CLASS_BOOL, i);
                                 break;
                         case VALUE_REGEX:
-                                vp = class_lookup_method(ty, CLASS_REGEX, method, h);
+                                vp = class_lookup_method_i(ty, CLASS_REGEX, i);
                                 break;
                         case VALUE_FUNCTION:
                         case VALUE_BUILTIN_FUNCTION:
                         case VALUE_METHOD:
                         case VALUE_BUILTIN_METHOD:
-                                vp = class_lookup_method(ty, CLASS_FUNCTION, method, h);
+                                vp = class_lookup_method_i(ty, CLASS_FUNCTION, i);
                                 break;
                         case VALUE_GENERATOR:
-                                vp = class_lookup_method(ty, CLASS_GENERATOR, method, h);
+                                vp = class_lookup_method_i(ty, CLASS_GENERATOR, i);
                                 break;
                         case VALUE_TUPLE:
-                                vp = tuple_get(&value, method);
+                                vp = tuple_get(&value, intern_entry(&xD.members, i)->name);
                                 if (vp == NULL) {
-                                        vp = class_lookup_method(ty, CLASS_TUPLE, method, h);
+                                        vp = class_lookup_method_i(ty, CLASS_TUPLE, i);
                                 } else {
                                         self = NULL;
                                 }
                                 break;
                         case VALUE_CLASS: /* lol */
-                                vp = class_lookup_immediate(ty, CLASS_CLASS, method, h);
+                                vp = class_lookup_immediate_i(ty, CLASS_CLASS, i);
                                 if (vp == NULL) {
-                                        vp = class_lookup_static(ty, value.class, method, h);
+                                        vp = class_lookup_static_i(ty, value.class, i);
                                 }
                                 if (vp == NULL) {
-                                        vp = class_lookup_method(ty, value.class, method, h);
+                                        vp = class_lookup_method_i(ty, value.class, i);
                                 }
                                 break;
                         case VALUE_OBJECT:
-                                vp = table_lookup(ty, value.object, method, h);
+                                vp = itable_lookup(ty, value.object, i);
                                 if (vp == NULL) {
-                                        vp = class_lookup_method(ty, value.class, method, h);
+                                        vp = class_lookup_method_i(ty, value.class, i);
                                 } else {
                                         self = NULL;
                                 }
@@ -4211,7 +4197,7 @@ Throw:
                                 value.type &= ~VALUE_TAGGED;
                                 value.tags = 0;
                                 AutoThis = true;
-                                v = BUILTIN_METHOD(method, func, &value);
+                                v = BUILTIN_METHOD(i, func, &value);
                                 if (nkw > 0) {
                                         goto CallKwArgs;
                                 } else {
@@ -4222,7 +4208,7 @@ Throw:
                                 pop(ty);
                                 if (self != NULL) {
                                         AutoThis = true;
-                                        v = METHOD(method, vp, self);
+                                        v = METHOD(i, vp, self);
                                 } else {
                                         v = *vp;
                                 }
@@ -4234,20 +4220,20 @@ Throw:
                         } else if (b) {
                                 STACK.count -= (n + 1 + nkw);
                                 push(ty, NIL);
-                        } else {
-                                if (value.type == VALUE_OBJECT) {
-                                        vp = class_method(ty, value.class, MISSING);
-                                        if (vp != NULL) {
-                                                v = pop(ty);
-                                                push(ty, NIL);
-                                                memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (Value));
-                                                top(ty)[-n++] = STRING_NOGC(method, strlen(method));
-                                                push(ty, v);
-                                                self = &value;
-                                                goto SetupMethodCall;
-                                        }
+                        } else if (value.type == VALUE_OBJECT) {
+                                method = M_NAME(i);
+                                vp = class_lookup_method_i(ty, value.class, NAMES.missing);
+                                if (vp != NULL) {
+                                        v = pop(ty);
+                                        push(ty, NIL);
+                                        memmove(top(ty) - (n - 1), top(ty) - n, n * sizeof (Value));
+                                        top(ty)[-n++] = STRING_NOGC(method, strlen(method));
+                                        push(ty, v);
+                                        self = &value;
+                                        goto SetupMethodCall;
                                 }
-                                zP("call to non-existent method '%s' on %s", method, value_show(ty, &value));
+                        } else {
+                                zP("call to non-existent method '%s' on %s", M_NAME(i), value_show(ty, &value));
                         }
                         break;
                 CASE(SAVE_STACK_POS)
@@ -4335,6 +4321,21 @@ vm_init(Ty *ty, int ac, char **av)
 {
         InitializeTY();
         InitializeTy(ty);
+
+        build_string_method_table();
+        build_dict_method_table();
+        build_array_method_table();
+        build_blob_method_table();
+
+        NAMES.fmt = M_ID("__fmt__");
+        NAMES.json = M_ID("__json__");
+        NAMES.len = M_ID("__len__");
+        NAMES.match = M_ID("__match__");
+        NAMES.missing = M_ID("__missing__");
+        NAMES.question = M_ID("__question__");
+        NAMES.slice = M_ID("__slice__");
+        NAMES.str = M_ID("__str__");
+        NAMES.subscript = M_ID("__subscript__");
 
         GC_STOP();
 
@@ -5101,7 +5102,7 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
         GCLOG("Marking finalizers");
         for (int i = 0; i < storage->allocs->count; ++i) {
                 if (storage->allocs->items[i]->type == GC_OBJECT) {
-                        value_mark(ty, &((ValueTable *)storage->allocs->items[i]->data)->finalizer);
+                        value_mark(ty, &((struct itable *)storage->allocs->items[i]->data)->finalizer);
                 }
         }
 }

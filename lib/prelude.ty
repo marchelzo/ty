@@ -2541,6 +2541,11 @@ macro __walk! {
             ty.And(a, b)   => ty.And(walk(a, f), walk(b, f)),
             ty.Or(a, b)    => ty.Or(walk(a, f), walk(b, f)),
 
+            ty.KwAnd(e, conds) => ty.KwAnd(
+                walk(e, f),
+                [walk(cond, f) for cond in conds]
+            ),
+
             ty.UserOp(op, a, b) => ty.UserOp(
                 op,
                 walk(a, f),

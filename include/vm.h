@@ -212,7 +212,7 @@ vm_get_sigfn(Ty *ty, int);
 
 #ifndef _WIN32
 void
-vm_do_signal(Ty *ty, int, siginfo_t *, void *);
+vm_do_signal(int, siginfo_t *, void *);
 #endif
 
 bool
@@ -266,8 +266,8 @@ vm_try_exec(Ty *ty, char *ip);
 FrameStack *
 vm_get_frames(Ty *ty);
 
-struct value
-GetMember(Ty *ty, struct value v, char const *member, unsigned long h, bool b);
+Value
+GetMember(Ty *ty, Value v, int i, bool b);
 
 extern _Thread_local TyMutex *MyLock;
 

@@ -10,7 +10,6 @@ CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
-CFLAGS += -ferror-limit=2
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
 LDFLAGS += -lm

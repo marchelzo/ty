@@ -44,15 +44,6 @@ table_look(Ty *ty, struct table const *t, char const *name)
         return table_lookup(ty, t, name, strhash(name));
 }
 
-char const *
-table_lookup_key(Ty *ty, struct table const *t, char const *name, unsigned long h);
-
-inline static char const *
-table_look_key(Ty *ty, struct table const *t, char const *name)
-{
-        return table_lookup_key(ty, t, name, strhash(name));
-}
-
 int
 table_get_completions(Ty *ty, struct table const *t, char const *prefix, char **out, int max);
 

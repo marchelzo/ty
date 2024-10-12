@@ -1361,6 +1361,7 @@ DEFINE_METHOD_TABLE(
 );
 
 DEFINE_METHOD_LOOKUP(string)
+DEFINE_METHOD_TABLE_BUILDER(string)
 DEFINE_METHOD_COMPLETER(string)
 
 /* vim: set sw=8 sts=8 expandtab: */

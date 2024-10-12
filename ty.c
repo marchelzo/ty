@@ -19,7 +19,7 @@
 #include "value.h"
 #include "sqlite.h"
 #include "util.h"
-#include "table.h"
+#include "itable.h"
 #include "compiler.h"
 #include "class.h"
 #include "blob.h"
@@ -231,7 +231,7 @@ complete(char const *s, int start, int end)
                 switch (v->type) {
                 case VALUE_OBJECT:
                         n += class_get_completions(&MainTy, v->class, s, completions, MAX_COMPLETIONS);
-                        n += table_get_completions(&MainTy, v->object, s, completions + n, MAX_COMPLETIONS - n);
+                        n += itable_get_completions(&MainTy, v->object, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_ARRAY:
                         n += array_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
