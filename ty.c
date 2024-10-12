@@ -354,7 +354,7 @@ ProcessArgs(char *argv[], bool first)
                                         EnableLogging = true;
                                         break;
                                 case 'p':
-                                        PrintResult = true;
+                                        PrintResult |= !first;
                                         break;
                                 case 't':
                                         if (opt[1] == '\0') {
