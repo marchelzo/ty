@@ -128,6 +128,7 @@ static struct location End;
 static int depth;
 static bool NoEquals = false;
 static bool NoIn = false;
+static bool NoAndOr = false;
 static bool NoPipe = false;
 
 static Expr WildCard = {
@@ -151,11 +152,13 @@ static enum {
 #define SAVE_NC(b) bool NCSave = NoConstraint; NoConstraint = (b);
 #define SAVE_NI(b) bool NISave = NoIn; NoIn = (b);
 #define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
+#define SAVE_NA(b) bool NASave = NoAndOr; NoAndOr = (b);
 
 #define LOAD_NE() NoEquals = NESave;
 #define LOAD_NC() NoConstraint = NCSave;
 #define LOAD_NI() NoIn = NISave;
 #define LOAD_NP() NoPipe = NPSave;
+#define LOAD_NA() NoAndOr = NASave;
 
 static char const *filename;
 
@@ -200,6 +203,9 @@ parse_target_list(Ty *ty);
 
 static struct statement *
 parse_block(Ty *ty);
+
+static condpart_vector
+parse_condparts(Ty *ty, bool neg);
 
 static struct expression *
 assignment_lvalue(Ty *ty, struct expression *e);
@@ -260,10 +266,10 @@ gensym(Ty *ty)
         return mksym(ty, sym++);
 }
 
-inline static struct expression *
+inline static Expr *
 mkexpr(Ty *ty)
 {
-        struct expression *e = amA(sizeof *e);
+        Expr *e = amA0(sizeof *e);
         e->arena = GetArenaAlloc(ty);
         e->origin = NULL;
         e->constraint = NULL;
@@ -276,10 +282,10 @@ mkexpr(Ty *ty)
         return e;
 }
 
-inline static struct expression *
+inline static Expr *
 mkfunc(Ty *ty)
 {
-        struct expression *f = mkexpr(ty);
+        Expr *f = mkexpr(ty);
 
         static _Thread_local int t = -1;
 
@@ -305,10 +311,10 @@ mkfunc(Ty *ty)
         return f;
 }
 
-inline static struct statement *
+inline static Stmt *
 mkstmt(Ty *ty)
 {
-        struct statement *s = amA(sizeof *s);
+        Stmt *s = amA(sizeof *s);
         s->arena = GetArenaAlloc(ty);
         s->origin = NULL;
         s->filename = filename;
@@ -317,25 +323,25 @@ mkstmt(Ty *ty)
         return s;
 }
 
-inline static struct statement *
-mkret(Ty *ty, struct expression *value)
+inline static Stmt *
+mkret(Ty *ty, Expr *value)
 {
-        struct statement *s = mkstmt(ty);
+        Stmt *s = mkstmt(ty);
         s->type = STATEMENT_RETURN;
         vec_init(s->returns);
         avP(s->returns, value);
         return s;
 }
 
-inline static struct statement *
-mkdef(Ty *ty, struct expression *lvalue, char *name)
+inline static Stmt *
+mkdef(Ty *ty, Expr *lvalue, char *name)
 {
-        struct expression *value = mkexpr(ty);
+        Expr *value = mkexpr(ty);
         value->type = EXPRESSION_IDENTIFIER;
         value->identifier = name;
         value->module = NULL;
 
-        struct statement *s = mkstmt(ty);
+        Stmt *s = mkstmt(ty);
         s->type = STATEMENT_DEFINITION;
         s->pub = false;
         s->target = lvalue;
@@ -1683,6 +1689,8 @@ prefix_match(Ty *ty)
         e->subject = parse_expr(ty, -1);
         e->end = e->subject->end = End;
 
+        SAVE_NA(false);
+
         if (tok()->type == TOKEN_FAT_ARROW) {
                 next();
                 avP(e->patterns, patternize(ty, e->subject));
@@ -1726,6 +1734,8 @@ prefix_match(Ty *ty)
         consume('}');
 
 End:
+        LOAD_NA();
+
         if (id != NULL) {
                 Expr *f = mkfunc(ty);
                 avP(f->params, id);
@@ -3221,32 +3231,41 @@ infix_arrow_function(Ty *ty, struct expression *left)
         return e;
 }
 
-static struct expression *
-infix_kw_or(Ty *ty, struct expression *left)
+static Expr *
+infix_kw_or(Ty *ty, Expr *left)
 {
-        struct expression *e = mkexpr(ty);
-        e->type = EXPRESSION_KW_OR;
-        e->left = left;
+        Expr *e = mkexpr(ty);
+
+        e->type = EXPRESSION_LIST;
+        vec_init(e->es);
+
+        avP(e->es, left);
+
+        do {
+                next();
+                avP(e->es, parse_expr(ty, 1));
+        } while (have_keyword(KEYWORD_OR));
+
         e->start = left->start;
-
-        consume_keyword(ty, KEYWORD_OR);
-
-        e->right = parse_expr(ty, 4);
+        e->end = End;
 
         return e;
 }
 
-static struct expression *
-infix_kw_and(Ty *ty, struct expression *left)
+static Expr *
+infix_kw_and(Ty *ty, Expr *left)
 {
-        struct expression *e = mkexpr(ty);
+        Expr *e = mkexpr(ty);
+
         e->type = EXPRESSION_KW_AND;
         e->left = left;
         e->start = left->start;
 
         consume_keyword(ty, KEYWORD_AND);
 
-        e->right = parse_expr(ty, 4);
+        e->p_cond = parse_condparts(ty, false);
+
+        e->end = End;
 
         return e;
 }
@@ -3524,8 +3543,8 @@ get_infix_parser(Ty *ty)
 Keyword:
 
         switch (tok()->keyword) {
-        //case KEYWORD_AND: return infix_kw_and;
-        //case KEYWORD_OR:  return infix_kw_or;
+        case KEYWORD_AND: return infix_kw_and;
+        case KEYWORD_OR:  return infix_kw_or;
         case KEYWORD_NOT:
         case KEYWORD_IN:  return infix_kw_in;
         case KEYWORD_AS:  return infix_alias;
@@ -3614,11 +3633,15 @@ get_infix_prec(Ty *ty)
 
 Keyword:
         switch (tok()->keyword) {
-        //case KEYWORD_OR:  return 4;
-        //case KEYWORD_AND: return 4;
+        case KEYWORD_OR: return NoAndOr ? -3 : 1;
+
+        case KEYWORD_AND: return NoAndOr ? -3 : 4;
+
         case KEYWORD_NOT:
         case KEYWORD_IN:  return NoIn ? -3 : 6;
+
         case KEYWORD_AS:  return 1;
+
         default:          return -3;
         }
 
@@ -4039,6 +4062,8 @@ parse_condparts(Ty *ty, bool neg)
         condpart_vector parts;
         vec_init(parts);
 
+        SAVE_NA(true);
+
         avP(parts, parse_condpart(ty));
 
         while ((!neg && have_keyword(KEYWORD_AND)) ||
@@ -4067,6 +4092,8 @@ parse_condparts(Ty *ty, bool neg)
                 avP(parts, part);
         }
 
+        LOAD_NA();
+
         return parts;
 }
 
@@ -4093,12 +4120,16 @@ parse_while(Ty *ty)
 
         vec_init(s->While.parts);
 
+        SAVE_NA(true);
+
         avP(s->While.parts, parse_condpart(ty));
 
         while (have_keyword(KEYWORD_AND)) {
                 next();
                 avP(s->While.parts, parse_condpart(ty));
         }
+
+        LOAD_NA();
 
         s->While.block = parse_block(ty);
 
@@ -4152,6 +4183,8 @@ parse_match_statement(Ty *ty)
         vec_init(s->match.patterns);
         vec_init(s->match.statements);
 
+        SAVE_NA(false);
+
         avP(s->match.patterns, parse_pattern(ty));
 
         consume(TOKEN_FAT_ARROW);
@@ -4168,6 +4201,8 @@ parse_match_statement(Ty *ty)
                 consume(TOKEN_FAT_ARROW);
                 avP(s->match.statements, parse_statement(ty, 0));
         }
+
+        LOAD_NA();
 
         consume('}');
 
@@ -4454,10 +4489,10 @@ should_split(Ty *ty)
         return false;
 }
 
-static struct expression *
+static Expr *
 parse_expr(Ty *ty, int prec)
 {
-        struct expression *e;
+        Expr *e;
 
         if (++depth > 256)
                 error(ty, "exceeded maximum recursion depth of 256");

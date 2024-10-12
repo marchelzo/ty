@@ -1365,6 +1365,207 @@ vm_do_signal(Ty *ty, int sig, siginfo_t *info, void *ctx)
 }
 #endif
 
+#ifndef TY_RELEASE
+__attribute__((noinline))
+#else
+inline
+#endif
+static void
+DoDrop(Ty *ty)
+{
+        Value group = *vvL(drop_stack);
+
+        for (int i = 0; i < group.array->count; ++i) {
+                Value v = group.array->items[i];
+                if (v.type != VALUE_OBJECT)
+                        continue;
+                Value *f = class_method(ty, v.class, "__drop__");
+                if (f == NULL)
+                        continue;
+                vm_call_method(ty, &v, f, 0);
+        }
+
+        vvX(drop_stack);
+}
+
+inline static struct try **
+GetCurrentTry(Ty *ty)
+{
+        for (int i = 0; i < try_stack.count; ++i) {
+                struct try **t = vvL(try_stack) - i;
+                if ((*t)->state == TRY_TRY || (*t)->state == TRY_FINALLY) {
+                        return t;
+                }
+        }
+
+        return NULL;
+}
+
+inline static noreturn void
+DoThrow(Ty *ty)
+{
+        struct try **tp = GetCurrentTry(ty);
+
+        if (tp == NULL) {
+                ThrowCtx c = *vvX(throw_stack);
+
+                FRAMES.count = c.ctxs;
+                IP = (char *)c.ip;
+
+                zP("uncaught exception: %s%s%s", TERM(31), value_show_color(ty, top(ty)), TERM(39));
+        }
+
+        struct try *t = *tp;
+
+        if (t->state == TRY_FINALLY) {
+                zP(
+                        "an exception was thrown while handling another exception: %s%s%s",
+                        TERM(31), value_show_color(ty, top(ty)), TERM(39)
+                );
+        }
+
+        t->state = TRY_THROW;
+        t->executing = true;
+
+        Value v = pop(ty);
+
+        for (struct try **t_ = vvL(try_stack); t_ != tp; --t_) {
+                t_[0]->state = TRY_FINALLY;
+                if (t_[0]->finally != NULL) {
+                        vm_exec(ty, t_[0]->finally);
+                }
+                while (drop_stack.count > t_[0]->ds) {
+                        DoDrop(ty);
+                }
+        }
+
+        while (drop_stack.count > t->ds) {
+                DoDrop(ty);
+        }
+
+        try_stack.count -= vvL(try_stack) - tp;
+
+        STACK.count = t->sp;
+
+        push(ty, SENTINEL);
+        push(ty, v);
+
+        sp_stack.count = t->nsp;
+        FRAMES.count = t->ctxs;
+        TARGETS.count = t->ts;
+        CALLS.count = t->cs;
+        IP = t->catch;
+
+
+        gc_truncate_root_set(ty, t->gc);
+
+        longjmp(t->jb, 1);
+        /* unreachable */
+}
+
+inline static Value
+ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
+{
+        char *ip;
+        Value *vp;
+
+        if (subscript.type == VALUE_GENERATOR) {
+                gP(&subscript);
+                gP(&container);
+                Array *a = vA();
+                NOGC(a);
+                ip = IP;
+                for (;;) {
+                        call_co(ty, &subscript, 0);
+                        *vvL(subscript.gen->calls) = &halt;
+                        vec_push_unchecked(ty, subscript.gen->calls, next_fix);
+                        vm_exec(ty, IP);
+                        Value r = pop(ty);
+                        if (r.type == VALUE_NONE)
+                                break;
+                        FALSE_OR (r.type != VALUE_INTEGER)
+                                zP("iterator yielded non-integer array index in subscript expression");
+                        if (r.integer < 0)
+                                r.integer += container.array->count;
+                        if (r.integer < 0 || r.integer >= container.array->count) {
+                                if (strict) goto Error;
+                                vAp(a, None);
+                        } else if (strict) {
+                                vAp(a, container.array->items[r.integer]);
+                        } else {
+                                vAp(a, Some(ty, container.array->items[r.integer]));
+                        }
+                }
+                OKGC(a);
+                gX();
+                gX();
+                IP = ip;
+                return ARRAY(a);
+        } else if (subscript.type == VALUE_OBJECT) {
+                gP(&subscript);
+                gP(&container);
+                vp = class_method(ty, subscript.class, "__next__");
+                if (vp == NULL) {
+                        vp = class_method(ty, subscript.class, "__iter__");
+                        FALSE_OR (vp == NULL) {
+                                zP("non-iterable object used in subscript expression");
+                        }
+                        call(ty, vp, &subscript, 0, 0, true);
+                        subscript = pop(ty);
+                        gX();
+                        gX();
+                        return ArraySubscript(ty, container, subscript, strict);
+                }
+                Array *a = vA();
+                NOGC(a);
+                for (int i = 0; ; ++i) {
+                        push(ty, INTEGER(i));
+                        call(ty, vp, &subscript, 1, 0, true);
+                        Value r = pop(ty);
+                        if (r.type == VALUE_NIL)
+                                break;
+                        FALSE_OR (r.type != VALUE_INTEGER)
+                                zP("iterator yielded non-integer array index in subscript expression");
+                        if (r.integer < 0)
+                                r.integer += container.array->count;
+                        if (r.integer < 0 || r.integer >= container.array->count) {
+                                if (strict) goto Error;
+                                vAp(a, None);
+                        } else if (strict) {
+                                vAp(a, container.array->items[r.integer]);
+                        } else {
+                                vAp(a, Some(ty, container.array->items[r.integer]));
+                        }
+                }
+                OKGC(a);
+                gX();
+                gX();
+                return ARRAY(a);
+        } else if (subscript.type == VALUE_INTEGER) {
+                if (subscript.integer < 0) {
+                        subscript.integer += container.array->count;
+                }
+                if (subscript.integer < 0 || subscript.integer >= container.array->count) {
+                        if (strict) goto Error;
+                        return None;
+                } else if (strict) {
+                        return container.array->items[subscript.integer];
+                } else {
+                        return Some(ty, container.array->items[subscript.integer]);
+                }
+        } else {
+                zP(
+                        "non-integer array index used in subscript expression: %s",
+                        value_show_color(ty, &subscript)
+                );
+        }
+
+        Value e;
+Error:
+        e = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
+        vm_throw(ty, &e);
+}
+
 inline static void
 AddTupleEntry(Ty *ty, StringVector *names, ValueVector *values, char const *name, Value const *v)
 {
@@ -1871,29 +2072,6 @@ DoTag(Ty *ty, int tag, int n, Value *kws)
         }
 }
 
-#ifndef TY_RELEASE
-__attribute__((noinline))
-#else
-inline
-#endif
-static void
-DoDrop(Ty *ty)
-{
-        Value group = *vvL(drop_stack);
-
-        for (int i = 0; i < group.array->count; ++i) {
-                Value v = group.array->items[i];
-                if (v.type != VALUE_OBJECT)
-                        continue;
-                Value *f = class_method(ty, v.class, "__drop__");
-                if (f == NULL)
-                        continue;
-                vm_call_method(ty, &v, f, 0);
-        }
-
-        vvX(drop_stack);
-}
-
 static void
 splat(Ty *ty, Dict *d, Value *v)
 {
@@ -1914,19 +2092,6 @@ splat(Ty *ty, Dict *d, Value *v)
         }
 
         // FIXME: What else should be allowed here?
-}
-
-inline static struct try **
-GetCurrentTry(Ty *ty)
-{
-        for (int i = 0; i < try_stack.count; ++i) {
-                struct try **t = vvL(try_stack) - i;
-                if ((*t)->state == TRY_TRY || (*t)->state == TRY_FINALLY) {
-                        return t;
-                }
-        }
-
-        return NULL;
 }
 
 Value
@@ -2462,65 +2627,7 @@ Throw:
                         }));
                         // Fallthrough
                 CASE(RETHROW)
-                {
-                        struct try **tp = GetCurrentTry(ty);
-
-                        if (tp == NULL) {
-                                ThrowCtx c = *vvX(throw_stack);
-
-                                FRAMES.count = c.ctxs;
-                                IP = (char *)c.ip;
-
-                                zP("uncaught exception: %s%s%s", TERM(31), value_show_color(ty, top(ty)), TERM(39));
-                        }
-
-                        struct try *t = *tp;
-
-                        if (t->state == TRY_FINALLY) {
-                                zP(
-                                        "an exception was thrown while handling another exception: %s%s%s",
-                                        TERM(31), value_show_color(ty, top(ty)), TERM(39)
-                                );
-                        }
-
-                        t->state = TRY_THROW;
-                        t->executing = true;
-
-                        v = pop(ty);
-
-                        for (struct try **t_ = vvL(try_stack); t_ != tp; --t_) {
-                                t_[0]->state = TRY_FINALLY;
-                                if (t_[0]->finally != NULL) {
-                                        vm_exec(ty, t_[0]->finally);
-                                }
-                                while (drop_stack.count > t_[0]->ds) {
-                                        DoDrop(ty);
-                                }
-                        }
-
-                        while (drop_stack.count > t->ds) {
-                                DoDrop(ty);
-                        }
-
-                        try_stack.count -= vvL(try_stack) - tp;
-
-                        STACK.count = t->sp;
-
-                        push(ty, SENTINEL);
-                        push(ty, v);
-
-                        sp_stack.count = t->nsp;
-                        FRAMES.count = t->ctxs;
-                        TARGETS.count = t->ts;
-                        CALLS.count = t->cs;
-                        IP = t->catch;
-
-
-                        gc_truncate_root_set(ty, t->gc);
-
-                        longjmp(t->jb, 1);
-                        /* unreachable */
-                }
+                        DoThrow(ty);
                 CASE(FINALLY)
                 {
                         struct try *t = *vvX(try_stack);
@@ -3328,86 +3435,7 @@ Throw:
 
                         switch (container.type) {
                         case VALUE_ARRAY:
-                        ArraySubscript:
-                                if (subscript.type == VALUE_GENERATOR) {
-                                        gP(&subscript);
-                                        gP(&container);
-                                        Array *a = vA();
-                                        NOGC(a);
-                                        str = IP;
-                                        for (;;) {
-                                                call_co(ty, &subscript, 0);
-                                                *vvL(subscript.gen->calls) = &halt;
-                                                vec_push_unchecked(ty, subscript.gen->calls, next_fix);
-                                                vm_exec(ty, IP);
-                                                Value r = pop(ty);
-                                                if (r.type == VALUE_NONE)
-                                                        break;
-                                                FALSE_OR (r.type != VALUE_INTEGER)
-                                                        zP("iterator yielded non-integer array index in subscript expression");
-                                                if (r.integer < 0)
-                                                        r.integer += container.array->count;
-                                                if (r.integer < 0 || r.integer >= container.array->count)
-                                                        goto OutOfRange;
-                                                vAp(a, container.array->items[r.integer]);
-                                        }
-                                        push(ty, ARRAY(a));
-                                        OKGC(a);
-                                        gX();
-                                        gX();
-                                        IP = str;
-                                } else if (subscript.type == VALUE_OBJECT) {
-                                        gP(&subscript);
-                                        gP(&container);
-                                        vp = class_method(ty, subscript.class, "__next__");
-                                        if (vp == NULL) {
-                                                vp = class_method(ty, subscript.class, "__iter__");
-                                                FALSE_OR (vp == NULL) {
-                                                        zP("non-iterable object used in subscript expression");
-                                                }
-                                                call(ty, vp, &subscript, 0, 0, true);
-                                                subscript = pop(ty);
-                                                gX();
-                                                gX();
-                                                goto ArraySubscript;
-                                        }
-                                        Array *a = vA();
-                                        NOGC(a);
-                                        for (int i = 0; ; ++i) {
-                                                push(ty, INTEGER(i));
-                                                call(ty, vp, &subscript, 1, 0, true);
-                                                Value r = pop(ty);
-                                                if (r.type == VALUE_NIL)
-                                                        break;
-                                                FALSE_OR (r.type != VALUE_INTEGER)
-                                                        zP("iterator yielded non-integer array index in subscript expression");
-                                                if (r.integer < 0)
-                                                        r.integer += container.array->count;
-                                                if (r.integer < 0 || r.integer >= container.array->count)
-                                                        goto OutOfRange;
-                                                vAp(a, container.array->items[r.integer]);
-                                        }
-                                        push(ty, ARRAY(a));
-                                        OKGC(a);
-                                        gX();
-                                        gX();
-                                } else if (subscript.type == VALUE_INTEGER) {
-                                        if (subscript.integer < 0) {
-                                                subscript.integer += container.array->count;
-                                        }
-                                        if (subscript.integer < 0 || subscript.integer >= container.array->count) {
-                                OutOfRange:
-                                                push(ty, TAG(gettag(ty, NULL, "IndexError")));
-                                                goto Throw;
-                                                zP("array index out of range in subscript expression");
-                                        }
-                                        push(ty, container.array->items[subscript.integer]);
-                                } else {
-                                        zP(
-                                                "non-integer array index used in subscript expression: %s",
-                                                value_show_color(ty, &subscript)
-                                        );
-                                }
+                                push(ty, ArraySubscript(ty, container, subscript, true));
                                 break;
                         case VALUE_TUPLE:
                                 if (subscript.type == VALUE_INTEGER) {
@@ -4023,6 +4051,26 @@ Throw:
                         case VALUE_NIL:
                                 STACK.count -= n + (nkw > 0);
                                 push(ty, NIL);
+                                break;
+                        case VALUE_DICT:
+                                if (nkw > 0) { pop(ty); }
+                                value = peek(ty);
+                                push(ty, v);
+                                vp = dict_get_value(ty, v.dict, &value);
+                                STACK.count -= 2;
+                                if (vp == NULL) {
+                                        push(ty, None);
+                                } else {
+                                        push(ty, Some(ty, *vp));
+                                }
+                                break;
+                        case VALUE_ARRAY:
+                                if (nkw > 0) { pop(ty); }
+                                subscript = peek(ty);
+                                push(ty, v);
+                                value = ArraySubscript(ty, v, subscript, false);
+                                STACK.count -= 2;
+                                push(ty, value);
                                 break;
                         default:
                                 zP("attempt to call non-callable value %s", value_show(ty, &v));
@@ -4741,13 +4789,17 @@ vm_get(Ty *ty, int i)
         return top(ty) - i;
 }
 
-_Noreturn void
+noreturn void
 vm_throw(Ty *ty, Value const *v)
 {
         push(ty, *v);
-        vm_exec(ty, (char[]){INSTR_THROW});
-        // unreachable
-        abort();
+
+        vvP(throw_stack, ((ThrowCtx) {
+                .ctxs = FRAMES.count,
+                .ip = IP
+        }));
+
+        DoThrow(ty);
 }
 
 FrameStack *
@@ -4766,7 +4818,7 @@ vm_call_method(Ty *ty, Value const *self, Value const *f, int argc)
 Value
 vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
 {
-        Value r, *init;
+        Value r, *init, *vp;
         size_t n = STACK.count - argc;
 
         switch (f->type) {
@@ -4814,10 +4866,18 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                                 call(ty, init, &r, argc, 0, true);
                                 pop(ty);
                         } else {
-                                STACK.count -= (argc + 1);
+                                STACK.count -= argc;
                         }
                         return r;
                 }
+        case VALUE_DICT:
+                vp = (argc >= 1) ? dict_get_value(ty, f->dict, top(ty) - (argc - 1)) : NULL;
+                STACK.count -= argc;
+                return (vp == NULL) ? None : Some(ty, *vp);
+        case VALUE_ARRAY:
+                r = (argc >= 1) ? ArraySubscript(ty, *f, top(ty)[-(argc - 1)], false) : None;
+                STACK.count -= argc;
+                return r;
         default:
                 zP("Non-callable value passed to vmC(): %s", value_show_color(ty, f));
         }
@@ -4847,7 +4907,7 @@ Collect:
 Value
 vm_call(Ty *ty, Value const *f, int argc)
 {
-        Value r, *init;
+        Value r, *vp;
         size_t n = STACK.count - argc;
 
         switch (f->type) {
@@ -4871,24 +4931,32 @@ vm_call(Ty *ty, Value const *f, int argc)
                 r.type |= VALUE_TAGGED;
                 return r;
         case VALUE_CLASS:
-                init = class_method(ty, f->class, "init");
+                vp = class_method(ty, f->class, "init");
                 if (f->class < CLASS_PRIMITIVE) {
-                        if (init != NULL) {
-                                call(ty, init, NULL, argc, 0, true);
+                        if (vp != NULL) {
+                                call(ty, vp, NULL, argc, 0, true);
                                 return pop(ty);
                         } else {
                                 zP("Couldn't find init method for built-in class. Was prelude loaded?");
                         }
                 } else {
                         r = OBJECT(object_new(ty, f->class), f->class);
-                        if (init != NULL) {
-                                call(ty, init, &r, argc, 0, true);
+                        if (vp != NULL) {
+                                call(ty, vp, &r, argc, 0, true);
                                 pop(ty);
                         } else {
-                                STACK.count -= (argc + 1);
+                                STACK.count -= argc;
                         }
                         return r;
                 }
+        case VALUE_DICT:
+                vp = (argc >= 1) ? dict_get_value(ty, f->dict, top(ty) - (argc - 1)) : NULL;
+                STACK.count -= argc;
+                return (vp == NULL) ? None : Some(ty, *vp);
+        case VALUE_ARRAY:
+                r = (argc >= 1) ? ArraySubscript(ty, *f, top(ty)[-(argc - 1)], false) : None;
+                STACK.count -= argc;
+                return r;
         default:
                 zP("Non-callable value passed to vmC(): %s", value_show_color(ty, f));
         }

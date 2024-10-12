@@ -1594,6 +1594,7 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                         e->identifier = identifier;
                         e->module = module;
                         e->symbol = symbol;
+                        e->namespace = NULL;
                         e->constraint = NULL;
                         if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
                                 e->tagged = tagged[0];
@@ -1838,6 +1839,14 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         symbolize_pattern_(ty, scope, e->aliased, reuse, def);
                 }
                 e->local = true;
+                break;
+        case EXPRESSION_KW_AND:
+                symbolize_pattern_(ty, scope, e->left, reuse, def);
+                for (int i = 0; i < e->p_cond.count; ++i) {
+                        struct condpart *p = e->p_cond.items[i];
+                        symbolize_pattern_(ty, scope, p->target, reuse, p->def);
+                        symbolize_expression(ty, scope, p->e);
+                }
                 break;
         case EXPRESSION_ARRAY:
                 for (int i = 0; i < e->elements.count; ++i)
@@ -2159,8 +2168,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_MATCH:
                 symbolize_expression(ty, scope, e->subject);
                 for (int i = 0; i < e->patterns.count; ++i) {
-                        Scope *shared = scope_new(ty, "(match-shared)", scope, false);
                         if (e->patterns.items[i]->type == EXPRESSION_LIST) {
+                                Scope *shared = scope_new(ty, "(match-shared)", scope, false);
                                 for (int j = 0; j < e->patterns.items[i]->es.count; ++j) {
                                         subscope = scope_new(ty, "(match-branch)", scope, false);
                                         symbolize_pattern(ty, subscope, e->patterns.items[i]->es.items[j], shared, true);
@@ -2197,7 +2206,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
         case EXPRESSION_KW_OR:
-        case EXPRESSION_KW_AND:
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
                 symbolize_expression(ty, scope, e->left);
@@ -2633,8 +2641,18 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_MATCH:
                 symbolize_expression(ty, scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
-                        subscope = scope_new(ty, "(match)", scope, false);
-                        symbolize_pattern(ty, subscope, s->match.patterns.items[i], NULL, true);
+                        if (s->match.patterns.items[i]->type == EXPRESSION_LIST) {
+                                Scope *shared = scope_new(ty, "(match-shared)", scope, false);
+                                for (int j = 0; j < s->match.patterns.items[i]->es.count; ++j) {
+                                        subscope = scope_new(ty, "(match-branch)", scope, false);
+                                        symbolize_pattern(ty, subscope, s->match.patterns.items[i]->es.items[j], shared, true);
+                                        scope_copy(ty, shared, subscope);
+                                }
+                                subscope = shared;
+                        } else {
+                                subscope = scope_new(ty, "(match-branch)", scope, false);
+                                symbolize_pattern(ty, subscope, s->match.patterns.items[i], NULL, true);
+                        }
                         symbolize_statement(ty, subscope, s->match.statements.items[i]);
                 }
                 break;
@@ -3756,6 +3774,19 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 FAIL_MATCH_IF(ENSURE_EQUALS_VAR);
                 need_loc = true;
                 break;
+        case EXPRESSION_KW_AND:
+                emit_try_match_(ty, pattern->left);
+                for (int i = 0; i < pattern->p_cond.count; ++i) {
+                        struct condpart *p = pattern->p_cond.items[i];
+                        emit_expression(ty, p->e);
+                        if (p->target == NULL) {
+                                FAIL_MATCH_IF(JUMP_IF_NOT);
+                        } else {
+                                emit_try_match_(ty, p->target);
+                                emit_instr(ty, INSTR_POP);
+                        }
+                }
+                break;
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 emit_instr(ty, INSTR_DUP);
                 FAIL_MATCH_IF(JUMP_IF_NIL);
@@ -3895,14 +3926,30 @@ emit_try_match_(Ty *ty, Expr const *pattern)
 
                 break;
         case EXPRESSION_LIST:
+        {
+                vec(JumpPlaceholder) matched = {0};
+
                 for (int i = 0; i < pattern->es.count; ++i) {
-                        emit_instr(ty, INSTR_PUSH_NTH);
-                        emit_int(ty, i);
-                        FAIL_MATCH_IF(JUMP_IF_SENTINEL);
+                        JumpGroup fails_save = state.match_fails;
+                        InitJumpGroup(&state.match_fails);
+
                         emit_try_match_(ty, pattern->es.items[i]);
-                        emit_instr(ty, INSTR_POP);
+                        avP(matched, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP));
+
+                        EMIT_GROUP_LABEL(state.match_fails, ":Fail");
+                        patch_jumps_to(&state.match_fails, state.code.count);
+
+                        state.match_fails = fails_save;
                 }
+
+                emit_instr(ty, INSTR_BAD_MATCH);
+
+                for (int i = 0; i < matched.count; ++i) {
+                        PATCH_JUMP(matched.items[i]);
+                }
+
                 break;
+        }
         default:
                 /*
                  * Need to think about how this should work...
@@ -6482,40 +6529,6 @@ source_forget_arena(void const *arena)
                         source_map.items[i] = NULL;
                 }
         }
-}
-
-Value
-tagged(Ty *ty, int tag, Value v, ...)
-{
-        va_list ap;
-
-        va_start(ap, v);
-
-        static vec(Value) vs;
-        vs.count = 0;
-
-        Value next = va_arg(ap, Value);
-
-        if (next.type == VALUE_NONE) {
-                goto TagAndReturn;
-        }
-
-        avP(vs, v);
-
-        while (next.type != VALUE_NONE) {
-                avP(vs, next);
-                next = va_arg(ap, Value);
-        }
-
-        v = vT(vs.count);
-        for (int i = 0; i < vs.count; ++i) {
-                v.items[i] = vs.items[i];
-        }
-
-TagAndReturn:
-        v.type |= VALUE_TAGGED;
-        v.tags = tags_push(ty, v.tags, tag);
-        return v;
 }
 
 static Value

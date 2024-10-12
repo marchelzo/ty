@@ -924,6 +924,8 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v)
         case VALUE_BUILTIN_METHOD:
         case VALUE_CLASS:
         case VALUE_TAG:
+        case VALUE_DICT:
+        case VALUE_ARRAY:
                 vmP(v);
                 return vmC(f, 1);
         case VALUE_REGEX:

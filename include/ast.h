@@ -305,7 +305,10 @@ struct expression {
                 struct {
                         char const *op_name;
                         struct expression *left;
-                        struct expression *right;
+                        union {
+                                struct expression *right;
+                                condpart_vector p_cond;
+                        };
                         struct expression *sc;
                         bool not_nil;
                 };
