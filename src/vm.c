@@ -1468,7 +1468,7 @@ ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
 {
         char *ip;
         Value *vp;
-
+Start:
         if (subscript.type == VALUE_GENERATOR) {
                 gP(&subscript);
                 gP(&container);
@@ -1514,7 +1514,7 @@ ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
                         subscript = pop(ty);
                         gX();
                         gX();
-                        return ArraySubscript(ty, container, subscript, strict);
+                        goto Start;
                 }
                 Array *a = vA();
                 NOGC(a);
