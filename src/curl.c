@@ -11,15 +11,41 @@
 #include "util.h"
 
 static _Thread_local vec(char) Buffer;
+static _Thread_local Blob *ResponseBlob;
+
+inline static bool
+BufferCString(Value const *v)
+{
+        size_t n;
+
+        Buffer.count = 0;
+
+        switch (v->type) {
+        case VALUE_STRING:
+                xvPn(Buffer, v->string, v->bytes);
+                xvP(Buffer, '\0');
+                break;
+        case VALUE_BLOB:
+                xvPn(Buffer, v->blob->items, v->blob->count);
+                break;
+        case VALUE_PTR:
+                n = strlen(v->ptr) + 1;
+                xvPn(Buffer, v->ptr, n);
+                break;
+        default:
+                return false;
+        }
+
+        return true;
+}
 
 static size_t
 write_function(char *ptr, size_t size, size_t nmemb, void *data)
 {
         Ty *ty = data;
-
         size_t n = size * nmemb;
 
-        vvPn(Buffer, ptr, n);
+        vec_push_n_unchecked(ty, *ResponseBlob, ptr, n);
 
         return n;
 }
@@ -172,12 +198,12 @@ builtin_curl_mime_name(Ty *ty, int argc, struct value *kwargs)
         struct value name = ARG(1);
         switch (name.type) {
         case VALUE_STRING:
-                vvPn(Buffer, name.string, name.bytes);
-                vvP(Buffer, '\0');
+                xvPn(Buffer, name.string, name.bytes);
+                xvP(Buffer, '\0');
                 break;
         case VALUE_BLOB:
-                vvPn(Buffer, name.blob->items, name.blob->count);
-                vvP(Buffer, '\0');
+                xvPn(Buffer, name.blob->items, name.blob->count);
+                xvP(Buffer, '\0');
                 break;
         default:
                 zP("invalid name argument passed to curl::mime::name()");
@@ -268,31 +294,31 @@ builtin_curl_setopt(Ty *ty, int argc, struct value *kwargs)
                 zP("curl::setopt() expects at least 2 arguments but got %d", argc);
         }
 
-        struct value curl = ARG(0);
+        Value curl = ARG(0);
         if (curl.type != VALUE_PTR) {
                 zP("the first argument to curl::setopt() must be a pointer");
         }
 
-        struct value opt = ARG(1);
+        Value opt = ARG(1);
         if (opt.type != VALUE_INTEGER) {
                 zP("the second argument to curl::setopt() must be an integer");
         }
 
-        struct value s;
-        char buffer[1024];
+        Value s;
 
         switch (opt.integer) {
         case CURLOPT_URL:
+        case CURLOPT_COOKIE:
+        case CURLOPT_COOKIEFILE:
+        case CURLOPT_COOKIEJAR:
+        case CURLOPT_COOKIELIST:
                 s = ARG(2);
-                if (s.type != VALUE_STRING) {
-                        zP("the value of CURLOPT_URL must be a string");
+
+                if (!BufferCString(&s)) {
+                        zP("curl.setopt(): expected String, Blob, or pointer but got: %s", VSC(&s));
                 }
-                if (s.bytes >= sizeof buffer) {
-                        zP("CURLOPT_URL is too long");
-                }
-                memcpy(buffer, s.string, s.bytes);
-                buffer[s.bytes] = '\0';
-                return INTEGER(curl_easy_setopt(curl.ptr, CURLOPT_URL, buffer));
+
+                return INTEGER(curl_easy_setopt(curl.ptr, opt.integer, Buffer.items));
         case CURLOPT_POST:
                 s = ARG(2);
                 if (s.type != VALUE_INTEGER) {
@@ -371,23 +397,20 @@ builtin_curl_perform(Ty *ty, int argc, struct value *kwargs)
                 zP("the argument to curl::perform() must be a pointer");
         }
 
-        vec_init(Buffer);
+        ResponseBlob = value_blob_new(ty);
+        NOGC(ResponseBlob);
 
+        lGv(true);
         CURLcode r = curl_easy_perform(curl.ptr);
+        lTk();
+
+        OKGC(ResponseBlob);
 
         if (r != CURLE_OK) {
-                vec_empty(ty, Buffer);
-                return INTEGER(r);
+                return Err(ty, INTEGER(r));
         }
 
-        struct blob *b = value_blob_new(ty);
-        b->items = Buffer.items;
-        b->count = Buffer.count;
-        b->capacity = Buffer.capacity;
-
-        vec_init(Buffer);
-
-        return BLOB(b);
+        return Ok(ty, BLOB(ResponseBlob));
 }
 
 struct value
@@ -509,14 +532,14 @@ builtin_curl_url_set(Ty *ty, int argc, struct value *kwargs)
         switch (ARG(2).type) {
         case VALUE_STRING:
                 Buffer.count = 0;
-                vvPn(Buffer, ARG(2).string, ARG(2).bytes);
-                vvP(Buffer, '\0');
+                xvPn(Buffer, ARG(2).string, ARG(2).bytes);
+                xvP(Buffer, '\0');
                 content = Buffer.items;
                 break;
         case VALUE_BLOB:
                 Buffer.count = 0;
-                vvPn(Buffer, ARG(2).blob->items, ARG(2).blob->count);
-                vvP(Buffer, '\0');
+                xvPn(Buffer, ARG(2).blob->items, ARG(2).blob->count);
+                xvP(Buffer, '\0');
                 content = Buffer.items;
                 break;
         case VALUE_PTR:

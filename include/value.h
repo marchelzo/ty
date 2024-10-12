@@ -5,6 +5,7 @@ struct value;
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include "ty.h"
@@ -271,13 +272,13 @@ enum {
         VALUE_CLASS            ,
         VALUE_GENERATOR        ,
         VALUE_TAG              ,
+        VALUE_ARRAY            ,
+        VALUE_DICT             ,
         VALUE_REGEX            , // CALLABLE here and above
         VALUE_INTEGER          ,
         VALUE_REAL             ,
         VALUE_BOOLEAN          ,
         VALUE_NIL              ,
-        VALUE_ARRAY            ,
-        VALUE_DICT             ,
         VALUE_OBJECT           ,
         VALUE_STRING           ,
         VALUE_BLOB             ,
@@ -832,5 +833,40 @@ ArrayClone(Ty *ty, Array const *a)
 
         return new;
 }
+
+inline static Value
+tagged(Ty *ty, int tag, Value v, ...)
+{
+        va_list ap;
+
+        va_start(ap, v);
+
+        static vec(Value) vs;
+        vs.count = 0;
+
+        Value next = va_arg(ap, Value);
+
+        if (next.type == VALUE_NONE) {
+                goto TagAndReturn;
+        }
+
+        avP(vs, v);
+
+        while (next.type != VALUE_NONE) {
+                avP(vs, next);
+                next = va_arg(ap, Value);
+        }
+
+        v = vT(vs.count);
+        for (int i = 0; i < vs.count; ++i) {
+                v.items[i] = vs.items[i];
+        }
+
+TagAndReturn:
+        v.type |= VALUE_TAGGED;
+        v.tags = tags_push(ty, v.tags, tag);
+        return v;
+}
+
 
 #endif
