@@ -65,6 +65,7 @@ typedef vec(struct alloc *) AllocList;
 typedef struct {
         InternSet u_ops;
         InternSet b_ops;
+        InternSet members;
 } TY;
 
 typedef struct thread_group ThreadGroup;
@@ -94,6 +95,18 @@ typedef struct {
         ThreadGroup *my_group;
 } Ty;
 
+struct member_names {
+        int missing;
+        int slice;
+        int fmt;
+        int str;
+        int question;
+        int subscript;
+        int len;
+        int match;
+        int json;
+};
+
 #define MemoryUsed  (ty->memory_used)
 #define MemoryLimit (ty->memory_limit)
 
@@ -101,6 +114,7 @@ typedef struct {
 
 extern Ty MainTy;
 extern TY xD;
+extern struct member_names NAMES;
 
 #define dont_printf(...) do { } while (0)
 
@@ -212,5 +226,8 @@ enum {
 #define pP(p) ((uintptr_t)p & ~7)
 
 #define NEW(x) x = mrealloc(NULL, sizeof *(x))
+
+#define M_ID(m) intern(&xD.members, (m))->id
+#define M_NAME(i) intern_entry(&xD.members, (i))->name
 
 #endif

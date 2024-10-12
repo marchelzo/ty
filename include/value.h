@@ -17,44 +17,44 @@ struct value;
 #include "token.h"
 #include "scope.h"
 
-#define V_ALIGN (_Alignof (struct value))
+#define V_ALIGN (_Alignof (Value))
 
 #define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
 
-#define INTEGER(k)               ((struct value){ .type = VALUE_INTEGER,        .integer        = (k),                                                   .tags = 0 })
-#define REAL(f)                  ((struct value){ .type = VALUE_REAL,           .real           = (f),                                                   .tags = 0 })
-#define BOOLEAN(b)               ((struct value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                                   .tags = 0 })
-#define ARRAY(a)                 ((struct value){ .type = VALUE_ARRAY,          .array          = (a),                                                   .tags = 0 })
-#define TUPLE(vs, ns, n, gc)     ((struct value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),  .names = (ns), .gc_names = (gc),  .tags = 0 })
-#define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
-#define DICT(d)                  ((struct value){ .type = VALUE_DICT,           .dict           = (d),                                                   .tags = 0 })
-#define REGEX(r)                 ((struct value){ .type = VALUE_REGEX,          .regex          = (r),                                                   .tags = 0 })
-#define FUNCTION()               ((struct value){ .type = VALUE_FUNCTION,                                                                                .tags = 0 })
-#define PTR(p)                   ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                                   .tags = 0 })
-#define TPTR(t, p)               ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,  .extra = (t),                    .tags = 0 })
-#define GCPTR(p, gcp)            ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                                  .tags = 0 })
-#define TGCPTR(p, t, gcp)        ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (t),                    .tags = 0 })
-#define EPTR(p, gcp, ep)         ((struct value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),                   .tags = 0 })
-#define BLOB(b)                  ((struct value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
-#define REF(p)                   ((struct value){ .type = VALUE_REF,            .ptr            = (p),                                                   .tags = 0 })
-#define UNINITIALIZED(p)         ((struct value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                                   .tags = 0 })
-#define TAG(t)                   ((struct value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
-#define CLASS(c)                 ((struct value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
-#define OBJECT(o, c)             ((struct value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
-#define METHOD(n, m, t)          ((struct value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
-#define GENERATOR(g)             ((struct value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
-#define THREAD(t)                ((struct value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((struct value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
-#define NIL                      ((struct value){ .type = VALUE_NIL,                                                                                     .tags = 0 })
+#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,        .integer        = (k),                                                   .tags = 0 })
+#define REAL(f)                  ((Value){ .type = VALUE_REAL,           .real           = (f),                                                   .tags = 0 })
+#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                                   .tags = 0 })
+#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,          .array          = (a),                                                   .tags = 0 })
+#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),  .ids = (ns),                      .tags = 0 })
+#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
+#define DICT(d)                  ((Value){ .type = VALUE_DICT,           .dict           = (d),                                                   .tags = 0 })
+#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,          .regex          = (r),                                                   .tags = 0 })
+#define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                                .tags = 0 })
+#define PTR(p)                   ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                                   .tags = 0 })
+#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,  .extra = (t),                    .tags = 0 })
+#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                                  .tags = 0 })
+#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (t),                    .tags = 0 })
+#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),                   .tags = 0 })
+#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
+#define REF(p)                   ((Value){ .type = VALUE_REF,            .ptr            = (p),                                                   .tags = 0 })
+#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                                   .tags = 0 })
+#define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
+#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
+#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
+#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
+#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
+#define THREAD(t)                ((Value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
+#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
+#define NIL                      ((Value){ .type = VALUE_NIL,                                                                                     .tags = 0 })
 
 /* Special kind of value, only used as an iteration counter in for-each loops */
-#define INDEX(ix, o, n)          ((struct value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),     .tags = 0 })
+#define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),     .tags = 0 })
 
 /* Another special one, used for functions with multiple return values */
-#define SENTINEL                 ((struct value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                  .tags = 0 })
+#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                  .tags = 0 })
 
 /* This is getting ugly */
-#define NONE                     ((struct value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                  .tags = 0 })
+#define NONE                     ((Value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                  .tags = 0 })
 
 //#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
 
@@ -106,6 +106,7 @@ struct value;
         X(And) \
         X(BitAnd) \
         X(BitOr) \
+        X(KwAnd) \
         X(NotEq) \
         X(Assign) \
         X(Let) \
@@ -199,28 +200,51 @@ enum {
         TAG_ERR
 };
 
-#define DEFINE_METHOD_TABLE(...) \
-        static struct { \
-                char const *name; \
-                BuiltinMethod *func; \
-        } funcs[] = { __VA_ARGS__ }; \
-        static size_t const nfuncs = sizeof funcs / sizeof funcs[0]
+#define DEFINE_METHOD_TABLE(...)                                     \
+        static struct {                                              \
+                char const *name;                                    \
+                BuiltinMethod *func;                                 \
+        } funcs[] = { __VA_ARGS__ };                                 \
+        static size_t const nfuncs = sizeof funcs / sizeof funcs[0]; \
+        static vec(BuiltinMethod *) ftable
 
-#define DEFINE_METHOD_LOOKUP(type) \
+#define DEFINE_METHOD_TABLE_BUILDER(type)                                     \
+        void build_ ## type ## _method_table(void)                            \
+        {                                                                     \
+                for (int i = 0; i < nfuncs; ++i) {                            \
+                        InternEntry *e = intern(&xD.members, funcs[i].name);  \
+                        while (ftable.count <= e->id) { xvP(ftable, NULL); }  \
+                        ftable.items[e->id] = funcs[i].func;                  \
+                }                                                             \
+        }
+
+#define DEFINE_METHOD_LOOKUP(type)                                   \
+        BuiltinMethod *get_ ## type ## _method_i(int i)              \
+        {                                                            \
+                return (i < ftable.count) ? ftable.items[i] : NULL;  \
+        }                                                            \
+                                                                     \
+        BuiltinMethod *get_ ## type ## _method(char const *name)     \
+        {                                                            \
+                InternEntry *e = intern(&xD.members, name);          \
+                return (get_ ## type ## _method_i)(e->id);           \
+        }
+
+#define DEFINE_METHOD_LOOKUP2(type) \
         BuiltinMethod *get_ ## type ## _method(char const *name) \
-        { \
-                int lo = 0, \
-                    hi = nfuncs - 1; \
-\
-                while (lo <= hi) { \
-                        int m = (lo + hi) / 2; \
-                        int c = strcmp(name, funcs[m].name); \
-                        if      (c < 0) hi = m - 1; \
-                        else if (c > 0) lo = m + 1; \
-                        else            return funcs[m].func; \
-                } \
-\
-                return NULL; \
+        {                                                        \
+                int lo = 0,                                      \
+                    hi = nfuncs - 1;                             \
+                                                                 \
+                while (lo <= hi) {                               \
+                        int m = (lo + hi) / 2;                   \
+                        int c = strcmp(name, funcs[m].name);     \
+                        if      (c < 0) hi = m - 1;              \
+                        else if (c > 0) lo = m + 1;              \
+                        else            return funcs[m].func;    \
+                }                                                \
+                                                                 \
+                return NULL;                                     \
         }
 
 #define DEFINE_METHOD_COMPLETER(type) \
@@ -312,6 +336,8 @@ enum {
         FUN_NAME        = FUN_DOC         + sizeof (uintptr_t)
 };
 
+typedef struct value Value;
+
 struct value {
         uint8_t type;
         uint16_t tags;
@@ -336,14 +362,14 @@ struct value {
                 };
                 struct {
                         int class;
-                        struct table *object;
+                        struct itable *object;
                 };
                 struct {
                         union {
                                 struct {
-                                        struct value *this;
+                                        Value *this;
                                         union {
-                                                struct value *method;
+                                                Value *method;
                                                 BuiltinMethod *builtin_method;
                                         };
                                 };
@@ -352,7 +378,7 @@ struct value {
                                         char const *module;
                                 };
                         };
-                        char const *name;
+                        int name;
                 };
                 struct {
                         char const *string;
@@ -365,31 +391,28 @@ struct value {
                         int nt;
                 };
                 struct {
-                        struct value *items;
-                        char **names;
                         int count;
-                        bool gc_names;
+                        Value *items;
+                        int *ids;
                 };
                 Regex const *regex;
                 struct {
                         int *info;
-                        struct value **env;
+                        Value **env;
                 };
                 Generator *gen;
         };
 };
 
-typedef struct value Value;
-
 struct frame {
         size_t fp;
-        struct value f;
+        Value f;
         char const *ip;
 };
 
 struct generator {
         char *ip;
-        struct value f;
+        Value f;
         int fp;
         ValueVector frame;
         FrameStack frames;
@@ -488,6 +511,9 @@ value_named_tuple(Ty *ty, char const *first, ...);
 Value *
 tuple_get(Value const *tuple, char const *name);
 
+Value *
+tuple_get_i(Value const *tuple, int id);
+
 inline static Value *
 tget_or_null(Value const *tuple, uintptr_t k)
 {
@@ -496,9 +522,10 @@ tget_or_null(Value const *tuple, uintptr_t k)
         }
 
         char const *name = (char const *)k;
+        int id = M_ID(name);
 
-        if (tuple->names != NULL) for (int i = 0; i < tuple->count; ++i) {
-                if (tuple->names[i] != NULL && strcmp(tuple->names[i], name) == 0) {
+        if (tuple->ids != NULL) for (int i = 0; i < tuple->count; ++i) {
+                if (tuple->ids[i] == id) {
                         return &tuple->items[i];
                 }
         }

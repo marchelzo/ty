@@ -52,8 +52,14 @@ dict_mark(Ty *ty, struct dict *obj);
 void
 dict_free(Ty *ty, struct dict *obj);
 
+void
+build_dict_method_table(void);
+
 BuiltinMethod *
 get_dict_method(char const *);
+
+BuiltinMethod *
+get_dict_method_i(int);
 
 int
 dict_get_completions(Ty *ty, char const *prefix, char **out, int max);

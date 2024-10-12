@@ -17,6 +17,7 @@
 #include "vm.h"
 #include "token.h"
 #include "ast.h"
+#include "intern.h"
 #include "compiler.h"
 
 static bool
@@ -305,14 +306,15 @@ show_tuple(Ty *ty, struct value const *v, bool color)
         for (size_t i = 0; i < v->count; ++i) {
                 add(i == 0 ? "" : ", ");
 
-                if (v->names != NULL && v->names[i] != NULL) {
+                if (v->ids != NULL && v->ids[i] != -1) {
+                        char const *name = M_NAME(v->ids[i]);
                         if (color) {
                                 add(TERM(34));
-                                add(v->names[i]);
+                                add(name);
                                 add(TERM(0));
                                 add(": ");
                         } else {
-                                add(v->names[i]);
+                                add(name);
                                 add(": ");
                         }
                 }
@@ -455,20 +457,20 @@ value_show(Ty *ty, Value const *v)
                 break;
         case VALUE_METHOD:
                 if (v->this == NULL)
-                        snprintf(buffer, 1024, "<method '%s' at %p>", v->name, (void *)v->method);
+                        snprintf(buffer, 1024, "<method '%s' at %p>", M_NAME(v->name), (void *)v->method);
                 else
-                        snprintf(buffer, 1024, "<method '%s' at %p bound to %s>", v->name, (void *)v->method, value_show(ty, v->this));
+                        snprintf(buffer, 1024, "<method '%s' at %p bound to %s>", M_NAME(v->name), (void *)v->method, value_show(ty, v->this));
                 break;
         case VALUE_BUILTIN_METHOD:
-                snprintf(buffer, 1024, "<bound builtin method '%s'>", v->name);
+                snprintf(buffer, 1024, "<bound builtin method '%s'>", M_NAME(v->name));
                 break;
         case VALUE_BUILTIN_FUNCTION:
-                if (v->name == NULL)
+                if (v->name == -1)
                         snprintf(buffer, 1024, "<builtin function>");
                 else if (v->module == NULL)
-                        snprintf(buffer, 1024, "<builtin function '%s'>", v->name);
+                        snprintf(buffer, 1024, "<builtin function '%s'>", M_NAME(v->name));
                 else
-                        snprintf(buffer, 1024, "<builtin function '%s::%s'>", v->module, v->name);
+                        snprintf(buffer, 1024, "<builtin function '%s::%s'>", v->module, M_NAME(v->name));
                 break;
         case VALUE_CLASS:
                 snprintf(buffer, 1024, "<class %s>", class_name(ty, v->class));
@@ -602,7 +604,7 @@ value_show_color(Ty *ty, struct value const *v)
                                 "%s<method %s'%s'%s at %s%p%s>%s",
                                 TERM(96),
                                 TERM(92),
-                                v->name,
+                                M_NAME(v->name),
                                 TERM(96),
                                 TERM(94),
                                 (void *)v->method,
@@ -617,7 +619,7 @@ value_show_color(Ty *ty, struct value const *v)
                                 "%s<method %s'%s'%s at %s%p%s bound to %s%s%s>%s",
                                 TERM(96),
                                 TERM(92),
-                                v->name,
+                                M_NAME(v->name),
                                 TERM(96),
                                 TERM(94),
                                 (void *)v->method,
@@ -637,13 +639,13 @@ value_show_color(Ty *ty, struct value const *v)
                         "%s<bound builtin method %s'%s'%s>%s",
                         TERM(96),
                         TERM(92),
-                        v->name,
+                        M_NAME(v->name),
                         TERM(96),
                         TERM(0)
                 );
                 break;
         case VALUE_BUILTIN_FUNCTION:
-                if (v->name == NULL)
+                if (v->name == -1)
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -658,7 +660,7 @@ value_show_color(Ty *ty, struct value const *v)
                                 "%s<builtin function %s'%s'%s>%s",
                                 TERM(96),
                                 TERM(92),
-                                v->name,
+                                M_NAME(v->name),
                                 TERM(96),
                                 TERM(0)
                         );
@@ -670,7 +672,7 @@ value_show_color(Ty *ty, struct value const *v)
                                 TERM(96),
                                 TERM(92),
                                 v->module,
-                                v->name,
+                                M_NAME(v->name),
                                 TERM(96),
                                 TERM(0)
                         );
@@ -1072,16 +1074,8 @@ mark_tuple(Ty *ty, struct value const *v)
                 value_mark(ty, &v->items[i]);
         }
 
-        if (v->names != NULL) {
-                MARK(v->names);
-                if (v->gc_names) {
-                        for (int i = 0; i < v->count; ++i) {
-                                if (v->names[i] != NULL) {
-                                        MARK(v->names[i]);
-                                        break;
-                                }
-                        }
-                }
+        if (v->ids != NULL) {
+                MARK(v->ids);
         }
 }
 
@@ -1238,48 +1232,54 @@ value_named_tuple(Ty *ty, char const *first, ...)
         int n = 0;
 
         do {
-                va_arg(ap, struct value);
+                va_arg(ap, Value);
                 n += 1;
         } while (va_arg(ap, char const *) != NULL);
 
         va_end(ap);
 
-        struct value *items = mAo(n * sizeof (Value), GC_TUPLE);
+        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
 
         NOGC(items);
-        char const **names = mAo(n * sizeof (char *), GC_TUPLE);
+        int *ids = mAo(n * sizeof (int), GC_TUPLE);
         OKGC(items);
 
         va_start(ap, first);
 
-        names[0] = first[0] == '\0' ? NULL : first;
-        items[0] = va_arg(ap, struct value);
+        ids[0] = (first[0] == '\0') ? -1 : M_ID(first);
+        items[0] = va_arg(ap, Value);
 
         for (int i = 1; i < n; ++i) {
-                names[i] = va_arg(ap, char *);
-                items[i] = va_arg(ap, struct value);
-                names[i] = names[i][0] == '\0' ? NULL : names[i];
+                char const *name = va_arg(ap, char *);
+                items[i] = va_arg(ap, Value);
+                ids[i] = (name[0] == '\0') ? -1 : M_ID(name);
         }
 
         va_end(ap);
 
-        return TUPLE(items, (char **)names, n, false);
+        return TUPLE(items, ids, n, false);
 }
 
 Value *
-tuple_get(Value const *tuple, char const *name)
+tuple_get_i(Value const *tuple, int id)
 {
-        if (tuple->names == NULL) {
+        if (tuple->ids == NULL) {
                 return NULL;
         }
 
         for (int i = 0; i < tuple->count; ++i) {
-                if (tuple->names[i] != NULL && strcmp(tuple->names[i], name) == 0) {
+                if (tuple->ids[i] == id) {
                         return &tuple->items[i];
                 }
         }
 
         return NULL;
+}
+
+Value *
+tuple_get(Value const *tuple, char const *name)
+{
+        return tuple_get_i(tuple, M_ID(name));
 }
 
 Array *
@@ -1289,27 +1289,31 @@ value_array_clone(Ty *ty, Array const *a)
 }
 
 void
-value_array_extend(Ty *ty, struct array *a, struct array const *other)
+value_array_extend(Ty *ty, Array *a, Array const *other)
 {
         int n = a->count + other->count;
 
         if (n != 0)
                 vec_reserve(ty, *a, n);
         if (other->count != 0)
-                memcpy(a->items + a->count, other->items, other->count * sizeof (struct value));
+                memcpy(a->items + a->count, other->items, other->count * sizeof (Value));
 
         a->count = n;
 }
 
 int
-tuple_get_completions(Ty *ty, struct value const *v, char const *prefix, char **out, int max)
+tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, int max)
 {
         int n = 0;
         int prefix_len = strlen(prefix);
 
-        for (int i = 0; i < v->count; ++i) {
-                if (n < max && v->names != NULL && strncmp(v->names[i], prefix, prefix_len) == 0) {
-                        out[n++] = sclone_malloc(v->names[i]);
+        if (v->ids == NULL) return 0;
+
+        for (int i = 0; i < v->count && n < max; ++i) {
+                if (v->ids[i] == -1) continue;
+                char const *name = M_NAME(v->ids[i]);
+                if (strncmp(name, prefix, prefix_len) == 0) {
+                        out[n++] = sclone_malloc(name);
                 }
         }
 

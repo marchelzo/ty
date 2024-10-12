@@ -3,8 +3,14 @@
 
 #include "value.h"
 
+void
+build_blob_method_table(void);
+
 BuiltinMethod *
 get_blob_method(char const *);
+
+BuiltinMethod *
+get_blob_method_i(int);
 
 int
 blob_get_completions(Ty *ty, char const *prefix, char **out, int max);

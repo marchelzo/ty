@@ -9,6 +9,7 @@
 #include "class.h"
 #include "tthread.h"
 #include "compiler.h"
+#include "itable.h"
 
 static _Thread_local vec(Value const *) RootSet;
 static vec(Value const *) ImmortalSet;
@@ -50,13 +51,13 @@ collect(Ty *ty, struct alloc *a)
                 TyCondVarDestroy(&t->cond);
                 break;
         case GC_OBJECT:
-                o = OBJECT((struct table *)p, ((struct table *)p)->class);
+                o = OBJECT((struct itable *)p, ((struct itable *)p)->class);
                 finalizer = class_get_finalizer(ty, o.class);
                 if (finalizer.type != VALUE_NONE) {
                         GCLOG("Calling finalizer for: %s", value_show(ty, &o));
                         vm_call_method(ty, &o, &finalizer, 0);
                 }
-                table_release(ty, p);
+                itable_release(ty, p);
                 break;
         case GC_REGEX:
                 re = p;

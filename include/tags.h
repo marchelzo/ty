@@ -35,8 +35,11 @@ tags_lookup(Ty *ty, char const *name);
 void
 tags_add_method(Ty *ty, int tag, char const *name, struct value f);
 
-struct value *
+Value *
 tags_lookup_method(Ty *ty, int tag, char const *name, unsigned long h);
+
+Value *
+tags_lookup_method_i(Ty *ty, int tag, int i);
 
 void
 tags_copy_methods(Ty *ty, int dst, int src);

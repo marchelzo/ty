@@ -48,10 +48,25 @@ class_lookup_static(Ty *ty, int class, char const *name, unsigned long h);
 struct value *
 class_lookup_immediate(Ty *ty, int class, char const *name, unsigned long h);
 
+struct value *
+class_lookup_method_i(Ty *ty, int class, int id);
+
+struct value *
+class_lookup_getter_i(Ty *ty, int class, int id);
+
+struct value *
+class_lookup_setter_i(Ty *ty, int class, int id);
+
+struct value *
+class_lookup_static_i(Ty *ty, int class, int id);
+
+struct value *
+class_lookup_immediate_i(Ty *ty, int class, int id);
+
 inline static struct value *
 class_method(Ty *ty, int class, char const *name)
 {
-        return class_lookup_method(ty, class, name, strhash(name));
+        return class_lookup_method(ty, class, name, 0);
 }
 
 char const *
@@ -69,16 +84,16 @@ class_is_subclass(Ty *ty, int sub, int super);
 int
 class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max);
 
-struct table *
+struct itable *
 class_methods(Ty *ty, int class);
 
-struct table *
+struct itable *
 class_static_methods(Ty *ty, int class);
 
-struct table *
+struct itable *
 class_getters(Ty *ty, int class);
 
-struct table *
+struct itable *
 class_setters(Ty *ty, int class);
 
 #endif

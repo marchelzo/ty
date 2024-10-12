@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdalign.h>
 #include <ctype.h>
 #include <string.h>
 #include <stdbool.h>
@@ -3046,7 +3047,7 @@ emit_constraint(Ty *ty, Expr const *c)
 inline static void
 align_code_to(Ty *ty, size_t n)
 {
-        while (((uintptr_t)(state.code.items + state.code.count)) % (_Alignof (int)) != ((_Alignof (int)) - 1))
+        while (((uintptr_t)(state.code.items + state.code.count)) % (alignof (int)) != ((alignof (int)) - 1))
                 avP(state.code, 0x00);
         avP(state.code, 0xFF);
 }
@@ -3313,8 +3314,7 @@ emit_function(Ty *ty, Expr const *e, int class)
                                 emit_load_instr(ty, "@", INSTR_LOAD_LOCAL, 0);
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
                                 emit_instr(ty, INSTR_TARGET_MEMBER);
-                                emit_string(ty, e->functions.items[i]->name);
-                                emit_ulong(ty, strhash(e->functions.items[i]->name));
+                                emit_int(ty, M_ID(e->functions.items[i]->name));
                                 emit_instr(ty, INSTR_ASSIGN);
                                 emit_instr(ty, INSTR_RETURN_IF_NOT_NONE);
                                 emit_instr(ty, INSTR_POP);
@@ -3325,8 +3325,7 @@ emit_function(Ty *ty, Expr const *e, int class)
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
                                 emit_instr(ty, INSTR_CALL_METHOD);
                                 emit_int(ty, -1);
-                                emit_string(ty, e->functions.items[i]->name);
-                                emit_ulong(ty, strhash(e->functions.items[i]->name));
+                                emit_int(ty, M_ID(e->functions.items[i]->name));
                                 emit_int(ty, 0);
                                 emit_instr(ty, INSTR_RETURN_IF_NOT_NONE);
                                 emit_instr(ty, INSTR_POP);
@@ -3703,17 +3702,17 @@ emit_record_rest(Ty *ty, Expr const *rec, int i, bool is_assignment)
                 emit_int(ty, 0);
         }
 
-        size_t sz_off = state.code.count;
-        emit_int(ty, 0);
+        while (!IS_ALIGNED_FOR(int, vec_last(state.code) + 1)) {
+                avP(state.code, 0);
+        }
 
-        avP(state.code, '\0');
         for (int j = 0; j < i; ++j) {
                 if (rec->names.items[j] != NULL) {
-                        emit_string(ty, rec->names.items[j]);
+                        emit_int(ty, intern(&xD.members, rec->names.items[j])->id);
                 }
         }
 
-        PATCH_OFFSET(sz_off);
+        emit_int(ty, -1);
 
         if (is_assignment) {
                 emit_instr(ty, INSTR_JUMP);
@@ -3908,7 +3907,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         } else if (pattern->names.items[i] != NULL) {
                                 FAIL_MATCH_IF(TRY_TUPLE_MEMBER);
                                 emit_boolean(ty, pattern->required.items[i]);
-                                emit_string(ty, pattern->names.items[i]);
+                                emit_int(ty, M_ID(pattern->names.items[i]));
                                 emit_try_match_(ty, pattern->es.items[i]);
                                 emit_instr(ty, INSTR_POP);
                         } else {
@@ -4483,8 +4482,7 @@ emit_target(Ty *ty, Expr *target, bool def)
         case EXPRESSION_SELF_ACCESS:
                 emit_expression(ty, target->object);
                 emit_instr(ty, INSTR_TARGET_MEMBER);
-                emit_string(ty, target->member_name);
-                emit_ulong(ty, strhash(target->member_name));
+                emit_int(ty, M_ID(target->member_name));
                 break;
         case EXPRESSION_SUBSCRIPT:
                 emit_expression(ty, target->container);
@@ -4960,7 +4958,7 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                         } else if (target->names.items[i] != NULL) {
                                 emit_instr(ty, INSTR_PUSH_TUPLE_MEMBER);
                                 emit_boolean(ty, target->required.items[i]);
-                                emit_string(ty, target->names.items[i]);
+                                emit_int(ty, M_ID(target->names.items[i]));
                                 emit_assignment2(ty, target->es.items[i], maybe, def);
                                 emit_instr(ty, INSTR_POP);
                         } else {
@@ -5085,8 +5083,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         method = "__count__";
                         emit_instr(ty, INSTR_CALL_METHOD);
                         emit_int(ty, 0);
-                        emit_string(ty, method);
-                        emit_ulong(ty, strhash(method));
+                        emit_int(ty, M_ID(method));
                         emit_int(ty, 0);
                 }
                 break;
@@ -5201,8 +5198,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         emit_instr(ty, INSTR_TRY_MEMBER_ACCESS);
                 else
                         emit_instr(ty, INSTR_MEMBER_ACCESS);
-                emit_string(ty, e->member_name);
-                emit_ulong(ty, strhash(e->member_name));
+                emit_int(ty, M_ID(e->member_name));
                 break;
         case EXPRESSION_SUBSCRIPT:
                 emit_expression(ty, e->container);
@@ -5282,8 +5278,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 } else {
                         emit_int(ty, e->method_args.count);
                 }
-                emit_string(ty, e->method_name);
-                emit_ulong(ty, strhash(e->method_name));
+
+                emit_int(ty, (int)intern(&xD.members, e->method_name)->id);
 
                 emit_int(ty, e->method_kwargs.count);
                 for (size_t i = e->method_kws.count; i > 0; --i) {
@@ -5331,8 +5327,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_expression(ty, e->right);
                 emit_instr(ty, INSTR_CALL_METHOD);
                 emit_int(ty, 1);
-                emit_string(ty, method);
-                emit_ulong(ty, strhash(method));
+                emit_int(ty, M_ID(method));
                 emit_int(ty, 0);
                 if (e->type == EXPRESSION_NOT_IN) {
                         emit_instr(ty, INSTR_NOT);
@@ -5507,9 +5502,13 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_int(ty, e->es.count);
                 for (int i = 0; i < e->names.count; ++i) {
                         if (e->names.items[i] != NULL) {
-                                emit_string(ty, e->names.items[i]);
+                                if (strcmp(e->names.items[i], "*") == 0) {
+                                        emit_int(ty, -2);
+                                } else {
+                                        emit_int(ty, (int)intern(&xD.members, e->names.items[i])->id);
+                                }
                         } else {
-                                avP(state.code, 0);
+                                emit_int(ty, -1);
                         }
                 }
                 break;
@@ -5749,8 +5748,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                         emit_load(ty, s->drop.items[i], state.fscope);
                         emit_instr(ty, INSTR_TRY_CALL_METHOD);
                         emit_int(ty, 0);
-                        emit_string(ty, "__drop__");
-                        emit_ulong(ty, strhash("__drop__"));
+                        emit_int(ty, (int)intern(&xD.members, "__drop__")->id);
                         emit_int(ty, 0);
                         emit_instr(ty, INSTR_POP);
                 }
@@ -7177,6 +7175,9 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_AND:
                 v = tagged(ty, TyAnd, tyexpr(ty, e->left), tyexpr(ty, e->right), NONE);
                 break;
+        case EXPRESSION_KW_AND:
+                v = tagged(ty, TyKwAnd, tyexpr(ty, e->left), typarts(ty, &e->p_cond), NONE);
+                break;
         case EXPRESSION_BIT_AND:
                 v = tagged(ty, TyBitAnd, tyexpr(ty, e->left), tyexpr(ty, e->right), NONE);
                 break;
@@ -8424,6 +8425,11 @@ cexpr(Ty *ty, Value *v)
                 e->left = cexpr(ty, &v->items[0]);
                 e->right = cexpr(ty, &v->items[1]);
                 break;
+        case TyKwAnd:
+                e->type = EXPRESSION_KW_AND;
+                e->left = cexpr(ty, &v->items[0]);
+                e->p_cond = cparts(ty, &v->items[1]);
+                break;
         case TyBitAnd:
                 e->type = EXPRESSION_BIT_AND;
                 e->left = cexpr(ty, &v->items[0]);
@@ -9276,10 +9282,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         byte_vector after = {0};
 
-#define SKIPSTR()     (dump(out, " %s\"%s\"%s", TERM(92), c, TERM(0)), (c += strlen(c) + 1))
+#define DUMPSTR(s) dump(out, " %s\"%s\"%s", TERM(92), (s), TERM(0))
+#define SKIPSTR()     (DUMPSTR(c), (c += strlen(c) + 1))
 #define READSTR(s)    (((s) = c), SKIPSTR())
 #define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
 #define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
+#define READMEMBER(n) (READVALUE_((n)), DUMPSTR(M_NAME((n))))
 
         if (code == NULL) {
                 for (int i = 0; i < annotations.count; ++i) {
@@ -9440,7 +9448,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 #endif
                         break;
                 CASE(TARGET_MEMBER)
-                        READSTR(member);
+                        READMEMBER(n);
                         READVALUE(h);
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -9558,7 +9566,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(TRY_TUPLE_MEMBER)
                         READVALUE(n);
                         READVALUE(b);
-                        READSTR(str);
+                        READMEMBER(n);
                         break;
                 CASE(TRY_TAG_POP)
                         READVALUE(n);
@@ -9684,7 +9692,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(PUSH_TUPLE_MEMBER)
                         READVALUE(b);
-                        READSTR(member);
+                        READMEMBER(n);
                         break;
                 CASE(PUSH_ALL)
                         break;
@@ -9696,8 +9704,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
-                        READSTR(member);
-                        READVALUE_(h);
+                        READMEMBER(n);
                         break;
                 CASE(SLICE)
                 CASE(SUBSCRIPT)

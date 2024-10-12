@@ -8,10 +8,11 @@
 #include "value.h"
 #include "dict.h"
 #include "util.h"
-#include "table.h"
+#include "itable.h"
 #include "class.h"
 #include "vec.h"
 #include "vm.h"
+#include "ty.h"
 
 #define KW_DELIM(c) (strchr(" \n}],", c) != NULL)
 #define FAIL longjmp(jb, 1)
@@ -386,11 +387,11 @@ encode(Ty *ty, Value const *v, str *out)
                 if (!try_visit(v->object))
                         return false;
 
-                struct value *vp = class_method(ty, v->class, "__json__");
+                Value *vp = class_lookup_method_i(ty, v->class, NAMES.json);
 
                 if (vp != NULL) {
-                        struct value method = METHOD("__json__", vp, v);
-                        struct value s = vm_eval_function(ty, NULL, &method, NULL);
+                        Value method = METHOD(NAMES.json, vp, v);
+                        Value s = vm_eval_function(ty, NULL, &method, NULL);
                         if (s.type == VALUE_STRING) {
                                 gP(&s);
                                 xvPn(*out, s.string, s.bytes);
@@ -400,10 +401,10 @@ encode(Ty *ty, Value const *v, str *out)
                         }
                 } else {
                         xvP(*out, '{');
-                        for (int i = 0; i < TABLE_SIZE; ++i) {
-                                for (int j = 0; j < v->object->buckets[i].names.count; ++j) {
+                        for (int i = 0; i < ITABLE_SIZE; ++i) {
+                                for (int j = 0; j < v->object->buckets[i].ids.count; ++j) {
+                                        char const *name = M_NAME(v->object->buckets[i].ids.items[j]);
                                         xvP(*out, '"');
-                                        char const *name = v->object->buckets[i].names.items[j];
                                         xvPn(*out, name, strlen(name));
                                         xvP(*out, '"');
                                         xvP(*out, ':');
@@ -426,8 +427,9 @@ encode(Ty *ty, Value const *v, str *out)
                         return false;
                 for (int i = 0; i < v->count; ++i) {
                         xvP(*out, '"');
-                        if (v->names != NULL && v->names[i] != NULL) {
-                                xvPn(*out, v->names[i], strlen(v->names[i]));
+                        if (v->ids != NULL && v->ids[i] != -1) {
+                                char const *name = M_NAME(v->ids[i]);
+                                xvPn(*out, name, strlen(name));
                         } else {
                                 char b[32];
                                 snprintf(b, sizeof b - 1, "%d", i);

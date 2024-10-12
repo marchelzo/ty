@@ -686,6 +686,14 @@ BUILTIN_FUNCTION(str)
         }
 }
 
+inline static void
+BufferCString(Value const *s)
+{
+        size_t n = umin(sizeof buffer - 1, s->bytes);
+        memcpy(buffer, s->string, n);
+        buffer[n] = '\0';
+}
+
 inline static bool
 isflag(int c)
 {
@@ -934,41 +942,34 @@ BUILTIN_FUNCTION(array)
 BUILTIN_FUNCTION(tuple)
 {
         int named = 0;
-        vec(char) names = {0};
-        struct dict *d = (kwargs != NULL) ? kwargs->dict : NULL;
+        Dict *d = (kwargs != NULL) ? kwargs->dict : NULL;
 
         if (d != NULL) for (int i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
                         named += 1;
-                        vvPn(names, d->keys[i].string, d->keys[i].bytes);
-                        vvP(names, '\0');
                 }
         }
 
-        struct value tuple = vT(argc + named);
+        Value tuple = vT(argc + named);
 
         if (named > 0) {
                 NOGC(tuple.items);
-                tuple.names = mAo((argc + named) * sizeof (char *), GC_ANY);
+                tuple.ids = mAo((argc + named) * sizeof (int), GC_ANY);
                 OKGC(tuple.items);
-        } else {
-                tuple.gc_names = true;
         }
 
         for (int i = 0; i < argc; ++i) {
                 tuple.items[i] = ARG(i);
-                if (tuple.names != NULL) {
-                        tuple.names[i] = NULL;
+                if (tuple.ids != NULL) {
+                        tuple.ids[i] = -1;
                 }
         }
 
-        char *name = names.items;
-
         if (d != NULL) for (int i = 0, n = argc; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
+                        BufferCString(&d->keys[i]);
                         tuple.items[n] = d->values[i];
-                        tuple.names[n] = name;
-                        name += strlen(name) + 1;
+                        tuple.ids[n] = intern(&xD.members, buffer)->id;
                         n += 1;
                 }
         }
@@ -3674,7 +3675,7 @@ BUILTIN_FUNCTION(os_getaddrinfo)
 
                         NOGC(b);
 
-                        struct value entry = vTn(
+                        Value entry = vTn(
                                 "family",    INTEGER(it->ai_family),
                                 "type",      INTEGER(it->ai_socktype),
                                 "protocol",  INTEGER(it->ai_protocol),
@@ -3684,12 +3685,12 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                         );
 
                         NOGC(entry.items);
-                        NOGC(entry.names);
+                        NOGC(entry.ids);
 
                         vAp(results.array, entry);
 
                         OKGC(entry.items);
-                        OKGC(entry.names);
+                        OKGC(entry.ids);
                         OKGC(b);
 
                         vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
@@ -5932,9 +5933,9 @@ BUILTIN_FUNCTION(members_list)
 
         switch (o.type) {
         case VALUE_OBJECT:
-                for (int i = 0; i < TABLE_SIZE; ++i) {
+                for (int i = 0; i < ITABLE_SIZE; ++i) {
                         for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
-                                char const *key = o.object->buckets[i].names.items[v];
+                                char const *key = intern_entry(&xD.members, o.object->buckets[i].ids.items[v])->name;
                                 Value member = vT(2);
                                 NOGC(member.items);
                                 member.items[0] = vSc(key, strlen(key));
@@ -5953,8 +5954,9 @@ BUILTIN_FUNCTION(members_list)
                         Value *pair = entry.items;
                         NOGC(pair);
                         vAp(a, entry);
-                        if (o.names != NULL && o.names[i] != NULL) {
-                                pair[0] = vSc(o.names[i], strlen(o.names[i]));
+                        if (o.ids != NULL && o.ids[i] != -1) {
+                                char const *name = intern_entry(&xD.members, o.ids[i])->name;
+                                pair[0] = vSc(name, strlen(name));
                                 pair[1] = o.items[i];
                         } else {
                                 pair[0] = INTEGER(i);
@@ -5992,9 +5994,9 @@ BUILTIN_FUNCTION(members)
 
         switch (o.type) {
         case VALUE_OBJECT:
-                for (int i = 0; i < TABLE_SIZE; ++i) {
+                for (int i = 0; i < ITABLE_SIZE; ++i) {
                         for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
-                                char const *key = o.object->buckets[i].names.items[v];
+                                char const *key = intern_entry(&xD.members, o.object->buckets[i].ids.items[v])->name;
                                 dict_put_member(ty, members, key, o.object->buckets[i].values.items[v]);
                         }
                 }
@@ -6002,8 +6004,9 @@ BUILTIN_FUNCTION(members)
                 break;
         case VALUE_TUPLE:
                 for (int i = 0; i < o.count; ++i) {
-                        if (o.names != NULL && o.names[i] != NULL) {
-                                struct value key = vSc(o.names[i], strlen(o.names[i]));
+                        if (o.ids != NULL && o.ids[i] != -1) {
+                                char const *name = intern_entry(&xD.members, o.ids[i])->name;
+                                struct value key = vSc(name, strlen(name));
                                 NOGC(key.string);
                                 dict_put_value(ty, members, key, o.items[i]);
                                 OKGC(key.string);
@@ -6027,8 +6030,8 @@ BUILTIN_FUNCTION(member)
 {
         ASSERT_ARGC_2("member()", 2, 3);
 
-        struct value o = ARG(0);
-        struct value name = ARG(1);
+        Value o = ARG(0);
+        Value name = ARG(1);
 
         if (name.type != VALUE_STRING) {
                 zP("the second argument to member() must be a string");
@@ -6042,22 +6045,19 @@ BUILTIN_FUNCTION(member)
         memcpy(buffer, name.string, name.bytes);
         buffer[name.bytes] = '\0';
 
+        int id = M_ID(buffer);
+
         if (argc == 2) {
-                struct value v = GetMember(ty, o, buffer, strhash(buffer), false);
+                Value v = GetMember(ty, o, id, false);
                 return (v.type == VALUE_NONE) ? NIL : v;
         } else if (o.type == VALUE_OBJECT) {
-                static _Thread_local struct table NameTable;
-
-                struct value *np = table_look(ty, &NameTable, buffer);
-
-                table_put(
+                itable_add(
                         ty,
                         o.object,
-                        ((np == NULL) ? table_put(ty, &NameTable, buffer, PTR(sclone(ty, buffer))) : np)->ptr,
+                        id,
                         ARG(2)
                 );
-
-                return NIL;
+                return ARG(2);
         } else {
                 zP("member(o, _, _): expected object but got: %s", value_show(ty, &o));
         }
@@ -6113,7 +6113,7 @@ fdoc(Ty *ty, struct value const *f)
 }
 
 static void
-mdocs(Ty *ty, struct table const *t, struct array *a)
+mdocs(Ty *ty, struct itable const *t, struct array *a)
 {
         for (int i = 0; i < TABLE_SIZE; ++i) {
                 for (int j = 0; j < t->buckets[i].values.count; ++j) {

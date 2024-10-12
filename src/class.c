@@ -6,26 +6,18 @@
 #include "log.h"
 #include "util.h"
 #include "vec.h"
-#include "table.h"
+#include "itable.h"
 #include "class.h"
-
-typedef struct {
-        int_vector types;
-        int_vector funs;
-} DispatchSet;
-
-typedef vec(DispatchSet) OperatorTable;
 
 static int class = 0;
 static vec(char const *) names;
 static vec(char const *) docs;
 static vec(int) supers;
-static vec(struct value) finalizers;
-static vec(struct table) mtables;
-static vec(struct table) gtables;
-static vec(struct table) stables;
-static vec(struct table) ctables;
-static vec(OperatorTable) b_op_tables;
+static vec(Value) finalizers;
+static vec(struct itable) mtables;
+static vec(struct itable) gtables;
+static vec(struct itable) stables;
+static vec(struct itable) ctables;
 
 int
 class_new(Ty *ty, char const *name, char const *doc)
@@ -35,16 +27,13 @@ class_new(Ty *ty, char const *name, char const *doc)
         vvP(supers, -1);
         vvP(finalizers, NONE);
 
-        struct table t;
-        table_init(ty, &t);
+        struct itable t;
+        itable_init(ty, &t);
 
         vvP(mtables, t);
         vvP(gtables, t);
         vvP(stables, t);
         vvP(ctables, t);
-
-        OperatorTable ops = {0};
-        xvP(b_op_tables, ops);
 
         return class++;
 }
@@ -78,15 +67,15 @@ class_name(Ty *ty, int class)
 }
 
 void
-class_add_static(Ty *ty, int class, char const *name, struct value f)
+class_add_static(Ty *ty, int class, char const *name, Value f)
 {
-        table_put(ty, &ctables.items[class], name, f);
+        itable_put(ty, &ctables.items[class], name, f);
 }
 
 void
-class_add_method(Ty *ty, int class, char const *name, struct value f)
+class_add_method(Ty *ty, int class, char const *name, Value f)
 {
-        table_put(ty, &mtables.items[class], name, f);
+        itable_put(ty, &mtables.items[class], name, f);
 
         if (strcmp(name, "__free__") == 0) {
                 finalizers.items[class] = f;
@@ -94,31 +83,51 @@ class_add_method(Ty *ty, int class, char const *name, struct value f)
 }
 
 void
-class_add_getter(Ty *ty, int class, char const *name, struct value f)
+class_add_getter(Ty *ty, int class, char const *name, Value f)
 {
-        table_put(ty, &gtables.items[class], name, f);
+        itable_put(ty, &gtables.items[class], name, f);
 }
 
 void
-class_add_setter(Ty *ty, int class, char const *name, struct value f)
+class_add_setter(Ty *ty, int class, char const *name, Value f)
 {
-        table_put(ty, &stables.items[class], name, f);
+        itable_put(ty, &stables.items[class], name, f);
 }
 
 void
 class_copy_methods(Ty *ty, int dst, int src)
 {
-        table_copy(ty, &mtables.items[dst], &mtables.items[src]);
-        table_copy(ty, &gtables.items[dst], &gtables.items[src]);
-        table_copy(ty, &stables.items[dst], &stables.items[src]);
+        itable_copy(ty, &mtables.items[dst], &mtables.items[src]);
+        itable_copy(ty, &gtables.items[dst], &gtables.items[src]);
+        itable_copy(ty, &stables.items[dst], &stables.items[src]);
 }
 
-struct value *
+Value *
+class_lookup_getter_i(Ty *ty, int class, int id)
+{
+        do {
+                struct itable const *t = &gtables.items[class];
+                Value *v = itable_lookup(ty, t, id);
+                if (v != NULL) return v;
+                class = supers.items[class];
+        } while (class != -1);
+
+        return NULL;
+}
+
+Value *
 class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h)
 {
+        InternEntry *e = intern(&xD.members, name);
+        return class_lookup_getter_i(ty, class, e->id);
+}
+
+Value *
+class_lookup_setter_i(Ty *ty, int class, int id)
+{
         do {
-                struct table const *t = &gtables.items[class];
-                struct value *v = table_lookup(ty, t, name, h);
+                struct itable const *t = &stables.items[class];
+                Value *v = itable_lookup(ty, t, id);
                 if (v != NULL) return v;
                 class = supers.items[class];
         } while (class != -1);
@@ -126,12 +135,19 @@ class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h)
         return NULL;
 }
 
-struct value *
+Value *
 class_lookup_setter(Ty *ty, int class, char const *name, unsigned long h)
 {
+        InternEntry *e = intern(&xD.members, name);
+        return class_lookup_setter_i(ty, class, e->id);
+}
+
+Value *
+class_lookup_method_i(Ty *ty, int class, int id)
+{
         do {
-                struct table const *t = &stables.items[class];
-                struct value *v = table_lookup(ty, t, name, h);
+                struct itable const *t = &mtables.items[class];
+                Value *v = itable_lookup(ty, t, id);
                 if (v != NULL) return v;
                 class = supers.items[class];
         } while (class != -1);
@@ -139,12 +155,19 @@ class_lookup_setter(Ty *ty, int class, char const *name, unsigned long h)
         return NULL;
 }
 
-struct value *
+Value *
 class_lookup_method(Ty *ty, int class, char const *name, unsigned long h)
 {
+        InternEntry *e = intern(&xD.members, name);
+        return class_lookup_method_i(ty, class, e->id);
+}
+
+Value *
+class_lookup_static_i(Ty *ty, int class, int id)
+{
         do {
-                struct table const *t = &mtables.items[class];
-                struct value *v = table_lookup(ty, t, name, h);
+                struct itable const *t = &ctables.items[class];
+                Value *v = itable_lookup(ty, t, id);
                 if (v != NULL) return v;
                 class = supers.items[class];
         } while (class != -1);
@@ -152,27 +175,28 @@ class_lookup_method(Ty *ty, int class, char const *name, unsigned long h)
         return NULL;
 }
 
-struct value *
+Value *
 class_lookup_static(Ty *ty, int class, char const *name, unsigned long h)
 {
-        do {
-                struct table const *t = &ctables.items[class];
-                struct value *v = table_lookup(ty, t, name, h);
-                if (v != NULL) return v;
-                class = supers.items[class];
-        } while (class != -1);
-
-        return NULL;
+        InternEntry *e = intern(&xD.members, name);
+        return class_lookup_static_i(ty, class, e->id);
 }
 
-struct value *
+Value *
+class_lookup_immediate_i(Ty *ty, int class, int id)
+{
+        struct itable const *t = &mtables.items[class];
+        return itable_lookup(ty, t, id);
+}
+
+Value *
 class_lookup_immediate(Ty *ty, int class, char const *name, unsigned long h)
 {
-        struct table const *t = &mtables.items[class];
-        return table_lookup(ty, t, name, h);
+        InternEntry *e = intern(&xD.members, name);
+        return class_lookup_immediate_i(ty, class, e->id);
 }
 
-struct value
+Value
 class_get_finalizer(Ty *ty, int class)
 {
         while (class != -1) {
@@ -203,42 +227,29 @@ class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max
         if (class == -1)
                 return 0;
 
-        int n = table_get_completions(ty, &mtables.items[class], prefix, out, max);
+        int n = itable_get_completions(ty, &mtables.items[class], prefix, out, max);
         return n + class_get_completions(ty, supers.items[class], prefix, out + n, max - n);
 }
 
-char const *
-class_method_name(Ty *ty, int class, char const *name)
-{
-        do {
-                struct table const *t = &mtables.items[class];
-                char const *s = table_look_key(ty, t, name);
-                if (s != NULL) return s;
-                class = supers.items[class];
-        } while (class != -1);
-
-        return NULL;
-}
-
-struct table *
+struct itable *
 class_methods(Ty *ty, int class)
 {
         return &mtables.items[class];
 }
 
-struct table *
+struct itable *
 class_static_methods(Ty *ty, int class)
 {
         return &ctables.items[class];
 }
 
-struct table *
+struct itable *
 class_getters(Ty *ty, int class)
 {
         return &gtables.items[class];
 }
 
-struct table *
+struct itable *
 class_setters(Ty *ty, int class)
 {
         return &stables.items[class];

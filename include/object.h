@@ -2,12 +2,12 @@
 #define OBJECT_H_INCLUDED
 
 #include "value.h"
-#include "table.h"
+#include "itable.h"
 
-struct table *
+struct itable *
 object_new(Ty *ty, int class);
 
 void
-object_mark(Ty *ty, struct table *obj);
+object_mark(Ty *ty, struct itable *obj);
 
 #endif
