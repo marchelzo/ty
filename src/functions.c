@@ -713,24 +713,22 @@ getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
 
         while (*s < end && **s == ' ') ++*s;
 
+        while (*s < end && isflag(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
+        }
+
         if (*s < end && **s == '*') {
                 *vw += 1;
                 *out++ = *(*s)++;
                 *out = '\0';
-        } else {
-                while (*s < end && isflag(**s)) {
-                        if (out + 1 >= oend)
-                                return -1;
-                        *out++ = *(*s)++;
-                        *out = '\0';
-                }
-
-                while (*s < end && isdigit(**s)) {
-                        if (out + 1 >= oend)
-                                return -1;
-                        *out++ = *(*s)++;
-                        *out = '\0';
-                }
+        } else while (*s < end && isdigit(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
         }
 
         if (*s < end && **s == '.') {
@@ -742,24 +740,22 @@ getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
 
         while (*s < end && **s == ' ') ++*s;
 
+        while (*s < end && isflag(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
+        }
+
         if (*s < end && **s == '*') {
                 *vw += 1;
                 *out++ = *(*s)++;
                 *out = '\0';
-        } else {
-                while (*s < end && isflag(**s)) {
-                        if (out + 1 >= oend)
-                                return -1;
-                        *out++ = *(*s)++;
-                        *out = '\0';
-                }
-
-                while (*s < end && isdigit(**s)) {
-                        if (out + 1 >= oend)
-                                return -1;
-                        *out++ = *(*s)++;
-                        *out = '\0';
-                }
+        } else while (*s < end && isdigit(**s)) {
+                if (out + 1 >= oend)
+                        return -1;
+                *out++ = *(*s)++;
+                *out = '\0';
         }
 
         if (*s < end) {
