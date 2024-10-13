@@ -734,9 +734,9 @@ xprint_stack(Ty *ty, int n)
         XLOG("STACK: (%zu)", STACK.count);
         for (int i = 0; i < n && i < STACK.count; ++i) {
                 if (FRAMES.count > 0 && STACK.count - (i + 1) == vvL(FRAMES)->fp) {
-                        XLOG(" -->  %s", value_show(ty, top(ty) - i));
+                        XLOG(" -->  %s", VSC(top(ty) - i));
                 } else {
-                        XLOG("      %s", value_show(ty, top(ty) - i));
+                        XLOG("      %s", VSC(top(ty) - i));
                 }
         }
 }
@@ -748,9 +748,9 @@ print_stack(Ty *ty, int n)
         LOG("STACK: (%zu)", STACK.count);
         for (int i = 0; i < n && i < STACK.count; ++i) {
                 if (FRAMES.count > 0 && STACK.count - (i + 1) == vvL(FRAMES)->fp) {
-                        LOG(" -->  %s", value_show(ty, top(ty) - i));
+                        LOG(" -->  %s", VSC(top(ty) - i));
                 } else {
-                        LOG("      %s", value_show(ty, top(ty) - i));
+                        LOG("      %s", VSC(top(ty) - i));
                 }
         }
 #endif
@@ -775,7 +775,7 @@ inline static void
 push(Ty *ty, Value v)
 {
         xvP(STACK, v);
-        LOG("PUSH: %s", value_show(ty, &v));
+        LOG("PUSH: %s", VSC(&v));
         print_stack(ty, 10);
 }
 
@@ -815,7 +815,7 @@ pushtarget(Ty *ty, Value *v, void *gc)
 inline static bool
 SpecialTarget(Ty *ty)
 {
-        return (((uintptr_t)TARGETS.items[TARGETS.count - 1].t) & 0x07) != 0;
+        return (((uintptr_t)TARGETS.items[TARGETS.count - 1].t) & PMASK3) != 0;
 }
 
 
@@ -940,7 +940,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
          * Fill in 'self' as an implicit additional parameter.
          */
         if (self.type != VALUE_NONE && class != -1) {
-                LOG("setting self = %s", value_show(ty, &self));
+                LOG("setting self = %s", VSC(&self));
                 STACK.items[fp + np] = self;
         }
 
@@ -961,7 +961,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 }
         }
 
-        LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", value_show(ty, f), argc, bound, value_show(ty, &self), f->info[2]);
+        LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", VSC(f), argc, bound, VSC(&self), f->info[2]);
         print_stack(ty, max(bound + 2, 5));
 
         if (exec) {
@@ -1415,7 +1415,7 @@ DoThrow(Ty *ty)
                 FRAMES.count = c.ctxs;
                 IP = (char *)c.ip;
 
-                zP("uncaught exception: %s%s%s", TERM(31), value_show_color(ty, top(ty)), TERM(39));
+                zP("uncaught exception: %s%s%s", TERM(31), VSC(top(ty)), TERM(39));
         }
 
         struct try *t = *tp;
@@ -1423,7 +1423,7 @@ DoThrow(Ty *ty)
         if (t->state == TRY_FINALLY) {
                 zP(
                         "an exception was thrown while handling another exception: %s%s%s",
-                        TERM(31), value_show_color(ty, top(ty)), TERM(39)
+                        TERM(31), VSC(top(ty)), TERM(39)
                 );
         }
 
@@ -1559,7 +1559,7 @@ Start:
         } else {
                 zP(
                         "non-integer array index used in subscript expression: %s",
-                        value_show_color(ty, &subscript)
+                        VSC(&subscript)
                 );
         }
 
@@ -1738,8 +1738,11 @@ ClassLookup:
                 }
                 break;
         case VALUE_TAG:
-                vp = tags_lookup_method_i(ty, v.tag, member);
-                return (vp == NULL) ? NIL : *vp;
+                vp = tags_lookup_static(ty, v.tag, member);
+                if (vp == NULL) {
+                        vp = tags_lookup_method_i(ty, v.tag, member);
+                }
+                return (vp == NULL) ? NONE : *vp;
         }
 
         return NONE;
@@ -1847,11 +1850,12 @@ DoMutDiv(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         struct itable *o;
+        INT32_C(4);
         Value *vp, *vp2, val, x;
-        void *v = vp = (void *)(p & ~0x07);
+        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
-        switch (p & 0x07) {
+        switch (p & PMASK3) {
         case 0:
                 if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "/=")) != NULL) {
                         gP(vp);
@@ -1870,7 +1874,7 @@ DoMutDiv(Ty *ty)
                 break;
         case 1:
                 FALSE_OR (top(ty)->type != VALUE_INTEGER) {
-                        zP("attempt to divide byte by non-integer: %s", value_show_color(ty, top(ty)));
+                        zP("attempt to divide byte by non-integer: %s", VSC(top(ty)));
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] /= pop(ty).integer;
                 push(ty, INTEGER(b));
@@ -1894,10 +1898,10 @@ DoMutMul(Ty *ty)
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         struct itable *o;
         Value *vp, *vp2, val, x;
-        void *v = vp = (void *)(p & ~0x07);
+        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
-        switch (p & 0x07) {
+        switch (p & PMASK3) {
         case 0:
                 if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "*=")) != NULL) {
                         gP(vp);
@@ -1941,10 +1945,10 @@ DoMutSub(Ty *ty)
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         struct itable *o;
         Value *vp, *vp2, x, val;
-        void *v = vp = (void *)(p & ~0x07);
+        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
-        switch (p & 0x07) {
+        switch (p & PMASK3) {
         case 0:
                 if (vp->type == VALUE_DICT) {
                         FALSE_OR (top(ty)->type != VALUE_DICT)
@@ -1993,10 +1997,10 @@ DoMutAdd(Ty *ty)
         uintptr_t c, p = (uintptr_t)poptarget(ty);
         struct itable *o;
         Value *vp, val, x;
-        void *v = vp = (void *)(p & ~0x07);
+        void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
-        switch (p & 0x07) {
+        switch (p & PMASK3) {
         case 0:
                 if (vp->type == VALUE_ARRAY) {
                         FALSE_OR (top(ty)->type != VALUE_ARRAY)
@@ -2048,10 +2052,10 @@ static void
 DoAssign(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget(ty);
-        void *v = (void *)(p & ~0x07);
+        void *v = (void *)(p & ~PMASK3);
         struct itable *o;
 
-        switch (p & 0x07) {
+        switch (p & PMASK3) {
         case 0:
                 *(Value *)v = peek(ty);
                 break;
@@ -2196,10 +2200,6 @@ vm_exec(Ty *ty, char *code)
 
                                 istat_add(&prof, LastIP, dt);
 
-                                if (llabs((intptr_t)LastIP - (intptr_t)10754527022) > 10000000L) {
-                                        //raise(SIGTRAP);
-                                }
-
                                 if (LastThreadGCTime > 0) {
                                         Value *count = dict_put_key_if_not_exists(ty, FuncSamples, PTR((void *)GC_ENTRY));
                                         if (count->type == VALUE_NIL) {
@@ -2258,7 +2258,7 @@ vm_exec(Ty *ty, char *code)
                 CASE(LOAD_CAPTURED)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
+                        LOG("Loading capture: %s (%d) of %s", IP, n, VSC(&vvL(FRAMES)->f));
                         SKIPSTR();
 #endif
 
@@ -2276,7 +2276,7 @@ vm_exec(Ty *ty, char *code)
                 CASE(CHECK_INIT)
                         if (top(ty)->type == VALUE_UNINITIALIZED) {
                                 // This will panic
-                                value_show(ty, top(ty));
+                                VSC(top(ty));
                         }
                         break;
                 CASE(CAPTURE)
@@ -2352,7 +2352,7 @@ vm_exec(Ty *ty, char *code)
                 CASE(TARGET_CAPTURED)
                         READVALUE(n);
 #ifndef TY_NO_LOG
-                        LOG("Loading capture: %s (%d) of %s", IP, n, value_show(ty, &vvL(FRAMES)->f));
+                        LOG("Loading capture: %s (%d) of %s", IP, n, VSC(&vvL(FRAMES)->f));
                         SKIPSTR();
 #endif
                         pushtarget(ty, vvL(FRAMES)->f.env[n], NULL);
@@ -2433,7 +2433,7 @@ vm_exec(Ty *ty, char *code)
                                 pushtarget(ty, (Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
                         } else if (container.type == VALUE_PTR && IP[0] == INSTR_ASSIGN) {
                                 if (subscript.type != VALUE_INTEGER) {
-                                        zP("non-integer pointer offset used in subscript assignment: %s", value_show_color(ty, &subscript));
+                                        zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
                                 }
                                 Value p = vm_2op(ty, OP_ADD, &container, &subscript);
                                 pop(ty);
@@ -2448,7 +2448,7 @@ vm_exec(Ty *ty, char *code)
                                 IP += 1;
                                 break;
                         } else {
-                                zP("attempt to perform subscript assignment on something other than an object or array: %s", value_show_color(ty, &container));
+                                zP("attempt to perform subscript assignment on something other than an object or array: %s", VSC(&container));
                         }
 
                         pop(ty);
@@ -2600,7 +2600,7 @@ vm_exec(Ty *ty, char *code)
                                 TERM(34),
                                 TERM(1),
                                 IP,
-                                value_show(ty, &v),
+                                VSC(&v),
                                 TERM(22),
                                 TERM(39)
                         );
@@ -2619,7 +2619,7 @@ vm_exec(Ty *ty, char *code)
                                 TERM(34),
                                 TERM(1),
                                 IP,
-                                value_show(ty, &v),
+                                VSC(&v),
                                 TERM(22),
                                 TERM(39)
                         );
@@ -2774,7 +2774,7 @@ Throw:
                         READJUMP(code);
                         READVALUE(i);
                         READVALUE(b);
-                        //LOG("trying to index: %s", value_show(ty, top(ty)));
+                        //LOG("trying to index: %s", VSC(top(ty)));
                         if (top(ty)->type != VALUE_ARRAY) {
                                 DOJUMP(code);
                                 break;
@@ -2910,7 +2910,7 @@ Throw:
                                         if (v->type != VALUE_TUPLE) {
                                                 zP(
                                                         "attempt to spread non-tuple in tuple expression: %s",
-                                                        value_show_color(ty, v)
+                                                        VSC(v)
                                                 );
                                         }
                                         for (int j = 0; j < v->count; ++j) {
@@ -2998,16 +2998,18 @@ Throw:
                         str = IP;
                         n = strlen(str);
                         IP += n + 1;
+                        READVALUE(z);
                         if (top(ty)->type == VALUE_PTR) {
-                            char *s = value_show(ty, top(ty));
+                            char *s = VSC(top(ty));
                             pop(ty);
                             push(ty, STRING_NOGC(s, strlen(s)));
                             break;
                         } else if (n > 0) {
                                 v = pop(ty);
                                 push(ty, STRING_NOGC(str, n));
+                                push(ty, INTEGER(z));
                                 push(ty, v);
-                                n = 1;
+                                n = 2;
                                 i = NAMES.fmt;
                         } else {
                                 n = 0;
@@ -3065,7 +3067,7 @@ Throw:
                 CASE(GET_NEXT)
                         v = top(ty)[-1];
                         i = top(ty)[-2].i++;
-                        //LOG("GET_NEXT: v = %s\n", value_show(ty, &v));
+                        //LOG("GET_NEXT: v = %s\n", VSC(&v));
                         //LOG("GET_NEXT: i = %d\n", i);
                         print_stack(ty, 10);
                         switch (v.type) {
@@ -3145,7 +3147,7 @@ Throw:
                         default:
                         NoIter:
                                 GC_STOP();
-                                zP("for-each loop on non-iterable value: %s", value_show(ty, &v));
+                                zP("for-each loop on non-iterable value: %s", VSC(&v));
                         }
                         break;
                 CASE(ARRAY_COMPR)
@@ -3184,7 +3186,7 @@ Throw:
                         if (top(ty)->type == VALUE_TAG && top(ty)->tag == TAG_NONE) {
                                 *top(ty) = NONE;
                         } else FALSE_OR (!(top(ty)->tags != 0 && tags_first(ty, top(ty)->tags) == TAG_SOME)) {
-                                zP("iterator returned invalid type. expected None or Some(ty, x) but got %s", value_show(ty, top(ty)));
+                                zP("iterator returned invalid type. expected None or Some(ty, x) but got %s", VSC(top(ty)));
                         } else {
                                 top(ty)->tags = tags_pop(ty, top(ty)->tags);
                                 if (top(ty)->tags == 0) {
@@ -3303,14 +3305,14 @@ Throw:
                         FALSE_OR (top(ty)->type != VALUE_TUPLE) {
                                 zP(
                                         "attempt to destructure non-tuple as tuple in assignment: %s",
-                                        value_show_color(ty, top(ty))
+                                        VSC(top(ty))
                                 );
                         }
                         FALSE_OR (n >= top(ty)->count) {
                                 zP(
                                         "elment index %d out of range in destructuring assignment: %s",
                                         n,
-                                        value_show_color(ty, top(ty))
+                                        VSC(top(ty))
                                 );
                         }
                         push(ty, top(ty)->items[n]);
@@ -3396,10 +3398,16 @@ Throw:
 
                         READVALUE(z);
 
-                        v = GetMember(ty, peek(ty), z, true);
+                        value = peek(ty);
+                        v = GetMember(ty, value, z, true);
 
-                        if (b || v.type != VALUE_NONE) {
+                        if (v.type != VALUE_NONE) {
                                 *top(ty) = v;
+                                break;
+                        }
+
+                        if (b) {
+                                *top(ty) = NIL;
                                 break;
                         }
 
@@ -3411,7 +3419,7 @@ Throw:
                                         M_NAME(z),
                                         TERM(39),
                                         TERM(97),
-                                        value_show_color(ty, &value),
+                                        VSC(&value),
                                         TERM(39)
                                 );
                         } else {
@@ -3421,7 +3429,7 @@ Throw:
                                         M_NAME(z),
                                         TERM(39),
                                         TERM(97),
-                                        value_show_color(ty, &value),
+                                        VSC(&value),
                                         TERM(39)
                                 );
                         }
@@ -3453,8 +3461,8 @@ Throw:
                                         push(ty, container.items[subscript.integer]);
                                 } else {
                                         zP(
-                                                "non-integer array index used in subscript expression: %s",
-                                                value_show_color(ty, &subscript)
+                                                "non-integer index used in subscript expression: %s",
+                                                VSC(&subscript)
                                         );
                                 }
                                 break;
@@ -3492,7 +3500,7 @@ Throw:
                                 goto CallMethod;
                         case VALUE_PTR:
                                 FALSE_OR (subscript.type != VALUE_INTEGER) {
-                                        zP("non-integer used to subscript pointer: %s", value_show(ty, &subscript));
+                                        zP("non-integer used to subscript pointer: %s", VSC(&subscript));
                                 }
                                 v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
                                 push(ty, v);
@@ -3507,7 +3515,7 @@ Throw:
                                 break;
                         default:
                         BadContainer:
-                                zP("invalid container in subscript expression: %s", value_show(ty, &container));
+                                zP("invalid container in subscript expression: %s", VSC(&container));
                         }
                         break;
                 CASE(NOT)
@@ -3549,7 +3557,7 @@ Throw:
                                 b = false;
                                 i = NAMES.len;
                                 goto CallMethod;
-                        default: zP("# applied to operand of invalid type: %s", value_show(ty, &v));
+                        default: zP("# applied to operand of invalid type: %s", VSC(&v));
                         }
                         break;
                 CASE(ADD)
@@ -3669,7 +3677,7 @@ Throw:
                                 vp->ptr = ((char *)vp->ptr) + ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
                                 break;
                         default:
-                                zP("pre-increment applied to invalid type: %s", value_show(ty, peektarget(ty)));
+                                zP("pre-increment applied to invalid type: %s", VSC(peektarget(ty)));
                         }
                         push(ty, *poptarget(ty));
                         break;
@@ -3685,7 +3693,7 @@ Throw:
                                 vp = peektarget(ty);
                                 vp->ptr = ((char *)vp->ptr) + ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
                                 break;
-                        default:            zP("post-increment applied to invalid type: %s", value_show(ty, peektarget(ty)));
+                        default:            zP("post-increment applied to invalid type: %s", VSC(peektarget(ty)));
                         }
                         poptarget(ty);
                         break;
@@ -3707,7 +3715,7 @@ Throw:
                                 vp->ptr = ((char *)vp->ptr) - ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
                                 break;
                         default:
-                                zP("pre-decrement applied to invalid type: %s", value_show(ty, peektarget(ty)));
+                                zP("pre-decrement applied to invalid type: %s", VSC(peektarget(ty)));
                         }
                         push(ty, *poptarget(ty));
                         break;
@@ -3723,7 +3731,7 @@ Throw:
                                 vp = peektarget(ty);
                                 vp->ptr = ((char *)vp->ptr) - ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
                                 break;
-                        default:            zP("post-decrement applied to invalid type: %s", value_show(ty, peektarget(ty)));
+                        default:            zP("post-decrement applied to invalid type: %s", VSC(peektarget(ty)));
                         }
                         poptarget(ty);
                         break;
@@ -3746,17 +3754,24 @@ Throw:
                         break;
                 CASE(DEFINE_TAG)
                 {
-                        int tag, super, n;
+                        int tag, super, n, c;
                         READVALUE(tag);
                         READVALUE(super);
                         READVALUE(n);
+                        READVALUE(c);
                         while (n --> 0) {
                                 v = pop(ty);
                                 tags_add_method(ty, tag, IP, v);
                                 SKIPSTR();
                         }
-                        if (super != -1)
+                        while (c --> 0) {
+                                v = pop(ty);
+                                tags_add_static(ty, tag, IP, v);
+                                SKIPSTR();
+                        }
+                        if (super != -1) {
                                 tags_copy_methods(ty, tag, super);
+                        }
                         break;
                 }
                 CASE(DEFINE_CLASS)
@@ -3812,7 +3827,7 @@ Throw:
                         LOG("Code size: %d", size);
                         LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
-                        LOG("Name: %s", value_show(ty, &v));
+                        LOG("Name: %s", VSC(&v));
 
                         if (EvalDepth > 0) {
                                 v.info = mAo(hs + size, GC_ANY);
@@ -3851,7 +3866,7 @@ Throw:
                                 } else {
                                         v.env[j] = p;
                                 }
-                                LOG("env[%d] = %s", j, value_show(ty, v.env[j]));
+                                LOG("env[%d] = %s", j, VSC(v.env[j]));
                         }
 
                         push(ty, v);
@@ -3930,7 +3945,7 @@ Throw:
                                                                 "attempt to splat invalid value in function call: %s%s%s%s%s",
                                                                 TERM(34),
                                                                 TERM(1),
-                                                                value_show(ty, top(ty)),
+                                                                VSC(top(ty)),
                                                                 TERM(22),
                                                                 TERM(39)
                                                         );
@@ -3955,7 +3970,7 @@ Throw:
 
                         switch (v.type) {
                         case VALUE_FUNCTION:
-                                LOG("CALLING %s with %d arguments", value_show(ty, &v), n);
+                                LOG("CALLING %s with %d arguments", VSC(&v), n);
                                 print_stack(ty, n);
                                 call(ty, &v, NULL, n, nkw, false);
                                 break;
@@ -4027,7 +4042,7 @@ Throw:
                                         zP("attempt to apply a regex to an invalid number of values");
                                 value = peek(ty);
                                 if (value.type != VALUE_STRING)
-                                        zP("attempt to apply a regex to a non-string: %s", value_show(ty, &value));
+                                        zP("attempt to apply a regex to a non-string: %s", VSC(&value));
                                 push(ty, v);
                                 v = get_string_method("match!")(ty, &value, 1, NULL);
                                 pop(ty);
@@ -4072,7 +4087,7 @@ Throw:
                                 push(ty, value);
                                 break;
                         default:
-                                zP("attempt to call non-callable value %s", value_show(ty, &v));
+                                zP("attempt to call non-callable value %s", VSC(&v));
                         }
                         gX();
                         nkw = 0;
@@ -4113,11 +4128,12 @@ CallMethod:
                          */
                         if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
                         case VALUE_TAG:
-                                vp = tags_lookup_method_i(ty, value.tag, i);
+                                vp = class_lookup_immediate_i(ty, CLASS_TAG, i);
                                 if (vp == NULL) {
-                                        vp = class_lookup_method_i(ty, CLASS_TAG, i);
-                                } else {
-                                        self = NULL;
+                                        vp = tags_lookup_static(ty, value.tag, i);
+                                }
+                                if (vp == NULL) {
+                                        vp = tags_lookup_method_i(ty, value.tag, i);
                                 }
                                 break;
                         case VALUE_STRING:
@@ -4233,7 +4249,7 @@ CallMethod:
                                         goto SetupMethodCall;
                                 }
                         } else {
-                                zP("call to non-existent method '%s' on %s", M_NAME(i), value_show(ty, &value));
+                                zP("call to non-existent method '%s' on %s", M_NAME(i), VSC(&value));
                         }
                         break;
                 CASE(SAVE_STACK_POS)
@@ -4563,7 +4579,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
         vm_exec(ty, code);
 
         if (PrintResult && STACK.capacity > 0) {
-                printf("%s\n", value_show(ty, top(ty) + 1));
+                printf("%s\n", VSC(top(ty) + 1));
         }
 
 #ifdef TY_ENABLE_PROFILING
@@ -4633,7 +4649,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 } else {
                         Value f = FUNCTION();
                         f.info = entry->ctx;
-                        char *f_string = value_show_color(ty, &f);
+                        char *f_string = VSC(&f);
                         fprintf(
                                 ProfileOut,
                                 "   %s%5.1f%%  %-14lld  %s\n",
@@ -4880,7 +4896,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                 STACK.count -= argc;
                 return r;
         default:
-                zP("Non-callable value passed to vmC(): %s", value_show_color(ty, f));
+                zP("Non-callable value passed to vmC(): %s", VSC(f));
         }
 
 Collect:
@@ -4959,7 +4975,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 STACK.count -= argc;
                 return r;
         default:
-                zP("Non-callable value passed to vmC(): %s", value_show_color(ty, f));
+                zP("Non-callable value passed to vmC(): %s", VSC(f));
         }
 }
 
@@ -5002,7 +5018,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 DoTag(ty, f->tag, argc, NULL);
                 return pop(ty);
         default:
-                zP("Non-callable value passed to vm_eval_function(ty): %s", value_show_color(ty, f));
+                zP("Non-callable value passed to vm_eval_function(ty): %s", VSC(f));
         }
 }
 

@@ -14,7 +14,7 @@ typedef enum LexContext {
 } LexContext;
 
 typedef struct LexState {
-        struct location loc;
+        Location loc;
         char const *end;
         bool need_nl;
         bool keep_comments;

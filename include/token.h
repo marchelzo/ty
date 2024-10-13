@@ -9,6 +9,7 @@
 #include "vec.h"
 #include "location.h"
 #include "lex.h"
+#include "ty.h"
 
 typedef struct regex {
         pcre *pcre;
@@ -126,7 +127,6 @@ typedef struct token {
                 struct regex const *regex;
                 struct {
                         vec(char *) strings;
-                        vec(char *) fmts;
                         vec(LexState) expressions;
                         vec(struct location) starts;
                         vec(struct location) ends;

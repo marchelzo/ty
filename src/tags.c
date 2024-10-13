@@ -27,6 +27,7 @@ static int tagcount = 0;
 static vec(struct tags *) lists;
 static vec(char const *) names;
 static vec(struct itable) tables;
+static vec(struct itable) statics;
 
 static struct tags *
 mklist(int tag, struct tags *next)
@@ -59,7 +60,8 @@ tags_new(Ty *ty, char const *tag)
 
         struct itable table;
         itable_init(ty, &table);
-        vec_nogc_push(tables, table);
+        xvP(tables, table);
+        xvP(statics, table);
 
         mklist(tagcount, lists.items[0]);
         return tagcount++;
@@ -166,24 +168,35 @@ tags_add_method(Ty *ty, int tag, char const *name, struct value f)
 }
 
 void
+tags_add_static(Ty *ty, int tag, char const *name, Value f)
+{
+        LOG("tag = %d", tag);
+        LOG("adding method %s to tag %s", name, names.items[tag - 1]);
+        itable_put(ty, &statics.items[tag - 1], name, f);
+}
+
+void
 tags_copy_methods(Ty *ty, int dst, int src)
 {
         struct itable *dt = &tables.items[dst - 1];
         struct itable const *st = &tables.items[src - 1];
         itable_copy(ty, dt, st);
-}
 
-Value *
-tags_lookup_method(Ty *ty, int tag, char const *name, unsigned long h)
-{
-        struct itable const *t = &tables.items[tag - 1];
-        InternEntry *e = intern(&xD.members, name);
-        return itable_lookup(ty, t, e->id);
+        dt = &statics.items[dst - 1];
+        st = &statics.items[src - 1];
+        itable_copy(ty, dt, st);
 }
 
 Value *
 tags_lookup_method_i(Ty *ty, int tag, int i)
 {
         struct itable const *t = &tables.items[tag - 1];
+        return itable_lookup(ty, t, i);
+}
+
+Value *
+tags_lookup_static(Ty *ty, int tag, int i)
+{
+        struct itable const *t = &statics.items[tag - 1];
         return itable_lookup(ty, t, i);
 }

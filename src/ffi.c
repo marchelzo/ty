@@ -23,7 +23,7 @@ int_from(Value const *v)
 }
 
 static void
-store(Ty *ty, ffi_type *t, void *p, struct value const *v)
+store(Ty *ty, ffi_type *t, void *p, Value const *v)
 {
         size_t offsets[64];
         Value *f, ptr;
@@ -105,18 +105,18 @@ store(Ty *ty, ffi_type *t, void *p, struct value const *v)
                         if (f != NULL)
                                 memcpy(p, vm_call_method(ty, v, f, 0).ptr, t->size);
                         else
-                                zP("attempt to dereference null-pointer: %s.__ptr__()", value_show_color(ty, v));
+                                zP("attempt to dereference null-pointer: %s.__ptr__()", VSC(v));
                         break;
                 }
                 break;
         }
 }
 
-static struct value
+static Value
 load(Ty *ty, ffi_type *t, void const *p)
 {
         void * const *vp;
-        struct value v;
+        Value v;
         int n;
 
         switch (t->type) {
@@ -170,11 +170,11 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         bool need_unlock = MaybeTakeLock(ty);
 
         for (int i = 0; i < cif->nargs; ++i) {
-                struct value arg = load(ty, cif->arg_types[i], args[i]);
+                Value arg = load(ty, cif->arg_types[i], args[i]);
                 vmP(&arg);
         }
 
-        struct value rv = vmC(f, cif->nargs);
+        Value rv = vmC(f, cif->nargs);
 
         switch (cif->rtype->type) {
         case FFI_TYPE_VOID:
@@ -199,8 +199,8 @@ closure_func(ffi_cif *cif, void *ret, void **args, void *data)
         }
 }
 
-struct value
-cffi_cif(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_cif(Ty *ty, int argc, Value *kwargs)
 {
         ffi_type *rt;
         vec(ffi_type *) ats = {0};
@@ -225,11 +225,11 @@ Bad:
 
         ffi_cif *cif = mA(sizeof *cif);
 
-        struct value *nFixed = NAMED("nFixed");
+        Value *nFixed = NAMED("nFixed");
 
         if (nFixed != NULL && nFixed->type != VALUE_NIL) {
                 if (nFixed->type != VALUE_INTEGER) {
-                        zP("ffi.cif(): expected nFixed to be an integer but got: %s", value_show_color(ty, nFixed));
+                        zP("ffi.cif(): expected nFixed to be an integer but got: %s", VSC(nFixed));
                 }
                 if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->integer, max(0, argc - 1), rt, ats.items) != FFI_OK) {
                         vec_empty(ty, ats);
@@ -245,17 +245,17 @@ Bad:
         return PTR(cif);
 }
 
-struct value
-cffi_addr(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_addr(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("ffi.addr() expects 1 argument but got %d", argc);
         }
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         if (v.type != VALUE_PTR) {
-                zP("ffi.addr() expects a pointer but got: %s", value_show(ty, &v));
+                zP("ffi.addr() expects a pointer but got: %s", VSC(&v));
         }
 
         void **p = mA(sizeof *p);
@@ -264,15 +264,15 @@ cffi_addr(Ty *ty, int argc, struct value *kwargs)
         return PTR(p);
 }
 
-struct value
-cffi_free(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_free(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("ffi.free() expects exactly 1 argument but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("ffi.free() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("ffi.free() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         free(ARG(0).ptr);
@@ -280,15 +280,15 @@ cffi_free(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-cffi_alloc(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_alloc(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("ffi.alloc() expects 1 argument but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("ffi.alloc() expects an integer but got: %s", value_show(ty, &ARG(0)));
+                zP("ffi.alloc() expects an integer but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(0).integer <= 0)
@@ -299,19 +299,19 @@ cffi_alloc(Ty *ty, int argc, struct value *kwargs)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-struct value
-cffi_realloc(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_realloc(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 2) {
                 zP("ffi.realloc() expects 2 arguments but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_PTR) {
-            zP("ffi.realloc(): expected pointer as first argument but got: %s", value_show(ty, &ARG(0)));
+            zP("ffi.realloc(): expected pointer as first argument but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("ffi.realloc(): expected integer as second argument but got: %s", value_show(ty, &ARG(1)));
+                zP("ffi.realloc(): expected integer as second argument but got: %s", VSC(&ARG(1)));
         }
 
         if (ARG(1).integer <= 0)
@@ -322,8 +322,8 @@ cffi_realloc(Ty *ty, int argc, struct value *kwargs)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-struct value
-cffi_size(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_size(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("ffi.size() expects 1 or 2 arguments but got %d", argc);
@@ -336,8 +336,8 @@ cffi_size(Ty *ty, int argc, struct value *kwargs)
         return INTEGER(((ffi_type *)ARG(0).ptr)->size);
 }
 
-struct value
-cffi_new(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_new(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 zP("ffi.new() expects 1 or 2 arguments but got %d", argc);
@@ -354,13 +354,13 @@ cffi_new(Ty *ty, int argc, struct value *kwargs)
         size += (size % align);
 
 #ifdef _WIN32
-        struct value p = TPTR(t, _aligned_malloc(size, align));
+        Value p = TPTR(t, _aligned_malloc(size, align));
 #else
-        struct value p = TPTR(t, aligned_alloc(align, size));
+        Value p = TPTR(t, aligned_alloc(align, size));
 #endif
 
         if (argc == 2) {
-                struct value v = ARG(1);
+                Value v = ARG(1);
                 store(ty, t, p.ptr, &v);
         } else {
                 memset(p.ptr, 0, t->size);
@@ -369,15 +369,15 @@ cffi_new(Ty *ty, int argc, struct value *kwargs)
         return p;
 }
 
-struct value
-cffi_pmember(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_pmember(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 3) {
                 zP("ffi.pmember(): expected 3 arguments but got %d", argc);
         }
 
 
-        struct value t = ARG(0);
+        Value t = ARG(0);
         if (t.type != VALUE_PTR) {
                 zP("the first argument to ffi.member() must be a pointer");
         }
@@ -398,12 +398,12 @@ cffi_pmember(Ty *ty, int argc, struct value *kwargs)
                 p = ARG(1).blob->items;
                 break;
         default:
-                zP("ffi.pmember(): invalid second argument: %s", value_show(ty, &ARG(1)));
+                zP("ffi.pmember(): invalid second argument: %s", VSC(&ARG(1)));
         }
 
-        struct value i = ARG(2);
+        Value i = ARG(2);
         if (i.type != VALUE_INTEGER || i.integer < 0 || i.integer >= n) {
-                zP("invalid third argument to ffi.pmember(): %s", value_show(ty, &i));
+                zP("invalid third argument to ffi.pmember(): %s", VSC(&i));
         }
 
         size_t offsets[64];
@@ -413,14 +413,14 @@ cffi_pmember(Ty *ty, int argc, struct value *kwargs)
 
 }
 
-struct value
-cffi_member(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_member(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 3 && argc != 4) {
                 zP("ffi.member() expects 3 or 4 arguments but got %d", argc);
         }
 
-        struct value t = ARG(0);
+        Value t = ARG(0);
         if (t.type != VALUE_PTR) {
                 zP("the first argument to ffi.member() must be a pointer");
         }
@@ -441,12 +441,12 @@ cffi_member(Ty *ty, int argc, struct value *kwargs)
                 p = ARG(1).blob->items;
                 break;
         default:
-                zP("ffi.member(): invalid second argument: %s", value_show(ty, &ARG(1)));
+                zP("ffi.member(): invalid second argument: %s", VSC(&ARG(1)));
         }
 
-        struct value i = ARG(2);
+        Value i = ARG(2);
         if (i.type != VALUE_INTEGER || i.integer < 0 || i.integer >= n) {
-                zP("invalid third argument to ffi.member(): %s", value_show(ty, &i));
+                zP("invalid third argument to ffi.member(): %s", VSC(&i));
         }
 
         size_t offsets[64];
@@ -460,8 +460,8 @@ cffi_member(Ty *ty, int argc, struct value *kwargs)
         }
 }
 
-struct value
-cffi_load(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_load(Ty *ty, int argc, Value *kwargs)
 {
         if (argc == 3) {
                 return cffi_load_n(ty, argc, kwargs);
@@ -475,8 +475,8 @@ cffi_load(Ty *ty, int argc, struct value *kwargs)
         return load(ty, ARG(0).ptr, ARG(1).ptr);
 }
 
-struct value
-cffi_load_n(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_load_n(Ty *ty, int argc, Value *kwargs)
 {
         ffi_type *t = ARG(0).ptr;
         char *p = ARG(1).ptr;
@@ -495,12 +495,12 @@ cffi_load_n(Ty *ty, int argc, struct value *kwargs)
         return ARRAY(a);
 }
 
-struct value
-cffi_store(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_store(Ty *ty, int argc, Value *kwargs)
 {
-        struct value vType;
-        struct value vPtr;
-        struct value vVal;
+        Value vType;
+        Value vPtr;
+        Value vVal;
 
         switch (argc) {
         case 3:
@@ -518,13 +518,13 @@ cffi_store(Ty *ty, int argc, struct value *kwargs)
         }
 
         if (vPtr.type != VALUE_PTR) {
-                zP("ffi.store(ty): expected pointer but got: %s", value_show_color(ty, &vPtr));
+                zP("ffi.store(ty): expected pointer but got: %s", VSC(&vPtr));
         }
 
         if (vType.type == VALUE_NONE) {
                 vType = PTR(vPtr.extra == NULL ? &ffi_type_uint8 : (ffi_type *)vPtr.extra);
         } else if (vType.type != VALUE_PTR) {
-                zP("ffi.store(ty): expected pointer but got: %s", value_show_color(ty, &vType));
+                zP("ffi.store(ty): expected pointer but got: %s", VSC(&vType));
         }
 
         store(ty, vType.ptr, vPtr.ptr, &vVal);
@@ -532,8 +532,8 @@ cffi_store(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-cffi_call(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_call(Ty *ty, int argc, Value *kwargs)
 {
         if (argc < 2) {
                 zP("ffi.call() expects at least 2 arguments (cif, function) but got %d", argc);
@@ -577,7 +577,7 @@ cffi_call(Ty *ty, int argc, struct value *kwargs)
                 ret = out->blob->items;
                 break;
         default:
-                zP("invalid `out` argument to ffi.call(): %s", value_show_color(ty, out));
+                zP("invalid `out` argument to ffi.call(): %s", VSC(out));
         }
 
         lGv(true);
@@ -589,8 +589,8 @@ cffi_call(Ty *ty, int argc, struct value *kwargs)
         return (out == NULL) ? load(ty, cif->rtype, ret) : PTR(ret);
 }
 
-struct value
-cffi_dlopen(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_dlopen(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 zP("ffi.dlopen() expects 1 or 2 arguments but got %d", argc);
@@ -614,19 +614,19 @@ cffi_dlopen(Ty *ty, int argc, struct value *kwargs)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-struct value
-cffi_blob(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_blob(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 2) {
                 zP("ffi.blob() expects 2 arguments but got %d", argc);
         }
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("the first argument to ffi.blob() must be a pointer, instead got: %s", value_show(ty, &ARG(0)));
+                zP("the first argument to ffi.blob() must be a pointer, instead got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("the second argument to ffi.blob() must be an integer, instead got: %s", value_show(ty, &ARG(1)));
+                zP("the second argument to ffi.blob() must be an integer, instead got: %s", VSC(&ARG(1)));
         }
 
         // TODO: should be a 'frozen' blob or something
@@ -640,8 +640,8 @@ cffi_blob(Ty *ty, int argc, struct value *kwargs)
         return BLOB(b);
 }
 
-struct value
-cffi_clone(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_clone(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 2) {
                 zP("ffi.clone() expects 2 arguments but got %d", argc);
@@ -663,8 +663,8 @@ cffi_clone(Ty *ty, int argc, struct value *kwargs)
         return PTR(clone);
 }
 
-struct value
-cffi_str(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_str(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 zP("ffi.str() expects 1 or 2 arguments but got %d", argc);
@@ -686,8 +686,8 @@ cffi_str(Ty *ty, int argc, struct value *kwargs)
         return vSc(p, n);
 }
 
-struct value
-cffi_as_str(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_as_str(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2) {
                 zP("ffi.as_str() expects 1 or 2 arguments but got %d", argc);
@@ -710,8 +710,8 @@ cffi_as_str(Ty *ty, int argc, struct value *kwargs)
         return STRING_NOGC(ARG(0).ptr, n);
 }
 
-struct value
-cffi_dlerror(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_dlerror(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 0) {
                 zP("ffi.dlerror(): expected 0 arguments but got %d", argc);
@@ -729,8 +729,8 @@ cffi_dlerror(Ty *ty, int argc, struct value *kwargs)
 #endif
 }
 
-struct value
-cffi_dlsym(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_dlsym(Ty *ty, int argc, Value *kwargs)
 {
         if (argc == 0 || argc > 2) {
                 zP("ffi.dlsym() expects 1 or 2 arguments but got %d", argc);
@@ -749,7 +749,7 @@ cffi_dlsym(Ty *ty, int argc, struct value *kwargs)
         void *handle;
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 if (ARG(1).type != VALUE_PTR) {
-                        zP("the second argument to ffi.dlsym() must be a pointer, instead got: %s", value_show(ty, &ARG(1)));
+                        zP("the second argument to ffi.dlsym() must be a pointer, instead got: %s", VSC(&ARG(1)));
                 }
                 handle = ARG(1).ptr;
         } else {
@@ -769,8 +769,8 @@ cffi_dlsym(Ty *ty, int argc, struct value *kwargs)
         return (p == NULL) ? NIL : PTR(p);
 }
 
-struct value
-cffi_struct(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_struct(Ty *ty, int argc, Value *kwargs)
 {
         if (argc == 0) {
                 zP("ffi.struct() expects at least 1 argument");
@@ -784,7 +784,7 @@ cffi_struct(Ty *ty, int argc, struct value *kwargs)
         t->elements = mA((argc + 1) * sizeof (ffi_type *));
 
         for (int i = 0; i < argc; ++i) {
-                struct value member = ARG(i);
+                Value member = ARG(i);
 
                 if (member.type != VALUE_PTR) {
                         zP("non-pointer passed to ffi.struct()");
@@ -800,21 +800,21 @@ cffi_struct(Ty *ty, int argc, struct value *kwargs)
         return PTR(t);
 }
 
-struct value
-cffi_closure(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_closure(Ty *ty, int argc, Value *kwargs)
 {
         if (argc == 0) {
                 zP("ffi.closure(): expected at least 1 argument but got %d", argc);
         }
 
-        struct value f = ARG(argc - 1);
+        Value f = ARG(argc - 1);
         vmX();
 
         if (!CALLABLE(f)) {
                 zP("ffi.closure(): last argument must be callable");
         }
 
-        struct value cif = cffi_cif(ty, argc - 1, NULL);
+        Value cif = cffi_cif(ty, argc - 1, NULL);
 
         if (cif.type == VALUE_NIL) {
                 zP("ffi.closure(): failed to construct cif");
@@ -830,7 +830,7 @@ cffi_closure(Ty *ty, int argc, struct value *kwargs)
 
         GC_STOP();
 
-        struct value *data = mAo(sizeof *data, GC_VALUE);
+        Value *data = mAo(sizeof *data, GC_VALUE);
         *data = vT(2);
         data->items[0] = f;
         data->items[1] = PTR(ty);
@@ -850,14 +850,14 @@ cffi_closure(Ty *ty, int argc, struct value *kwargs)
         }
 }
 
-struct value
-cffi_closure_free(Ty *ty, int argc, struct value *kwargs)
+Value
+cffi_closure_free(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("ffi.freeClosure(): expected 1 argument but got %d", argc);
         }
 
-        struct value p = ARG(0);
+        Value p = ARG(0);
 
         void **pointers = p.extra;
 

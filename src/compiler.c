@@ -305,7 +305,7 @@ get_import_scope(Ty *ty, char const *);
 static Scope *
 search_import_scope(char const *);
 
-void
+static void
 import_module(Ty *ty, Stmt const *s);
 
 static Scope *
@@ -1506,7 +1506,7 @@ aggregate_overloads(Ty *ty, expression_vector *ms, bool setters)
                 int m = 0;
                 do {
                         ms->items[i + m]->is_overload = true;
-                        snprintf(buffer, sizeof buffer - 1, "%s#%d", ms->items[i + m]->name, m + 1);
+                        snprintf(buffer, sizeof buffer, "%s#%d", ms->items[i + m]->name, m + 1);
                         ms->items[i + m]->name = sclonea(ty, buffer);
                         avP(multi->functions, ms->items[i + m]);
                         m += 1;
@@ -2608,6 +2608,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                 subscope = scope_new(ty, s->tag.name, scope, false);
                 symbolize_methods(ty, subscope, s->tag.methods.items, s->tag.methods.count);
+                symbolize_methods(ty, subscope, s->tag.statics.items, s->tag.statics.count);
 
                 break;
         case STATEMENT_BLOCK:
@@ -3469,6 +3470,7 @@ emit_special_string(Ty *ty, Expr const *e)
                         avPn(state.code, e->fmts.items[i], strcspn(e->fmts.items[i], "{"));
                 }
                 avP(state.code, '\0');
+                emit_int(ty, e->widths.items[i]);
                 emit_instr(ty, INSTR_STRING);
                 emit_string(ty, e->strings.items[i + 1]);
         }
@@ -5609,6 +5611,10 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 emit_instr(ty, INSTR_POP);
                 break;
         case STATEMENT_TAG_DEFINITION:
+                for (int i = 0; i < s->tag.statics.count; ++i) {
+                        emit_function(ty, s->tag.statics.items[i], CLASS_TAG);
+                }
+
                 for (int i = 0; i < s->tag.methods.count; ++i) {
                         emit_function(ty, s->tag.methods.items[i], CLASS_TAG);
                 }
@@ -5617,9 +5623,15 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 emit_int(ty, s->tag.symbol);
                 emit_int(ty, s->tag.super == NULL ? -1 : s->tag.super->symbol->tag);
                 emit_int(ty, s->tag.methods.count);
+                emit_int(ty, s->tag.statics.count);
 
-                for (int i = s->tag.methods.count; i > 0; --i)
+                for (int i = s->tag.methods.count; i > 0; --i) {
                         emit_string(ty, s->tag.methods.items[i - 1]->name);
+                }
+
+                for (int i = s->tag.statics.count; i > 0; --i) {
+                        emit_string(ty, s->tag.statics.items[i - 1]->name);
+                }
 
                 break;
         case STATEMENT_CLASS_DEFINITION:
@@ -5909,7 +5921,7 @@ compile(Ty *ty, char const *source)
                         do {
                                 p[i + m]->pub = false;
                                 p[i + m]->value->is_overload = true;
-                                snprintf(buffer, sizeof buffer - 1, "%s#%d", multi->name, m + 1);
+                                snprintf(buffer, sizeof buffer, "%s#%d", multi->name, m + 1);
                                 p[i + m]->target->identifier = p[i + m]->value->name = sclonea(ty, buffer);
                                 avP(multi->functions, (Expr *)p[i + m]);
                                 define_function(ty, p[i + m]);
@@ -6080,7 +6092,7 @@ compiler_import_module(Ty *ty, Stmt const *s)
         return true;
 }
 
-void
+static void
 import_module(Ty *ty, Stmt const *s)
 {
         char const *name = s->import.module;
@@ -7091,7 +7103,8 @@ tyexpr(Ty *ty, Expr const *e)
                                 vAp(v.array, expr);
                         } else {
                                 Value s = vSc(e->fmts.items[i], strlen(e->fmts.items[i]));
-                                vAp(v.array, PAIR(expr, s));
+                                Value w = INTEGER(e->widths.items[i]);
+                                vAp(v.array, TRIPLE(expr, s, w));
                         }
                         vAp(v.array, vSc(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
                 }
@@ -7995,6 +8008,7 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_SPECIAL_STRING;
                 vec_init(e->strings);
                 vec_init(e->expressions);
+                vec_init(e->widths);
                 vec_init(e->fmts);
                 for (int i = 0; i < v->array->count; ++i) {
                         Value *x = &v->array->items[i];
@@ -8003,9 +8017,11 @@ cexpr(Ty *ty, Value *v)
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, mkcstr(ty, &x->items[1]));
+                                avP(e->widths, (x->count > 2) ? x->items[2].integer : 0);
                         } else {
                                 avP(e->expressions, cexpr(ty, x));
                                 avP(e->fmts, NULL);
+                                avP(e->widths, 0);
                         }
                 }
                 if (v->array->count == 0 || vvL(*v->array)->type != VALUE_STRING) {
@@ -9752,11 +9768,15 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(DEFINE_TAG)
                 {
-                        int tag, super, n;
+                        int tag, super, t, n;
                         READVALUE(tag);
                         READVALUE(super);
                         READVALUE(n);
+                        READVALUE(t);
                         while (n --> 0) {
+                                SKIPSTR();
+                        }
+                        while (t --> 0) {
                                 SKIPSTR();
                         }
                         break;

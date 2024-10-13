@@ -22,18 +22,18 @@ static vec(struct itable) ctables;
 int
 class_new(Ty *ty, char const *name, char const *doc)
 {
-        vvP(names, name);
-        vvP(docs, doc);
-        vvP(supers, -1);
-        vvP(finalizers, NONE);
+        xvP(names, name);
+        xvP(docs, doc);
+        xvP(supers, -1);
+        xvP(finalizers, NONE);
 
         struct itable t;
         itable_init(ty, &t);
 
-        vvP(mtables, t);
-        vvP(gtables, t);
-        vvP(stables, t);
-        vvP(ctables, t);
+        xvP(mtables, t);
+        xvP(gtables, t);
+        xvP(stables, t);
+        xvP(ctables, t);
 
         return class++;
 }
