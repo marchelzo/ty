@@ -204,6 +204,18 @@ class Array : Iterable {
         return s
     }
 
+    map?(f) {
+        let ys = []
+
+        for x in self {
+            if let Some(y) = f(x) {
+                ys.push(y)
+            }
+        }
+
+        return ys
+    }
+
     T() {
         let t = [[nil for _ in self] for _ in self[0]]
 
@@ -226,6 +238,10 @@ class Array : Iterable {
                 yield i
             }
         }
+    }
+
+    flatMap(f) {
+        self.map(f).flat(1)
     }
 
     sorted?() {
@@ -538,11 +554,11 @@ class String : Iterable {
         }
     }
 
-    __fmt__(s) {
-        match int(s) {
-            nil        => self,
-            n :: n > 0 => @padRight(n),
-            n :: n < 0 => @padLeft(-n)
+    __fmt__(spec, w) {
+        if spec.match?(/[A-z]/) {
+            fmt("%{spec}", w if '*' in spec, self)
+        } else {
+            fmt("%{spec}s", w if '*' in spec, self)
         }
     }
 }
@@ -673,11 +689,11 @@ class Int {
         Float.clamp.bind(self)(*args)
     }
 
-    __fmt__(spec) {
-        if spec[-1].match?(/[A-z]/) {
-            fmt("%{spec}", self)
+    __fmt__(spec, w) {
+        if spec.match?(/[a-z]/) {
+            fmt("%{spec}", w if '*' in spec, self)
         } else {
-            fmt("%{spec}d", self)
+            fmt("%{spec}d", w if '*' in spec, self)
         }
     }
 }
@@ -729,11 +745,11 @@ class Float {
         }
     }
 
-    __fmt__(spec) {
-        if spec[-1].match?(/[A-z]/) {
-            fmt("%{spec}", self)
+    __fmt__(spec, w) {
+        if spec.match?(/[A-z]/) {
+            fmt("%{spec}", w if '*' in spec, self)
         } else {
-            fmt("%{spec}f", self)
+            fmt("%{spec}f", w if '*' in spec, self)
         }
     }
 
@@ -968,6 +984,10 @@ class Iterable {
         @__iter__().tally(f)
     }
 
+    each(f) {
+        @__iter__().each(f)
+    }
+
     min(k) {
         @__iter__().min(k)
     }
@@ -1079,6 +1099,14 @@ class Iter : Iterable {
     map*(f) {
         for x in self {
             yield f(x)
+        }
+    }
+
+    map?*(f) {
+        for x in self {
+            if let Some(y) = f(x) {
+                yield y
+            }
         }
     }
 
@@ -1353,6 +1381,10 @@ class Iter : Iterable {
         let d = %{*:0}
         for x in self { d[f(x)] += 1 }
         return d
+    }
+
+    each(f) {
+        for x in self { f(x) }
     }
 
     enumerate*() {
