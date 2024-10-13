@@ -10,7 +10,6 @@
 #include "vec.h"
 #include "scope.h"
 
-typedef vec(int) int_vector;
 typedef vec(struct expression *) expression_vector;
 
 typedef struct scope Scope;
@@ -288,6 +287,7 @@ struct expression {
                 struct {
                         vec(char *) strings;
                         vec(char *) fmts;
+                        int_vector widths;
                         expression_vector expressions;
                 };
                 struct {

@@ -12,20 +12,20 @@
 #include "vm.h"
 #include "ty.h"
 
-static struct value
-array_drop_mut(Ty *ty, struct value *array, int argc, struct value *kwargs);
+static Value
+array_drop_mut(Ty *ty, Value *array, int argc, Value *kwargs);
 
-static struct value
-array_drop(Ty *ty, struct value *array, int argc, struct value *kwargs);
+static Value
+array_drop(Ty *ty, Value *array, int argc, Value *kwargs);
 
-static struct value
-array_min_by(Ty *ty, struct value *array, int argc, struct value *kwargs);
+static Value
+array_min_by(Ty *ty, Value *array, int argc, Value *kwargs);
 
-static struct value
-array_max_by(Ty *ty, struct value *array, int argc, struct value *kwargs);
+static Value
+array_max_by(Ty *ty, Value *array, int argc, Value *kwargs);
 
-static struct value
-array_reverse(Ty *ty, struct value *array, int argc, struct value *kwargs);
+static Value
+array_reverse(Ty *ty, Value *array, int argc, Value *kwargs);
 
 typedef struct {
         Value f;
@@ -59,10 +59,10 @@ compare_by(void const *v1, void const *v2, void *ctx_)
         SortContext *ctx = ctx_;
         Ty *ty = ctx->ty;
 
-        struct value k1 = value_apply_callable(ty, &ctx->f, (struct value *)v1);
+        Value k1 = value_apply_callable(ty, &ctx->f, (Value *)v1);
         gP(&k1);
 
-        struct value k2 = value_apply_callable(ty, &ctx->f, (struct value *)v2);
+        Value k2 = value_apply_callable(ty, &ctx->f, (Value *)v2);
         gP(&k2);
 
         int result = value_compare(ty, &k1, &k2);
@@ -83,7 +83,7 @@ compare_by2(void const *v1, void const *v2, void *ctx_)
         SortContext *ctx = ctx_;
         Ty *ty = ctx->ty;
 
-        struct value v = vm_eval_function(ty, &ctx->f, v1, v2, NULL);
+        Value v = vm_eval_function(ty, &ctx->f, v1, v2, NULL);
         gP(&v);
 
         int result;
@@ -99,19 +99,19 @@ compare_by2(void const *v1, void const *v2, void *ctx_)
 }
 
 inline static void
-shrink(Ty *ty, struct value *array)
+shrink(Ty *ty, Value *array)
 {
         if (array->array->capacity > 8 * array->array->count || (array->array->capacity - array->array->count) > 1000) {
                 array->array->capacity = array->array->count;
                 if (array->array->count == 0)
                         mF(array->array->items), array->array->items = NULL;
                 else
-                        mREu(array->array->items, array->array->count * sizeof (struct value));
+                        mREu(array->array->items, array->array->count * sizeof (Value));
         }
 }
 
-static struct value
-array_push(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_push(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the push method on arrays expects 1 argument but got %d", argc);
@@ -121,14 +121,14 @@ array_push(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_insert(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_insert(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 2)
                 zP("the insert method on arrays expects 2 arguments but got %d", argc);
 
-        struct value i = ARG(0);
-        struct value v = ARG(1);
+        Value i = ARG(0);
+        Value v = ARG(1);
 
         if (i.type != VALUE_INTEGER)
                 zP("non-integer passed as the index to the insert method on array");
@@ -142,23 +142,23 @@ array_insert(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         vAp(array->array, NIL);
 
-        memmove(array->array->items + index + 1, array->array->items + index, (array->array->count - index - 1) * sizeof (struct value));
+        memmove(array->array->items + index + 1, array->array->items + index, (array->array->count - index - 1) * sizeof (Value));
         array->array->items[index] = v;
 
         return *array;
 }
 
-static struct value
-array_pop(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_pop(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        struct value result;
+        Value result;
 
         if (argc == 0) {
                 if (array->array->count == 0)
                         zP("attempt to pop from an empty array");
                 result = array->array->items[--array->array->count];
         } else if (argc == 1) {
-                struct value arg = ARG(0);
+                Value arg = ARG(0);
                 if (arg.type != VALUE_INTEGER)
                         zP("the argument to pop must be an integer");
                 if (arg.integer < 0)
@@ -176,14 +176,14 @@ array_pop(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return result;
 }
 
-static struct value
-array_swap(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_swap(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 2)
                 zP("array.swap() expects 2 arguments but got %d", argc);
 
-        struct value i = ARG(0);
-        struct value j = ARG(1);
+        Value i = ARG(0);
+        Value j = ARG(1);
 
         if (i.type != VALUE_INTEGER || j.type != VALUE_INTEGER)
                 zP("the arguments to array.swap() must be integers");
@@ -199,20 +199,20 @@ array_swap(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 zP("invalid indices passed to array.swap(): (%d, %d)", (int) i.integer, (int) j.integer);
            }
 
-        struct value tmp = array->array->items[i.integer];
+        Value tmp = array->array->items[i.integer];
         array->array->items[i.integer] = array->array->items[j.integer];
         array->array->items[j.integer] = tmp;
 
         return *array;
 }
 
-static struct value
-array_slice_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_slice_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("array.slice!() expects 1 or 2 arguments but got %d", argc);
 
-        struct value start = ARG(0);
+        Value start = ARG(0);
 
         if (start.type != VALUE_INTEGER)
                 zP("non-integer passed as first argument to array.slice!()");
@@ -221,7 +221,7 @@ array_slice_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
         int n;
 
         if (argc == 2) {
-                struct value count = ARG(1);
+                Value count = ARG(1);
                 if (count.type != VALUE_INTEGER)
                         zP("non-integer passed as second argument to array.slice!()");
                 n = count.integer;
@@ -257,8 +257,8 @@ array_slice_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return ARRAY(slice);
 }
 
-static struct value
-array_zip(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_zip(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc == 0 || (argc == 1 && ARG(0).type != VALUE_ARRAY)) {
                 zP("array.zip() expects at least one array argument");
@@ -266,8 +266,8 @@ array_zip(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         int ac = argc;
 
-        struct value f = NIL;
-        if (CALLABLE(ARG(ac - 1))) {
+        Value f = NIL;
+        if (ARG(ac - 1).type != VALUE_ARRAY && CALLABLE(ARG(ac - 1))) {
                 f = ARG(ac - 1);
                 ac -= 1;
         }
@@ -282,7 +282,7 @@ array_zip(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         for (int i = 0; i < n; ++i) {
                 if (f.type == VALUE_NIL) {
-                        struct value t = vT(ac + 1);
+                        Value t = vT(ac + 1);
                         t.items[0] = array->array->items[i];
                         for (int j = 0; j < ac; ++j) {
                                 t.items[j + 1] = ARG(j).array->items[i];
@@ -303,13 +303,13 @@ array_zip(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_window(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_window(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("array.window() expects 1 or 2 arguments but got %d", argc);
 
-        struct value k = ARG(0);
+        Value k = ARG(0);
         if (k.type != VALUE_INTEGER)
                 zP("the first argument to array.window() must be an integer");
 
@@ -319,7 +319,7 @@ array_window(Ty *ty, struct value *array, int argc, struct value *kwargs)
         int n = max((intmax_t)array->array->count - k.integer + 1, 0);
 
         if (argc == 2) {
-                struct value f = ARG(1);
+                Value f = ARG(1);
                 if (!CALLABLE(f))
                         zP("the second argument to array.window() must be callable");
 
@@ -346,13 +346,13 @@ array_window(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_slice(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("array.slice() expects 1 or 2 arguments but got %d", argc);
 
-        struct value start = ARG(0);
+        Value start = ARG(0);
         if (start.type != VALUE_INTEGER)
                 zP("non-integer passed as first argument to array.slice()");
 
@@ -360,7 +360,7 @@ array_slice(Ty *ty, struct value *array, int argc, struct value *kwargs)
         int n;
 
         if (argc == 2) {
-                struct value count = ARG(1);
+                Value count = ARG(1);
                 if (count.type != VALUE_INTEGER)
                         zP("non-integer passed as second argument to array.slice()");
                 n = count.integer;
@@ -381,7 +381,7 @@ array_slice(Ty *ty, struct value *array, int argc, struct value *kwargs)
         s = min(s, array->array->count);
         n = min(n, array->array->count - s);
 
-        struct value result = ARRAY(vA());
+        Value result = ARRAY(vA());
         NOGC(result.array);
         value_array_reserve(ty, result.array, n);
         OKGC(result.array);
@@ -391,8 +391,8 @@ array_slice(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return result;
 }
 
-static struct value
-array_sort(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         int i;
         int n;
@@ -424,8 +424,8 @@ array_sort(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (n < 0 || i < 0 || i + n > array->array->count)
                 zP("invalid index passed to array.sort()");
 
-        struct value *by = NAMED("by");
-        struct value *cmp = NAMED("cmp");
+        Value *by = NAMED("by");
+        Value *cmp = NAMED("cmp");
 
         if (by != NULL && cmp != NULL) {
                 zP("ambiguous call to Array.sort(): by and cmp both specified");
@@ -440,18 +440,18 @@ array_sort(Ty *ty, struct value *array, int argc, struct value *kwargs)
                         zP("Array.sort(): `by` is not callable");
                 }
                 ctx.f = *by;
-                rqsort(array->array->items + i, n, sizeof (struct value), compare_by, &ctx);
+                rqsort(array->array->items + i, n, sizeof (Value), compare_by, &ctx);
         } else if (cmp != NULL) {
                 if (!CALLABLE(*cmp)) {
                         zP("Array.sort(): `cmp` is not callable");
                 }
                 ctx.f = *cmp;
-                rqsort(array->array->items + i, n, sizeof (struct value), compare_by2, &ctx);
+                rqsort(array->array->items + i, n, sizeof (Value), compare_by2, &ctx);
         } else {
-                rqsort(array->array->items + i, n, sizeof (struct value), compare_default, ty);
+                rqsort(array->array->items + i, n, sizeof (Value), compare_default, ty);
         }
 
-        struct value *desc = NAMED("desc");
+        Value *desc = NAMED("desc");
 
         if (desc != NULL && value_truthy(ty, desc)) {
                 array_reverse(ty, array, argc, NULL);
@@ -460,8 +460,8 @@ array_sort(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_next_permutation(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_next_permutation(Ty *ty, Value *array, int argc, Value *kwargs)
 {
 #define CMP(i, j) value_compare(ty, &array->array->items[i], &array->array->items[j])
         if (argc != 0)
@@ -474,7 +474,7 @@ array_next_permutation(Ty *ty, struct value *array, int argc, struct value *kwar
                                 if (CMP(k, j) < 0 && CMP(k, i - 1) > 0)
                                         j = k;
 
-                        struct value t = array->array->items[i - 1];
+                        Value t = array->array->items[i - 1];
                         array->array->items[i - 1] = array->array->items[j];
                         array->array->items[j] = t;
 
@@ -490,13 +490,13 @@ array_next_permutation(Ty *ty, struct value *array, int argc, struct value *kwar
 #undef CMP
 }
 
-static struct value
-array_take_while_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_take_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.takeWhile!() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
 
         if (!CALLABLE(f))
                 zP("non-callable predicate passed to array.takeWhile!()");
@@ -515,13 +515,13 @@ array_take_while_mut(Ty *ty, struct value *array, int argc, struct value *kwargs
         return *array;
 }
 
-static struct value
-array_take_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_take_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.takeWhile!() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
 
         if (!CALLABLE(f))
                 zP("non-callable predicate passed to array.takeWhile!()");
@@ -533,23 +533,23 @@ array_take_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 else
                         break;
 
-        struct value result = ARRAY(vA());
+        Value result = ARRAY(vA());
         NOGC(result.array);
         value_array_reserve(ty, result.array, keep);
         OKGC(result.array);
-        memmove(result.array->items, array->array->items, keep * sizeof (struct value));
+        memmove(result.array->items, array->array->items, keep * sizeof (Value));
         result.array->count = keep;
 
         return result;
 }
 
-static struct value
-array_drop_while_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_drop_while_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.dropWhile!() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
 
         if (!CALLABLE(f))
                 zP("non-callable predicate passed to array.dropWhile!()");
@@ -561,20 +561,20 @@ array_drop_while_mut(Ty *ty, struct value *array, int argc, struct value *kwargs
                 else
                         break;
 
-        memmove(array->array->items, array->array->items + drop, (array->array->count - drop) * sizeof (struct value));
+        memmove(array->array->items, array->array->items + drop, (array->array->count - drop) * sizeof (Value));
         array->array->count -= drop;
         shrink(ty, array);
 
         return *array;
 }
 
-static struct value
-array_drop_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_drop_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.dropWhile() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
 
         if (!CALLABLE(f))
                 zP("non-callable predicate passed to array.dropWhile()");
@@ -587,20 +587,20 @@ array_drop_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
                         break;
 
         int n = array->array->count - drop;
-        struct value result = ARRAY(vA());
+        Value result = ARRAY(vA());
         NOGC(result.array);
         value_array_reserve(ty, result.array, n);
         OKGC(result.array);
-        memmove(result.array->items, array->array->items + drop, n * sizeof (struct value));
+        memmove(result.array->items, array->array->items + drop, n * sizeof (Value));
         result.array->count = n;
 
         return result;
 }
 
-static struct value
-array_uniq(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_uniq(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        struct value *f = NULL;
+        Value *f = NULL;
 
         if (argc == 1)
                 f = &ARG(0);
@@ -610,14 +610,14 @@ array_uniq(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (f != NULL && !CALLABLE(*f))
                 zP("the argument to array.uniq() must be callable");
 
-        struct value d = DICT(dict_new(ty));
+        Value d = DICT(dict_new(ty));
         gP(&d);
 
         int n = 0;
         for (int i = 0; i < array->array->count; ++i) {
-                struct value e = array->array->items[i];
-                struct value k = (f == NULL) ? e : vm_eval_function(ty, f, &e, NULL);
-                struct value *v = dict_put_key_if_not_exists(ty, d.dict, k);
+                Value e = array->array->items[i];
+                Value k = (f == NULL) ? e : vm_eval_function(ty, f, &e, NULL);
+                Value *v = dict_put_key_if_not_exists(ty, d.dict, k);
                 if (v->type == VALUE_NIL) {
                         *v = e;
                         array->array->items[n++] = e;
@@ -630,13 +630,13 @@ array_uniq(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_take_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_take_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.take!() expects 1 argument but got %d", argc);
 
-        struct value n = ARG(0);
+        Value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.take!()");
@@ -647,18 +647,18 @@ array_take_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_take(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_take(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.take() expects 1 argument but got %d", argc);
 
-        struct value n = ARG(0);
+        Value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.take!()");
 
-        struct value result = ARRAY(vA());
+        Value result = ARRAY(vA());
 
         int count = min(n.integer, array->array->count);
 
@@ -666,44 +666,44 @@ array_take(Ty *ty, struct value *array, int argc, struct value *kwargs)
         value_array_reserve(ty, result.array, count);
         OKGC(result.array);
 
-        memmove(result.array->items, array->array->items, count * sizeof (struct value));
+        memmove(result.array->items, array->array->items, count * sizeof (Value));
         result.array->count = count;
 
         return result;
 }
 
-static struct value
-array_drop_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_drop_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.drop!() expects 1 argument but got %d", argc);
 
-        struct value n = ARG(0);
+        Value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.drop!()");
 
         int d = min(array->array->count, max(n.integer, 0));
 
-        memmove(array->array->items, array->array->items + d, (array->array->count - d) * sizeof (struct value));
+        memmove(array->array->items, array->array->items + d, (array->array->count - d) * sizeof (Value));
         array->array->count -= d;
         shrink(ty, array);
 
         return *array;
 }
 
-static struct value
-array_drop(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_drop(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.drop() expects 1 argument but got %d", argc);
 
-        struct value n = ARG(0);
+        Value n = ARG(0);
 
         if (n.type != VALUE_INTEGER)
                 zP("non-integer passed to array.drop()");
 
-        struct value result = ARRAY(vA());
+        Value result = ARRAY(vA());
 
         int d = min(max(n.integer, 0), array->array->count);
         int count = array->array->count - d;
@@ -712,14 +712,14 @@ array_drop(Ty *ty, struct value *array, int argc, struct value *kwargs)
         value_array_reserve(ty, result.array, count);
         OKGC(result.array);
 
-        memcpy(result.array->items, array->array->items + d, count * sizeof (struct value));
+        memcpy(result.array->items, array->array->items + d, count * sizeof (Value));
         result.array->count = count;
 
         return result;
 }
 
-static struct value
-array_sum(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_sum(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("the sum method on arrays expects no arguments but got %d", argc);
@@ -727,7 +727,7 @@ array_sum(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (array->array->count == 0)
                 return NIL;
 
-        struct value sum, v;
+        Value sum, v;
         sum = array->array->items[0];
 
         gP(&sum);
@@ -742,8 +742,8 @@ array_sum(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return sum;
 }
 
-static struct value
-array_join(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_join(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.join() expects 1 argument but got %d", argc);
@@ -751,14 +751,14 @@ array_join(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (array->array->count == 0)
                 return NIL;
 
-        struct value sep = ARG(0);
+        Value sep = ARG(0);
         if (sep.type != VALUE_STRING)
                 zP("the argument to array.join() must be a string");
 
         vmP(&array->array->items[0]);
-        struct value sum = builtin_str(ty, 1, NULL);
+        Value sum = builtin_str(ty, 1, NULL);
         vmX();
-        struct value v = NIL;
+        Value v = NIL;
 
         gP(&sum);
         gP(&v);
@@ -777,14 +777,14 @@ array_join(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return sum;
 }
 
-static struct value
-array_consume_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_consume_while(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 2)
                 zP("array.consumeWhile() expects 2 arguments but got %d", argc);
 
-        struct value f = ARG(0);
-        struct value p = ARG(1);
+        Value f = ARG(0);
+        Value p = ARG(1);
 
         if (!CALLABLE(f))
                 zP("invalid source passed to array.consumeWhile()");
@@ -792,7 +792,7 @@ array_consume_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (!CALLABLE(p))
                 zP("invalid predicate passed to array.consumeWhile()");
 
-        struct value v = NIL;
+        Value v = NIL;
         gP(&v);
 
         for (;;) {
@@ -808,13 +808,13 @@ array_consume_while(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_groups_of(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_groups_of(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("array.groupsOf() expects 1 or 2 arguments but got %d", argc);
 
-        struct value size = ARG(0);
+        Value size = ARG(0);
         if (size.type != VALUE_INTEGER)
                 zP("the argument to array.groupsOf() must be an integer");
 
@@ -855,18 +855,18 @@ array_groups_of(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_group_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.groupBy() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
 
         if (!CALLABLE(f))
                 zP("the argument to array.groupBy() must be callable");
 
-        struct value v1, v2;
+        Value v1, v2;
         v1 = v2 = NIL;
 
         gP(&v1);
@@ -874,9 +874,9 @@ array_group_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         int len = 0;
         for (int i = 0; i < array->array->count; ++i) {
-                struct value group = ARRAY(vA());
+                Value group = ARRAY(vA());
                 NOGC(group.array);
-                struct value e = array->array->items[i];
+                Value e = array->array->items[i];
                 v1 = value_apply_callable(ty, &f, &e);
                 vAp(group.array, e);
                 while (i + 1 < array->array->count) {
@@ -899,8 +899,8 @@ array_group_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_group(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_group(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc == 1)
                 return array_group_by(ty, array, argc, kwargs);
@@ -910,7 +910,7 @@ array_group(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         int len = 0;
         for (int i = 0; i < array->array->count; ++i) {
-                struct value group = ARRAY(vA());
+                Value group = ARRAY(vA());
                 NOGC(group.array);
                 vAp(group.array, array->array->items[i]);
                 while (i + 1 < array->array->count && value_test_equality(ty, &array->array->items[i], &array->array->items[i + 1]))
@@ -925,13 +925,13 @@ array_group(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_intersperse(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_intersperse(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the intersperse method on arrays expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int n = array->array->count - 1;
         if (n < 1)
@@ -939,7 +939,7 @@ array_intersperse(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         int newcount = 2 * n + 1;
         value_array_reserve(ty, array->array, newcount);
-        memcpy(array->array->items + n + 1, array->array->items + 1, n * sizeof (struct value));
+        memcpy(array->array->items + n + 1, array->array->items + 1, n * sizeof (Value));
 
         int lo = 1;
         int hi = n + 1;
@@ -952,8 +952,8 @@ array_intersperse(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_min(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_min(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc == 1)
                 return array_min_by(ty, array, argc, kwargs);
@@ -964,7 +964,7 @@ array_min(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (array->array->count == 0)
                 return NIL;
 
-        struct value min, v;
+        Value min, v;
         min = array->array->items[0];
 
         for (int i = 1; i < array->array->count; ++i) {
@@ -976,8 +976,8 @@ array_min(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return min;
 }
 
-static struct value
-array_min_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_min_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the minBy method on arrays expects 1 argument but got %d", argc);
@@ -985,11 +985,11 @@ array_min_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (array->array->count == 0)
                 return NIL;
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
         if (!CALLABLE(f))
                 zP("non-function passed to the minBy method on array");
 
-        struct value min, v, k, r;
+        Value min, v, k, r;
         min = array->array->items[0];
 
         gP(&k);
@@ -1023,8 +1023,8 @@ array_min_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return min;
 }
 
-static struct value
-array_max(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_max(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc == 1)
                 return array_max_by(ty, array, argc, kwargs);
@@ -1035,7 +1035,7 @@ array_max(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (array->array->count == 0)
                 return NIL;
 
-        struct value max, v;
+        Value max, v;
         max = array->array->items[0];
 
         for (int i = 1; i < array->array->count; ++i) {
@@ -1047,8 +1047,8 @@ array_max(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return max;
 }
 
-static struct value
-array_max_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the maxBy method on arrays expects 1 argument but got %d", argc);
@@ -1056,11 +1056,11 @@ array_max_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         if (array->array->count == 0)
                 return NIL;
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
         if (!CALLABLE(f))
                 zP("non-function passed to the maxBy method on array");
 
-        struct value max, v, k, r;
+        Value max, v, k, r;
         max = array->array->items[0];
 
         gP(&k);
@@ -1094,8 +1094,8 @@ array_max_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return max;
 }
 
-static struct value
-array_length(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_length(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("array.len() expects no arguments but got %d", argc);
@@ -1103,13 +1103,13 @@ array_length(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return INTEGER(array->array->count);
 }
 
-static struct value
-array_shuffle(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_shuffle(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("the shuffle! method on arrays expects no arguments but got %d", argc);
 
-        struct value t;
+        Value t;
         int n = array->array->count;
         for (int i = n - 1; i > 0; --i) {
                 int j = rand() % (i + 1);
@@ -1121,13 +1121,13 @@ array_shuffle(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_map(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_map(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the map method on arrays expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
 
         if (!CALLABLE(f))
                 zP("non-function passed to the map method on array");
@@ -1140,8 +1140,8 @@ array_map(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_enumerate(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_enumerate(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("the enumerate method on arrays expects no arguments but got %d", argc);
@@ -1149,7 +1149,7 @@ array_enumerate(Ty *ty, struct value *array, int argc, struct value *kwargs)
         int n = array->array->count;
 
         for (int i = 0; i < n; ++i) {
-                struct value entry = vT(2);
+                Value entry = vT(2);
                 entry.items[0] = INTEGER(i);
                 entry.items[1] = array->array->items[i];
                 array->array->items[i] =  entry;
@@ -1158,13 +1158,13 @@ array_enumerate(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_remove(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_remove(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the remove method on arrays expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int n = array->array->count;
         int j = 0;
@@ -1178,13 +1178,13 @@ array_remove(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_filter(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_filter(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the filter method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the filter method on array");
@@ -1201,13 +1201,13 @@ array_filter(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_find(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_find(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the find method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the find method on array");
@@ -1220,13 +1220,13 @@ array_find(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_findr(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_findr(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the findr method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the findr method on array");
@@ -1239,13 +1239,13 @@ array_findr(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_bsearch(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_bsearch(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the bsearch? method on array expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int i = 0,
             lo = 0,
@@ -1262,13 +1262,13 @@ array_bsearch(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return INTEGER(i);
 }
 
-static struct value
-array_bsearch_strict(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_bsearch_strict(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the bsearch method on array expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         // FIXME: is it ok to subtract 1 here when count is 0? implementation-defined?
         int lo = 0,
@@ -1285,13 +1285,13 @@ array_bsearch_strict(Ty *ty, struct value *array, int argc, struct value *kwargs
         return NIL;
 }
 
-static struct value
-array_search_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_search_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the searchBy method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the searchBy method on array");
@@ -1304,13 +1304,13 @@ array_search_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_searchr_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_searchr_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the searchrBy method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the searchBy method on array");
@@ -1323,8 +1323,8 @@ array_searchr_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_set(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_set(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("array.set() expects 0 arguments but got %d", argc);
@@ -1340,13 +1340,13 @@ array_set(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return DICT(d);
 }
 
-static struct value
-array_partition(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_partition(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the partition method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the partition method on array");
@@ -1385,8 +1385,8 @@ array_partition(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_split_at(Ty *ty, struct value *array, int argc, struct value *kargs)
+static Value
+array_split_at(Ty *ty, Value *array, int argc, Value *kargs)
 {
         if (argc != 1) {
                 zP("array.split()  expects 1 argument but got %d", argc);
@@ -1420,7 +1420,7 @@ array_split_at(Ty *ty, struct value *array, int argc, struct value *kargs)
         vvPn(*front, array->array->items, i);
         vvPn(*back, array->array->items + i, array->array->count - i);
 
-        struct value pair = vT(2);
+        Value pair = vT(2);
         pair.items[0] = ARRAY(front);
         pair.items[1] = ARRAY(back);
 
@@ -1430,13 +1430,13 @@ array_split_at(Ty *ty, struct value *array, int argc, struct value *kargs)
         return pair;
 }
 
-static struct value
-array_partition_no_mut(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the partition method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the partition method on array");
@@ -1470,13 +1470,13 @@ array_partition_no_mut(Ty *ty, struct value *array, int argc, struct value *kwar
         return ARRAY(result);
 }
 
-static struct value
-array_contains(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_contains(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.contains?() expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i)
@@ -1486,8 +1486,8 @@ array_contains(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return BOOLEAN(false);
 }
 
-static struct value
-array_tuple(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_tuple(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0) {
                 zP("array.tuple() expects 0 arguments but got %d", argc);
@@ -1495,24 +1495,24 @@ array_tuple(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         int n = array->array->count;
 
-        struct value v = vT(n);
+        Value v = vT(n);
         memcpy(v.items, array->array->items, n * sizeof (Value));
 
         return v;
 }
 
-static struct value
-array_tally(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_tally(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0 && argc != 1)
                 zP("array.tally() expects 0 or 1 argument(s) but got %d", argc);
 
-        struct value d = DICT(dict_new(ty));
+        Value d = DICT(dict_new(ty));
         gP(&d);
 
         if (argc == 0) {
                 for (int i = 0; i < array->array->count; ++i) {
-                        struct value *c = dict_get_value(ty, d.dict, &array->array->items[i]);
+                        Value *c = dict_get_value(ty, d.dict, &array->array->items[i]);
                         if (c == NULL) {
                                 dict_put_value(ty, d.dict, array->array->items[i], INTEGER(1));
                         } else {
@@ -1520,13 +1520,13 @@ array_tally(Ty *ty, struct value *array, int argc, struct value *kwargs)
                         }
                 }
         } else {
-                struct value f = ARG(0);
+                Value f = ARG(0);
                 if (!CALLABLE(f))
                         zP("non-callable passed to array.tally()");
 
                 for (int i = 0; i < array->array->count; ++i) {
-                        struct value v = value_apply_callable(ty, &f, &array->array->items[i]);
-                        struct value *c = dict_get_value(ty, d.dict, &v);
+                        Value v = value_apply_callable(ty, &f, &array->array->items[i]);
+                        Value *c = dict_get_value(ty, d.dict, &v);
                         if (c == NULL) {
                                 dict_put_value(ty, d.dict, v, INTEGER(1));
                         } else {
@@ -1540,13 +1540,13 @@ array_tally(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return d;
 }
 
-static struct value
-array_search(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_search(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.search() expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int n = array->array->count;
         for (int i = 0; i < n; ++i)
@@ -1556,13 +1556,13 @@ array_search(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_searchr(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_searchr(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("array.searchr() expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int n = array->array->count;
         for (int i = n - 1; i >= 0; --i)
@@ -1572,8 +1572,8 @@ array_searchr(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-array_flat(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0 && argc != 1) {
                 zP("array.flat() expects 0 or 1 arguments but got %d", argc);
@@ -1581,7 +1581,7 @@ array_flat(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
         struct array *r = vA();
 
-        vec(struct value *) stack = {0};
+        vec(Value *) stack = {0};
         vec(int) dstack = {0};
 
         int maxdepth;
@@ -1601,7 +1601,7 @@ array_flat(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 vvP(stack, &array->array->items[i]);
                 vvP(dstack, 1);
                 while (stack.count > 0) {
-                        struct value *v = *vvX(stack);
+                        Value *v = *vvX(stack);
                         int d = *vvX(dstack);
                         if (v->type != VALUE_ARRAY || d > maxdepth) {
                                 vAp(r, *v);
@@ -1621,14 +1621,14 @@ array_flat(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
 }
 
-static struct value
-array_each(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_each(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("the each method on arrays expects 1 or 2 arguments but got %d", argc);
 
         if (argc == 1) {
-                struct value f = ARG(0);
+                Value f = ARG(0);
 
                 if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
                         zP("non-function passed to the each method on array");
@@ -1640,8 +1640,8 @@ array_each(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
                 return *array;
         } else {
-                struct value v = ARG(0);
-                struct value f = ARG(1);
+                Value v = ARG(0);
+                Value f = ARG(1);
 
                 if (f.type != VALUE_FUNCTION && f.type != VALUE_BUILTIN_FUNCTION && f.type != VALUE_METHOD && f.type != VALUE_BUILTIN_METHOD)
                         zP("non-function passed to the each method on array");
@@ -1657,8 +1657,8 @@ array_each(Ty *ty, struct value *array, int argc, struct value *kwargs)
 
 }
 
-static struct value
-array_all(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_all(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         int n = array->array->count;
 
@@ -1668,7 +1668,7 @@ array_all(Ty *ty, struct value *array, int argc, struct value *kwargs)
                                 return BOOLEAN(false);
                 }
         } else if (argc == 1) {
-                struct value pred = ARG(0);
+                Value pred = ARG(0);
 
                 if (!CALLABLE(pred))
                         zP("non-predicate passed to the all? method on array");
@@ -1684,8 +1684,8 @@ array_all(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return BOOLEAN(true);
 }
 
-static struct value
-array_any(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_any(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         int n = array->array->count;
 
@@ -1694,7 +1694,7 @@ array_any(Ty *ty, struct value *array, int argc, struct value *kwargs)
                         if (value_truthy(ty, &array->array->items[i]))
                                 return BOOLEAN(true);
         } else if (argc == 1) {
-                struct value pred = ARG(0);
+                Value pred = ARG(0);
 
                 if (!CALLABLE(pred))
                         zP("non-predicate passed to the any? method on array");
@@ -1709,13 +1709,13 @@ array_any(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return BOOLEAN(false);
 }
 
-static struct value
-array_count(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_count(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the count method on arrays expects 1 argument but got %d", argc);
 
-        struct value v = ARG(0);
+        Value v = ARG(0);
 
         int n = array->array->count;
         int k = 0;
@@ -1726,13 +1726,13 @@ array_count(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return INTEGER(k);
 }
 
-static struct value
-array_count_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_count_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("the count method on arrays expects 1 argument but got %d", argc);
 
-        struct value pred = ARG(0);
+        Value pred = ARG(0);
 
         if (!CALLABLE(pred))
                 zP("non-predicate passed to the count method on array");
@@ -1746,14 +1746,14 @@ array_count_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return INTEGER(k);
 }
 
-static struct value
-array_fold_left(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_fold_left(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("the foldLeft method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
-        struct value f, v;
+        Value f, v;
 
         if (argc == 1) {
                 start = 1;
@@ -1782,14 +1782,14 @@ array_fold_left(Ty *ty, struct value *array, int argc, struct value *kwargs)
 }
 
 /* TODO: fix this */
-static struct value
-array_fold_right(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("the foldRight method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
-        struct value f, v;
+        Value f, v;
 
         if (argc == 1) {
                 start = array->array->count - 2;
@@ -1816,14 +1816,14 @@ array_fold_right(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return v;
 }
 
-static struct value
-array_scan_left(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("the scanLeft method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
-        struct value f, v;
+        Value f, v;
 
         if (argc == 1) {
                 start = 1;
@@ -1849,14 +1849,14 @@ array_scan_left(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_scan_right(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1 && argc != 2)
                 zP("the scanRight method on arrays expects 1 or 2 arguments but got %d", argc);
 
         int start;
-        struct value f, v;
+        Value f, v;
 
         if (argc == 1) {
                 start = array->array->count - 2;
@@ -1881,8 +1881,8 @@ array_scan_right(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_reverse(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_reverse(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         int lo;
         int n;
@@ -1925,7 +1925,7 @@ array_reverse(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 );
         }
 
-        struct value t;
+        Value t;
 
         while (lo < hi) {
                 t = array->array->items[lo];
@@ -1939,14 +1939,14 @@ array_reverse(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_rotate(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_rotate(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         int d = 1;
         int n = array->array->count;
 
         if (argc == 1) {
-                struct value amount = ARG(0);
+                Value amount = ARG(0);
                 if (amount.type != VALUE_INTEGER)
                         zP("the argument to array.rotate() must be an integer");
                 d = amount.integer;
@@ -1961,7 +1961,7 @@ array_rotate(Ty *ty, struct value *array, int argc, struct value *kwargs)
         int N = gcd(n, d);
         int i, j, k;
         for (i = 0; i < N; ++i) {
-                struct value t = array->array->items[i];
+                Value t = array->array->items[i];
                 j = i;
                 for (;;) {
                         k = j + d;
@@ -1979,13 +1979,13 @@ array_rotate(Ty *ty, struct value *array, int argc, struct value *kwargs)
         return *array;
 }
 
-static struct value
-array_sort_on(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_sort_on(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("Array.sortOn() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
         if (!CALLABLE(f))
                 zP("non-function passed to the Array.sortOn()");
 
@@ -1997,18 +1997,18 @@ array_sort_on(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 .ty = ty
         };
 
-        rqsort(array->array->items, array->array->count, sizeof (struct value), compare_by, &ctx);
+        rqsort(array->array->items, array->array->count, sizeof (Value), compare_by, &ctx);
 
         return *array;
 }
 
-static struct value
-array_sort_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_sort_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("Array.sortBy() expects 1 argument but got %d", argc);
 
-        struct value f = ARG(0);
+        Value f = ARG(0);
         if (!CALLABLE(f))
                 zP("non-function passed to the Array.sortBy()");
 
@@ -2020,30 +2020,30 @@ array_sort_by(Ty *ty, struct value *array, int argc, struct value *kwargs)
                 .ty = ty
         };
 
-        rqsort(array->array->items, array->array->count, sizeof (struct value), compare_by2, &ctx);
+        rqsort(array->array->items, array->array->count, sizeof (Value), compare_by2, &ctx);
 
         return *array;
 }
 
-static struct value
-array_clone(Ty *ty, struct value *array, int argc, struct value *kwargs)
+static Value
+array_clone(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("the clone method on arrays expects no arguments but got %d", argc);
 
-        struct value v = *array;
+        Value v = *array;
         v.array = value_array_clone(ty, v.array);
 
         return v;
 }
 
 #define DEFINE_NO_MUT(name) \
-        static struct value \
-        array_ ## name ## _no_mut(Ty *ty, struct value *array, int argc, struct value *kwargs) \
+        static Value \
+        array_ ## name ## _no_mut(Ty *ty, Value *array, int argc, Value *kwargs) \
         { \
-                struct value clone = array_clone(ty, array, 0, NULL); \
+                Value clone = array_clone(ty, array, 0, NULL); \
                 gP(&clone); \
-                struct value result = array_ ## name(ty, &clone, argc, kwargs); \
+                Value result = array_ ## name(ty, &clone, argc, kwargs); \
                 gX(); \
                 return result; \
         }

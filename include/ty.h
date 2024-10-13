@@ -11,6 +11,7 @@
 
 typedef struct value Value;
 
+typedef vec(int) int_vector;
 typedef vec(char) byte_vector;
 typedef vec(char *) CallStack;
 typedef vec(Value) ValueVector;
@@ -229,5 +230,7 @@ enum {
 
 #define M_ID(m) intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name
+
+#define PMASK3 ((uintptr_t)7)
 
 #endif

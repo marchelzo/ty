@@ -23,7 +23,7 @@ enum {
 };
 
 static char const *filename;
-static struct location Start;
+static Location Start;
 
 static jmp_buf jb;
 
@@ -500,10 +500,11 @@ lexrawstr(Ty *ty)
         return mkstring(ty, str.items);
 }
 
-static char const *
+static int
 lexexpr(Ty *ty)
 {
         int depth = 1;
+        int width = 0;
 
         for (;;) {
                 switch (C(0)) {
@@ -518,10 +519,11 @@ lexexpr(Ty *ty)
                         break;
                 }
                 nextchar(ty);
+                width += 1;
         }
-End:
 
-        return SRC;
+End:
+        return width + 2;
 
 Unterminated:
         error(ty, "unterminated expression in interpolated string");
@@ -555,7 +557,6 @@ readhex(Ty *ty, int ndigits, unsigned long long *k)
 
 struct SDSLine {
         vec(char *) strs;
-        vec(char *) fmts;
         vec(LexState) exprs;
 };
 
@@ -593,9 +594,9 @@ lexspecialdocstring(Ty *ty)
                         vec_init(str);
                         nextchar(ty);
                         LexState st = state;
-                        st.end = lexexpr(ty);
+                        int width = lexexpr(ty);
+                        st.end = SRC;
                         nextchar(ty);
-                        avP(vvL(lines)->fmts, NULL);
                         avP(vvL(lines)->exprs, st);
                 } else switch (C(0)) {
                         case '\0': goto Unterminated;
@@ -678,7 +679,6 @@ lexspecialdocstring(Ty *ty)
 
         struct token special = mktoken(ty, TOKEN_SPECIAL_STRING);
         vec_init(special.strings);
-        vec_init(special.fmts);
         vec_init(special.expressions);
         vec_init(special.starts);
         vec_init(special.ends);
@@ -700,7 +700,6 @@ lexspecialdocstring(Ty *ty)
                 }
                 for (int j = 0; j < lines.items[i].exprs.count; ++j) {
                         avP(special.expressions, lines.items[i].exprs.items[j]);
-                        avP(special.fmts, lines.items[i].fmts.items[j]);
                         avP(special.strings, lines.items[i].strs.items[j + 1]);
                 }
         }
@@ -718,7 +717,6 @@ lexspecialstr(Ty *ty)
 {
         struct token special = mktoken(ty, TOKEN_SPECIAL_STRING);
         vec_init(special.strings);
-        vec_init(special.fmts);
         vec_init(special.expressions);
         vec_init(special.starts);
         vec_init(special.ends);
@@ -727,8 +725,6 @@ lexspecialstr(Ty *ty)
         vec_init(str);
 
         nextchar(ty);
-
-        char *fmt = NULL;
 
 Start:
 
@@ -790,6 +786,15 @@ Start:
 
                                         continue;
                                 }
+                        case '>':
+                                nextchar(ty);
+
+                                while (str.count > 0 && isspace(*vvL(str))) {
+                                        if (*vvL(str) == '\n') break;
+                                        str.count -= 1;
+                                }
+
+                                continue;
                         }
                 default:
                            avP(str, nextchar(ty));
@@ -809,14 +814,12 @@ LexExpr:
         avP(special.strings, str.items);
         vec_init(str);
 
-        avP(special.fmts, fmt);
-        fmt = NULL;
-
         /* Eat the initial { */
         nextchar(ty);
 
         LexState st = state;
-        st.end = lexexpr(ty);
+        int width = lexexpr(ty);
+        st.end = SRC;
 
         /* Eat the terminating } */
         nextchar(ty);
@@ -1108,8 +1111,14 @@ lexfmt(Ty *ty)
 
         vec(char) fmt = {0};
 
+        skipspace(ty);
+
         while (C(0) != '\0') {
                 avP(fmt, nextchar(ty));
+        }
+
+        while (fmt.count > 0 && isspace(*vvL(fmt))) {
+                fmt.count -= 1;
         }
 
         avP(fmt, '\0');
@@ -1146,7 +1155,7 @@ lex_token(Ty *ty, LexContext ctx)
                         } else if (skipspace(ty)) {
                                 return mktoken(ty, TOKEN_NEWLINE);
                         }
-                } else if (ctx == LEX_FMT && C(0) == '#') {
+                } else if (ctx == LEX_FMT && (C(0) == '#' || C(0) == ':')) {
                         return lexfmt(ty);
                 } else if (ctx == LEX_PREFIX && C(0) == '/') {
                         return lexregex(ty);
@@ -1195,7 +1204,15 @@ lex_token(Ty *ty, LexContext ctx)
                 } else if (C(0) == '$' && ctx == LEX_PREFIX) {
                         nextchar(ty);
                         return mktoken(ty, '$');
-                } else if (contains(OperatorCharset, C(0)) || (C(0) == ':' && contains(OperatorCharset, C(1)) && C(1) != '-')) {
+                } else if (
+                        contains(OperatorCharset, C(0)) ||
+                        (
+                                C(0) == ':' &&
+                                contains(OperatorCharset, C(1)) &&
+                                C(1) != '-' &&
+                                C(1) != '*'
+                        )
+                ) {
                         return lexop(ty);
                 } else if (isdigit(C(0))) {
                         return lexnum(ty);
@@ -1223,8 +1240,8 @@ lex_token(Ty *ty, LexContext ctx)
                 }
         }
 
-        struct location start = Start;
-        struct location end = state.loc;
+        Location start = Start;
+        Location end = state.loc;
         return (struct token) { .type = TOKEN_END, .start = start, .end = end, .ctx = state.ctx };
 }
 
@@ -1240,7 +1257,7 @@ lex_init(Ty *ty, char const *file, char const *src)
         filename = file;
 
         state = (LexState) {
-                .loc = (struct location) {
+                .loc = (Location) {
                         .s = src,
                         .line = 0,
                         .col = 0
@@ -1275,7 +1292,7 @@ lex_save(Ty *ty, LexState *s)
 }
 
 void
-lex_rewind(Ty *ty, struct location const *where)
+lex_rewind(Ty *ty, Location const *where)
 {
         state.loc = *where;
 }
@@ -1300,7 +1317,7 @@ lex_end(Ty *ty)
         state = *vvX(states);
 }
 
-struct location
+Location
 lex_pos(Ty *ty)
 {
         return state.loc;
@@ -1357,24 +1374,6 @@ lex_next_char(Ty *ty, char *out)
         }
 
         return true;
-}
-
-static struct token *
-lex(Ty *ty, char const *s)
-{
-        LexState st = {
-                .loc = (struct location) { 0 },
-                .end = s + strlen(s)
-        };
-
-        lex_start(ty, &st);
-
-        struct token *t = malloc(sizeof *t);
-        *t = lex_token(ty, LEX_INFIX);
-
-        lex_end(ty);
-
-        return t;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

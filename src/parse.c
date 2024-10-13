@@ -251,7 +251,7 @@ mksym(Ty *ty, int s)
 {
         char b[32];
 
-        snprintf(b, sizeof b - 1, ":%d", s);
+        snprintf(b, sizeof b, ":%d", s);
         return sclonea(ty, b);
 }
 
@@ -978,6 +978,7 @@ prefix_special_string(Ty *ty)
         e->type = EXPRESSION_SPECIAL_STRING;
         vec_init(e->expressions);
         vec_init(e->fmts);
+        vec_init(e->widths);
 
         e->strings.items = tok()->strings.items;
         e->strings.count = tok()->strings.count;
@@ -999,6 +1000,7 @@ prefix_special_string(Ty *ty)
                 lex_save(ty, &CtxCheckpoint);
                 avP(e->expressions, parse_expr(ty, 0));
                 (*vvL(e->expressions))->end = End;
+                avP(e->widths, exprs[i].end - exprs[i].loc.s + 2);
                 setctx(ty, LEX_FMT);
                 if (tok()->type == TOKEN_STRING) {
                         avP(e->fmts, tok()->string);
@@ -1274,7 +1276,7 @@ Body:
 
         if (sugared_generator) {
                 char name[256];
-                snprintf(name, sizeof name - 1, "<%s:generator>", e->name);
+                snprintf(name, sizeof name, "<%s:generator>", e->name);
                 e->body->expression->name = sclonea(ty, name);
         }
 
@@ -1711,8 +1713,10 @@ prefix_match(Ty *ty)
         consume(TOKEN_FAT_ARROW);
         avP(e->thens, parse_expr(ty, 0));
 
-        while (tok()->type == ',') {
-                next();
+        while (tok()->type != '}') {
+                if (tok()->type == ',') {
+                        next();
+                }
 
                 // Trailing comma is allowed
                 if (tok()->type == '}') {
@@ -4183,8 +4187,10 @@ parse_match_statement(Ty *ty)
         consume(TOKEN_FAT_ARROW);
         avP(s->match.statements, parse_statement(ty, 0));
 
-        while (tok()->type == ',') {
-                next();
+        while (tok()->type != '}') {
+                if (tok()->type == ',') {
+                        next();
+                }
 
                 if (tok()->type == '}') {
                         break;
@@ -5179,12 +5185,13 @@ parse_ex(
                 parse_sync_lex(ty);
                 lex_keep_comments(ty, true);
 
-                if (tok()->type == TOKEN_COMMENT) {
+                while (tok()->type == TOKEN_COMMENT) {
                         doc = tok()->comment;
                         next();
-                        if (tok()->type == TOKEN_END) {
-                                break;
-                        }
+                }
+
+                if (tok()->type == TOKEN_END) {
+                        break;
                 }
 
                 bool pub = have_keyword(KEYWORD_PUB);

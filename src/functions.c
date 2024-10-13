@@ -705,24 +705,32 @@ isflag(int c)
 }
 
 static int
-getfmt(char const **s, char const *end, char *out, char const *oend)
+getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
 {
         // %
         *out++ = *(*s)++;
         *out = '\0';
 
-        while (*s < end && isflag(**s)) {
-                if (out + 1 >= oend)
-                        return -1;
-                *out++ = *(*s)++;
-                *out = '\0';
-        }
+        while (*s < end && **s == ' ') ++*s;
 
-        while (*s < end && isdigit(**s)) {
-                if (out + 1 >= oend)
-                        return -1;
+        if (*s < end && **s == '*') {
+                *vw += 1;
                 *out++ = *(*s)++;
                 *out = '\0';
+        } else {
+                while (*s < end && isflag(**s)) {
+                        if (out + 1 >= oend)
+                                return -1;
+                        *out++ = *(*s)++;
+                        *out = '\0';
+                }
+
+                while (*s < end && isdigit(**s)) {
+                        if (out + 1 >= oend)
+                                return -1;
+                        *out++ = *(*s)++;
+                        *out = '\0';
+                }
         }
 
         if (*s < end && **s == '.') {
@@ -732,11 +740,26 @@ getfmt(char const **s, char const *end, char *out, char const *oend)
                 *out = '\0';
         }
 
-        while (*s < end && isdigit(**s)) {
-                if (out + 1 >= oend)
-                        return -1;
+        while (*s < end && **s == ' ') ++*s;
+
+        if (*s < end && **s == '*') {
+                *vw += 1;
                 *out++ = *(*s)++;
                 *out = '\0';
+        } else {
+                while (*s < end && isflag(**s)) {
+                        if (out + 1 >= oend)
+                                return -1;
+                        *out++ = *(*s)++;
+                        *out = '\0';
+                }
+
+                while (*s < end && isdigit(**s)) {
+                        if (out + 1 >= oend)
+                                return -1;
+                        *out++ = *(*s)++;
+                        *out = '\0';
+                }
         }
 
         if (*s < end) {
@@ -769,6 +792,8 @@ getfmt(char const **s, char const *end, char *out, char const *oend)
                                 return -1;
                         break;
                 default:
+                        *out++ = c;
+                        *out++ = '\0';
                         return -1;
                 }
 
@@ -787,7 +812,7 @@ BUILTIN_FUNCTION(fmt)
                 return STRING_EMPTY;
 
         if (ARG(0).type != VALUE_STRING) {
-                zP("fmt(): expected string but got: %s", value_show(ty, &ARG(0)));
+                zP("fmt(): expected string but got: %s", VSC(&ARG(0)));
         }
 
         char const *fmt = ARG(0).string;
@@ -799,23 +824,43 @@ BUILTIN_FUNCTION(fmt)
         vec(char) cs = {0};
         vec(char) sb = {0};
 
+        void const *p;
+
         for (size_t i = 0; i < n; ++i) {
                 if (fmt[i] == '%') {
                         if (i + 1 < n && fmt[i + 1] == '%') {
-                                vvP(cs, '%');
+                                xvP(cs, '%');
                                 i += 1;
                                 continue;
                         }
 
                         char const *start = fmt + i;
-                        int t = getfmt(&start, fmt + n, spec, spec + sizeof spec);
+                        int vw = 0;
+                        int t = getfmt(&start, fmt + n, spec, spec + sizeof spec, &vw);
                         i = start - fmt - 1;
 
-                        if (argc <= ai) {
-                                zP("fmt(): missing argument %d for format specifier %s", ai, spec);
+                        if (argc <= ai + vw) {
+                                zP("fmt(): missing argument %d for format specifier %s", ai + vw, spec);
                         }
 
-                        struct value arg = ARG(ai);
+                        int w1;
+                        int w2;
+
+                        switch (vw) {
+                        case 2:
+                                if (ARG(ai + 1).type != VALUE_INTEGER) {
+                                        zP("fmt(): invalid width/precision for format specifier %s: %s", spec, VSC(&ARG(ai + 1)));
+                                }
+                                w2 = ARG(ai + 1).integer;
+                                /* fallthrough */
+                        case 1:
+                                if (ARG(ai).type != VALUE_INTEGER) {
+                                        zP("fmt(): invalid width/precision for format specifier %s: %s", spec, VSC(&ARG(ai)));
+                                }
+                                w1 = ARG(ai).integer;
+                        }
+
+                        struct value arg = ARG(ai + vw);
 
                         switch (t) {
                         case 'i':
@@ -825,14 +870,22 @@ BUILTIN_FUNCTION(fmt)
                         case 'X':
                                 switch (arg.type) {
                                 case VALUE_INTEGER:
-                                        snprintf(buffer, sizeof buffer - 1, spec, arg.integer);
+                                        switch (vw) {
+                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, arg.integer); break;
+                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     arg.integer); break;
+                                        default: snprintf(buffer, sizeof buffer, spec,         arg.integer); break;
+                                        }
                                         break;
                                 case VALUE_REAL:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (intmax_t)arg.real);
+                                        switch (vw) {
+                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, (intmax_t)arg.real); break;
+                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     (intmax_t)arg.real); break;
+                                        default: snprintf(buffer, sizeof buffer, spec,         (intmax_t)arg.real); break;
+                                        }
                                         break;
                                 default:
                                 BadFmt:
-                                        zP("fmt(): format specifier %s doesn't match value provided: %s", spec, value_show(ty, &arg));
+                                        zP("fmt(): format specifier %s doesn't match value provided: %s", spec, VSC(&arg));
                                 }
                                 break;
                         case 'f':
@@ -845,10 +898,19 @@ BUILTIN_FUNCTION(fmt)
                         case 'A':
                                 switch (arg.type) {
                                 case VALUE_INTEGER:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (double)arg.integer);
+                                        switch (vw) {
+                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, (double)arg.integer); break;
+                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     (double)arg.integer); break;
+                                        default: snprintf(buffer, sizeof buffer, spec,         (double)arg.integer); break;
+                                        }
                                         break;
                                 case VALUE_REAL:
-                                        snprintf(buffer, sizeof buffer - 1, spec, arg.real);
+                                        switch (vw) {
+                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, arg.real); break;
+                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     arg.real); break;
+                                        default: snprintf(buffer, sizeof buffer, spec,         arg.real); break;
+                                        }
+                                        break;
                                         break;
                                 default:
                                         goto BadFmt;
@@ -858,47 +920,43 @@ BUILTIN_FUNCTION(fmt)
                                 sb.count = 0;
                                 switch (arg.type) {
                                 case VALUE_STRING:
-                                        vvPn(sb, arg.string, arg.bytes);
-                                        vvP(sb, '\0');
-                                        snprintf(buffer, sizeof buffer - 1, spec, sb.items);
+                                        xvPn(sb, arg.string, arg.bytes);
+                                        xvP(sb, '\0');
+                                        p = sb.items;
                                         break;
                                 case VALUE_BLOB:
-                                        vvPn(sb, arg.blob->items, arg.blob->count);
-                                        vvP(sb, '\0');
-                                        snprintf(buffer, sizeof buffer - 1, spec, sb.items);
+                                        xvPn(sb, arg.blob->items, arg.blob->count);
+                                        xvP(sb, '\0');
+                                        p = sb.items;
                                         break;
                                 case VALUE_PTR:
-                                        snprintf(buffer, sizeof buffer - 1, spec, arg.ptr);
+                                        p = arg.ptr;
                                         break;
                                 default:
                                         goto BadFmt;
                                 }
+                                switch (vw) {
+                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, p); break;
+                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     p); break;
+                                default: snprintf(buffer, sizeof buffer, spec,         p); break;
+                                }
                                 break;
                         case 'p':
                                 switch (arg.type) {
-                                case VALUE_STRING:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.string);
-                                        break;
-                                case VALUE_BLOB:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.blob);
-                                        break;
-                                case VALUE_OBJECT:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.object);
-                                        break;
-                                case VALUE_PTR:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.ptr);
-                                        break;
-                                case VALUE_DICT:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.dict);
-                                        break;
-                                case VALUE_ARRAY:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.array);
-                                        break;
-                                case VALUE_FUNCTION:
-                                        snprintf(buffer, sizeof buffer - 1, spec, (void *)arg.info);
-                                        break;
-                                default:
-                                        goto BadFmt;
+                                case VALUE_STRING:   p = arg.string; break;
+                                case VALUE_BLOB:     p = arg.blob;   break;
+                                case VALUE_OBJECT:   p = arg.object; break;
+                                case VALUE_PTR:      p = arg.ptr;    break;
+                                case VALUE_DICT:     p = arg.dict;   break;
+                                case VALUE_ARRAY:    p = arg.array;  break;
+                                case VALUE_FUNCTION: p = arg.info;   break;
+                                case VALUE_REGEX:    p = arg.regex;  break;
+                                default: goto BadFmt;
+                                }
+                                switch (vw) {
+                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, p); break;
+                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     p); break;
+                                default: snprintf(buffer, sizeof buffer, spec,         p); break;
                                 }
                                 break;
                         default:
@@ -906,17 +964,18 @@ BUILTIN_FUNCTION(fmt)
 
                         }
 
-                        vvPn(cs, buffer, strlen(buffer));
+                        xvPn(cs, buffer, strlen(buffer));
 
                         ai += 1;
                 } else {
-                        vvP(cs, fmt[i]);
+                        xvP(cs, fmt[i]);
                 }
         }
 
-        struct value s = vSc(cs.items, cs.count);
+        Value s = vSc(cs.items, cs.count);
 
-        mF(cs.items);
+        free(cs.items);
+        free(sb.items);
 
         return s;
 }
@@ -989,7 +1048,7 @@ BUILTIN_FUNCTION(regex)
         if (pattern.type != VALUE_STRING)
                 zP("non-string passed to regex()");
 
-        snprintf(buffer, sizeof buffer - 1, "%.*s", (int) pattern.bytes, pattern.string);
+        snprintf(buffer, sizeof buffer, "%.*s", (int) pattern.bytes, pattern.string);
 
         char const *err;
         int off;
@@ -1336,11 +1395,11 @@ BUILTIN_FUNCTION(locale_setlocale)
         ASSERT_ARGC("locale.setlocale()", 2);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("locale.setlocale(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("locale.setlocale(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_STRING) {
-                zP("locale.setlocale(): expected string but got: %s", value_show(ty, &ARG(0)));
+                zP("locale.setlocale(): expected string but got: %s", VSC(&ARG(0)));
         }
 
         size_t n = min(ARG(1).bytes, sizeof buffer - 1);
@@ -1400,7 +1459,7 @@ BUILTIN_FUNCTION(sha1)
         } else if (s.type == VALUE_BLOB) {
                 SHA1(s.blob->items, s.blob->count, digest);
         } else {
-                zP("md5(): invalid argument: %s", value_show_color(ty, &s));
+                zP("md5(): invalid argument: %s", VSC(&s));
         }
 
         GC_STOP();
@@ -1423,7 +1482,7 @@ BUILTIN_FUNCTION(md5)
         } else if (s.type == VALUE_BLOB) {
                 MD5(s.blob->items, s.blob->count, digest);
         } else {
-                zP("md5(): invalid argument: %s", value_show_color(ty, &s));
+                zP("md5(): invalid argument: %s", VSC(&s));
         }
 
         struct blob *b = value_blob_new(ty);
@@ -1994,7 +2053,7 @@ BUILTIN_FUNCTION(os_link)
                 old = STRING_NOGC(old.ptr, strlen(old.ptr));
                 break;
         default:
-                zP("os.link(): invalid argument: %s", value_show(ty, &old));
+                zP("os.link(): invalid argument: %s", VSC(&old));
         }
 
         switch (new.type) {
@@ -2007,7 +2066,7 @@ BUILTIN_FUNCTION(os_link)
                 new = STRING_NOGC(new.ptr, strlen(new.ptr));
                 break;
         default:
-                zP("os.link(): invalid argument: %s", value_show(ty, &new));
+                zP("os.link(): invalid argument: %s", VSC(&new));
         }
 
 
@@ -2046,7 +2105,7 @@ BUILTIN_FUNCTION(os_symlink)
                 old = STRING_NOGC(old.ptr, strlen(old.ptr));
                 break;
         default:
-                zP("os.symlink(): invalid argument: %s", value_show(ty, &old));
+                zP("os.symlink(): invalid argument: %s", VSC(&old));
         }
 
         switch (new.type) {
@@ -2059,7 +2118,7 @@ BUILTIN_FUNCTION(os_symlink)
                 new = STRING_NOGC(new.ptr, strlen(new.ptr));
                 break;
         default:
-                zP("os.symlink(): invalid argument: %s", value_show(ty, &new));
+                zP("os.symlink(): invalid argument: %s", VSC(&new));
         }
 
 
@@ -2089,11 +2148,11 @@ BUILTIN_FUNCTION(os_rename)
         struct value new = ARG(1);
 
         if (old.type != VALUE_STRING) {
-                zP("os.rename(): expected string but got: %s", value_show(ty, &old));
+                zP("os.rename(): expected string but got: %s", VSC(&old));
         }
 
         if (new.type != VALUE_STRING) {
-                zP("os.rename(): expected string but got: %s", value_show(ty, &new));
+                zP("os.rename(): expected string but got: %s", VSC(&new));
         }
 
         if (old.bytes + new.bytes + 2 > sizeof buffer) {
@@ -2117,14 +2176,14 @@ BUILTIN_FUNCTION(os_mkdir)
         struct value path = ARG(0);
 
         if (path.type != VALUE_STRING) {
-                zP("os.mkdir(): expected string as first argument but got: %s", value_show(ty, &ARG(0)));
+                zP("os.mkdir(): expected string as first argument but got: %s", VSC(&ARG(0)));
         }
 
         mode_t mode = 0777;
 
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("os.mkdir(): expected integer as second argument but got: %s", value_show(ty, &ARG(1)));
+                        zP("os.mkdir(): expected integer as second argument but got: %s", VSC(&ARG(1)));
                 } else {
                         mode = ARG(1).integer;
                 }
@@ -2148,7 +2207,7 @@ BUILTIN_FUNCTION(os_rmdir)
         struct value path = ARG(0);
 
         if (path.type != VALUE_STRING) {
-                zP("os.rmdir(): expected string as first argument but got: %s", value_show(ty, &ARG(0)));
+                zP("os.rmdir(): expected string as first argument but got: %s", VSC(&ARG(0)));
         }
 
         B.count = 0;
@@ -2183,15 +2242,15 @@ BUILTIN_FUNCTION(os_chown)
                 path = ARG(0).ptr;
                 break;
         default:
-                zP("os.chown(): expected path but got: %s", value_show_color(ty, &ARG(0)));
+                zP("os.chown(): expected path but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("os.chown(): expected integer but got: %s", value_show_color(ty, &ARG(1)));
+                zP("os.chown(): expected integer but got: %s", VSC(&ARG(1)));
         }
 
         if (ARG(2).type != VALUE_INTEGER) {
-                zP("os.chown(): expected integer but got: %s", value_show_color(ty, &ARG(2)));
+                zP("os.chown(): expected integer but got: %s", VSC(&ARG(2)));
         }
 
         if (n >= sizeof buffer) {
@@ -2230,11 +2289,11 @@ BUILTIN_FUNCTION(os_chmod)
                 path = ARG(0).ptr;
                 break;
         default:
-                zP("os.chmod(): expected path but got: %s", value_show_color(ty, &ARG(0)));
+                zP("os.chmod(): expected path but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("os.chmod(): expected integer but got: %s", value_show_color(ty, &ARG(1)));
+                zP("os.chmod(): expected integer but got: %s", VSC(&ARG(1)));
         }
 
         if (n >= sizeof buffer) {
@@ -2423,7 +2482,7 @@ BUILTIN_FUNCTION(os_fsync)
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER) {
-                zP("os.fsync(): expected integer but got: %s", value_show(ty, &fd));
+                zP("os.fsync(): expected integer but got: %s", VSC(&fd));
         }
 
 #ifdef _WIN32
@@ -2826,7 +2885,7 @@ BUILTIN_FUNCTION(os_spawn)
 BUILTIN_FUNCTION(thread_join)
 {
         if (argc == 0 || ARG(0).type != VALUE_THREAD) {
-                zP("non-thread passed to thread.join(): %s", value_show(ty, &ARG(0)));
+                zP("non-thread passed to thread.join(): %s", VSC(&ARG(0)));
         }
 
         if (argc == 1 || ARG(1).type == VALUE_NIL || (ARG(1).type == VALUE_INTEGER && ARG(1).integer == -1)) {
@@ -2836,7 +2895,7 @@ BUILTIN_FUNCTION(thread_join)
                 return ARG(0).thread->v;
         } else if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("thread.join(): invalid timeout argument: %s", value_show_color(ty, &ARG(1)));
+                        zP("thread.join(): invalid timeout argument: %s", VSC(&ARG(1)));
                 }
 
                 Thread* t = ARG(0).thread;
@@ -2869,7 +2928,7 @@ BUILTIN_FUNCTION(thread_detach)
         }
 
         if (ARG(0).type != VALUE_THREAD) {
-                zP("non-thread passed to thread.detach(): %s", value_show(ty, &ARG(0)));
+                zP("non-thread passed to thread.detach(): %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyThreadDetach(ARG(0).thread->t));
@@ -2894,11 +2953,11 @@ BUILTIN_FUNCTION(thread_cond_wait)
         ASSERT_ARGC_2("thread.waitCond()", 2, 3);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.waitCond() expects a pointer as its first argument but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.waitCond() expects a pointer as its first argument but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_PTR) {
-                zP("thread.waitCond() expects a pointer as its second argument but got: %s", value_show(ty, &ARG(1)));
+                zP("thread.waitCond() expects a pointer as its second argument but got: %s", VSC(&ARG(1)));
         }
 
         int r;
@@ -2908,7 +2967,7 @@ BUILTIN_FUNCTION(thread_cond_wait)
         int64_t usec = -1;
         if (argc == 3) {
                 if (ARG(2).type != VALUE_INTEGER) {
-                        zP("thread.waitCond() expects an integer as its third argument but got: %s", value_show(ty, &ARG(2)));
+                        zP("thread.waitCond() expects an integer as its third argument but got: %s", VSC(&ARG(2)));
                 }
                 usec = ARG(2).integer;
         }
@@ -2929,7 +2988,7 @@ BUILTIN_FUNCTION(thread_cond_signal)
         ASSERT_ARGC("thread.signalCond()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.signalCond() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.signalCond() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyCondVarSignal(ARG(0).ptr));
@@ -2940,7 +2999,7 @@ BUILTIN_FUNCTION(thread_cond_broadcast)
         ASSERT_ARGC("thread.broadcastCond()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.broadcastCond() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.broadcastCond() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyCondVarBroadcast(ARG(0).ptr));
@@ -2951,7 +3010,7 @@ BUILTIN_FUNCTION(thread_cond_destroy)
         ASSERT_ARGC("thread.destroyCond()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.destroyCond() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.destroyCond() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyCondVarDestroy(ARG(0).ptr));
@@ -2962,7 +3021,7 @@ BUILTIN_FUNCTION(thread_mutex_destroy)
         ASSERT_ARGC("thread.destroyMutex()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.destroyMutex() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.destroyMutex() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyMutexDestroy(ARG(0).ptr));
@@ -2973,7 +3032,7 @@ BUILTIN_FUNCTION(thread_lock)
         ASSERT_ARGC("thread.lock()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.lock() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.lock() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         lGv(true);
@@ -2988,7 +3047,7 @@ BUILTIN_FUNCTION(thread_trylock)
         ASSERT_ARGC("thread.tryLock()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.tryLock() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.tryLock() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyMutexTryLock(ARG(0).ptr));
@@ -2999,7 +3058,7 @@ BUILTIN_FUNCTION(thread_unlock)
         ASSERT_ARGC("thread.unlock()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.unlock() expects a pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.unlock() expects a pointer but got: %s", VSC(&ARG(0)));
         }
 
         return BOOLEAN(TyMutexUnlock(ARG(0).ptr));
@@ -3012,7 +3071,7 @@ BUILTIN_FUNCTION(thread_create)
         }
 
         if (!CALLABLE(ARG(0))) {
-                zP("non-callable value passed to thread.create(): %s", value_show(ty, &ARG(0)));
+                zP("non-callable value passed to thread.create(): %s", VSC(&ARG(0)));
         }
 
         struct value *ctx = mA((argc + 1) * sizeof (Value));
@@ -3055,7 +3114,7 @@ BUILTIN_FUNCTION(thread_send)
         ASSERT_ARGC("thread.send()", 2);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.send(): expected pointer to channel but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.send(): expected pointer to channel but got: %s", VSC(&ARG(0)));
         }
 
         Channel *chan = ARG(0).ptr;
@@ -3080,7 +3139,7 @@ BUILTIN_FUNCTION(thread_recv)
         ASSERT_ARGC_2("thread.recv()", 1, 2);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.recv(): expected pointer to channel but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.recv(): expected pointer to channel but got: %s", VSC(&ARG(0)));
         }
 
         Channel *chan = ARG(0).ptr;
@@ -3095,7 +3154,7 @@ BUILTIN_FUNCTION(thread_recv)
         } else {
                 struct value t = ARG(1);
                 if (t.type != VALUE_INTEGER) {
-                        zP("thread.recv(): expected integer but got: %s", value_show(ty, &t));
+                        zP("thread.recv(): expected integer but got: %s", VSC(&t));
                 }
                 while (chan->open && chan->q.count == 0) {
                         if (!TyCondVarTimedWaitRelative(&chan->c, &chan->m, t.integer)) {
@@ -3127,7 +3186,7 @@ BUILTIN_FUNCTION(thread_close)
         ASSERT_ARGC("thread.close()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("thread.close(): expected pointer to channel but got: %s", value_show(ty, &ARG(0)));
+                zP("thread.close(): expected pointer to channel but got: %s", VSC(&ARG(0)));
         }
 
         Channel *chan = ARG(0).ptr;
@@ -3148,13 +3207,13 @@ BUILTIN_FUNCTION(thread_kill)
         struct value t = ARG(0);
 
         if (t.type != VALUE_THREAD) {
-                zP("thread.kill() expects a thread as the first argument but got: %s", value_show(ty, &t));
+                zP("thread.kill() expects a thread as the first argument but got: %s", VSC(&t));
         }
 
         struct value sig = ARG(1);
 
         if (sig.type != VALUE_INTEGER) {
-                zP("thread.kill(): expected integer as second argument but got: %s", value_show(ty, &sig));
+                zP("thread.kill(): expected integer as second argument but got: %s", VSC(&sig));
         }
 
         return BOOLEAN(TyThreadKill(t.thread->t, sig.integer));
@@ -3187,7 +3246,7 @@ BUILTIN_FUNCTION(thread_setname)
                 pname = name.ptr;
                 break;
         default:
-                zP("thread.setName(): expected string but got: %s", value_show(ty, &name));
+                zP("thread.setName(): expected string but got: %s", VSC(&name));
         }
 
 #ifdef __APPLE__
@@ -3224,7 +3283,7 @@ BUILTIN_FUNCTION(thread_id)
         } else if (ARG(0).type == VALUE_PTR) {
                 return INTEGER(((Thread *)ARG(0).ptr)->i);
         } else {
-                zP("thread.id(): expected thread pointer but got: %s", value_show_color(ty, &ARG(0)));
+                zP("thread.id(): expected thread pointer but got: %s", VSC(&ARG(0)));
         }
 }
 
@@ -3377,11 +3436,11 @@ BUILTIN_FUNCTION(os_getnameinfo)
                 alen = ARG(0).blob->count;
                 break;
         default:
-                zP("os.getnameinfo(): invalid address argument: %s", value_show(ty, &ARG(0)));
+                zP("os.getnameinfo(): invalid address argument: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("os.getnameinfo(): invalid flags argument: %s", value_show(ty, &ARG(1)));
+                zP("os.getnameinfo(): invalid flags argument: %s", VSC(&ARG(1)));
         }
 
         char host[128];
@@ -3404,7 +3463,7 @@ BUILTIN_FUNCTION(os_getpeername)
         ASSERT_ARGC("os.getpeername()", 1);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("os.getpeername(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("os.getpeername(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         struct sockaddr_storage addr;
@@ -3429,7 +3488,7 @@ BUILTIN_FUNCTION(os_getsockname)
         ASSERT_ARGC("os.getsockname()", 1);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("os.getsockname(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("os.getsockname(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         struct sockaddr_storage addr;
@@ -3716,7 +3775,7 @@ BUILTIN_FUNCTION(os_gai_strerror)
         ASSERT_ARGC("os.gai_strerror()", 1);
 
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("os.gai_strerror(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("os.gai_strerror(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         char const *msg = gai_strerror(ARG(0).integer);
@@ -3835,7 +3894,7 @@ BUILTIN_FUNCTION(os_sendto)
                         "os.sendto(): expected Blob or String as second argument but got: %s%s%s%s",
                         TERM(1),
                         TERM(93),
-                        value_show(ty, &buffer),
+                        VSC(&buffer),
                         TERM(0)
                 );
         }
@@ -4231,7 +4290,7 @@ tuple_timespec(Ty *ty, char const *func, struct value const *v)
                         "%s: expected timespec %s%s%s to have Int field %s%s%s",
                         func,
                         TERM(93),
-                        value_show(ty, v),
+                        VSC(v),
                         TERM(0),
                         TERM(92),
                         "tv_sec",
@@ -4246,7 +4305,7 @@ tuple_timespec(Ty *ty, char const *func, struct value const *v)
                         "%s: expected timespec %s%s%s to have Int field %s%s%s",
                         func,
                         TERM(93),
-                        value_show(ty, v),
+                        VSC(v),
                         TERM(0),
                         TERM(92),
                         "tv_nsec",
@@ -4553,11 +4612,11 @@ BUILTIN_FUNCTION(os_ftruncate)
 
         struct value fd = ARG(0);
         if (fd.type != VALUE_INTEGER)
-                zP("os.ftruncate(): expected integer as first argument but got: %s", value_show(ty, &fd));
+                zP("os.ftruncate(): expected integer as first argument but got: %s", VSC(&fd));
 
         struct value size = ARG(1);
         if (size.type != VALUE_INTEGER)
-                zP("os.truncate(): expected integer as second argumnet but got: %s", value_show(ty, &size));
+                zP("os.truncate(): expected integer as second argumnet but got: %s", VSC(&size));
 
         return INTEGER(ftruncate(fd.integer, size.integer));
 }
@@ -4615,7 +4674,7 @@ BUILTIN_FUNCTION(os_truncate)
 
         struct value size = ARG(1);
         if (size.type != VALUE_INTEGER)
-                zP("os.truncate(): expected integer as second argumnet but got: %s", value_show(ty, &size));
+                zP("os.truncate(): expected integer as second argumnet but got: %s", VSC(&size));
 
         return INTEGER(truncate_file(B.items, size.integer));
 }
@@ -4765,7 +4824,7 @@ BUILTIN_FUNCTION(os_fcntl)
 BUILTIN_FUNCTION(os_isatty)
 {
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("os.isatty(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("os.isatty(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         return INTEGER(isatty(ARG(0).integer));
@@ -4777,7 +4836,7 @@ BUILTIN_FUNCTION(termios_tcgetattr)
         NOT_ON_WINDOWS("termios.tcgetattr()");
 #else
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("termios.tcgetattr(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("termios.tcgetattr(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         struct termios t;
@@ -4814,7 +4873,7 @@ BUILTIN_FUNCTION(termios_tcsetattr)
         NOT_ON_WINDOWS("termios.tcsetattr()");
 #else
         if (ARG(0).type != VALUE_INTEGER) {
-                zP("termios.tcsetattr(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("termios.tcsetattr(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         struct termios t;
@@ -4824,11 +4883,11 @@ BUILTIN_FUNCTION(termios_tcsetattr)
         }
 
         if (ARG(1).type != VALUE_INTEGER) {
-                zP("termios.tcsetattr(_, flags, _): expected integer but got: %s", value_show(ty, &ARG(1)));
+                zP("termios.tcsetattr(_, flags, _): expected integer but got: %s", VSC(&ARG(1)));
         }
 
         if (ARG(2).type != VALUE_TUPLE) {
-                zP("termios.tcsetattr(_, _, t): expected tuple but got: %s", value_show(ty, &ARG(2)));
+                zP("termios.tcsetattr(_, _, t): expected tuple but got: %s", VSC(&ARG(2)));
         }
 
         struct value *iflag = tuple_get(&ARG(2), "iflag");
@@ -5162,7 +5221,7 @@ BUILTIN_FUNCTION(stdio_fdopen)
                 if (m.type != VALUE_STRING)
                         zP("the second argument to stdio.fdopen() must be a string");
                 if (m.bytes >= sizeof mode)
-                        zP("invalid mode string %s passed to stdio.fdopen()", value_show(ty, &m));
+                        zP("invalid mode string %s passed to stdio.fdopen()", VSC(&m));
                 memcpy(mode, m.string, m.bytes);
                 mode[m.bytes] = '\0';
         }
@@ -5230,7 +5289,7 @@ BUILTIN_FUNCTION(stdio_read_signed)
         int size;
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.readSigned() but got: %s", value_show(ty, &ARG(1)));
+                        zP("expected intger as second argument to stdio.readSigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
         } else {
@@ -5271,7 +5330,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
 
         if (argc == 3) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.writeSigned() but got: %s", value_show(ty, &ARG(1)));
+                        zP("expected intger as second argument to stdio.writeSigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
                 x = ARG(2);
@@ -5281,7 +5340,7 @@ BUILTIN_FUNCTION(stdio_write_signed)
         }
 
         if (x.type != VALUE_INTEGER) {
-                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(ty, &x));
+                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", VSC(&x));
         }
 
         char b[sizeof (intmax_t)];
@@ -5314,7 +5373,7 @@ BUILTIN_FUNCTION(stdio_read_unsigned)
         int size;
         if (argc == 2) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.readUnsigned() but got: %s", value_show(ty, &ARG(1)));
+                        zP("expected intger as second argument to stdio.readUnsigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
         } else {
@@ -5345,7 +5404,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
 
         if (argc == 3) {
                 if (ARG(1).type != VALUE_INTEGER) {
-                        zP("expected intger as second argument to stdio.writeUnsigned() but got: %s", value_show(ty, &ARG(1)));
+                        zP("expected intger as second argument to stdio.writeUnsigned() but got: %s", VSC(&ARG(1)));
                 }
                 size = ARG(1).integer;
                 x = ARG(2);
@@ -5355,7 +5414,7 @@ BUILTIN_FUNCTION(stdio_write_unsigned)
         }
 
         if (x.type != VALUE_INTEGER) {
-                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", value_show(ty, &x));
+                zP("stdio.writeUnsigned(): expected int as last argument but got: %s", VSC(&x));
         }
 
         char b[sizeof (uintmax_t)];
@@ -5484,7 +5543,7 @@ BUILTIN_FUNCTION(stdio_fread)
 
         if (existing_blob) {
                 if (ARG(2).type != VALUE_BLOB) {
-                        zP("stdio.fread() expects a blob as the third argument but got: %s", value_show(ty, &ARG(2)));
+                        zP("stdio.fread() expects a blob as the third argument but got: %s", VSC(&ARG(2)));
                 }
                 b = ARG(2).blob;
         } else {
@@ -5813,7 +5872,7 @@ BUILTIN_FUNCTION(define_method)
                 zP("the third argument to defineMethod() must be a function");
         }
 
-        snprintf(buffer, sizeof buffer - 1, "%*s", (int)name.bytes, name.string);
+        snprintf(buffer, sizeof buffer, "%*s", (int)name.bytes, name.string);
 
         class_add_method(ty, class.class, sclone(ty, buffer), f);
 
@@ -5835,7 +5894,7 @@ BUILTIN_FUNCTION(apply)
         Value f = (self == NULL || g.type != VALUE_METHOD) ? g : METHOD(g.name, &g, self);
 
         if (!CALLABLE(f)) {
-                zP("apply(): non-callable argument: %s", value_show_color(ty, &f));
+                zP("apply(): non-callable argument: %s", VSC(&f));
         }
 
         for (int i = 1; i < argc; ++i) {
@@ -6059,7 +6118,7 @@ BUILTIN_FUNCTION(member)
                 );
                 return ARG(2);
         } else {
-                zP("member(o, _, _): expected object but got: %s", value_show(ty, &o));
+                zP("member(o, _, _): expected object but got: %s", VSC(&o));
         }
 }
 
@@ -6164,7 +6223,7 @@ BUILTIN_FUNCTION(doc)
 
         if (argc == 2) {
                 if (ARG(1).type != VALUE_STRING) {
-                        zP("doc(): expected function or string but got: %s", value_show_color(ty, &ARG(1)));
+                        zP("doc(): expected function or string but got: %s", VSC(&ARG(1)));
                 }
                 snprintf(mod, sizeof mod, "%.*s", (int)ARG(1).bytes, ARG(1).string);
                 s = compiler_lookup(ty, mod, id);
@@ -6481,7 +6540,7 @@ BUILTIN_FUNCTION(ty_parse)
 
 
         if (ARG(0).type != VALUE_STRING) {
-                zP("ty.parse(ty): expected string but got: %s", value_show_color(ty, &ARG(0)));
+                zP("ty.parse(ty): expected string but got: %s", VSC(&ARG(0)));
         }
 
         B.count = 0;
@@ -6689,7 +6748,7 @@ BUILTIN_FUNCTION(token_peek)
         ASSERT_ARGC_2("ty.token.peek()", 0, 1);
 
         if (argc == 1 && ARG(0).type != VALUE_INTEGER) {
-                zP("ty.token.peek(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                zP("ty.token.peek(): expected integer but got: %s", VSC(&ARG(0)));
         }
 
         GC_STOP();
@@ -6730,7 +6789,7 @@ BUILTIN_FUNCTION(parse_source)
                 n = ARG(0).blob->count;
                 break;
         default:
-                zP("ty.parse.source(): expected Blob or String but got: %s", value_show(ty, &ARG(0)));
+                zP("ty.parse.source(): expected Blob or String but got: %s", VSC(&ARG(0)));
         }
 
         char *src = ((char *)mA(n + 2)) + 1;
@@ -6752,7 +6811,7 @@ BUILTIN_FUNCTION(parse_expr)
 
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
-                        zP("ty.parse.expr(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                        zP("ty.parse.expr(): expected integer but got: %s", VSC(&ARG(0)));
                 }
                 prec = ARG(0).integer;
         } else {
@@ -6775,7 +6834,7 @@ BUILTIN_FUNCTION(parse_stmt)
 
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
-                        zP("ty.parse.stmt(): expected integer but got: %s", value_show(ty, &ARG(0)));
+                        zP("ty.parse.stmt(): expected integer but got: %s", VSC(&ARG(0)));
                 }
                 prec = ARG(0).integer;
         } else {
@@ -6790,7 +6849,7 @@ BUILTIN_FUNCTION(parse_show)
         ASSERT_ARGC("ty.parse.show()", 1);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("ty.parse.show(): expected pointer but got: %s", value_show(ty, &ARG(0)));
+                zP("ty.parse.show(): expected pointer but got: %s", VSC(&ARG(0)));
         }
 
         struct statement const *s = ARG(0).ptr;
@@ -6805,7 +6864,7 @@ BUILTIN_FUNCTION(parse_fail)
         ASSERT_ARGC("ty.parse.fail(ty)", 1);
 
         if (ARG(0).type != VALUE_STRING) {
-                zP("ty.parse.fail(ty): expected string but got: %s", value_show(ty, &ARG(0)));
+                zP("ty.parse.fail(ty): expected string but got: %s", VSC(&ARG(0)));
         }
 
         parse_fail(ty, ARG(0).string, ARG(0).bytes);
@@ -6818,11 +6877,11 @@ BUILTIN_FUNCTION(ptr_typed)
         ASSERT_ARGC("ptr.typed()", 2);
 
         if (ARG(0).type != VALUE_PTR) {
-                zP("ptr.typed(): expected pointer as first argument but got: %s", value_show(ty, &ARG(0)));
+                zP("ptr.typed(): expected pointer as first argument but got: %s", VSC(&ARG(0)));
         }
 
         if (ARG(1).type != VALUE_PTR) {
-                zP("ptr.typed(): expected pointer as second argument but got: %s", value_show(ty, &ARG(1)));
+                zP("ptr.typed(): expected pointer as second argument but got: %s", VSC(&ARG(1)));
         }
 
         return TGCPTR(ARG(0).ptr, ARG(1).ptr, ARG(0).gcptr);
@@ -6835,7 +6894,7 @@ BUILTIN_FUNCTION(ptr_untyped)
         struct value p = ARG(0);
 
         if (p.type != VALUE_PTR) {
-                zP("ptr.untyped(): expected pointer as first argument but got: %s", value_show_color(ty, &p));
+                zP("ptr.untyped(): expected pointer as first argument but got: %s", VSC(&p));
         }
 
         return GCPTR(p.ptr, p.gcptr);
