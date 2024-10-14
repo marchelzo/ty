@@ -500,11 +500,10 @@ lexrawstr(Ty *ty)
         return mkstring(ty, str.items);
 }
 
-static int
+static char const *
 lexexpr(Ty *ty)
 {
         int depth = 1;
-        int width = 0;
 
         for (;;) {
                 switch (C(0)) {
@@ -519,11 +518,10 @@ lexexpr(Ty *ty)
                         break;
                 }
                 nextchar(ty);
-                width += 1;
         }
 
 End:
-        return width + 2;
+        return SRC;
 
 Unterminated:
         error(ty, "unterminated expression in interpolated string");
@@ -571,8 +569,6 @@ lexspecialdocstring(Ty *ty)
 
         avP(lines, (struct SDSLine){0});
 
-        char *fmt = NULL;
-
         int ndelim = 0;
         while (C(0) == '"') {
                 nextchar(ty);
@@ -594,8 +590,7 @@ lexspecialdocstring(Ty *ty)
                         vec_init(str);
                         nextchar(ty);
                         LexState st = state;
-                        int width = lexexpr(ty);
-                        st.end = SRC;
+                        st.end = lexexpr(ty);
                         nextchar(ty);
                         avP(vvL(lines)->exprs, st);
                 } else switch (C(0)) {
@@ -726,6 +721,8 @@ lexspecialstr(Ty *ty)
 
         nextchar(ty);
 
+        bool finished = false;
+
 Start:
 
         while (C(0) != '"') {
@@ -795,9 +792,18 @@ Start:
                                 }
 
                                 continue;
+                        case '^':
+                                nextchar(ty);
+                                str.count = 0;
+                                continue;
+                        case '$':
+                                nextchar(ty);
+                                finished = true;
+                                continue;
                         }
                 default:
-                           avP(str, nextchar(ty));
+                        if (finished) (void)nextchar(ty);
+                        else          avP(str, nextchar(ty));
                 }
         }
 
@@ -818,8 +824,7 @@ LexExpr:
         nextchar(ty);
 
         LexState st = state;
-        int width = lexexpr(ty);
-        st.end = SRC;
+        st.end = lexexpr(ty);
 
         /* Eat the terminating } */
         nextchar(ty);
@@ -1126,13 +1131,13 @@ lexfmt(Ty *ty)
         return mkstring(ty, fmt.items);
 }
 
-struct token
+Token
 lex_token(Ty *ty, LexContext ctx)
 {
         if (setjmp(jb) != 0)
                 return (struct token) { .type = TOKEN_ERROR, .start = Start, .end = state.loc, .ctx = state.ctx };
 
-        Start = state.loc;
+        Location start = Start = state.loc;
 
         if (skipspace(ty)) {
                 return mktoken(ty, TOKEN_NEWLINE);
@@ -1201,6 +1206,21 @@ lex_token(Ty *ty, LexContext ctx)
                 } else if (C(0) == '?' && ctx == LEX_PREFIX) {
                         nextchar(ty);
                         return mktoken(ty, TOKEN_QUESTION);
+                } else if (C(0) == '$' && C(1) == '"') {
+                        nextchar(ty);
+                        Token t = lex_token(ty, ctx);
+                        for (int i = 0; i < t.expressions.count; ++i) {
+                                char *dollar = strrchr(t.strings.items[i], '$');
+                                if (dollar != NULL && dollar[1] == '\0') {
+                                        *dollar = '\0';
+                                        avP(t.e_is_param, true);
+                                } else {
+                                        avP(t.e_is_param, false);
+                                }
+                        }
+                        t.start = start;
+                        t.type = TOKEN_FUN_SPECIAL_STRING;
+                        return t;
                 } else if (C(0) == '$' && ctx == LEX_PREFIX) {
                         nextchar(ty);
                         return mktoken(ty, '$');
@@ -1210,7 +1230,9 @@ lex_token(Ty *ty, LexContext ctx)
                                 C(0) == ':' &&
                                 contains(OperatorCharset, C(1)) &&
                                 C(1) != '-' &&
-                                C(1) != '*'
+                                C(1) != '*' &&
+                                C(1) != '+' &&
+                                C(1) != '%'
                         )
                 ) {
                         return lexop(ty);
@@ -1240,8 +1262,8 @@ lex_token(Ty *ty, LexContext ctx)
                 }
         }
 
-        Location start = Start;
         Location end = state.loc;
+
         return (struct token) { .type = TOKEN_END, .start = start, .end = end, .ctx = state.ctx };
 }
 

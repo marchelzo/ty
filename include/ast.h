@@ -64,7 +64,6 @@ struct condpart {
 
 typedef vec(struct condpart *) condpart_vector;
 typedef vec(struct statement *) statement_vector;
-typedef vec(char *) name_vector;
 typedef struct class_definition ClassDefinition;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
@@ -327,7 +326,7 @@ struct expression {
                         char const *proto;
                         Symbol *function_symbol;
                         Scope *scope;
-                        name_vector params;
+                        StringVector params;
                         expression_vector dflts;
                         expression_vector constraints;
                         expression_vector decorators;
@@ -354,7 +353,7 @@ struct expression {
                         expression_vector fconds;
                         expression_vector kwargs;
                         expression_vector fkwconds;
-                        name_vector kws;
+                        StringVector kws;
                 };
                 struct {
                         struct symbol *dtmp;
@@ -386,7 +385,7 @@ struct expression {
                                         expression_vector method_args;
                                         expression_vector mconds;
                                         expression_vector method_kwargs;
-                                        name_vector method_kws;
+                                        StringVector method_kws;
                                 };
                         };
                         bool maybe;

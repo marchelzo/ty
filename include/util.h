@@ -173,6 +173,18 @@ StrHash(char const *s)
         return hash;
 }
 
+inline static bool
+search_str(StringVector const *ss, char const *s)
+{
+        for (size_t i = 0; i < ss->count; ++i) {
+                if (strcmp(ss->items[i], s) == 0) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 Value
 this_executable(Ty *ty);
 

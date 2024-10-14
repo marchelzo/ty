@@ -218,7 +218,7 @@ typedef struct state {
 
         import_vector imports;
 
-        name_vector ns;
+        StringVector ns;
 
         Scope *global;
 
@@ -354,6 +354,59 @@ Retry:
         }
 
         b->count += need;
+}
+
+static void
+dumpstr(byte_vector *out, char const *s)
+{
+#define COLOR(i) xvPn(*out, TERM(i), strlen(TERM(i)))
+
+        COLOR(92);
+
+        xvP(*out, '\'');
+
+        if (s != NULL) for (char const *c = s; *c != '\0'; ++c) switch (*c) {
+        case '\t':
+                COLOR(95);
+                xvP(*out, '\\');
+                xvP(*out, 't');
+                COLOR(92);
+                break;
+        case '\r':
+                COLOR(95);
+                xvP(*out, '\\');
+                xvP(*out, 'r');
+                COLOR(92);
+                break;
+        case '\n':
+                COLOR(95);
+                xvP(*out, '\\');
+                xvP(*out, 'n');
+                COLOR(92);
+                break;
+        case '\\':
+                COLOR(95);
+                xvP(*out, '\\');
+                xvP(*out, '\\');
+                COLOR(92);
+                break;
+        case '\'':
+                COLOR(95);
+                xvP(*out, '\\');
+                xvP(*out, '\'');
+                COLOR(92);
+                break;
+        default:
+                xvP(*out, *c);
+        }
+
+        xvP(*out, '\'');
+
+        COLOR(0);
+
+#undef COLOR
+
+        xvP(*out, '\0');
 }
 
 #define annotate(...)                                                        \
@@ -1325,7 +1378,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
 static void
 fixup_access(Ty *ty, Scope const *scope, Expr *e)
 {
-        name_vector parts = {0};
+        StringVector parts = {0};
 
         char const *name;
         Location start = e->start;
@@ -9298,7 +9351,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         byte_vector after = {0};
 
-#define DUMPSTR(s) dump(out, " %s\"%s\"%s", TERM(92), (s), TERM(0))
+#define DUMPSTR(s) dumpstr(out, (s))
 #define SKIPSTR()     (DUMPSTR(c), (c += strlen(c) + 1))
 #define READSTR(s)    (((s) = c), SKIPSTR())
 #define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
@@ -9323,10 +9376,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
         intmax_t k;
         bool b = false, tco = false;
         float f;
-        int n, nkw = 0, i, j, tag;
-        unsigned long h;
-
-        bool AutoThis = false;
+        int n, nkw = 0, i, j, tag, *id;
 
         Value v, key, value, container, subscript, *vp, *vp2;
         char *str;
@@ -9379,12 +9429,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         TERM(93), GetInstructionName(*c), TERM(0)
                 );
 #else
-                dont_printf(
-                        "%s%7td%s            %s%s%s %s\n",
-                        TERM(94), pc, TERM(0),
-                        TERM(93), GetInstructionName(*c), TERM(0),
-                        name
-                );
                 dump(
                         out,
                         "%s%7td%s            %s%s%s",
@@ -9392,6 +9436,13 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         TERM(93), GetInstructionName(*c), TERM(0)
                 );
 #endif
+
+                printf(
+                        "%s%7td%s            %s%s%s %s\n",
+                        TERM(94), pc, TERM(0),
+                        TERM(93), GetInstructionName(*c), TERM(0),
+                        name
+                );
 
                 switch ((unsigned char)*c++) {
                 CASE(NOP)
@@ -9465,7 +9516,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(TARGET_MEMBER)
                         READMEMBER(n);
-                        READVALUE(h);
                         break;
                 CASE(TARGET_SUBSCRIPT)
                         break;
@@ -9487,8 +9537,9 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(RECORD_REST)
                         READVALUE(n);
-                        READVALUE(j);
-                        c += j;
+                        c = ALIGNED_FOR(int, c);
+                        while (*(int const *)c != -1) c += sizeof (int);
+                        c += sizeof (int);
                         break;
                 CASE(THROW_IF_NIL)
                         break;
@@ -9617,11 +9668,9 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(TUPLE)
                         READVALUE(n);
-
                         while (n --> 0) {
-                                SKIPSTR();
+                                READVALUE(i);
                         }
-
                         break;
                 CASE(DICT)
                         break;
@@ -9633,6 +9682,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(TO_STRING)
                         SKIPSTR();
+                        READVALUE_(n);
                         break;
                 CASE(YIELD)
                         break;
@@ -9862,8 +9912,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
                         READVALUE(n);
-                        READSTR(method);
-                        READVALUE_(h);
+                        READMEMBER(n);
                         READVALUE(nkw);
                         for (int i = 0; i < nkw; ++i) {
                                 SKIPSTR();

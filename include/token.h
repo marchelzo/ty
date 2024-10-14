@@ -31,6 +31,7 @@ typedef struct token {
                 TOKEN_IDENTIFIER,
                 TOKEN_STRING,
                 TOKEN_SPECIAL_STRING,
+                TOKEN_FUN_SPECIAL_STRING,
                 TOKEN_REGEX,
                 TOKEN_INTEGER,
                 TOKEN_REAL,
@@ -128,6 +129,7 @@ typedef struct token {
                 struct {
                         vec(char *) strings;
                         vec(LexState) expressions;
+                        vec(bool) e_is_param;
                         vec(struct location) starts;
                         vec(struct location) ends;
                 };
