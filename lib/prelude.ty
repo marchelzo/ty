@@ -555,7 +555,7 @@ class String : Iterable {
     }
 
     __fmt__(spec, w) {
-        if spec.match?(/[A-z]/) {
+        if spec.match?(/[%[:alpha:]]/) {
             fmt("%{spec}", w if '*' in spec, self)
         } else {
             fmt("%{spec}s", w if '*' in spec, self)
@@ -690,7 +690,7 @@ class Int {
     }
 
     __fmt__(spec, w) {
-        if spec.match?(/[a-z]/) {
+        if spec.match?(/[%[:alpha:]]/) {
             fmt("%{spec}", w if '*' in spec, self)
         } else {
             fmt("%{spec}d", w if '*' in spec, self)
@@ -746,7 +746,7 @@ class Float {
     }
 
     __fmt__(spec, w) {
-        if spec.match?(/[A-z]/) {
+        if spec.match?(/[%[:alpha:]]/) {
             fmt("%{spec}", w if '*' in spec, self)
         } else {
             fmt("%{spec}f", w if '*' in spec, self)
@@ -2081,33 +2081,39 @@ macro match?(e, p) {
 }
 
 macro dbg(*args) {
-    let tmp = ty.Id(name: ty.gensym())
+    let results = ty.Id(name: ty.gensym())
 
     if #args == 0 {
         return $$[ nil $$]
     }
 
     ty.Block([
+        $$[ let $$results = [] $$],
         *[
-            $$[
-                let $$(tmp) = $$(e)
-                print(
+            $$[ $$results.push(($$e, $$(ty.String(parse.show(raw[i]))))) $$]
+            for e, i in args
+        ],
+        $$[
+            let maxw = $$results.map(&1 |> &len).max()
+
+            for (r, src) in $$results {
+                eprint(
                     __module__,
                     ':',
                     __func__ ?? '(top)',
                     ':',
                     __line__,
                     ': ',
-                    $$(ty.String(parse.show(raw[i]))),
+                    fmt('%*s', maxw, src),
                     ' = ',
-                    $$(tmp),
+                    show(r),
                     sep: '',
                     flush: true
                 )
-            $$]
-            for e, i in args
-        ],
-        tmp
+            }
+
+            $$results[-1].0
+        $$]
     ])
 }
 

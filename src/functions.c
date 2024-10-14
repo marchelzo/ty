@@ -699,71 +699,84 @@ isflag(int c)
 {
         return c == '0' ||
                c == '-' ||
-               c == ' ' ||
                c == '+' ||
+               c == ' ' ||
+               c == '#' ||
                c == '\'';
 }
 
 static int
 getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
 {
+        char *ostart = out;
+
         // %
         *out++ = *(*s)++;
         *out = '\0';
 
         while (*s < end && **s == ' ') ++*s;
 
+        char width[64] = {0}, w = 0;
+        char prec[64] = {0}, p = 0;
+
         while (*s < end && isflag(**s)) {
-                if (out + 1 >= oend)
+                if (w + 1 >= sizeof width)
                         return -1;
-                *out++ = *(*s)++;
-                *out = '\0';
+                width[w++] = *(*s)++;
         }
 
         if (*s < end && **s == '*') {
                 *vw += 1;
-                *out++ = *(*s)++;
-                *out = '\0';
-        } else while (*s < end && isdigit(**s)) {
-                if (out + 1 >= oend)
+                if (w + 1 >= sizeof width)
                         return -1;
-                *out++ = *(*s)++;
-                *out = '\0';
+                width[w++] = *(*s)++;
+        } else while (*s < end && isdigit(**s)) {
+                if (w + 1 >= sizeof width)
+                        return -1;
+                width[w++] = *(*s)++;
         }
 
         if (*s < end && **s == '.') {
-                if (out + 1 >= oend)
+                if (p + 1 >= sizeof prec)
                         return -1;
-                *out++ = *(*s)++;
-                *out = '\0';
+                prec[p++] = *(*s)++;
+
+                while (*s < end && **s == ' ') ++*s;
+
+                if (*s < end && **s == '*') {
+                        *vw += 1;
+                        if (p + 1 >= sizeof prec)
+                                return -1;
+                        prec[p++] = *(*s)++;
+                } else while (*s < end && isdigit(**s)) {
+                        if (p + 1 >= sizeof prec)
+                                return -1;
+                        prec[p++] = *(*s)++;
+                }
         }
 
         while (*s < end && **s == ' ') ++*s;
 
-        while (*s < end && isflag(**s)) {
-                if (out + 1 >= oend)
-                        return -1;
-                *out++ = *(*s)++;
-                *out = '\0';
-        }
+        char const *sep = (**s == '_' || **s == ',') ? (*s)++ : NULL;
 
-        if (*s < end && **s == '*') {
-                *vw += 1;
-                *out++ = *(*s)++;
-                *out = '\0';
-        } else while (*s < end && isdigit(**s)) {
-                if (out + 1 >= oend)
-                        return -1;
-                *out++ = *(*s)++;
-                *out = '\0';
-        }
+        while (*s < end && **s == ' ') ++*s;
+
+        if (w + p >= oend - out)
+                return -1;
+
+        out += sprintf(out, "%s%s", width, prec);
 
         if (*s < end) {
                 int c = *(*s)++;
                 switch (c) {
-                case 'i':
                 case 'd':
+                case 'i':
                 case 'u':
+                        if (sep != NULL && out + 16 < oend) {
+                                sprintf(ostart, "%%%sl%c%c%%%ss", prec, c, 0, width);
+                                return *sep;
+                        }
+                case 'o':
                 case 'x':
                 case 'X':
                         if (out + 2 >= oend)
@@ -774,6 +787,10 @@ getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
                 case 'F':
                 case 'g':
                 case 'G':
+                        if (sep != NULL && out + 16 < oend) {
+                                sprintf(ostart, "%%%sl%c%c%%%ss", prec, c, 0, width);
+                                return *sep;
+                        }
                 case 'e':
                 case 'E':
                 case 'a':
@@ -782,6 +799,11 @@ getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
                                 return -1;
                         *out++ = 'l';
                         break;
+                case '%':
+                        if (out + 16 >= oend)
+                                return -1;
+                        sprintf(ostart, "%%%slf%%%%%c%%%ss", prec, 0, width);
+                        return '%';
                 case 's':
                 case 'p':
                         if (out + 1 >= oend)
@@ -802,6 +824,61 @@ getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
         }
 }
 
+inline static noreturn void
+BadFmt(Ty *ty, char const *spec, Value const *v)
+{
+        zP("fmt(): format specifier %s doesn't match value provided: %s", spec, VSC(v));
+}
+
+inline static intmax_t
+int_from(Ty *ty, Value const *v, char const *spec)
+{
+        switch (v->type) {
+        case VALUE_INTEGER: return v->integer;
+        case VALUE_REAL:    return v->real;
+        case VALUE_BOOLEAN: return v->boolean;
+        default: BadFmt(ty, spec, v);
+        }
+}
+
+inline static double
+float_from(Ty *ty, Value const *v, char const *spec)
+{
+        switch (v->type) {
+        case VALUE_INTEGER: return v->integer;
+        case VALUE_REAL:    return v->real;
+        default: BadFmt(ty, spec, v);
+        }
+}
+
+static void
+AddThousandsSep(char *s, int c)
+{
+        while (!isdigit(*s)) ++s;
+
+        char const *in = s;
+
+        char b[512];
+        int i = 0;
+
+        int w = strcspn(in, ".,");
+        int n = (w + 2) / 3 - 1;
+
+        if (n > 0) switch (w % 3) {
+        case 0: do { b[i++] = *in++;
+        case 2:      b[i++] = *in++;
+        case 1:      b[i++] = *in++;
+                     b[i++] = c;
+                } while (--n > 0);
+        }
+
+        while (*in != '\0') b[i++] = *in++;
+
+        i = min(i, 255);
+
+        ((char *)memcpy(s, b, i))[i] = '\0';
+}
+
 BUILTIN_FUNCTION(fmt)
 {
         if (argc == 0)
@@ -816,20 +893,17 @@ BUILTIN_FUNCTION(fmt)
         int ai = 1;
 
         char spec[64];
+        char scratch[256];
 
         vec(char) cs = {0};
         vec(char) sb = {0};
 
         void const *p;
+        intmax_t k;
+        double x;
 
         for (size_t i = 0; i < n; ++i) {
                 if (fmt[i] == '%') {
-                        if (i + 1 < n && fmt[i + 1] == '%') {
-                                xvP(cs, '%');
-                                i += 1;
-                                continue;
-                        }
-
                         char const *start = fmt + i;
                         int vw = 0;
                         int t = getfmt(&start, fmt + n, spec, spec + sizeof spec, &vw);
@@ -856,33 +930,23 @@ BUILTIN_FUNCTION(fmt)
                                 w1 = ARG(ai).integer;
                         }
 
-                        struct value arg = ARG(ai + vw);
+                        Value arg = ARG(ai + vw);
 
                         switch (t) {
-                        case 'i':
                         case 'd':
+                        case 'i':
+                        case 'o':
                         case 'u':
                         case 'x':
                         case 'X':
-                                switch (arg.type) {
-                                case VALUE_INTEGER:
-                                        switch (vw) {
-                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, arg.integer); break;
-                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     arg.integer); break;
-                                        default: snprintf(buffer, sizeof buffer, spec,         arg.integer); break;
-                                        }
-                                        break;
-                                case VALUE_REAL:
-                                        switch (vw) {
-                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, (intmax_t)arg.real); break;
-                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     (intmax_t)arg.real); break;
-                                        default: snprintf(buffer, sizeof buffer, spec,         (intmax_t)arg.real); break;
-                                        }
-                                        break;
-                                default:
-                                BadFmt:
-                                        zP("fmt(): format specifier %s doesn't match value provided: %s", spec, VSC(&arg));
+                                k = int_from(ty, &arg, spec);
+
+                                switch (vw) {
+                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, k); break;
+                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     k); break;
+                                default: snprintf(buffer, sizeof buffer, spec,         k); break;
                                 }
+
                                 break;
                         case 'f':
                         case 'F':
@@ -892,25 +956,59 @@ BUILTIN_FUNCTION(fmt)
                         case 'E':
                         case 'a':
                         case 'A':
-                                switch (arg.type) {
-                                case VALUE_INTEGER:
-                                        switch (vw) {
-                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, (double)arg.integer); break;
-                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     (double)arg.integer); break;
-                                        default: snprintf(buffer, sizeof buffer, spec,         (double)arg.integer); break;
-                                        }
-                                        break;
-                                case VALUE_REAL:
-                                        switch (vw) {
-                                        case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, arg.real); break;
-                                        case 1:  snprintf(buffer, sizeof buffer, spec, w1,     arg.real); break;
-                                        default: snprintf(buffer, sizeof buffer, spec,         arg.real); break;
-                                        }
-                                        break;
-                                        break;
-                                default:
-                                        goto BadFmt;
+                                x = float_from(ty, &arg, spec);
+
+                                switch (vw) {
+                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, x); break;
+                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     x); break;
+                                default: snprintf(buffer, sizeof buffer, spec,         x); break;
                                 }
+
+                                break;
+                        case '%':
+                                if (arg.type != VALUE_REAL) BadFmt(ty, spec, &arg);
+
+                                x = arg.real * 100.0;
+
+                                if (strchr(spec, '*') != NULL) {
+                                        snprintf(scratch, sizeof scratch, spec, (--vw == 0) ? w1 : w2, x);
+                                } else {
+                                        snprintf(scratch, sizeof scratch, spec, x);
+                                }
+
+                                if (vw == 0) {
+                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1,     scratch);
+                                } else {
+                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1, w1, scratch);
+                                }
+
+                                break;
+                        case '_':
+                        case ',':
+                                if (strchr("diu", strchr(spec, '\0')[-1]) != NULL) {
+                                        k = int_from(ty, &arg, spec);
+                                        if (strchr(spec, '*') != NULL) {
+                                                snprintf(scratch, sizeof scratch, spec, (--vw == 0) ? w1 : w2, k);
+                                        } else {
+                                                snprintf(scratch, sizeof scratch, spec, k);
+                                        }
+                                } else {
+                                        x = float_from(ty, &arg, spec);
+                                        if (strchr(spec, '*') != NULL) {
+                                                snprintf(scratch, sizeof scratch, spec, (--vw == 0) ? w1 : w2, x);
+                                        } else {
+                                                snprintf(scratch, sizeof scratch, spec, x);
+                                        }
+                                }
+
+                                AddThousandsSep(scratch, t);
+
+                                if (vw == 0) {
+                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1,     scratch);
+                                } else {
+                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1, w1, scratch);
+                                }
+
                                 break;
                         case 's':
                                 sb.count = 0;
@@ -929,7 +1027,7 @@ BUILTIN_FUNCTION(fmt)
                                         p = arg.ptr;
                                         break;
                                 default:
-                                        goto BadFmt;
+                                        BadFmt(ty, spec, &arg);
                                 }
                                 switch (vw) {
                                 case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, p); break;
@@ -947,7 +1045,7 @@ BUILTIN_FUNCTION(fmt)
                                 case VALUE_ARRAY:    p = arg.array;  break;
                                 case VALUE_FUNCTION: p = arg.info;   break;
                                 case VALUE_REGEX:    p = arg.regex;  break;
-                                default: goto BadFmt;
+                                default: BadFmt(ty, spec, &arg);
                                 }
                                 switch (vw) {
                                 case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, p); break;

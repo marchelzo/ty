@@ -4135,6 +4135,9 @@ CallMethod:
                                 if (vp == NULL) {
                                         vp = tags_lookup_method_i(ty, value.tag, i);
                                 }
+                                if (vp == NULL) {
+                                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
+                                }
                                 break;
                         case VALUE_STRING:
                                 func = get_string_method_i(i);
@@ -4192,6 +4195,9 @@ CallMethod:
                                 }
                                 if (vp == NULL) {
                                         vp = class_lookup_method_i(ty, value.class, i);
+                                }
+                                if (vp == NULL) {
+                                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
                                 }
                                 break;
                         case VALUE_OBJECT:
