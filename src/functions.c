@@ -961,16 +961,6 @@ MissingArgument:
                         memcpy(scratch + si, spec.prec, plen);
                         si += plen;
 
-                        if (t == 'q') {
-                                scratch[si++] = 'f';
-                                scratch[si++] = '%';
-                                scratch[si++] = '%';
-                        } else {
-                                scratch[si++] = t;
-                        }
-
-                        scratch[si] = '\0';
-
                         switch (t) {
                         case 'd':
                         case 'i':
@@ -978,6 +968,10 @@ MissingArgument:
                         case 'u':
                         case 'x':
                         case 'X':
+                                scratch[si++] = 'j';
+                                scratch[si++] = t;
+                                scratch[si] = '\0';
+
                                 snprintf(
                                         buffer,
                                         sizeof buffer,
@@ -998,6 +992,10 @@ MissingArgument:
                         case 'E':
                         case 'a':
                         case 'A':
+                                scratch[si++] = 'l';
+                                scratch[si++] = t;
+                                scratch[si] = '\0';
+
                                 snprintf(
                                         buffer,
                                         sizeof buffer,
@@ -1011,6 +1009,12 @@ MissingArgument:
 
                                 break;
                         case 'q':
+                                scratch[si++] = 'l';
+                                scratch[si++] = 'f';
+                                scratch[si++] = '%';
+                                scratch[si++] = '%';
+                                scratch[si] = '\0';
+
                                 len = snprintf(
                                         buffer,
                                         sizeof buffer,
@@ -1033,6 +1037,9 @@ MissingArgument:
 
                                 break;
                         case 's':
+                                scratch[si++] = t;
+                                scratch[si] = '\0';
+
                                 sb.count = 0;
 
                                 switch (arg.type) {
@@ -1060,6 +1067,9 @@ MissingArgument:
 
                                 break;
                         case 'p':
+                                scratch[si++] = t;
+                                scratch[si] = '\0';
+
                                 switch (arg.type) {
                                 case VALUE_STRING:   p = arg.string; break;
                                 case VALUE_BLOB:     p = arg.blob;   break;
