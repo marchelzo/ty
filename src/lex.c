@@ -18,6 +18,9 @@
 #include "lex.h"
 #include "log.h"
 
+static Token
+dotoken(Ty *ty, int ctx);
+
 enum {
         MAX_OP_LEN = 8,
 };
@@ -511,7 +514,7 @@ lexexpr(Ty *ty)
                         C(0) == '"'  ||
                         (C(0) == '/' && C(1) == '*')
                 ) {
-                        (void)lex_token(ty, LEX_PREFIX);
+                        (void)dotoken(ty, LEX_PREFIX);
                 } else {
                         nextchar(ty);
                 }
@@ -1126,12 +1129,9 @@ lexfmt(Ty *ty)
         return mkstring(ty, fmt.items);
 }
 
-Token
-lex_token(Ty *ty, LexContext ctx)
+static Token
+dotoken(Ty *ty, int ctx)
 {
-        if (setjmp(jb) != 0)
-                return (struct token) { .type = TOKEN_ERROR, .start = Start, .end = state.loc, .ctx = state.ctx };
-
         Location start = Start = state.loc;
 
         if (skipspace(ty)) {
@@ -1140,127 +1140,149 @@ lex_token(Ty *ty, LexContext ctx)
 
         state.ctx = ctx;
 
-        while (SRC < END) {
-                if (C(0) == '/' && C(1) == '*') {
-                        struct token t = lexcomment(ty);
-                        if (state.keep_comments) {
-                                return t;
-                        } else if (skipspace(ty)) {
-                                return mktoken(ty, TOKEN_NEWLINE);
-                        }
-                } else if (C(0) == '/' && C(1) == '/') {
-                        struct token t = lexlinecomment(ty);
-                        if (state.keep_comments) {
-                                return t;
-                        } else if (skipspace(ty)) {
-                                return mktoken(ty, TOKEN_NEWLINE);
-                        }
-                } else if (ctx == LEX_FMT && (C(0) == '#' || C(0) == ':')) {
-                        return lexfmt(ty);
-                } else if (ctx == LEX_PREFIX && C(0) == '/') {
-                        return lexregex(ty);
-                } else if (haveid(ty)) {
-                        return lexword(ty);
-                } else if (C(0) == ':' && C(1) == ':' && !contains(OperatorCharset, C(2))) {
-                        nextchar(ty);
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_CHECK_MATCH);
-                } else if (C(0) == '-' && C(1) == '>' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_ARROW);
-                } else if (C(0) == '-' && C(1) != '-' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_MINUS);
-                } else if (C(0) == '#' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, '#');
-                } else if (C(0) == '&' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, '&');
-                } else if (C(0) == '*' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_STAR);
-                } else if (C(0) == '!' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_BANG);
-                } else if (C(0) == '$' && C(1) == '$' && C(2) == '[') {
-                        nextchar(ty);
-                        nextchar(ty);
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_TEMPLATE_BEGIN);
-                } else if (C(0) == '$' && C(1) == '$' && C(2) == ']') {
-                        nextchar(ty);
-                        nextchar(ty);
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_TEMPLATE_END);
-                } else if (C(0) == '$' && C(1) == '$') {
-                        nextchar(ty);
-                        nextchar(ty);
-                        return mktoken(ty, '$$');
-                } else if (C(0) == '?' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, TOKEN_QUESTION);
-                } else if (C(0) == '$' && C(1) == '"') {
-                        nextchar(ty);
-                        Token t = lex_token(ty, ctx);
-                        for (int i = 0; i < t.expressions.count; ++i) {
-                                char *dollar = strrchr(t.strings.items[i], '$');
-                                if (dollar != NULL && dollar[1] == '\0') {
-                                        *dollar = '\0';
-                                        avP(t.e_is_param, true);
-                                } else {
-                                        avP(t.e_is_param, false);
-                                }
-                        }
-                        t.start = start;
-                        t.type = TOKEN_FUN_SPECIAL_STRING;
-                        return t;
-                } else if (C(0) == '$' && ctx == LEX_PREFIX) {
-                        nextchar(ty);
-                        return mktoken(ty, '$');
-                } else if (
-                        contains(OperatorCharset, C(0)) ||
-                        (
-                                C(0) == ':' &&
-                                contains(OperatorCharset, C(1)) &&
-                                C(1) != '-' &&
-                                C(1) != '*' &&
-                                C(1) != '+' &&
-                                C(1) != '.' &&
-                                C(1) != '%'
-                        )
-                ) {
-                        return lexop(ty);
-                } else if (isdigit(C(0))) {
-                        return lexnum(ty);
-                } else if (C(0) == '\'') {
-                        if (C(1) == '\'' && C(2) == '\'') {
-                                return lexdocstring(ty);
-                        } else {
-                                return lexrawstr(ty);
-                        }
-                } else if (C(0) == '"') {
-                        if (C(1) == '"' && C(2) == '"') {
-                                return lexspecialdocstring(ty);
-                        } else {
-                                return lexspecialstr(ty);
-                        }
-                } else if (C(0) == '.' && C(1) == '.') {
-                        nextchar(ty);
-                        nextchar(ty);
-                        if (C(0) == '.')
-                                return nextchar(ty), mktoken(ty, TOKEN_DOT_DOT_DOT);
-                        else
-                                return mktoken(ty, TOKEN_DOT_DOT);
-                } else {
-                        return mktoken(ty, nextchar(ty));
-                }
+        if (SRC >= END) {
+                return (Token) {
+                        .type = TOKEN_END,
+                        .start = start,
+                        .end = state.loc,
+                        .ctx = state.ctx
+                };
         }
 
-        Location end = state.loc;
+        if (C(0) == '/' && C(1) == '*') {
+                struct token t = lexcomment(ty);
+                if (state.keep_comments) {
+                        return t;
+                } else if (skipspace(ty)) {
+                        return mktoken(ty, TOKEN_NEWLINE);
+                } else {
+                        return dotoken(ty, ctx);
+                }
+        } else if (C(0) == '/' && C(1) == '/') {
+                struct token t = lexlinecomment(ty);
+                if (state.keep_comments) {
+                        return t;
+                } else if (skipspace(ty)) {
+                        return mktoken(ty, TOKEN_NEWLINE);
+                } else {
+                        return dotoken(ty, ctx);
+                }
+        } else if (ctx == LEX_FMT && (C(0) == '#' || C(0) == ':')) {
+                return lexfmt(ty);
+        } else if (ctx == LEX_PREFIX && C(0) == '/') {
+                return lexregex(ty);
+        } else if (haveid(ty)) {
+                return lexword(ty);
+        } else if (C(0) == ':' && C(1) == ':' && !contains(OperatorCharset, C(2))) {
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, TOKEN_CHECK_MATCH);
+        } else if (C(0) == '-' && C(1) == '>' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, TOKEN_ARROW);
+        } else if (C(0) == '-' && C(1) != '-' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, TOKEN_MINUS);
+        } else if (C(0) == '#' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, '#');
+        } else if (C(0) == '&' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, '&');
+        } else if (C(0) == '*' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, TOKEN_STAR);
+        } else if (C(0) == '!' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, TOKEN_BANG);
+        } else if (C(0) == '$' && C(1) == '$' && C(2) == '[') {
+                nextchar(ty);
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, TOKEN_TEMPLATE_BEGIN);
+        } else if (C(0) == '$' && C(1) == '$' && C(2) == ']') {
+                nextchar(ty);
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, TOKEN_TEMPLATE_END);
+        } else if (C(0) == '$' && C(1) == '$') {
+                nextchar(ty);
+                nextchar(ty);
+                return mktoken(ty, '$$');
+        } else if (C(0) == '?' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, TOKEN_QUESTION);
+        } else if (C(0) == '$' && C(1) == '"') {
+                nextchar(ty);
+                Token t = dotoken(ty, ctx);
+                for (int i = 0; i < t.expressions.count; ++i) {
+                        char *dollar = strrchr(t.strings.items[i], '$');
+                        if (dollar != NULL && dollar[1] == '\0') {
+                                *dollar = '\0';
+                                avP(t.e_is_param, true);
+                        } else {
+                                avP(t.e_is_param, false);
+                        }
+                }
+                t.start = start;
+                t.type = TOKEN_FUN_SPECIAL_STRING;
+                return t;
+        } else if (C(0) == '$' && ctx == LEX_PREFIX) {
+                nextchar(ty);
+                return mktoken(ty, '$');
+        } else if (
+                contains(OperatorCharset, C(0)) ||
+                (
+                        C(0) == ':' &&
+                        contains(OperatorCharset, C(1)) &&
+                        C(1) != '-' &&
+                        C(1) != '*' &&
+                        C(1) != '+' &&
+                        C(1) != '.' &&
+                        C(1) != '%'
+                )
+        ) {
+                return lexop(ty);
+        } else if (isdigit(C(0))) {
+                return lexnum(ty);
+        } else if (C(0) == '\'') {
+                if (C(1) == '\'' && C(2) == '\'') {
+                        return lexdocstring(ty);
+                } else {
+                        return lexrawstr(ty);
+                }
+        } else if (C(0) == '"') {
+                if (C(1) == '"' && C(2) == '"') {
+                        return lexspecialdocstring(ty);
+                } else {
+                        return lexspecialstr(ty);
+                }
+        } else if (C(0) == '.' && C(1) == '.') {
+                nextchar(ty);
+                nextchar(ty);
+                if (C(0) == '.')
+                        return nextchar(ty), mktoken(ty, TOKEN_DOT_DOT_DOT);
+                else
+                        return mktoken(ty, TOKEN_DOT_DOT);
+        } else {
+                return mktoken(ty, nextchar(ty));
+        }
+}
 
-        return (struct token) { .type = TOKEN_END, .start = start, .end = end, .ctx = state.ctx };
+Token
+lex_token(Ty *ty, LexContext ctx)
+{
+        if (setjmp(jb) != 0) {
+                return (Token) {
+                        .type = TOKEN_ERROR,
+                        .start = Start,
+                        .end = state.loc,
+                        .ctx = state.ctx
+                };
+        }
+
+        return dotoken(ty, ctx);
 }
 
 char const *
