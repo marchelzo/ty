@@ -419,7 +419,7 @@ setctx(Ty *ty, int ctx)
 
         bool next_nl = tok()->type == TOKEN_NEWLINE;
 
-        LOG("Rewinding to: %.*s...  TokenIndex=%d\n", (int)strcspn(tok()->start.s, "\n"), tok()->start.s, TokenIndex);
+        LOG("Rewinding to: %.*s...  TokenIndex=%d", (int)strcspn(tok()->start.s, "\n"), tok()->start.s, TokenIndex);
 
         struct location start = tok()->start;
         lex_rewind(ty, &start);
@@ -430,12 +430,12 @@ setctx(Ty *ty, int ctx)
         // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
 
         while (tokens.count > TokenIndex) {
-                LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(ty, vvL(tokens)));
+                LOG("Popping tokens[%zu]: %s", tokens.count - 1, token_show(ty, vvL(tokens)));
                 tokens.count -= 1;
         }
 
         while (tokens.count > 0 && vvL(tokens)->start.s == start.s) {
-                LOG("Popping tokens[%zu]: %s\n", tokens.count - 1, token_show(ty, vvL(tokens)));
+                LOG("Popping tokens[%zu]: %s", tokens.count - 1, token_show(ty, vvL(tokens)));
                 tokens.count -= 1;
         }
 
@@ -468,7 +468,7 @@ logctx(Ty *ty)
 
         char const *ahead = lex_pos(ty).s;
 
-        fprintf(stderr, ": %.*s\n\n", (int)strcspn(ahead, "\n"), ahead);
+        fprintf(stderr, ": %.*s\n", (int)strcspn(ahead, "\n"), ahead);
 #endif
 }
 

@@ -503,28 +503,21 @@ lexrawstr(Ty *ty)
 static char const *
 lexexpr(Ty *ty)
 {
-        int depth = 1;
-
-        for (;;) {
-                switch (C(0)) {
-                case '\0':
-                        goto Unterminated;
-                case '{':
-                        depth += 1;
-                        break;
-                case '}':
-                        if (--depth == 0)
-                                goto End;
-                        break;
+        while (C(0) != '}') {
+                if (C(0) == '\0') {
+                        error(ty, "unterminated expression in interpolated string");
+                } else if (
+                        C(0) == '\'' ||
+                        C(0) == '"'  ||
+                        (C(0) == '/' && C(1) == '*')
+                ) {
+                        (void)lex_token(ty, LEX_PREFIX);
+                } else {
+                        nextchar(ty);
                 }
-                nextchar(ty);
         }
 
-End:
         return SRC;
-
-Unterminated:
-        error(ty, "unterminated expression in interpolated string");
 }
 
 inline static bool
