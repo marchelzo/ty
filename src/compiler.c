@@ -2197,8 +2197,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 comptime(ty, scope, e);
                 break;
         case EXPRESSION_SPECIAL_STRING:
-                for (int i = 0; i < e->expressions.count; ++i)
+                for (int i = 0; i < e->expressions.count; ++i) {
                         symbolize_expression(ty, scope, e->expressions.items[i]);
+                }
                 break;
         case EXPRESSION_TAG:
                 e->symbol = getsymbol(
@@ -3513,23 +3514,43 @@ emit_coalesce(Ty *ty, Expr const *left, Expr const *right)
 static void
 emit_special_string(Ty *ty, Expr const *e)
 {
-        emit_instr(ty, INSTR_STRING);
-        emit_string(ty, e->strings.items[0]);
+        int n = e->expressions.count;
+
+        if (e->strings.items[0][0] != '\0') {
+                emit_instr(ty, INSTR_STRING);
+                emit_string(ty, e->strings.items[0]);
+                n += 1;
+        }
+
+        for (int i = 1; i < e->strings.count; ++i) {
+                if (e->strings.items[i][0] != '\0') {
+                        n += 1;
+                }
+        }
 
         for (int i = 0; i < e->expressions.count; ++i) {
                 emit_expression(ty, e->expressions.items[i]);
                 emit_instr(ty, INSTR_TO_STRING);
                 if (e->fmts.items[i] != NULL) {
-                        avPn(state.code, e->fmts.items[i], strcspn(e->fmts.items[i], "{"));
+                        emit_string(ty, e->fmts.items[i]);
+                } else {
+                        avP(state.code, '\0');
                 }
-                avP(state.code, '\0');
                 emit_int(ty, e->widths.items[i]);
-                emit_instr(ty, INSTR_STRING);
-                emit_string(ty, e->strings.items[i + 1]);
+
+                if (e->strings.items[i + 1][0] != '\0') {
+                        emit_instr(ty, INSTR_STRING);
+                        emit_string(ty, e->strings.items[i + 1]);
+                }
         }
 
-        emit_instr(ty, INSTR_CONCAT_STRINGS);
-        emit_int(ty, 2 * e->expressions.count + 1);
+        if (n > 1) {
+                emit_instr(ty, INSTR_CONCAT_STRINGS);
+                emit_int(ty, n);
+        } else if (n == 0) {
+                emit_instr(ty, INSTR_STRING);
+                avP(state.code, '\0');
+        }
 }
 
 static void

@@ -16,7 +16,8 @@ typedef vec(char) byte_vector;
 typedef vec(char *) CallStack;
 typedef vec(Value) ValueVector;
 typedef ValueVector ValueStack;
-typedef vec(char const *) StringVector;
+typedef vec(char *) StringVector;
+typedef vec(char const *) ConstStringVector;
 typedef vec(struct try *) TryStack;
 typedef vec(struct sigfn) SigfnStack;
 

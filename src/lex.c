@@ -825,6 +825,8 @@ LexExpr:
 
         LexState st = state;
         st.end = lexexpr(ty);
+        st.keep_comments = false;
+        st.need_nl = false;
 
         /* Eat the terminating } */
         nextchar(ty);

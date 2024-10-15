@@ -4668,6 +4668,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 }
         }
 
+        /*
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByLocation);
 
         int n = 1;
@@ -4779,6 +4780,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         code_buffer
                 );
         }
+        */
 
         fputc('\n', ProfileOut);
 
