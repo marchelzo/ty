@@ -1004,7 +1004,6 @@ prefix_special_string(Ty *ty)
                         char *left = e->strings.items[i];
                         char *right = e->strings.items[i + 1];
 
-                        printf("i=%d, merged('%s', '%s')\n", i, left, right);
                         char *merged = amA(strlen(left) + strlen(right) + 1);
 
                         strcpy(merged, left);
