@@ -284,7 +284,7 @@ struct expression {
                         struct symbol const *match_symbol;
                 };
                 struct {
-                        vec(char *) strings;
+                        StringVector strings;
                         vec(char *) fmts;
                         int_vector widths;
                         expression_vector expressions;

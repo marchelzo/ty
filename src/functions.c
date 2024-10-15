@@ -705,163 +705,133 @@ isflag(int c)
                c == '\'';
 }
 
-static int
-getfmt(char const **s, char const *end, char *out, char const *oend, int *vw)
+struct fspec {
+        bool alt;
+        bool blank;
+        bool left;
+        bool sep;
+        bool sign;
+        bool zero;
+        char xsep;
+        char prec[64];
+        char width[64];
+};
+
+inline static int
+getfmt(char const **s, char const *end, struct fspec *out)
 {
-        char *ostart = out;
+        int w = 0;
+        int p = 0;
 
-        // %
-        *out++ = *(*s)++;
-        *out = '\0';
+        out->alt    = false;
+        out->blank  = false;
+        out->left   = false;
+        out->sep    = false;
+        out->sign   = false;
+        out->zero   = false;
+        out->xsep   = '\0';
 
-        while (*s < end && **s == ' ') ++*s;
+        bool flags = true;
 
-        char width[64] = {0}, w = 0;
-        char prec[64] = {0}, p = 0;
-
-        while (*s < end && isflag(**s)) {
-                if (w + 1 >= sizeof width)
-                        return -1;
-                width[w++] = *(*s)++;
+        while (flags && *s < end) {
+                switch (**s) {
+                case '+':  out->sign  = true; break;
+                case '-':  out->left  = true; break;
+                case '0':  out->zero  = true; break;
+                case '#':  out->alt   = true; break;
+                case '\'': out->sep   = true; break;
+                case ' ':  out->blank = true; break;
+                default:   flags = false; continue;
+                }
+                *s += 1;
         }
 
         if (*s < end && **s == '*') {
-                *vw += 1;
-                if (w + 1 >= sizeof width)
-                        return -1;
-                width[w++] = *(*s)++;
+                if (w + 1 >= sizeof out->width)
+                        return '\0';
+                out->width[w++] = *(*s)++;
         } else while (*s < end && isdigit(**s)) {
-                if (w + 1 >= sizeof width)
-                        return -1;
-                width[w++] = *(*s)++;
+                if (w + 1 >= sizeof out->width)
+                        return '\0';
+                out->width[w++] = *(*s)++;
         }
 
         if (*s < end && **s == '.') {
-                if (p + 1 >= sizeof prec)
-                        return -1;
-                prec[p++] = *(*s)++;
+                if (p + 1 >= sizeof out->prec)
+                        return '\0';
+
+                out->prec[p++] = *(*s)++;
 
                 while (*s < end && **s == ' ') ++*s;
 
                 if (*s < end && **s == '*') {
-                        *vw += 1;
-                        if (p + 1 >= sizeof prec)
-                                return -1;
-                        prec[p++] = *(*s)++;
+                        if (p + 1 >= sizeof out->prec)
+                                return '\0';
+                        out->prec[p++] = *(*s)++;
                 } else while (*s < end && isdigit(**s)) {
-                        if (p + 1 >= sizeof prec)
-                                return -1;
-                        prec[p++] = *(*s)++;
+                        if (p + 1 >= sizeof out->prec)
+                                return '\0';
+                        out->prec[p++] = *(*s)++;
                 }
         }
 
+        if (**s == ' ' || **s == '_' || **s == ',')
+                out->xsep = *(*s)++;
+
         while (*s < end && **s == ' ') ++*s;
 
-        char const *sep = (**s == '_' || **s == ',') ? (*s)++ : NULL;
+        out->width[w] = '\0';
+        out->prec[p] = '\0';
 
-        while (*s < end && **s == ' ') ++*s;
-
-        if (w + p >= oend - out)
-                return -1;
-
-        out += sprintf(out, "%s%s", width, prec);
-
-        if (*s < end) {
-                int c = *(*s)++;
-                switch (c) {
-                case 'd':
-                case 'i':
-                case 'u':
-                        if (sep != NULL && out + 16 < oend) {
-                                sprintf(ostart, "%%%sl%c%c%%%ss", prec, c, 0, width);
-                                return *sep;
-                        }
-                case 'o':
-                case 'x':
-                case 'X':
-                        if (out + 2 >= oend)
-                                return -1;
-                        *out++ = 'j';
-                        break;
-                case 'f':
-                case 'F':
-                case 'g':
-                case 'G':
-                        if (sep != NULL && out + 16 < oend) {
-                                sprintf(ostart, "%%%sl%c%c%%%ss", prec, c, 0, width);
-                                return *sep;
-                        }
-                case 'e':
-                case 'E':
-                case 'a':
-                case 'A':
-                        if (out + 2 >= oend)
-                                return -1;
-                        *out++ = 'l';
-                        break;
-                case '%':
-                        if (out + 16 >= oend)
-                                return -1;
-                        sprintf(ostart, "%%%slf%%%%%c%%%ss", prec, 0, width);
-                        return '%';
-                case 's':
-                case 'p':
-                        if (out + 1 >= oend)
-                                return -1;
-                        break;
-                default:
-                        *out++ = c;
-                        *out++ = '\0';
-                        return -1;
-                }
-
-                *out++ = c;
-                *out++ = '\0';
-
-                return c;
-        } else {
-                return -1;
-        }
+        return (*s < end) ? *(*s)++ : '\0';
 }
 
 inline static noreturn void
-BadFmt(Ty *ty, char const *spec, Value const *v)
+BadFmt(Ty *ty, char const *spec, int n, Value const *v)
 {
-        zP("fmt(): format specifier %s doesn't match value provided: %s", spec, VSC(v));
+        zP(
+                "fmt(): format specifier %.*s doesn't match value provided: %s",
+                n,
+                spec,
+                VSC(v)
+        );
 }
 
 inline static intmax_t
-int_from(Ty *ty, Value const *v, char const *spec)
+int_from(Ty *ty, Value const *v, char const *spec, int n)
 {
         switch (v->type) {
         case VALUE_INTEGER: return v->integer;
         case VALUE_REAL:    return v->real;
         case VALUE_BOOLEAN: return v->boolean;
-        default: BadFmt(ty, spec, v);
+        default: BadFmt(ty, spec, n, v);
         }
 }
 
 inline static double
-float_from(Ty *ty, Value const *v, char const *spec)
+float_from(Ty *ty, Value const *v, char const *spec, int n)
 {
         switch (v->type) {
         case VALUE_INTEGER: return v->integer;
         case VALUE_REAL:    return v->real;
-        default: BadFmt(ty, spec, v);
+        default: BadFmt(ty, spec, n, v);
         }
 }
 
-static void
+inline static void
 AddThousandsSep(char *s, int c)
 {
+        char const *start = s;
+
         while (!isdigit(*s)) ++s;
+        while (*s == '0')    ++s;
 
         char const *in = s;
 
         char b[512];
         int i = 0;
 
-        int w = strcspn(in, ".,");
+        int w = strcspn(in, " .,");
         int n = (w + 2) / 3 - 1;
 
         if (n > 0) switch (w % 3) {
@@ -869,6 +839,7 @@ AddThousandsSep(char *s, int c)
         case 2:      b[i++] = *in++;
         case 1:      b[i++] = *in++;
                      b[i++] = c;
+                     s -= (s > start) && (s[-1] == ' ' || s[-1] == '0');
                 } while (--n > 0);
         }
 
@@ -881,8 +852,9 @@ AddThousandsSep(char *s, int c)
 
 BUILTIN_FUNCTION(fmt)
 {
-        if (argc == 0)
+        if (argc == 0) {
                 return STRING_EMPTY;
+        }
 
         if (ARG(0).type != VALUE_STRING) {
                 zP("fmt(): expected string but got: %s", VSC(&ARG(0)));
@@ -890,47 +862,114 @@ BUILTIN_FUNCTION(fmt)
 
         char const *fmt = ARG(0).string;
         size_t n = ARG(0).bytes;
-        int ai = 1;
+        int ai = 0;
 
-        char spec[64];
-        char scratch[256];
+        struct fspec spec;
+
+        int len;
 
         vec(char) cs = {0};
         vec(char) sb = {0};
 
         void const *p;
-        intmax_t k;
-        double x;
 
         for (size_t i = 0; i < n; ++i) {
                 if (fmt[i] == '%') {
+                        /* %% is just a literal % like printf() */
+                        if (i + 1 < n && fmt[i + 1] == '%') {
+                                xvP(cs, '%');
+                                i += 1;
+                                continue;
+                        }
+
                         char const *start = fmt + i;
-                        int vw = 0;
-                        int t = getfmt(&start, fmt + n, spec, spec + sizeof spec, &vw);
-                        i = start - fmt - 1;
+                        char const *end = start + 1;
 
-                        if (argc <= ai + vw) {
-                                zP("fmt(): missing argument %d for format specifier %s", ai + vw, spec);
+                        int t = getfmt(&end, fmt + n, &spec);
+                        int nspec = (int)(end - start);
+
+                        i  = end - fmt;
+
+                        if (t == '\0') {
+BadFormatSpecifier:
+                                zP("fmt(): invalid format specifier: %.*s", nspec, start);
                         }
 
-                        int w1;
-                        int w2;
-
-                        switch (vw) {
-                        case 2:
-                                if (ARG(ai + 1).type != VALUE_INTEGER) {
-                                        zP("fmt(): invalid width/precision for format specifier %s: %s", spec, VSC(&ARG(ai + 1)));
+                        if (spec.width[0] == '*') {
+                                if (++ai >= argc) {
+                                        goto MissingArgument;
                                 }
-                                w2 = ARG(ai + 1).integer;
-                                /* fallthrough */
-                        case 1:
+
                                 if (ARG(ai).type != VALUE_INTEGER) {
-                                        zP("fmt(): invalid width/precision for format specifier %s: %s", spec, VSC(&ARG(ai)));
+                                        zP(
+                                                "fmt(): invalid width for format specifier %.*s: %s",
+                                                nspec,
+                                                start,
+                                                VSC(&ARG(ai))
+                                        );
                                 }
-                                w1 = ARG(ai).integer;
+
+                                snprintf(spec.width, sizeof spec.width, "%"PRIiMAX, ARG(ai).integer);
                         }
 
-                        Value arg = ARG(ai + vw);
+                        if (spec.prec[0] == '*') {
+                                if (++ai >= argc) {
+                                        goto MissingArgument;
+                                }
+
+                                if (ARG(ai).type != VALUE_INTEGER) {
+                                        zP(
+                                                "fmt(): invalid precision for format specifier %.*s: %s",
+                                                nspec,
+                                                start,
+                                                VSC(&ARG(ai))
+                                        );
+                                }
+
+                                snprintf(spec.prec, sizeof spec.prec, "%"PRIiMAX, ARG(ai).integer);
+                        }
+
+                        if (++ai >= argc) {
+MissingArgument:
+                                zP(
+                                        "fmt(): missing argument %d for format specifier %.*s",
+                                        ai + 1,
+                                        nspec,
+                                        start
+                                );
+                        }
+
+                        Value arg = ARG(ai);
+
+                        char scratch[256];
+                        int si = 0;
+
+                        scratch[si++] = '%';
+
+                        if (spec.alt)   scratch[si++] = '#';
+                        if (spec.blank) scratch[si++] = ' ';
+                        if (spec.sign)  scratch[si++] = '+';
+                        if (spec.zero)  scratch[si++] = '0';
+                        if (spec.left)  scratch[si++] = '-';
+
+                        int wlen = strlen(spec.width);
+                        int plen = strlen(spec.prec);
+
+                        memcpy(scratch + si, spec.width, wlen);
+                        si += wlen;
+
+                        memcpy(scratch + si, spec.prec, plen);
+                        si += plen;
+
+                        if (t == 'q') {
+                                scratch[si++] = 'f';
+                                scratch[si++] = '%';
+                                scratch[si++] = '%';
+                        } else {
+                                scratch[si++] = t;
+                        }
+
+                        scratch[si] = '\0';
 
                         switch (t) {
                         case 'd':
@@ -939,12 +978,15 @@ BUILTIN_FUNCTION(fmt)
                         case 'u':
                         case 'x':
                         case 'X':
-                                k = int_from(ty, &arg, spec);
+                                snprintf(
+                                        buffer,
+                                        sizeof buffer,
+                                        scratch,
+                                        int_from(ty, &arg, start, nspec)
+                                );
 
-                                switch (vw) {
-                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, k); break;
-                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     k); break;
-                                default: snprintf(buffer, sizeof buffer, spec,         k); break;
+                                if (spec.xsep != '\0') {
+                                        AddThousandsSep(&buffer[spec.blank], spec.xsep);
                                 }
 
                                 break;
@@ -956,67 +998,46 @@ BUILTIN_FUNCTION(fmt)
                         case 'E':
                         case 'a':
                         case 'A':
-                                x = float_from(ty, &arg, spec);
+                                snprintf(
+                                        buffer,
+                                        sizeof buffer,
+                                        scratch,
+                                        float_from(ty, &arg, start, nspec)
+                                );
 
-                                switch (vw) {
-                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, x); break;
-                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     x); break;
-                                default: snprintf(buffer, sizeof buffer, spec,         x); break;
+                                if (spec.xsep != '\0') {
+                                        AddThousandsSep(&buffer[spec.blank], spec.xsep);
                                 }
 
                                 break;
-                        case '%':
-                                if (arg.type != VALUE_REAL) BadFmt(ty, spec, &arg);
+                        case 'q':
+                                len = snprintf(
+                                        buffer,
+                                        sizeof buffer,
+                                        scratch,
+                                        100.0 * float_from(ty, &arg, start, nspec)
+                                );
 
-                                x = arg.real * 100.0;
-
-                                if (strchr(spec, '*') != NULL) {
-                                        snprintf(scratch, sizeof scratch, spec, (--vw == 0) ? w1 : w2, x);
-                                } else {
-                                        snprintf(scratch, sizeof scratch, spec, x);
+                                if (buffer[0] == '0' || buffer[spec.blank] == ' ') {
+                                        xvPn(cs, buffer + 1, len - 1);
+                                        continue;
                                 }
 
-                                if (vw == 0) {
-                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1,     scratch);
-                                } else {
-                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1, w1, scratch);
+                                for (int i = len - 1; buffer[i - 1] == ' '; --i) {
+                                        SWAP(char, buffer[i], buffer[i - 1]);
                                 }
 
-                                break;
-                        case '_':
-                        case ',':
-                                if (strchr("diu", strchr(spec, '\0')[-1]) != NULL) {
-                                        k = int_from(ty, &arg, spec);
-                                        if (strchr(spec, '*') != NULL) {
-                                                snprintf(scratch, sizeof scratch, spec, (--vw == 0) ? w1 : w2, k);
-                                        } else {
-                                                snprintf(scratch, sizeof scratch, spec, k);
-                                        }
-                                } else {
-                                        x = float_from(ty, &arg, spec);
-                                        if (strchr(spec, '*') != NULL) {
-                                                snprintf(scratch, sizeof scratch, spec, (--vw == 0) ? w1 : w2, x);
-                                        } else {
-                                                snprintf(scratch, sizeof scratch, spec, x);
-                                        }
-                                }
-
-                                AddThousandsSep(scratch, t);
-
-                                if (vw == 0) {
-                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1,     scratch);
-                                } else {
-                                        snprintf(buffer, sizeof buffer, strchr(spec, '\0') + 1, w1, scratch);
+                                if (buffer[len - 1] == ' ') {
+                                        buffer[--len] = '\0';
                                 }
 
                                 break;
                         case 's':
                                 sb.count = 0;
+
                                 switch (arg.type) {
                                 case VALUE_STRING:
                                         xvPn(sb, arg.string, arg.bytes);
-                                        xvP(sb, '\0');
-                                        p = sb.items;
                                         break;
                                 case VALUE_BLOB:
                                         xvPn(sb, arg.blob->items, arg.blob->count);
@@ -1027,13 +1048,16 @@ BUILTIN_FUNCTION(fmt)
                                         p = arg.ptr;
                                         break;
                                 default:
-                                        BadFmt(ty, spec, &arg);
+                                        BadFmt(ty, start, nspec, &arg);
                                 }
-                                switch (vw) {
-                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, p); break;
-                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     p); break;
-                                default: snprintf(buffer, sizeof buffer, spec,         p); break;
-                                }
+
+                                snprintf(
+                                        buffer,
+                                        sizeof buffer,
+                                        scratch,
+                                        p
+                                );
+
                                 break;
                         case 'p':
                                 switch (arg.type) {
@@ -1045,22 +1069,22 @@ BUILTIN_FUNCTION(fmt)
                                 case VALUE_ARRAY:    p = arg.array;  break;
                                 case VALUE_FUNCTION: p = arg.info;   break;
                                 case VALUE_REGEX:    p = arg.regex;  break;
-                                default: BadFmt(ty, spec, &arg);
+                                default: BadFmt(ty, start, nspec, &arg);
                                 }
-                                switch (vw) {
-                                case 2:  snprintf(buffer, sizeof buffer, spec, w1, w2, p); break;
-                                case 1:  snprintf(buffer, sizeof buffer, spec, w1,     p); break;
-                                default: snprintf(buffer, sizeof buffer, spec,         p); break;
-                                }
+
+                                snprintf(
+                                        buffer,
+                                        sizeof buffer,
+                                        scratch,
+                                        p
+                                );
+
                                 break;
                         default:
-                                zP("fmt(): invalid format specifier: %s", spec);
-
+                                goto BadFormatSpecifier;
                         }
 
                         xvPn(cs, buffer, strlen(buffer));
-
-                        ai += 1;
                 } else {
                         xvP(cs, fmt[i]);
                 }

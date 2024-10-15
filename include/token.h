@@ -127,7 +127,7 @@ typedef struct token {
                 struct expression *e;
                 struct regex const *regex;
                 struct {
-                        vec(char *) strings;
+                        StringVector strings;
                         vec(LexState) expressions;
                         vec(bool) e_is_param;
                         vec(struct location) starts;

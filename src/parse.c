@@ -22,6 +22,7 @@
 #include "log.h"
 #include "vm.h"
 #include "parse.h"
+#include "ty.h"
 
 #define BINARY_OPERATOR(name, t, prec, right_assoc) \
         static Expr * \
@@ -979,12 +980,12 @@ prefix_special_string(Ty *ty)
         vec_init(e->fmts);
         vec_init(e->widths);
 
-        e->strings.items = tok()->strings.items;
-        e->strings.count = tok()->strings.count;
-        e->strings.capacity = tok()->strings.capacity;
+        vec(LexState) exprs = {
+                .items = tok()->expressions.items,
+                .count = tok()->expressions.count
+        };
 
-        LexState *exprs = tok()->expressions.items;
-        int count = tok()->expressions.count;
+        e->strings = tok()->strings;
 
         next();
 
@@ -992,22 +993,46 @@ prefix_special_string(Ty *ty)
         LexState cp = CtxCheckpoint;
         TokenVector ts = tokens;
 
-        for (int i = 0; i < count; ++i) {
+        for (int i = 0; i < exprs.count;) {
                 TokenIndex = 0;
                 vec_init(tokens);
-                lex_start(ty, &exprs[i]);
+
+                lex_start(ty, &exprs.items[i]);
                 lex_save(ty, &CtxCheckpoint);
-                avP(e->expressions, parse_expr(ty, 0));
-                (*vvL(e->expressions))->end = End;
-                avP(e->widths, exprs[i].end - exprs[i].loc.s + 2);
-                setctx(ty, LEX_FMT);
-                if (tok()->type == TOKEN_STRING) {
-                        avP(e->fmts, tok()->string);
-                        next();
+
+                if (tok()->type == TOKEN_END) {
+                        char *left = e->strings.items[i];
+                        char *right = e->strings.items[i + 1];
+
+                        printf("i=%d, merged('%s', '%s')\n", i, left, right);
+                        char *merged = amA(strlen(left) + strlen(right) + 1);
+
+                        strcpy(merged, left);
+                        strcat(merged, right);
+
+                        e->strings.items[i] = merged;
+
+                        vvXi(exprs, i);
+                        vvXi(e->strings, i + 1);
                 } else {
-                        avP(e->fmts, NULL);
+                        avP(e->expressions, parse_expr(ty, 0));
+                        (*vvL(e->expressions))->end = End;
+
+                        avP(e->widths, exprs.items[i].end - exprs.items[i].loc.s + 2);
+
+                        setctx(ty, LEX_FMT);
+                        if (tok()->type == TOKEN_STRING) {
+                                avP(e->fmts, tok()->string);
+                                next();
+                        } else {
+                                avP(e->fmts, NULL);
+                        }
+
+                        i += 1;
                 }
+
                 consume(TOKEN_END);
+
                 lex_end(ty);
         }
 
