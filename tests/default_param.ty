@@ -6,7 +6,7 @@ if f() != 5 {
     print('FAIL')
 }
 
-if f(&pred, 8) != 7 {
+if f(&.pred, 8) != 7 {
     print('FAIL')
 }
 

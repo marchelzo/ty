@@ -33,6 +33,9 @@
 
 #define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
 
+#define SAVE_(t, x) t x##_; memcpy(&(x##_), &(x), sizeof (x))
+#define RESTORE_(x) memcpy(&(x), &(x##_), sizeof (x))
+
 inline static size_t
 P_ALIGN(void const *p)
 {

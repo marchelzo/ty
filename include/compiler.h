@@ -8,6 +8,145 @@ struct location;
 struct expression;
 typedef struct symbol Symbol;
 
+struct eloc {
+        union {
+                uintptr_t p_start;
+                size_t start_off;
+        };
+        union {
+                uintptr_t p_end;
+                size_t end_off;
+        };
+        Location start;
+        Location end;
+        char const *filename;
+        Expr const *e;
+};
+
+typedef struct expr_list ExprList;
+
+struct expr_list {
+        ExprList *next;
+        Expr *e;
+};
+
+struct import {
+        bool pub;
+        char const *name;
+        Scope *scope;
+};
+
+typedef vec(struct import) import_vector;
+
+struct module {
+        char const *path;
+        char *code;
+        Scope *scope;
+        import_vector imports;
+};
+
+typedef vec(struct eloc)      location_vector;
+typedef vec(Symbol *)         symbol_vector;
+
+typedef struct {
+        intrusive_vec(size_t);
+        int label;
+} JumpGroup;
+
+typedef JumpGroup offset_vector;
+
+typedef struct {
+        size_t off;
+        int label;
+} JumpPlaceholder, JumpLabel;
+
+typedef struct loop_state {
+        offset_vector continues;
+        offset_vector breaks;
+        int resources;
+        int t;
+        bool wr;
+        bool each;
+} LoopState;
+
+typedef struct try_state {
+        int t;
+        bool finally;
+} TryState;
+
+typedef vec(LoopState) LoopStates;
+typedef vec(TryState) TryStates;
+
+typedef struct {
+        int i;
+        bool patched;
+        byte_vector text;
+        vec(char const *) captions;
+        vec(char const *) map;
+        uintptr_t start;
+        uintptr_t end;
+        char const *name;
+        char const *module;
+} ProgramAnnotation;
+
+/*
+ * State which is local to a single compilation unit.
+ */
+typedef struct state {
+        byte_vector code;
+
+        ProgramAnnotation annotation;
+
+        offset_vector selfs;
+
+        JumpGroup match_fails;
+        JumpGroup match_successes;
+
+        offset_vector generator_returns;
+
+        symbol_vector bound_symbols;
+
+        int function_resources;
+        int resources;
+
+        int label;
+
+        Scope *method;
+        Scope *fscope;
+
+        Scope *macro_scope;
+
+        Scope *implicit_fscope;
+        Expr *implicit_func;
+
+        Expr *origin;
+
+        statement_vector class_ops;
+
+        Expr *func;
+        int class;
+
+        int function_depth;
+
+        TryStates tries;
+        LoopStates loops;
+
+        import_vector imports;
+
+        StringVector ns;
+
+        Scope *global;
+
+        char const *filename;
+        Location start;
+        Location end;
+
+        Location mstart;
+        Location mend;
+
+        location_vector expression_locations;
+} CompileState;
+
 char const *
 compiler_error(Ty *ty);
 
@@ -152,6 +291,12 @@ CompilationDepth(Ty *ty);
 
 char *
 CompilationTrace(Ty *ty);
+
+CompileState
+PushCompilerState(Ty *ty, char const *filename);
+
+void
+PopCompilerState(Ty *ty, CompileState state);
 
 bool
 IsTopLevel(Symbol const *sym);

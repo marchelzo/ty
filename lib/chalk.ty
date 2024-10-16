@@ -92,3 +92,45 @@ pub function padRight(s, n) {
     let w = #strip(s)
     s + ' '.repeat(max(0, n - w))
 }
+
+pub function hueToRgb(p, q, t) {
+  if t < 0 { t += 1 }
+  if t > 1 { t -= 1 }
+  if t < 1.0/6 { return p + (q - p) * 6 * t }
+  if t < 1.0/2 { return q }
+  if t < 2.0/3 { return p + (q - p) * (2.0/3 - t) * 6 }
+  return p
+}
+
+pub function hslToRgb(h, s, l) {
+  let r, g, b = nil, nil, nil
+
+  if s == 0 {
+    r = g = b = l // achromatic
+  } else {
+    let q = (l < 0.5) ? l * (1 + s) : l + s - l * s
+    let p = 2 * l - q
+    r = hueToRgb(p, q, h + 1.0/3)
+    g = hueToRgb(p, q, h)
+    b = hueToRgb(p, q, h - 1.0/3)
+  }
+
+  return (iround(r * 255), iround(g * 255), iround(b * 255))
+}
+
+pub function fg_hsl(h, s, l) {
+    let (r, g, b) = hslToRgb(h, s, l)
+    return fg("#{r:02x}{g:02x}{b:02x}")
+}
+
+pub function fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
+    let sample = match {
+        (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
+    }
+
+    return fg_hsl(
+        sample(h),
+        sample(s),
+        sample(l)
+    )
+}

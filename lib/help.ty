@@ -407,11 +407,16 @@ pub function prettyPrint(x, %kwargs) {
 
     kwargs['width'] ?= min(winSize.cols, 108)
 
-    let P = Printer@(**kwargs)
+    let WithKwargs = Printer@(**kwargs)
+
+    let colors = match getenv('HOME') {
+        slurp@("{_}/.ty/colors.json")
+        $~> color-profile =>  color-profile
+    }
 
     if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
-        print(P(colors=tuple(**json.parse(s))).print(x))
+        print(Printer(colors=tuple(**json.parse(s))).print(x))
     } else {
-        print(P().print(x))
+        print(Printer(**kwargs).print(x))
     }
 }

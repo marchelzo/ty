@@ -45,10 +45,16 @@ Allocate(Ty *ty, size_t n)
         ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
 
         if (n > avail - padding) {
-#ifndef TY_RELASE
+#ifndef TY_RELEASE
                 *(char *)0 = 0;
 #else
-                panic("out of memory: couldn't allocate %zu-byte object in %zu-byte arena. avail=%zu", n, (size_t)(A.end - A.base), (size_t)avail);
+                panic(
+                        "out of memory: "
+                        "couldn't allocate %zu-byte object in %zu-byte arena. avail=%zu",
+                        n,
+                        (size_t)(A.end - A.base),
+                        (size_t)avail
+                );
 #endif
         }
 

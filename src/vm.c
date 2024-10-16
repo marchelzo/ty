@@ -3819,7 +3819,6 @@ Throw:
                         int hs = v.info[0];
                         int size  = v.info[1];
                         int nEnv = v.info[2];
-                        int bound = v.info[3];
 
                         int ncaps = (n > 0) ? nEnv - n : nEnv;
 
@@ -3829,10 +3828,9 @@ Throw:
                         LOG("ncaps: %d", ncaps);
                         LOG("Name: %s", VSC(&v));
 
-                        if (EvalDepth > 0) {
+                        if (*from_eval(&v)) {
                                 v.info = mAo(hs + size, GC_ANY);
                                 memcpy(v.info, IP, hs + size);
-                                *from_eval(&v) = true;
                                 NOGC(v.info);
                         }
 
@@ -3873,7 +3871,7 @@ Throw:
 
                         GC_RESUME();
 
-                        if (EvalDepth > 0) {
+                        if (*from_eval(&v)) {
                                 OKGC(v.info);
                         }
 

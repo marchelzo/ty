@@ -775,7 +775,7 @@ getfmt(char const **s, char const *end, struct fspec *out)
                 }
         }
 
-        if (**s == ' ' || **s == '_' || **s == ',')
+        if (**s == ' ' || **s == '_' || **s == ',' || **s == '\'')
                 out->xsep = *(*s)++;
 
         while (*s < end && **s == ' ') ++*s;
@@ -1045,6 +1045,8 @@ MissingArgument:
                                 switch (arg.type) {
                                 case VALUE_STRING:
                                         xvPn(sb, arg.string, arg.bytes);
+                                        xvP(sb, '\0');
+                                        p = sb.items;
                                         break;
                                 case VALUE_BLOB:
                                         xvPn(sb, arg.blob->items, arg.blob->count);
@@ -6558,16 +6560,35 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_KEYWORD:
                 type = (char *)keyword_show(t->keyword);
                 break;
+        case TOKEN_SPECIAL_STRING:
+        case TOKEN_FUN_SPECIAL_STRING:
+                type = "f-string";
+                break;
+        case TOKEN_NEWLINE:
+                type = "\n";
+                break;
+        case TOKEN_REGEX:
+                type = "regex";
+                break;
         }
 
 #undef T
 
+        int tlen;
         if (type == NULL) {
-                type = sclonea(ty, (char const []){(char)t->type, '\0'});
+                char const *charset = "[](){}<>;.,?`~=!@#$%^&*()-_~+|\\\n";
+
+                if ((type = strchr(charset, t->type)) == NULL) {
+                        tlen = 0;
+                } else {
+                        tlen = 1;
+                }
+        } else {
+                tlen = strlen(type);
         }
 
         return vTn(
-                "type",   STRING_NOGC(type, strlen(type)),
+                "type",   STRING_NOGC(type, tlen),
                 "start",  start,
                 "end",    end,
                 NULL
@@ -6664,9 +6685,6 @@ BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse(ty)", 1);
 
-        struct scope *scope = NULL;
-
-
         if (ARG(0).type != VALUE_STRING) {
                 zP("ty.parse(ty): expected string but got: %s", VSC(&ARG(0)));
         }
@@ -6694,6 +6712,8 @@ BUILTIN_FUNCTION(ty_parse)
 
         jmp_buf cjb;
         jmp_buf *cjb_save;
+
+        CompileState compiler_state = PushCompilerState(ty, "(eval)");
 
         if (setjmp(cjb) != 0) {
                 char const *msg = compiler_error(ty);
@@ -6776,6 +6796,8 @@ BUILTIN_FUNCTION(ty_parse)
 Return:
         ReleaseArena(ty, old);
         GC_RESUME();
+
+        PopCompilerState(ty, compiler_state);
 
         compiler_swap_jb(ty, cjb_save);
 
@@ -6976,15 +6998,17 @@ BUILTIN_FUNCTION(parse_show)
 {
         ASSERT_ARGC("ty.parse.show()", 1);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("ty.parse.show(): expected pointer but got: %s", VSC(&ARG(0)));
+        Value expr = ARG(0);
+
+        Expr const *src = (expr.type == VALUE_PTR) ? expr.ptr : source_lookup(ty, expr.src);
+
+        if (src == NULL) {
+                return NIL;
         }
 
-        struct statement const *s = ARG(0).ptr;
+        int n = src->end.s - src->start.s;
 
-        int n = s->end.s - s->start.s;
-
-        return vSc(s->start.s, n);
+        return vSc(src->start.s, n);
 }
 
 BUILTIN_FUNCTION(parse_fail)
