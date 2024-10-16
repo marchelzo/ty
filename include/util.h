@@ -192,3 +192,5 @@ Value
 this_executable(Ty *ty);
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

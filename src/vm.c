@@ -334,6 +334,7 @@ static void
 InitializeTy(Ty *ty)
 {
         memset(ty, 0, sizeof *ty);
+        ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
 }
 
@@ -2505,14 +2506,16 @@ vm_exec(Ty *ty, char *code)
                                 vec(int) ids = {0};
                                 vec(int) indices = {0};
 
+                                SCRATCH_SAVE();
+
                                 IP = ALIGNED_FOR(int, IP);
 
                                 for (int i = 0; i < v.count; ++i) {
                                         if (v.ids == NULL || v.ids[i] == -1)
                                                 continue;
                                         if (!search_int((int const *)IP, v.ids[i])) {
-                                                vvP(ids, v.ids[i]);
-                                                vvP(indices, i);
+                                                svP(ids, v.ids[i]);
+                                                svP(indices, i);
                                         }
                                 }
 
@@ -2527,6 +2530,8 @@ vm_exec(Ty *ty, char *code)
                                 for (int i = 0; i < value.count; ++i) {
                                         value.items[i] = v.items[indices.items[i]];
                                 }
+
+                                SCRATCH_RESTORE();
 
                                 *poptarget(ty) = value;
 
@@ -2893,11 +2898,10 @@ Throw:
                         break;
                 CASE(TUPLE)
                 {
-                        static _Thread_local int_vector ids;
-                        static _Thread_local ValueVector values;
+                        int_vector ids = {0};
+                        ValueVector values = {0};
 
-                        ids.count = 0;
-                        values.count = 0;
+                        SCRATCH_SAVE();
 
                         bool have_names = false;
 
@@ -2918,14 +2922,14 @@ Throw:
                                                         AddTupleEntry(ty, &ids, &values, v->ids[j], &v->items[j]);
                                                         have_names = true;
                                                 } else {
-                                                        vvP(ids, -1);
-                                                        vvP(values, v->items[j]);
+                                                        svP(ids, -1);
+                                                        svP(values, v->items[j]);
                                                 }
                                         }
                                 } else if (v->type != VALUE_NONE) {
                                         if (z == -1) {
-                                                vvP(ids, -1);
-                                                vvP(values, *v);
+                                                svP(ids, -1);
+                                                svP(values, *v);
                                         } else {
                                                 AddTupleEntry(ty, &ids, &values, z, v);
                                                 have_names = true;
@@ -2953,6 +2957,8 @@ Throw:
                         push(ty, v);
 
                         GC_RESUME();
+
+                        SCRATCH_RESTORE();
 
                         break;
                 }
@@ -4362,7 +4368,7 @@ vm_init(Ty *ty, int ac, char **av)
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
-        amN(1ULL << 32);
+        amN(1ULL << 30);
 
         curl_global_init(CURL_GLOBAL_ALL);
 

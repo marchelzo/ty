@@ -963,7 +963,7 @@ tmpsymbol(Ty *ty, Scope *scope)
         return scope_add(ty, scope, sclonea(ty, idbuf));
 }
 
-static struct state
+static CompileState
 freshstate(Ty *ty)
 {
         CompileState s = {0};
@@ -2471,6 +2471,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 this->identifier = s->class.name;
 
                                 avI(fun->params, "self", 0);
+                                avI(fun->dflts, NULL, 0);
                                 avI(fun->constraints, this, 0);
 
                                 avP(state.class_ops, def);
@@ -5974,7 +5975,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
          * Save the current compiler state so we can restore it after compiling
          * this module.
          */
-        struct state save = state;
+        CompileState save = state;
         state = freshstate(ty);
         state.filename = name;
 

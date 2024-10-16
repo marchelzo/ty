@@ -7,6 +7,7 @@
 #include "gc.h"
 
 #define Resize(p, n, m) ((p) = memcpy(amA(n), (p), (m)))
+#define resize_scratch(p, n, m) ((p) = memcpy(smA(n), (p), (m)))
 
 Arena
 NewArena(Ty *ty, size_t cap);
@@ -28,5 +29,8 @@ Allocate(Ty *ty, size_t n);
 
 void *
 Allocate0(Ty *ty, size_t n);
+
+void *
+AllocateScratch(Ty *ty, size_t n);
 
 #endif
