@@ -3023,9 +3023,7 @@ Throw:
                         }
                         break;
                 CASE(MAKE_GENERATOR)
-                        v.type = VALUE_GENERATOR;
-                        v.tags = 0;
-                        v.gen = mAo(sizeof *v.gen, GC_GENERATOR);
+                        v = GENERATOR(mAo(sizeof *v.gen, GC_GENERATOR));
                         NOGC(v.gen);
                         v.gen->ip = IP;
                         v.gen->f = vvL(FRAMES)->f;
@@ -3806,7 +3804,7 @@ Throw:
                 }
                 CASE(FUNCTION)
                 {
-                        v.tags = 0;
+                        v = NONE;
                         v.type = VALUE_FUNCTION;
 
                         IP = ALIGNED_FOR(int, IP);

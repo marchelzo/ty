@@ -5840,16 +5840,15 @@ compile(Ty *ty, char const *source)
                         bool pub = p[i]->pub;
 
                         Stmt *def = NewStmt(ty, STATEMENT_FUNCTION_DEFINITION);
-                        def->target = amA(sizeof *def->target);
-                        *def->target = (Expr) {
-                                .type = EXPRESSION_IDENTIFIER,
-                                .start = p[i]->target->start,
-                                .end = p[i]->target->end,
-                                .filename = state.filename,
-                                .identifier = multi->name
-                        };
+
                         def->value = multi;
                         def->pub = pub;
+
+                        def->target = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                        def->target->start      = p[i]->target->start;
+                        def->target->end        = p[i]->target->end;
+                        def->target->filename   = state.filename;
+                        def->target->identifier = multi->name;
 
                         define_function(ty, def);
                         symbolize_statement(ty, state.global, def);
