@@ -25,8 +25,8 @@
         ((v).items + idx)
 
 #define vec_push(ty, v, item) \
-          (((v).count == (v).capacity) \
-        ? ((resize((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
+          (UNLIKELY((v).count == (v).capacity) \
+        ? ((resize((v).items, ((v).capacity = (UNLIKELY((v).capacity == 0) ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count] = (item)), \
                         (v).count += 1, \
                         ((v).items + (v).count - 1)) \
@@ -35,8 +35,8 @@
                 ((v).items + (v).count - 1)))
 
 #define vec_push_unchecked(ty, v, item) \
-          (((v).count == (v).capacity) \
-        ? ((resize_unchecked((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
+          (UNLIKELY((v).count == (v).capacity) \
+        ? ((resize_unchecked((v).items, ((v).capacity = (UNLIKELY((v).capacity == 0) ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count] = (item)), \
                         (v).count += 1, \
                         ((v).items + (v).count - 1)) \
@@ -61,7 +61,7 @@
                 ((v).count += (n))))
 
 #define vec_pop(v) \
-    ((v).count == 0 ? NULL : (v).items + --(v).count)
+    (UNLIKELY((v).count == 0) ? NULL : (v).items + --(v).count)
 
 #define vec_pop_ith(v, i) \
     ((((v).items)[(i)]), (memmove((v).items + (i), (v).items + (i) + 1, (--(v).count - (i)) * sizeof (*((v).items)))))
@@ -88,8 +88,8 @@
 #define vec_for_each(v, idx, name) for (size_t idx = 0; ((name) = vec_get((v), idx)), idx < (v).count; ++idx)
 
 #define vec_nogc_push(v, item) \
-          (((v).count == (v).capacity) \
-        ? ((mresize((v).items, ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
+          (UNLIKELY(((v).count == (v).capacity)) \
+        ? ((mresize((v).items, ((v).capacity = (UNLIKELY((v).capacity == 0) ? 4 : ((v).capacity * 2))) * (sizeof (*(v).items)))), \
                         ((v).items[(v).count] = (item)), \
                         (v).count += 1, \
                         ((v).items + (v).count - 1)) \
@@ -138,8 +138,8 @@
         ((vec_reserve_scratch(ty, (v), (v).count + (n))), memmove((v).items + (i) + (n), (v).items + (i), ((v).count - (i)) * (sizeof (*(v).items))), memcpy((v).items + (i), (elems), (n) * (sizeof (*(v).items))), (v).count += (n))
 
 #define VPush(ty, v, item) \
-          (((v).count == (v).capacity) \
-        ? ((Resize((v).items, (((v).capacity == 0 ? 4 : ((v).capacity * 2)) * (sizeof (*(v).items))), ((v).capacity * sizeof (*(v).items))), \
+          (UNLIKELY((v).count == (v).capacity) \
+        ? ((Resize((v).items, ((UNLIKELY((v).capacity == 0) ? 4 : ((v).capacity * 2)) * (sizeof (*(v).items))), ((v).capacity * sizeof (*(v).items))), \
                         ((v).capacity = ((v).capacity == 0 ? 4 : ((v).capacity * 2))), \
                         ((v).items[(v).count] = (item)), \
                         (v).count += 1, \
