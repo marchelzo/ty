@@ -1,13 +1,16 @@
 #ifndef TY_H_INCLUDED
 #define TY_H_INCLUDED
 
+#include <stdlib.h>
 #include <stddef.h>
 #include <setjmp.h>
 #include <stdbool.h>
 #include <inttypes.h>
+#include <stdalign.h>
 
 #include "vec.h"
 #include "intern.h"
+#include "panic.h"
 
 typedef struct value Value;
 
@@ -80,6 +83,11 @@ typedef struct arena {
 } Arena;
 
 typedef struct {
+	int i;
+	void *beg;
+} ScratchSave;
+
+typedef struct {
         TY *ty;
         char *ip;
         ValueStack stack;
@@ -93,6 +101,11 @@ typedef struct {
         int GC_OFF_COUNT;
 
         Arena arena;
+
+		struct {
+			int i ;
+			vec(Arena) arenas;
+		} scratch;
 
         ThreadGroup *my_group;
 } Ty;
@@ -131,16 +144,18 @@ extern struct member_names NAMES;
 #define mAo0(...) gc_alloc_object0(ty, __VA_ARGS__)
 #define mF(p) gc_free(ty, p)
 
-#define amA(n) Allocate(ty, n)
-#define amA0(n) Allocate0(ty, n)
-#define amX(n) DestroyArena(ty, n)
-#define amF(n) ReleaseArena(ty, n)
+#define amA(n) Allocate(ty, (n))
+#define amA0(n) Allocate0(ty, (n))
+#define amX(n) DestroyArena(ty, (n))
+#define amF(n) ReleaseArena(ty, (n))
 
-#define amN(c) NewArena(ty, c)
-#define amNg(c) NewArenaGC(ty, c)
+#define smA(n) AllocateScratch(ty, (n))
 
-#define vSc(s, n) STRING_CLONE(ty, s, n)
-#define vSnc(s, n) STRING_C_CLONE(ty, s, n)
+#define amN(c) NewArena(ty, (c))
+#define amNg(c) NewArenaGC(ty, (c))
+
+#define vSc(s, n) STRING_CLONE(ty, s, (n))
+#define vSnc(s, n) STRING_C_CLONE(ty, s, (n))
 #define vScn(s)    STRING_CLONE_C(ty, s)
 #define vSncn(s)    STRING_C_CLONE_C(ty, s)
 
@@ -172,6 +187,11 @@ extern struct member_names NAMES;
 #define xvI(a, b, c)    vec_nogc_insert(a, b, c)
 #define xvIn(a, b, c, d) vec_nogc_insert_n(a, b, c, d)
 #define xvR(a, b)       vec_nogc_reserve(a, b)
+
+#define svPn(a, b, c)    vec_push_n_scratch(ty, a, b, c)
+#define svP(a, b)       vec_push_scratch(ty, a, b)
+#define svI(a, b, c)    vec_insert_scratch(ty, a, b, c)
+#define svIn(a, b, c, d) vec_insert_n_scratch(ty, a, b, c, d)
 
 #define gP(x) gc_push(ty, x)
 #define gX()  gc_pop(ty)
@@ -234,4 +254,88 @@ enum {
 
 #define PMASK3 ((uintptr_t)7)
 
+inline static void *
+mrealloc(void *p, size_t n)
+{
+        p = realloc(p, n);
+
+        if (p == NULL) {
+                panic("Out of memory!");
+        }
+
+        return p;
+}
+
+#define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
+
+inline static void
+ExpandScratch(Ty *ty)
+{
+#define S(x) (ty->scratch . x)
+#define SS (&S(arenas.items)[S(i) - 1])
+        if (S(i) == S(arenas.count)) {
+                ptrdiff_t cap;
+
+                if (S(i) == 0) {
+                        cap = 1LL << 12;
+                } else {
+                        cap = 2 * (vvL(S(arenas))->end - vvL(S(arenas))->base);
+                }
+
+                void *new = mrealloc(NULL, cap);
+
+                xvP(
+                        S(arenas),
+                        ((Arena) {
+                                .base = new,
+                                .beg  = new,
+                                .end  = new + cap
+                        })
+                );
+        }
+
+        S(i) += 1;
+}
+
+inline static void *
+AllocateScratch(Ty *ty, size_t n)
+{
+        for (;;) {
+                ptrdiff_t avail = SS->end - SS->beg;
+                ptrdiff_t padding = -(intptr_t)SS->beg & ((alignof (void *)) - 1);
+
+                if (n > avail - padding) {
+                        ExpandScratch(ty);
+                } else {
+                        char *new = SS->beg + padding;
+                        SS->beg += padding + n;
+                        return new;
+                }
+        }
+}
+
+inline static ScratchSave
+SaveScratch(Ty *ty)
+{
+        return (ScratchSave) {
+                .i = S(i),
+                .beg = SS->beg
+        };
+}
+
+inline static void
+RestoreScratch(Ty *ty, ScratchSave save)
+{
+        while (S(i) > save.i) {
+                SS->beg = SS->base;
+                S(i) -= 1;
+        }
+}
+#undef S
+
+#define SCRATCH_SAVE() ScratchSave _scratch_save = SaveScratch(ty);
+#define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
+
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

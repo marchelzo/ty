@@ -209,18 +209,6 @@ gc_free(Ty *ty, void *p)
 }
 
 inline static void *
-mrealloc(void *p, size_t n)
-{
-        p = realloc(p, n);
-
-        if (p == NULL) {
-                panic("Out of memory!");
-        }
-
-        return p;
-}
-
-inline static void *
 gc_resize(Ty *ty, void *p, size_t n) {
         struct alloc *a;
 

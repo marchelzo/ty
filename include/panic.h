@@ -7,3 +7,5 @@ noreturn void
 panic(char const *fmt, ...);
 
 #endif
+
+/* vim: set sts=8 sw=8 expandtab: */

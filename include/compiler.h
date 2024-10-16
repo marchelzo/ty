@@ -92,7 +92,7 @@ typedef struct {
 /*
  * State which is local to a single compilation unit.
  */
-typedef struct state {
+typedef struct compiler_state {
         byte_vector code;
 
         ProgramAnnotation annotation;

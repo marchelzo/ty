@@ -6777,10 +6777,9 @@ BUILTIN_FUNCTION(ty_parse)
                 goto Return;
         }
 
-        struct statement *multi = amA(sizeof *multi);
+        Stmt *multi = amA0(sizeof *multi);
         multi->type = STATEMENT_MULTI;
         multi->arena = GetArenaAlloc(ty);
-        vec_init(multi->statements);
 
         for (int i = 0; prog[i] != NULL; ++i) {
                 avP(multi->statements, prog[i]);

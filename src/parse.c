@@ -318,9 +318,8 @@ mkfunc(Ty *ty)
 inline static Stmt *
 mkstmt(Ty *ty)
 {
-        Stmt *s = amA(sizeof *s);
+        Stmt *s = amA0(sizeof *s);
         s->arena = GetArenaAlloc(ty);
-        s->origin = NULL;
         s->filename = filename;
         s->start = tok()->start;
         s->end = tok()->start;
