@@ -93,6 +93,7 @@ extern _Thread_local int EvalDepth;
         X(SWAP), \
         X(NONE), \
         X(NONE_IF_NIL), \
+        X(NONE_IF_NOT), \
         X(CLEAR_RC), \
         X(GET_EXTRA), \
         X(PUSH_NTH), \

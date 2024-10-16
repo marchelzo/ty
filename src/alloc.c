@@ -28,7 +28,7 @@ NewArena(Ty *ty, size_t cap)
         A.base = malloc(cap);
         A.gc = false;
 
-        if (A.base == NULL) {
+        if (UNLIKELY(A.base == NULL)) {
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
         }
 
@@ -44,7 +44,7 @@ Allocate(Ty *ty, size_t n)
         ptrdiff_t avail = A.end - A.beg;
         ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
 
-        if (n > avail - padding) {
+        if (UNLIKELY(n > avail - padding)) {
 #ifndef TY_RELEASE
                 *(char *)0 = 0;
 #else

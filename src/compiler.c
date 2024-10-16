@@ -834,26 +834,36 @@ is_const(Ty *ty, Scope const *scope, char const *name)
 }
 
 static bool
-is_variadic(Expr const *e)
+any_variadic(Expr * const *args, Expr * const *conds, int n)
 {
-        int n = 0;
-        Expr * const *args = NULL;
-        Expr * const *conds = NULL;
-
-        if (e->type == EXPRESSION_FUNCTION_CALL) {
-                n = e->args.count;
-                args = e->args.items;
-                conds = e->fconds.items;
-        } else if (e->type == EXPRESSION_METHOD_CALL) {
-                n = e->method_args.count;
-                args = e->method_args.items;
-                conds = e->mconds.items;
-        }
 
         for (int i = 0; i < n; ++i) {
-                if (args[i] != NULL && (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL)) {
+                if (
+                        args[i] != NULL &&
+                        (args[i]->type == EXPRESSION_SPREAD || conds[i] != NULL)
+                ) {
                         return true;
                 }
+        }
+
+        return false;
+}
+
+static bool
+is_variadic(Expr const *e)
+{
+        if (e->type == EXPRESSION_FUNCTION_CALL) {
+                return any_variadic(
+                        e->args.items,
+                        e->fconds.items,
+                        e->args.count
+                );
+        } else if (e->type == EXPRESSION_METHOD_CALL) {
+                return any_variadic(
+                        e->method_args.items,
+                        e->mconds.items,
+                        e->method_args.count
+                );
         }
 
         return false;
@@ -1211,8 +1221,9 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
                 fc.fconds = e->mconds;
 
                 vec_init(fc.fkwconds);
-                for (size_t i = 0; i < fc.kws.count; ++i)
+                for (size_t i = 0; i < fc.kws.count; ++i) {
                         avP(fc.fkwconds, NULL);
+                }
 
                 Expr *f = fc.function = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 f->start = left->start;
@@ -3482,11 +3493,31 @@ emit_return(Ty *ty, Stmt const *s)
                 }
         }
 
-        if (false && s->returns.count == 1 && is_call(s->returns.items[0])) {
+        Expr **rets = s->returns.items;
+        int nret = s->returns.count;
+
+        bool tco = (nret == 1)
+                && (state.tries.count == 0)
+                && (state.function_resources == state.resources)
+                && (!CheckConstraints || state.func->return_type == NULL)
+                && is_call(rets[0])
+                && !is_variadic(rets[0])
+                && (rets[0]->function->type == EXPRESSION_IDENTIFIER)
+                && (rets[0]->function->symbol == state.func->function_symbol)
+                && (rets[0]->args.count == state.func->params.count)
+                && (rets[0]->kwargs.count == 0);
+
+        if (tco) {
+                for (int i = 0; i < rets[0]->args.count; ++i) {
+                        emit_expression(ty, rets[0]->args.items[i]);
+                }
+
                 emit_instr(ty, INSTR_TAIL_CALL);
+
+                return true;
         }
 
-        if (s->returns.count > 0) for (int i = 0; i < s->returns.count; ++i) {
+        if (s->returns.count > 0 ) for (int i = 0; i < s->returns.count; ++i) {
                 emit_expression(ty, s->returns.items[i]);
         } else {
                 emit_instr(ty, INSTR_NIL);
@@ -4962,13 +4993,17 @@ emit_non_nil_expr(Ty *ty, Expr const *e, bool none)
 {
         emit_expression(ty, e);
         emit_instr(ty, INSTR_DUP);
+
         PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, skip);
         PLACEHOLDER_JUMP(INSTR_JUMP, good);
         PATCH_JUMP(skip);
+
         emit_instr(ty, INSTR_POP);
+
         if (none) {
                 emit_instr(ty, INSTR_NONE);
         }
+
         PATCH_JUMP(good);
 }
 
@@ -5162,6 +5197,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 if (is_variadic(e)) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
                 }
+
                 for (size_t i = 0; i < e->args.count; ++i) {
                         if (e->args.items[i] == NULL) {
                                 continue;
@@ -5174,20 +5210,33 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                                 emit_expression(ty, e->args.items[i]);
                         }
                 }
+
                 for (size_t i = 0; i < e->kwargs.count; ++i) {
-                        emit_expression(ty, e->kwargs.items[i]);
+                        if (e->fkwconds.items[i] == NULL) {
+                                emit_expression(ty, e->kwargs.items[i]);
+                        } else {
+                                emit_expression(ty, e->fkwconds.items[i]);
+                                PLACEHOLDER_JUMP(INSTR_NONE_IF_NOT, skip);
+
+                                emit_expression(ty, e->kwargs.items[i]);
+                                PATCH_JUMP(skip);
+                        }
                 }
+
                 emit_expression(ty, e->function);
                 emit_instr(ty, INSTR_CALL);
+
                 if (is_variadic(e)) {
                         emit_int(ty, -1);
                 } else {
                         emit_int(ty, e->args.count);
                 }
+
                 emit_int(ty, e->kwargs.count);
                 for (size_t i = e->kws.count; i > 0; --i) {
                         emit_string(ty, e->kws.items[i - 1]);
                 }
+
                 break;
         case EXPRESSION_METHOD_CALL:
                 if (is_variadic(e)) {

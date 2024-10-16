@@ -76,15 +76,15 @@ typedef struct {
 typedef struct thread_group ThreadGroup;
 
 typedef struct arena {
-	char *base;
-	char *beg;
-	char *end;
-	bool gc;
+        char *base;
+        char *beg;
+        char *end;
+        bool gc;
 } Arena;
 
 typedef struct {
-	int i;
-	void *beg;
+        int i;
+        void *beg;
 } ScratchSave;
 
 typedef struct {
@@ -102,10 +102,10 @@ typedef struct {
 
         Arena arena;
 
-		struct {
-			int i ;
-			vec(Arena) arenas;
-		} scratch;
+        struct {
+                int i ;
+                vec(Arena) arenas;
+        } scratch;
 
         ThreadGroup *my_group;
 } Ty;
@@ -135,6 +135,9 @@ extern struct member_names NAMES;
 
 #define GC_STOP() (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
+
+#define UNLIKELY(x) __builtin_expect((x), 0)
+#define LIKELY(x)   __builtin_expect((x), 1)
 
 #define zP(...) vm_panic(ty, __VA_ARGS__)
 #define mRE(...) resize(__VA_ARGS__)
@@ -259,7 +262,7 @@ mrealloc(void *p, size_t n)
 {
         p = realloc(p, n);
 
-        if (p == NULL) {
+        if (UNLIKELY(p == NULL)) {
                 panic("Out of memory!");
         }
 

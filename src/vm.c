@@ -970,7 +970,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 gP(f);
                 Generator *gen = GetCurrentGenerator(ty);
                 vm_exec(ty, code);
-                if (GetCurrentGenerator(ty) != gen) {
+                if (UNLIKELY(GetCurrentGenerator(ty) != gen)) {
                         zP("sus usage of coroutine yield");
                 }
                 gX();
@@ -1410,7 +1410,7 @@ DoThrow(Ty *ty)
 {
         struct try **tp = GetCurrentTry(ty);
 
-        if (tp == NULL) {
+        if (UNLIKELY(tp == NULL)) {
                 ThrowCtx c = *vvX(throw_stack);
 
                 FRAMES.count = c.ctxs;
@@ -1421,7 +1421,7 @@ DoThrow(Ty *ty)
 
         struct try *t = *tp;
 
-        if (t->state == TRY_FINALLY) {
+        if (UNLIKELY(t->state == TRY_FINALLY)) {
                 zP(
                         "an exception was thrown while handling another exception: %s%s%s",
                         TERM(31), VSC(top(ty)), TERM(39)
@@ -1472,11 +1472,14 @@ ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
 {
         char *ip;
         Value *vp;
+        Array *a;
+
 Start:
-        if (subscript.type == VALUE_GENERATOR) {
+        switch (__builtin_expect(subscript.type, VALUE_INTEGER)) {
+        case VALUE_GENERATOR:
                 gP(&subscript);
                 gP(&container);
-                Array *a = vA();
+                a = vA();
                 NOGC(a);
                 ip = IP;
                 for (;;) {
@@ -1487,7 +1490,7 @@ Start:
                         Value r = pop(ty);
                         if (r.type == VALUE_NONE)
                                 break;
-                        FALSE_OR (r.type != VALUE_INTEGER)
+                        if (UNLIKELY(r.type != VALUE_INTEGER))
                                 zP("iterator yielded non-integer array index in subscript expression");
                         if (r.integer < 0)
                                 r.integer += container.array->count;
@@ -1500,18 +1503,23 @@ Start:
                                 vAp(a, Some(ty, container.array->items[r.integer]));
                         }
                 }
+
                 OKGC(a);
                 gX();
                 gX();
+
                 IP = ip;
+
                 return ARRAY(a);
-        } else if (subscript.type == VALUE_OBJECT) {
+        case VALUE_OBJECT:
                 gP(&subscript);
                 gP(&container);
+
                 vp = class_method(ty, subscript.class, "__next__");
-                if (vp == NULL) {
+
+                if (UNLIKELY(vp == NULL)) {
                         vp = class_method(ty, subscript.class, "__iter__");
-                        FALSE_OR (vp == NULL) {
+                        if (UNLIKELY(vp == NULL)) {
                                 zP("non-iterable object used in subscript expression");
                         }
                         call(ty, vp, &subscript, 0, 0, true);
@@ -1520,15 +1528,17 @@ Start:
                         gX();
                         goto Start;
                 }
-                Array *a = vA();
+
+                a = vA();
                 NOGC(a);
+
                 for (int i = 0; ; ++i) {
                         push(ty, INTEGER(i));
                         call(ty, vp, &subscript, 1, 0, true);
                         Value r = pop(ty);
                         if (r.type == VALUE_NIL)
                                 break;
-                        FALSE_OR (r.type != VALUE_INTEGER)
+                        if (UNLIKELY(r.type != VALUE_INTEGER))
                                 zP("iterator yielded non-integer array index in subscript expression");
                         if (r.integer < 0)
                                 r.integer += container.array->count;
@@ -1541,14 +1551,17 @@ Start:
                                 vAp(a, Some(ty, container.array->items[r.integer]));
                         }
                 }
+
                 OKGC(a);
                 gX();
                 gX();
+
                 return ARRAY(a);
-        } else if (subscript.type == VALUE_INTEGER) {
+        case VALUE_INTEGER:
                 if (subscript.integer < 0) {
                         subscript.integer += container.array->count;
                 }
+
                 if (subscript.integer < 0 || subscript.integer >= container.array->count) {
                         if (strict) goto Error;
                         return None;
@@ -1557,7 +1570,7 @@ Start:
                 } else {
                         return Some(ty, container.array->items[subscript.integer]);
                 }
-        } else {
+        default:
                 zP(
                         "non-integer array index used in subscript expression: %s",
                         VSC(&subscript)
@@ -1874,7 +1887,7 @@ DoMutDiv(Ty *ty)
                 push(ty, *vp);
                 break;
         case 1:
-                FALSE_OR (top(ty)->type != VALUE_INTEGER) {
+                if (UNLIKELY(top(ty)->type != VALUE_INTEGER)) {
                         zP("attempt to divide byte by non-integer: %s", VSC(top(ty)));
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] /= pop(ty).integer;
@@ -1920,7 +1933,7 @@ DoMutMul(Ty *ty)
                 push(ty, *vp);
                 break;
         case 1:
-                FALSE_OR (top(ty)->type != VALUE_INTEGER) {
+                if (UNLIKELY(top(ty)->type != VALUE_INTEGER)) {
                         zP("attempt to multiply byte by non-integer");
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] *= pop(ty).integer;
@@ -1952,7 +1965,7 @@ DoMutSub(Ty *ty)
         switch (p & PMASK3) {
         case 0:
                 if (vp->type == VALUE_DICT) {
-                        FALSE_OR (top(ty)->type != VALUE_DICT)
+                        if (UNLIKELY(top(ty)->type != VALUE_DICT))
                                 zP("attempt to subtract non-dict from dict");
                         dict_subtract(ty, vp, 1, NULL);
                         pop(ty);
@@ -1972,7 +1985,7 @@ DoMutSub(Ty *ty)
                 push(ty, *vp);
                 break;
         case 1:
-                FALSE_OR (top(ty)->type != VALUE_INTEGER) {
+                if (UNLIKELY(top(ty)->type != VALUE_INTEGER)) {
                         zP("attempt to subtract non-integer from byte");
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] -= pop(ty).integer;
@@ -2004,12 +2017,12 @@ DoMutAdd(Ty *ty)
         switch (p & PMASK3) {
         case 0:
                 if (vp->type == VALUE_ARRAY) {
-                        FALSE_OR (top(ty)->type != VALUE_ARRAY)
+                        if (UNLIKELY(top(ty)->type != VALUE_ARRAY))
                                 zP("attempt to add non-array to array");
                         value_array_extend(ty, vp->array, top(ty)->array);
                         pop(ty);
                 } else if (vp->type == VALUE_DICT) {
-                        FALSE_OR (top(ty)->type != VALUE_DICT)
+                        if (UNLIKELY(top(ty)->type != VALUE_DICT))
                                 zP("attempt to add non-dict to dict");
                         DictUpdate(ty, vp->dict, top(ty)->dict);
                         pop(ty);
@@ -2024,7 +2037,7 @@ DoMutAdd(Ty *ty)
                 push(ty, *vp);
                 break;
         case 1:
-                FALSE_OR (top(ty)->type != VALUE_INTEGER) {
+                if (UNLIKELY(top(ty)->type != VALUE_INTEGER)) {
                         zP("attempt to add non-integer to byte");
                 }
                 b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] += pop(ty).integer;
@@ -2134,7 +2147,7 @@ vm_try_exec(Ty *ty, char *code)
                 try_stack = ts;
                 IP = save;
                 push(ty, vSc(ERR, strlen(ERR)));
-                top(ty)->tags = tags_push(ty, 0, gettag(ty, NULL, "Err"));
+                top(ty)->tags = tags_push(ty, 0, TAG_ERR);
                 top(ty)->type |= VALUE_TAGGED;
                 vm_exec(ty, &throw);
                 // unreachable
@@ -2167,7 +2180,7 @@ vm_exec(Ty *ty, char *code)
 
         Value v, key, value, container, subscript, *vp, *vp2, *self;
         char *str;
-        char const *method, *member;
+        char const *method;
 
         BuiltinMethod *func;
 
@@ -2367,7 +2380,7 @@ vm_exec(Ty *ty, char *code)
                                 vp = class_lookup_setter_i(ty, v.class, z);
                                 if (vp != NULL) {
                                         vp2 = class_lookup_getter_i(ty, v.class, z);
-                                        FALSE_OR (vp2 == NULL) {
+                                        if (UNLIKELY(vp2 == NULL)) {
                                                 zP(
                                                         "class %s%s%s needs a getter for %s%s%s!",
                                                         TERM(33),
@@ -2405,21 +2418,28 @@ vm_exec(Ty *ty, char *code)
                         container = top(ty)[-1];
 
                         if (container.type == VALUE_ARRAY) {
-                                FALSE_OR (subscript.type != VALUE_INTEGER)
+                                if (UNLIKELY(subscript.type != VALUE_INTEGER))
                                         zP("non-integer array index used in subscript assignment");
                                 if (subscript.integer < 0)
                                         subscript.integer += container.array->count;
-                                if (subscript.integer < 0 || subscript.integer >= container.array->count) {
-                                        // TODO: Not sure which is the best behavior here
-                                        push(ty, TAG(gettag(ty, NULL, "IndexError")));
+                                if (UNLIKELY(subscript.integer < 0 || subscript.integer >= container.array->count)) {
+                                        push(
+                                                ty,
+                                                tagged(
+                                                        ty,
+                                                        TAG_INDEX_ERR,
+                                                        container,
+                                                        subscript,
+                                                        NONE
+                                                )
+                                        );
                                         goto Throw;
-                                        zP("array index out of range in subscript expression");
                                 }
                                 pushtarget(ty, &container.array->items[subscript.integer], container.array);
                         } else if (container.type == VALUE_DICT) {
                                 pushtarget(ty, dict_put_key_if_not_exists(ty, container.dict, subscript), container.dict);
                         } else if (container.type == VALUE_BLOB) {
-                                FALSE_OR (subscript.type != VALUE_INTEGER) {
+                                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                                         zP("non-integer blob index used in subscript assignment");
                                 }
                                 if (subscript.integer < 0) {
@@ -2433,7 +2453,7 @@ vm_exec(Ty *ty, char *code)
                                 }
                                 pushtarget(ty, (Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
                         } else if (container.type == VALUE_PTR && IP[0] == INSTR_ASSIGN) {
-                                if (subscript.type != VALUE_INTEGER) {
+                                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                                         zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
                                 }
                                 Value p = vm_2op(ty, OP_ADD, &container, &subscript);
@@ -2449,7 +2469,11 @@ vm_exec(Ty *ty, char *code)
                                 IP += 1;
                                 break;
                         } else {
-                                zP("attempt to perform subscript assignment on something other than an object or array: %s", VSC(&container));
+                                zP(
+                                        "attempt to perform subscript assignment on "
+                                        "something other than an object or array: %s",
+                                        VSC(&container)
+                                );
                         }
 
                         pop(ty);
@@ -2461,8 +2485,9 @@ vm_exec(Ty *ty, char *code)
                         break;
                 CASE(MAYBE_ASSIGN)
                         vp = poptarget(ty);
-                        if (vp->type == VALUE_NIL)
+                        if (vp->type == VALUE_NIL) {
                                 *vp = peek(ty);
+                        }
                         break;
                 CASE(TAG_PUSH)
                         READVALUE(tag);
@@ -2540,13 +2565,13 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(THROW_IF_NIL)
-                        if (top(ty)->type == VALUE_NIL) {
+                        if (UNLIKELY(top(ty)->type == VALUE_NIL)) {
                                 MatchError;
                         }
                         break;
                 CASE(UNTAG_OR_DIE)
                         READVALUE(tag);
-                        if (!tags_same(ty, tags_first(ty, top(ty)->tags), tag)) {
+                        if (UNLIKELY(!tags_same(ty, tags_first(ty, top(ty)->tags), tag))) {
                                 MatchError;
                         } else {
                                 top(ty)->tags = tags_pop(ty, top(ty)->tags);
@@ -2555,7 +2580,7 @@ vm_exec(Ty *ty, char *code)
                         break;
                 CASE(STEAL_TAG)
                         vp = poptarget(ty);
-                        if (top(ty)->type & VALUE_TAGGED) {
+                        if (LIKELY(top(ty)->type & VALUE_TAGGED)) {
                                 *vp = TAG(tags_first(ty, top(ty)->tags));
                                 if ((top(ty)->tags = tags_pop(ty, top(ty)->tags)) == 0) {
                                         top(ty)->type &= ~VALUE_TAGGED;
@@ -2609,9 +2634,11 @@ vm_exec(Ty *ty, char *code)
                                 TERM(22),
                                 TERM(39)
                         );
+
                         break;
                 CASE(BAD_ASSIGN)
                         v = peek(ty);
+
                         str = IP;
                         zP(
                                 "constraint on %s%s%s%s%s violated in assignment: %s%s%s = %s%s%s",
@@ -2628,6 +2655,7 @@ vm_exec(Ty *ty, char *code)
                                 TERM(22),
                                 TERM(39)
                         );
+
                         break;
                 CASE(THROW)
 Throw:
@@ -2661,7 +2689,7 @@ Throw:
                         READVALUE(n);
                         struct try *t;
                         size_t n_tstk = try_stack.count;
-                        if (n_tstk == try_stack.capacity) {
+                        if (UNLIKELY(n_tstk == try_stack.capacity)) {
                                 do {
                                         t = mrealloc(NULL, sizeof *t);
                                         vvP(try_stack, t);
@@ -2728,16 +2756,18 @@ Throw:
                 CASE(ENSURE_EQUALS_VAR)
                         v = pop(ty);
                         READVALUE(n);
-                        if (!value_test_equality(ty, top(ty), &v))
+                        if (!value_test_equality(ty, top(ty), &v)) {
                                 IP += n;
+                        }
                         break;
                 CASE(TRY_ASSIGN_NON_NIL)
                         READVALUE(n);
                         vp = poptarget(ty);
-                        if (top(ty)->type == VALUE_NIL)
+                        if (top(ty)->type == VALUE_NIL) {
                                 IP += n;
-                        else
+                        } else {
                                 *vp = peek(ty);
+                        }
                         break;
                 CASE(TRY_REGEX)
                         READJUMP(code);
@@ -2911,7 +2941,7 @@ Throw:
                                 Value *v = &STACK.items[STACK.count - n + i];
                                 READVALUE(z);
                                 if (z == -2) {
-                                        if (v->type != VALUE_TUPLE) {
+                                        if (UNLIKELY(v->type != VALUE_TUPLE)) {
                                                 zP(
                                                         "attempt to spread non-tuple in tuple expression: %s",
                                                         VSC(v)
@@ -3024,7 +3054,7 @@ Throw:
                         b = false;
                         goto CallMethod;
                 CASE(YIELD)
-                        if (!co_yield(ty)) {
+                        if (UNLIKELY(!co_yield(ty))) {
                                 zP("attempt to yield from outside generator context");
                         }
                         break;
@@ -3189,13 +3219,27 @@ Throw:
                 CASE(NONE_IF_NIL)
                         if (top(ty)->type == VALUE_TAG && top(ty)->tag == TAG_NONE) {
                                 *top(ty) = NONE;
-                        } else FALSE_OR (!(top(ty)->tags != 0 && tags_first(ty, top(ty)->tags) == TAG_SOME)) {
-                                zP("iterator returned invalid type. expected None or Some(ty, x) but got %s", VSC(top(ty)));
+                        } else if (
+                                !LIKELY(
+                                        top(ty)->tags != 0 &&
+                                        tags_first(ty, top(ty)->tags) == TAG_SOME
+                                )
+                        ) {
+                                zP("iterator returned invalid type. Expected None or Some(ty, x) but got %s", VSC(top(ty)));
                         } else {
                                 top(ty)->tags = tags_pop(ty, top(ty)->tags);
                                 if (top(ty)->tags == 0) {
                                         top(ty)->type &= ~VALUE_TAGGED;
                                 }
+                        }
+                        break;
+                CASE(NONE_IF_NOT)
+                        READJUMP(code);
+                        if (!value_truthy(ty, top(ty))) {
+                                *top(ty) = NONE;
+                                DOJUMP(code);
+                        } else {
+                                pop(ty);
                         }
                         break;
                 CASE(CLEAR_RC)
@@ -3286,7 +3330,7 @@ Throw:
                 CASE(PUSH_ARRAY_ELEM)
                         READVALUE(n);
                         READVALUE(b);
-                        if (top(ty)->type != VALUE_ARRAY) {
+                        if (UNLIKELY(top(ty)->type != VALUE_ARRAY)) {
                                 MatchError;
                                 zP("attempt to destructure non-array as array in assignment");
                         }
@@ -3306,13 +3350,13 @@ Throw:
                         break;
                 CASE(PUSH_TUPLE_ELEM)
                         READVALUE(n);
-                        FALSE_OR (top(ty)->type != VALUE_TUPLE) {
+                        if (UNLIKELY(top(ty)->type != VALUE_TUPLE)) {
                                 zP(
                                         "attempt to destructure non-tuple as tuple in assignment: %s",
                                         VSC(top(ty))
                                 );
                         }
-                        FALSE_OR (n >= top(ty)->count) {
+                        if (UNLIKELY(n >= top(ty)->count)) {
                                 zP(
                                         "elment index %d out of range in destructuring assignment: %s",
                                         n,
@@ -3327,7 +3371,7 @@ Throw:
 
                         v = peek(ty);
 
-                        if (v.type != VALUE_TUPLE || v.ids == NULL) {
+                        if (UNLIKELY(v.type != VALUE_TUPLE || v.ids == NULL)) {
                                 value = v;
                                 goto BadTupleMember;
                         }
@@ -3373,24 +3417,24 @@ Throw:
                         STACK.items[STACK.count - 1] = v;
                         break;
                 CASE(RANGE)
-                        i = class_lookup(ty, "Range");
-                        if (i == -1 || (vp = class_method(ty, i, "init")) == NULL) {
-                                zP("failed to load Range class. was prelude loaded correctly?");
+                        vp = class_method(ty, CLASS_RANGE, "init");
+                        if (UNLIKELY(vp == NULL)) {
+                                zP("failed to load Range class. Was prelude loaded correctly?");
                         }
 
-                        v = OBJECT(object_new(ty, i), i);
+                        v = OBJECT(object_new(ty, CLASS_RANGE), CLASS_RANGE);
                         NOGC(v.object);
                         call(ty, vp, &v, 2, 0, true);
                         *top(ty) = v;
                         OKGC(v.object);
                         break;
                 CASE(INCRANGE)
-                        i = class_lookup(ty, "InclusiveRange");
-                        if (i == -1 || (vp = class_method(ty, i, "init")) == NULL) {
-                                zP("failed to load InclusiveRange class. was prelude loaded correctly?");
+                        vp = class_method(ty, CLASS_INC_RANGE, "init");
+                        if (UNLIKELY (vp == NULL)) {
+                                zP("failed to load InclusiveRange class. Was prelude loaded correctly?");
                         }
 
-                        v = OBJECT(object_new(ty, i), i);
+                        v = OBJECT(object_new(ty, CLASS_INC_RANGE), CLASS_INC_RANGE);
                         NOGC(v.object);
                         call(ty, vp, &v, 2, 0, true);
                         *top(ty) = v;
@@ -3453,7 +3497,7 @@ Throw:
                                 push(ty, ArraySubscript(ty, container, subscript, true));
                                 break;
                         case VALUE_TUPLE:
-                                if (subscript.type == VALUE_INTEGER) {
+                                if (LIKELY(subscript.type == VALUE_INTEGER)) {
                                         if (subscript.integer < 0) {
                                                 subscript.integer += container.count;
                                         }
@@ -3503,7 +3547,7 @@ Throw:
                                 i = NAMES.subscript;
                                 goto CallMethod;
                         case VALUE_PTR:
-                                FALSE_OR (subscript.type != VALUE_INTEGER) {
+                                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                                         zP("non-integer used to subscript pointer: %s", VSC(&subscript));
                                 }
                                 v = GCPTR((container.extra == NULL) ? &ffi_type_uint8 : container.extra, container.gcptr);
@@ -3664,10 +3708,10 @@ Throw:
                         push(ty, INTEGER(v.array->count)); // TODO
                         break;
                 CASE(PRE_INC)
-                        FALSE_OR (SpecialTarget(ty)) {
+                        if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-increment applied to invalid target");
                         }
-                        switch (peektarget(ty)->type) {
+                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: ++peektarget(ty)->integer; break;
                         case VALUE_REAL:    ++peektarget(ty)->real;    break;
                         case VALUE_OBJECT:
@@ -3686,11 +3730,11 @@ Throw:
                         push(ty, *poptarget(ty));
                         break;
                 CASE(POST_INC)
-                        FALSE_OR (SpecialTarget(ty)) {
+                        if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-increment applied to invalid target");
                         }
                         push(ty, *peektarget(ty));
-                        switch (peektarget(ty)->type) {
+                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: ++peektarget(ty)->integer; break;
                         case VALUE_REAL:    ++peektarget(ty)->real;    break;
                         case VALUE_PTR:
@@ -3702,10 +3746,10 @@ Throw:
                         poptarget(ty);
                         break;
                 CASE(PRE_DEC)
-                        if (SpecialTarget(ty)) {
+                        if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-decrement applied to invalid target");
                         }
-                        switch (peektarget(ty)->type) {
+                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: --peektarget(ty)->integer; break;
                         case VALUE_REAL:    --peektarget(ty)->real;    break;
                         case VALUE_OBJECT:
@@ -3724,11 +3768,11 @@ Throw:
                         push(ty, *poptarget(ty));
                         break;
                 CASE(POST_DEC)
-                        if (SpecialTarget(ty)) {
+                        if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("post-decrement applied to invalid target");
                         }
                         push(ty, *peektarget(ty));
-                        switch (peektarget(ty)->type) {
+                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: --peektarget(ty)->integer; break;
                         case VALUE_REAL:    --peektarget(ty)->real;    break;
                         case VALUE_PTR:
@@ -3886,7 +3930,24 @@ Throw:
                         *top(ty)->env[n] = *top(ty);
                         break;
                 CASE(TAIL_CALL)
-                        tco = true;
+                        n = vvL(FRAMES)->f.info[4];
+
+                        memcpy(
+                                local(ty, 0),
+                                topN(n),
+                                n * sizeof (Value)
+                        );
+
+                        i = n;
+                        n = vvL(FRAMES)->f.info[3];
+
+                        for (; i < n; ++i) {
+                                *local(ty, i) = NIL;
+                        }
+
+                        STACK.count = vvL(FRAMES)->fp + n;
+                        IP = code_of(&vvL(FRAMES)->f);
+
                         break;
                 CASE(CALL)
                         v = pop(ty);
@@ -3898,11 +3959,14 @@ Throw:
                                 n = STACK.count - *vvX(sp_stack) - nkw;
                         }
 
+                        /* TODO: optimize more tail calls */
+#if 0
                         if (tco) {
                                 vvX(FRAMES);
                                 IP = *vvX(CALLS);
                                 tco = false;
                         }
+#endif
 
                         /*
                          * Move all the keyword args into a dict.
@@ -3925,12 +3989,21 @@ Throw:
                                 }
                                 GC_STOP();
                                 container = DICT(dict_new(ty));
-                                for (int i = 0; i < nkw; ++i) {
+                                for (int i = 0; i < nkw; ++i, SKIPSTR()) {
+                                        if (top(ty)->type == VALUE_NONE) {
+                                                pop(ty);
+                                                continue;
+                                        }
                                         if (IP[0] == '*') {
                                                 if (top(ty)->type == VALUE_DICT) {
                                                         DictUpdate(ty, container.dict, top(ty)->dict);
                                                         pop(ty);
-                                                } else if (top(ty)->type == VALUE_TUPLE && top(ty)->ids != NULL) {
+                                                } else if (
+                                                        LIKELY(
+                                                                top(ty)->type == VALUE_TUPLE &&
+                                                                top(ty)->ids != NULL
+                                                        )
+                                                ) {
                                                         for (int i = 0; i < top(ty)->count; ++i) {
                                                                 if (top(ty)->ids[i] != -1) {
                                                                         dict_put_member(
@@ -3955,7 +4028,6 @@ Throw:
                                         } else {
                                                 dict_put_member(ty, container.dict, IP, pop(ty));
                                         }
-                                        SKIPSTR();
                                 }
                                 push(ty, container);
                                 GC_RESUME();
@@ -4010,10 +4082,10 @@ Throw:
                         case VALUE_CLASS:
                                 vp = class_method(ty, v.class, "init");
                                 if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
-                                        if (vp != NULL) {
+                                        if (LIKELY(vp != NULL)) {
                                                 call(ty, vp, NULL, n, nkw, true);
                                         } else {
-                                                zP("primitive class has no init method. was prelude loaded?");
+                                                zP("primitive class has no init method. Was prelude loaded?");
                                         }
                                 } else {
                                         value = OBJECT(object_new(ty, v.class), v.class);
@@ -4040,11 +4112,13 @@ Throw:
                                 if (nkw > 0) {
                                         pop(ty);
                                 }
-                                if (n != 1)
+                                if (UNLIKELY(n != 1)) {
                                         zP("attempt to apply a regex to an invalid number of values");
+                                }
                                 value = peek(ty);
-                                if (value.type != VALUE_STRING)
+                                if (UNLIKELY(value.type != VALUE_STRING)) {
                                         zP("attempt to apply a regex to a non-string: %s", VSC(&value));
+                                }
                                 push(ty, v);
                                 v = get_string_method("match!")(ty, &value, 1, NULL);
                                 pop(ty);
@@ -4881,7 +4955,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
         case VALUE_CLASS:
                 init = class_method(ty, f->class, "init");
                 if (f->class < CLASS_PRIMITIVE) {
-                        if (init != NULL) {
+                        if (LIKELY(init != NULL)) {
                                 call(ty, init, NULL, argc, 0, true);
                                 return pop(ty);
                         } else {
@@ -4960,7 +5034,7 @@ vm_call(Ty *ty, Value const *f, int argc)
         case VALUE_CLASS:
                 vp = class_method(ty, f->class, "init");
                 if (f->class < CLASS_PRIMITIVE) {
-                        if (vp != NULL) {
+                        if (LIKELY(vp != NULL)) {
                                 call(ty, vp, NULL, argc, 0, true);
                                 return pop(ty);
                         } else {

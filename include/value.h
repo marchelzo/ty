@@ -79,6 +79,12 @@ struct value;
 #define CLASS_TUPLE     13
 #define CLASS_PRIMITIVE 14
 #define CLASS_RE_MATCH  14
+#define CLASS_ITERABLE  15
+#define CLASS_ITER      16
+#define CLASS_REV_ITER  17
+#define CLASS_QUEUE     18
+#define CLASS_RANGE     19
+#define CLASS_INC_RANGE 20
 
 #define TY_AST_NODES \
         X(Expr) \

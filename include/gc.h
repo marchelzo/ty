@@ -86,7 +86,7 @@ gc_resize_unchecked(Ty *ty, void *p, size_t n) {
         MemoryUsed += n;
 
         a = realloc(a, sizeof *a + n);
-        if (a == NULL) {
+        if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
@@ -99,12 +99,12 @@ gc_resize_unchecked(Ty *ty, void *p, size_t n) {
 inline static void
 CheckUsed(Ty *ty)
 {
-        if (
+        if (UNLIKELY(
                 ty->GC_OFF_COUNT == 0
 #if 1
                 && MemoryUsed > MemoryLimit
 #endif
-        ) {
+        )) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);
                 GCLOG("DoGC(ty) returned: %zu MB still in use", MemoryUsed / 1000000);
@@ -122,7 +122,7 @@ gc_alloc(Ty *ty, size_t n)
         CheckUsed(ty);
 
         struct alloc *a = malloc(sizeof *a + n);
-        if (a == NULL) {
+        if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
@@ -144,7 +144,7 @@ gc_alloc_object(Ty *ty, size_t n, char type)
         CheckUsed(ty);
 
         struct alloc *a = malloc(sizeof *a + n);
-        if (a == NULL) {
+        if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
@@ -228,7 +228,7 @@ gc_resize(Ty *ty, void *p, size_t n) {
         CheckUsed(ty);
 
         a = realloc(a, sizeof *a + n);
-        if (a == NULL) {
+        if (UNLIKELY(a == NULL)) {
                 panic("Out of memory!");
         }
 
