@@ -93,145 +93,6 @@
   #define INSTR_RESTORE_STACK_POS INSTR_RESTORE_STACK_POS), emit_int(ty, __LINE__
 #endif
 
-struct eloc {
-        union {
-                uintptr_t p_start;
-                size_t start_off;
-        };
-        union {
-                uintptr_t p_end;
-                size_t end_off;
-        };
-        Location start;
-        Location end;
-        char const *filename;
-        Expr const *e;
-};
-
-typedef struct expr_list ExprList;
-
-struct expr_list {
-        ExprList *next;
-        Expr *e;
-};
-
-struct import {
-        bool pub;
-        char const *name;
-        Scope *scope;
-};
-
-typedef vec(struct import) import_vector;
-
-struct module {
-        char const *path;
-        char *code;
-        Scope *scope;
-        import_vector imports;
-};
-
-typedef vec(struct eloc)      location_vector;
-typedef vec(Symbol *)         symbol_vector;
-
-typedef struct {
-        intrusive_vec(size_t);
-        int label;
-} JumpGroup;
-
-typedef JumpGroup offset_vector;
-
-typedef struct {
-        size_t off;
-        int label;
-} JumpPlaceholder, JumpLabel;
-
-typedef struct loop_state {
-        offset_vector continues;
-        offset_vector breaks;
-        int resources;
-        int t;
-        bool wr;
-        bool each;
-} LoopState;
-
-typedef struct try_state {
-        int t;
-        bool finally;
-} TryState;
-
-typedef vec(LoopState) LoopStates;
-typedef vec(TryState) TryStates;
-
-typedef struct {
-        int i;
-        bool patched;
-        byte_vector text;
-        vec(char const *) captions;
-        vec(char const *) map;
-        uintptr_t start;
-        uintptr_t end;
-        char const *name;
-        char const *module;
-} ProgramAnnotation;
-
-/*
- * State which is local to a single compilation unit.
- */
-typedef struct state {
-        byte_vector code;
-
-        ProgramAnnotation annotation;
-
-        offset_vector selfs;
-
-        JumpGroup match_fails;
-        JumpGroup match_successes;
-
-        offset_vector generator_returns;
-
-        symbol_vector bound_symbols;
-
-        int function_resources;
-        int resources;
-
-        int label;
-
-        Scope *method;
-        Scope *fscope;
-
-        Scope *macro_scope;
-
-        Scope *implicit_fscope;
-        Expr *implicit_func;
-
-        Expr *origin;
-
-        statement_vector class_ops;
-
-        Expr *func;
-        int class;
-
-        int function_depth;
-
-        TryStates tries;
-        LoopStates loops;
-
-        import_vector imports;
-
-        StringVector ns;
-
-        Scope *global;
-
-        char const *filename;
-        Location start;
-        Location end;
-
-        Location mstart;
-        Location mend;
-
-        location_vector expression_locations;
-} CompileState;
-
 bool CheckConstraints = true;
 bool ProduceAnnotation = true;
 size_t GlobalCount = 0;
@@ -450,6 +311,7 @@ inline static Expr *
 NewExpr(Ty *ty, int t)
 {
         Expr *e = amA0(sizeof *e);
+        e->arena = GetArenaAlloc(ty);
         e->start = UnknownStart;
         e->end = UnknownEnd;
         e->filename = state.filename;
@@ -461,6 +323,7 @@ inline static Stmt *
 NewStmt(Ty *ty, int t)
 {
         Stmt *s = amA0(sizeof *s);
+        s->arena = GetArenaAlloc(ty);
         s->start = UnknownStart;
         s->end = UnknownEnd;
         s->filename = state.filename;
@@ -756,7 +619,7 @@ show_expr_type(Ty *ty, Expr const *e)
         }
 }
 
-static char *
+char *
 show_expr(Expr const *e)
 {
         char buffer[4096];
@@ -3231,7 +3094,7 @@ emit_function(Ty *ty, Expr const *e, int class)
         emit_int(ty, class);
 
         // Need to GC code?
-        avP(state.code, 0);
+        avP(state.code, GetArenaAlloc(ty) != NULL);
 
         // Is this function hidden (i.e. omitted from stack trace messages)?
         avP(state.code, e->type == EXPRESSION_MULTI_FUNCTION);
@@ -6582,6 +6445,13 @@ mkcstr(Ty *ty, Value const *v)
 uint32_t
 source_register(Ty *ty, void const *src)
 {
+#if 0
+        char const *s = ((Expr *)src)->start.s;
+        if (s == NULL) s = "XXXXX";
+        int line = ((Expr *)src)->start.line;
+        XLOG("Register: %p -> %p: [%.*s] (%d)", src, *(void **)src, (int)strcspn(s, "\n"), s, line + 1);
+#endif
+
         for (uint32_t i = 0; i < source_map.count; ++i) {
                 if (source_map.items[i] == NULL) {
                         source_map.items[i] = (void *)src;
@@ -6609,8 +6479,12 @@ source_forget_arena(void const *arena)
 {
         for (uint32_t i = 0; i < source_map.count; ++i) {
                 void **p = source_map.items[i];
+                LOG("Forget: src=%p     arena=%p", (void *)p, arena);
                 if (p != NULL && *p == arena) {
+                        LOG("  Forgotten!");
                         source_map.items[i] = NULL;
+                } else if (p != NULL) {
+                        LOG("  Keeping: src->arena=%p", *p);
                 }
         }
 }
@@ -6813,9 +6687,10 @@ tyexpr(Ty *ty, Expr const *e)
                 }
 
                 if (e->identifier != EmptyString) {
-                        Expr id = *e;
-                        id.type = EXPRESSION_IDENTIFIER;
-                        v.items[0] = tyexpr(ty, &id);
+                        Expr *id = amA0(sizeof *id);
+                        *id = *e;
+                        id->type = EXPRESSION_IDENTIFIER;
+                        v.items[0] = tyexpr(ty, id);
                 } else {
                         v.items[0] = tagged(ty, TyValue, *e->constraint->v, NONE);
                 }
@@ -9989,6 +9864,23 @@ IsTopLevel(Symbol const *sym)
 
         return global == s
             || global == s->parent;
+}
+
+CompileState
+PushCompilerState(Ty *ty, char const *filename)
+{
+        CompileState old = state;
+
+        state = freshstate(ty);
+        state.filename = filename;
+
+        return old;
+}
+
+void
+PopCompilerState(Ty *ty, CompileState saved)
+{
+        state = saved;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

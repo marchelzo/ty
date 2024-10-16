@@ -661,15 +661,23 @@ class Int {
         self in r
     }
 
-    pred() {
+    abs {
+        abs(self)
+    }
+
+    pred {
         self - 1
     }
 
-    succ() {
+    succ {
         self + 1
     }
 
-    zero?() {
+    sqrt {
+        math.sqrt(self)
+    }
+
+    zero? {
         self == 0
     }
 
@@ -725,6 +733,14 @@ class Float {
 
     nan?() {
         math.nan?(self)
+    }
+
+    abs {
+        abs(self)
+    }
+
+    sqrt {
+        math.sqrt(self)
     }
 
     clamp(*args) {
@@ -2081,35 +2097,29 @@ macro match?(e, p) {
 }
 
 macro dbg(*args) {
-    let results = ty.Id(name: ty.gensym())
-
     if #args == 0 {
         return $$[ nil $$]
     }
 
+    let results = ty.Id(name: ty.gensym())
+
     ty.Block([
         $$[ let $$results = [] $$],
         *[
-            $$[ $$results.push(($$e, $$(ty.String(parse.show(raw[i]))))) $$]
+            $$[ $$results.push(($$e, $$(ty.String(parse.show(e))))) $$]
             for e, i in args
         ],
         $$[
-            let maxw = $$results.map(&1 |> &len).max()
+            let maxw = $$results.map\(#_.1).max()
 
             for (r, src) in $$results {
                 eprint(
-                    __module__,
-                    ':',
-                    __func__ ?? '(top)',
-                    ':',
-                    __line__,
-                    ': ',
-                    fmt('%*s', maxw, src),
-                    ' = ',
-                    show(r),
-                    sep: '',
+                    "{__module__                      }:"
+                    "{__func__ ?? '(top)'             }:"
+                    "{__line__                       }: "
+                    "{fmt('%*s', maxw, src)} = {show(r)}",
                     flush: true
-                )
+                 )
             }
 
             $$results[-1].0

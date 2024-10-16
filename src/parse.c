@@ -166,6 +166,9 @@ static char const *filename;
 noreturn static void
 error(Ty *ty, char const *fmt, ...);
 
+char *
+show_expr(Expr const *e);
+
 static void
 logctx(Ty *ty);
 
@@ -746,6 +749,20 @@ try_cond(Ty *ty)
 }
 
 inline static void
+iter_sugar(Ty *ty, Expr **target, Expr **iterable)
+{
+        Expr *it = mkexpr(ty);
+        it->type = EXPRESSION_IDENTIFIER;
+        it->identifier = "it";
+
+        (*iterable) = mkexpr(ty);
+        (*iterable)->type = EXPRESSION_LIST;
+        avP((*iterable)->es, it);
+
+        SWAP(Expr *, *target, *iterable);
+}
+
+inline static void
 op_fixup(Ty *ty)
 {
         switch (tok()->type) {
@@ -1029,6 +1046,9 @@ prefix_special_string(Ty *ty)
 
                         i += 1;
                 }
+
+                avIn(ts, tokens.items, tokens.count, ti);
+                ti += tokens.count;
 
                 consume(TOKEN_END);
 
@@ -1812,35 +1832,47 @@ static Expr *
 gencompr(Ty *ty, Expr *e)
 {
         next();
+
+        Expr *iter;
         Expr *target = parse_target_list(ty);
-        consume_keyword(ty, KEYWORD_IN);
-        Expr *iter = parse_expr(ty, 0);
+
+        if (target->type != EXPRESSION_LIST) {
+                iter_sugar(ty, &target, &iter);
+        } else {
+                consume_keyword(ty, KEYWORD_IN);
+                iter = parse_expr(ty, 0);
+        }
+
         Expr *g = mkfunc(ty);
         g->start = e->start;
         g->type = EXPRESSION_GENERATOR;
         g->body = mkstmt(ty);
         g->body->type = STATEMENT_EACH_LOOP;
+
         if (have_keyword(KEYWORD_IF)) {
                 next();
                 g->body->each.cond = parse_expr(ty, 0);
         } else {
                 g->body->each.cond = NULL;
         }
+
         if (have_keyword(KEYWORD_WHILE)) {
                 next();
                 g->body->each.stop = parse_expr(ty, 0);
         } else {
                 g->body->each.stop = NULL;
         }
+
         g->body->each.target = target;
         g->body->each.array = iter;
         g->body->each.body = mkstmt(ty);
         g->body->each.body->type = STATEMENT_EXPRESSION;
         g->body->each.body->expression = mkexpr(ty);
         g->body->each.body->expression->type = EXPRESSION_YIELD;
-        vec_init(g->body->each.body->expression->es);
         avP(g->body->each.body->expression->es, e);
+
         g->end = End;
+
         return g;
 }
 
@@ -2213,7 +2245,12 @@ prefix_parenthesis(Ty *ty)
                 return list;
         } else if (have_keyword(KEYWORD_FOR)) {
                 e = gencompr(ty, e);
+
                 consume(')');
+
+                e->start = start;
+                e->end = End;
+
                 return e;
         } else {
                 consume(')');
@@ -2419,10 +2456,17 @@ prefix_array(Ty *ty)
 
                 if (have_keyword(KEYWORD_FOR)) {
                         next();
+
                         e->type = EXPRESSION_ARRAY_COMPR;
                         e->compr.pattern = parse_target_list(ty);
-                        consume_keyword(ty, KEYWORD_IN);
-                        e->compr.iter = parse_expr(ty, 0);
+
+                        if (e->compr.pattern->type != EXPRESSION_LIST) {
+                                iter_sugar(ty, &e->compr.pattern, &e->compr.iter);
+                        } else {
+                                consume_keyword(ty, KEYWORD_IN);
+                                e->compr.iter = parse_expr(ty, 0);
+                        }
+
                         if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IF) {
                                 next();
                                 e->compr.cond = parse_expr(ty, 0);
@@ -2815,6 +2859,8 @@ prefix_percent(Ty *ty)
         vec_init(e->values);
 
         while (tok()->type != '}') {
+                setctx(ty, LEX_PREFIX);
+
                 if (tok()->type == TOKEN_STAR && token(1)->type == ':') {
                         struct location start = tok()->start;
                         next();
@@ -2833,6 +2879,11 @@ prefix_percent(Ty *ty)
                                 item->type = EXPRESSION_SPREAD;
                         }
 
+                        /*
+                         * If we have just ** as an item on its own (e.g. %{'abc': 123, **, 'def': 321})
+                         * we treat it as an identifier. This is a special case that is patched up
+                         * later by __desugar_partial__.
+                         */
                         if (tok()->type == ',' || tok()->type == '}') {
                                 item->value = mkexpr(ty);
                                 item->value->type = EXPRESSION_IDENTIFIER;
@@ -3365,8 +3416,6 @@ infix_slash(Ty *ty, Expr *left)
 
         Expr *body = parse_expr(ty, 0);
 
-        next();
-
         Expr *nil = mkexpr(ty);
         nil->type = EXPRESSION_NIL;
 
@@ -3377,6 +3426,8 @@ infix_slash(Ty *ty, Expr *left)
         Expr *call = mkcall(ty, left);
         avP(call->args, mkpartial(ty, f));
         avP(call->fconds, NULL);
+
+        next();
 
         return call;
 }
@@ -3892,19 +3943,21 @@ assignment_lvalue(Ty *ty, Expr *e)
  * This is kind of a hack.
  */
 static Expr *
-parse_definition_lvalue(Ty *ty, int context)
+parse_definition_lvalue(Ty *ty, int context, Expr *e)
 {
-        Expr *e;
         int save = TokenIndex;
 
-        SAVE_NI(true);
-        SAVE_NE(true);
-        e = parse_expr(ty, 1);
-        EStart = e->start;
-        EEnd = e->end;
+        if (e == NULL) {
+                SAVE_NI(true);
+                SAVE_NE(true);
+                e = parse_expr(ty, 1);
+                EStart = e->start;
+                EEnd = e->end;
+                LOAD_NE();
+                LOAD_NI();
+        }
+
         e = definition_lvalue(ty, e);
-        LOAD_NE();
-        LOAD_NI();
 
         if (context == LV_LET && tok()->type == ',') {
                 Expr *l = mkexpr(ty);
@@ -3913,7 +3966,7 @@ parse_definition_lvalue(Ty *ty, int context)
                 avP(l->es, e);
                 while (tok()->type == ',') {
                         next();
-                        Expr *e = parse_definition_lvalue(ty, LV_SUB);
+                        Expr *e = parse_definition_lvalue(ty, LV_SUB, NULL);
                         if (e == NULL) {
                                 error(ty, "expected lvalue but found %s", token_show(ty, tok()));
                         }
@@ -3950,10 +4003,22 @@ Error:
 static Expr *
 parse_target_list(Ty *ty)
 {
+        SAVE_NI(true);
+        SAVE_NE(true);
+
+        Expr *target = parse_expr(ty, 0);
+
+        LOAD_NE();
+        LOAD_NI();
+
+        if (tok()->type != ',' && !have_keyword(KEYWORD_IN)) {
+                return target;
+        }
+
         Expr *e = mkexpr(ty);
         e->type = EXPRESSION_LIST;
-        vec_init(e->es);
-        avP(e->es, parse_definition_lvalue(ty, LV_EACH));
+
+        avP(e->es, parse_definition_lvalue(ty, LV_EACH, target));
 
         if (e->es.items[0] == NULL) {
         Error:
@@ -3965,14 +4030,18 @@ parse_target_list(Ty *ty)
                         token(1)->type == TOKEN_IDENTIFIER ||
                         token(1)->type == '[' ||
                         token(1)->type == '{' ||
-                        (token(1)->type == '%' && token(2)->type == '{')
+                        (token(1)->type == '%' && token(2)->type == '{') ||
+                        true /* TODO: why were we doing these lookaheads? */
                 )
         ) {
                 next();
-                avP(e->es, parse_definition_lvalue(ty, LV_EACH));
-                if (*vvL(e->es) == NULL) {
+
+                target = parse_definition_lvalue(ty, LV_EACH, NULL);
+                if (target == NULL) {
                         goto Error;
                 }
+
+                avP(e->es, target);
         }
 
         return e;
@@ -4022,9 +4091,12 @@ parse_for_loop(Ty *ty)
 
                 s->each.target = parse_target_list(ty);
 
-                consume_keyword(ty, KEYWORD_IN);
-
-                s->each.array = parse_expr(ty, 0);
+                if (s->each.target->type != EXPRESSION_LIST) {
+                        iter_sugar(ty, &s->each.target, &s->each.array);
+                } else {
+                        consume_keyword(ty, KEYWORD_IN);
+                        s->each.array = parse_expr(ty, 0);
+                }
 
                 if (tok()->type == TOKEN_KEYWORD && tok()->keyword == KEYWORD_IF) {
                         next();
@@ -4094,7 +4166,7 @@ parse_condpart(Ty *ty)
         if (have_keyword(KEYWORD_LET)) {
                 next();
                 p->def = true;
-                p->target = parse_definition_lvalue(ty, LV_LET);
+                p->target = parse_definition_lvalue(ty, LV_LET, NULL);
                 consume(TOKEN_EQ);
                 p->e = parse_expr(ty, -1);
                 return p;
@@ -4416,7 +4488,7 @@ parse_let_definition(Ty *ty)
 
         consume_keyword(ty, KEYWORD_LET);
 
-        s->target = parse_definition_lvalue(ty, LV_LET);
+        s->target = parse_definition_lvalue(ty, LV_LET, NULL);
         if (s->target == NULL) {
                 error(ty, "failed to parse lvalue in 'let' definition");
         }

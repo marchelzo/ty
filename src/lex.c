@@ -233,7 +233,9 @@ nextchar(Ty *ty)
 {
         char c = C(0);
 
-        if (c == '\n') {
+        if (c == '\0') {
+                return '\0';
+        } else if (c == '\n') {
                 state.loc.line += 1;
                 state.loc.col = 0;
         } else {
@@ -503,24 +505,44 @@ lexrawstr(Ty *ty)
         return mkstring(ty, str.items);
 }
 
+static void
+skiptoken(Ty *ty)
+{
+        LexState save = state;
+
+        SAVE_(jmp_buf, jb);
+
+        if (setjmp(jb) != 0) {
+                state = save;
+                nextchar(ty);
+        } else {
+                (void)dotoken(ty, LEX_PREFIX);
+        }
+
+        RESTORE_(jb);
+}
+
 static char const *
 lexexpr(Ty *ty)
 {
-        while (C(0) != '}') {
-                if (C(0) == '\0') {
+        for (int depth = 1; depth > 0;) {
+                switch (C(0)) {
+                case '\0':
                         error(ty, "unterminated expression in interpolated string");
-                } else if (
-                        C(0) == '\'' ||
-                        C(0) == '"'  ||
-                        (C(0) == '/' && C(1) == '*')
-                ) {
-                        (void)dotoken(ty, LEX_PREFIX);
-                } else {
-                        nextchar(ty);
+
+                case '{': depth += 1; break;
+                case '}': depth -= 1; break;
+
+                case '\'':
+                case '"':
+                case '/':
+                        (void)skiptoken(ty);
+                        continue;
                 }
+                nextchar(ty);
         }
 
-        return SRC;
+        return SRC - 1;
 }
 
 inline static bool
@@ -587,7 +609,6 @@ lexspecialdocstring(Ty *ty)
                         nextchar(ty);
                         LexState st = state;
                         st.end = lexexpr(ty);
-                        nextchar(ty);
                         avP(vvL(lines)->exprs, st);
                 } else switch (C(0)) {
                         case '\0': goto Unterminated;
@@ -823,9 +844,6 @@ LexExpr:
         st.end = lexexpr(ty);
         st.keep_comments = false;
         st.need_nl = false;
-
-        /* Eat the terminating } */
-        nextchar(ty);
 
         avP(special.expressions, st);
 
