@@ -37,6 +37,7 @@ TY xD;
 
 #define MAX_COMPLETIONS 240
 
+static int color_mode = TY_COLOR_AUTO;
 static bool use_readline;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
@@ -44,6 +45,14 @@ static char const *print_function = "print";
 static char SymbolLocation[512];
 
 bool EnableLogging = false;
+
+bool ColorStdout;
+bool ColorStderr;
+
+#ifdef TY_ENABLE_PROFILING
+extern FILE *ProfileOut;
+bool ColorProfile;
+#endif
 
 static char **
 complete(char const *s, int start, int end);
@@ -69,6 +78,8 @@ usage(void)
                 "                                (-o@ is interpreted as stderr)                           \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
 #endif
+                "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
+                "                  to 'always', 'never', or 'auto' (default: 'auto')                      \0"
                 "    --            Stop handling options                                                  \0"
                 "    --version     Print ty version information and exit                                  \0"
                 "    --help        Print this help message and exit                                       \0"
@@ -278,7 +289,6 @@ stdin_is_tty(void)
 static void
 set_profile_out(char const *path)
 {
-        extern FILE *ProfileOut;
 
         if (strcmp(path, "@") == 0) {
                 ProfileOut = stderr;
@@ -332,6 +342,16 @@ ProcessArgs(char *argv[], bool first)
                 if (strcmp(argv[argi], "--help") == 0) {
                         usage();
                         exit(0);
+                }
+
+                char const prefix[] = "--color=";
+                if (strncmp(argv[argi], prefix, countof(prefix) - 1) == 0) {
+                        char const *when = strchr(argv[argi], '=') + 1;
+                        if      (strcmp(when, "always") == 0) { color_mode = TY_COLOR_ALWAYS; }
+                        else if (strcmp(when, "never")  == 0) { color_mode = TY_COLOR_NEVER;  }
+                        else if (strcmp(when, "auto")   == 0) { color_mode = TY_COLOR_AUTO;   }
+                        else                                  { goto BadOption;               }
+                        goto NextOption;
                 }
 
 #ifdef TY_ENABLE_PROFILING
@@ -426,6 +446,7 @@ ProcessArgs(char *argv[], bool first)
                                 }
                         }
                 } else {
+BadOption:
                         fprintf(stderr, "Unrecognized option %s\n", argv[argi]);
                         exit(1);
                 }
@@ -440,6 +461,20 @@ int
 main(int argc, char **argv)
 {
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
+
+        switch (color_mode) {
+        case TY_COLOR_AUTO:   ColorStdout = isatty(1); ColorStderr = isatty(2); break;
+        case TY_COLOR_ALWAYS: ColorStdout = true;      ColorStderr = true;      break;
+        case TY_COLOR_NEVER:  ColorStdout = false;     ColorStderr = false;     break;
+        }
+
+#ifdef TY_ENABLE_PROFILING
+        switch (color_mode) {
+        case TY_COLOR_AUTO:   ColorProfile = isatty(fileno(ProfileOut)); break;
+        case TY_COLOR_ALWAYS: ColorProfile = true;                       break;
+        case TY_COLOR_NEVER:  ColorProfile = false;                      break;
+        }
+#endif
 
         if (!vm_init(&MainTy, argc - nopt, argv + nopt)) {
                 fprintf(stderr, "%s\n", vm_error(&MainTy));

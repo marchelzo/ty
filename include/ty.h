@@ -131,6 +131,10 @@ extern Ty MainTy;
 extern TY xD;
 extern struct member_names NAMES;
 
+extern bool ColorStdout;
+extern bool ColorStderr;
+extern bool ColorProfile;
+
 #define dont_printf(...) do { } while (0)
 
 #define GC_STOP() (ty->GC_OFF_COUNT += 1)
@@ -169,21 +173,21 @@ extern struct member_names NAMES;
 #define vT(n)    value_tuple(ty, n)
 #define vTn(...)  value_named_tuple(ty, __VA_ARGS__, NULL)
 
-#define vvPn(a, b, c)    vec_push_n(ty, a, b, c)
-#define vvP(a, b)       vec_push(ty, a, b)
-#define vvI(a, b, c)    vec_insert(ty, a, b, c)
-#define vvIn(a, b, c, d) vec_insert_n(ty, a, b, c, d)
-#define vvF(a)           vec_empty(ty, a)
-#define vvR(a, b)        vec_reserve(ty, a, b)
+#define vvPn(a, b, c)    vec_push_n(a, b, c)
+#define vvP(a, b)       vec_push(a, b)
+#define vvI(a, b, c)    vec_insert(a, b, c)
+#define vvIn(a, b, c, d) vec_insert_n(a, b, c, d)
+#define vvF(a)           vec_empty(a)
+#define vvR(a, b)        vec_reserve(a, b)
 
 #define vvX  vec_pop
 #define vvL  vec_last
 #define vvXi vec_pop_ith
 
-#define avP(a, b)       VPush(ty, a, b)
-#define avPn(a, b, c)    VPushN(ty, a, b, c)
-#define avI(a, b, c)    VInsert(ty, a, b, c)
-#define avIn(a, b, c, d) VInsertN(ty, a, b, c, d)
+#define avP(a, b)       VPush(a, b)
+#define avPn(a, b, c)    VPushN(a, b, c)
+#define avI(a, b, c)    VInsert(a, b, c)
+#define avIn(a, b, c, d) VInsertN(a, b, c, d)
 
 #define xvP(a, b)       vec_nogc_push(a, b)
 #define xvPn(a, b, c)    vec_nogc_push_n(a, b, c)
@@ -191,10 +195,10 @@ extern struct member_names NAMES;
 #define xvIn(a, b, c, d) vec_nogc_insert_n(a, b, c, d)
 #define xvR(a, b)       vec_nogc_reserve(a, b)
 
-#define svPn(a, b, c)    vec_push_n_scratch(ty, a, b, c)
-#define svP(a, b)       vec_push_scratch(ty, a, b)
-#define svI(a, b, c)    vec_insert_scratch(ty, a, b, c)
-#define svIn(a, b, c, d) vec_insert_n_scratch(ty, a, b, c, d)
+#define svPn(a, b, c)    vec_push_n_scratch(a, b, c)
+#define svP(a, b)       vec_push_scratch(a, b)
+#define svI(a, b, c)    vec_insert_scratch(a, b, c)
+#define svIn(a, b, c, d) vec_insert_n_scratch(a, b, c, d)
 
 #define gP(x) gc_push(ty, x)
 #define gX()  gc_pop(ty)
@@ -240,6 +244,12 @@ enum {
 };
 #undef X
 
+enum {
+        TY_COLOR_AUTO,
+        TY_COLOR_ALWAYS,
+        TY_COLOR_NEVER
+};
+
 #define FMT_MORE "\n                 "
 #define FMT_CS   "%s%s%s"
 
@@ -249,8 +259,6 @@ enum {
 
 #define pT(p) ((uintptr_t)p &  7)
 #define pP(p) ((uintptr_t)p & ~7)
-
-#define NEW(x) x = mrealloc(NULL, sizeof *(x))
 
 #define M_ID(m) intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name

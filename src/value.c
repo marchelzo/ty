@@ -1294,7 +1294,7 @@ value_array_extend(Ty *ty, Array *a, Array const *other)
         int n = a->count + other->count;
 
         if (n != 0)
-                vec_reserve(ty, *a, n);
+                vec_reserve(*a, n);
         if (other->count != 0)
                 memcpy(a->items + a->count, other->items, other->count * sizeof (Value));
 

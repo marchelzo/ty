@@ -119,7 +119,7 @@ op_add(int op, int t1, int t2, int ref)
                 TyRwLockWrLock(&_2.lock);
 
                 do {
-                        DispatchGroup *NEW(group);
+                        DispatchGroup *group = mrealloc(NULL, sizeof *group);
                         *group = (DispatchGroup) { .lock = TY_RWLOCK_INIT };
                         xvP(_2.ops, group);
 

@@ -116,10 +116,10 @@ GetCurrentTimespec(struct timespec* ts)
 #endif
 }
 
-static void
+static intmax_t
 doprint(Ty *ty, int argc, struct value *kwargs, FILE *f)
 {
-        struct value *sep = NAMED("sep");
+        Value *sep = NAMED("sep");
 
         if (sep != NULL && sep->type != VALUE_STRING) {
                 zP(
@@ -130,7 +130,7 @@ doprint(Ty *ty, int argc, struct value *kwargs, FILE *f)
                 );
         }
 
-        struct value *end = NAMED("end");
+        Value *end = NAMED("end");
 
         if (end != NULL && end->type != VALUE_STRING) {
                 zP(
@@ -141,36 +141,90 @@ doprint(Ty *ty, int argc, struct value *kwargs, FILE *f)
                 );
         }
 
-        struct value *flush = NAMED("flush");
+        Value *flush = NAMED("flush");
         bool do_flush = flush != NULL && value_truthy(ty, flush);
 
         lGv(true);
         flockfile(f);
-        lTk();
+
+        intmax_t written = 0;
 
         for (int i = 0; i < argc; ++i) {
-                struct value *v = &ARG(i);
+                Value *v = &ARG(i);
+
                 if (i > 0) {
                         if (sep != NULL) {
-                                fwrite(sep->string, 1, sep->bytes, f);
+                                if (fwrite(sep->string, 1, sep->bytes, f) < sep->bytes) {
+                                        lTk();
+                                        return -1;
+                                }
+                                written += sep->bytes;
                         } else {
-                                fputs(", ", stdout);
+                                if (fputs(", ", stdout) == EOF) {
+                                        lTk();
+                                        return -1;
+                                }
+                                written += 2;
                         }
                 }
-                if (v->type == VALUE_STRING) {
-                        fwrite(v->string, 1, v->bytes, f);
-                } else {
-                        char *s = value_show_color(ty, &ARG(i));
-                        fputs(s, f);
-                        mF(s);
+
+                char const  *s;
+                int64_t      n;
+                bool need_free = false;
+
+                switch (v->type) {
+                case VALUE_STRING:
+                        s = v->string;
+                        n = v->bytes;
+                        break;
+                case VALUE_BLOB:
+                        s = (char const *)v->blob->items;
+                        n = v->blob->count;
+                        break;
+                case VALUE_PTR:
+                        s = v->ptr;
+                        n = strlen(v->ptr);
+                        break;
+                default:
+                        lTk();
+                        s = value_show_color(ty, &ARG(i));
+                        lGv(true);
+                        n = strlen(s);
+                        need_free = true;
+                        break;
                 }
+
+                if (fwrite(s, 1, n, f) < n) {
+                        if (need_free) {
+                                mF((char *)s);
+                        }
+
+                        lTk();
+
+                        return -1;
+                }
+
+                if (need_free) {
+                        mF((char *)s);
+                }
+
+                written += n;
         }
 
 
         if (end != NULL) {
-                fwrite(end->string, 1, end->bytes, f);
+                if (fwrite(end->string, 1, end->bytes, f) < end->bytes) {
+                        lTk();
+                        return -1;
+                }
+                written += end->bytes;
         } else {
-                fputc('\n', f);
+                if (fputc('\n', f) == EOF) {
+                        lTk();
+                        return -1;
+                } else {
+                        written += 1;
+                }
         }
 
         if (do_flush) {
@@ -178,12 +232,22 @@ doprint(Ty *ty, int argc, struct value *kwargs, FILE *f)
         }
 
         funlockfile(f);
+        lTk();
+
+        return written;
 }
 
 BUILTIN_FUNCTION(print)
 {
-        doprint(ty, argc, kwargs, stdout);
-        return NIL;
+        Value *file = NAMED("file");
+
+        if (file == NULL) {
+                return INTEGER(doprint(ty, argc, kwargs, stdout));
+        } else if (LIKELY(file->type == VALUE_PTR)) {
+                return INTEGER(doprint(ty, argc, kwargs, file->ptr));
+        } else {
+                zP("print(): bad `file` argument: %s", VSC(file));
+        }
 }
 
 BUILTIN_FUNCTION(eprint)
@@ -2495,7 +2559,7 @@ BUILTIN_FUNCTION(os_read)
                 zP("the third argument to os.read() must be non-negative");
 
         NOGC(blob.blob);
-        vec_reserve(ty, *blob.blob, blob.blob->count + n.integer);
+        vec_reserve(*blob.blob, blob.blob->count + n.integer);
 
         Value *all = NAMED("all");
         bool read_all = all != NULL && value_truthy(ty, all);
@@ -3608,7 +3672,7 @@ BUILTIN_FUNCTION(os_getpeername)
         }
 
         struct blob *b = value_blob_new(ty);
-        vec_push_n_unchecked(ty, *b, &addr, min(addr_size, sizeof addr));
+        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
 }
@@ -3633,7 +3697,7 @@ BUILTIN_FUNCTION(os_getsockname)
         }
 
         struct blob *b = value_blob_new(ty);
-        vec_push_n_unchecked(ty, *b, &addr, min(addr_size, sizeof addr));
+        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
 }
@@ -3980,7 +4044,7 @@ BUILTIN_FUNCTION(os_recvfrom)
 
         NOGC(buffer.blob);
 
-        vec_reserve(ty, *buffer.blob, size.integer);
+        vec_reserve(*buffer.blob, size.integer);
 
         struct sockaddr_storage addr;
         socklen_t addr_size = sizeof addr;
@@ -4062,7 +4126,7 @@ BUILTIN_FUNCTION(os_poll)
         static _Thread_local vec(struct pollfd) pfds;
         pfds.count = 0;
 
-        vec_reserve(ty, pfds, fds.array->count);
+        vec_reserve(pfds, fds.array->count);
 
         struct value *v;
         for (int i = 0; i < fds.array->count; ++i) {
@@ -6628,10 +6692,10 @@ BUILTIN_FUNCTION(eval)
 
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
-                vec_push_unchecked(ty, B, '\0');
-                vec_push_n_unchecked(ty, B, PRE, strlen(PRE));
-                vec_push_n_unchecked(ty, B, ARG(0).string, ARG(0).bytes);
-                vec_push_n_unchecked(ty, B, POST, (sizeof POST));
+                vec_push_unchecked(B, '\0');
+                vec_push_n_unchecked(B, PRE, strlen(PRE));
+                vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
+                vec_push_n_unchecked(B, POST, (sizeof POST));
                 Arena old = amNg(1 << 22);
                 struct statement **prog = parse(ty, B.items + 1, "(eval)");
 
@@ -6690,9 +6754,9 @@ BUILTIN_FUNCTION(ty_parse)
         }
 
         B.count = 0;
-        vec_push_unchecked(ty, B, '\0');
-        vec_push_n_unchecked(ty, B, ARG(0).string, ARG(0).bytes);
-        vec_push_unchecked(ty, B, '\0');
+        vec_push_unchecked(B, '\0');
+        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
+        vec_push_unchecked(B, '\0');
 
         Arena old = amNg(1 << 22);
 
