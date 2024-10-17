@@ -720,6 +720,7 @@ add_location_info(Ty *ty)
 {
         struct eloc *locs = state.expression_locations.items;
         for (int i = 0; i < state.expression_locations.count; ++i) {
+                //printf("start_off=%ju\n", locs[i].start_off);
                 locs[i].p_start = (uintptr_t)(state.code.items + locs[i].start_off);
                 locs[i].p_end = (uintptr_t)(state.code.items + locs[i].end_off);
         }
@@ -6528,12 +6529,9 @@ source_forget_arena(void const *arena)
 {
         for (uint32_t i = 0; i < source_map.count; ++i) {
                 void **p = source_map.items[i];
-                LOG("Forget: src=%p     arena=%p", (void *)p, arena);
                 if (p != NULL && *p == arena) {
-                        LOG("  Forgotten!");
                         source_map.items[i] = NULL;
                 } else if (p != NULL) {
-                        LOG("  Keeping: src->arena=%p", *p);
                 }
         }
 }

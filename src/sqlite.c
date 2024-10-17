@@ -382,7 +382,7 @@ mbind(Ty *ty, int argc, struct value *kwargs)
                 vvPn(s, index.string, index.bytes);
                 vvP(s, '\0');
                 i = sqlite3_bind_parameter_index(ptr.ptr, s.items);
-                vec_empty(ty, s);
+                vec_empty(s);
         } else if (index.type == VALUE_INTEGER) {
                 i = index.integer;
         } else {

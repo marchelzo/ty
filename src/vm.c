@@ -376,7 +376,7 @@ Forget(Ty *ty, Value *v, AllocList *allocs)
         GCForget(ty, MyStorage.allocs, MyStorage.memory_used);
 
         for (size_t i = MyStorage.allocs->count; i < n; ++i) {
-                vec_push_unchecked(ty, *allocs, MyStorage.allocs->items[i]);
+                vec_push_unchecked(*allocs, MyStorage.allocs->items[i]);
         }
 }
 
@@ -605,7 +605,6 @@ PopulateGlobals(Ty *ty)
         while (Globals.count < n) {
                 Symbol *sym = compiler_global_sym(ty, Globals.count);
                 vec_push_unchecked(
-                        ty,
                         Globals,
                         IsTopLevel(sym) ? UNINITIALIZED(sym) : NIL
                 );
@@ -843,7 +842,7 @@ co_yield(Ty *ty)
         SWAP(ValueVector, gen->deferred, defer_stack);
         SWAP(ValueVector, gen->to_drop, drop_stack);
 
-        xvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
+        vec_push_n_unchecked(gen->frame, STACK.items + n, STACK.count - n - 1);
 
         STACK.items[n - 1] = peek(ty);
         STACK.count = n;
@@ -945,7 +944,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 STACK.items[fp + np] = self;
         }
 
-        vec_push_unchecked(ty, FRAMES, FRAME(fp, *f, IP));
+        vec_push_unchecked(FRAMES, FRAME(fp, *f, IP));
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
@@ -966,7 +965,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         print_stack(ty, max(bound + 2, 5));
 
         if (exec) {
-                vec_push_unchecked(ty, CALLS, &halt);
+                vec_push_unchecked(CALLS, &halt);
                 gP(f);
                 Generator *gen = GetCurrentGenerator(ty);
                 vm_exec(ty, code);
@@ -975,7 +974,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 }
                 gX();
         } else {
-                vec_push_unchecked(ty, CALLS, IP);
+                vec_push_unchecked(CALLS, IP);
                 IP = code;
         }
 }
@@ -985,9 +984,9 @@ call_co(Ty *ty, Value *v, int n)
 {
         if (v->gen->ip != code_of(&v->gen->f)) {
                 if (n == 0) {
-                        vec_push_unchecked(ty, v->gen->frame, NIL);
+                        vec_push_unchecked(v->gen->frame, NIL);
                 } else {
-                        vec_nogc_push_n(v->gen->frame, top(ty) - (n - 1), n);
+                        vec_push_n_unchecked(v->gen->frame, top(ty) - (n - 1), n);
                         STACK.count -= n;
                 }
         }
@@ -1142,7 +1141,7 @@ CleanupThread(void *ctx)
                 TyMutexLock(&MyGroup->DLock);
         }
 
-        vec_push_n_unchecked(ty, MyGroup->DeadAllocs, ty->allocs.items, ty->allocs.count);
+        vec_push_n_unchecked(MyGroup->DeadAllocs, ty->allocs.items, ty->allocs.count);
         MyGroup->DeadUsed += MemoryUsed;
 
         ty->allocs.count = 0;
@@ -1485,7 +1484,7 @@ Start:
                 for (;;) {
                         call_co(ty, &subscript, 0);
                         *vvL(subscript.gen->calls) = &halt;
-                        vec_push_unchecked(ty, subscript.gen->calls, next_fix);
+                        vec_push_unchecked(subscript.gen->calls, next_fix);
                         vm_exec(ty, IP);
                         Value r = pop(ty);
                         if (r.type == VALUE_NONE)
@@ -2344,7 +2343,7 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
                         while (Globals.count <= n)
-                                vec_push_unchecked(ty, Globals, NIL);
+                                vec_push_unchecked(Globals, NIL);
                         pushtarget(ty, &Globals.items[n], NULL);
                         break;
                 CASE(TARGET_LOCAL)
@@ -2720,13 +2719,13 @@ Throw:
                         DoDrop(ty);
                         break;
                 CASE(PUSH_DROP_GROUP)
-                        vec_push_unchecked(ty, drop_stack, ARRAY(vA()));
+                        vec_push_unchecked(drop_stack, ARRAY(vA()));
                         break;
                 CASE(PUSH_DROP)
-                        vec_push_unchecked(ty, *vvL(drop_stack)->array, peek(ty));
+                        vec_push_unchecked(*vvL(drop_stack)->array, peek(ty));
                         break;
                 CASE(PUSH_DEFER_GROUP)
-                        vec_push_unchecked(ty, defer_stack, ARRAY(vA()));
+                        vec_push_unchecked(defer_stack, ARRAY(vA()));
                         break;
                 CASE(DEFER)
                         v = pop(ty);
@@ -3065,7 +3064,7 @@ Throw:
                         v.gen->f = vvL(FRAMES)->f;
                         n = STACK.count - vvL(FRAMES)->fp;
                         vec_init(v.gen->frame);
-                        vvPn(v.gen->frame, STACK.items + STACK.count - n, n);
+                        vec_push_n_unchecked(v.gen->frame, STACK.items + STACK.count - n, n);
                         vec_init(v.gen->sps);
                         vec_init(v.gen->targets);
                         vec_init(v.gen->calls);
@@ -3134,7 +3133,7 @@ Throw:
                         case VALUE_OBJECT:
                                 if ((vp = class_method(ty, v.class, "__next__")) != NULL) {
                                         push(ty, INTEGER(i));
-                                        vec_push_unchecked(ty, CALLS, IP);
+                                        vec_push_unchecked(CALLS, IP);
                                         call(ty, vp, &v, 1, 0, false);
                                         *vvL(CALLS) = next_fix;
                                 } else if ((vp = class_method(ty, v.class, "__iter__")) != NULL) {
@@ -3142,7 +3141,7 @@ Throw:
                                         pop(ty);
                                         --top(ty)->i;
                                         /* Have to repeat this instruction */
-                                        vec_push_unchecked(ty, CALLS, IP - 1);
+                                        vec_push_unchecked(CALLS, IP - 1);
                                         call(ty, vp, &v, 0, 0, false);
                                         *vvL(CALLS) = iter_fix;
                                         continue;
@@ -3174,7 +3173,7 @@ Throw:
                                 }
                                 break;
                         case VALUE_GENERATOR:
-                                vec_push_unchecked(ty, CALLS, IP);
+                                vec_push_unchecked(CALLS, IP);
                                 call_co(ty, &v, 0);
                                 *vvL(v.gen->calls) = next_fix;
                                 break;
@@ -3872,7 +3871,7 @@ Throw:
 
                         LOG("Header size: %d", hs);
                         LOG("Code size: %d", size);
-                        LOG("Bound: %d", bound);
+                        LOG("Bound: %d", v.info[4]);
                         LOG("ncaps: %d", ncaps);
                         LOG("Name: %s", VSC(&v));
 

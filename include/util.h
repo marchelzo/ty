@@ -20,21 +20,18 @@
 #undef min
 #endif
 
-#define PTERM(n) \
-        ( \
-                ( \
-                        (ProfileOut == stderr && isatty(2)) || \
-                        (ProfileOut == stdout && isatty(1)) \
-                ) \
-                ? ("\x1b[" #n "m") : "" \
-        )
-#define TERM(n) (isatty(2) ? ("\x1b[" #n "m") : "")
+#define PTERM(n) (ColorProfile ? ("\x1b[" #n "m") : "")
+#define TERM1(n) (ColorStdout  ? ("\x1b[" #n "m") : "")
+#define TERM(n)  (ColorStderr  ? ("\x1b[" #n "m") : "")
+
 #define ERR_SIZE 4096
 
 #define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
 
 #define SAVE_(t, x) t x##_; memcpy(&(x##_), &(x), sizeof (x))
 #define RESTORE_(x) memcpy(&(x), &(x##_), sizeof (x))
+
+#define countof(x) (sizeof (x) / sizeof ((x)[0]))
 
 inline static size_t
 P_ALIGN(void const *p)

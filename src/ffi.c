@@ -211,7 +211,7 @@ cffi_cif(Ty *ty, int argc, Value *kwargs)
                 rt = ARG(0).ptr;
         } else {
 Bad:
-                vec_empty(ty, ats);
+                vec_empty(ats);
                 zP("invalid type passed to ffi.cif()");
         }
 
@@ -232,12 +232,12 @@ Bad:
                         zP("ffi.cif(): expected nFixed to be an integer but got: %s", VSC(nFixed));
                 }
                 if (ffi_prep_cif_var(cif, FFI_DEFAULT_ABI, nFixed->integer, max(0, argc - 1), rt, ats.items) != FFI_OK) {
-                        vec_empty(ty, ats);
+                        vec_empty(ats);
                         mF(cif);
                         return NIL;
                 }
         } else if (ffi_prep_cif(cif, FFI_DEFAULT_ABI, max(0, argc - 1), rt, ats.items) != FFI_OK) {
-                vec_empty(ty, ats);
+                vec_empty(ats);
                 mF(cif);
                 return NIL;
         }

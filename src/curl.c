@@ -45,7 +45,7 @@ write_function(char *ptr, size_t size, size_t nmemb, void *data)
         Ty *ty = data;
         size_t n = size * nmemb;
 
-        vec_push_n_unchecked(ty, *ResponseBlob, ptr, n);
+        vec_push_n_unchecked(*ResponseBlob, ptr, n);
 
         return n;
 }

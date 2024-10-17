@@ -85,6 +85,16 @@
 #define have_keyword(k) (have_keyword)(ty, k)
 #define    unconsume(t) (unconsume   )(ty, t)
 
+#define T0 (token(0)->type)
+#define T1 (token(1)->type)
+#define T2 (token(2)->type)
+#define T3 (token(3)->type)
+
+#define K0 ((T0 == TOKEN_KEYWORD) ? token(0)->keyword : -1)
+#define K1 ((T1 == TOKEN_KEYWORD) ? token(1)->keyword : -1)
+#define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
+#define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
+
 typedef Expr *
 prefix_parse_fn(Ty *ty);
 
@@ -286,6 +296,16 @@ mkexpr(Ty *ty)
         return e;
 }
 
+#define mkid(id) ((mkid)(ty, (id)))
+inline static Expr *
+(mkid)(Ty *ty, char *id)
+{
+        Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_IDENTIFIER;
+        e->identifier = id;
+        return e;
+}
+
 inline static Expr *
 mkfunc(Ty *ty)
 {
@@ -349,6 +369,20 @@ mkdef(Ty *ty, Expr *lvalue, char *name)
         s->pub = false;
         s->target = lvalue;
         s->value = value;
+
+        return s;
+}
+
+#define to_stmt(e) ((to_stmt)(ty, (e)))
+inline static Stmt *
+(to_stmt)(Ty *ty, Expr *e)
+{
+        Stmt *s = mkstmt(ty);
+        s->type = STATEMENT_EXPRESSION;
+        s->start = e->start;
+        s->end = e->end;
+
+        s->expression = e;
 
         return s;
 }
@@ -496,8 +530,9 @@ inline static void
         avI(tokens, t, TokenIndex);
 }
 
+#define putback(t) ((putback)(ty, (t)))
 inline static void
-putback(Ty *ty, Token t)
+(putback)(Ty *ty, Token t)
 {
         unconsume(TOKEN_ERROR);
         *tok() = t;
@@ -798,7 +833,7 @@ parse_decorator_macro(Ty *ty)
                 unconsume(')');
                 unconsume('(');
 
-                putback(ty, id);
+                putback(id);
         }
 
         Expr *m = parse_expr(ty, 0);
@@ -1283,6 +1318,12 @@ prefix_function(Ty *ty)
                 next();
         }
 
+        if (e->name != NULL && tok()->start.s[-1] == ' ') {
+                Expr *f = parse_expr(ty, 0);
+                f->name = e->name;
+                return f;
+        }
+
         char const *proto_start = tok()->start.s;
 
         consume('(');
@@ -1385,7 +1426,7 @@ opfunc(Ty *ty)
         tok()->module = NULL;
         tok()->identifier = b;
 
-        putback(ty, t);
+        putback(t);
 
         unconsume(TOKEN_IDENTIFIER);
         tok()->module = NULL;
@@ -1750,7 +1791,7 @@ prefix_match(Ty *ty)
                 next();
                 unconsume(TOKEN_IDENTIFIER);
                 tok()->identifier = id = gensym(ty);
-                putback(ty, kw);
+                putback(kw);
         }
 
         Expr *e = mkexpr(ty);
@@ -1776,10 +1817,7 @@ prefix_match(Ty *ty)
                 if (have_keyword(KEYWORD_ELSE)) {
                         next();
                         Expr *alt = parse_expr(ty, 0);
-                        Expr *any = mkexpr(ty);
-                        ZERO_EXPR(any);
-                        any->type = EXPRESSION_MATCH_ANY;
-                        any->identifier = "_";
+                        Expr *any = mkid("it");
                         avP(e->patterns, any);
                         avP(e->thens, alt);
                 }
@@ -2370,7 +2408,75 @@ prefix_array(Ty *ty)
 
         Expr *e, *f;
 
-        struct location start = tok()->start;
+        Location start = tok()->start;
+
+        consume('[');
+
+        /*
+         * function sum [match] {
+         *      [x, *xs] => x + sum(*xs),
+         *      []       => 0,
+         * }
+         *
+         * Why not?
+         */
+        if (K0 == KEYWORD_MATCH && T1 == ']') {
+                char *args = gensym(ty);
+
+                f = mkfunc(ty);
+                avP(f->params, args);
+                avP(f->constraints, NULL);
+                avP(f->dflts, NULL);
+                f->rest = 0;
+
+                Token match = *tok();
+                next();
+                next();
+
+                if (T0 != '{') {
+                        Expr *pat = parse_pattern(ty);
+
+                        consume(TOKEN_FAT_ARROW);
+
+                        Expr *good = parse_expr(ty, 0);
+                        Expr *bad = (K0 == KEYWORD_ELSE)
+                                  ? (next(), parse_expr(ty, 0))
+                                  : NULL;
+
+                        unconsume('}');
+
+                        if (bad != NULL) {
+                                unconsume(TOKEN_EXPRESSION);
+                                tok()->e = bad;
+
+                                unconsume(TOKEN_FAT_ARROW);
+
+                                unconsume(TOKEN_IDENTIFIER);
+                                tok()->identifier = "it";
+
+                                unconsume(',');
+                        }
+
+                        unconsume(TOKEN_EXPRESSION);
+                        tok()->e = good;
+
+                        unconsume(TOKEN_FAT_ARROW);
+
+                        unconsume(TOKEN_EXPRESSION);
+                        tok()->e = pat;
+
+                        unconsume('{');
+                }
+
+                unconsume(TOKEN_IDENTIFIER);
+                tok()->identifier = args;
+
+                putback(match);
+
+                f->body = to_stmt(prefix_match(ty));
+
+                return f;
+        }
 
         int in_type = EXPRESSION_IN;
 
@@ -2411,8 +2517,6 @@ prefix_array(Ty *ty)
         vec_init(e->elements);
         vec_init(e->aconds);
         vec_init(e->optional);
-
-        consume('[');
 
         while (tok()->type != ']') {
                 setctx(ty, LEX_PREFIX);
@@ -2494,9 +2598,9 @@ prefix_array(Ty *ty)
                         tok()->identifier = f->params.items[0];
                         tok()->module = NULL;
                         if (t2.type != ']') {
-                                putback(ty, t2);
+                                putback(t2);
                         }
-                        putback(ty, t);
+                        putback(t);
                         f->body = mkstmt(ty);
                         f->body->type = STATEMENT_EXPRESSION;
                         f->body->expression = get_infix_parser(ty)(ty, e->elements.items[0]);
@@ -4359,8 +4463,8 @@ parse_function_definition(Ty *ty)
                         unconsume(')');
                         unconsume('(');
                 }
-                putback(ty, name);
-                putback(ty, kw);
+                putback(name);
+                putback(kw);
         } else {
                 s->type = STATEMENT_FUNCTION_DEFINITION;
 
@@ -4867,7 +4971,7 @@ parse_class_definition(Ty *ty)
                         } else if (token(1)->type == TOKEN_EQ) {
                                 struct token t = *tok();
                                 skip(2);
-                                putback(ty, t);
+                                putback(t);
                                 avP(
                                         s->tag.setters,
                                         parse_method(
@@ -4883,7 +4987,7 @@ parse_class_definition(Ty *ty)
                                 next();
                                 unconsume(')');
                                 unconsume('(');
-                                putback(ty, t);
+                                putback(t);
                                 avP(
                                         s->tag.getters,
                                         parse_method(

@@ -140,13 +140,13 @@ html_parse(Ty *ty, int argc, struct value *kwargs)
         GumboOutput *out = gumbo_parse(b.items);
 
         if (out == NULL) {
-                vec_empty(ty, b);
+                vec_empty(b);
                 return NIL;
         } else {
                 GC_STOP();
                 struct value v = convert(ty, out);
                 GC_RESUME();
-                vec_empty(ty, b);
+                vec_empty(b);
                 gumbo_destroy_output(&kGumboDefaultOptions, out);
                 return v;
         }
