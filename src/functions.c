@@ -252,8 +252,7 @@ BUILTIN_FUNCTION(print)
 
 BUILTIN_FUNCTION(eprint)
 {
-        doprint(ty, argc, kwargs, stderr);
-        return NIL;
+        return INTEGER(doprint(ty, argc, kwargs, stderr));
 }
 
 BUILTIN_FUNCTION(slurp)

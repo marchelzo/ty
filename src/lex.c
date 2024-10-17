@@ -48,12 +48,10 @@ noreturn static void
 error(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
-        va_start(ap, fmt);
 
-        int sz = ERR_SIZE - 1;
         int n = snprintf(
                 ERR,
-                sz,
+                ERR_SIZE,
                 "%s%sSyntaxError%s%s %s%s%s:%s%d%s:%s%d%s: ",
                 TERM(1),
                 TERM(31),
@@ -69,8 +67,12 @@ error(Ty *ty, char const *fmt, ...)
                 state.loc.col + 1,
                 TERM(39)
         );
-        n += vsnprintf(ERR + n, sz - n, fmt, ap);
-        va_end(ap);
+
+        if (n < ERR_SIZE) {
+                va_start(ap, fmt);
+                n += vsnprintf(ERR + n, ERR_SIZE - n, fmt, ap);
+                va_end(ap);
+        }
 
         char const *prefix = state.loc.s;
         while (prefix[-1] != '\n' && prefix[-1] != '\0')
@@ -79,9 +81,9 @@ error(Ty *ty, char const *fmt, ...)
         int before = state.loc.s - prefix;
         int after = (state.loc.s[0] == '\0') ? 0 : strcspn(state.loc.s + 1, "\n");
 
-        n += snprintf(
+        if (n < ERR_SIZE) n += snprintf(
                 ERR + n,
-                sz - n,
+                ERR_SIZE - n,
                 "\n\n\tnear: %.*s%s%s%.1s%s%s%.*s\n",
                 before,
                 prefix,
@@ -94,9 +96,9 @@ error(Ty *ty, char const *fmt, ...)
                 state.loc.s + 1
         );
 
-        n += snprintf(
+        if (n < ERR_SIZE) n += snprintf(
                 ERR + n,
-                sz - n,
+                ERR_SIZE - n,
                 "\t%*s%s^%s",
                 6 + before,
                 " ",
@@ -533,9 +535,9 @@ lexexpr(Ty *ty)
                 case '{': depth += 1; break;
                 case '}': depth -= 1; break;
 
+                case '/':
                 case '\'':
                 case '"':
-                case '/':
                         (void)skiptoken(ty);
                         continue;
                 }

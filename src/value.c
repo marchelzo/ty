@@ -235,9 +235,9 @@ show_dict(Ty *ty, struct value const *d, bool color)
 }
 
 char *
-show_array(Ty *ty, struct value const *a, bool color)
+show_array(Ty *ty, Value const *a, bool color)
 {
-        static _Thread_local vec(struct array *) show_arrays;
+        static _Thread_local vec(Array *) show_arrays;
 
         for (int i = 0; i < show_arrays.count; ++i)
                 if (show_arrays.items[i] == a->array)
