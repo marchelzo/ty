@@ -1762,8 +1762,8 @@ function printf(*args, %kwargs) {
 function uuid4() {
     let b = Blob(*[rand(256) for _ in ..16])
 
-    b.set(6, 0x40 .|. (b[6] .&. 0x0F))
-    b.set(8, 0xA0 .|. (b[8] .&. 0x3F))
+    b.set(6, 0x40 | (b[6] & 0x0F))
+    b.set(8, 0xA0 | (b[8] & 0x3F))
 
     let hex = b.hex()
 
@@ -1785,8 +1785,8 @@ function uuid7(pseudo = true) {
         os.read(fd, 16)
     }
 
-    b.set(6, 0x70 .|. (b[6] .&. 0x0F))
-    b.set(8, 0x80 .|. (b[8] .&. 0x3F))
+    b.set(6, 0x70 | (b[6] & 0x0F))
+    b.set(8, 0x80 | (b[8] & 0x3F))
 
     let t = time.utime() / 1000
 

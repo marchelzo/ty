@@ -242,7 +242,7 @@ function WritePNG(
     bitDepth=8,
     raw=false
 ) {
-    if not let $f = stdio.fdopen(os.open(path, os.O_RDWR .|. os.O_CREAT, 0644), 'w+') {
+    if not let $f = stdio.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0644), 'w+') {
         throw Err(errno.get())
     }
 
