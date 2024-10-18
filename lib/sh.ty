@@ -56,7 +56,7 @@ static_if __apple__ || __linux__ {
             remainingMs = timeoutMs - (utime() - start) / 1000
         }
 
-        if pfds.len() > 1 && pfds[1].revents & os.POLLIN {
+        if pfds.len() > 1 && (pfds[1].revents & os.POLLIN) {
             os.read(p.stderr, err, 4096)
         }
 
