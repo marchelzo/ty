@@ -5,7 +5,7 @@ import stdio
 pub FBF = stdio._IOFBF
 pub LBF = stdio._IOLBF
 pub NBF = stdio._IONBF
-pub BufferingMethod = FBF | LBF | NBF
+pub BufferingMethod = AnyOf(FBF, LBF, NBF)
 
 pub SEEK_SET = stdio.SEEK_SET
 pub SEEK_CUR = stdio.SEEK_CUR
@@ -160,12 +160,12 @@ pub function open(path: String | Int, mode: String = 'a+', buffering, dup: Bool 
 
     let flags = match mode {
         'r'  => os.O_RDONLY,
-        'w'  => os.O_WRONLY .|. os.O_CREAT .|. os.O_TRUNC,
-        'wx' => os.O_WRONLY .|. os.O_CREAT,
-        'a'  => os.O_WRONLY .|. os.O_CREAT .|. os.O_APPEND,
+        'w'  => os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        'wx' => os.O_WRONLY | os.O_CREAT,
+        'a'  => os.O_WRONLY | os.O_CREAT | os.O_APPEND,
         'r+' => os.O_RDWR,
-        'w+' => os.O_RDWR .|. os.O_CREAT .|. os.O_TRUNC,
-        'a+' => os.O_RDWR .|. os.O_CREAT .|. os.O_APPEND,
+        'w+' => os.O_RDWR | os.O_CREAT | os.O_TRUNC,
+        'a+' => os.O_RDWR | os.O_CREAT | os.O_APPEND,
         _    => nil
     };
 

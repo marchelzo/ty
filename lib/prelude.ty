@@ -3,6 +3,7 @@ import math
 import thread
 import base64
 import time
+import stdio
 import ffi as c
 import ty
 import ty.parse as parse
@@ -454,6 +455,14 @@ class String : Iterable {
         self.bslice(i, j - i)
     }
 
+    __slice__(i=0, j=#self, k=1) {
+        if k != 1 {
+            throw 'not implemented'
+        }
+
+        self.slice(i, j)
+    }
+
     lower?() {
         return self == @lower()
     }
@@ -569,10 +578,6 @@ class Int {
     }
 
     ^(b)    { bit.XOR(self, b)        }
-    .&.(b)  { bit.AND(self, b)        }
-    .|.(b)  { bit.OR(self, b)         }
-    <<(b)   { bit.shiftLeft(self, b)  }
-    >>(b)   { bit.shiftRight(self, b) }
 
     **(x) {
         type(x)(math.pow(self, x))
@@ -2476,6 +2481,16 @@ class SharedQueue : Iterable {
     }
 }
 
+class EqualTo {
+    init(x)      { @x = x     }
+    __match__(x) { self == @x }
+}
+
+class AnyOf {
+    init(*xs)    { @xs = xs }
+    __match__(x) { x in @xs }
+}
+
 function memoized(f) {
     let memo = %{*: f(*it.0, **%{k: v for (k, v) in it.1})}
     return function (*args, %kwargs) {
@@ -2711,7 +2726,10 @@ macro __walk! {
             ),
 
             ty.SpecialString(parts) => ty.SpecialString(
-                [walk(part, f) for part in parts]
+                parts.map(match {
+                    (e, fmt, w) => (walk(e, f), fmt, w),
+                    e           => walk(e, f)
+                })
             ),
 
             ty.Wtf(a, b) => ty.Wtf(
@@ -2753,15 +2771,15 @@ macro __desugar_partial__(call) {
 
     args.map!(e -> __walk!(e, match {
         ty.Id({name: /^(_+)([xyz])$/, *})
-            => ty.Id({name: _1 + str(' xyz'.search(_2))}),
+            => ty.Id({name: $1 + str(' xyz'.search($2))}),
         e   => e
     }))
 
     let depth = 0
 
     __walk!(call, match {
-        ty.Id({name: /^(_+)\d*$/, *}) as e => do {
-            depth = max(depth, #_1)
+        ty.Id({name: /^([$_]_*)\d*$/, *}) as e => do {
+            depth = max(depth, #$1)
             e
         },
 
@@ -2784,7 +2802,10 @@ macro __desugar_partial__(call) {
     */
 
     args.map!(e -> __walk!(e, match {
-        ty.Id({name: /^(_+)(\d*)$/, *}) => ty.Id({name: '_'.repeat(depth - #_1 + 1) + _2}),
+        ty.Id({name: /^_*$/, *})
+            => ty.Id({name: '_'.repeat(depth - #$0 + 1)}),
+        ty.Id({name: /^\$(_*)(\d+)$/, *})
+            => ty.Id({name: '$' + '_'.repeat(depth - #$1 - 1) + $2}),
         e => e
     }))
 
@@ -2804,10 +2825,11 @@ macro __desugar_partial__(call) {
 
         let i = 0
         let reducedArgs = args.map(e -> __walk!(e, match {
-            ty.Id({name: '_', *})          => ty.Subscript(argv, ty.Int(i++)),
-            ty.Id({name: /^_(\d+)$/, *})   => ty.Subscript(argv, ty.Int(int(_1) - 1)),
-            ty.Id({name: /^_(_+\d*)$/, *}) => ty.Id({name: _1}),
-            ty.Id({name: '**', *}) as e    => (d == 1) ? kwargs : ty.Add(kwargs, e),
+            ty.Id({name: '_', *})           => ty.Subscript(argv, ty.Int(i++)),
+            ty.Id({name: /^\$(\d+)$/, *})   => ty.Subscript(argv, ty.Int(int($1) - 1)),
+            ty.Id({name: /^\$(_+\d*)$/, *}) => ty.Id({name: "${$1[1;]}"}),
+            ty.Id({name: /^_(_+\d*)$/, *})  => ty.Id({name: $1}),
+            ty.Id({name: '**', *}) as e     => (d == 1) ? kwargs : ty.Add(kwargs, e),
 
             ty.Id({name: '*', *}) as e => do {
                 let slice = ty.MethodCall({
@@ -2830,6 +2852,37 @@ macro __desugar_partial__(call) {
     }
 
     return go(args, mkcall, max(depth, 1))
+}
+
+function |(a: Int, b: Int) { bit.OR(a, b)  }
+function &(a: Int, b: Int) { bit.AND(a, b) }
+
+function >>(x, f) { f(x) }
+function <<(f, x) { f(x) }
+
+function >>(n: Int, m: Int) { bit.shiftRight(n, m) }
+function <<(n: Int, m: Int) { bit.shiftLeft(n, m)  }
+
+function sink(file) match file {
+    nil => print@(*, **, :flush),
+
+    fd: Int => {
+        let file = stdio.fdopen(fd, 'a+b')
+        return print@(*, **, file=file, :flush)
+    },
+
+    file: String => {
+        let flags = os.O_RDWR | os.O_CREAT | os.O_TRUNC
+
+        let fd = os.open(file, flags, 0644)
+        if fd < 0 {
+            throw Err(fd)
+        }
+
+        let file = stdio.fdopen(fd, 'w+b')
+
+        return print@(*, **, file=file, :flush)
+    }
 }
 
 operator **   10 right

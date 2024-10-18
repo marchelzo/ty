@@ -405,7 +405,7 @@ pub function prettyPrint(x, %kwargs) {
         winSize.cols = 108
     }
 
-    kwargs['width'] ?= min(winSize.cols, 108)
+    kwargs['width'] ?= max(min(winSize.cols, 108), 36)
 
     let WithKwargs = Printer@(**kwargs)
 
@@ -418,5 +418,26 @@ pub function prettyPrint(x, %kwargs) {
         print(Printer(colors=tuple(**json.parse(s))).print(x))
     } else {
         print(Printer(**kwargs).print(x))
+    }
+}
+
+pub function pretty(x, %kwargs) {
+    if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {
+        winSize.cols = 108
+    }
+
+    kwargs['width'] ?= max(min(winSize.cols, 108), 36)
+
+    let WithKwargs = Printer@(**kwargs)
+
+    let colors = match getenv('HOME') {
+        slurp@("{_}/.ty/colors.json")
+        $~> color-profile =>  color-profile
+    }
+
+    if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
+        Printer(colors=tuple(**json.parse(s))).print(x)
+    } else {
+        Printer(**kwargs).print(x)
     }
 }
