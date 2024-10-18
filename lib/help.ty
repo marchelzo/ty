@@ -145,7 +145,7 @@ pub function help(x) {
     let helpString = Blob()
     let p = function (*args, sep=', ', end='\n') {
         helpString.push(args.join(sep) ?? '');
-        helpString.push(end); 
+        helpString.push(end);
     }
 
     function pdoc(s, indent) {

@@ -71,8 +71,11 @@ _scope_new(Ty *ty,
   #define scope_new(ty, n, p, f) _scope_new(ty, n, p, f)
 #endif
 
-struct symbol *
-scope_add(Ty *ty, struct scope *s, char const *id);
+Symbol *
+scope_add(Ty *ty, Scope *s, char const *id);
+
+Symbol *
+scope_add_i(Ty *ty, Scope *s, char const *id, int i);
 
 Symbol *
 scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns);

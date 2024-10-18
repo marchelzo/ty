@@ -201,7 +201,7 @@ get_column(Ty *ty, int argc, struct value *kwargs)
         case SQLITE_TEXT:;
                 s = (char *)sqlite3_column_text(stmt, i);
                 sz = sqlite3_column_bytes(stmt, i);
-                return vSc(s, sz);
+                return vSs(s, sz);
         case SQLITE_BLOB:;
                 b = value_blob_new(ty);
                 NOGC(b);
@@ -251,7 +251,7 @@ fetch(Ty *ty, int argc, struct value *kwargs)
                 case SQLITE_TEXT:;
                         s = (char *)sqlite3_column_text(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
-                        vAp(a.array, vSc(s, sz));
+                        vAp(a.array, vSs(s, sz));
                         break;
                 case SQLITE_BLOB:;
                         b = value_blob_new(ty);
@@ -292,7 +292,7 @@ fetch_dict(Ty *ty, int argc, struct value *kwargs)
         int n = sqlite3_column_count(stmt);
         for (int i = 0; i < n; ++i) {
                 char const *name = sqlite3_column_name(stmt, i);
-                struct value key = vSc(name, strlen(name));
+                Value key = vSsz(name);
                 switch (sqlite3_column_type(stmt, i)) {
                 case SQLITE_NULL:
                         dict_put_value(ty, d.dict, key, NIL);
@@ -306,7 +306,7 @@ fetch_dict(Ty *ty, int argc, struct value *kwargs)
                 case SQLITE_TEXT:;
                         s = (char *)sqlite3_column_text(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
-                        dict_put_value(ty, d.dict, key, vSc(s, sz));
+                        dict_put_value(ty, d.dict, key, vSs(s, sz));
                         break;
                 case SQLITE_BLOB:;
                         b = value_blob_new(ty);
@@ -439,7 +439,7 @@ column_name(Ty *ty, int argc, struct value *kwargs)
         if (s == NULL) {
                 return NIL;
         } else {
-                return vSc(s, strlen(s));
+                return vSsz(s);
         }
 }
 
@@ -479,7 +479,7 @@ error_msg(Ty *ty, int argc, struct value *kwargs)
                 zP("the argument to sqlite3.errorMessage() must be a pointer or an integer");
         }
 
-        return vSc(s, strlen(s));
+        return vSsz(s);
 }
 
 

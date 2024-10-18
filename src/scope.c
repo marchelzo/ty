@@ -185,7 +185,7 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
 }
 
 Symbol *
-scope_add(Ty *ty, Scope *s, char const *id)
+scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
 {
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
@@ -221,15 +221,33 @@ scope_add(Ty *ty, Scope *s, char const *id)
                 owner = owner->parent;
         }
 
-        sym->i = owner->owned.count;
+        while (owner->owned.count <= idx) {
+                avP(owner->owned, NULL);
+        }
 
         LOG("Symbol %d (%s) is getting i = %d in scope %p", sym->symbol, id, sym->i, s);
 
-        avP(owner->owned, sym);
+        while (idx < owner->owned.count && owner->owned.items[idx] != NULL) {
+                idx += 1;
+        }
+
+        if (idx == owner->owned.count) {
+                avP(owner->owned, sym);
+        } else {
+                owner->owned.items[idx] = sym;
+        }
+
+        sym->i = idx;
 
         s->table[i] = sym;
 
         return sym;
+}
+
+Symbol *
+scope_add(Ty *ty, Scope *s, char const *id)
+{
+        return scope_add_i(ty, s, id, 0);
 }
 
 Symbol *

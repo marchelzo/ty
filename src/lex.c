@@ -249,16 +249,32 @@ nextchar(Ty *ty)
         return c;
 }
 
+inline static bool
+starts_id(int c)
+{
+        return isalpha(c)
+            || (c == '_')
+            || (c > 0xC0);
+}
+
+inline static int
+_count(Ty *ty, int i)
+{
+        int n = 0;
+
+        while (C(i + n) == '_') {
+                n += 1;
+        }
+
+        return n;
+}
+
 static bool
 haveid(Ty *ty)
 {
-        if (C(0) == ':' && C(1) == ':' && (isalpha(C(2)) || C(2) == '_'))
-                return true;
-
-        if (isalpha(C(0)) || C(0) == '_' || (C(0) > 0xC0))
-                return true;
-
-        return false;
+        return starts_id(C(0))
+            || (C(0) == ':' && C(1) == ':' && starts_id(C(2)))
+            || (C(0) == '$' && isdigit(C(1 + _count(ty, 1))));
 }
 
 static bool
@@ -307,6 +323,18 @@ lexword(Ty *ty)
         bool has_module = false;
 
         for (;;) {
+                if (C(0) == '$') {
+                        avP(word, nextchar(ty));
+
+                        while (C(0) == '_') {
+                                avP(word, nextchar(ty));
+                        }
+
+                        while (isdigit(C(0))) {
+                                avP(word, nextchar(ty));
+                        }
+                }
+
                 for (;;) {
                         if (idchar(C(0))) {
                                 avP(word, nextchar(ty));
@@ -329,7 +357,7 @@ lexword(Ty *ty)
                                 avPn(module, word.items, word.count);
                         word.count = 0;
 
-                        if (!isalpha(C(0)) && C(0) != '_') {
+                        if (!haveid(ty)) {
                                 error(
                                         ty,
                                         "expected name after %s'::'%s in identifier",

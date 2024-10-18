@@ -7,10 +7,12 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdbool.h>
-#include "polyfill_unistd.h"
+
 #include <pcre.h>
+#include <utf8proc.h>
 
 #include "value.h"
+#include "polyfill_unistd.h"
 
 #ifdef max
 #undef max
@@ -183,6 +185,60 @@ search_str(StringVector const *ss, char const *s)
         }
 
         return false;
+}
+
+static void
+dump(byte_vector *b, char const *fmt, ...)
+{
+        va_list ap;
+
+        for (;;) {
+                int avail = b->capacity - b->count;
+                int need;
+
+                va_start(ap, fmt);
+                need = vsnprintf(b->items + b->count, avail, fmt, ap);
+                va_end(ap);
+
+                if (1 + need >= avail) {
+                        xvR(*b, max(b->capacity * 2, 256));
+                        continue;
+                }
+
+                b->count += need;
+                vvL(*b)[1] = '\0';
+
+
+                break;
+        }
+}
+
+static int
+term_width(char const *s, int n)
+{
+        if (n == -1) {
+                n = strlen(s);
+        }
+
+        int width = 0;
+        int ret;
+        int cp;
+
+        for (int i = 0; i < n;) {
+                if (s[i] == 0x1b) {
+                        while (++i < n && s[i] != 'm') {
+                                ;
+                        }
+                        i += 1;
+                } else if ((ret = utf8proc_iterate((uint8_t const *)s + i, n - i, &cp)) > 0) {
+                        width += utf8proc_charwidth(cp);
+                        i += ret;
+                } else {
+                        i += 1;
+                }
+        }
+
+        return width;
 }
 
 Value

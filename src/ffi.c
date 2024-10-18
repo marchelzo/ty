@@ -683,7 +683,7 @@ cffi_str(Ty *ty, int argc, Value *kwargs)
                 n = strlen(p);
         }
 
-        return vSc(p, n);
+        return vSs(p, n);
 }
 
 Value
@@ -725,7 +725,7 @@ cffi_dlerror(Ty *ty, int argc, Value *kwargs)
         if (error == NULL)
                 return NIL;
 
-        return vSc(error, strlen(error));
+        return vSs(error, strlen(error));
 #endif
 }
 

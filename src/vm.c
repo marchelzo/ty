@@ -266,8 +266,10 @@ typedef struct {
 
 static char const *filename;
 static char const *Error;
+
 bool CompileOnly = false;
 bool PrintResult = false;
+FILE *DisassemblyOut = NULL;
 
 typedef struct thread_group {
         TyMutex Lock;
@@ -2145,7 +2147,7 @@ vm_try_exec(Ty *ty, char *code)
                 FRAMES.count = nframes;
                 try_stack = ts;
                 IP = save;
-                push(ty, vSc(ERR, strlen(ERR)));
+                push(ty, vSsz(ERR));
                 top(ty)->tags = tags_push(ty, 0, TAG_ERR);
                 top(ty)->type |= VALUE_TAGGED;
                 vm_exec(ty, &throw);
@@ -2170,7 +2172,7 @@ vm_exec(Ty *ty, char *code)
 
         uintptr_t s, off;
         intmax_t k;
-        bool b = false, tco = false;
+        bool b = false;
         float f;
         int n, nkw = 0, i, j, z, tag;
         unsigned long h;
@@ -4475,9 +4477,6 @@ vm_init(Ty *ty, int ac, char **av)
         GC_RESUME();
 
 #ifdef TY_ENABLE_PROFILING
-        if (ProfileOut == NULL) {
-                ProfileOut = stdout;
-        }
         Samples = dict_new(ty);
         NOGC(Samples);
         FuncSamples = dict_new(ty);
@@ -4646,8 +4645,15 @@ vm_execute(Ty *ty, char const *source, char const *file)
         if (code == NULL) {
                 filename = NULL;
                 Error = compiler_error(ty);
-                LOG("compiler error was: %s", Error);
                 return false;
+        }
+
+        if (DisassemblyOut != NULL) {
+                byte_vector out = {0};
+                DumpProgram(ty, &out, filename, code, NULL);
+                fwrite(out.items, 1, out.count, DisassemblyOut);
+                free(out.items);
+
         }
 
         GC_RESUME();

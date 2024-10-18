@@ -448,7 +448,7 @@ value_show(Ty *ty, Value const *v)
                 s = show_dict(ty, v, false);
                 break;
         case VALUE_FUNCTION:
-                if (v->info[6] == -1) {
+                if (class_of(v) == -1) {
                         snprintf(buffer, 1024, "<function '%s' at %p>", name_of(v), (void *)((char *)v->info + v->info[0]));
                 } else {
                         char const *class = class_name(ty, v->info[6]);

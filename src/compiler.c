@@ -46,14 +46,14 @@
 
 #define JUMP(loc)                                                          \
         do {                                                               \
-                annotate("L%d", (loc).label + 1);                          \
+                annotate("%sL%d%s", TERM(95), (loc).label + 1, TERM(0));   \
                 emit_instr(ty, INSTR_JUMP);                                \
                 emit_int(ty, (loc).off - state.code.count - sizeof (int)); \
         } while (0)
 
 #define JUMP_IF_NOT(loc)                                                   \
         do {                                                               \
-                annotate("L%d", (loc).label + 1);                          \
+                annotate("%sL%d%s", TERM(95), (loc).label + 1, TERM(0));   \
                 emit_instr(ty, INSTR_JUMP_IF_NOT);                         \
                 emit_int(ty, (loc).off - state.code.count - sizeof (int)); \
         } while (0)
@@ -197,27 +197,6 @@ static char const *StatementTypeNames[] = {
 #undef X
 
 static void
-dump(byte_vector *b, char const *fmt, ...)
-{
-        va_list ap;
-        int need, avail;
-
-Retry:
-        avail = b->capacity - b->count;
-
-        va_start(ap, fmt);
-        need = vsnprintf(b->items + b->count, avail, fmt, ap);
-        va_end(ap);
-
-        if (need >= avail) {
-                xvR(*b, max(b->capacity * 2, 256));
-                goto Retry;
-        }
-
-        b->count += need;
-}
-
-static void
 dumpstr(byte_vector *out, char const *s)
 {
 #define COLOR(i) xvPn(*out, TERM(i), strlen(TERM(i)))
@@ -268,6 +247,7 @@ dumpstr(byte_vector *out, char const *s)
 #undef COLOR
 
         xvP(*out, '\0');
+        vvX(*out);
 }
 
 #define annotate(...)                                                        \
@@ -969,7 +949,7 @@ tmpsymbol(Ty *ty, Scope *scope)
 
         assert(i <= 9999999);
 
-        sprintf(idbuf, "%d", i++);
+        sprintf(idbuf, "#%d", i++);
 
         return scope_add(ty, scope, sclonea(ty, idbuf));
 }
@@ -1461,7 +1441,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
         char const *names;
         pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE, &names);
 
-        pattern->match_symbol = addsymbol(ty, scope, "_0");
+        pattern->match_symbol = addsymbol(ty, scope, "$0");
 
         for (int i = 1; i <= n; ++i) {
                 char const *nt = names;
@@ -1482,7 +1462,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
                  * This is not a named capture group
                  */
                 char id[16];
-                sprintf(id, "_%d", i);
+                sprintf(id, "$%d", i);
                 addsymbol(ty, scope, sclonea(ty, id));
         NextCapture:
                 ;
@@ -2272,16 +2252,18 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
                 vec_init(e->param_symbols);
 
-                for (size_t i = 0; i < e->params.count; ++i) {
-                        symbolize_expression(ty, scope, e->dflts.items[i]);
-                        avP(e->param_symbols, addsymbol(ty, scope, e->params.items[i]));
-                }
-
                 /*
                  * This is trash.
                  */
                 if (e->is_method) {
-                        addsymbol(ty, scope, "self");
+                        Symbol *s = scope_add_i(ty, scope, "self", e->params.count);
+                        s->file = state.filename;
+                        s->loc = state.start;
+                }
+
+                for (size_t i = 0; i < e->params.count; ++i) {
+                        symbolize_expression(ty, scope, e->dflts.items[i]);
+                        avP(e->param_symbols, addsymbol(ty, scope, e->params.items[i]));
                 }
 
                 for (size_t i = 0; i < e->params.count; ++i) {
@@ -2815,17 +2797,19 @@ emit_string(Ty *ty, char const *s)
 }
 
 #ifndef TY_NO_LOG
-#define emit_load_instr(ty, id, inst, i) \
-        do { \
-                emit_instr(ty, inst); \
-                emit_int(ty, i); \
-                emit_string(ty, id); \
+#define emit_load_instr(ty, id, inst, i)        \
+        do {                                    \
+                annotate("%s", id);             \
+                emit_instr(ty, inst);           \
+                emit_int(ty, i);                \
+                emit_string(ty, id);            \
         } while (0)
 #else
-#define emit_load_instr(ty, id, inst, i) \
-        do { \
-                emit_instr(ty, inst); \
-                emit_int(ty, i); \
+#define emit_load_instr(ty, id, inst, i)        \
+        do {                                    \
+                annotate("%s", id);             \
+                emit_instr(ty, inst);           \
+                emit_int(ty, i);                \
         } while (0)
 #endif
 
@@ -2836,6 +2820,7 @@ target_captured(Ty *ty, Scope const *scope, Symbol const *s)
         while (scope->function->captured.items[i] != s) {
                 i += 1;
         }
+
         emit_instr(ty, INSTR_TARGET_CAPTURED);
         emit_int(ty, i);
 #ifndef TY_NO_LOG
@@ -2849,8 +2834,6 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
         LOG("Emitting LOAD for %s", s->identifier);
 
         bool local = !s->global && (s->scope->function == scope->function);
-
-        annotate("%s", s->identifier);
 
         if (s->global) {
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_GLOBAL, s->i);
@@ -2918,7 +2901,7 @@ inline static JumpPlaceholder
 {
         int label = state.label++;
 
-        annotate("L%d", label + 1);
+        annotate("%sL%d%s", TERM(95), label + 1, TERM(0));
 
         emit_instr(ty, t);
 
@@ -3041,8 +3024,8 @@ emit_function(Ty *ty, Expr const *e, int class)
         int label_save = state.label;
         state.label = 0;
 
-        ProgramAnnotation annotation = state.annotation;
-        state.annotation = (ProgramAnnotation) {0};
+        //ProgramAnnotation annotation = state.annotation;
+        //state.annotation = (ProgramAnnotation) {0};
 
         Scope *fs_save = state.fscope;
         state.fscope = e->scope;
@@ -3065,11 +3048,13 @@ emit_function(Ty *ty, Expr const *e, int class)
                          * Don't call emit_tgt because despite these being captured,
                          * we need to use TARGET_LOCAL to avoid following the reference.
                          */
+                        annotate("%s", caps[i]->identifier);
                         emit_instr(ty, INSTR_TARGET_LOCAL);
                         emit_int(ty, caps[i]->i);
                 } else {
                         // FIXME: should just use same allocated variable
                         LOG("%s: Using TARGET_CAPTURED for %s: %d", e->name == NULL ? "(anon)" : e->name, caps[i]->identifier, cap_indices[i]);
+                        annotate("%s", caps[i]->identifier);
                         emit_instr(ty, INSTR_TARGET_CAPTURED);
                         emit_int(ty, cap_indices[i]);
 #ifndef TY_NO_LOG
@@ -3160,6 +3145,7 @@ emit_function(Ty *ty, Expr const *e, int class)
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, need_dflt);
                 PLACEHOLDER_JUMP(INSTR_JUMP, skip_dflt);
                 PATCH_JUMP(need_dflt);
+                annotate("%s", s->identifier);
                 emit_instr(ty, INSTR_TARGET_LOCAL);
                 emit_int(ty, s->i);
                 emit_expression(ty, e->dflts.items[i]);
@@ -3303,7 +3289,7 @@ emit_function(Ty *ty, Expr const *e, int class)
                 emit_int(ty, i);
         }
 
-        state.annotation = annotation;
+        //state.annotation = annotation;
         state.label = label_save;
         state.fscope = fs_save;
         state.selfs = selfs_save;
@@ -4448,6 +4434,7 @@ emit_target(Ty *ty, Expr *target, bool def)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
+                annotate("%s", target->identifier);
                 emit_tgt(ty, target->symbol, state.fscope, def);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
@@ -5796,6 +5783,7 @@ emit_new_globals(Ty *ty)
                 if (s->tag != -1) {
                         emit_instr(ty, INSTR_TAG);
                         emit_int(ty, s->tag);
+                        annotate("%s", s->identifier);
                         emit_instr(ty, INSTR_TARGET_GLOBAL);
                         emit_int(ty, s->i);
                         emit_instr(ty, INSTR_ASSIGN);
@@ -5803,6 +5791,7 @@ emit_new_globals(Ty *ty)
                 } else if (s->class >= 0) {
                         emit_instr(ty, INSTR_CLASS);
                         emit_int(ty, s->class);
+                        annotate("%s", s->identifier);
                         emit_instr(ty, INSTR_TARGET_GLOBAL);
                         emit_int(ty, s->i);
                         emit_instr(ty, INSTR_ASSIGN);
@@ -6605,14 +6594,14 @@ tyexpr(Ty *ty, Expr const *e)
                 if (e->namespace != NULL) {
                         v = vT(2);
                         v.items[0] = tyexpr(ty, e->namespace);
-                        v.items[1] = vSc(e->identifier, strlen(e->identifier));
+                        v.items[1] = vSs(e->identifier, strlen(e->identifier));
                         v.type |= VALUE_TAGGED;
                         v.tags = tags_push(ty, 0, TyMemberAccess);
                         break;
                 }
                 v = vTn(
-                        "name", vSc(e->identifier, strlen(e->identifier)),
-                        "module", (e->module == NULL) ? NIL : vSc(e->module, strlen(e->module)),
+                        "name", vSs(e->identifier, strlen(e->identifier)),
+                        "module", (e->module == NULL) ? NIL : vSs(e->module, strlen(e->module)),
                         "constraint", (e->constraint == NULL) ? NIL : tyexpr(ty, e->constraint),
                         NULL
                 );
@@ -6625,13 +6614,13 @@ tyexpr(Ty *ty, Expr const *e)
                 if (e->parent != NULL) {
                         v = vT(2);
                         v.items[0] = tyexpr(ty, e->parent);
-                        v.items[1] = vSc(e->name, strlen(e->name));
+                        v.items[1] = vSs(e->name, strlen(e->name));
                         v.type |= VALUE_TAGGED;
                         v.tags = tags_push(ty, 0, TyMemberAccess);
                         break;
                 } else {
                         v = vTn(
-                                "name", vSc(e->name, strlen(e->name)),
+                                "name", vSs(e->name, strlen(e->name)),
                                 "module", NIL,
                                 "constraint", NIL,
                                 NULL
@@ -6650,9 +6639,9 @@ tyexpr(Ty *ty, Expr const *e)
                 break;
         case EXPRESSION_ALIAS_PATTERN:
                 v = vTn(
-                        "name",       vSc(e->identifier, strlen(e->identifier)),
+                        "name",       vSs(e->identifier, strlen(e->identifier)),
                         "pattern",    tyexpr(ty, e->aliased),
-                        "module",     (e->module == NULL) ? NIL : vSc(e->module, strlen(e->module)),
+                        "module",     (e->module == NULL) ? NIL : vSs(e->module, strlen(e->module)),
                         "constraint", (e->constraint == NULL) ? NIL : tyexpr(ty, e->constraint),
                         NULL
                 );
@@ -6661,8 +6650,8 @@ tyexpr(Ty *ty, Expr const *e)
                 break;
         case EXPRESSION_MATCH_NOT_NIL:
                 v = vTn(
-                        "name", vSc(e->identifier, strlen(e->identifier)),
-                        "module", (e->module == NULL) ? NIL : vSc(e->module, strlen(e->module)),
+                        "name", vSs(e->identifier, strlen(e->identifier)),
+                        "module", (e->module == NULL) ? NIL : vSs(e->module, strlen(e->module)),
                         NULL
                 );
                 v.type |= VALUE_TAGGED;
@@ -6673,8 +6662,8 @@ tyexpr(Ty *ty, Expr const *e)
                         ty,
                         TyResource,
                         vTn(
-                                "name", vSc(e->identifier, strlen(e->identifier)),
-                                "module", (e->module == NULL) ? NIL : vSc(e->module, strlen(e->module)),
+                                "name", vSs(e->identifier, strlen(e->identifier)),
+                                "module", (e->module == NULL) ? NIL : vSs(e->module, strlen(e->module)),
                                 NULL
                         ),
                         NONE
@@ -6771,7 +6760,7 @@ tyexpr(Ty *ty, Expr const *e)
                         ty,
                         tag,
                         vTn(
-                                "name", e->name != NULL ? vSc(e->name, strlen(e->name)) : NIL,
+                                "name", e->name != NULL ? vSs(e->name, strlen(e->name)) : NIL,
                                 "params", ARRAY(params),
                                 "rt", e->return_type != NULL ? tyexpr(ty, e->return_type) : NIL,
                                 "body", tystmt(ty, e->body),
@@ -6786,7 +6775,7 @@ tyexpr(Ty *ty, Expr const *e)
                 }
 
                 for (int i = 0; i < e->params.count; ++i) {
-                        Value name = vSc(e->params.items[i], strlen(e->params.items[i]));
+                        Value name = vSs(e->params.items[i], strlen(e->params.items[i]));
                         if (i == e->rest) {
                                 vAp(
                                         params,
@@ -6814,7 +6803,7 @@ tyexpr(Ty *ty, Expr const *e)
                 try_symbolize_application(ty, NULL, (Expr *)e);
         case EXPRESSION_TAG_PATTERN:
                 v = vT(2);
-                v.items[0] = vSc(e->identifier, strlen(e->identifier));
+                v.items[0] = vSs(e->identifier, strlen(e->identifier));
                 v.items[1] = tyexpr(ty, e->tagged);
                 v = tagged(
                         ty,
@@ -6829,7 +6818,7 @@ tyexpr(Ty *ty, Expr const *e)
                 for (int i = 0; i < e->es.count; ++i) {
                         Value name = (e->names.items[i] == NULL)
                                    ? NIL
-                                   : vSc(e->names.items[i], strlen(e->names.items[i]));
+                                   : vSs(e->names.items[i], strlen(e->names.items[i]));
                         vAp(
                                 v.array,
                                 tagged(
@@ -6961,7 +6950,7 @@ tyexpr(Ty *ty, Expr const *e)
                                         vTn(
                                                 "arg", tyexpr(ty, e->kwargs.items[i]),
                                                 "cond", e->fkwconds.items[i] != NULL ? tyexpr(ty, e->fkwconds.items[i]) : NIL,
-                                                "name", vSc(e->kws.items[i], strlen(e->kws.items[i])),
+                                                "name", vSs(e->kws.items[i], strlen(e->kws.items[i])),
                                                 NULL
                                         ),
                                         NONE
@@ -6974,7 +6963,7 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_METHOD_CALL:
                 v = vTn(
                         "object", tyexpr(ty, e->function),
-                        "method", vSc(e->method_name, strlen(e->method_name)),
+                        "method", vSs(e->method_name, strlen(e->method_name)),
                         "args", ARRAY(vA()),
                         NULL
                 );
@@ -7004,7 +6993,7 @@ tyexpr(Ty *ty, Expr const *e)
                                                 "arg", tyexpr(ty, e->method_kwargs.items[i]),
                                                 // TODO conditional method kwargs
                                                 "cond", NIL,
-                                                "name", vSc(e->method_kws.items[i], strlen(e->method_kws.items[i])),
+                                                "name", vSs(e->method_kws.items[i], strlen(e->method_kws.items[i])),
                                                 NULL
                                         ),
                                         NONE
@@ -7018,7 +7007,7 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_SELF_ACCESS:
                 v = vT(2);
                 v.items[0] = tyexpr(ty, e->object);
-                v.items[1] = vSc(e->member_name, strlen(e->member_name));
+                v.items[1] = vSs(e->member_name, strlen(e->member_name));
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, 0, TyMemberAccess);
                 break;
@@ -7083,7 +7072,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v.tags = tags_push(ty, 0, TyBool);
                 break;
         case EXPRESSION_STRING:
-                v = vSc(e->string, strlen(e->string));
+                v = vSs(e->string, strlen(e->string));
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, 0, TyString);
                 break;
@@ -7091,18 +7080,18 @@ tyexpr(Ty *ty, Expr const *e)
                 v = ARRAY(vA());
                 gP(&v);
 
-                vAp(v.array, vSc(e->strings.items[0], strlen(e->strings.items[0])));
+                vAp(v.array, vSs(e->strings.items[0], strlen(e->strings.items[0])));
 
                 for (int i = 0; i < e->expressions.count; ++i) {
                         Value expr = tyexpr(ty, e->expressions.items[i]);
                         if (e->fmts.items[i] == NULL) {
                                 vAp(v.array, expr);
                         } else {
-                                Value s = vSc(e->fmts.items[i], strlen(e->fmts.items[i]));
+                                Value s = vSs(e->fmts.items[i], strlen(e->fmts.items[i]));
                                 Value w = INTEGER(e->widths.items[i]);
                                 vAp(v.array, TRIPLE(expr, s, w));
                         }
-                        vAp(v.array, vSc(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
+                        vAp(v.array, vSs(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
                 }
 
                 gX();
@@ -7115,7 +7104,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v = tagged(
                         ty,
                         TyUserOp,
-                        vSc(e->op_name, strlen(e->op_name)),
+                        vSs(e->op_name, strlen(e->op_name)),
                         tyexpr(ty, e->left),
                         tyexpr(ty, e->right),
                         NONE
@@ -7230,8 +7219,8 @@ tyexpr(Ty *ty, Expr const *e)
                         ty,
                         TyDefined,
                         vTn(
-                                "name", vSc(e->identifier, strlen(e->identifier)),
-                                "module", (e->module == NULL) ? NIL : vSc(e->module, strlen(e->module)),
+                                "name", vSs(e->identifier, strlen(e->identifier)),
+                                "module", (e->module == NULL) ? NIL : vSs(e->module, strlen(e->module)),
                                 NULL
                         ),
                         NONE
@@ -7242,8 +7231,8 @@ tyexpr(Ty *ty, Expr const *e)
                         ty,
                         TyIfDef,
                         vTn(
-                                "name", vSc(e->identifier, strlen(e->identifier)),
-                                "module", (e->module == NULL) ? NIL : vSc(e->module, strlen(e->module)),
+                                "name", vSs(e->identifier, strlen(e->identifier)),
+                                "module", (e->module == NULL) ? NIL : vSs(e->module, strlen(e->module)),
                                 NULL
                         ),
                         NONE
@@ -7293,7 +7282,7 @@ tystmt(Ty *ty, Stmt *s)
                 break;
         case STATEMENT_CLASS_DEFINITION:
                 v = vTn(
-                        "name", vSc(s->class.name, strlen(s->class.name)),
+                        "name", vSs(s->class.name, strlen(s->class.name)),
                         "super", s->class.super != NULL ? tyexpr(ty, s->class.super) : NIL,
                         "methods", ARRAY(vA()),
                         "getters", ARRAY(vA()),
@@ -8905,7 +8894,7 @@ compiler_render_template(Ty *ty, Expr *e)
         if (setjmp(jb) != 0) {
                 RESTORE_JB;
                 char const *msg = compiler_error(ty);
-                v = Err(ty, vSc(msg, strlen(msg)));
+                v = Err(ty, vSs(msg, strlen(msg)));
                 vmE(&v);
         }
 
@@ -9294,12 +9283,24 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         byte_vector after = {0};
 
-#define DUMPSTR(s) dumpstr(out, (s))
+#define DUMPSTR(s) (xvP(*out, ' '), dumpstr(out, (s)))
 #define SKIPSTR()     (DUMPSTR(c), (c += strlen(c) + 1))
 #define READSTR(s)    (((s) = c), SKIPSTR())
 #define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
 #define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
 #define READMEMBER(n) (READVALUE_((n)), DUMPSTR(M_NAME((n))))
+
+        ProgramAnnotation *annotation = NULL;
+
+        for (int i = 0; i < annotations.count; ++i) {
+                if (
+                        ((uintptr_t)code) >= annotations.items[i].start
+                     && ((uintptr_t)code) <  annotations.items[i].end
+                ) {
+                        annotation = &annotations.items[i];
+                        annotation->i = 0;
+                }
+        }
 
         if (code == NULL) {
                 for (int i = 0; i < annotations.count; ++i) {
@@ -9315,24 +9316,20 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 return end;
         }
 
-        uintptr_t s, off;
+        uintptr_t s;
         intmax_t k;
-        bool b = false, tco = false;
+        bool b = false;
         float f;
-        int n, nkw = 0, i, j, tag, *id;
+        int n, nkw = 0, i, j, tag;
 
-        Value v, key, value, container, subscript, *vp, *vp2;
-        char *str;
-        char const *method, *member;
-
-        dump(out, "        %s%s:%s\n", TERM(34), name, TERM(0));
+        dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
         dont_printf("        %s%s:%s\n", TERM(34), name, TERM(0));
 
         char const *caption;
 
         for (char const *c = code; c != end; xvP(*out, '\n')) {
-                while (
-                        (caption = NextCaption(&state.annotation, c)) != NULL &&
+                if (annotation != NULL) while (
+                        (caption = NextCaption(annotation, c)) != NULL &&
                         caption[0] == ':'
                 ) {
                         dump(out, "            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
@@ -9340,6 +9337,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 }
 
                 ptrdiff_t pc = (uintptr_t)c;
+                ptrdiff_t begin = out->count;
 
 #ifdef TY_ENABLE_PROFILING
                 extern istat prof;
@@ -9374,13 +9372,13 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 #else
                 dump(
                         out,
-                        "%s%7td%s            %s%s%s",
+                        "                    %s%7td%s            %s%s%s",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0)
                 );
 #endif
 
-                printf(
+                dont_printf(
                         "%s%7td%s            %s%s%s %s\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
@@ -9843,7 +9841,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         break;
                 CASE(TAIL_CALL)
-                        tco = true;
                         break;
                 CASE(CALL)
                         READVALUE(n);
@@ -9877,13 +9874,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 }
 
                 if (caption != NULL) {
-                        int width = 0;
+                        int width = term_width(
+                                v_(*out, begin),
+                                out->count - begin
+                        );
 
-                        while (vec_last(*out)[-width] != '\n') {
-                                width += 1;
-                        }
-
-                        while (width < 44) {
+                        while (width < 70) {
                                 xvP(*out, ' ');
                                 width += 1;
                         }
@@ -9894,9 +9890,10 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 End:
         if (after.count > 0) {
                 xvP(*out, '\n');
-                xvP(*out, '\n');
                 xvPn(*out, after.items, after.count);
         }
+
+        xvP(*out, '\n');
 
         return end;
 }

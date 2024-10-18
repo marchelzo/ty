@@ -504,7 +504,7 @@ json_encode(Ty *ty, struct value const *v)
         Visiting.count = 0;
 
         if (encode(ty, v, &s)) {
-                r = vSc(s.items, s.count);
+                r = vSs(s.items, s.count);
                 free(s.items);
         }
 

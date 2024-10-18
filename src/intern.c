@@ -40,7 +40,7 @@ intern_get(InternSet *set, char const *name)
                         .id = set->set - b - 1,
                         .data = set
                 })
-        ); 
+        );
 
         return vvX(*b);
 }

@@ -327,9 +327,19 @@ typedef Value BuiltinFunction(Ty *, int, Value *);
 typedef Value BuiltinMethod(Ty *, Value *, int, Value *);
 
 enum {
+        FUN_INFO_HEADER_SIZE,
+        FUN_INFO_CODE_SIZE,
+        FUN_INFO_CAPTURES,
+        FUN_INFO_BOUND,
+        FUN_INFO_PARAM_COUNT,
+        FUN_INFO__PAD1,
+        FUN_INFO_CLASS
+};
+
+enum {
         FUN_HEADER_SIZE = 0,
-        FUN_TOTAL_SIZE  = FUN_HEADER_SIZE + sizeof (int),
-        FUN_CAPTURES    = FUN_TOTAL_SIZE  + sizeof (int),
+        FUN_CODE_SIZE   = FUN_HEADER_SIZE + sizeof (int),
+        FUN_CAPTURES    = FUN_CODE_SIZE   + sizeof (int),
         FUN_BOUND       = FUN_CAPTURES    + sizeof (int),
         FUN_PARAM_COUNT = FUN_BOUND       + sizeof (int),
         FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (int),
@@ -771,10 +781,22 @@ Some(Ty *ty, struct value v)
         return v;
 }
 
+inline static ptrdiff_t
+code_size_of(Value const *v)
+{
+        return v->info[FUN_INFO_CODE_SIZE];
+}
+
 inline static char *
-code_of(struct value const *v)
+code_of(Value const *v)
 {
         return (char *)v->info + v->info[0];
+}
+
+inline static int
+class_of(Value const *v)
+{
+        return v->info[FUN_INFO_CLASS];
 }
 
 inline static char const *
