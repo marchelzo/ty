@@ -173,7 +173,7 @@ pub function open(path: String | Int, mode: String = 'a+', buffering, dup: Bool 
         throw Err(errno.EINVAL)
     }
 
-    let fd = if flags .&. os.O_CREAT {
+    let fd = if flags & os.O_CREAT {
         os.open(path, flags, 0666)
     } else {
         os.open(path, flags)

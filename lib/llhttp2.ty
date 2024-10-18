@@ -295,7 +295,7 @@ let llhttp_get_version = parser -> (
 let llhttp_get_flags = parser -> c.member(llhttp_internal, parser, 17)
 
 let llhttp_content_length = parser -> do {
-    if llhttp_get_flags(parser) .&. F_CONTENT_LENGTH {
+    if llhttp_get_flags(parser) & F_CONTENT_LENGTH {
         c.member(llhttp_internal, parser, 8)
     }
 }

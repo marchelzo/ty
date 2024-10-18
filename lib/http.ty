@@ -171,13 +171,13 @@ class HttpServer {
 
             for {fd, events, revents} in pollFds {
                 if fd == @sock {
-                    if revents .&. POLLIN {
+                    if revents & POLLIN {
                         let (conn, addr) = accept(fd)
                         @conns.push({fd: conn, addr, p: HttpParser(HTTP_REQUEST)})
                     }
                 } else {
                     let c = @conns.find(${it.fd == fd})
-                    if (revents .&. POLLIN) && read(fd, b, 4096) > 0 {
+                    if (revents & POLLIN) && read(fd, b, 4096) > 0 {
                         c.p.push(b)
                         b.clear()
 
@@ -243,7 +243,7 @@ class HttpServer {
 
                             rsp.send(fd)
                         }
-                    } else if revents .&. POLLHUP {
+                    } else if revents & POLLHUP {
                         close(fd)
                         @conns.filter!(${it.fd != fd})
                     }

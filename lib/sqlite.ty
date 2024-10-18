@@ -93,8 +93,8 @@ class SQLiteStatement : Iterable {
 pub class SQLite {
     init(path, fullMutex: Bool = false) {
         let fullMutexFlags =  SQLITE_OPEN_FULLMUTEX
-                          .|. SQLITE_OPEN_READWRITE
-                          .|. SQLITE_OPEN_CREATE
+                          | SQLITE_OPEN_READWRITE
+                          | SQLITE_OPEN_CREATE
 
         if let $db = open(path, fullMutexFlags if fullMutex) {
             @db = db

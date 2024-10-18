@@ -50,10 +50,10 @@ pub class CURL {
         for k, v in d {
             if v :: Iter && v !:: String {
                 for e in v {
-                    curl.url.set(@url, curl.url.PART_QUERY, "{k}={e}", curl.url.APPENDQUERY .|. curl.url.URLENCODE)
+                    curl.url.set(@url, curl.url.PART_QUERY, "{k}={e}", curl.url.APPENDQUERY | curl.url.URLENCODE)
                 }
             } else {
-                curl.url.set(@url, curl.url.PART_QUERY, "{k}={v}", curl.url.APPENDQUERY .|. curl.url.URLENCODE)
+                curl.url.set(@url, curl.url.PART_QUERY, "{k}={v}", curl.url.APPENDQUERY | curl.url.URLENCODE)
             }
         }
     }

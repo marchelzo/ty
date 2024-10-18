@@ -148,7 +148,7 @@ class FCGIRecord {
 
 function getLength(b) {
     if (b[0] >> 7) == 1 {
-        let n = ((b[0] .&. 0x7F) << 24)
+        let n = ((b[0] & 0x7F) << 24)
               + (b[1] << 16)
               + (b[2] << 8)
               + b[3]
@@ -231,7 +231,7 @@ class FCGIRequest {
             push(0);
             push(1);
             push(size >> 8);
-            push(0xFF .&. size);
+            push(0xFF & size);
             push(0);
             push(0);
             push(output.slice(offset));
@@ -258,10 +258,10 @@ class FCGIRequest {
         push(8);
         push(0);
         push(0);
-        push((exitStatus >> 24) .&. 0xFF);
-        push((exitStatus >> 16) .&. 0xFF);
-        push((exitStatus >> 8) .&. 0xFF);
-        push(exitStatus .&. 0xFF);
+        push((exitStatus >> 24) & 0xFF);
+        push((exitStatus >> 16) & 0xFF);
+        push((exitStatus >> 8) & 0xFF);
+        push(exitStatus & 0xFF);
         push(FCGI_REQUEST_COMPLETE);
         push(0);
         push(0);
@@ -346,13 +346,13 @@ pub class FCGIApp {
                 continue
             }
 
-            if pollFds[0].revents .&. os.POLLIN {
+            if pollFds[0].revents & os.POLLIN {
                 let (conn, addr) = os.accept(@socket)
                 @clients[conn] = FCGIParser(conn)
             }
 
             for {fd, events, revents} in pollFds.drop(1) {
-                if revents .&. os.POLLIN {
+                if revents & os.POLLIN {
                     if let $data = os.read(fd, 4096) {
                         if let $request = @clients[fd].push(data) {
                             request.app = self
@@ -362,7 +362,7 @@ pub class FCGIApp {
                     } else {
                         @clients.remove(fd)
                     }
-                } else if revents .&. (os.POLLNVAL .|. os.POLLERR) {
+                } else if revents & (os.POLLNVAL | os.POLLERR) {
                     @clients.remove(fd)
                 }
             }

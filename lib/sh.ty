@@ -56,15 +56,15 @@ static_if __apple__ || __linux__ {
             remainingMs = timeoutMs - (utime() - start) / 1000
         }
 
-        if pfds.len() > 1 && pfds[1].revents .&. os.POLLIN {
+        if pfds.len() > 1 && pfds[1].revents & os.POLLIN {
             os.read(p.stderr, err, 4096)
         }
 
-        if pfds[0].revents .&. os.POLLIN {
+        if pfds[0].revents & os.POLLIN {
             os.read(p.stdout, out, 4096)
         }
 
-        if pfds[0].revents .&. (os.POLLERR .|. os.POLLHUP) {
+        if pfds[0].revents & (os.POLLERR | os.POLLHUP) {
             break
         }
     }
