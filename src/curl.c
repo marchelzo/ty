@@ -50,8 +50,8 @@ write_function(char *ptr, size_t size, size_t nmemb, void *data)
         return n;
 }
 
-struct value
-builtin_curl_free(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_free(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 0) {
                 zP("curl.free(): expected 1 argument but got %d", argc);
@@ -90,8 +90,8 @@ builtin_curl_trace(Ty *ty, int argc, Value *kwargs)
         return INTEGER(curl_global_trace(buffer));
 }
 
-struct value
-builtin_curl_init(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_init(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 0) {
                 zP("curl::init() expects no arguments but got %d", argc);
@@ -114,14 +114,14 @@ builtin_curl_init(Ty *ty, int argc, struct value *kwargs)
         return PTR(c);
 }
 
-struct value
-builtin_curl_mime(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_mime(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl::mime::init() expects 1 argument but got %d", argc);
         }
 
-        struct value curl = ARG(0);
+        Value curl = ARG(0);
         if (curl.type != VALUE_PTR) {
                 zP("the first argument to curl::mime() must be a pointer");
         }
@@ -134,14 +134,14 @@ builtin_curl_mime(Ty *ty, int argc, struct value *kwargs)
         return PTR(m);
 }
 
-struct value
-builtin_curl_mime_add(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_mime_add(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl::mime::add() expects 1 argument but got %d", argc);
         }
 
-        struct value mime = ARG(0);
+        Value mime = ARG(0);
         if (mime.type != VALUE_PTR) {
                 zP("the first argument to curl::mime::add() must be a pointer");
         }
@@ -154,19 +154,19 @@ builtin_curl_mime_add(Ty *ty, int argc, struct value *kwargs)
         return PTR(p);
 }
 
-struct value
-builtin_curl_mime_data(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_mime_data(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 2) {
                 zP("curl::mime::data() expects 2 arguments but got %d", argc);
         }
 
-        struct value part = ARG(0);
+        Value part = ARG(0);
         if (part.type != VALUE_PTR) {
                 zP("the first argument to curl::mime::data() must be a pointer");
         }
 
-        struct value data = ARG(1);
+        Value data = ARG(1);
         switch (data.type) {
         case VALUE_STRING:
                 curl_mime_data(part.ptr, data.string, data.bytes);
@@ -181,21 +181,21 @@ builtin_curl_mime_data(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_curl_mime_name(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_mime_name(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 2) {
                 zP("curl::mime::name() expects 2 arguments but got %d", argc);
         }
 
-        struct value part = ARG(0);
+        Value part = ARG(0);
         if (part.type != VALUE_PTR) {
                 zP("the first argument to curl::mime::name() must be a pointer");
         }
 
         Buffer.count = 0;
 
-        struct value name = ARG(1);
+        Value name = ARG(1);
         switch (name.type) {
         case VALUE_STRING:
                 xvPn(Buffer, name.string, name.bytes);
@@ -214,19 +214,19 @@ builtin_curl_mime_name(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_curl_slist_append(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_slist_append(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 2) {
                 zP("curl::slist::append() expects 2 arguments but got %d", argc);
         }
 
-        struct value slist = ARG(0);
+        Value slist = ARG(0);
         if (slist.type != VALUE_PTR) {
                 zP("the first argument to curl::slist::append() must be a pointer");
         }
 
-        struct value s = ARG(1);
+        Value s = ARG(1);
         if (s.type != VALUE_BLOB) {
                 zP("the second argument to curl::slist::append() must be a blob");
         }
@@ -239,14 +239,14 @@ builtin_curl_slist_append(Ty *ty, int argc, struct value *kwargs)
         return PTR(list);
 }
 
-struct value
-builtin_curl_slist_free(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_slist_free(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl::slist::free() expects 1 argument but got %d", argc);
         }
 
-        struct value slist = ARG(0);
+        Value slist = ARG(0);
         if (slist.type != VALUE_PTR) {
                 zP("the argument to curl::slist::free() must be a pointer");
         }
@@ -256,24 +256,24 @@ builtin_curl_slist_free(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_curl_getinfo(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_getinfo(Ty *ty, int argc, Value *kwargs)
 {
         if (argc < 2) {
                 zP("curl::getinfo() expects at least 2 arguments but got %d", argc);
         }
 
-        struct value curl = ARG(0);
+        Value curl = ARG(0);
         if (curl.type != VALUE_PTR) {
                 zP("the first argument to curl::getinfo() must be a pointer");
         }
 
-        struct value opt = ARG(1);
+        Value opt = ARG(1);
         if (opt.type != VALUE_INTEGER) {
                 zP("the second argument to curl::getinfo() must be an integer");
         }
 
-        struct value s;
+        Value s;
         char buffer[1024];
 
         long rc;
@@ -287,8 +287,8 @@ builtin_curl_getinfo(Ty *ty, int argc, struct value *kwargs)
         }
 }
 
-struct value
-builtin_curl_setopt(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_setopt(Ty *ty, int argc, Value *kwargs)
 {
         if (argc < 2) {
                 zP("curl::setopt() expects at least 2 arguments but got %d", argc);
@@ -385,14 +385,14 @@ builtin_curl_setopt(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_curl_perform(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_perform(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl::perform() expects 1 argument but got %d", argc);
         }
 
-        struct value curl = ARG(0);
+        Value curl = ARG(0);
         if (curl.type != VALUE_PTR) {
                 zP("the argument to curl::perform() must be a pointer");
         }
@@ -413,14 +413,14 @@ builtin_curl_perform(Ty *ty, int argc, struct value *kwargs)
         return Ok(ty, BLOB(ResponseBlob));
 }
 
-struct value
-builtin_curl_strerror(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_strerror(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl::strerror() expects 1 argument but got %d", argc);
         }
 
-        struct value n = ARG(0);
+        Value n = ARG(0);
 
         if (n.type != VALUE_INTEGER) {
                 zP("the argument to curl::strerror() must be an integer");
@@ -432,8 +432,8 @@ builtin_curl_strerror(Ty *ty, int argc, struct value *kwargs)
         return STRING_NOGC(msg, strlen(msg));
 }
 
-struct value
-builtin_curl_url(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_url(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 0) {
                 zP("curl.url.new(): expected no arguments but got %d", argc);
@@ -442,8 +442,8 @@ builtin_curl_url(Ty *ty, int argc, struct value *kwargs)
         return PTR(curl_url());
 }
 
-struct value
-builtin_curl_url_strerror(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_url_strerror(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl.url.strerror(): expected 1 argument but got %d", argc);
@@ -462,8 +462,8 @@ builtin_curl_url_strerror(Ty *ty, int argc, struct value *kwargs)
         return (s == NULL) ? NIL : STRING_NOGC(s, strlen(s));
 }
 
-struct value
-builtin_curl_url_cleanup(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_url_cleanup(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 1) {
                 zP("curl.url.cleanup(): expected 1 argument but got %d", argc);
@@ -478,8 +478,8 @@ builtin_curl_url_cleanup(Ty *ty, int argc, struct value *kwargs)
         return NIL;
 }
 
-struct value
-builtin_curl_url_get(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_url_get(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 3) {
                 zP("curl.url.get(): expected 4 arguments but got %d", argc);
@@ -505,15 +505,15 @@ builtin_curl_url_get(Ty *ty, int argc, struct value *kwargs)
                 return Err(ty, INTEGER(rc));
         }
 
-        struct value v = vSc(content, strlen(content));
+        Value v = vSs(content, strlen(content));
 
         curl_free(content);
 
         return Ok(ty, v);
 }
 
-struct value
-builtin_curl_url_set(Ty *ty, int argc, struct value *kwargs)
+Value
+builtin_curl_url_set(Ty *ty, int argc, Value *kwargs)
 {
         if (argc != 4) {
                 zP("curl.url.set(): expected 4 arguments but got %d", argc);

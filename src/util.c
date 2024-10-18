@@ -154,19 +154,19 @@ this_executable(Ty *ty)
                 return NIL;
         }
 
-        return vSc(path, strlen(path));
+        return vSsz(path);
 #elif defined(__linux__)
         char path[PATH_MAX];
         ssize_t len = readlink("/proc/self/exe", path, sizeof path - 1);
         if (len <= 0)
                 return NIL;
-        return vSc(path, len);
+        return vSs(path, len);
 #elif defined(_WIN32)
         char path[MAX_PATH];
         DWORD len = GetModuleFileName(NULL, path, MAX_PATH);
         if (len == 0)
                 return NIL;
-        return vSc(path, len);
+        return vSs(path, len);
 #else
         return NIL;
 #endif

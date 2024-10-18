@@ -14,24 +14,22 @@
 
 typedef struct value Value;
 
-typedef vec(int) int_vector;
-typedef vec(char) byte_vector;
-typedef vec(char *) CallStack;
-typedef vec(Value) ValueVector;
-typedef ValueVector ValueStack;
-typedef vec(char *) StringVector;
-typedef vec(char const *) ConstStringVector;
-typedef vec(struct try *) TryStack;
-typedef vec(struct sigfn) SigfnStack;
+typedef vec(int)           int_vector;
+typedef vec(char)          byte_vector;
+typedef vec(char *)        CallStack;
+typedef vec(Value)         ValueVector;
+typedef ValueVector        ValueStack;
+typedef vec(char *)        StringVector;
+typedef vec(char const *)  ConstStringVector;
+typedef vec(struct try *)  TryStack;
+typedef vec(struct sigfn)  SigfnStack;
 
-struct target {
+typedef struct target {
         struct {
                 Value *t;
                 void *gc;
         };
-};
-
-typedef struct target Target;
+} Target;
 
 struct frame;
 typedef struct frame Frame;
@@ -137,68 +135,75 @@ extern bool ColorProfile;
 
 #define dont_printf(...) do { } while (0)
 
-#define GC_STOP() (ty->GC_OFF_COUNT += 1)
+#define GC_STOP()   (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
 
 #define UNLIKELY(x) __builtin_expect((x), 0)
 #define LIKELY(x)   __builtin_expect((x), 1)
 
-#define zP(...) vm_panic(ty, __VA_ARGS__)
-#define mRE(...) resize(__VA_ARGS__)
+#define zP(...)   vm_panic(ty, __VA_ARGS__)
+#define mRE(...)  resize(__VA_ARGS__)
 #define mREu(...) resize_unchecked(__VA_ARGS__)
-#define mA(...) gc_alloc(ty, __VA_ARGS__)
-#define mAo(...) gc_alloc_object(ty, __VA_ARGS__)
+#define mA(...)   gc_alloc(ty, __VA_ARGS__)
+#define mAo(...)  gc_alloc_object(ty, __VA_ARGS__)
 #define mAo0(...) gc_alloc_object0(ty, __VA_ARGS__)
-#define mF(p) gc_free(ty, p)
+#define mF(p)     gc_free(ty, p)
 
-#define amA(n) Allocate(ty, (n))
+#define amA(n)  Allocate(ty, (n))
 #define amA0(n) Allocate0(ty, (n))
-#define amX(n) DestroyArena(ty, (n))
-#define amF(n) ReleaseArena(ty, (n))
+#define amX(n)  DestroyArena(ty, (n))
+#define amF(n)  ReleaseArena(ty, (n))
 
 #define smA(n) AllocateScratch(ty, (n))
 
-#define amN(c) NewArena(ty, (c))
+#define amN(c)  NewArena(ty, (c))
 #define amNg(c) NewArenaGC(ty, (c))
 
-#define vSc(s, n) STRING_CLONE(ty, s, (n))
-#define vSnc(s, n) STRING_C_CLONE(ty, s, (n))
-#define vScn(s)    STRING_CLONE_C(ty, s)
-#define vSncn(s)    STRING_C_CLONE_C(ty, s)
+#define vSs(s, n)  STRING_CLONE(ty, (s), (n))
+#define vSzs(s, n) STRING_C_CLONE(ty, (s), (n))
+#define vSsz(s)    STRING_CLONE_C(ty, (s))
+#define vSzz(s)    STRING_C_CLONE_C(ty, (s))
 
 #define vA()       value_array_new(ty)
 #define vAn(n)     value_array_new_sized(ty, n)
 #define vAp(a, x)  value_array_push(ty, a, x)
 
-#define vT(n)    value_tuple(ty, n)
+#define vT(n)     value_tuple(ty, n)
 #define vTn(...)  value_named_tuple(ty, __VA_ARGS__, NULL)
 
-#define vvPn(a, b, c)    vec_push_n(a, b, c)
-#define vvP(a, b)       vec_push(a, b)
-#define vvI(a, b, c)    vec_insert(a, b, c)
-#define vvIn(a, b, c, d) vec_insert_n(a, b, c, d)
-#define vvF(a)           vec_empty(a)
-#define vvR(a, b)        vec_reserve(a, b)
+#define vvPn(a, b, c)    vec_push_n((a), (b), (c))
+#define vvP(a, b)        vec_push((a), (b))
+#define vvI(a, b, c)     vec_insert((a), (b), (c))
+#define vvIn(a, b, c, d) vec_insert_n(a, (b), (c), (d))
+#define vvF(a)           vec_empty((a))
+#define vvR(a, b)        vec_reserve((a), (b))
 
 #define vvX  vec_pop
 #define vvL  vec_last
 #define vvXi vec_pop_ith
+#define v_(v, i) (&(v).items[(i)])
+#define vZ(v) ((v).items + (v).count)
 
-#define avP(a, b)       VPush(a, b)
+#define avP(a, b)        VPush(a, b)
 #define avPn(a, b, c)    VPushN(a, b, c)
-#define avI(a, b, c)    VInsert(a, b, c)
+#define avI(a, b, c)     VInsert(a, b, c)
 #define avIn(a, b, c, d) VInsertN(a, b, c, d)
 
-#define xvP(a, b)       vec_nogc_push(a, b)
-#define xvPn(a, b, c)    vec_nogc_push_n(a, b, c)
-#define xvI(a, b, c)    vec_nogc_insert(a, b, c)
-#define xvIn(a, b, c, d) vec_nogc_insert_n(a, b, c, d)
-#define xvR(a, b)       vec_nogc_reserve(a, b)
+#define uvP(v, x)         vec_push_unchecked((v), (x))
+#define uvPn(v, xs, n)    vec_push_n_unchecked((v), (xs), (n))
+#define uvI(v, x, i)      vec_insert_unchecked((v), (x), (i))
+#define uvIn(v, xs, n, i) vec_insert_n_unchecked((v), (xs), (n), (i))
 
-#define svPn(a, b, c)    vec_push_n_scratch(a, b, c)
-#define svP(a, b)       vec_push_scratch(a, b)
-#define svI(a, b, c)    vec_insert_scratch(a, b, c)
-#define svIn(a, b, c, d) vec_insert_n_scratch(a, b, c, d)
+#define xvP(a, b)        vec_nogc_push((a), (b))
+#define xvPn(a, b, c)    vec_nogc_push_n((a), (b), (c))
+#define xvI(a, b, c)     vec_nogc_insert((a), (b), (c))
+#define xvIn(a, b, c, d) vec_nogc_insert_n(a, (b), (c), (d))
+#define xvR(a, b)        vec_nogc_reserve((a), (b))
+
+#define svPn(a, b, c)    vec_push_n_scratch((a), (b), (c))
+#define svP(a, b)        vec_push_scratch((a), (b))
+#define svI(a, b, c)     vec_insert_scratch((a), (b), (c))
+#define svIn(a, b, c, d) vec_insert_n_scratch(a, (b), (c), (d))
 
 #define gP(x) gc_push(ty, x)
 #define gX()  gc_pop(ty)
@@ -206,12 +211,12 @@ extern bool ColorProfile;
 #define lGv(b) ReleaseLock(ty, b)
 #define lTk()  TakeLock(ty)
 
-#define vmP(x)     vm_push(ty, x)
-#define vmX()      vm_pop(ty)
-#define vmE(x)     vm_throw(ty, x)
-#define vmC(...)   vm_call(ty, __VA_ARGS__)
+#define vmP(x)   vm_push(ty, x)
+#define vmX()    vm_pop(ty)
+#define vmE(x)   vm_throw(ty, x)
+#define vmC(...) vm_call(ty, __VA_ARGS__)
 
-#define PAIR(a, b)    PAIR_(ty, a, b)
+#define PAIR(a, b)      PAIR_(ty, a, b)
 #define TRIPLE(a, b, c) TRIPLE_(ty, a, b, c)
 
 #define TY_BINARY_OPERATORS  \
@@ -260,7 +265,7 @@ enum {
 #define pT(p) ((uintptr_t)p &  7)
 #define pP(p) ((uintptr_t)p & ~7)
 
-#define M_ID(m) intern(&xD.members, (m))->id
+#define M_ID(m)   intern(&xD.members, (m))->id
 #define M_NAME(i) intern_entry(&xD.members, (i))->name
 
 #define PMASK3 ((uintptr_t)7)
@@ -283,7 +288,7 @@ inline static void
 ExpandScratch(Ty *ty)
 {
 #define S(x) (ty->scratch . x)
-#define SS (&S(arenas.items)[S(i) - 1])
+#define SS   (&S(arenas.items)[S(i) - 1])
         if (S(i) == S(arenas.count)) {
                 ptrdiff_t cap;
 
@@ -343,8 +348,9 @@ RestoreScratch(Ty *ty, ScratchSave save)
         }
 }
 #undef S
+#undef SS
 
-#define SCRATCH_SAVE() ScratchSave _scratch_save = SaveScratch(ty);
+#define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
 #define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
 
 #endif

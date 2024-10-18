@@ -8,8 +8,8 @@
 #include "util.h"
 #include "ty.h"
 
-static struct value
-blob_clear(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_clear(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         int start;
         int n;
@@ -50,12 +50,12 @@ blob_clear(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-blob_search(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
 
-        struct value start;
-        struct value c;
+        Value start;
+        Value c;
 
         switch (argc) {
         case 1:
@@ -102,23 +102,23 @@ blob_search(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return (s == NULL) ? NIL : INTEGER(s - haystack + start.integer);
 }
 
-static struct value
-blob_shrink(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_shrink(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         mRE(blob->blob->items, blob->blob->count);
         blob->blob->capacity = blob->blob->count;
         return NIL;
 }
 
-static struct value
-blob_push(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         size_t index = blob->blob->count;
-        struct value arg;
+        Value arg;
 
         if (argc >= 2 && ARG(0).type != VALUE_PTR) {
                 arg = ARG(1);
-                struct value idx = ARG(0);
+                Value idx = ARG(0);
                 if (idx.type != VALUE_INTEGER)
                         zP("the index passed to blob.push() must be an integer");
                 if (idx.integer < 0)
@@ -155,19 +155,19 @@ blob_push(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return *blob;
 }
 
-static struct value
-blob_size(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_size(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         return INTEGER(blob->blob->count);
 }
 
-static struct value
-blob_get(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_get(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("blob.get() expects 1 argument but got %d", argc);
 
-        struct value i = ARG(0);
+        Value i = ARG(0);
         if (i.type != VALUE_INTEGER)
                 zP("the argument to blob.get() must be an integer");
         if (i.integer < 0)
@@ -178,8 +178,8 @@ blob_get(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return INTEGER(blob->blob->items[i.integer]);
 }
 
-static struct value
-blob_fill(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_fill(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("blob.fill() expects no arguments but got %d", argc);
@@ -193,13 +193,13 @@ blob_fill(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-blob_set(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_set(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc != 2)
                 zP("blob.set() expects 2 arguments but got %d", argc);
 
-        struct value i = ARG(0);
+        Value i = ARG(0);
         if (i.type != VALUE_INTEGER)
                 zP("the argument to blob.get() must be an integer");
         if (i.integer < 0)
@@ -207,7 +207,7 @@ blob_set(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         if (i.integer < 0 || i.integer >= blob->blob->count)
                 zP("invalid index passed to blob.get()");
 
-        struct value arg = ARG(1);
+        Value arg = ARG(1);
         if (arg.type != VALUE_INTEGER || arg.integer < 0 || arg.integer > UCHAR_MAX)
                 zP("invalid integer passed to blob.set()");
 
@@ -216,8 +216,8 @@ blob_set(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-blob_xor(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc == 1 && ARG(0).type == VALUE_BLOB) {
                 struct blob *b = ARG(0).blob;
@@ -295,8 +295,8 @@ blob_xor(Ty *ty, struct value *blob, int argc, struct value *kwargs)
 }
 
 
-static struct value
-blob_str(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         int start;
         int n;
@@ -351,8 +351,8 @@ blob_str(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return STRING(s, i);
 }
 
-static struct value
-blob_str_unsafe(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         int start;
         int n;
@@ -383,16 +383,16 @@ blob_str_unsafe(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         if (start < 0 || n < 0 || (n + start) > blob->blob->count)
                 zP("invalid arguments to blob.str()");
 
-        return vSc((char const *)blob->blob->items + start, n);
+        return vSs((char const *)blob->blob->items + start, n);
 }
 
-static struct value
-blob_reserve(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_reserve(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc != 1)
                 zP("blob.reserve() expects 1 argument but got %d", argc);
 
-        struct value n = ARG(0);
+        Value n = ARG(0);
         if (n.type != VALUE_INTEGER)
                 zP("the argument to blob.reserve() must be an integer");
         if (n.integer < 0)
@@ -403,8 +403,8 @@ blob_reserve(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return NIL;
 }
 
-static struct value
-blob_ptr(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_ptr(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc == 0) {
                 return PTR(blob->blob->items);
@@ -421,8 +421,8 @@ blob_ptr(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         zP("blob.ptr() expects 0 or 1 arguments but got %d", argc);
 }
 
-static struct value
-blob_hex(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_hex(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc != 0)
                 zP("blob.hex() expects no arguments but got %d", argc);
@@ -441,8 +441,8 @@ blob_hex(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return STRING(s, n*2);
 }
 
-static struct value
-blob_slice(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         int start = 0;
         int n = blob->blob->count;
@@ -481,8 +481,8 @@ blob_slice(Ty *ty, struct value *blob, int argc, struct value *kwargs)
         return BLOB(b);
 }
 
-static struct value
-blob_splice(Ty *ty, struct value *blob, int argc, struct value *kwargs)
+static Value
+blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         int start = 0;
         int n = blob->blob->count;

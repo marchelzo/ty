@@ -91,7 +91,7 @@ pub macro clap! {
         getc()
 
         let v = ''
-        
+
         while !peekc().match?(/\s/) {
             v += getc()
         }

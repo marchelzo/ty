@@ -132,7 +132,7 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
 
     let pKey = c.new(TermKeyKey)
     let keyBuffer = Blob()
-    
+
     keyBuffer.reserve(256)
 
     termkey_start(tk)

@@ -348,7 +348,7 @@ BUILTIN_FUNCTION(slurp)
 
                 lTk();
 
-                struct value str = vSc(B.items, B.count);
+                struct value str = vSs(B.items, B.count);
 
                 if (need_close)
                         fclose(f);
@@ -387,7 +387,7 @@ BUILTIN_FUNCTION(read)
         if (B.count == 0 && c != '\n')
                 return NIL;
 
-        return vSc(B.items, B.count);
+        return vSs(B.items, B.count);
 }
 
 BUILTIN_FUNCTION(rand)
@@ -560,7 +560,7 @@ BUILTIN_FUNCTION(chr)
         char b[4];
         int n = utf8proc_encode_char(k.integer, b);
 
-        return vSc(b, n);
+        return vSs(b, n);
 }
 
 BUILTIN_FUNCTION(ord)
@@ -725,7 +725,7 @@ BUILTIN_FUNCTION(show)
         bool use_color = (color == NULL) ? isatty(1) : value_truthy(ty, color);
 
         char *str = use_color ? value_show_color(ty, &arg) : value_show(ty, &arg);
-        struct value result = vSc(str, strlen(str));
+        struct value result = vSs(str, strlen(str));
         mF(str);
 
         return result;
@@ -743,7 +743,7 @@ BUILTIN_FUNCTION(str)
                 return arg;
         } else {
                 char *str = value_show(ty, &arg);
-                struct value result = vSc(str, strlen(str));
+                struct value result = vSs(str, strlen(str));
                 mF(str);
                 return result;
         }
@@ -1165,7 +1165,7 @@ MissingArgument:
                 }
         }
 
-        Value s = vSc(cs.items, cs.count);
+        Value s = vSs(cs.items, cs.count);
 
         free(cs.items);
         free(sb.items);
@@ -1830,7 +1830,7 @@ BUILTIN_FUNCTION(base64_encode)
                 }
         }
 
-        return vSc(B.items, B.count);
+        return vSs(B.items, B.count);
 
 Bad:
         zP("base64.encode(): invalid argument(s)");
@@ -1979,7 +1979,7 @@ BUILTIN_FUNCTION(os_mkdtemp)
                 return NIL;
         }
 
-        return vSc(template, strlen(template));
+        return vSs(template, strlen(template));
 }
 
 static int
@@ -2055,7 +2055,7 @@ BUILTIN_FUNCTION(os_mktemp)
         NOGC(pair.items);
 
         pair.items[0] = INTEGER(fd);
-        pair.items[1] = vSc(template, strlen(template));
+        pair.items[1] = vSs(template, strlen(template));
 
         OKGC(pair.items);
 
@@ -2109,7 +2109,7 @@ BUILTIN_FUNCTION(os_readdir)
         if (entry == NULL)
                 return NIL;
 
-        Value name = vSc(entry->d_name, strlen(entry->d_name));
+        Value name = vSs(entry->d_name, strlen(entry->d_name));
 
         NOGC(name.string);
 
@@ -2206,7 +2206,7 @@ BUILTIN_FUNCTION(os_getcwd)
         if (getcwd(buffer, sizeof buffer) == NULL)
                 return NIL;
 
-        return vSc(buffer, strlen(buffer));
+        return vSs(buffer, strlen(buffer));
 }
 
 BUILTIN_FUNCTION(os_unlink)
@@ -3463,7 +3463,7 @@ BUILTIN_FUNCTION(thread_getname)
                 return NIL;
         }
 
-        return vSc(buffer, strlen(buffer));
+        return vSs(buffer, strlen(buffer));
 #endif
 }
 
@@ -3643,8 +3643,8 @@ BUILTIN_FUNCTION(os_getnameinfo)
 
         if (r == 0) {
                 struct value v = vT(2);
-                v.items[0] = vSc(host, strlen(host));
-                v.items[1] = vSc(serv, strlen(serv));
+                v.items[0] = vSs(host, strlen(host));
+                v.items[1] = vSs(serv, strlen(serv));
                 return v;
         }
 
@@ -3948,7 +3948,7 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                         vvPn(*b, (char *)it->ai_addr, it->ai_addrlen);
 
                         if (it->ai_canonname != NULL) {
-                                entry.items[4] = vSc(it->ai_canonname, strlen(it->ai_canonname));
+                                entry.items[4] = vSs(it->ai_canonname, strlen(it->ai_canonname));
                         }
                 }
 
@@ -4701,7 +4701,7 @@ BUILTIN_FUNCTION(os_listdir)
 
         do {
                 if (strcmp(findData.cFileName, ".") != 0 && strcmp(findData.cFileName, "..") != 0) {
-                        vvP(*files, vSc(findData.cFileName, strlen(findData.cFileName)));
+                        vvP(*files, vSs(findData.cFileName, strlen(findData.cFileName)));
                 }
         } while (FindNextFileA(hFind, &findData) != 0);
 
@@ -4743,7 +4743,7 @@ BUILTIN_FUNCTION(os_listdir)
 
         while (e = readdir(d), e != NULL)
                 if (strcmp(e->d_name, ".") != 0 && strcmp(e->d_name, "..") != 0)
-                        vvP(*files, vSc(e->d_name, strlen(e->d_name)));
+                        vvP(*files, vSs(e->d_name, strlen(e->d_name)));
 
         closedir(d);
 
@@ -4796,7 +4796,7 @@ BUILTIN_FUNCTION(os_realpath)
         if (resolved == NULL)
                 return NIL;
 
-        return vSc(out, strlen(out));
+        return vSs(out, strlen(out));
 }
 
 BUILTIN_FUNCTION(os_ftruncate)
@@ -5130,7 +5130,7 @@ BUILTIN_FUNCTION(errno_str)
 
         char const *s = strerror(e);
 
-        return vSc(s, strlen(s));
+        return vSs(s, strlen(s));
 }
 
 BUILTIN_FUNCTION(time_gettime)
@@ -5295,7 +5295,7 @@ BUILTIN_FUNCTION(time_strftime)
         int n = strftime(buffer, sizeof buffer, B.items, &t);
 
         if (n > 0) {
-                return vSc(buffer, n);
+                return vSs(buffer, n);
         } else {
                 return NIL;
         }
@@ -5463,7 +5463,7 @@ BUILTIN_FUNCTION(stdio_fgets)
         if (B.count == 0) {
                 s = (c == EOF) ? NIL : STRING_EMPTY;
         } else {
-                s = vSc(B.items, B.count);
+                s = vSs(B.items, B.count);
         }
 
         return s;
@@ -5790,7 +5790,7 @@ BUILTIN_FUNCTION(stdio_slurp)
         if (c == EOF && B.count == 0)
                 return NIL;
 
-        struct value s = vSc(B.items, B.count);
+        struct value s = vSs(B.items, B.count);
 
         return s;
 }
@@ -6190,7 +6190,7 @@ BUILTIN_FUNCTION(members_list)
                                 char const *key = intern_entry(&xD.members, o.object->buckets[i].ids.items[v])->name;
                                 Value member = vT(2);
                                 NOGC(member.items);
-                                member.items[0] = vSc(key, strlen(key));
+                                member.items[0] = vSs(key, strlen(key));
                                 member.items[1] = o.object->buckets[i].values.items[v];
                                 NOGC(member.items[0].string);
                                 vAp(a, member);
@@ -6208,7 +6208,7 @@ BUILTIN_FUNCTION(members_list)
                         vAp(a, entry);
                         if (o.ids != NULL && o.ids[i] != -1) {
                                 char const *name = intern_entry(&xD.members, o.ids[i])->name;
-                                pair[0] = vSc(name, strlen(name));
+                                pair[0] = vSs(name, strlen(name));
                                 pair[1] = o.items[i];
                         } else {
                                 pair[0] = INTEGER(i);
@@ -6258,7 +6258,7 @@ BUILTIN_FUNCTION(members)
                 for (int i = 0; i < o.count; ++i) {
                         if (o.ids != NULL && o.ids[i] != -1) {
                                 char const *name = intern_entry(&xD.members, o.ids[i])->name;
-                                struct value key = vSc(name, strlen(name));
+                                struct value key = vSs(name, strlen(name));
                                 NOGC(key.string);
                                 dict_put_value(ty, members, key, o.items[i]);
                                 OKGC(key.string);
@@ -6346,14 +6346,14 @@ fdoc(Ty *ty, struct value const *f)
         struct value n;
         if (f->info[6] != -1) {
                 snprintf(name_buf, sizeof name_buf, "%s.%s", class_name(ty, f->info[6]), name);
-                n = vSc(name_buf, strlen(name_buf));
+                n = vSs(name_buf, strlen(name_buf));
         } else if (name != NULL) {
-                n = vSc(name, strlen(name));
+                n = vSs(name, strlen(name));
         } else {
                 n = NIL;
         }
-        struct value p = (proto == NULL) ? NIL : vSc(proto, strlen(proto));
-        struct value doc = (s == NULL) ? NIL : vSc(s, strlen(s));
+        struct value p = (proto == NULL) ? NIL : vSs(proto, strlen(proto));
+        struct value doc = (s == NULL) ? NIL : vSs(s, strlen(s));
         struct value v = vT(3);
         v.items[0] = n;
         v.items[1] = p;
@@ -6394,7 +6394,7 @@ BUILTIN_FUNCTION(doc)
                 char const *name = class_name(ty, ARG(0).class);
                 struct value v = vT(3);
                 v.items[0] = STRING_NOGC(name, strlen(name));
-                v.items[1] = (s == NULL) ? NIL : vSc(s, strlen(s));
+                v.items[1] = (s == NULL) ? NIL : vSs(s, strlen(s));
                 v.items[2] = ARRAY(vA());
                 mdocs(ty, class_methods(ty, ARG(0).class), v.items[2].array);
                 mdocs(ty, class_static_methods(ty, ARG(0).class), v.items[2].array);
@@ -6427,7 +6427,7 @@ BUILTIN_FUNCTION(doc)
         if (s == NULL || s->doc == NULL)
                 return NIL;
 
-        return vSc(s->doc, strlen(s->doc));
+        return vSs(s->doc, strlen(s->doc));
 }
 
 BUILTIN_FUNCTION(ty_gc)
@@ -6676,6 +6676,73 @@ make_tokens(Ty *ty, TokenVector const *ts)
         return ARRAY(a);
 }
 
+BUILTIN_FUNCTION(ty_disassemble)
+{
+        ASSERT_ARGC("ty.disassemble()", 1);
+
+        Value what = ARG(0);
+
+        char *code;
+        char const *end;
+        char const *name;
+
+        switch (what.type) {
+        case VALUE_STRING:
+                uvP(B, '\0');
+                uvPn(B, what.string, what.bytes);
+                uvP(B, '\0');
+
+                name = "(eval)";
+                code = compiler_compile_source(ty, B.items + 1, name);
+                end = NULL;
+
+                if (code == NULL) {
+                        snprintf(buffer, sizeof buffer, "%s", compiler_error(ty));
+                        zP("disassemble(): %s\n=============================================================", buffer);
+                }
+
+                break;
+        case VALUE_GENERATOR:
+                what = what.gen->f;
+        case VALUE_FUNCTION:
+                if (class_of(&what) != -1) {
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s.%s%s",
+                                class_name(ty, class_of(&what)),
+                                name_of(&what),
+                                proto_of(&what)
+                        );
+                } else {
+                        snprintf(
+                                buffer,
+                                sizeof buffer,
+                                "%s%s",
+                                name_of(&what),
+                                proto_of(&what)
+                        );
+                }
+
+                name = buffer;
+                code = code_of(&what);
+                end = code + code_size_of(&what);
+
+                break;
+        default:
+                zP("I don't know how to dissasemble that yet :( %s", VSC(&what));
+        }
+
+        byte_vector text = {0};
+        DumpProgram(ty, &text, name, code, end);
+
+        Value result = vSs(text.items, text.count);
+
+        free(text.items);
+
+        return result;
+}
+
 BUILTIN_FUNCTION(eval)
 {
         ASSERT_ARGC_2("ty.eval()", 1, 2);
@@ -6700,7 +6767,7 @@ BUILTIN_FUNCTION(eval)
 
                 if (prog == NULL) {
                         char const *msg = parse_error(ty);
-                        struct value e = Err(ty, vSc(msg, strlen(msg)));
+                        struct value e = Err(ty, vSs(msg, strlen(msg)));
                         ReleaseArena(ty, old);
                         vmE(&e);
                 }
@@ -6710,7 +6777,7 @@ BUILTIN_FUNCTION(eval)
                 if (!compiler_symbolize_expression(ty, e, scope))
                 Err1: {
                         char const *msg = compiler_error(ty);
-                        struct value e = Err(ty, vSc(msg, strlen(msg)));
+                        struct value e = Err(ty, vSs(msg, strlen(msg)));
                         ReleaseArena(ty, old);
                         vmE(&e);
                 }
@@ -6730,7 +6797,7 @@ BUILTIN_FUNCTION(eval)
                 Err2:
                 {
                         char const *msg = compiler_error(ty);
-                        struct value e = Err(ty, vSc(msg, strlen(msg)));
+                        struct value e = Err(ty, vSs(msg, strlen(msg)));
                         vmE(&e);
                 }
                 Value v = tyeval(ty, e);
@@ -6784,7 +6851,7 @@ BUILTIN_FUNCTION(ty_parse)
                 result = Err(
                         ty,
                         vTn(
-                                "msg", vSc(msg, strlen(msg)),
+                                "msg", vSs(msg, strlen(msg)),
                                 NULL
                         )
                 );
@@ -6803,7 +6870,7 @@ BUILTIN_FUNCTION(ty_parse)
 
                 extra = vTn(
                         "where",    make_location(ty, &stop, beginning_of(stop.s)),
-                        "msg",      vSc(msg, strlen(msg)),
+                        "msg",      vSs(msg, strlen(msg)),
                         tokens_key, vTokens,
                         NULL
                 );
@@ -6893,7 +6960,7 @@ BUILTIN_FUNCTION(ty_get_source)
 
         Value file = (src->filename == NULL)
                    ? NIL
-                   : vSc(src->filename, strlen(src->filename));
+                   : vSs(src->filename, strlen(src->filename));
 
         char const *start = beginning_of(src->start.s);
 
@@ -6937,7 +7004,7 @@ BUILTIN_FUNCTION(lex_peek_char)
                 return NIL;
         }
 
-        return vSc(b, n);
+        return vSs(b, n);
 }
 
 BUILTIN_FUNCTION(lex_next_char)
@@ -6952,7 +7019,7 @@ BUILTIN_FUNCTION(lex_next_char)
                 return NIL;
         }
 
-        return vSc(b, strlen(b));
+        return vSs(b, strlen(b));
 }
 
 BUILTIN_FUNCTION(token_peek)
@@ -7070,7 +7137,7 @@ BUILTIN_FUNCTION(parse_show)
 
         int n = src->end.s - src->start.s;
 
-        return vSc(src->start.s, n);
+        return vSs(src->start.s, n);
 }
 
 BUILTIN_FUNCTION(parse_fail)

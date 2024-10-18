@@ -26,6 +26,7 @@
 #include "str.h"
 #include "dict.h"
 #include "array.h"
+#include "ty.h"
 #include "polyfill_time.h"
 
 #ifdef TY_HAVE_VERSION_INFO
@@ -45,9 +46,11 @@ static char const *print_function = "print";
 static char SymbolLocation[512];
 
 bool EnableLogging = false;
-
 bool ColorStdout;
 bool ColorStderr;
+
+extern bool ProduceAnnotation;
+extern FILE *DisassemblyOut;
 
 #ifdef TY_ENABLE_PROFILING
 extern FILE *ProfileOut;
@@ -71,11 +74,13 @@ usage(void)
                 "    -M MODULE     Like -m, but uses an unqualified import: import MODULE (..)            \0"
                 "    -p            Print the value of the last-evaluated expression before exiting        \0"
                 "    -q            Ignore constraints on function parameters and return values            \0"
+                "    -S FILE       Write the program's annotated disassembly to FILE                      \0"
+                "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    -t LINE:COL   Find the definition of the symbol which occurs at LINE:COL             \0"
                 "                  in the specified source file                                           \0"
 #ifdef TY_ENABLE_PROFILING
                 "    -o FILE       Write profile data to FILE instead of stdout                           \0"
-                "                                (-o@ is interpreted as stderr)                           \0"
+                "                    (- is interpreted as stdout, and @ is interpreted as stderr)         \0"
                 "    --wall        Profile based on wall time instead of CPU time                         \0"
 #endif
                 "    --color=WHEN  Explicitly control when to use colored output. WHEN can be set         \0"
@@ -107,11 +112,13 @@ repl_exec(Ty *ty, char const *code)
 static bool
 execln(Ty *ty, char *line)
 {
-        static char buffer[8192];
+        byte_vector buffer = {0};
         bool good = true;
 
         if (line[strspn(line, " \t\n")] == '\0')
                 return true;
+
+        xvP(buffer, '\0');
 
         /*
          * Very bad.
@@ -129,26 +136,35 @@ execln(Ty *ty, char *line)
                         good = false;
                 }
                 goto End;
-
         } else if (strncmp(line, "help ", 5) == 0) {
-                snprintf(buffer + 1, sizeof buffer - 2, "help(%s);", line + 5);
-                if (repl_exec(&MainTy, buffer + 1))
+                dump(&buffer, "help(%s);", line + 5);
+                if (repl_exec(&MainTy, v_(buffer, 1)))
+                        goto End;
+                else
+                        goto Bad;
+        } else if (strncmp(line, "dis ", 4) == 0) {
+                dump(&buffer, "print(ty.disassemble(%s));", line + 4);
+                if (repl_exec(&MainTy, v_(buffer, 1)))
                         goto End;
                 else
                         goto Bad;
         }
 
-        snprintf(buffer + 1, sizeof buffer - 2, "%s(%s);", print_function, line);
-        if (repl_exec(&MainTy, buffer + 1))
+        dump(&buffer, "%s(%s);", print_function, line);
+        if (repl_exec(&MainTy, v_(buffer, 1)))
                 goto End;
-        snprintf(buffer + 1, sizeof buffer - 2, "%s\n", line);
-        if (strstr(vm_error(&MainTy), "ParseError") != NULL && repl_exec(&MainTy, buffer + 1))
+
+        buffer.count = 1;
+
+        dump(&buffer, "%s\n", line);
+        if (strstr(vm_error(&MainTy), "ParseError") != NULL && repl_exec(&MainTy, v_(buffer, 1)))
                 goto End;
+
 Bad:
         good = false;
         fprintf(stderr, "%s\n", vm_error(&MainTy));
-End:
 
+End:
         fflush(stdout);
 
         return good;
@@ -174,9 +190,19 @@ repl(Ty *ty)
 
         signal(SIGINT, sigint);
 
-        execln(&MainTy, "import help (..)");
-        print_function = "prettyPrint";
+        execln(
+                &MainTy,
+                "import help (..)\n"
+                "import json     \n"
+                "import math     \n"
+                "import ty       \n"
+                "import os       \n"
+                "import time     \n"
+                "import errno    \n"
+                "import locale   \n"
+        );
 
+        print_function = "prettyPrint";
         use_readline = true;
 
         for (;;) {
@@ -284,19 +310,20 @@ stdin_is_tty(void)
 #endif
 }
 
-
-#ifdef TY_ENABLE_PROFILING
-static void
-set_profile_out(char const *path)
+static FILE *
+OpenOutputFile(char const *path)
 {
-
-        if (strcmp(path, "@") == 0) {
-                ProfileOut = stderr;
-        } else {
-                ProfileOut = fopen(path, "w+");
+        if (path[0] == '\0' || strcmp(path, "-") == 0) {
+                return stdout;
         }
 
-        if (ProfileOut == NULL) {
+        if (strcmp(path, "@") == 0) {
+                return stderr;
+        }
+
+        FILE *file = fopen(path, "w+");
+
+        if (file == NULL) {
                 fprintf(
                         stderr,
                         "Failed to open %s for writing: %s",
@@ -305,9 +332,9 @@ set_profile_out(char const *path)
                 );
                 exit(EXIT_FAILURE);
         }
-}
-#endif
 
+        return file;
+}
 
 static int
 ProcessArgs(char *argv[], bool first)
@@ -394,9 +421,10 @@ ProcessArgs(char *argv[], bool first)
                                                         fprintf(stderr, "Missing argument for -e\n");
                                                         return 1;
                                                 }
-                                                if (!first) exit((int)!execln(&MainTy, argv[++argi]));
+                                                if ((++argi, !first)) exit((int)!execln(&MainTy, argv[argi]));
                                         } else {
                                                 if (!first) exit((int)!execln(&MainTy, (char *)(opt + 1)));
+                                                while (opt[1] != '\0') ++opt;
                                         }
                                         break;
                                 case 'f':
@@ -433,13 +461,25 @@ ProcessArgs(char *argv[], bool first)
                                                         fprintf(stderr, "Missing argument for -o\n");
                                                         exit(1);
                                                 }
-                                                set_profile_out(argv[++argi]);
+                                                ProfileOut = OpenOutputFile(argv[++argi]);
                                         } else {
-                                                set_profile_out(opt + 1);
+                                                ProfileOut = OpenOutputFile(opt + 1);
                                                 while (opt[1] != '\0') ++opt;
                                         }
                                         break;
 #endif
+                                case 'S':
+                                        if (opt[1] == '\0') {
+                                                if (argv[argi + 1] == NULL) {
+                                                        fprintf(stderr, "Missing argument for -S\n");
+                                                        exit(1);
+                                                }
+                                                DisassemblyOut = OpenOutputFile(argv[++argi]);
+                                        } else {
+                                                DisassemblyOut = OpenOutputFile(opt + 1);
+                                                while (opt[1] != '\0') ++opt;
+                                        }
+                                        break;
                                 default:
                                         fprintf(stderr, "Unrecognized option -%c\n", *opt);
                                         exit(1);
@@ -469,6 +509,10 @@ main(int argc, char **argv)
         }
 
 #ifdef TY_ENABLE_PROFILING
+        if (ProfileOut == NULL) {
+                ProfileOut = stdout;
+        }
+
         switch (color_mode) {
         case TY_COLOR_AUTO:   ColorProfile = isatty(fileno(ProfileOut)); break;
         case TY_COLOR_ALWAYS: ColorProfile = true;                       break;

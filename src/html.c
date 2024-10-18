@@ -15,7 +15,7 @@ convert_node(Ty *ty, GumboNode const *n, struct itable *p);
 inline static struct value
 convert_text(Ty *ty, GumboText const *t)
 {
-        return vScn(t->text);
+        return vSsz(t->text);
 }
 
 inline static struct value
@@ -24,8 +24,8 @@ convert_attr(Ty *ty, GumboAttribute const *a)
         struct itable *t = object_new(ty, 0);
         NOGC(t);
 
-        itable_put(ty, t, "name", vScn(a->name));
-        itable_put(ty, t, "value", vScn(a->value));
+        itable_put(ty, t, "name", vSsz(a->name));
+        itable_put(ty, t, "value", vSsz(a->value));
 
         OKGC(t);
 
@@ -47,7 +47,7 @@ convert_elem(Ty *ty, GumboElement const *e, struct itable *n)
 
 
         itable_put(ty, t, "children", ARRAY(cs));
-        itable_put(ty, t, "t", vScn(gumbo_normalized_tagname(e->tag)));
+        itable_put(ty, t, "t", vSsz(gumbo_normalized_tagname(e->tag)));
 
         struct array *as = vA();
         NOGC(as);
@@ -72,9 +72,9 @@ convert_doc(Ty *ty, GumboDocument const *d)
         NOGC(t);
 
         itable_put(ty, t, "has_doctype", BOOLEAN(!!d->has_doctype));
-        itable_put(ty, t, "name", vScn(d->name));
-        itable_put(ty, t, "public_id", vScn(d->public_identifier));
-        itable_put(ty, t, "system_id", vScn(d->system_identifier));
+        itable_put(ty, t, "name", vSsz(d->name));
+        itable_put(ty, t, "public_id", vSsz(d->public_identifier));
+        itable_put(ty, t, "system_id", vSsz(d->system_identifier));
 
         OKGC(t);
         return OBJECT(t, 0);

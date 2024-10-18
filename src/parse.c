@@ -265,7 +265,7 @@ mksym(Ty *ty, int s)
 {
         char b[32];
 
-        snprintf(b, sizeof b, ":%d", s);
+        snprintf(b, sizeof b, "<%d>", s);
         return sclonea(ty, b);
 }
 
@@ -1220,7 +1220,7 @@ prefix_identifier(Ty *ty)
         }
 
         // Is this a macro invocation?
-        if (strchr(e->identifier, '$') != NULL) {
+        if (false && strchr(e->identifier, '$') != NULL) {
                 e->identifier = sclonea(ty, e->identifier);
                 *strchr(e->identifier, '$') = '\0';
                 Expr *call = infix_function_call(ty, e);
@@ -2514,9 +2514,7 @@ prefix_array(Ty *ty)
 
         e = mkexpr(ty);
         e->type = EXPRESSION_ARRAY;
-        vec_init(e->elements);
-        vec_init(e->aconds);
-        vec_init(e->optional);
+        e->start = start;
 
         while (tok()->type != ']') {
                 setctx(ty, LEX_PREFIX);
