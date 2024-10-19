@@ -271,13 +271,19 @@ bool CompileOnly = false;
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
 
+#ifdef _WIN32
+typedef volatile long TyThreadState;
+#else
+typedef atomic_bool TyThreadState;
+#endif
+
 typedef struct thread_group {
         TyMutex Lock;
         TyMutex GCLock;
         vec(TyThread) ThreadList;
         vec(TyMutex *) ThreadLocks;
         vec(ThreadStorage) ThreadStorages;
-        vec(atomic_bool *) ThreadStates;
+        vec(TyThreadState *) ThreadStates;
         atomic_bool WantGC;
         TyBarrier GCBarrierStart;
         TyBarrier GCBarrierMark;
@@ -306,7 +312,7 @@ static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 
 static _Thread_local Ty *MyTy;
 _Thread_local TyMutex *MyLock;
-static _Thread_local atomic_bool *MyState;
+static _Thread_local TyThreadState *MyState;
 static _Thread_local ThreadStorage MyStorage;
 static _Thread_local bool GCInProgress;
 static _Thread_local bool HaveLock = true;
@@ -363,10 +369,14 @@ SetState(Ty *ty, bool blocking)
 }
 
 inline static bool
-TryFlipTo(atomic_bool *state, bool blocking)
+TryFlipTo(TyThreadState *state, bool blocking)
 {
         bool expected = !blocking;
+#ifdef _WIN32
+        return InterlockedCompareExchange(state, blocking, expected) == expected;
+#else
         return atomic_compare_exchange_strong(state, &expected, blocking);
+#endif
 }
 
 void
@@ -1476,7 +1486,7 @@ ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
         Array *a;
 
 Start:
-        switch (__builtin_expect(subscript.type, VALUE_INTEGER)) {
+        switch (EXPECT(subscript.type, VALUE_INTEGER)) {
         case VALUE_GENERATOR:
                 gP(&subscript);
                 gP(&container);
@@ -3725,7 +3735,7 @@ Throw:
                         if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-increment applied to invalid target");
                         }
-                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
+                        switch (EXPECT(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: ++peektarget(ty)->integer; break;
                         case VALUE_REAL:    ++peektarget(ty)->real;    break;
                         case VALUE_OBJECT:
@@ -3748,7 +3758,7 @@ Throw:
                                 zP("pre-increment applied to invalid target");
                         }
                         push(ty, *peektarget(ty));
-                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
+                        switch (EXPECT(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: ++peektarget(ty)->integer; break;
                         case VALUE_REAL:    ++peektarget(ty)->real;    break;
                         case VALUE_PTR:
@@ -3763,7 +3773,7 @@ Throw:
                         if (UNLIKELY(SpecialTarget(ty))) {
                                 zP("pre-decrement applied to invalid target");
                         }
-                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
+                        switch (EXPECT(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: --peektarget(ty)->integer; break;
                         case VALUE_REAL:    --peektarget(ty)->real;    break;
                         case VALUE_OBJECT:
@@ -3786,7 +3796,7 @@ Throw:
                                 zP("post-decrement applied to invalid target");
                         }
                         push(ty, *peektarget(ty));
-                        switch (__builtin_expect(peektarget(ty)->type, VALUE_INTEGER)) {
+                        switch (EXPECT(peektarget(ty)->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: --peektarget(ty)->integer; break;
                         case VALUE_REAL:    --peektarget(ty)->real;    break;
                         case VALUE_PTR:

@@ -4,6 +4,7 @@
 #include "value.h"
 
 extern bool CheckConstraints;
+
 typedef struct location Location;
 typedef struct expression Expr;
 typedef struct symbol Symbol;

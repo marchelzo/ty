@@ -4282,7 +4282,7 @@ Bad:
 #ifdef _WIN32
 #define WAITMACRO(name) \
         struct value \
-        builtin_os_ ## name(int argc, struct value *kwargs) \
+        builtin_os_ ## name(Ty *ty, int argc, struct value *kwargs) \
         { \
                 NOT_ON_WINDOWS("os." #name); \
         }
@@ -4890,7 +4890,8 @@ BUILTIN_FUNCTION(os_stat)
         if (r != 0)
                return NIL;
 
-        return vTn(
+        return value_named_tuple(
+                ty,
                 "st_dev", INTEGER(s.st_dev),
                 "st_ino", INTEGER(s.st_ino),
                 "st_mode", INTEGER(s.st_mode),

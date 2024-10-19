@@ -38,6 +38,8 @@ typedef vec(Target) TargetStack;
 
 typedef struct table ValueTable;
 
+enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
+
 struct try {
         jmp_buf jb;
         bool executing;
@@ -52,7 +54,6 @@ struct try {
         char *catch;
         char *finally;
         char *end;
-        enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
 };
 
 typedef struct ThrowCtx {
@@ -138,8 +139,16 @@ extern bool ColorProfile;
 #define GC_STOP()   (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
 
-#define UNLIKELY(x) __builtin_expect((x), 0)
-#define LIKELY(x)   __builtin_expect((x), 1)
+#ifdef _WIN32
+#  define UNLIKELY(x)  (x)
+#  define LIKELY(x)    (x)
+#  define EXPECT(x, y) (x)
+#else
+#  define UNLIKELY(x)  __builtin_expect((x), 0)
+#  define LIKELY(x)    __builtin_expect((x), 1)
+#  define EXPECT(x, y) __builtin_expect((x), (y))
+#endif
+
 
 #define zP(...)   vm_panic(ty, __VA_ARGS__)
 #define mRE(...)  resize(__VA_ARGS__)
@@ -303,14 +312,14 @@ ExpandScratch(Ty *ty)
                         cap = 2 * (vvL(S(arenas))->end - vvL(S(arenas))->base);
                 }
 
-                void *new = mrealloc(NULL, cap);
+                char *new_ = mrealloc(NULL, cap);
 
                 xvP(
                         S(arenas),
                         ((Arena) {
-                                .base = new,
-                                .beg  = new,
-                                .end  = new + cap
+                                .base = new_,
+                                .beg  = new_,
+                                .end  = new_ + cap
                         })
                 );
         }

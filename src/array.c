@@ -33,7 +33,7 @@ typedef struct {
 } SortContext;
 
 static int
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 compare_default(void *ty, void const *v1, void const *v2)
 #elif defined(__linux__)
 compare_default(void const *v1, void const *v2, void *ty)
@@ -44,13 +44,12 @@ compare_default(void const *v1, void const *v2, void *ty)
 
 #if defined(__APPLE__)
 #define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
-#elif defined(__linux__)
-#define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
-#else
+#elif defined(__linux__) || defined(_WIN32)
+#define rqsort(base, nel, width, cmp, ctx) qsort_s(base, nel, width, cmp, ctx);
 #endif
 
 static int
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 compare_by(void *ctx_, void const *v1, void const *v2)
 #elif defined(__linux__)
 compare_by(void const *v1, void const *v2, void *ctx_)
@@ -74,7 +73,7 @@ compare_by(void const *v1, void const *v2, void *ctx_)
 }
 
 static int
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
 compare_by2(void *ctx_, void const *v1, void const *v2)
 #elif defined(__linux__)
 compare_by2(void const *v1, void const *v2, void *ctx_)

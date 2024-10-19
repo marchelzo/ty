@@ -18,9 +18,9 @@ fit2(vec_z cap, vec_z min)
 #define intrusive_vec(T) \
         T *items;        \
         vec_z count;     \
-        vec_z capacity;
+        vec_z capacity
 
-#define vec(T) struct { intrusive_vec(T) }
+#define vec(T) struct { intrusive_vec(T); }
 
 #define vec_init(v, ...) (                      \
         ((v).items    = NULL),                  \

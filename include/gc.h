@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "polyfill_stdatomic.h"
 #include "vec.h"
@@ -101,9 +102,7 @@ CheckUsed(Ty *ty)
 {
         if (UNLIKELY(
                 ty->GC_OFF_COUNT == 0
-#if 1
                 && MemoryUsed > MemoryLimit
-#endif
         )) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);

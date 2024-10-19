@@ -1,15 +1,18 @@
 #include <string.h>
 #include <math.h>
+#include <inttypes.h>
 
 #include <ffi.h>
 
 #include "alloc.h"
-#include "value.h"
-#include "operators.h"
 #include "class.h"
 #include "dict.h"
-#include "vm.h"
 #include "gc.h"
+#include "operators.h"
+#include "tthread.h"
+#include "value.h"
+#include "vec.h"
+#include "vm.h"
 
 typedef struct {
         uint32_t t1;
@@ -125,7 +128,7 @@ op_add(int op, int t1, int t2, int ref)
 
                 } while (_2.ops.count <= op || _2.ops.count < _2.ops.capacity);
 
-                TyRwLockUnlock(&_2.lock);
+                TyRwLockWrUnlock(&_2.lock);
         }
 
         DispatchGroup *group = _2.ops.items[op];
@@ -143,7 +146,7 @@ op_add(int op, int t1, int t2, int ref)
 
         group->cache.count = 0;
 
-        TyRwLockUnlock(&group->lock);
+        TyRwLockWrUnlock(&group->lock);
 }
 
 int
@@ -154,18 +157,18 @@ op_dispatch(int op, int t1, int t2)
         TyRwLockRdLock(&_2.lock);
 
         if (_2.ops.count <= op) {
-                TyRwLockUnlock(&_2.lock);
+                TyRwLockRdUnlock(&_2.lock);
                 return -1;
         }
 
         DispatchGroup *group = _2.ops.items[op];
 
-        TyRwLockUnlock(&_2.lock);
+        TyRwLockRdUnlock(&_2.lock);
         TyRwLockRdLock(&group->lock);
 
         int ref = check_cache(&group->cache, key);
 
-        TyRwLockUnlock(&group->lock);
+        TyRwLockRdUnlock(&group->lock);
 
         if (ref == -1) {
                 TyRwLockWrLock(&group->lock);
@@ -173,7 +176,7 @@ op_dispatch(int op, int t1, int t2)
                 ref = check_slow(&group->defs, t1, t2);
                 update_cache(&group->cache, key,ref);
 
-                TyRwLockUnlock(&group->lock);
+                TyRwLockWrUnlock(&group->lock);
         }
 
         return ref;
