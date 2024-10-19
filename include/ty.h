@@ -164,6 +164,9 @@ extern bool ColorProfile;
 #define vSsz(s)    STRING_CLONE_C(ty, (s))
 #define vSzz(s)    STRING_C_CLONE_C(ty, (s))
 
+#define xSs(s, n) STRING_NOGC((s), (n))
+#define xSz(s)    STRING_NOGC_C(s)
+
 #define vA()       value_array_new(ty)
 #define vAn(n)     value_array_new_sized(ty, n)
 #define vAp(a, x)  value_array_push(ty, a, x)
@@ -188,6 +191,7 @@ extern bool ColorProfile;
 #define avPn(a, b, c)    VPushN(a, b, c)
 #define avI(a, b, c)     VInsert(a, b, c)
 #define avIn(a, b, c, d) VInsertN(a, b, c, d)
+#define avPv(a, b)       VPushN((a), ((b).items), ((b).count))
 
 #define uvP(v, x)         vec_push_unchecked((v), (x))
 #define uvPn(v, xs, n)    vec_push_n_unchecked((v), (xs), (n))
@@ -216,8 +220,9 @@ extern bool ColorProfile;
 #define vmE(x)   vm_throw(ty, x)
 #define vmC(...) vm_call(ty, __VA_ARGS__)
 
-#define PAIR(a, b)      PAIR_(ty, a, b)
-#define TRIPLE(a, b, c) TRIPLE_(ty, a, b, c)
+#define PAIR(a, b)            PAIR_(ty, (a), (b))
+#define TRIPLE(a, b, c)       TRIPLE_(ty, (a), (b), (c))
+#define QUADRUPLE(a, b, c, d) QUADRUPLE_(ty, (a), (b), (c), (d))
 
 #define TY_BINARY_OPERATORS  \
         X(ADD,       "+"),   \

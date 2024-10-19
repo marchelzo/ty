@@ -22,6 +22,16 @@ extern _Bool EnableLogging;
                         GC_RESUME(); \
                 } while (0)
 
+#define XLOGX(...) if (EnableLogging) do { \
+                        GC_STOP(); \
+                        flockfile(stderr), \
+                        fprintf(stderr, "(%d) ", getpid()), \
+                        fprintf(stderr, "(%4llu) ", TID), \
+                        fprintf(stderr, __VA_ARGS__), \
+                        funlockfile(stderr); \
+                        GC_RESUME(); \
+                } while (0)
+
 #define XXLOG(...) if (EnableLogging) do { \
                         Ty *ty = &MainTy; \
                         GC_STOP(); \

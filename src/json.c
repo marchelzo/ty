@@ -307,9 +307,30 @@ try_visit(void const *p)
 static bool
 encode(Ty *ty, Value const *v, str *out)
 {
+        if (v->type & VALUE_TAGGED) {
+                Value val = *v;
+                char const *tn = tags_name(ty, tags_first(ty, v->tags));
+
+                val.tags = tags_pop(ty, v->tags);
+                if (val.tags == 0) {
+                        val.type &= ~VALUE_TAGGED;
+                }
+
+                dump((void *)out, "{\"type\":\"%s\",\"value\":", tn);
+                if (!encode(ty, &val, out)) {
+                        return false;
+                }
+                xvP(*out, '}');
+
+                return true;
+        }
+
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_NIL:
                 xvPn(*out, "null", 4);
+                break;
+        case VALUE_TAG:
+                dump((void *)out, "\"%s\"", tags_name(ty, v->tag));
                 break;
         case VALUE_STRING:
                 xvP(*out, '"');

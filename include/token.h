@@ -9,6 +9,7 @@
 #include "vec.h"
 #include "location.h"
 #include "lex.h"
+#include "ast.h"
 #include "ty.h"
 
 typedef struct regex {
@@ -19,8 +20,21 @@ typedef struct regex {
         bool detailed;
 } Regex;
 
+typedef struct {
+        StringVector strings;
+        vec(LexState) expressions;
+        vec(bool) e_is_param;
+        vec(struct location) starts;
+        vec(struct location) ends;
+} SpecialString;
+
 typedef struct token {
         enum {
+                TOKEN_NEWLINE = '\n',
+                TOKEN_AT = '@',
+                TOKEN_BANG = '!',
+                TOKEN_QUESTION = '?',
+
                 /*
                  * We start the enumeration constants slightly below INT_MAX so that they
                  * don't collide with any codepoints. This way, the type of an open parenthesis
@@ -42,8 +56,6 @@ typedef struct token {
                 TOKEN_DIV,
                 TOKEN_PERCENT,
                 TOKEN_NOT_EQ,
-                TOKEN_BANG,
-                TOKEN_QUESTION,
                 TOKEN_DBL_EQ,
                 TOKEN_EQ,
                 TOKEN_PLUS_EQ,
@@ -61,10 +73,8 @@ typedef struct token {
                 TOKEN_GEQ,
                 TOKEN_LT,
                 TOKEN_GT,
-                TOKEN_AT,
                 TOKEN_INC,
                 TOKEN_DEC,
-                TOKEN_NEWLINE,
                 TOKEN_DOT_MAYBE,
                 TOKEN_DOT_DOT,
                 TOKEN_DOT_DOT_DOT,
@@ -76,11 +86,17 @@ typedef struct token {
                 TOKEN_TEMPLATE_END,
                 TOKEN_EXPRESSION,
                 TOKEN_COMMENT,
+                TOKEN_DIRECTIVE,
                 TOKEN_ERROR,
         } type;
-        int ctx;
-        struct location start;
-        struct location end;
+
+        int8_t pp;
+        int8_t nl;
+        int8_t ctx;
+
+        Location start;
+        Location end;
+
         union {
                 enum {
                         KEYWORD_RETURN,
@@ -124,29 +140,30 @@ typedef struct token {
                         KEYWORD_DEFINED,
                         KEYWORD_NAMESPACE,
                 } keyword;
-                struct expression *e;
-                struct regex const *regex;
-                struct {
-                        StringVector strings;
-                        vec(LexState) expressions;
-                        vec(bool) e_is_param;
-                        vec(struct location) starts;
-                        vec(struct location) ends;
-                };
+
+
                 struct {
                         char *module;
                         char *identifier;
+                        bool raw;
                 };
+
+                Expr *e;
+                Regex const *regex;
+                SpecialString *special;
+                char *comment;
                 char *operator;
                 char *string;
-                char *comment;
+                double real;
                 intmax_t integer;
-                float real;
         };
 } Token;
 
 char const *
 token_show(Ty *ty, struct token const *t);
+
+char const *
+token_showx(Ty *ty, struct token const *t, char const *c);
 
 char const *
 token_show_type(Ty *ty, int type);

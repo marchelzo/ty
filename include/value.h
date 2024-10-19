@@ -731,6 +731,18 @@ STRING_NOGC(char const *s, int n)
         };
 }
 
+inline static Value
+STRING_NOGC_C(char const *s)
+{
+        return (Value) {
+                .type = VALUE_STRING,
+                .tags = 0,
+                .string = s,
+                .bytes = strlen(s),
+                .gcstr = NULL
+        };
+}
+
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))
 
 inline static struct value
@@ -749,6 +761,17 @@ TRIPLE_(Ty *ty, struct value a, struct value b, struct value c)
         v.items[0] = a;
         v.items[1] = b;
         v.items[2] = c;
+        return v;
+}
+
+inline static Value
+QUADRUPLE_(Ty *ty, Value a, Value b, Value c, Value d)
+{
+        Value v = vT(4);
+        v.items[0] = a;
+        v.items[1] = b;
+        v.items[2] = c;
+        v.items[3] = d;
         return v;
 }
 

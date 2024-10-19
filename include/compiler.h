@@ -4,8 +4,8 @@
 #include "value.h"
 
 extern bool CheckConstraints;
-struct location;
-struct expression;
+typedef struct location Location;
+typedef struct expression Expr;
 typedef struct symbol Symbol;
 
 struct eloc {
@@ -166,7 +166,7 @@ void
 compiler_introduce_tag(Ty *ty, char const *module, char const *name);
 
 bool
-compiler_symbolize_expression(Ty *ty, struct expression *e, struct scope *scope);
+compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope);
 
 void
 compiler_clear_location(Ty *ty);
@@ -186,7 +186,7 @@ gettag(Ty *ty, char const *module, char const *name);
 char *
 compiler_load_prelude(Ty *ty);
 
-struct location
+Location
 compiler_find_definition(Ty *ty, char const *file, int line, int col);
 
 Expr const *
@@ -201,23 +201,23 @@ compiler_global_count(Ty *ty);
 Symbol *
 compiler_global_sym(Ty *ty, int i);
 
-struct value
-compiler_render_template(Ty *ty, struct expression *);
+Value
+compiler_render_template(Ty *ty, Expr *);
 
 bool
-compiler_import_module(Ty *ty, struct statement const *);
+compiler_import_module(Ty *ty, Stmt const *);
 
 void
-define_macro(Ty *ty, struct statement *, bool fun);
+define_macro(Ty *ty, Stmt *, bool fun);
 
 void
-define_class(Ty *ty, struct statement *);
+define_class(Ty *ty, Stmt *);
 
 void
-define_tag(Ty *ty, struct statement *s);
+define_tag(Ty *ty, Stmt *s);
 
 void
-define_function(Ty *ty, struct statement *);
+define_function(Ty *ty, Stmt *);
 
 bool
 is_macro(Ty *ty, char const *module, char const *id);
@@ -225,20 +225,20 @@ is_macro(Ty *ty, char const *module, char const *id);
 bool
 is_fun_macro(Ty *ty, char const *module, char const *id);
 
-struct value
-tyexpr(Ty *ty, struct expression const *);
+Value
+tyexpr(Ty *ty, Expr const *);
 
-struct value
-tyeval(Ty *ty, struct expression *e);
+Value
+tyeval(Ty *ty, Expr *e);
 
-struct value
-tystmt(Ty *ty, struct statement *s);
+Value
+tystmt(Ty *ty, Stmt *s);
 
-struct expression *
-cexpr(Ty *ty, struct value *);
+Expr *
+cexpr(Ty *ty, Value *);
 
-struct expression *
-TyToCExpr(Ty *ty, struct value *v);
+Expr *
+TyToCExpr(Ty *ty, Value *v);
 
 Value
 CToTyExpr(Ty *ty, Expr *);
@@ -246,11 +246,14 @@ CToTyExpr(Ty *ty, Expr *);
 Value
 CToTyStmt(Ty *ty, Stmt *);
 
-struct expression *
-typarse(Ty *ty, struct expression *, struct location const *start, struct location const *end);
+Expr *
+typarse(Ty *ty, Expr *, Location const *start, Location const *end);
 
-struct statement *
-cstmt(Ty *ty, struct value *);
+Value
+compiler_eval(Ty *ty, Expr *e);
+
+Stmt *
+cstmt(Ty *ty, Value *);
 
 void *
 compiler_swap_jb(Ty *ty, void *);
@@ -278,7 +281,7 @@ void
 source_forget_arena(void const *arena);
 
 void
-try_symbolize_application(Ty *ty, struct scope *scope, struct expression *e);
+try_symbolize_application(Ty *ty, Scope *scope, Expr *e);
 
 int
 WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool first);

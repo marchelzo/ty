@@ -234,7 +234,7 @@ struct expression {
                 intmax_t integer;
                 bool boolean;
                 char const *string;
-                float real;
+                double real;
                 struct statement *statement;
                 struct value *v;
                 void *p;
@@ -288,6 +288,7 @@ struct expression {
                         vec(char *) fmts;
                         int_vector widths;
                         expression_vector expressions;
+                        expression_vector fmt_args;
                 };
                 struct {
                         union {

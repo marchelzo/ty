@@ -7,19 +7,27 @@
 #include "location.h"
 
 typedef enum LexContext {
-        LEX_PREFIX = 1,
-        LEX_INFIX  = 2,
-        LEX_FMT    = 3,
-        LEX_FAKE   = 4
+        LEX_PREFIX  = 1,
+        LEX_INFIX   = 2,
+        LEX_FMT     = 3,
+        LEX_FAKE    = 4,
+        LEX_HIDDEN  = 5,
 } LexContext;
 
 typedef struct LexState {
         Location loc;
+
+        int ctx;
+
+        char const *start;
         char const *end;
+
         bool need_nl;
         bool keep_comments;
-        int ctx;
+        bool blank_line;
 } LexState;
+
+extern LexState *lxst;
 
 #define OperatorCharset "/=<~|!@%^&*-+>?.$"
 

@@ -50,6 +50,8 @@ extern _Thread_local int EvalDepth;
         X(TAG), \
         X(CLASS), \
         X(TO_STRING), \
+        X(FMT1), \
+        X(FMT2), \
         X(CONCAT_STRINGS), \
         X(RANGE), \
         X(INCRANGE), \

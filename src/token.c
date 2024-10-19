@@ -6,6 +6,7 @@
 #include "token.h"
 #include "alloc.h"
 #include "util.h"
+#include "ty.h"
 
 static char token_show_buffer[512];
 
@@ -180,6 +181,7 @@ token_show_type(Ty *ty, int type)
         case TOKEN_REAL:               return "real";
         case TOKEN_NEWLINE:            return "newline";
         case TOKEN_KEYWORD:            return "keyword";
+        case TOKEN_DIRECTIVE:          return "compile-time directive";
         case TOKEN_END:                return "end of input";
         case TOKEN_COMMENT:            return "comment";
         case TOKEN_ERROR:              return "ERROR";
@@ -188,7 +190,7 @@ token_show_type(Ty *ty, int type)
 }
 
 char const *
-token_show(Ty *ty, struct token const *t)
+token_showx(Ty *ty, struct token const *t, char const *c)
 {
         switch (t->type) {
         case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
@@ -197,8 +199,48 @@ token_show(Ty *ty, struct token const *t)
         case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
         case TOKEN_KEYWORD:    snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;
         case TOKEN_USER_OP:    snprintf(token_show_buffer, 512, "operator '%s'", t->identifier);           break;
-        default:               return token_show_type(ty, t->type);
+        default:               snprintf(token_show_buffer, 512, "%s", token_show_type(ty, t->type));       break;
         }
 
-        return sclone(ty, token_show_buffer);
+        byte_vector out = {0};
+
+        if (t->pp) {
+                dump(&out, "%sp/%s", TERM(31), TERM(0));
+        }
+
+        int ctx = ((int []) {
+                [0]          = '?',
+                [LEX_HIDDEN] = 'h',
+                [LEX_FMT]    = 'f',
+                [LEX_FAKE]   = '_',
+                [LEX_PREFIX] = 'p',
+                [LEX_INFIX]  = 'i'
+        })[t->ctx];
+
+        char const *ctxc = ((char const *[]) {
+                [0]          = TERM(92),
+                [LEX_HIDDEN] = TERM(34;1),
+                [LEX_FMT]    = TERM(92),
+                [LEX_FAKE]   = TERM(92;1),
+                [LEX_PREFIX] = TERM(95;1),
+                [LEX_INFIX]  = TERM(93;1)
+        })[t->ctx];
+
+        if (!*c) c = TERM(36);
+
+        dump(&out, "%s%c%s %s%s%s", ctxc, ctx, TERM(0), c, token_show_buffer, TERM(0));
+
+        if (t->nl) {
+                dump(&out, " %s\\n%s", TERM(94), TERM(0));
+        }
+
+        xvP(out, '\0');
+
+        return out.items;
+}
+
+char const *
+token_show(Ty *ty, struct token const *t)
+{
+        return token_showx(ty, t, "");
 }
