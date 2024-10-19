@@ -714,6 +714,8 @@ static struct {
 {.module = "ty/lex", .name = "peekc", .value = BUILTIN(builtin_lex_peek_char)},
 {.module = "ty/lex", .name = "getc", .value = BUILTIN(builtin_lex_next_char)},
 
-#include "ioctl_constants.h"
+#ifndef _WIN32
+#  include "ioctl_constants.h"
+#endif
 
 };
