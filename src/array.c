@@ -43,9 +43,11 @@ compare_default(void const *v1, void const *v2, void *ty)
 }
 
 #if defined(__APPLE__)
-#define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
-#elif defined(__linux__) || defined(_WIN32)
-#define rqsort(base, nel, width, cmp, ctx) qsort_s(base, nel, width, cmp, ctx);
+#  define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, ctx, cmp);
+#elif defined(__linux__)
+#  define rqsort(base, nel, width, cmp, ctx) qsort_r(base, nel, width, cmp, ctx);
+#elif defined(_WIN32)
+#  define rqsort(base, nel, width, cmp, ctx) qsort_s(base, nel, width, cmp, ctx);
 #endif
 
 static int
