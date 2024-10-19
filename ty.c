@@ -40,13 +40,14 @@ TY xD;
 
 static int color_mode = TY_COLOR_AUTO;
 static bool use_readline;
+static bool basic = false;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
 static char const *print_function = "print";
 static char SymbolLocation[512];
 
+static bool KindOfEnableLogging = false;
 bool EnableLogging = false;
-bool KindOfEnableLogging = false;
 
 bool ColorStdout;
 bool ColorStderr;
@@ -68,6 +69,8 @@ usage(void)
         char *u = (char[]) {
                 "usage: ty [options] [script [args]]                                                      \0"
                 "Available options are:                                                                   \0"
+                "    -b            Basic mode: no batteries included. Only has an effect when ty is       \0"
+                "                  running as a REPL or when the program was specified using -e           \0"
                 "    -c            Exit after compilation without executing the program                   \0"
                 "    -e EXPR       Evaluate and print EXPR                                                \0"
                 "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
@@ -172,6 +175,28 @@ End:
         return good;
 }
 
+
+static void
+pollute_with_bloat(void)
+{
+        execln(
+                &MainTy,
+                "import help (..)\n"
+                "import json     \n"
+                "import math     \n"
+                "import ty       \n"
+                "import os       \n"
+                "import time     \n"
+                "import errno    \n"
+                "import locale   \n"
+                "import io       \n"
+                "import sh       \n"
+        );
+
+        print_function = "prettyPrint";
+}
+
+
 noreturn static void
 repl(Ty *ty);
 
@@ -192,19 +217,8 @@ repl(Ty *ty)
 
         signal(SIGINT, sigint);
 
-        execln(
-                &MainTy,
-                "import help (..)\n"
-                "import json     \n"
-                "import math     \n"
-                "import ty       \n"
-                "import os       \n"
-                "import time     \n"
-                "import errno    \n"
-                "import locale   \n"
-        );
+        if (!basic) pollute_with_bloat();
 
-        print_function = "prettyPrint";
         use_readline = true;
 
         for (;;) {
@@ -396,6 +410,9 @@ ProcessArgs(char *argv[], bool first)
                                 case 'q':
                                         CheckConstraints = false;
                                         break;
+                                case 'b':
+                                        basic = true;
+                                        break;
                                 case 'c':
                                         CompileOnly = true;
                                         break;
@@ -419,6 +436,7 @@ ProcessArgs(char *argv[], bool first)
                                         }
                                         break;
                                 case 'e':
+                                        if (!first && !basic) pollute_with_bloat();
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
                                                         fprintf(stderr, "Missing argument for -e\n");

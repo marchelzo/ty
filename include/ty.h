@@ -94,6 +94,8 @@ typedef struct {
         TargetStack targets;
         FrameStack frames;
 
+        uint64_t prng[4];
+
         AllocList allocs;
         size_t memory_used;
         size_t memory_limit;
