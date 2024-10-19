@@ -257,10 +257,9 @@ BUILTIN_FUNCTION(eprint)
 
 BUILTIN_FUNCTION(slurp)
 {
-        ASSERT_ARGC_2("slurp(ty)", 0, 1);
+        ASSERT_ARGC_2("slurp()", 0, 1);
 
 #if defined(_WIN32) && !defined(PATH_MAX)
-#define fstat _fstat
 #define PATH_MAX MAX_PATH
 #endif
         char p[PATH_MAX + 1];
@@ -290,7 +289,7 @@ BUILTIN_FUNCTION(slurp)
         } else if (ARG(0).type == VALUE_INTEGER) {
                 fd = ARG(0).integer;
         } else {
-                zP("the argument to slurp(ty) must be a path or a file descriptor");
+                zP("the argument to slurp() must be a path or a file descriptor");
         }
 
         StatStruct st;
@@ -299,7 +298,7 @@ BUILTIN_FUNCTION(slurp)
                 return NIL;
         }
 
-        struct value *use_mmap = NAMED("mmap");
+        Value *use_mmap = NAMED("mmap");
 
 #ifdef _WIN32
 #define S_ISLNK(m) 0
@@ -310,13 +309,12 @@ BUILTIN_FUNCTION(slurp)
 #if !defined(S_ISDIR)
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #endif
+
+#ifndef _WIN32
         if ((use_mmap == NULL || value_truthy(ty, use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
                 size_t n = st.st_size;
-#ifdef _WIN32
-                void *m = VirtualAlloc(NULL, n, MEM_RESERVE, PAGE_READWRITE);
-#else
+
                 void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
-#endif
                 if (m == NULL) {
                         close(fd);
                         return NIL;
@@ -325,16 +323,15 @@ BUILTIN_FUNCTION(slurp)
                 char *s = value_string_alloc(ty, n);
                 memcpy(s, m, n);
 
-#ifdef _WIN32
-                VirtualFree(m, n, MEM_RELEASE);
-#else
                 munmap(m, n);
-#endif
 
                 close(fd);
 
                 return STRING(s, n);
         } else if (!S_ISDIR(st.st_mode)) {
+#else
+        if (1) {
+#endif
                 FILE *f = fdopen(fd, "r");
                 int r;
 
@@ -390,16 +387,40 @@ BUILTIN_FUNCTION(read)
         return vSs(B.items, B.count);
 }
 
+inline static uint64_t
+rotl(uint64_t x, int k)
+{
+        return (x << k) | (x >> (64 - k));
+}
+
+inline static uint64_t
+xoshiro256ss(Ty *ty)
+{
+        uint64_t const result = rotl(ty->prng[1] * 5, 7) * 9;
+        uint64_t const t = ty->prng[1] << 17;
+
+        ty->prng[2] ^= ty->prng[0];
+        ty->prng[3] ^= ty->prng[1];
+        ty->prng[1] ^= ty->prng[2];
+        ty->prng[0] ^= ty->prng[3];
+
+        ty->prng[2] ^= t;
+        ty->prng[3] = rotl(ty->prng[3], 45);
+
+        return result;
+}
+
 BUILTIN_FUNCTION(rand)
 {
-        long low, high;
+        int64_t low;
+        int64_t high;
 
         ASSERT_ARGC_3("rand()", 0, 1, 2);
 
-        long z = random();
+        uint64_t z = xoshiro256ss(ty);
 
         if (argc == 0) {
-                return REAL(z / (double)((1UL << 31) - 1));
+                return REAL(z / (double)UINT64_MAX);
         }
 
         if (argc == 1 && ARG(0).type == VALUE_ARRAY) {
@@ -6763,7 +6784,7 @@ BUILTIN_FUNCTION(eval)
                 vec_push_n_unchecked(B, PRE, strlen(PRE));
                 vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
                 vec_push_n_unchecked(B, POST, (sizeof POST));
-                Arena old = amNg(1 << 22);
+                Arena old = amNg(1 << 26);
                 struct statement **prog = parse(ty, B.items + 1, "(eval)");
 
                 if (prog == NULL) {

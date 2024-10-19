@@ -765,11 +765,11 @@ class Float {
         }
     }
 
-    __fmt__(spec, w) {
+    __fmt__(spec, w, n) {
         if spec.match?(/[%[:alpha:]]/) {
-            fmt("%{spec}", w if '*' in spec, self)
+            fmt("%{spec}", (n ?? w) if '*' in spec, self)
         } else {
-            fmt("%{spec}f", w if '*' in spec, self)
+            fmt("%{spec}f", (n ?? w) if '*' in spec, self)
         }
     }
 

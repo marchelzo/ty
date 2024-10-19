@@ -344,6 +344,12 @@ InitializeTy(Ty *ty)
         memset(ty, 0, sizeof *ty);
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
+
+        uint64_t seed = rand();
+        ty->prng[0] = splitmix64(&seed);
+        ty->prng[1] = splitmix64(&seed);
+        ty->prng[2] = splitmix64(&seed);
+        ty->prng[3] = splitmix64(&seed);
 }
 
 static void
@@ -1265,7 +1271,7 @@ vm_run_thread(void *p)
 #ifndef _WIN32
         pthread_cleanup_pop(1);
 #else
-        CleanupThread(NULL);
+        CleanupThread(ty);
 #endif
 
         free(ctx);
