@@ -11,10 +11,12 @@
 #include <process.h>
 
 #define TY_THREAD_OK 0
+#define TY_RWLOCK_INIT SRWLOCK_INIT
 
 typedef HANDLE                  TyThread;
 typedef CRITICAL_SECTION        TyMutex;
 typedef CONDITION_VARIABLE      TyCondVar;
+typedef SRWLOCK                 TyRwLock;
 typedef SYNCHRONIZATION_BARRIER TyBarrier;
 typedef unsigned                TyThreadFunc(void *);
 typedef unsigned                TyThreadReturnValue;
@@ -140,6 +142,58 @@ TyCondVarBroadcast(TyCondVar *cv)
 inline static bool
 TyCondVarDestroy(TyCondVar *cv)
 {
+        return true;
+}
+
+inline static void
+TyRwLockInit(TyRwLock *m)
+{
+        InitializeSRWLock(m);
+}
+
+inline static bool
+TyRwLockDestroy(TyRwLock* m)
+{
+        return true;
+}
+
+inline static bool
+TyRwLockRdLock(TyRwLock *m)
+{
+        AcquireSRWLockShared(m);
+        return true;
+}
+
+inline static bool
+TyRwLockTryRdLock(TyRwLock *m)
+{
+        return TryAcquireSRWLockShared(m);
+}
+
+inline static bool
+TyRwLockWrLock(TyRwLock *m)
+{
+        AcquireSRWLockExclusive(m);
+        return true;
+}
+
+inline static bool
+TyRwLockTryWrLock(TyRwLock *m)
+{
+        return TryAcquireSRWLockExclusive(m);
+}
+
+inline static bool
+TyRwLockRdUnlock(TyRwLock *m)
+{
+        ReleaseSRWLockShared(m);
+        return true;
+}
+
+inline static bool
+TyRwLockWrUnlock(TyRwLock *m)
+{
+        ReleaseSRWLockExclusive(m);
         return true;
 }
 

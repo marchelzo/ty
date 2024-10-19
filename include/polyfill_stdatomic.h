@@ -12,7 +12,6 @@
 #define atomic_fetch_add_explicit(A, B, C) *(A) += (B)
 #define atomic_fetch_sub_explicit(A, B, C) *(A) -= (B)
 #define atomic_init(A, B) *(A) = (B)
-
 #else
 #include <stdatomic.h>
 #endif
