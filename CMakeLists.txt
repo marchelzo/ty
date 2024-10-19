@@ -56,6 +56,53 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED TRUE)
 
 # ---
+#  generate ioctl_constants
+# ---
+
+set(_autogen_dir ${PROJECT_BINARY_DIR}/GeneratedFiles)
+file(MAKE_DIRECTORY ${_autogen_dir})
+file(MAKE_DIRECTORY ${_autogen_dir}/include)
+
+set(_file_ioctl_constants_h ${_autogen_dir}/include/ioctl_constants.h)
+set(_gen_ioctl_script       ${PROJECT_SOURCE_DIR}/scripts/getioctls.sh)
+
+set(_tgt_ioctlconstants_h "IoctlConstantsH")
+add_library(${_tgt_ioctlconstants_h} INTERFACE)
+target_include_directories(${_tgt_ioctlconstants_h}
+  INTERFACE
+    ${_autogen_dir}/include
+)
+
+if (WIN32)
+  if (NOT EXISTS ${_file_ioctl_constants_h})
+    file(TOUCH ${_file_ioctl_constants_h})
+  endif()
+else()
+  set(_tgt_gen_ioctl_h GenerateIoctlConstantsH)
+  add_custom_target(${_tgt_gen_ioctl_h}
+    BYPRODUCTS
+      ${_file_ioctl_constants_h}
+    COMMAND # generate tmp file
+      sh "${_gen_ioctl_script}" > "${_file_ioctl_constants_h}.tmp"
+    COMMAND # replace existing (if different)
+      ${CMAKE_COMMAND} -E copy_if_different
+        "${_file_ioctl_constants_h}.tmp"
+        "${_file_ioctl_constants_h}"
+    COMMAND # remove tmp file
+      ${CMAKE_COMMAND} -E rm "${_file_ioctl_constants_h}.tmp"
+    WORKING_DIRECTORY
+      "${PROJECT_SOURCE_DIR}"
+    COMMENT
+      "Generating ioctl_constants.h file using getioctls.sh"
+    DEPENDS
+      ${_gen_ioctl_script}
+    VERBATIM
+  )
+  add_dependencies(${_tgt_ioctlconstants_h} ${_tgt_gen_ioctl_h})
+endif()
+
+
+# ---
 #  target: ty
 # ---
 
@@ -114,8 +161,8 @@ target_sources(${_tgt_ty_interface}
 target_link_libraries(${_tgt_ty_interface}
   INTERFACE
     ${_tgt_ty_interface_version_info}
+    ${_tgt_ioctlconstants_h}
     Threads::Threads # pthreads (or equivalent)
-    $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     CURL::libcurl
     OpenSSL::SSL
     OpenSSL::Crypto
@@ -124,6 +171,7 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::gumbo::gumbo
     unofficial::pcre::pcre
     utf8proc
+    $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>

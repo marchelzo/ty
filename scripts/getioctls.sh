@@ -1,3 +1,5 @@
+#!/bin/sh
+
 echo '#include <sys/ioctl.h>' \
     | gcc -dM -E - \
     | grep '#define [A-Z]\+IOC' \
@@ -5,5 +7,4 @@ echo '#include <sys/ioctl.h>' \
 	| grep -v ISO7816 \
     | sort \
     | uniq \
-	| awk '{printf("{ .module = \"ioctls\", .name = \"%s\", .value = INT(%s) },\n", $1, $1)}' \
-    > include/ioctl_constants.h
+	| awk '{printf("{ .module = \"ioctls\", .name = \"%s\", .value = INT(%s) },\n", $1, $1)}'
