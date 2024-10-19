@@ -418,7 +418,13 @@ TyRwLockTryWrLock(TyRwLock *m)
 }
 
 inline static bool
-TyRwLockUnlock(TyRwLock *m)
+TyRwLockRdUnlock(TyRwLock *m)
+{
+        return pthread_rwlock_unlock(m) == 0;
+}
+
+inline static bool
+TyRwLockWrUnlock(TyRwLock *m)
 {
         return pthread_rwlock_unlock(m) == 0;
 }
