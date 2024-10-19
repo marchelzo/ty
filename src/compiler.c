@@ -9730,7 +9730,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(TUPLE)
                         READVALUE(n);
                         while (n --> 0) {
-                                READVALUE(i);
+                                READVALUE_(i);
+                                switch (i) {
+                                case -1: dump(out, " %s_%s", TERM(96),   TERM(0)); break;
+                                case -2: dump(out, " %s*%s", TERM(95;1), TERM(0)); break;
+                                default: DUMPSTR(M_NAME(i));
+                                }
                         }
                         break;
                 CASE(DICT)
@@ -9878,7 +9883,8 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(MUT_SUB)
                          break;
                 CASE(BINARY_OP)
-                        READVALUE(n);
+                        READVALUE_(n);
+                        DUMPSTR(intern_entry(&xD.b_ops, n)->name);
                         break;
                 CASE(DEFINE_TAG)
                 {

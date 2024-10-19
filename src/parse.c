@@ -1104,6 +1104,18 @@ op_fixup(Ty *ty, int i)
         return true;
 }
 
+inline static char *
+clone_slice_a(Ty *ty, char const *p, char const *q)
+{
+        ptrdiff_t n = q - p;
+        char *s = amA(n + 1);
+
+        memcpy(s, p, n);
+        s[n] = '\0';
+
+        return s;
+}
+
 Expr *
 parse_decorator_macro(Ty *ty)
 {
@@ -1675,12 +1687,7 @@ prefix_function(Ty *ty)
                 e->return_type = parse_expr(ty, 0);
         }
 
-        char const *proto_end = End.s;
-        size_t proto_len = proto_end - proto_start;
-        char *proto = amA(proto_len + 1);
-        memcpy(proto, proto_start, proto_len);
-        proto[proto_len] = '\0';
-        e->proto = proto;
+        e->proto = clone_slice_a(ty, proto_start, End.s);
 
         if (sugared_generator) {
                 unconsume(TOKEN_KEYWORD);
@@ -3695,6 +3702,8 @@ infix_arrow_function(Ty *ty, Expr *left)
 
         Expr *e = mkfunc(ty);
         e->start = left->start;
+
+        e->proto = clone_slice_a(ty, left->start.s, left->end.s);
 
         if (left->type != EXPRESSION_LIST && (left->type != EXPRESSION_TUPLE || !left->only_identifiers)) {
                 Expr *l = mkexpr(ty);

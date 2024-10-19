@@ -827,7 +827,7 @@ proto_of(struct value const *f)
 {
         uintptr_t p;
         memcpy(&p, (char *)f->info + FUN_PROTO, sizeof p);
-        return (char const *)p;
+        return (p == 0) ?  "()" : (char const *)p;
 }
 
 inline static char const *
