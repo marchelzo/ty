@@ -19,6 +19,7 @@
             "cacheVariables": {
                 "VCPKG_MANIFEST_MODE": true,
                 "VCPKG_VERBOSE": false,
+                "VCPKG_INSTALL_OPTIONS": "--no-print-usage",
                 "VCPKG_INSTALLED_DIR": "${sourceDir}/_vcpkg_installed",
                 "CMAKE_BUILD_TYPE": "Release"
             }
