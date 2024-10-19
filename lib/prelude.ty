@@ -4,7 +4,6 @@ import thread
 import base64
 import time
 import stdio
-import ffi as c
 import ty
 import ty.parse as parse
 import ty.token as lex
@@ -563,11 +562,11 @@ class String : Iterable {
         }
     }
 
-    __fmt__(spec, w) {
+    __fmt__(spec, w, n) {
         if spec.match?(/[%[:alpha:]]/) {
-            fmt("%{spec}", w if '*' in spec, self)
+            fmt("%{spec}", (n ?? w) if '*' in spec, self)
         } else {
-            fmt("%{spec}s", w if '*' in spec, self)
+            fmt("%{spec}s", (n ?? w) if '*' in spec, self)
         }
     }
 }
@@ -702,11 +701,11 @@ class Int {
         Float.clamp.bind(self)(*args)
     }
 
-    __fmt__(spec, w) {
+    __fmt__(spec, w, n) {
         if spec.match?(/[%[:alpha:]]/) {
-            fmt("%{spec}", w if '*' in spec, self)
+            fmt("%{spec}", (n ?? w) if '*' in spec, self)
         } else {
-            fmt("%{spec}d", w if '*' in spec, self)
+            fmt("%{spec}d", (n ?? w) if '*' in spec, self)
         }
     }
 }
@@ -2116,6 +2115,7 @@ macro dbg(*args) {
         ],
         $$[
             let maxw = $$results.map\(#_.1).max()
+            let show = $${::show}
 
             for (r, src) in $$results {
                 eprint(
@@ -2727,8 +2727,8 @@ macro __walk! {
 
             ty.SpecialString(parts) => ty.SpecialString(
                 parts.map(match {
-                    (e, fmt, w) => (walk(e, f), fmt, w),
-                    e           => walk(e, f)
+                    (e, fmt, w, ?x) => (walk(e, f), fmt, w, x),
+                    e               => walk(e, f)
                 })
             ),
 
