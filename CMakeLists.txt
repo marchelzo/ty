@@ -7,6 +7,7 @@ include(cmake/VersionInfoTarget.cmake)
 # ---
 #   user-defined options
 # ---
+
 option(BUILD_PROFILER "Build the typrof executable" OFF)
 
 # ---
@@ -143,14 +144,34 @@ set(_tgt_ty_interface "${PROJECT_NAME}_Objects")
 add_library(${_tgt_ty_interface} INTERFACE)
 
 set(_tgt_ty_interface_version_info "${_tgt_ty_interface}_VersionInfo")
-add_version_info_target(NAME ${_tgt_ty_interface_version_info} GIT_WORK_TREE . LANGUAGE C)
+add_version_info_target(NAME ${_tgt_ty_interface_version_info}
+  GIT_WORK_TREE ${PROJECT_SOURCE_DIR}
+  LANGUAGE C
+)
 
 target_compile_options(${_tgt_ty_interface}
   INTERFACE
-    $<$<C_COMPILER_ID:GNU>:-Wall -Wno-switch -Wno-unused-value -Wno-unused-function>
-    $<$<C_COMPILER_ID:AppleClang>:-Weverything -mcpu=native -flto -ferror-limit=3>
-    $<$<C_COMPILER_ID:Clang>:-Weverything -mcpu=native -flto>
-    $<$<C_COMPILER_ID:MSVC>:/W4>
+    $<$<C_COMPILER_ID:GNU>:
+      -Wall
+      -Wno-switch
+      -Wno-unused-value
+      -Wno-unused-function
+    >
+    $<$<C_COMPILER_ID:AppleClang>:
+      -Weverything
+      -mcpu=native
+      -flto
+      -ferror-limit=3
+    >
+    $<$<C_COMPILER_ID:Clang>:
+      -Weverything
+      -mcpu=native
+      -flto
+    >
+    $<$<C_COMPILER_ID:MSVC>:
+      /W4
+      /we4013 # undefined function, assuming extern returning int
+    >
 )
 
 target_sources(${_tgt_ty_interface}
