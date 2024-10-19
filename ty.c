@@ -46,6 +46,8 @@ static char const *print_function = "print";
 static char SymbolLocation[512];
 
 bool EnableLogging = false;
+bool KindOfEnableLogging = false;
+
 bool ColorStdout;
 bool ColorStderr;
 
@@ -398,7 +400,8 @@ ProcessArgs(char *argv[], bool first)
                                         CompileOnly = true;
                                         break;
                                 case 'L':
-                                        EnableLogging = true;
+                                        EnableLogging |= KindOfEnableLogging;
+                                        KindOfEnableLogging = true;
                                         break;
                                 case 'p':
                                         PrintResult |= !first;
@@ -525,10 +528,11 @@ main(int argc, char **argv)
                 return -1;
         }
 
-        if (argc <= 1 && stdin_is_tty())
-                repl(&MainTy);
-
         argv += ProcessArgs(argv, false);
+
+        if (argv[0] == NULL && stdin_is_tty()) {
+                repl(&MainTy);
+        }
 
         FILE *file;
         char const *filename;

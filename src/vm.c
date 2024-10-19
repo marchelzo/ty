@@ -2173,7 +2173,7 @@ vm_exec(Ty *ty, char *code)
         uintptr_t s, off;
         intmax_t k;
         bool b = false;
-        float f;
+        double x;
         int n, nkw = 0, i, j, z, tag;
         unsigned long h;
 
@@ -2885,8 +2885,8 @@ Throw:
                         push(ty, INTEGER(k));
                         break;
                 CASE(REAL)
-                        READVALUE(f);
-                        push(ty, REAL(f));
+                        READVALUE(x);
+                        push(ty, REAL(x));
                         break;
                 CASE(BOOLEAN)
                         READVALUE(b);
@@ -3031,29 +3031,42 @@ Throw:
                 CASE(NIL)
                         push(ty, NIL);
                         break;
-                CASE(TO_STRING)
-                        str = IP;
-                        n = strlen(str);
-                        IP += n + 1;
+                CASE(FMT1)
+                        READSTR(str);
                         READVALUE(z);
+                        v = pop(ty);
+                        push(ty, xSz(str));
+                        push(ty, INTEGER(z));
+                        push(ty, v);
+                        n = 2;
+                        i = NAMES.fmt;
+                        b = false;
+                        goto CallMethod;
+                CASE(FMT2)
+                        READSTR(str);
+                        READVALUE(z);
+                        v = pop(ty);
+                        value = pop(ty);
+                        push(ty, xSz(str));
+                        push(ty, INTEGER(z));
+                        push(ty, value);
+                        push(ty, v);
+                        n = 3;
+                        i = NAMES.fmt;
+                        b = false;
+                        goto CallMethod;
+                CASE(TO_STRING)
                         if (top(ty)->type == VALUE_PTR) {
                             char *s = VSC(top(ty));
                             pop(ty);
                             push(ty, STRING_NOGC(s, strlen(s)));
-                            break;
-                        } else if (n > 0) {
-                                v = pop(ty);
-                                push(ty, STRING_NOGC(str, n));
-                                push(ty, INTEGER(z));
-                                push(ty, v);
-                                n = 2;
-                                i = NAMES.fmt;
                         } else {
                                 n = 0;
                                 i = NAMES.str;
+                                b = false;
+                                goto CallMethod;
                         }
-                        b = false;
-                        goto CallMethod;
+                        break;
                 CASE(YIELD)
                         if (UNLIKELY(!co_yield(ty))) {
                                 zP("attempt to yield from outside generator context");

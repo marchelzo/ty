@@ -586,6 +586,13 @@ eloc_cmp(void const *a_, void const *b_)
         return 0;
 }
 
+inline static void
+DebugExpr(Ty *ty, Expr const *e)
+{
+        Value v = tyexpr(ty, e);
+        XLOG("%s", VSC(&v));
+}
+
 char const *
 show_expr_type(Ty *ty, Expr const *e)
 {
@@ -594,7 +601,6 @@ show_expr_type(Ty *ty, Expr const *e)
         if (v.type == VALUE_TAG) {
                 return tags_name(ty, v.tag);
         } else {
-                //return value_show_color(ty, &v);
                 return tags_name(ty, tags_first(ty, v.tags));
         }
 }
@@ -922,7 +928,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
         if (s == NULL || s->namespace) {
                 fail(
                         ty,
-                        "reference to undefined variable: %s%s%s%s",
+                        "xreference to undefined variable: %s%s%s%s",
                         TERM(1),
                         TERM(93),
                         name,
@@ -1078,7 +1084,7 @@ symbolize_op_def(Ty *ty, Scope *scope, Stmt *def)
 }
 
 inline static Expr *
-resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
+resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool strict)
 {
         static vec(char) mod;
         mod.count = 0;
@@ -1145,11 +1151,11 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
         static int d;
         printf("%*sbefore: left=%s, e=%s, part=%s\n", d*4, "", ExpressionTypeName(left), ExpressionTypeName(e), parts[n - 1]);
         d += 1;
-        resolve_access(ty, scope, parts, n - 1, left);
+        resolve_access(ty, scope, parts, n - 1, left, strict);
         d -= 1;
         printf("%*safter:  left=%s, e=%s, part=%s\n", d*4, "", ExpressionTypeName(left), ExpressionTypeName(e), id);
 #else
-        resolve_access(ty, scope, parts, n - 1, left);
+        resolve_access(ty, scope, parts, n - 1, left, strict);
 #endif
 
         if (left->type == EXPRESSION_IDENTIFIER || left->type == EXPRESSION_MEMBER_ACCESS)
@@ -1157,6 +1163,8 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
 
         sym = scope_lookup(ty, left->scope, id);
         if (sym == NULL) {
+                if (!strict) return NULL;
+                //DebugExpr(ty, e);
                 state.end = e->end;
                 fail(
                         ty,
@@ -1173,6 +1181,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
                         !scope_is_subscope(ty, left->scope, state.global)
                 )
         ) {
+                if (!strict) return NULL;
                 state.end = e->end;
                 fail(
                         ty,
@@ -1230,14 +1239,18 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e)
         return e;
 }
 
-static void
-fixup_access(Ty *ty, Scope const *scope, Expr *e)
+void
+fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
 {
         StringVector parts = {0};
 
         char const *name;
         Location start = e->start;
         Location end = e->end;
+
+        if (scope == NULL) {
+                scope = state.global;
+        }
 
         if (e->type == EXPRESSION_MEMBER_ACCESS) {
                 name = e->member_name;
@@ -1312,7 +1325,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e)
         putchar('\n');
 #endif
 
-        resolve_access(ty, scope, parts.items, parts.count, (Expr *)e);
+        resolve_access(ty, scope, parts.items, parts.count, (Expr *)e, strict);
 
 #ifdef TY_DEBUG_NAMES
         printf("resolved to: %s\n", ExpressionTypeName(e));
@@ -1494,6 +1507,7 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                         Expr f = *e;
                         char *identifier = e->function->identifier;
                         char *module = e->function->module;
+                        Expr *namespace = e->function->namespace;
                         Expr **tagged = e->args.items;
                         int tagc = e->args.count;
                         Symbol *symbol = e->function->symbol;
@@ -1503,7 +1517,7 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                         e->identifier = identifier;
                         e->module = module;
                         e->symbol = symbol;
-                        e->namespace = NULL;
+                        e->namespace = namespace;
                         e->constraint = NULL;
                         if (tagc == 1 && tagged[0]->type != EXPRESSION_MATCH_REST) {
                                 e->tagged = tagged[0];
@@ -1526,7 +1540,10 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
                                 e->tagged = items;
                         }
                 }
-        } else if (e->type == EXPRESSION_TAG_APPLICATION && e->identifier != EmptyString) {
+        } else if (
+                (e->type == EXPRESSION_TAG_APPLICATION)
+             && (e->identifier != EmptyString)
+        ) {
                 e->symbol = e->symbolized ? e->symbol : getsymbol(
                         ty,
                         (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(ty, e->module),
@@ -1550,7 +1567,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
 
         void *ctx = PushContext(ty, target);
 
-        fixup_access(ty, scope, target);
+        fixup_access(ty, scope, target, true);
         try_symbolize_application(ty, scope, target);
 
         if (target->symbolized)
@@ -1704,7 +1721,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
         void *ctx = PushContext(ty, e);
 
-        fixup_access(ty, scope, e);
+        fixup_access(ty, scope, e, true);
         try_symbolize_application(ty, scope, e);
 
         if (e->symbolized)
@@ -1876,6 +1893,10 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         byte_vector code_save = state.code;
         vec_init(state.code);
 
+        ProgramAnnotation annotation = state.annotation;
+        state.annotation = (ProgramAnnotation) {0};
+
+        int t = e->type;
         e->type = EXPRESSION_FUN_MACRO_INVOCATION;
 
         emit_expression(ty, e->function);
@@ -1886,15 +1907,12 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         vm_exec(ty, state.code.items);
 
         state.code = code_save;
+        state.annotation = annotation;
 
         Value m = *vm_get(ty, 0);
         vmX();
 
         GC_STOP();
-
-        Value raw = ARRAY(vA());
-
-        vmP(&raw);
 
         Scope *mscope = state.macro_scope;
         state.macro_scope = scope;
@@ -1902,12 +1920,11 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         void *ctx = PushInfo(ty, e, "invoking function-like macro %s", QualifiedName(e->function));
 
         for (size_t i = 0;  i < e->args.count; ++i) {
-                vAp(raw.array, PTR(e->args.items[i]));
                 Value v = tyexpr(ty, e->args.items[i]);
                 vmP(&v);
         }
 
-        Value v = vmC(&m, e->args.count + 1);
+        Value v = vmC(&m, e->args.count);
 
         Location const mstart = state.mstart;
         Location const mend = state.mend;
@@ -1928,6 +1945,41 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         RestoreContext(ty, ctx);
 
         GC_RESUME();
+}
+
+static bool
+try_fun_macro_op(Ty *ty, Scope *scope, Expr *e)
+{
+        Symbol *sym = scope_lookup(ty, scope, e->op_name);
+
+        if (sym == NULL || !sym->fun_macro) {
+                return false;
+        }
+
+        Expr *fun = NewExpr(ty, EXPRESSION_IDENTIFIER);
+        fun->symbolized = true;
+        fun->identifier = (char *)e->op_name;
+        fun->scope = sym->scope;
+        fun->symbol = sym;
+
+        Expr *left = e->left;
+        Expr *right =  e->right;
+
+        e->type = EXPRESSION_FUNCTION_CALL;
+        e->function = fun;
+
+        vec_init(e->args);
+        vec_init(e->fconds);
+
+        avP(e->args, left);
+        avP(e->fconds, NULL);
+
+        avP(e->args, right);
+        avP(e->fconds, NULL);
+
+        invoke_fun_macro(ty, scope, e);
+
+        return true;
 }
 
 static Scope *
@@ -1975,7 +2027,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 
         void *ctx = PushContext(ty, e);
 
-        fixup_access(ty, scope, e);
+        fixup_access(ty, scope, e, true);
 
         if (e->symbolized)
                 goto End;
@@ -2054,6 +2106,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i) {
                         symbolize_expression(ty, scope, e->expressions.items[i]);
+                        symbolize_expression(ty, scope, *v_(e->fmt_args, i));
                 }
                 break;
         case EXPRESSION_TAG:
@@ -2094,6 +2147,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
                 break;
         case EXPRESSION_USER_OP:
+                if (try_fun_macro_op(ty, scope, e)) {
+                        symbolize_expression(ty, scope, e);
+                        break;
+                }
                 symbolize_expression(ty, scope, e->sc);
         case EXPRESSION_PLUS:
         case EXPRESSION_MINUS:
@@ -2782,11 +2839,11 @@ emit_boolean(Ty *ty, bool b)
 }
 
 inline static void
-emit_float(Ty *ty, float f)
+emit_float(Ty *ty, double x)
 {
 
-        LOG("emitting float: %f", f);
-        avPn(state.code, (char const *)&f, sizeof f);
+        LOG("emitting float: %f", x);
+        avPn(state.code, (char const *)&x, sizeof x);
 }
 
 inline static void
@@ -3391,14 +3448,26 @@ emit_special_string(Ty *ty, Expr const *e)
         }
 
         for (int i = 0; i < e->expressions.count; ++i) {
-                emit_expression(ty, e->expressions.items[i]);
-                emit_instr(ty, INSTR_TO_STRING);
-                if (e->fmts.items[i] != NULL) {
-                        emit_string(ty, e->fmts.items[i]);
+                char const *fmt = *v_(e->fmts, i);
+                Expr const *arg = *v_(e->fmt_args, i);
+                Expr const *ex = *v_(e->expressions, i);
+                int width = *v_(e->widths, i);
+
+                if (fmt == NULL) {
+                        emit_expression(ty, ex);
+                        emit_instr(ty, INSTR_TO_STRING);
+                } else if (arg == NULL ) {
+                        emit_expression(ty, ex);
+                        emit_instr(ty, INSTR_FMT1);
+                        emit_string(ty, fmt);
+                        emit_int(ty, width);
                 } else {
-                        avP(state.code, '\0');
+                        emit_expression(ty, arg);
+                        emit_expression(ty, ex);
+                        emit_instr(ty, INSTR_FMT2);
+                        emit_string(ty, fmt);
+                        emit_int(ty, width);
                 }
-                emit_int(ty, e->widths.items[i]);
 
                 if (e->strings.items[i + 1][0] != '\0') {
                         emit_instr(ty, INSTR_STRING);
@@ -6586,7 +6655,7 @@ tyexpr(Ty *ty, Expr const *e)
                      ? state.global
                      : state.macro_scope;
 
-        fixup_access(ty, scope, (Expr *)e);
+        fixup_access(ty, scope, (Expr *)e, true);
         expedite_fun(ty, (Expr *)e, scope);
 
         switch (e->type) {
@@ -7084,12 +7153,13 @@ tyexpr(Ty *ty, Expr const *e)
 
                 for (int i = 0; i < e->expressions.count; ++i) {
                         Value expr = tyexpr(ty, e->expressions.items[i]);
+                        Value arg = tyexpr(ty, *v_(e->fmt_args, i));
                         if (e->fmts.items[i] == NULL) {
                                 vAp(v.array, expr);
                         } else {
                                 Value s = vSs(e->fmts.items[i], strlen(e->fmts.items[i]));
                                 Value w = INTEGER(e->widths.items[i]);
-                                vAp(v.array, TRIPLE(expr, s, w));
+                                vAp(v.array, QUADRUPLE(expr, s, w, arg));
                         }
                         vAp(v.array, vSs(e->strings.items[i + 1], strlen(e->strings.items[i + 1])));
                 }
@@ -7239,10 +7309,16 @@ tyexpr(Ty *ty, Expr const *e)
                 );
                 break;
         case EXPRESSION_TEMPLATE_HOLE:
-                v = *vm_get(ty, e->integer);
+                if (ty->stack.count > e->integer)
+                        v = *vm_get(ty, e->integer);
+                else
+                        v = TAG(TyNil);
                 break;
         case EXPRESSION_TEMPLATE_VHOLE:
-                v = tagged(ty, TyValue, *vm_get(ty, e->integer), NONE);
+                if (ty->stack.count > e->integer)
+                        v = tagged(ty, TyValue, *vm_get(ty, e->integer), NONE);
+                else
+                        v = TAG(TyNil);
                 break;
         case EXPRESSION_STATEMENT:
                 v = tystmt(ty, e->statement);
@@ -7805,7 +7881,7 @@ cstmt(Ty *ty, Value *v)
 Expr *
 cexpr(Ty *ty, Value *v)
 {
-        if (v->type == VALUE_NIL) {
+        if (v == NULL || v->type == VALUE_NIL) {
                 return NULL;
         }
 
@@ -7820,6 +7896,8 @@ cexpr(Ty *ty, Value *v)
                         src = source_lookup(ty, src_val->src);
                 }
         }
+
+        XLOG("cexpr(): v = %s", VSC(v));
 
         if (src != NULL) {
                 e->start = src->start;
@@ -7991,10 +8069,7 @@ cexpr(Ty *ty, Value *v)
         case TySpecialString:
         {
                 e->type = EXPRESSION_SPECIAL_STRING;
-                vec_init(e->strings);
-                vec_init(e->expressions);
-                vec_init(e->widths);
-                vec_init(e->fmts);
+
                 for (int i = 0; i < v->array->count; ++i) {
                         Value *x = &v->array->items[i];
                         if (x->type == VALUE_STRING) {
@@ -8003,12 +8078,15 @@ cexpr(Ty *ty, Value *v)
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
                                 avP(e->fmts, mkcstr(ty, &x->items[1]));
                                 avP(e->widths, (x->count > 2) ? x->items[2].integer : 0);
+                                avP(e->fmt_args, cexpr(ty, tget_nn(x, 3)));
                         } else {
                                 avP(e->expressions, cexpr(ty, x));
                                 avP(e->fmts, NULL);
                                 avP(e->widths, 0);
+                                avP(e->fmt_args, NULL);
                         }
                 }
+
                 if (v->array->count == 0 || vvL(*v->array)->type != VALUE_STRING) {
                         avP(e->strings, "");
                 }
@@ -8572,7 +8650,7 @@ cexpr(Ty *ty, Value *v)
                      ? state.global
                      : state.macro_scope;
 
-        fixup_access(ty, scope, e);
+        fixup_access(ty, scope, e, true);
         e->origin = state.origin;
 
         return e;
@@ -8669,27 +8747,69 @@ tyeval(Ty *ty, Expr *e)
         return v;
 }
 
-Expr *
-typarse(Ty *ty, Expr *e, Location const *start,
-        Location const *end)
+Value
+compiler_eval(
+        Ty *ty,
+        Expr *e
+)
 {
         symbolize_expression(ty, state.global, e);
 
         byte_vector code_save = state.code;
         vec_init(state.code);
 
-        location_vector locs_save = state.expression_locations;
+        add_location_info(ty);
         vec_init(state.expression_locations);
+
+        ProgramAnnotation annotation = state.annotation;
+        state.annotation = (ProgramAnnotation) {0};
 
         emit_expression(ty, e);
         emit_instr(ty, INSTR_HALT);
 
-        add_location_info(ty);
+        vec_init(state.expression_locations);
 
         vm_exec(ty, state.code.items);
 
         state.code = code_save;
-        state.expression_locations = locs_save;
+        state.annotation = annotation;
+        vec_init(state.expression_locations);
+
+        Value v = *vm_get(ty, 0);
+        vmX();
+
+        return v;
+}
+
+Expr *
+typarse(
+        Ty *ty,
+        Expr *e,
+        Location const *start,
+        Location const *end
+)
+{
+        symbolize_expression(ty, state.global, e);
+
+        byte_vector code_save = state.code;
+        vec_init(state.code);
+
+        add_location_info(ty);
+        vec_init(state.expression_locations);
+
+        ProgramAnnotation annotation = state.annotation;
+        state.annotation = (ProgramAnnotation) {0};
+
+        emit_expression(ty, e);
+        emit_instr(ty, INSTR_HALT);
+
+        vec_init(state.expression_locations);
+
+        vm_exec(ty, state.code.items);
+
+        state.code = code_save;
+        state.annotation = annotation;
+        vec_init(state.expression_locations);
 
         Value m = *vm_get(ty, 0);
 
@@ -9319,7 +9439,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
         uintptr_t s;
         intmax_t k;
         bool b = false;
-        float f;
+        double x;
         int n, nkw = 0, i, j, tag;
 
         dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
@@ -9588,7 +9708,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(k);
                         break;
                 CASE(REAL)
-                        READVALUE(f);
+                        READVALUE(x);
                         break;
                 CASE(BOOLEAN)
                         READVALUE(b);
@@ -9621,9 +9741,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(NIL)
                         break;
-                CASE(TO_STRING)
+                CASE(FMT1)
+                CASE(FMT2)
                         SKIPSTR();
-                        READVALUE_(n);
+                        READVALUE(n);
+                        break;
+                CASE(TO_STRING)
                         break;
                 CASE(YIELD)
                         break;
