@@ -605,11 +605,6 @@ inline static Token *
         for (;;) {
                 t = tokenx(i);
 
-                if (t->pp && t->type == '\n' && !lxst->need_nl) {
-                        t->ctx = LEX_HIDDEN;
-                        continue;
-                }
-
                 if (
                         LIKELY(t->type != TOKEN_DIRECTIVE)
                      || tokenx(i + 1)->type != TOKEN_KEYWORD

@@ -928,7 +928,7 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
         if (s == NULL || s->namespace) {
                 fail(
                         ty,
-                        "xreference to undefined variable: %s%s%s%s",
+                        "reference to undefined variable: %s%s%s%s",
                         TERM(1),
                         TERM(93),
                         name,
