@@ -283,6 +283,8 @@ function(add_version_info_target)
 
   add_library(${arg_NAME} STATIC)
   add_library(VersionInfo::${arg_NAME} ALIAS ${arg_NAME})
+  set_property(TARGET ${arg_NAME} PROPERTY C_STANDARD 99)
+  set_property(TARGET ${arg_NAME} PROPERTY CXX_STANDARD 98)
 
   target_sources(${arg_NAME} PRIVATE ${_vinfo_hdr} ${_vinfo_src})
 

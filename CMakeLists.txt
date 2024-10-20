@@ -8,7 +8,7 @@ include(cmake/VersionInfoTarget.cmake)
 #   user-defined options
 # ---
 
-option(BUILD_PROFILER "Build the typrof executable" OFF)
+option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
 
 # ---
 #   find 3rd-party dependencies
@@ -53,7 +53,7 @@ endif()
 #   global compiler variables
 # ---
 
-set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED TRUE)
 
 # ---
@@ -236,5 +236,22 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS ${_tgt_ty} ${_tgt_ty_profiler}
+  COMPONENT InstallComponentTy
   DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
+
+file(GLOB _ty_modules LIST_DIRECTORIES false ${PROJECT_SOURCE_DIR}/lib/*.ty)
+install(FILES ${_ty_modules}
+  COMPONENT InstallComponentTy
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/ty
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE   # 6
+    GROUP_READ               # 4
+    WORLD_READ               # 4
+)
+
+# ---
+#  include cpack (must be very last thing in cmakelists.txt)
+# ---
+
+include(${PROJECT_SOURCE_DIR}/cmake/CPackSetup.cmake)
