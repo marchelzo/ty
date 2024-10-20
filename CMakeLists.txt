@@ -249,3 +249,9 @@ install(FILES ${_ty_modules}
     GROUP_READ               # 4
     WORLD_READ               # 4
 )
+
+# ---
+#  include cpack (must be very last thing in cmakelists.txt)
+# ---
+
+include(${PROJECT_SOURCE_DIR}/cmake/CPackSetup.cmake)

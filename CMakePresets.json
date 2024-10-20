@@ -166,6 +166,50 @@
             "configuration": "Release"
         }
     ],
+    "packagePresets": [
+        {
+            "name": "base-package",
+            "hidden": true,
+            "configurations": [
+                "Release"
+            ],
+            "packageDirectory": "${sourceDir}/_packages/${presetName}"
+        },
+        {
+            "name": "msvc2022",
+            "inherits": "base-package",
+            "configurePreset": "msvc2022"
+        },
+        {
+            "name": "msvc2022-debug",
+            "inherits": "base-package",
+            "configurePreset": "msvc2022-debug",
+            "configurations": [ "Debug" ]
+        },
+        {
+            "name": "msvc2022-shared",
+            "inherits": "base-package",
+            "configurePreset": "msvc2022-shared"
+        },
+        {
+            "name": "msvc2022-shared-debug",
+            "inherits": "base-package",
+            "configurePreset": "msvc2022-shared-debug",
+            "configurations": [ "Debug" ]
+        },
+        {
+            "name": "gcc",
+            "inherits": "base-package",
+            "configurePreset": "gcc",
+            "configurations": [ "Debug" ]
+        },
+        {
+            "name": "clang-osx",
+            "inherits": "base-package",
+            "configurePreset": "clang-osx",
+            "configurations": [ "Debug" ]
+        }
+    ],
     "workflowPresets": [
         {
             "name": "msvc2022",
