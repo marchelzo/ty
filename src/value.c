@@ -20,6 +20,10 @@
 #include "intern.h"
 #include "compiler.h"
 
+static _Thread_local int ShowDepth = 0;
+static char *value_showx(Ty *ty, Value const *v);
+static char *value_show_colorx(Ty *ty, Value const *v);
+
 static bool
 arrays_equal(Ty *ty, struct value const *v1, struct value const *v2)
 {
@@ -146,7 +150,7 @@ obj_hash(Ty *ty, struct value const *v)
         if (f != NULL) {
                 struct value h = vm_eval_function(ty, f, v, NULL);
                 if (h.type != VALUE_INTEGER) {
-                        zP("%s.__hash__ return non-integer: %s", class_name(ty, v->class), value_show(ty, v));
+                        zP("%s.__hash__ return non-integer: %s", class_name(ty, v->class), VSC(v));
                 }
                 return (unsigned long)h.integer;
         } else {
@@ -175,7 +179,7 @@ hash(Ty *ty, struct value const *val)
         case VALUE_PTR:               return ptr_hash(ty, val->ptr);
         case VALUE_TAG:               return (((unsigned long)val->tag) * 91238) ^ 0x123AEDDULL;
         case VALUE_CLASS:             return (((unsigned long)val->class) * 2048) ^ 0xAABB1012ULL;
-        default:                      zP("attempt to hash invalid value: %s", value_show(ty, val));
+        default:                      zP("attempt to hash invalid value: %s", VSC(val));
         }
 }
 
@@ -213,8 +217,8 @@ show_dict(Ty *ty, struct value const *d, bool color)
 
         for (size_t i = 0, j = 0; i < d->dict->size; ++i) {
                 if (d->dict->keys[i].type == 0) continue;
-                char *key = color ? value_show_color(ty, &d->dict->keys[i]) : value_show(ty, &d->dict->keys[i]);
-                char *val = color ? value_show_color(ty, &d->dict->values[i]) : value_show(ty, &d->dict->values[i]);
+                char *key = color ? value_show_colorx(ty, &d->dict->keys[i]) : value_showx(ty, &d->dict->keys[i]);
+                char *val = color ? value_show_colorx(ty, &d->dict->values[i]) : value_showx(ty, &d->dict->values[i]);
                 add(j == 0 ? "" : ", ");
                 add(key);
                 if (d->dict->values[i].type != VALUE_NIL) {
@@ -261,7 +265,7 @@ show_array(Ty *ty, Value const *a, bool color)
                 len += n;
 
         for (size_t i = 0; i < a->array->count; ++i) {
-                char *val = color ? value_show_color(ty, &a->array->items[i]) : value_show(ty, &a->array->items[i]);
+                char *val = color ? value_show_colorx(ty, &a->array->items[i]) : value_showx(ty, &a->array->items[i]);
                 add(i == 0 ? "" : ", ");
                 add(val);
                 mF(val);
@@ -319,7 +323,7 @@ show_tuple(Ty *ty, struct value const *v, bool color)
                         }
                 }
 
-                char *val = color ? value_show_color(ty, &v->items[i]) : value_show(ty, &v->items[i]);
+                char *val = color ? value_show_colorx(ty, &v->items[i]) : value_showx(ty, &v->items[i]);
                 add(val);
                 mF(val);
         }
@@ -413,11 +417,14 @@ uninit(Ty *ty, Symbol const *s)
         );
 }
 
-char *
-value_show(Ty *ty, Value const *v)
+static char *
+value_showx(Ty *ty, Value const *v)
 {
         char buffer[1024];
         char *s = NULL;
+
+        if (++ShowDepth > 12)
+                return sclone(ty, "...");
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
@@ -459,7 +466,7 @@ value_show(Ty *ty, Value const *v)
                 if (v->this == NULL)
                         snprintf(buffer, 1024, "<method '%s' at %p>", M_NAME(v->name), (void *)v->method);
                 else
-                        snprintf(buffer, 1024, "<method '%s' at %p bound to %s>", M_NAME(v->name), (void *)v->method, value_show(ty, v->this));
+                        snprintf(buffer, 1024, "<method '%s' at %p bound to %s>", M_NAME(v->name), (void *)v->method, value_showx(ty, v->this));
                 break;
         case VALUE_BUILTIN_METHOD:
                 snprintf(buffer, 1024, "<bound builtin method '%s'>", M_NAME(v->name));
@@ -529,11 +536,16 @@ value_show(Ty *ty, Value const *v)
         return result;
 }
 
-char *
-value_show_color(Ty *ty, struct value const *v)
+static char *
+value_show_colorx(Ty *ty, struct value const *v)
 {
         char buffer[4096];
         char *s = NULL;
+
+        static _Thread_local vec(void const *) visiting;
+
+        if (++ShowDepth > 12)
+                return sclone(ty, "...");
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
@@ -612,7 +624,7 @@ value_show_color(Ty *ty, struct value const *v)
                                 TERM(0)
                         );
                 } else {
-                        char *vs = value_show_color(ty, v->this);
+                        char *vs = value_show_colorx(ty, v->this);
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -727,13 +739,20 @@ value_show_color(Ty *ty, struct value const *v)
                 snprintf(buffer, sizeof buffer, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
         case VALUE_OBJECT:;
+                xvP(visiting, v->object);
+
+                for (int i = 0; i < v_n(visiting); ++i) {
+                        if (*v_(visiting, i) == v->object) {
+                                goto BasicObject;
+                        }
+                }
 #ifdef TY_NO_LOG
-                struct value *fp = class_method(ty, v->class, "__str__");
+                Value *fp = class_method(ty, v->class, "__str__");
 #else
                 struct value *fp = NULL;
 #endif
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
-                        struct value str = vm_eval_function(ty, fp, v, NULL);
+                        Value str = vm_eval_function(ty, fp, v, NULL);
                         gP(&str);
                         if (str.type != VALUE_STRING)
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
@@ -742,6 +761,7 @@ value_show_color(Ty *ty, struct value const *v)
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
+BasicObject:
                         snprintf(
                                 buffer,
                                 sizeof buffer,
@@ -756,6 +776,9 @@ value_show_color(Ty *ty, struct value const *v)
                                 TERM(0)
                         );
                 }
+
+                vvX(visiting);
+
                 break;
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
@@ -767,6 +790,24 @@ value_show_color(Ty *ty, struct value const *v)
         mF(s);
 
         return result;
+}
+
+char *
+value_show_color(Ty *ty, Value const *v)
+{
+        bool top = (ShowDepth == 0);
+        char *str = value_show_colorx(ty, v);
+        if (top) ShowDepth = 0;
+        return str;
+}
+
+char *
+value_show(Ty *ty, Value const *v)
+{
+        bool top = (ShowDepth == 0);
+        char *str = value_showx(ty, v);
+        if (top) ShowDepth = 0;
+        return str;
 }
 
 inline static int
@@ -912,7 +953,7 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
         case VALUE_CLASS:
                 return v->type == VALUE_OBJECT && v->class == p->class;
         default:
-                zP("invalid type of value used as a predicate: %s", value_show(ty, v));
+                zP("invalid type of value used as a predicate: %s", value_showx(ty, v));
         }
 }
 
@@ -974,7 +1015,7 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v)
 
                 return match;
         default:
-                zP("invalid type of value used as a callable: %s", value_show(ty, f));
+                zP("invalid type of value used as a callable: %s", value_showx(ty, f));
         }
 }
 

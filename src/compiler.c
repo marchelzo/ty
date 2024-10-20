@@ -7897,8 +7897,6 @@ cexpr(Ty *ty, Value *v)
                 }
         }
 
-        XLOG("cexpr(): v = %s", VSC(v));
-
         if (src != NULL) {
                 e->start = src->start;
                 e->end = src->end;
@@ -9389,6 +9387,8 @@ NextCaption(ProgramAnnotation *annotation, char const *pc)
 char const *
 DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end)
 {
+        extern bool DebugMode;
+
 #define CASE(i) case INSTR_ ## i:
 #define PRINTVALUE(x)                                                                      \
         _Generic(                                                                          \
@@ -9403,22 +9403,24 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         byte_vector after = {0};
 
-#define DUMPSTR(s) (xvP(*out, ' '), dumpstr(out, (s)))
+#define DUMPSTR(s)    (!DebugScan && (xvP(*out, ' '), dumpstr(out, (s)), 0))
 #define SKIPSTR()     (DUMPSTR(c), (c += strlen(c) + 1))
 #define READSTR(s)    (((s) = c), SKIPSTR())
-#define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), PRINTVALUE(x))
+#define READVALUE(x)  (memcpy(&x, c, sizeof x), (c += sizeof x), (!DebugScan && ((PRINTVALUE(x)), 0)))
 #define READVALUE_(x) (memcpy(&x, c, sizeof x), (c += sizeof x))
 #define READMEMBER(n) (READVALUE_((n)), DUMPSTR(M_NAME((n))))
 
+        uintptr_t pc = (uintptr_t)code;
         ProgramAnnotation *annotation = NULL;
 
         for (int i = 0; i < annotations.count; ++i) {
                 if (
-                        ((uintptr_t)code) >= annotations.items[i].start
-                     && ((uintptr_t)code) <  annotations.items[i].end
+                        pc >= annotations.items[i].start
+                     && pc <  annotations.items[i].end
                 ) {
                         annotation = &annotations.items[i];
                         annotation->i = 0;
+                        break;
                 }
         }
 
@@ -9442,22 +9444,49 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
         double x;
         int n, nkw = 0, i, j, tag;
 
-        dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
+        bool DebugScan = DebugMode;
+        uint32_t limit = UINT32_MAX;
+        uintptr_t DebugHistory[8] = {0};
+
+        dump(
+                out,
+                "%s%s: %s%s: %s:%s  (code = %ju)\n",
+                TERM(32),
+                name,
+                TERM(34),
+                annotation->module,
+                TERM(33),
+                annotation->name,
+                TERM(0),
+                (uintptr_t)code
+        );
+        //dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
         dont_printf("        %s%s:%s\n", TERM(34), name, TERM(0));
 
         char const *caption;
 
-        for (char const *c = code; c != end; xvP(*out, '\n')) {
-                if (annotation != NULL) while (
+        for (char const *c = code; c != end; DebugScan || xvP(*out, '\n')) {
+                uintptr_t pc = (uintptr_t)c;
+
+                if (DebugMode) {
+                        if (--limit == 0) break;
+                        memmove(
+                                DebugHistory,
+                                DebugHistory + 1, 
+                                (sizeof DebugHistory) - sizeof DebugHistory[0]
+                        );
+                        DebugHistory[countof(DebugHistory) - 1] = pc;
+                }
+
+                ptrdiff_t begin = out->count;
+
+                if (!DebugScan && annotation != NULL) while (
                         (caption = NextCaption(annotation, c)) != NULL &&
                         caption[0] == ':'
                 ) {
                         dump(out, "            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
                         dont_printf("            %s%s:%s\n", TERM(95), caption + 1, TERM(0));
                 }
-
-                ptrdiff_t pc = (uintptr_t)c;
-                ptrdiff_t begin = out->count;
 
 #ifdef TY_ENABLE_PROFILING
                 extern istat prof;
@@ -9490,19 +9519,45 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         TERM(93), GetInstructionName(*c), TERM(0)
                 );
 #else
-                dump(
-                        out,
-                        "                    %s%7td%s            %s%s%s",
-                        TERM(94), pc, TERM(0),
-                        TERM(93), GetInstructionName(*c), TERM(0)
-                );
+                if (DebugScan && c == ty->ip) {
+                        for (int i = 0; i < countof(DebugHistory); ++i) {
+                                if (DebugHistory[i] != 0) {
+                                        c = (char const *)DebugHistory[i];
+                                        break;
+                                }
+                        }
+                        dont_printf("Hit IP:\n");
+                        for (int i = 0; i < countof(DebugHistory); ++i) {
+                                dont_printf("   [%d] = %ju\n", i, DebugHistory[i]);
+                        }
+                        DebugScan = false;
+                        limit = 2 * countof(DebugHistory);
+                        continue;
+                }
+
+                if (DebugMode && c == ty->ip) {
+                        dump(
+                                out,
+                                "                    %s%7td%s       %s-->  %s%s%s",
+                                TERM(92), pc, TERM(0),
+                                TERM(92),
+                                TERM(93;4), GetInstructionName(*c), TERM(0)
+                        );
+                } else if (!DebugScan) {
+                        dump(
+                                out,
+                                "                    %s%7td%s            %s%s%s",
+                                TERM(94), pc, TERM(0),
+                                TERM(93), GetInstructionName(*c), TERM(0)
+                        );
+                }
 #endif
 
                 dont_printf(
-                        "%s%7td%s            %s%s%s %s\n",
+                        "%s%7td%s            %s%s%s      %ju\n",
                         TERM(94), pc, TERM(0),
                         TERM(93), GetInstructionName(*c), TERM(0),
-                        name
+                        (uintptr_t)ty->ip
                 );
 
                 switch ((unsigned char)*c++) {
@@ -9731,7 +9786,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         while (n --> 0) {
                                 READVALUE_(i);
-                                switch (i) {
+                                if (!DebugScan) switch (i) {
                                 case -1: dump(out, " %s_%s", TERM(96),   TERM(0)); break;
                                 case -2: dump(out, " %s*%s", TERM(95;1), TERM(0)); break;
                                 default: DUMPSTR(M_NAME(i));
@@ -9759,7 +9814,13 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(VALUE)
                         READVALUE_(s);
-                        dump(out, " %s", VSC((Value *)s));
+                        if (DebugMode && !DebugScan) {
+                                DebugMode = false;
+                                dump(out, " %s", VSC((Value *)s));
+                                DebugMode = true;
+                        } else if (!DebugMode) {
+                                dump(out, " %s", VSC((Value *)s));
+                        }
                         dont_printf(" %s", VSC((Value *)s));
                         break;
                 CASE(EVAL)
@@ -9767,8 +9828,8 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(RENDER_TEMPLATE)
                         READVALUE_(s);
-                        xvP(*out, ' ');
-                        dump_source_of((Expr *)s, out);
+                        if (!DebugScan) xvP(*out, ' ');
+                        if (!DebugScan) dump_source_of((Expr *)s, out);
                         break;
                 CASE(TRAP)
                         break;
@@ -9946,18 +10007,22 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
 
-                        char signature[256];
+                        if (DebugMode && ty->ip > c + hs + size) {
+                                c += hs + size;
+                        } else {
+                                char signature[256];
 
-                        snprintf(
-                                signature,
-                                sizeof signature,
-                                "%s%s",
-                                name_of(&v),
-                                (proto_of(&v) == NULL) ? "()" : proto_of(&v)
-                        );
+                                snprintf(
+                                        signature,
+                                        sizeof signature,
+                                        "%s%s",
+                                        name_of(&v),
+                                        (proto_of(&v) == NULL) ? "()" : proto_of(&v)
+                                );
 
-                        dump(out, " %s%s%s", TERM(96), signature, TERM(0));
-                        c = DumpProgram(ty, &after, signature, c + hs, c + hs + size);
+                                dump(out, " %s%s%s", TERM(96), signature, TERM(0));
+                                c = DumpProgram(ty, &after, signature, c + hs, c + hs + size);
+                        }
 
                         for (int i = 0; i < ncaps; ++i) {
                                 READVALUE_(b);
@@ -10002,7 +10067,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         if (end == NULL) goto End;
                 }
 
-                if (caption != NULL) {
+                if (!DebugScan && caption != NULL) {
                         int width = term_width(
                                 v_(*out, begin),
                                 out->count - begin
@@ -10017,7 +10082,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 }
         }
 End:
-        if (after.count > 0) {
+        if (!DebugMode && after.count > 0) {
                 xvP(*out, '\n');
                 xvPn(*out, after.items, after.count);
         }

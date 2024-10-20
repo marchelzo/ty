@@ -87,7 +87,7 @@
 #define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 
-#ifndef TY_NO_LOG
+#ifndef aada
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
      && fprintf(                                \
@@ -498,7 +498,13 @@ inline static Token *
 
                 t = lex_token(ty, lctx);
 
-                PLOG("Add tokens[%d]: %s", (int)tokens.count, token_show(ty, &t));
+                PLOG(
+                        "%sAdd tokens%s[%d]: %s",
+                        TERM(92;),
+                        TERM(0),
+                        (int)tokens.count,
+                        token_show(ty, &t)
+                );
                 avP(tokens, t);
         }
 
@@ -646,14 +652,12 @@ inline static struct token *
 void
 parse_sync_lex(Ty *ty)
 {
-        Token t0 = *token(-1);
-        Token t1 = *token(0);
+        Token t;
 
         if (
-                t0.pp
-             || t1.pp
-             || (TokenIndex == 0)
+                (TokenIndex == 0)
              || (TokenIndex >= tokens.count)
+             || (t = *token(-1)).pp
         ) {
                 return;
         }
@@ -669,10 +673,8 @@ parse_sync_lex(Ty *ty)
         );
 
         tokens.count = TokenIndex;
-        lex_need_nl(ty, t0.nl && t1.nl);
-        lex_rewind(ty, &t0.end);
-
-        tok();
+        lex_need_nl(ty, t.nl);
+        lex_rewind(ty, &t.end);
 
         PLOG(
                 "%sparse_sync_lex()%s: %spost%s: [%s] | [%s]",
@@ -704,7 +706,9 @@ setctx(Ty *ty, int ctx)
         PLOGC('\n');
 
         PLOG(
-                "Rewind: %s[%5d]%s: %s%.*s%s~%s",
+                "%sRewind:%s %s[%5d]%s: %s%.*s%s~%s",
+                TERM(91),
+                TERM(0),
                 TERM(95),
                 TokenIndex,
                 TERM(0),

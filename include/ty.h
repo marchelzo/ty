@@ -13,6 +13,7 @@
 #include "panic.h"
 
 typedef struct value Value;
+typedef struct expression Expr;
 
 typedef vec(int)           int_vector;
 typedef vec(char)          byte_vector;
@@ -87,6 +88,22 @@ typedef struct {
 } ScratchSave;
 
 typedef struct {
+        char *ip;
+        uint8_t op;
+        Expr *cond;
+} DebugBreakpoint;
+
+typedef struct {
+        enum {
+                TDB_OFF,
+                TDB_ACTIVE,
+                TDB_STOPPED,
+                TDB_STEPPING
+        } state;
+        vec(DebugBreakpoint) breaks;
+} TDB;
+
+typedef struct {
         TY *ty;
         char *ip;
         ValueStack stack;
@@ -109,6 +126,8 @@ typedef struct {
         } scratch;
 
         ThreadGroup *my_group;
+
+        TDB *tdb;
 } Ty;
 
 struct member_names {
@@ -195,8 +214,10 @@ extern bool ColorProfile;
 #define vvX  vec_pop
 #define vvL  vec_last
 #define vvXi vec_pop_ith
+
+#define v_n(v)   ((ptrdiff_t)(v).count)
 #define v_(v, i) (&(v).items[(i)])
-#define vZ(v) ((v).items + (v).count)
+#define vZ(v)    ((v).items + (v).count)
 
 #define avP(a, b)        VPush(a, b)
 #define avPn(a, b, c)    VPushN(a, b, c)
@@ -298,6 +319,18 @@ mrealloc(void *p, size_t n)
         return p;
 }
 
+inline static void *
+alloc0(size_t n)
+{
+        void *p = calloc(1, n);
+
+        if (UNLIKELY(p == NULL)) {
+                panic("Out of memory!");
+        }
+
+        return p;
+}
+
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 
 inline static void
@@ -368,6 +401,28 @@ RestoreScratch(Ty *ty, ScratchSave save)
 
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
 #define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
+
+inline static bool
+tdb_is_active(Ty const *ty)
+{
+        return ty->tdb != NULL
+            && ty->tdb->active;
+}
+
+inline static void
+tdb_start(Ty *ty)
+{
+        if (ty->tdb == NULL) {
+                ty->tdb = alloc0(sizeof *ty->tdb);
+        }
+
+        ty->tdb->state = true;
+}
+
+#define TDB        (ty->tdb)
+#define TDB_STATE  ((TDB == NULL) ? TDB_OFF : TDB->state)
+#define TDB_IS(x)  (TDB_STATE == TDB_ ## x)
+#define DEBUGGING  (!TDB_IS(OFF))
 
 #endif
 

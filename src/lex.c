@@ -1464,11 +1464,10 @@ lex_need_nl(Ty *ty, bool need)
 }
 
 bool
-lex_keep_comments(Ty *ty, bool b)
+lex_keep_comments(Ty *ty, bool keep)
 {
-        bool old = state.keep_comments;
-        state.keep_comments = b;
-        return old;
+        SWAP(bool, keep, state.keep_comments);
+        return keep;
 }
 
 void
