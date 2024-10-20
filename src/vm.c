@@ -267,6 +267,7 @@ typedef struct {
 static char const *filename;
 static char const *Error;
 
+bool DEBUGGING = false;
 bool CompileOnly = false;
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
@@ -325,11 +326,16 @@ static TyThreadReturnValue
 vm_run_thread(void *p);
 
 static void
+DebugStackTrace(Ty *ty);
+
+static void
 InitializeTY(void)
 {
 #define X(op, id) intern(&xD.b_ops, id)
         TY_BINARY_OPERATORS;
 #undef X
+
+        srandom(time(NULL));
 }
 
 int
@@ -345,7 +351,7 @@ InitializeTy(Ty *ty)
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
 
-        uint64_t seed = rand();
+        uint64_t seed = random();
         ty->prng[0] = splitmix64(&seed);
         ty->prng[1] = splitmix64(&seed);
         ty->prng[2] = splitmix64(&seed);
@@ -749,12 +755,12 @@ top(Ty *ty)
 inline static void
 xprint_stack(Ty *ty, int n)
 {
-        XLOG("STACK: (%zu)", STACK.count);
+        printf("STACK: (%zu)\n", STACK.count);
         for (int i = 0; i < n && i < STACK.count; ++i) {
                 if (FRAMES.count > 0 && STACK.count - (i + 1) == vvL(FRAMES)->fp) {
-                        XLOG(" -->  %s", VSC(top(ty) - i));
+                        printf(" -->  %s\n", VSC(top(ty) - i));
                 } else {
-                        XLOG("      %s", VSC(top(ty) - i));
+                        printf("      %s\n", VSC(top(ty) - i));
                 }
         }
 }
@@ -872,6 +878,17 @@ co_yield(Ty *ty)
         return true;
 }
 
+inline static Generator *
+GetGeneratorForFrame(Ty *ty, int i)
+{
+        int n = FRAMES.items[i].fp;
+
+        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
+                return NULL;
+        }
+
+        return STACK.items[n - 1].gen;
+}
 
 inline static Generator *
 GetCurrentGenerator(Ty *ty)
@@ -2183,6 +2200,7 @@ vm_try_exec(Ty *ty, char *code)
 void
 vm_exec(Ty *ty, char *code)
 {
+        char *jump;
         char *save = IP;
         IP = code;
 
@@ -2262,6 +2280,65 @@ vm_exec(Ty *ty, char *code)
                         LastThreadTime = now;
                 }
 #endif
+                if (TDB_IS_STEPPING) {
+                        static byte_vector context;
+                        
+                        DEBUGGING = false;
+
+                        dont_printf(
+                                "%s%ju: %s%s%s\n",
+                                TERM(95),
+                                (uintptr_t)IP,
+                                TERM(92),
+                                GetInstructionName(*IP),
+                                TERM(0)
+                        );
+
+                        xprint_stack(ty, 5);
+
+                        DEBUGGING = true;
+
+                        char const *start = (FRAMES.count != 0)
+                                          ? code_of(&vvL(FRAMES)->f)
+                                          : code;
+
+                        context.count = 0;
+                        DumpProgram(ty, &context, "<debugger>", start, NULL);
+                        fwrite(v_(context, 0), 1, context.count, stdout);
+
+                        int c;
+                        int last = '\n';
+                        for (bool go = false; !go; last = c) switch (c = getchar()) {
+                        case EOF:
+                                go = true;
+                                break;
+
+                        case '\n':
+                                if (last != '\n') break;
+                        case 'n':
+                                go = true;
+                                break;
+
+                        case 'c':
+                                go = true;
+                                TDB->stopped = false;
+                                break;
+
+                        case 'B':
+                                DebugStackTrace(ty);
+                                break;
+
+                        case 'b':
+                                break;
+
+                        case 'l':
+                                context.count = 0;
+                                DumpProgram(ty, &context, "<debugger>", start, NULL);
+                                fwrite(v_(context, 0), 1, context.count, stdout);
+                                break;
+                        }
+                }
+
                 switch ((unsigned char)*IP++) {
                 CASE(NOP)
                         continue;
@@ -2512,11 +2589,11 @@ vm_exec(Ty *ty, char *code)
                         top(ty)->type |= VALUE_TAGGED;
                         break;
                 CASE(ARRAY_REST)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(i);
                         READVALUE(j);
                         if (top(ty)->type != VALUE_ARRAY || top(ty)->array->count < i + j) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else {
                                 Array *rest = vA();
                                 NOGC(rest);
@@ -2526,11 +2603,11 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(TUPLE_REST)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(i);
                         vp = poptarget(ty);
                         if (top(ty)->type != VALUE_TUPLE) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else {
                                 int count = top(ty)->count - i;
                                 Value *rest = mAo(count * sizeof (Value), GC_TUPLE);
@@ -2539,9 +2616,9 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(RECORD_REST)
-                        READJUMP(code);
+                        READJUMP(jump);
                         if (top(ty)->type != VALUE_TUPLE) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else {
                                 v = peek(ty);
 
@@ -2757,17 +2834,17 @@ Throw:
                         vvX(defer_stack);
                         break;
                 CASE(ENSURE_LEN)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(i);
                         if (top(ty)->type != VALUE_ARRAY || top(ty)->array->count > i) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         }
                         break;
                 CASE(ENSURE_LEN_TUPLE)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(i);
                         if (top(ty)->type != VALUE_TUPLE || top(ty)->count > i) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         }
                         break;
                 CASE(ENSURE_EQUALS_VAR)
@@ -2787,13 +2864,13 @@ Throw:
                         }
                         break;
                 CASE(TRY_REGEX)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(s);
                         v = REGEX((struct regex *) s);
                         value = value_apply_callable(ty, &v, top(ty));
                         vp = poptarget(ty);
                         if (value.type == VALUE_NIL) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else if (value.type == VALUE_STRING) {
                                 *vp = value;
                         } else {
@@ -2823,12 +2900,12 @@ Throw:
                         }
                         break;
                 CASE(TRY_INDEX)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(i);
                         READVALUE(b);
                         //LOG("trying to index: %s", VSC(top(ty)));
                         if (top(ty)->type != VALUE_ARRAY) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                                 break;
                         }
                         if (i < 0) {
@@ -2836,7 +2913,7 @@ Throw:
                         }
                         if (top(ty)->array->count <= i) {
                                 if (b) {
-                                        DOJUMP(code);
+                                        DOJUMP(jump);
                                 } else {
                                         push(ty, NIL);
                                 }
@@ -2845,21 +2922,21 @@ Throw:
                         }
                         break;
                 CASE(TRY_INDEX_TUPLE)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(i);
                         if (top(ty)->type != VALUE_TUPLE || top(ty)->count <= i) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else {
                                 push(ty, top(ty)->items[i]);
                         }
                         break;
                 CASE(TRY_TUPLE_MEMBER)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(b);
                         READVALUE(z);
 
                         if (top(ty)->type != VALUE_TUPLE) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                                 break;
                         }
 
@@ -2875,14 +2952,14 @@ Throw:
                                 goto NextInstruction;
                         }
 
-                        DOJUMP(code);
+                        DOJUMP(jump);
 
                         break;
                 CASE(TRY_TAG_POP)
-                        READJUMP(code);
+                        READJUMP(jump);
                         READVALUE(tag);
                         if (!(top(ty)->type & VALUE_TAGGED) || tags_first(ty, top(ty)->tags) != tag) {
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else {
                                 top(ty)->tags = tags_pop(ty, top(ty)->tags);
                                 if (top(ty)->tags == 0) {
@@ -3128,6 +3205,8 @@ Throw:
                         raise(SIGTRAP);
 #endif
                         break;
+                CASE(TRAP_TY)
+                        break;
                 CASE(GET_NEXT)
                         v = top(ty)[-1];
                         i = top(ty)[-2].i++;
@@ -3264,10 +3343,10 @@ Throw:
                         }
                         break;
                 CASE(NONE_IF_NOT)
-                        READJUMP(code);
+                        READJUMP(jump);
                         if (!value_truthy(ty, top(ty))) {
                                 *top(ty) = NONE;
-                                DOJUMP(code);
+                                DOJUMP(jump);
                         } else {
                                 pop(ty);
                         }
@@ -4476,8 +4555,6 @@ vm_init(Ty *ty, int ac, char **av)
 
         curl_global_init(CURL_GLOBAL_ALL);
 
-        srandom(time(NULL));
-
         compiler_init(ty);
 
         add_builtins(ty, ac, av);
@@ -4578,6 +4655,56 @@ Next:
         LOG("VM Error: %s", ERR);
 
         longjmp(jb, 1);
+}
+
+static void
+DebugStackTrace(Ty *ty)
+{
+        FrameStack frames = FRAMES;
+        char const *ip = IP;
+
+        char buf[8192];
+        int sz = sizeof buf;
+        int n = 0;
+        Generator *gen = NULL;
+
+        for (int i = 0; ip != NULL && n < sz; ++i) {
+                if (v_n(frames) > 0 && ((char *)vvL(frames)->f.info)[FUN_HIDDEN]) {
+                        /*
+                         * This code is part of a hidden function; we don't want it
+                         * to show up in stack traces.
+                         */
+                        goto Next;
+                }
+
+                Expr const *expr = compiler_find_expr(ty, ip - 1);
+
+                n += WriteExpressionTrace(ty, buf + n, sz - n, expr, 0, i == 0);
+                if (expr != NULL && expr->origin != NULL) {
+                        n += WriteExpressionOrigin(ty, buf + n, sz - n, expr->origin);
+                }
+
+                if (v_n(frames) == 0) {
+                        if (gen != NULL) {
+                                frames = gen->frames;
+                        } else {
+                                break;
+                        }
+                }
+
+                gen = (v_n(frames) == 0)     ? NULL
+                    : (vvL(frames)->fp == 0) ? NULL
+                    : (v_(STACK, vvL(frames)->fp - 1)->type != VALUE_GENERATOR) ? NULL
+                    : v_(STACK, vvL(frames)->fp - 1)->gen;
+
+Next:
+                ip = v_n(frames) == 0
+                   ? NULL
+                   : vvX(frames)->ip;
+        }
+
+        fputs(buf, stdout);
+        fputc('\n', stdout);
 }
 
 bool
@@ -5245,6 +5372,12 @@ char const *
 GetInstructionName(uint8_t i)
 {
         return InstructionNames[i];
+}
+
+void
+DebugAddBreak(Ty *ty, Value const *f)
+{
+
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

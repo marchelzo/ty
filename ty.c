@@ -52,6 +52,7 @@ bool EnableLogging = false;
 bool ColorStdout;
 bool ColorStderr;
 
+extern bool DebugMode;
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 
@@ -147,6 +148,17 @@ execln(Ty *ty, char *line)
                         goto End;
                 else
                         goto Bad;
+        } else if (strncmp(line, "dbg ", 4) == 0) {
+                DebugMode = true;
+                line += 4;
+        } else if (strncmp(line, "b ", 2) == 0) {
+                if (repl_exec(&MainTy, line + 2)) {
+                        Value *v = vm_get(&MainTy, -1);
+                        DebugAddBreak(&MainTy, v);
+                        goto End;
+                } else {
+                        goto Bad;
+                }
         } else if (strncmp(line, "dis ", 4) == 0) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);
                 if (repl_exec(&MainTy, v_(buffer, 1)))
@@ -171,6 +183,7 @@ Bad:
 
 End:
         fflush(stdout);
+        DebugMode = false;
 
         return good;
 }

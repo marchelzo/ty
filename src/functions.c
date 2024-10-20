@@ -7041,7 +7041,7 @@ BUILTIN_FUNCTION(lex_next_char)
                 return NIL;
         }
 
-        return vSs(b, strlen(b));
+        return vSsz(b);
 }
 
 BUILTIN_FUNCTION(token_peek)

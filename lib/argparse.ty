@@ -154,26 +154,26 @@ pub function make(*opts, version, help) {
                 },
 
                 /^--([^=]+)$/ => {
-                    if let $opt = getflag(_1) {
+                    if let $opt = getflag($1) {
                         if opt.long  { result << opt.long  }
                         if opt.short { result << opt.short }
                     } else {
-                        unrecognized(_1)
+                        unrecognized($1)
                     }
                 },
 
                 /^--([^=]+)=(.+)/ => {
-                    if let $opt = getopt(_1) {
-                        if !(_2 :: opt.pre) {
-                            throw "Invalid value for {_1}: {_2}"
+                    if let $opt = getopt($1) {
+                        if !($2 :: opt.pre) {
+                            throw "Invalid value for {$1}: {$2}"
                         }
-                        let value = (opt.convert)(_2)
+                        let value = (opt.convert)($2)
                         if !(value :: opt.post) {
-                            throw "Invalid value for {_1}: {_2}"
+                            throw "Invalid value for {$1}: {$2}"
                         }
                         add(opt, result, value)
-                    } else if let $flag = getflag(_1) and _2 in bools {
-                        if bools[_2] {
+                    } else if let $flag = getflag($1) and $2 in bools {
+                        if bools[$2] {
                             if flag.short { result << flag.short }
                             if flag.long  { result << flag.long  }
                         } else {
@@ -181,35 +181,35 @@ pub function make(*opts, version, help) {
                             result.remove(flag.long)
                         }
                     } else {
-                        unrecognized(_1)
+                        unrecognized($1)
                     }
                 },
 
                 /^-(.+)/ => {
-                    if not let $opt = opts.find(&.short |> (== _1[0])) {
-                        throw "Unrecognized option: {_0}"
+                    if not let $opt = opts.find(&.short |> (== $1[0])) {
+                        throw "Unrecognized option: {$0}"
                     }
 
                     if opt.type == 'o' {
-                        let s = if #_1 == 1 {
+                        let s = if #$1 == 1 {
                             next()
                         } else {
-                            _1.slice(1)
+                            $1.slice(1)
                         }
 
                         if !(s :: opt.pre) {
-                            throw "Invalid value for {opt.long ?? _1[0]}: {s}"
+                            throw "Invalid value for {opt.long ?? $1[0]}: {s}"
                         }
 
-                        let value = (opt.convert)(s)
+                        let value = dbg((opt.convert)(s))
 
-                        if !(value :: opt.post) {
-                            throw "Invalid value for {opt.long ?? _1[0]}: {s}"
+                        if !(value :: dbg(opt.post)) {
+                            throw "Invalid value for {opt.long ?? $1[0]}: {s}"
                         }
 
                         add(opt, result, value)
                     } else {
-                        for c in _1 {
+                        for c in $1 {
                             if let $opt = getflag(c) {
                                 if opt.short { result << opt.short }
                                 if opt.long  { result << opt.long  }

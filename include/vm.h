@@ -153,6 +153,7 @@ extern _Thread_local int EvalDepth;
         X(RENDER_TEMPLATE), \
         X(BINARY_OP), \
         X(TRAP), \
+        X(TRAP_TY), \
         X(ADD), \
         X(SUB), \
         X(MUL), \
@@ -285,6 +286,9 @@ MaybeTakeLock(Ty *ty);
 
 char const *
 GetInstructionName(uint8_t i);
+
+void
+DebugAddBreak(Ty *ty, Value const *f);
 
 #endif
 
