@@ -8,7 +8,7 @@ include(cmake/VersionInfoTarget.cmake)
 #   user-defined options
 # ---
 
-option(BUILD_PROFILER "Build the typrof executable" OFF)
+option(BUILD_PROFILER "Build the typrof executable for profiling" OFF)
 
 # ---
 #   find 3rd-party dependencies
@@ -53,7 +53,7 @@ endif()
 #   global compiler variables
 # ---
 
-set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED TRUE)
 
 # ---
