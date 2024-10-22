@@ -212,6 +212,7 @@ pub function help(x) {
 }
 
 class TooWideError {}
+class TooMuchError {}
 
 let defaultColors = {
     dict:  ['#e78a4e', true],
@@ -223,10 +224,11 @@ let defaultColors = {
     null:  ['#89b482', nil],
     t:     ['#d8a657', nil],
     field: ['#7daea3', nil],
-    bool:  ['#d3869b', nil]
+    bool:  ['#d3869b', nil],
+    more:  ['#928374', nil]
 }
 
-pub function sanitizeString(s) {
+pub function escapeString(s) {
     s.sub(/[\x00-\x1F\x7F-\xFF"\\]/, m -> match m {
         '"'  => '\\"',
         '\\' => '\\\\',
@@ -248,17 +250,19 @@ class Printer {
         @depth = 0
         @colors = tuple(**members(colors).map([fg, b] -> chalk.fg(fg) |> (b ? chalk.bold : id)))
         @color = color
+        @visiting = []
     }
 
     save() {
-        (@col, @depth, #@out)
+        (@col, @depth, #@visiting, #@out)
     }
 
     restore(state) {
-        let (col, depth, i) = state
+        let (col, depth, num-visiting, i) = state
         @out.splice(i)
         @col = col
         @depth = depth
+        @visiting.take!(num-visiting)
     }
 
     write(s, pen=id, force) {
@@ -275,7 +279,15 @@ class Printer {
     }
 
     go(x, canPush, force) {
+        let id-of-x = ident(x)
+
+        if id-of-x in @visiting {
+            self.write('...', @colors.more, force)
+            return
+        }
+
         let state = self.save()
+        @visiting.push(id-of-x)
 
         function printList(xs, open, close, color) {
             try {
@@ -298,15 +310,19 @@ class Printer {
         }
 
         function printMap(m, dict?) {
+            let write-key = dict?
+                          ? self.go
+                          : self.write@($1, @colors.field, $3)
+
+            let open = dict?
+                     ? '%{'
+                     : '{'
+
             try {
-                self.write('{', @colors.dict, force)
+                self.write(open, @colors.dict, force)
                 for match m.intersperse(', ') {
                     (k, v) => {
-                        if dict? {
-                            self.go(k, false, false)
-                        } else {
-                            self.write(k, @colors.field, false)
-                        }
+                        write-key(k, false, false)
                         self.write(': ', @colors.dict, false)
                         self.go(v, false, false)
                     },
@@ -318,15 +334,11 @@ class Printer {
                 self.write('}', @colors.dict, false)
             } catch e: TooWideError & canPush {
                 self.restore(state)
-                self.write('{', @colors.dict, force)
+                self.write(open, @colors.dict, force)
                 self.nl(1)
                 for (k, v), i in m {
                     if i > 0 { self.write(',', id, force); self.nl() }
-                    if dict? {
-                        self.go(k, true, force)
-                    } else {
-                        self.write(k, @colors.field, force)
-                    }
+                    write-key(k, true, force)
                     self.write(': ', @colors.dict, force)
                     self.go(v, true, force)
                 }
@@ -350,8 +362,8 @@ class Printer {
                 self.write(")", @colors.t, force)
             },
 
-            _ :: Tuple => {
-                let items = members(x, list: true)
+            t :: Tuple => {
+                let items = members(t, list: true)
 
                 if items.map(&0) :: Array[Int] {
                     printList(items.map(&1), '(', ')', @colors.array)
@@ -365,7 +377,7 @@ class Printer {
             },
 
             _ :: String => {
-                let s = sanitizeString(x)
+                let s = escapeString(x)
                 self.write('"', @colors.quote, force)
                 self.write(s, @colors.str, force)
                 self.write('"', @colors.quote, force)
@@ -387,10 +399,12 @@ class Printer {
                 self.write(show(x), id, force)
             }
         }
+
+        @visiting.pop()
     }
 
     print(x) {
-        self.restore((0, 0, 0))
+        self.restore((0, 0, 0, 0))
         self.go(x, true, true)
         return @out.str()
     }
@@ -406,7 +420,6 @@ C! struct WinSize {
 let winSize = WinSize()
 
 pub function prettyPrint(x, %kwargs) {
-
 #|if !__windows__
     if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {
         winSize.cols = 108

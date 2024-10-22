@@ -33,7 +33,7 @@ extern _Bool EnableLogging;
                 } while (0)
 
 #define XXLOG(...) if (EnableLogging) do { \
-                        Ty *ty = &MainTy; \
+                        Ty *ty = ty; \
                         GC_STOP(); \
                         flockfile(stderr), \
                         fprintf(stderr, "(%d) ", getpid()), \

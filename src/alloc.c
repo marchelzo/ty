@@ -5,15 +5,36 @@
 #define align (_Alignof(void *))
 #define A ty->arena
 
+enum {
+        RESERVED = sizeof (Arena)
+};
+
+inline static Arena *
+NextArena(Arena const *a)
+{
+        return ((Arena *)a->base);
+}
+
+inline static void
+ExpandArena(Ty *ty)
+{
+        size_t size = 2 * (A.end - (A.base + RESERVED));
+        Arena old = A.gc ? NewArenaGC(ty, size) : NewArena(ty, size);
+
+        *NextArena(&A) = old;
+}
+
 Arena
 NewArenaGC(Ty *ty, size_t cap)
 {
         Arena old = A;
 
-        A.base = mAo(cap, GC_ARENA);
+        A.base = mAo(cap + RESERVED, GC_ARENA);
         A.gc = true;
-        A.beg = A.base;
-        A.end = A.base + cap;
+        A.beg = A.base + RESERVED;
+        A.end = A.base + RESERVED + cap;
+
+        memset(A.base, 0, RESERVED);
 
         NOGC(A.base);
 
@@ -25,15 +46,17 @@ NewArena(Ty *ty, size_t cap)
 {
         Arena old = A;
 
-        A.base = malloc(cap);
+        A.base = malloc(cap + RESERVED);
         A.gc = false;
 
         if (UNLIKELY(A.base == NULL)) {
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
         }
 
-        A.beg = A.base;
-        A.end = A.base + cap;
+        A.beg = A.base + RESERVED;
+        A.end = A.base + RESERVED + cap;
+
+        memset(A.base, 0, RESERVED);
 
         return old;
 }
@@ -41,27 +64,20 @@ NewArena(Ty *ty, size_t cap)
 void *
 Allocate(Ty *ty, size_t n)
 {
-        ptrdiff_t avail = A.end - A.beg;
-        ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
+        for (;;) {
+                ptrdiff_t avail = A.end - A.beg;
+                ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
 
-        if (UNLIKELY(n > avail - padding)) {
-#ifndef TY_RELEASE
-                *(char *)0 = 0;
-#else
-                panic(
-                        "out of memory: "
-                        "couldn't allocate %zu-byte object in %zu-byte arena. avail=%zu",
-                        n,
-                        (size_t)(A.end - A.base),
-                        (size_t)avail
-                );
-#endif
+                if (UNLIKELY(n > avail - padding)) {
+                        ExpandArena(ty);
+                        continue;
+                }
+
+                void *o = A.beg + padding;
+                A.beg += padding + n;
+
+                return o;
         }
-
-        char *p = A.beg + padding;
-        A.beg += padding + n;
-
-        return p;
 }
 
 void *
@@ -73,8 +89,8 @@ Allocate0(Ty *ty, size_t n)
 void
 ReleaseArena(Ty *ty, Arena old)
 {
-        if (A.gc) {
-                OKGC(A.base);
+        for (Arena *a = &A; a->base != NULL; a = NextArena(a)) {
+                OKGC(a->base);
         }
 
         A = old;
@@ -83,7 +99,10 @@ ReleaseArena(Ty *ty, Arena old)
 void
 DestroyArena(Ty *ty, Arena old)
 {
-        free(A.base);
+        for (Arena *a = &A; a->base != NULL; a = NextArena(a)) {
+                free(a->base);
+        }
+
         A = old;
 }
 

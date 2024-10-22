@@ -37,7 +37,7 @@ intern_get(InternSet *set, char const *name)
                 ((InternEntry){
                         .name = name,
                         .hash = h,
-                        .id = set->set - b - 1,
+                        .id = -(b + 1 - set->set),
                         .data = set
                 })
         );
@@ -48,12 +48,12 @@ intern_get(InternSet *set, char const *name)
 InternEntry *
 intern_put(InternEntry *e, void *data)
 {
-
         InternSet *set = e->data;
         InternBucket *b = &set->set[-e->id - 1];
 
         e->data = data;
         e->id = set->index.count;
+        e->name = sclone_malloc(e->name);
 
         xvP(set->index, (b->count << 8u) | (b - set->set));
 

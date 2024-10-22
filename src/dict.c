@@ -660,6 +660,15 @@ dict_len(Ty *ty, Value *d, int argc, Value *kwargs)
         return INTEGER(d->dict->count);
 }
 
+static Value
+dict_ptr(Ty *ty, Value *d, int argc, Value *kwargs)
+{
+        if (argc != 0)
+                zP("dict.ptr() expects 0 arguments but got %d", argc);
+
+        return PTR(d->dict);
+}
+
 DEFINE_METHOD_TABLE(
         { .name = "&",            .func = dict_intersect_copy },
         { .name = "&=",           .func = dict_intersect      },
@@ -673,6 +682,7 @@ DEFINE_METHOD_TABLE(
         { .name = "intersect",    .func = dict_intersect      },
         { .name = "keys",         .func = dict_keys           },
         { .name = "len",          .func = dict_len            },
+        { .name = "ptr",          .func = dict_ptr            },
         { .name = "put",          .func = dict_put            },
         { .name = "remove",       .func = dict_remove         },
         { .name = "update",       .func = dict_update         },

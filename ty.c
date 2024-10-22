@@ -33,7 +33,9 @@
 #include "VersionInfo.h"
 #endif
 
-Ty MainTy;
+static Ty vvv;
+
+Ty *ty;
 TY xD;
 
 #define MAX_COMPLETIONS 240
@@ -52,7 +54,6 @@ bool EnableLogging = false;
 bool ColorStdout;
 bool ColorStderr;
 
-extern bool DebugMode;
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 
@@ -112,7 +113,7 @@ readln(void)
 inline static bool
 repl_exec(Ty *ty, char const *code)
 {
-        return vm_execute(&MainTy, code, "(repl)");
+        return vm_execute(ty, code, "(repl)");
 }
 
 static bool
@@ -137,53 +138,79 @@ execln(Ty *ty, char *line)
         if (line[0] == ':') {
                 if (line[1] == '!') {
                         system(line + 2) || 0;
-                } else if (!vm_execute_file(&MainTy, line + 1)) {
-                        fprintf(stderr, "%s\n", vm_error(&MainTy));
+                } else if (!vm_execute_file(ty, line + 1)) {
+                        fprintf(stderr, "%s\n", vm_error(ty));
                         good = false;
                 }
                 goto End;
         } else if (strncmp(line, "help ", 5) == 0) {
                 dump(&buffer, "help(%s);", line + 5);
-                if (repl_exec(&MainTy, v_(buffer, 1)))
+                if (repl_exec(ty, v_(buffer, 1)))
                         goto End;
                 else
                         goto Bad;
-        } else if (strncmp(line, "dbg ", 4) == 0) {
-                DebugMode = true;
-                line += 4;
-        } else if (strncmp(line, "b ", 2) == 0) {
-                if (repl_exec(&MainTy, line + 2)) {
-                        Value *v = vm_get(&MainTy, -1);
-                        DebugAddBreak(&MainTy, v);
-                        goto End;
-                } else {
+        } else if (strncmp(line, "tdb ", 4) == 0) {
+                dump(&buffer, "%s", line + 4);
+
+                if (!vm_load_program(ty, v_(buffer, 1), "(repl)")) {
                         goto Bad;
                 }
+
+                if (!DEBUGGING) tdb_start(ty);
+                tdb_set_break(ty, ty->code);
+
+                if (!vm_execute(ty, NULL, NULL)) {
+                        goto Bad;
+                }
+
+                goto End;
+        } else if (strncmp(line, "b ", 2) == 0) {
+                dump(&buffer, "%s", line + 2);
+
+                if (!repl_exec(ty, v_(buffer, 1))) {
+                        goto Bad;
+                }
+
+                Value *v = vm_get(ty, -1);
+
+                if (v->type != VALUE_FUNCTION) {
+                        printf(
+                                "Can't break on %s!",
+                                VSC(v)
+                        );
+                        goto End;
+                }
+
+                if (!DEBUGGING) tdb_start(ty);
+                tdb_set_break(ty, code_of(v));
+
+                puts("Breakpoint set.");
+                
+                goto End;
         } else if (strncmp(line, "dis ", 4) == 0) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);
-                if (repl_exec(&MainTy, v_(buffer, 1)))
+                if (repl_exec(ty, v_(buffer, 1)))
                         goto End;
                 else
                         goto Bad;
         }
 
-        dump(&buffer, "%s(%s);", print_function, line);
-        if (repl_exec(&MainTy, v_(buffer, 1)))
+        dump(&buffer, "%s(do (%s));", print_function, line);
+        if (repl_exec(ty, v_(buffer, 1)))
                 goto End;
 
         buffer.count = 1;
 
         dump(&buffer, "%s\n", line);
-        if (strstr(vm_error(&MainTy), "ParseError") != NULL && repl_exec(&MainTy, v_(buffer, 1)))
+        if (strstr(vm_error(ty), "ParseError") != NULL && repl_exec(ty, v_(buffer, 1)))
                 goto End;
 
 Bad:
         good = false;
-        fprintf(stderr, "%s\n", vm_error(&MainTy));
+        fprintf(stderr, "%s\n", vm_error(ty));
 
 End:
         fflush(stdout);
-        DebugMode = false;
 
         return good;
 }
@@ -193,7 +220,7 @@ static void
 pollute_with_bloat(void)
 {
         execln(
-                &MainTy,
+                ty,
                 "import help (..)\n"
                 "import json     \n"
                 "import math     \n"
@@ -241,7 +268,7 @@ repl(Ty *ty)
                         if (line == NULL) {
                                 exit(EXIT_SUCCESS);
                         }
-                        execln(&MainTy, line);
+                        execln(ty, line);
                 }
         }
 }
@@ -266,7 +293,7 @@ complete(char const *s, int start, int end)
         rl_completion_append_character = '\0';
 
         if (start == 0 || rl_line_buffer[start - 1] != '.') {
-                int n = compiler_get_completions(&MainTy, NULL, s, completions, 99);
+                int n = compiler_get_completions(ty, NULL, s, completions, 99);
                 if (n == 0) {
                         return NULL;
                 } else {
@@ -287,36 +314,36 @@ complete(char const *s, int start, int end)
          * First check if it's a module name, otherwise treat it as an expression that
          * will evaluate to an object and then complete its members.
          */
-        if (compiler_has_module(&MainTy, before + 1)) {
-                n = compiler_get_completions(&MainTy, before + 1, s, completions, MAX_COMPLETIONS);
+        if (compiler_has_module(ty, before + 1)) {
+                n = compiler_get_completions(ty, before + 1, s, completions, MAX_COMPLETIONS);
         } else {
-                repl_exec(&MainTy, before + 1);
+                repl_exec(ty, before + 1);
 
-                struct value *v = vm_get(&MainTy, -1);
+                struct value *v = vm_get(ty, -1);
 
                 switch (v->type) {
                 case VALUE_OBJECT:
-                        n += class_get_completions(&MainTy, v->class, s, completions, MAX_COMPLETIONS);
-                        n += itable_get_completions(&MainTy, v->object, s, completions + n, MAX_COMPLETIONS - n);
+                        n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
+                        n += itable_get_completions(ty, v->object, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_ARRAY:
-                        n += array_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(&MainTy, CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
+                        n += array_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(ty, CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_DICT:
-                        n += dict_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(&MainTy, CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
+                        n += dict_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(ty, CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_STRING:
-                        n += string_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(&MainTy, CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
+                        n += string_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(ty, CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_BLOB:
-                        n += blob_get_completions(&MainTy, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(&MainTy, CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
+                        n += blob_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                        n += class_get_completions(ty, CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
                         break;
                 case VALUE_TUPLE:
-                        n += tuple_get_completions(&MainTy, v, s, completions, MAX_COMPLETIONS);
+                        n += tuple_get_completions(ty, v, s, completions, MAX_COMPLETIONS);
                         break;
                 }
         }
@@ -455,9 +482,9 @@ ProcessArgs(char *argv[], bool first)
                                                         fprintf(stderr, "Missing argument for -e\n");
                                                         return 1;
                                                 }
-                                                if ((++argi, !first)) exit((int)!execln(&MainTy, argv[argi]));
+                                                if ((++argi, !first)) exit((int)!execln(ty, argv[argi]));
                                         } else {
-                                                if (!first) exit((int)!execln(&MainTy, (char *)(opt + 1)));
+                                                if (!first) exit((int)!execln(ty, (char *)(opt + 1)));
                                                 while (opt[1] != '\0') ++opt;
                                         }
                                         break;
@@ -482,7 +509,7 @@ ProcessArgs(char *argv[], bool first)
 
                                         snprintf(buffer, sizeof buffer, fmt, module);
 
-                                        if (!first && !execln(&MainTy, buffer)) {
+                                        if (!first && !execln(ty, buffer)) {
                                                 exit(1);
                                         }
 
@@ -534,6 +561,8 @@ NextOption:
 int
 main(int argc, char **argv)
 {
+        ty = &vvv;
+
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
 
         switch (color_mode) {
@@ -554,16 +583,18 @@ main(int argc, char **argv)
         }
 #endif
 
-        if (!vm_init(&MainTy, argc - nopt, argv + nopt)) {
-                fprintf(stderr, "%s\n", vm_error(&MainTy));
+        if (!vm_init(ty, argc - nopt, argv + nopt)) {
+                fprintf(stderr, "%s\n", vm_error(ty));
                 return -1;
         }
 
         argv += ProcessArgs(argv, false);
 
         if (argv[0] == NULL && stdin_is_tty()) {
-                repl(&MainTy);
+                repl(ty);
         }
+
+        tdb_start(ty);
 
         FILE *file;
         char const *filename;
@@ -580,7 +611,7 @@ main(int argc, char **argv)
                 return 1;
         }
 
-        char *source = fslurp(&MainTy, file);
+        char *source = fslurp(ty, file);
 
         if (*SymbolLocation != '\0') {
                 char *colon = strchr(SymbolLocation, ':');
@@ -591,11 +622,11 @@ main(int argc, char **argv)
                 int col = atoi(colon + 1);
 
                 CompileOnly = true;
-                if (!vm_execute(&MainTy, source, filename)) {
+                if (!vm_execute(ty, source, filename)) {
                         return 1;
                 }
 
-                struct location loc = compiler_find_definition(&MainTy, filename, line - 1, col - 1);
+                Location loc = compiler_find_definition(ty, filename, line - 1, col - 1);
 
                 if (loc.s == NULL) {
                         return -1;
@@ -605,8 +636,8 @@ main(int argc, char **argv)
                 }
         }
 
-        if (!vm_execute(&MainTy, source, filename)) {
-                fprintf(stderr, "%s\n", vm_error(&MainTy));
+        if (!vm_execute(ty, source, filename)) {
+                fprintf(stderr, "%s\n", vm_error(ty));
                 return -1;
         }
 

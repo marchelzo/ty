@@ -8,22 +8,237 @@
 #include <inttypes.h>
 #include <stdalign.h>
 
+#include <pcre.h>
+
 #include "vec.h"
 #include "intern.h"
 #include "panic.h"
+#include "tthread.h"
 
-typedef struct value Value;
+typedef struct ty0        TY;
+typedef struct ty         Ty;
+typedef struct value      Value;
 typedef struct expression Expr;
+typedef struct statement  Stmt;
+typedef struct symbol     Symbol;
+typedef struct frame      Frame;
+typedef struct target     Target;
 
-typedef vec(int)           int_vector;
-typedef vec(char)          byte_vector;
-typedef vec(char *)        CallStack;
-typedef vec(Value)         ValueVector;
-typedef ValueVector        ValueStack;
-typedef vec(char *)        StringVector;
-typedef vec(char const *)  ConstStringVector;
-typedef vec(struct try *)  TryStack;
-typedef vec(struct sigfn)  SigfnStack;
+typedef vec(int)            int_vector;
+typedef vec(char)           byte_vector;
+typedef vec(char *)         CallStack;
+typedef vec(Value)          ValueVector;
+typedef ValueVector         ValueStack;
+typedef vec(char *)         StringVector;
+typedef vec(char const *)   ConstStringVector;
+typedef vec(struct try *)   TryStack;
+typedef vec(struct sigfn)   SigfnStack;
+typedef vec(size_t)         SPStack;
+typedef vec(Frame)          FrameStack;
+typedef vec(Target)         TargetStack;
+typedef vec(struct alloc *) AllocList;
+
+typedef struct array {
+        Value *items;
+        size_t count;
+        size_t capacity;
+} Array;
+
+typedef struct blob {
+        unsigned char *items;
+        size_t count;
+        size_t capacity;
+} Blob;
+
+typedef struct regex {
+        pcre *pcre;
+        pcre_extra *extra;
+        char const *pattern;
+        bool gc;
+        bool detailed;
+} Regex;
+
+typedef struct dict Dict;
+
+typedef struct generator Generator;
+typedef struct thread Thread;
+typedef struct channel Channel;
+typedef struct chanval ChanVal;
+
+enum {
+        VALUE_FUNCTION = 1     ,
+        VALUE_METHOD           ,
+        VALUE_BUILTIN_FUNCTION ,
+        VALUE_BUILTIN_METHOD   ,
+        VALUE_CLASS            ,
+        VALUE_GENERATOR        ,
+        VALUE_TAG              ,
+        VALUE_ARRAY            ,
+        VALUE_DICT             ,
+        VALUE_REGEX            , // CALLABLE here and above
+        VALUE_INTEGER          ,
+        VALUE_REAL             ,
+        VALUE_BOOLEAN          ,
+        VALUE_NIL              ,
+        VALUE_OBJECT           ,
+        VALUE_STRING           ,
+        VALUE_BLOB             ,
+        VALUE_SENTINEL         ,
+        VALUE_INDEX            ,
+        VALUE_NONE             ,
+        VALUE_UNINITIALIZED    ,
+        VALUE_PTR              ,
+        VALUE_REF              ,
+        VALUE_THREAD           ,
+        VALUE_TUPLE            ,
+        VALUE_TAGGED           = 1 << 7
+};
+
+typedef Value BuiltinFunction(Ty *, int, Value *);
+typedef Value BuiltinMethod(Ty *, Value *, int, Value *);
+
+enum {
+        FUN_INFO_HEADER_SIZE,
+        FUN_INFO_CODE_SIZE,
+        FUN_INFO_CAPTURES,
+        FUN_INFO_BOUND,
+        FUN_INFO_PARAM_COUNT,
+        FUN_INFO__PAD1,
+        FUN_INFO_CLASS
+};
+
+enum {
+        FUN_HEADER_SIZE = 0,
+        FUN_CODE_SIZE   = FUN_HEADER_SIZE + sizeof (int),
+        FUN_CAPTURES    = FUN_CODE_SIZE   + sizeof (int),
+        FUN_BOUND       = FUN_CAPTURES    + sizeof (int),
+        FUN_PARAM_COUNT = FUN_BOUND       + sizeof (int),
+        FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (int),
+        FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (int16_t),
+        FUN_CLASS       = FUN_REST_IDX    + sizeof (int),
+        FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
+        FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
+        FUN_PROTO       = FUN_HIDDEN      + 1,
+        FUN_DOC         = FUN_PROTO       + sizeof (uintptr_t),
+        FUN_NAME        = FUN_DOC         + sizeof (uintptr_t)
+};
+
+struct value {
+        uint8_t type;
+        uint16_t tags;
+        uint32_t src;
+        union {
+                short tag;
+                double real;
+                bool boolean;
+                Array *array;
+                Dict *dict;
+                Blob *blob;
+                Thread *thread;
+                Symbol *sym;
+                struct {
+                        void *ptr;
+                        void *gcptr;
+                        void *extra;
+                };
+                struct {
+                        intmax_t integer;
+                        char const *constant;
+                };
+                struct {
+                        int class;
+                        struct itable *object;
+                };
+                struct {
+                        union {
+                                struct {
+                                        Value *this;
+                                        union {
+                                                Value *method;
+                                                BuiltinMethod *builtin_method;
+                                        };
+                                };
+                                struct {
+                                        BuiltinFunction *builtin_function;
+                                        char const *module;
+                                };
+                        };
+                        int name;
+                };
+                struct {
+                        char const *string;
+                        uint32_t bytes;
+                        char *gcstr;
+                };
+                struct {
+                        intmax_t i;
+                        int off;
+                        int nt;
+                };
+                struct {
+                        int count;
+                        Value *items;
+                        int *ids;
+                };
+                Regex const *regex;
+                struct {
+                        int *info;
+                        Value **env;
+                };
+                Generator *gen;
+        };
+};
+
+struct frame {
+        size_t fp;
+        Value f;
+        char const *ip;
+};
+
+struct generator {
+        char *ip;
+        Value f;
+        int fp;
+        ValueVector frame;
+        FrameStack frames;
+        CallStack calls;
+        SPStack sps;
+        TargetStack targets;
+        ValueVector deferred;
+        ValueVector to_drop;
+};
+
+struct thread {
+        TyThread t;
+        TyMutex mutex;
+        TyCondVar cond;
+
+        Value v;
+        uint64_t i;
+        bool alive;
+};
+
+struct chanval {
+        vec(void *) as;
+        struct value v;
+};
+
+struct channel {
+        bool open;
+        TyMutex m;
+        TyCondVar c;
+        vec(ChanVal) q;
+};
+
+struct dict {
+        unsigned long *hashes;
+        struct value *keys;
+        struct value *values;
+        size_t size;
+        size_t count;
+        struct value dflt;
+};
+
 
 typedef struct target {
         struct {
@@ -34,8 +249,6 @@ typedef struct target {
 
 struct frame;
 typedef struct frame Frame;
-
-typedef vec(Target) TargetStack;
 
 typedef struct table ValueTable;
 
@@ -62,12 +275,7 @@ typedef struct ThrowCtx {
         char const *ip;
 } ThrowCtx;
 
-typedef vec(size_t) SPStack;
-typedef vec(Frame) FrameStack;
-
-typedef vec(struct alloc *) AllocList;
-
-typedef struct {
+typedef struct ty0 {
         InternSet u_ops;
         InternSet b_ops;
         InternSet members;
@@ -75,12 +283,14 @@ typedef struct {
 
 typedef struct thread_group ThreadGroup;
 
-typedef struct arena {
+typedef struct arena Arena;
+struct arena {
         char *base;
         char *beg;
         char *end;
+        Arena *next;
         bool gc;
-} Arena;
+};
 
 typedef struct {
         int i;
@@ -89,27 +299,48 @@ typedef struct {
 
 typedef struct {
         char *ip;
-        uint8_t op;
+        char op;
         Expr *cond;
 } DebugBreakpoint;
 
 typedef struct {
         enum {
-                TDB_OFF,
-                TDB_ACTIVE,
-                TDB_STOPPED,
-                TDB_STEPPING
+                TDB_STATE_OFF,
+                TDB_STATE_ACTIVE,
+                TDB_STATE_STOPPED,
+                TDB_STATE_STEPPING
         } state;
+
+        Ty *ty;
+        Ty *host;
+
+        Value thread;
+        Value hook;
+
+        DebugBreakpoint next;
+        DebugBreakpoint alt;
         vec(DebugBreakpoint) breaks;
+
+        byte_vector context_buffer;
 } TDB;
 
-typedef struct {
-        TY *ty;
+typedef struct ty {
         char *ip;
+        char *code;
+
         ValueStack stack;
         CallStack calls;
         TargetStack targets;
         FrameStack frames;
+
+        int rc;
+        SPStack sp_stack;
+
+        jmp_buf jb;
+        TryStack try_stack;
+        ValueStack defer_stack;
+        ValueStack drop_stack;
+        vec(ThrowCtx) throw_stack;
 
         uint64_t prng[4];
 
@@ -127,10 +358,11 @@ typedef struct {
 
         ThreadGroup *my_group;
 
+        TY *ty;
         TDB *tdb;
 } Ty;
 
-struct member_names {
+typedef struct {
         int missing;
         int slice;
         int fmt;
@@ -140,16 +372,21 @@ struct member_names {
         int len;
         int match;
         int json;
-};
+        int call;
+
+        int exit_hooks;
+        int tdb_hook;
+} InternedNames;
 
 #define MemoryUsed  (ty->memory_used)
 #define MemoryLimit (ty->memory_limit)
 
 #define MyGroup (ty->my_group)
 
-extern Ty MainTy;
+extern Ty *ty;
 extern TY xD;
-extern struct member_names NAMES;
+
+extern InternedNames NAMES;
 
 extern bool ColorStdout;
 extern bool ColorStderr;
@@ -170,6 +407,204 @@ extern bool ColorProfile;
 #  define EXPECT(x, y) __builtin_expect((x), (y))
 #endif
 
+#define TY_INSTRUCTIONS \
+        X(NOP), \
+        X(LOAD_LOCAL), \
+        X(LOAD_REF), \
+        X(LOAD_CAPTURED), \
+        X(LOAD_GLOBAL), \
+        X(CHECK_INIT), \
+        X(CAPTURE), \
+        X(TARGET_LOCAL), \
+        X(TARGET_REF), \
+        X(TARGET_CAPTURED), \
+        X(TARGET_GLOBAL), \
+        X(TARGET_MEMBER), \
+        X(TARGET_SUBSCRIPT), \
+        X(ASSIGN), \
+        X(MAYBE_ASSIGN), \
+        X(ARRAY_REST), \
+        X(TUPLE_REST), \
+        X(RECORD_REST), \
+        X(INTEGER), \
+        X(REAL), \
+        X(BOOLEAN), \
+        X(STRING), \
+        X(REGEX), \
+        X(ARRAY), \
+        X(DICT), \
+        X(TUPLE), \
+        X(DICT_DEFAULT), \
+        X(NIL), \
+        X(SELF), \
+        X(TAG), \
+        X(CLASS), \
+        X(TO_STRING), \
+        X(FMT1), \
+        X(FMT2), \
+        X(CONCAT_STRINGS), \
+        X(RANGE), \
+        X(INCRANGE), \
+        X(MEMBER_ACCESS), \
+        X(TRY_MEMBER_ACCESS), \
+        X(SUBSCRIPT), \
+        X(SLICE), \
+        X(TAIL_CALL), \
+        X(CALL), \
+        X(CALL_METHOD), \
+        X(TRY_CALL_METHOD), \
+        X(GET_NEXT), \
+        X(PUSH_INDEX), \
+        X(READ_INDEX), \
+        X(POP), \
+        X(UNPOP), \
+        X(DUP), \
+        X(LEN), \
+        X(ARRAY_COMPR), \
+        X(DICT_COMPR), \
+        X(THROW_IF_NIL), \
+        X(PRE_INC), \
+        X(POST_INC), \
+        X(PRE_DEC), \
+        X(POST_DEC), \
+        X(FUNCTION), \
+        X(JUMP), \
+        X(JUMP_IF), \
+        X(JUMP_IF_NIL), \
+        X(JUMP_IF_NOT), \
+        X(JUMP_IF_NONE), \
+        X(RETURN), \
+        X(RETURN_PRESERVE_CTX), \
+        X(EXEC_CODE), \
+        X(HALT), \
+        X(MULTI_RETURN), \
+        X(RETURN_IF_NOT_NONE), \
+        X(SENTINEL), \
+        X(FIX_TO), \
+        X(REVERSE), \
+        X(SWAP), \
+        X(NONE), \
+        X(NONE_IF_NIL), \
+        X(NONE_IF_NOT), \
+        X(CLEAR_RC), \
+        X(GET_EXTRA), \
+        X(PUSH_NTH), \
+        X(PUSH_ARRAY_ELEM), \
+        X(PUSH_TUPLE_ELEM), \
+        X(PUSH_TUPLE_MEMBER), \
+        X(MULTI_ASSIGN), \
+        X(MAYBE_MULTI), \
+        X(JUMP_IF_SENTINEL), \
+        X(CLEAR_EXTRA), \
+        X(FIX_EXTRA), \
+        X(PUSH_ALL), \
+        X(VALUE), \
+        X(EVAL), \
+        X(SAVE_STACK_POS), \
+        X(RESTORE_STACK_POS), \
+        X(NEXT), \
+        X(YIELD), \
+        X(MAKE_GENERATOR), \
+        X(THROW), \
+        X(RETHROW), \
+        X(TRY), \
+        X(CATCH), \
+        X(POP_TRY), \
+        X(RESUME_TRY), \
+        X(FINALLY), \
+        X(PUSH_DEFER_GROUP), \
+        X(DEFER), \
+        X(CLEANUP), \
+        X(DROP), \
+        X(PUSH_DROP), \
+        X(PUSH_DROP_GROUP), \
+        X(TAG_PUSH), \
+        X(DEFINE_TAG), \
+        X(DEFINE_CLASS), \
+        X(TRY_INDEX), \
+        X(TRY_INDEX_TUPLE), \
+        X(TRY_TUPLE_MEMBER), \
+        X(TRY_TAG_POP), \
+        X(TRY_REGEX), \
+        X(TRY_ASSIGN_NON_NIL), \
+        X(BAD_MATCH), \
+        X(BAD_CALL), \
+        X(BAD_DISPATCH), \
+        X(BAD_ASSIGN), \
+        X(UNTAG_OR_DIE), \
+        X(STEAL_TAG), \
+        X(TRY_STEAL_TAG), \
+        X(ENSURE_LEN), \
+        X(ENSURE_LEN_TUPLE), \
+        X(ENSURE_EQUALS_VAR), \
+        X(ENSURE_DICT), \
+        X(ENSURE_CONTAINS), \
+        X(ENSURE_SAME_KEYS), \
+        X(RENDER_TEMPLATE), \
+        X(BINARY_OP), \
+        X(TRAP), \
+        X(TRAP_TY), \
+        X(ADD), \
+        X(SUB), \
+        X(MUL), \
+        X(DIV), \
+        X(MOD), \
+        X(EQ), \
+        X(NEQ), \
+        X(LT), \
+        X(GT), \
+        X(LEQ), \
+        X(GEQ), \
+        X(CMP), \
+        X(CHECK_MATCH), \
+        X(MUT_ADD), \
+        X(MUT_MUL), \
+        X(MUT_DIV), \
+        X(MUT_SUB), \
+        X(NEG), \
+        X(NOT), \
+        X(QUESTION), \
+        X(COUNT), \
+        X(PATCH_ENV), \
+        X(GET_TAG)
+
+#define X(i) INSTR_ ## i
+enum {
+        TY_INSTRUCTIONS
+};
+#undef X
+
+#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,        .integer        = (k),                                                   .tags = 0 })
+#define REAL(f)                  ((Value){ .type = VALUE_REAL,           .real           = (f),                                                   .tags = 0 })
+#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                                   .tags = 0 })
+#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,          .array          = (a),                                                   .tags = 0 })
+#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),  .ids = (ns),                      .tags = 0 })
+#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
+#define DICT(d)                  ((Value){ .type = VALUE_DICT,           .dict           = (d),                                                   .tags = 0 })
+#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,          .regex          = (r),                                                   .tags = 0 })
+#define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                                .tags = 0 })
+#define PTR(p)                   ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                                   .tags = 0 })
+#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,  .extra = (t),                    .tags = 0 })
+#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                                  .tags = 0 })
+#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (t),                    .tags = 0 })
+#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),                   .tags = 0 })
+#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
+#define REF(p)                   ((Value){ .type = VALUE_REF,            .ptr            = (p),                                                   .tags = 0 })
+#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                                   .tags = 0 })
+#define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
+#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
+#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
+#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
+#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
+#define THREAD(t)                ((Value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
+#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
+#define NIL                      ((Value){ .type = VALUE_NIL,                                                                                     .tags = 0 })
+#define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),     .tags = 0 })
+#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                  .tags = 0 })
+#define NONE                     ((Value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                  .tags = 0 })
+
+#define CALLABLE(v) ((v).type <= VALUE_REGEX)
+#define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
 
 #define zP(...)   vm_panic(ty, __VA_ARGS__)
 #define mRE(...)  resize(__VA_ARGS__)
@@ -215,7 +650,7 @@ extern bool ColorProfile;
 #define vvL  vec_last
 #define vvXi vec_pop_ith
 
-#define v_n(v)   ((ptrdiff_t)(v).count)
+#define vN(v)    ((v).count)
 #define v_(v, i) (&(v).items[(i)])
 #define vZ(v)    ((v).items + (v).count)
 
@@ -402,27 +837,50 @@ RestoreScratch(Ty *ty, ScratchSave save)
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
 #define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
 
-inline static bool
-tdb_is_active(Ty const *ty)
-{
-        return ty->tdb != NULL
-            && ty->tdb->active;
-}
+#define TDB           (ty->tdb)
+#define TDB_TY        ((Ty *)(ty->tdb)->ty)
+#define TDB_STATE     ((TDB == NULL) ? TDB_STATE_OFF : TDB->state)
+#define TDB_IS(x)     (TDB_STATE == TDB_STATE_ ## x)
+#define TDB_IS_NOW(x) (TDB->state = TDB_STATE_ ## x)
+#define DEBUGGING     (!TDB_IS(OFF))
+
+void
+tdb_start(Ty *ty);
 
 inline static void
-tdb_start(Ty *ty)
+tdb_set_trap(DebugBreakpoint *breakpoint, char *ip)
 {
-        if (ty->tdb == NULL) {
-                ty->tdb = alloc0(sizeof *ty->tdb);
-        }
-
-        ty->tdb->state = true;
+        breakpoint->ip = ip;
+        breakpoint->op = *ip;
+        *ip = (char)INSTR_TRAP_TY;
 }
 
-#define TDB        (ty->tdb)
-#define TDB_STATE  ((TDB == NULL) ? TDB_OFF : TDB->state)
-#define TDB_IS(x)  (TDB_STATE == TDB_ ## x)
-#define DEBUGGING  (!TDB_IS(OFF))
+void
+tdb_set_break(Ty *ty, char *ip);
+
+DebugBreakpoint *
+tdb_get_break(Ty *ty, char const *ip);
+
+void
+tdb_list(Ty *ty);
+
+void
+tdb_go(Ty *ty);
+
+bool
+tdb_step_over(Ty *ty);
+
+bool
+tdb_step_expr(Ty *ty);
+
+bool
+tdb_step_into(Ty *ty);
+
+bool
+tdb_step_line(Ty *ty);
+
+Value
+tdb_locals(Ty *ty);
 
 #endif
 

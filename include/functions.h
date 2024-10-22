@@ -10,6 +10,8 @@ BUILTIN_FUNCTION(print);
 
 BUILTIN_FUNCTION(doc);
 
+BUILTIN_FUNCTION(ident);
+
 BUILTIN_FUNCTION(eprint);
 
 BUILTIN_FUNCTION(slurp);
@@ -481,5 +483,17 @@ BUILTIN_FUNCTION(ty_lock);
 BUILTIN_FUNCTION(ptr_typed);
 
 BUILTIN_FUNCTION(ptr_untyped);
+
+BUILTIN_FUNCTION(tdb_eval);
+BUILTIN_FUNCTION(tdb_over);
+BUILTIN_FUNCTION(tdb_into);
+BUILTIN_FUNCTION(tdb_step);
+BUILTIN_FUNCTION(tdb_list);
+BUILTIN_FUNCTION(tdb_state);
+BUILTIN_FUNCTION(tdb_span);
+BUILTIN_FUNCTION(tdb_ip);
+BUILTIN_FUNCTION(tdb_breakpoint);
+BUILTIN_FUNCTION(tdb_context);
+BUILTIN_FUNCTION(tdb_locals);
 
 #endif

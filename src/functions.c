@@ -87,10 +87,33 @@ static _Thread_local char buffer[1024 * 1024 * 4];
 static _Thread_local vec(char) B;
 static _Atomic(uint64_t) tid = 1;
 
-#define ASSERT_ARGC(func, ac) \
-        if (argc != (ac)) { \
-                zP(func " expects " #ac " argument(s) but got %d", argc); \
-        }
+#define TDB_MUST_BE(x) if (1) {         \
+        if (!TDB_IS(x)) zP(             \
+                "%s(): tdb must be %s", \
+                __func__,               \
+                #x                      \
+        );                              \
+} else ((void)0)
+
+#define TDB_MUST_NOT_BE(x) if (1) {         \
+        if (TDB_IS(x)) zP(                  \
+                "%s(): error: "             \
+                "tdb is %s",                \
+                __func__,                   \
+                #x                          \
+        );                                  \
+} else ((void)0)
+
+
+#define ASSERT_ARGC(func, ac) if (argc != (ac)) {       \
+        if (argc != (ac)) zP(                           \
+                func                                    \
+                " expects "                             \
+                #ac                                     \
+                " argument(s) but got %d",              \
+                argc                                    \
+        );                                              \
+} else ((void)0)
 
 #define ASSERT_ARGC_2(func, ac1, ac2) \
         if (argc != (ac1) && argc != (ac2)) { \
@@ -101,6 +124,13 @@ static _Atomic(uint64_t) tid = 1;
         if (argc != (ac1) && argc != (ac2) && argc != (ac3)) { \
                 zP(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
+
+//#define EVAL_PROLOGUE "(function () {"
+//#define EVAL_EPILOGUE "})()"
+
+#define EVAL_PROLOGUE "(do {"
+#define EVAL_EPILOGUE "})"
+
 
 inline static void
 GetCurrentTimespec(struct timespec* ts)
@@ -354,6 +384,23 @@ BUILTIN_FUNCTION(slurp)
         }
 
         return NIL;
+}
+
+BUILTIN_FUNCTION(ident)
+{
+        ASSERT_ARGC("ident()", 1);
+
+        Value v = ARG(0);
+
+        switch (v.type) {
+        case VALUE_ARRAY:   return PTR(v.array);
+        case VALUE_DICT:    return PTR(v.dict);
+        case VALUE_OBJECT:  return PTR(v.object);
+        case VALUE_BLOB:    return PTR(v.blob);
+        case VALUE_TUPLE:   return PTR(v.items);
+        case VALUE_STRING:  return PAIR(PTR((void *)v.string), INTEGER(v.bytes));
+        default:            return v;
+        }
 }
 
 BUILTIN_FUNCTION(die)
@@ -3288,7 +3335,7 @@ BUILTIN_FUNCTION(thread_create)
                 zP("non-callable value passed to thread.create(): %s", VSC(&ARG(0)));
         }
 
-        struct value *ctx = mA((argc + 1) * sizeof (Value));
+        Value *ctx = mA((argc + 1) * sizeof (Value));
         Thread *t = mAo(sizeof *t, GC_THREAD);
 
         NOGC(t);
@@ -3301,7 +3348,7 @@ BUILTIN_FUNCTION(thread_create)
 
         ctx[argc] = NONE;
 
-        struct value *isolated = NAMED("isolated");
+        Value *isolated = NAMED("isolated");
 
         NewThread(ty, t, ctx, NAMED("name"), isolated != NULL && value_truthy(ty, isolated));
 
@@ -6528,16 +6575,12 @@ beginning_of(char const *s)
 }
 
 static Value
-make_location(Ty *ty, Location const *loc, char const *start)
+make_location(Ty *ty, Location const *loc)
 {
-        if (loc->s == NULL) {
-                return NIL;
-        }
-
         return vTn(
                 "line", INTEGER(loc->line),
                 "col",  INTEGER(loc->col),
-                "byte", INTEGER(loc->s - start),
+                "byte", INTEGER(loc->byte),
                 NULL
         );
 }
@@ -6547,9 +6590,8 @@ make_token(Ty *ty, Token const *t)
 {
         char *type = NULL;
 
-        char const *s = beginning_of(t->start.s);
-        Value start = make_location(ty, &t->start, s);
-        Value end = make_location(ty, &t->end, s);
+        Value start = make_location(ty, &t->start);
+        Value end = make_location(ty, &t->end);
 
 #define T(name) (STRING_NOGC(#name, strlen(#name)))
         switch (t->type) {
@@ -6775,38 +6817,37 @@ BUILTIN_FUNCTION(eval)
                 scope = ARG(1).ptr;
         }
 
-#define PRE  "(function () {"
-#define POST "})()"
-
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
                 vec_push_unchecked(B, '\0');
-                vec_push_n_unchecked(B, PRE, strlen(PRE));
+                vec_push_n_unchecked(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
                 vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-                vec_push_n_unchecked(B, POST, (sizeof POST));
+                vec_push_n_unchecked(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
                 Arena old = amNg(1 << 26);
-                struct statement **prog = parse(ty, B.items + 1, "(eval)");
+                Stmt **prog = parse(ty, B.items + 1, "(eval)");
 
                 if (prog == NULL) {
                         char const *msg = parse_error(ty);
-                        struct value e = Err(ty, vSs(msg, strlen(msg)));
+                        Value e = Err(ty, vSs(msg, strlen(msg)));
                         ReleaseArena(ty, old);
                         vmE(&e);
                 }
 
-                struct expression *e = prog[0]->expression;
+                Expr *e = (Expr *)prog[0];
 
                 if (!compiler_symbolize_expression(ty, e, scope))
-                Err1: {
+E1:
+                {
                         char const *msg = compiler_error(ty);
-                        struct value e = Err(ty, vSs(msg, strlen(msg)));
+                        Value e = Err(ty, vSs(msg, strlen(msg)));
                         ReleaseArena(ty, old);
                         vmE(&e);
                 }
 
-                struct value v = tyeval(ty, e);
+                Value v = tyeval(ty, e);
+
                 if (v.type == VALUE_NONE) {
-                        goto Err1;
+                        goto E1;
                 }
 
                 ReleaseArena(ty, old);
@@ -6816,21 +6857,21 @@ BUILTIN_FUNCTION(eval)
                 compiler_clear_location(ty);
                 struct expression *e = TyToCExpr(ty, &ARG(0));
                 if (e == NULL || !compiler_symbolize_expression(ty, e, scope))
-                Err2:
+E2:
                 {
                         char const *msg = compiler_error(ty);
                         struct value e = Err(ty, vSs(msg, strlen(msg)));
                         vmE(&e);
                 }
+
                 Value v = tyeval(ty, e);
+
                 if (v.type == VALUE_NONE) {
-                        goto Err2;
+                        goto E2;
                 }
+
                 return v;
         }
-
-#undef PRE
-#undef POST
 }
 
 BUILTIN_FUNCTION(ty_parse)
@@ -6891,7 +6932,7 @@ BUILTIN_FUNCTION(ty_parse)
                 }
 
                 extra = vTn(
-                        "where",    make_location(ty, &stop, beginning_of(stop.s)),
+                        "where",    make_location(ty, &stop),
                         "msg",      vSs(msg, strlen(msg)),
                         tokens_key, vTokens,
                         NULL
@@ -6974,7 +7015,11 @@ BUILTIN_FUNCTION(ty_get_source)
         Value expr = ARG(0);
         Expr *src = source_lookup(ty, expr.src);
 
-        if (src == NULL) {
+        if (src == NULL && expr.type == VALUE_PTR) {
+                src = (Expr const *)expr.ptr;
+        }
+
+        if (src == NULL || src->start.s == NULL || src->end.s == NULL) {
                 return NIL;
         }
 
@@ -6982,19 +7027,14 @@ BUILTIN_FUNCTION(ty_get_source)
 
         Value file = (src->filename == NULL)
                    ? NIL
-                   : vSs(src->filename, strlen(src->filename));
-
-        char const *start = beginning_of(src->start.s);
-
-        Value text = (start == NULL)
-                   ? NIL
-                   : STRING_NOGC(start, strlen(start));
+                   : vSsz(src->filename);
 
         Value result = vTn(
-                "start", make_location(ty, &src->start, start),
-                "end",   make_location(ty, &src->end, start),
+                "start", make_location(ty, &src->start),
+                "end",   make_location(ty, &src->end),
                 "file",  file,
-                "src",   text,
+                "prog",  xSz(src->start.s - src->start.byte),
+                "src",   xSs(src->start.s, src->end.s - src->start.s),
                 NULL
         );
 
@@ -7201,6 +7241,216 @@ BUILTIN_FUNCTION(ptr_untyped)
         }
 
         return GCPTR(p.ptr, p.gcptr);
+}
+
+BUILTIN_FUNCTION(tdb_eval)
+{
+        ASSERT_ARGC("tdb.eval()", 1);
+
+        if (!DEBUGGING) return NIL;
+
+        B.count = 0;
+        vec_push_unchecked(B, '\0');
+        vec_push_n_unchecked(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
+        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
+        vec_push_n_unchecked(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
+
+        Arena old = amNg(1 << 20);
+
+        Stmt **prog = parse(ty, B.items + 1, "(eval)");
+        if (prog == NULL) {
+                char const *msg = parse_error(ty);
+                Value error = Err(ty, vSsz(msg));
+                ReleaseArena(ty, old);
+                return error;
+        }
+
+        Expr *e = (Expr *)prog[0];
+
+        Expr const *context = compiler_find_expr(ty, TDB->host->ip);
+        Scope *scope = (context == NULL) ? NULL : context->xscope;
+
+// =====================================================================
+        Ty save = *TDB->host;
+
+        Value v;
+        if (
+                compiler_symbolize_expression(ty, e, scope)
+             && (v = tyeval(TDB->host, e)).type != VALUE_NONE
+        ) {
+                ReleaseArena(ty, old);
+                *TDB->host = save;
+                return Ok(ty, v);
+        }
+
+        *TDB->host = save;
+// =====================================================================
+
+        char const *msg = compiler_error(ty);
+        Value error = Err(ty, vSsz(msg));
+
+        ReleaseArena(ty, old);
+
+        return error;
+}
+
+BUILTIN_FUNCTION(tdb_list)
+{
+        ASSERT_ARGC("tdb.list()", 0);
+        TDB_MUST_BE(STOPPED);
+
+        tdb_list(TDB->host);
+
+        return NIL;
+}
+
+BUILTIN_FUNCTION(tdb_span)
+{
+        ASSERT_ARGC_2("tdb.list()", 0, 1);
+
+        // TODO
+        if (argc == 1) {
+                Expr const *expr = ARG(0).ptr;
+                return NIL;
+        }
+
+        ExprLocation *eloc = compiler_find_expr_x(ty, TDB->host->ip, false);
+        if (eloc == NULL) {
+                return NIL;
+        }
+
+        return PAIR(
+                PTR((void *)eloc->p_start),
+                PTR((void *)eloc->p_end)
+        );
+}
+
+BUILTIN_FUNCTION(tdb_over)
+{
+        ASSERT_ARGC("tdb.over()", 0);
+        TDB_MUST_BE(STOPPED);
+        return BOOLEAN(tdb_step_over(TDB->host));
+}
+
+BUILTIN_FUNCTION(tdb_into)
+{
+        ASSERT_ARGC("tdb.into()", 0);
+        TDB_MUST_BE(STOPPED);
+        return BOOLEAN(tdb_step_into(TDB->host));
+}
+
+BUILTIN_FUNCTION(tdb_step)
+{
+        ASSERT_ARGC("tdb.step()", 0);
+        TDB_MUST_BE(STOPPED);
+        return BOOLEAN(tdb_step_line(TDB->host));
+}
+
+BUILTIN_FUNCTION(tdb_ip)
+{
+        ASSERT_ARGC_2("tdb.ip()", 0, 1);
+        TDB_MUST_NOT_BE(OFF);
+
+        return (argc == 0)
+             ? PTR(TDB->host->ip)
+             : PTR(code_of(&ARG(0)));
+}
+
+BUILTIN_FUNCTION(tdb_breakpoint)
+{
+        ASSERT_ARGC_2("tdb.breakpoint()", 0, 1);
+
+        char *ip;
+        Value arg;
+
+        if (argc == 0) {
+                ip = TDB->host->ip;
+        } else switch ((arg = ARG(0)).type) {
+        case VALUE_PTR:       ip = arg.ptr;             break;
+        case VALUE_FUNCTION:  ip = code_of(&arg);       break;
+        case VALUE_METHOD:    ip = code_of(arg.method); break;
+
+        default:
+                zP(
+                        "tdb.breakpoint(): attempt to set breakpoint "
+                        "on invalid type: %s",
+                        VSC(&arg)
+                );
+        }
+
+        tdb_set_break(ty, ip);
+
+        return BOOLEAN(true);
+}
+
+BUILTIN_FUNCTION(tdb_locals)
+{
+        ASSERT_ARGC("tdb.locals()", 0);
+        TDB_MUST_NOT_BE(OFF);
+        return tdb_locals(ty);
+}
+
+BUILTIN_FUNCTION(tdb_context)
+{
+        ASSERT_ARGC_2("tdb.context()", 0, 1);
+        TDB_MUST_NOT_BE(OFF);
+
+        char *ip = (argc == 0) ? TDB->host->ip : ARG(0).ptr;
+        Expr *context = (Expr *)compiler_find_expr(ty, ip);
+
+        Value expr = (context == NULL) ? NIL : PTR(context);
+
+        Value prog = (context == NULL)          ? NIL
+                   : (context->start.s == NULL) ? NIL
+                   : xSz(context->start.s - context->start.byte);
+
+        Value file = (context == NULL)           ? NIL
+                   : (context->filename == NULL) ? NIL
+                   : xSz(context->filename);
+
+        return (context == NULL) ? NIL : vTn(
+                "prog",  prog,
+                "file",  file,
+                "expr",  expr
+        );
+}
+
+BUILTIN_FUNCTION(tdb_state)
+{
+        ASSERT_ARGC("tdb.state()", 0);
+        TDB_MUST_NOT_BE(OFF);
+
+        Expr *context = (Expr *)compiler_find_expr(ty, TDB->host->ip);
+
+        Value ip = PTR(TDB->host->ip);
+
+        Value expr = (context == NULL) ? NIL : PTR(context);
+
+        Value prog = (context == NULL)          ? NIL
+                   : (context->start.s == NULL) ? NIL
+                   : xSz(context->start.s - context->start.byte);
+
+        Value file = (context == NULL)           ? NIL
+                   : (context->filename == NULL) ? NIL
+                   : xSz(context->filename);
+
+        Value f = (TDB->host->frames.count > 0)
+                ? vvL(TDB->host->frames)->f
+                : NIL;
+
+        Value fp = (TDB->host->frames.count > 0)
+                 ? INTEGER(vvL(TDB->host->frames)->fp)
+                 : NIL;
+
+        return vTn(
+                "ip",    ip,
+                "prog",  prog,
+                "file",  file,
+                "expr",  expr,
+                "func",  f,
+                "fp",    fp,
+                "sp",    INTEGER(TDB->host->stack.count)
+        );
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

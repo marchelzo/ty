@@ -17,173 +17,6 @@ extern bool CompileOnly;
 extern bool PrintResult;
 extern _Thread_local int EvalDepth;
 
-#define TY_INSTRUCTIONS \
-        X(NOP), \
-        X(LOAD_LOCAL), \
-        X(LOAD_REF), \
-        X(LOAD_CAPTURED), \
-        X(LOAD_GLOBAL), \
-        X(CHECK_INIT), \
-        X(CAPTURE), \
-        X(TARGET_LOCAL), \
-        X(TARGET_REF), \
-        X(TARGET_CAPTURED), \
-        X(TARGET_GLOBAL), \
-        X(TARGET_MEMBER), \
-        X(TARGET_SUBSCRIPT), \
-        X(ASSIGN), \
-        X(MAYBE_ASSIGN), \
-        X(ARRAY_REST), \
-        X(TUPLE_REST), \
-        X(RECORD_REST), \
-        X(INTEGER), \
-        X(REAL), \
-        X(BOOLEAN), \
-        X(STRING), \
-        X(REGEX), \
-        X(ARRAY), \
-        X(DICT), \
-        X(TUPLE), \
-        X(DICT_DEFAULT), \
-        X(NIL), \
-        X(SELF), \
-        X(TAG), \
-        X(CLASS), \
-        X(TO_STRING), \
-        X(FMT1), \
-        X(FMT2), \
-        X(CONCAT_STRINGS), \
-        X(RANGE), \
-        X(INCRANGE), \
-        X(MEMBER_ACCESS), \
-        X(TRY_MEMBER_ACCESS), \
-        X(SUBSCRIPT), \
-        X(SLICE), \
-        X(TAIL_CALL), \
-        X(CALL), \
-        X(CALL_METHOD), \
-        X(TRY_CALL_METHOD), \
-        X(GET_NEXT), \
-        X(PUSH_INDEX), \
-        X(READ_INDEX), \
-        X(POP), \
-        X(UNPOP), \
-        X(DUP), \
-        X(LEN), \
-        X(ARRAY_COMPR), \
-        X(DICT_COMPR), \
-        X(THROW_IF_NIL), \
-        X(PRE_INC), \
-        X(POST_INC), \
-        X(PRE_DEC), \
-        X(POST_DEC), \
-        X(FUNCTION), \
-        X(JUMP), \
-        X(JUMP_IF), \
-        X(JUMP_IF_NIL), \
-        X(JUMP_IF_NOT), \
-        X(JUMP_IF_NONE), \
-        X(RETURN), \
-        X(RETURN_PRESERVE_CTX), \
-        X(EXEC_CODE), \
-        X(HALT), \
-        X(MULTI_RETURN), \
-        X(RETURN_IF_NOT_NONE), \
-        X(SENTINEL), \
-        X(FIX_TO), \
-        X(REVERSE), \
-        X(SWAP), \
-        X(NONE), \
-        X(NONE_IF_NIL), \
-        X(NONE_IF_NOT), \
-        X(CLEAR_RC), \
-        X(GET_EXTRA), \
-        X(PUSH_NTH), \
-        X(PUSH_ARRAY_ELEM), \
-        X(PUSH_TUPLE_ELEM), \
-        X(PUSH_TUPLE_MEMBER), \
-        X(MULTI_ASSIGN), \
-        X(MAYBE_MULTI), \
-        X(JUMP_IF_SENTINEL), \
-        X(CLEAR_EXTRA), \
-        X(FIX_EXTRA), \
-        X(PUSH_ALL), \
-        X(VALUE), \
-        X(EVAL), \
-        X(SAVE_STACK_POS), \
-        X(RESTORE_STACK_POS), \
-        X(NEXT), \
-        X(YIELD), \
-        X(MAKE_GENERATOR), \
-        X(THROW), \
-        X(RETHROW), \
-        X(TRY), \
-        X(CATCH), \
-        X(POP_TRY), \
-        X(RESUME_TRY), \
-        X(FINALLY), \
-        X(PUSH_DEFER_GROUP), \
-        X(DEFER), \
-        X(CLEANUP), \
-        X(DROP), \
-        X(PUSH_DROP), \
-        X(PUSH_DROP_GROUP), \
-        X(TAG_PUSH), \
-        X(DEFINE_TAG), \
-        X(DEFINE_CLASS), \
-        X(TRY_INDEX), \
-        X(TRY_INDEX_TUPLE), \
-        X(TRY_TUPLE_MEMBER), \
-        X(TRY_TAG_POP), \
-        X(TRY_REGEX), \
-        X(TRY_ASSIGN_NON_NIL), \
-        X(BAD_MATCH), \
-        X(BAD_CALL), \
-        X(BAD_DISPATCH), \
-        X(BAD_ASSIGN), \
-        X(UNTAG_OR_DIE), \
-        X(STEAL_TAG), \
-        X(TRY_STEAL_TAG), \
-        X(ENSURE_LEN), \
-        X(ENSURE_LEN_TUPLE), \
-        X(ENSURE_EQUALS_VAR), \
-        X(ENSURE_DICT), \
-        X(ENSURE_CONTAINS), \
-        X(ENSURE_SAME_KEYS), \
-        X(RENDER_TEMPLATE), \
-        X(BINARY_OP), \
-        X(TRAP), \
-        X(TRAP_TY), \
-        X(ADD), \
-        X(SUB), \
-        X(MUL), \
-        X(DIV), \
-        X(MOD), \
-        X(EQ), \
-        X(NEQ), \
-        X(LT), \
-        X(GT), \
-        X(LEQ), \
-        X(GEQ), \
-        X(CMP), \
-        X(CHECK_MATCH), \
-        X(MUT_ADD), \
-        X(MUT_MUL), \
-        X(MUT_DIV), \
-        X(MUT_SUB), \
-        X(NEG), \
-        X(NOT), \
-        X(QUESTION), \
-        X(COUNT), \
-        X(PATCH_ENV), \
-        X(GET_TAG)
-
-#define X(i) INSTR_ ## i
-enum instruction {
-        TY_INSTRUCTIONS
-};
-#undef X
-
 bool
 vm_init(Ty *ty, int ac, char **av);
 
@@ -221,6 +54,9 @@ vm_do_signal(int, siginfo_t *, void *);
 
 bool
 vm_execute(Ty *ty, char const *source, char const *file);
+
+bool
+vm_load_program(Ty *ty, char const *source, char const *file);
 
 bool
 vm_execute_file(Ty *ty, char const *path);
@@ -264,7 +100,7 @@ vm_load_c_module(Ty *ty, char const *name, void *p);
 void
 vm_exec(Ty *ty, char *ip);
 
-struct value
+Value
 vm_try_exec(Ty *ty, char *ip);
 
 FrameStack *

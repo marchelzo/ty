@@ -81,8 +81,8 @@ inline static bool
 are_ordered(OperatorSpec const *a, OperatorSpec const *b)
 {
         return (
-                class_is_subclass(&MainTy, a->t1, b->t1) &&
-                class_is_subclass(&MainTy, a->t2, b->t2) &&
+                class_is_subclass(ty, a->t1, b->t1) &&
+                class_is_subclass(ty, a->t2, b->t2) &&
                 (
                         a->t1 != b->t1 ||
                         a->t2 != b->t2
@@ -101,8 +101,8 @@ check_slow(DispatchList const *list, int t1, int t2)
                         return op->ref;
                 }
                 if (
-                        class_is_subclass(&MainTy, t1, op->t1) &&
-                        class_is_subclass(&MainTy, t2, op->t2) &&
+                        class_is_subclass(ty, t1, op->t1) &&
+                        class_is_subclass(ty, t2, op->t2) &&
                         (
                                 (match == NULL) ||
                                 are_ordered(op, match)
