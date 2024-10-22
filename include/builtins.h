@@ -54,6 +54,7 @@ static struct {
 { .module = NULL,     .name = "setFinalizer",      .value = BUILTIN(builtin_finalizer)                     },
 { .module = NULL,     .name = "apply",             .value = BUILTIN(builtin_apply)                         },
 { .module = NULL,     .name = "docRef",            .value = BUILTIN(builtin_doc_ref)                       },
+{ .module = NULL,     .name = "ident",             .value = BUILTIN(builtin_ident)                         },
 { .module = NULL,     .name = "min",               .value = BUILTIN(builtin_min)                           },
 { .module = NULL,     .name = "max",               .value = BUILTIN(builtin_max)                           },
 { .module = NULL,     .name = "chr",               .value = BUILTIN(builtin_chr)                           },
@@ -699,6 +700,7 @@ static struct {
 {.module = "ty", .name = "copySource", .value = BUILTIN(builtin_ty_copy_source)},
 {.module = "ty", .name = "stripSource", .value = BUILTIN(builtin_ty_strip_source)},
 {.module = "ty", .name = "getSource", .value = BUILTIN(builtin_ty_get_source)},
+{.module = "ty", .name = "src", .value = BUILTIN(builtin_ty_get_source)},
 {.module = "ty", .name = "lock", .value = BUILTIN(builtin_ty_lock)},
 {.module = "ty", .name = "unlock", .value = BUILTIN(builtin_ty_unlock)},
 {.module = "ty", .name = "gc", .value = BUILTIN(builtin_ty_gc)},
@@ -713,6 +715,18 @@ static struct {
 {.module = "ty/parse", .name = "show", .value = BUILTIN(builtin_parse_show)},
 {.module = "ty/lex", .name = "peekc", .value = BUILTIN(builtin_lex_peek_char)},
 {.module = "ty/lex", .name = "getc", .value = BUILTIN(builtin_lex_next_char)},
+
+{.module = "tdb", .name = "eval",       .value = BUILTIN(builtin_tdb_eval)},
+{.module = "tdb", .name = "over",       .value = BUILTIN(builtin_tdb_over)},
+{.module = "tdb", .name = "span",       .value = BUILTIN(builtin_tdb_span)},
+{.module = "tdb", .name = "into",       .value = BUILTIN(builtin_tdb_into)},
+{.module = "tdb", .name = "step",       .value = BUILTIN(builtin_tdb_step)},
+{.module = "tdb", .name = "list",       .value = BUILTIN(builtin_tdb_list)},
+{.module = "tdb", .name = "state",      .value = BUILTIN(builtin_tdb_state)},
+{.module = "tdb", .name = "context",    .value = BUILTIN(builtin_tdb_context)},
+{.module = "tdb", .name = "locals",    .value = BUILTIN(builtin_tdb_locals)},
+{.module = "tdb", .name = "ip",         .value = BUILTIN(builtin_tdb_ip)},
+{.module = "tdb", .name = "breakpoint", .value = BUILTIN(builtin_tdb_breakpoint)},
 
 #ifndef _WIN32
 #  include "ioctl_constants.h"

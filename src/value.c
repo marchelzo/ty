@@ -20,7 +20,6 @@
 #include "intern.h"
 #include "compiler.h"
 
-static _Thread_local int ShowDepth = 0;
 static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
 
@@ -309,7 +308,6 @@ show_tuple(Ty *ty, struct value const *v, bool color)
 
         for (size_t i = 0; i < v->count; ++i) {
                 add(i == 0 ? "" : ", ");
-
                 if (v->ids != NULL && v->ids[i] != -1) {
                         char const *name = M_NAME(v->ids[i]);
                         if (color) {
@@ -422,9 +420,6 @@ value_showx(Ty *ty, Value const *v)
 {
         char buffer[1024];
         char *s = NULL;
-
-        if (++ShowDepth > 12)
-                return sclone(ty, "...");
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
@@ -543,9 +538,6 @@ value_show_colorx(Ty *ty, struct value const *v)
         char *s = NULL;
 
         static _Thread_local vec(void const *) visiting;
-
-        if (++ShowDepth > 12)
-                return sclone(ty, "...");
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
@@ -741,7 +733,7 @@ value_show_colorx(Ty *ty, struct value const *v)
         case VALUE_OBJECT:;
                 xvP(visiting, v->object);
 
-                for (int i = 0; i < v_n(visiting); ++i) {
+                for (int i = 0; i < vN(visiting); ++i) {
                         if (*v_(visiting, i) == v->object) {
                                 goto BasicObject;
                         }
@@ -795,18 +787,14 @@ BasicObject:
 char *
 value_show_color(Ty *ty, Value const *v)
 {
-        bool top = (ShowDepth == 0);
         char *str = value_show_colorx(ty, v);
-        if (top) ShowDepth = 0;
         return str;
 }
 
 char *
 value_show(Ty *ty, Value const *v)
 {
-        bool top = (ShowDepth == 0);
         char *str = value_showx(ty, v);
-        if (top) ShowDepth = 0;
         return str;
 }
 
@@ -861,9 +849,15 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
         case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
                 return (v1->integer < v2->real) ? -1 : (v1->integer != v2->real);
 
-        case PAIR_OF(VALUE_STRING):;
+        case PAIR_OF(VALUE_STRING):
                 c = memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
                 return (c != 0) ? c : ((int)v1->bytes - (int)v2->bytes);
+
+        case PAIR_OF(VALUE_PTR):
+                return ((uintptr_t)v1->ptr < (uintptr_t)v2->ptr)
+                     ? -1
+                     :  ((uintptr_t)v1->ptr != (uintptr_t)v2->ptr)
+                     ;
 
         case PAIR_OF(VALUE_ARRAY):
                 for (int i = 0; i < v1->array->count && i < v2->array->count; ++i) {

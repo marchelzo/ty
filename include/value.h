@@ -19,49 +19,6 @@ struct value;
 
 #define V_ALIGN (_Alignof (Value))
 
-#define POINTER(p)    { .type = VALUE_PTR,              .ptr              = (p), .tags = 0 }
-
-#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,        .integer        = (k),                                                   .tags = 0 })
-#define REAL(f)                  ((Value){ .type = VALUE_REAL,           .real           = (f),                                                   .tags = 0 })
-#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                                   .tags = 0 })
-#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,          .array          = (a),                                                   .tags = 0 })
-#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),  .ids = (ns),                      .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
-#define DICT(d)                  ((Value){ .type = VALUE_DICT,           .dict           = (d),                                                   .tags = 0 })
-#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,          .regex          = (r),                                                   .tags = 0 })
-#define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                                .tags = 0 })
-#define PTR(p)                   ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                                   .tags = 0 })
-#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,  .extra = (t),                    .tags = 0 })
-#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                                  .tags = 0 })
-#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (t),                    .tags = 0 })
-#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),                   .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
-#define REF(p)                   ((Value){ .type = VALUE_REF,            .ptr            = (p),                                                   .tags = 0 })
-#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                                   .tags = 0 })
-#define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
-#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
-#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
-#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
-#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
-#define THREAD(t)                ((Value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
-#define NIL                      ((Value){ .type = VALUE_NIL,                                                                                     .tags = 0 })
-
-/* Special kind of value, only used as an iteration counter in for-each loops */
-#define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),     .tags = 0 })
-
-/* Another special one, used for functions with multiple return values */
-#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                  .tags = 0 })
-
-/* This is getting ugly */
-#define NONE                     ((Value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                  .tags = 0 })
-
-//#define CALLABLE(v) ((!((v).type & VALUE_TAGGED)) && (((v).type & (VALUE_CLASS | VALUE_METHOD | VALUE_BUILTIN_METHOD | VALUE_FUNCTION | VALUE_BUILTIN_FUNCTION | VALUE_REGEX | VALUE_TAG)) != 0))
-
-#define CALLABLE(v) ((v).type <= VALUE_REGEX)
-
-#define ARITY(f) ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
-
 #define CLASS_TOP      -1
 #define CLASS_OBJECT    0
 #define CLASS_CLASS     1
@@ -86,106 +43,106 @@ struct value;
 #define CLASS_RANGE     19
 #define CLASS_INC_RANGE 20
 
-#define TY_AST_NODES \
-        X(Expr) \
-        X(Stmt) \
-        X(Value) \
-        X(Match) \
-        X(Each) \
-        X(For) \
-        X(While) \
-        X(WhileMatch) \
-        X(Func) \
-        X(FuncDef) \
-        X(ImplicitFunc) \
-        X(Generator) \
-        X(Param) \
-        X(Arg) \
-        X(Null) \
-        X(If) \
-        X(IfNot) \
-        X(In) \
-        X(NotIn) \
-        X(Eq) \
-        X(Matches) \
-        X(Or) \
-        X(And) \
-        X(BitAnd) \
-        X(BitOr) \
-        X(KwAnd) \
-        X(NotEq) \
-        X(Assign) \
-        X(Let) \
-        X(Class) \
-        X(Spread) \
-        X(Splat) \
-        X(Gather) \
-        X(Kwargs) \
-        X(Any) \
-        X(Add) \
-        X(Mul) \
-        X(Sub) \
-        X(Div) \
-        X(Mod) \
-        X(Block) \
-        X(Multi) \
-        X(With) \
-        X(Defer) \
-        X(Array) \
-        X(Dict) \
-        X(String) \
-        X(SpecialString) \
-        X(Int) \
-        X(Bool) \
-        X(Float) \
-        X(Nil) \
-        X(Regex) \
-        X(Id) \
-        X(Record) \
-        X(RecordEntry) \
-        X(DictItem) \
-        X(ArrayItem) \
-        X(Call) \
-        X(MethodCall) \
-        X(TagPattern) \
-        X(Tagged) \
-        X(PatternAlias) \
-        X(MemberAccess) \
-        X(Subscript) \
-        X(Slice) \
-        X(NotNil) \
-        X(ArrayCompr) \
-        X(Try) \
-        X(Eval) \
-        X(Cond) \
-        X(UserOp) \
-        X(Return) \
-        X(Yield) \
-        X(Break) \
-        X(Continue) \
-        X(Wtf) \
-        X(GT) \
-        X(GEQ) \
-        X(LT) \
-        X(LEQ) \
-        X(Cmp) \
-        X(Not) \
-        X(Neg) \
-        X(PreInc) \
-        X(PostInc) \
-        X(PreDec) \
-        X(PostDec) \
-        X(Count) \
-        X(Question) \
-        X(Resource) \
-        X(View) \
-        X(NotNilView) \
-        X(IfDef) \
-        X(CompileTime) \
-        X(Defined) \
-        X(Throw) \
-        X(Range) \
-        X(IncRange) \
+#define TY_AST_NODES            \
+        X(Expr)                 \
+        X(Stmt)                 \
+        X(Value)                \
+        X(Match)                \
+        X(Each)                 \
+        X(For)                  \
+        X(While)                \
+        X(WhileMatch)           \
+        X(Func)                 \
+        X(FuncDef)              \
+        X(ImplicitFunc)         \
+        X(Generator)            \
+        X(Param)                \
+        X(Arg)                  \
+        X(Null)                 \
+        X(If)                   \
+        X(IfNot)                \
+        X(In)                   \
+        X(NotIn)                \
+        X(Eq)                   \
+        X(Matches)              \
+        X(Or)                   \
+        X(And)                  \
+        X(BitAnd)               \
+        X(BitOr)                \
+        X(KwAnd)                \
+        X(NotEq)                \
+        X(Assign)               \
+        X(Let)                  \
+        X(Class)                \
+        X(Spread)               \
+        X(Splat)                \
+        X(Gather)               \
+        X(Kwargs)               \
+        X(Any)                  \
+        X(Add)                  \
+        X(Mul)                  \
+        X(Sub)                  \
+        X(Div)                  \
+        X(Mod)                  \
+        X(Block)                \
+        X(Multi)                \
+        X(With)                 \
+        X(Defer)                \
+        X(Array)                \
+        X(Dict)                 \
+        X(String)               \
+        X(SpecialString)        \
+        X(Int)                  \
+        X(Bool)                 \
+        X(Float)                \
+        X(Nil)                  \
+        X(Regex)                \
+        X(Id)                   \
+        X(Record)               \
+        X(RecordEntry)          \
+        X(DictItem)             \
+        X(ArrayItem)            \
+        X(Call)                 \
+        X(MethodCall)           \
+        X(TagPattern)           \
+        X(Tagged)               \
+        X(PatternAlias)         \
+        X(MemberAccess)         \
+        X(Subscript)            \
+        X(Slice)                \
+        X(NotNil)               \
+        X(ArrayCompr)           \
+        X(Try)                  \
+        X(Eval)                 \
+        X(Cond)                 \
+        X(UserOp)               \
+        X(Return)               \
+        X(Yield)                \
+        X(Break)                \
+        X(Continue)             \
+        X(Wtf)                  \
+        X(GT)                   \
+        X(GEQ)                  \
+        X(LT)                   \
+        X(LEQ)                  \
+        X(Cmp)                  \
+        X(Not)                  \
+        X(Neg)                  \
+        X(PreInc)               \
+        X(PostInc)              \
+        X(PreDec)               \
+        X(PostDec)              \
+        X(Count)                \
+        X(Question)             \
+        X(Resource)             \
+        X(View)                 \
+        X(NotNilView)           \
+        X(IfDef)                \
+        X(CompileTime)          \
+        X(Defined)              \
+        X(Throw)                \
+        X(Range)                \
+        X(IncRange)             \
         X(Stop)
 
 #define X(x) Ty ## x,
@@ -253,227 +210,38 @@ enum {
                 return NULL;                                     \
         }
 
-#define DEFINE_METHOD_COMPLETER(type) \
-        int \
-        type ## _get_completions(Ty *ty, char const *prefix, char **out, int max) \
-        { \
-                int n = 0; \
-                int len = strlen(prefix); \
-\
-                for (int i = 0; i < nfuncs; ++i) { \
-                        if (n < max && strncmp(funcs[i].name, prefix, len) == 0) { \
-                                out[n++] = sclone_malloc(funcs[i].name); \
-                        } \
-                } \
-\
-                return n; \
+#define DEFINE_METHOD_COMPLETER(type)                                           \
+        int                                                                     \
+        type ## _get_completions(                                               \
+                Ty *ty,                                                         \
+                char const *prefix,                                             \
+                char **out,                                                     \
+                int max                                                         \
+        )                                                                       \
+        {                                                                       \
+                int n = 0;                                                      \
+                int len = strlen(prefix);                                       \
+                                                                                \
+                for (int i = 0; i < nfuncs; ++i) {                              \
+                        if (                                                    \
+                                (n < max)                                       \
+                             && strncmp(funcs[i].name, prefix, len) == 0        \
+                        ) {                                                     \
+                                out[n++] = sclone_malloc(funcs[i].name);        \
+                        }                                                       \
+                }                                                               \
+                                                                                \
+                return n;                                                       \
         }
 
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
 #define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
 
-//#define value_mark(ty, v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
-#define value_mark _value_mark
-
-typedef struct array {
-        Value *items;
-        size_t count;
-        size_t capacity;
-} Array;
-
-typedef struct blob {
-        unsigned char *items;
-        size_t count;
-        size_t capacity;
-} Blob;
-
-typedef struct dict Dict;
-
-typedef struct generator Generator;
-typedef struct thread Thread;
-typedef struct channel Channel;
-typedef struct chanval ChanVal;
-
-enum {
-        VALUE_FUNCTION = 1     ,
-        VALUE_METHOD           ,
-        VALUE_BUILTIN_FUNCTION ,
-        VALUE_BUILTIN_METHOD   ,
-        VALUE_CLASS            ,
-        VALUE_GENERATOR        ,
-        VALUE_TAG              ,
-        VALUE_ARRAY            ,
-        VALUE_DICT             ,
-        VALUE_REGEX            , // CALLABLE here and above
-        VALUE_INTEGER          ,
-        VALUE_REAL             ,
-        VALUE_BOOLEAN          ,
-        VALUE_NIL              ,
-        VALUE_OBJECT           ,
-        VALUE_STRING           ,
-        VALUE_BLOB             ,
-        VALUE_SENTINEL         ,
-        VALUE_INDEX            ,
-        VALUE_NONE             ,
-        VALUE_UNINITIALIZED    ,
-        VALUE_PTR              ,
-        VALUE_REF              ,
-        VALUE_THREAD           ,
-        VALUE_TUPLE            ,
-        VALUE_TAGGED           = 1 << 7
-};
-
-typedef Value BuiltinFunction(Ty *, int, Value *);
-typedef Value BuiltinMethod(Ty *, Value *, int, Value *);
-
-enum {
-        FUN_INFO_HEADER_SIZE,
-        FUN_INFO_CODE_SIZE,
-        FUN_INFO_CAPTURES,
-        FUN_INFO_BOUND,
-        FUN_INFO_PARAM_COUNT,
-        FUN_INFO__PAD1,
-        FUN_INFO_CLASS
-};
-
-enum {
-        FUN_HEADER_SIZE = 0,
-        FUN_CODE_SIZE   = FUN_HEADER_SIZE + sizeof (int),
-        FUN_CAPTURES    = FUN_CODE_SIZE   + sizeof (int),
-        FUN_BOUND       = FUN_CAPTURES    + sizeof (int),
-        FUN_PARAM_COUNT = FUN_BOUND       + sizeof (int),
-        FUN_REST_IDX    = FUN_PARAM_COUNT + sizeof (int),
-        FUN_KWARGS_IDX  = FUN_REST_IDX    + sizeof (int16_t),
-        FUN_CLASS       = FUN_REST_IDX    + sizeof (int),
-        FUN_FROM_EVAL   = FUN_CLASS       + sizeof (int),
-        FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
-        FUN_PROTO       = FUN_HIDDEN      + 1,
-        FUN_DOC         = FUN_PROTO       + sizeof (uintptr_t),
-        FUN_NAME        = FUN_DOC         + sizeof (uintptr_t)
-};
-
-typedef struct value Value;
-
-struct value {
-        uint8_t type;
-        uint16_t tags;
-        uint32_t src;
-        union {
-                short tag;
-                double real;
-                bool boolean;
-                Array *array;
-                Dict *dict;
-                Blob *blob;
-                Thread *thread;
-                Symbol *sym;
-                struct {
-                        void *ptr;
-                        void *gcptr;
-                        void *extra;
-                };
-                struct {
-                        intmax_t integer;
-                        char const *constant;
-                };
-                struct {
-                        int class;
-                        struct itable *object;
-                };
-                struct {
-                        union {
-                                struct {
-                                        Value *this;
-                                        union {
-                                                Value *method;
-                                                BuiltinMethod *builtin_method;
-                                        };
-                                };
-                                struct {
-                                        BuiltinFunction *builtin_function;
-                                        char const *module;
-                                };
-                        };
-                        int name;
-                };
-                struct {
-                        char const *string;
-                        uint32_t bytes;
-                        char *gcstr;
-                };
-                struct {
-                        intmax_t i;
-                        int off;
-                        int nt;
-                };
-                struct {
-                        int count;
-                        Value *items;
-                        int *ids;
-                };
-                Regex const *regex;
-                struct {
-                        int *info;
-                        Value **env;
-                };
-                Generator *gen;
-        };
-};
-
-struct frame {
-        size_t fp;
-        Value f;
-        char const *ip;
-};
-
-struct generator {
-        char *ip;
-        Value f;
-        int fp;
-        ValueVector frame;
-        FrameStack frames;
-        CallStack calls;
-        SPStack sps;
-        TargetStack targets;
-        ValueVector deferred;
-        ValueVector to_drop;
-};
-
-struct thread {
-#ifdef _WIN32
-        HANDLE t;
-        CRITICAL_SECTION mutex;
-        CONDITION_VARIABLE cond;
+#if 0
+  #define value_mark(ty, v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 #else
-        pthread_t t;
-        pthread_mutex_t mutex;
-        pthread_cond_t cond;
+  #define value_mark _value_mark
 #endif
-        struct value v;
-        uint64_t i;
-        bool alive;
-};
-
-struct chanval {
-        vec(void *) as;
-        struct value v;
-};
-
-struct channel {
-        bool open;
-        TyMutex m;
-        TyCondVar c;
-        vec(ChanVal) q;
-};
-
-struct dict {
-        unsigned long *hashes;
-        struct value *keys;
-        struct value *values;
-        size_t size;
-        size_t count;
-        struct value dflt;
-};
 
 unsigned long
 value_hash(Ty *ty, struct value const *val);

@@ -14,19 +14,19 @@ tag IndexError;
 tag DispatchError;
 
 tag None {
-     map()     { None }
-     flatMap() { None }
-     some?()   { false }
+    map()      { None  }
+    flat-map() { None  }
+    or-else(x) { x     }
+
+    some?() { false }
 }
 
 tag Some {
-    map(f) {
-        Some(f(self))
-    }
+    map(f)      { Some(f(self)) }
+    flat-map(f) {      f(self)  }
+    or-else(x)  {        self   }
 
-    flatMap(f) {
-        f(self)
-    }
+    some?() { true }
 
     static from(x) {
         match x {
@@ -34,8 +34,6 @@ tag Some {
             _   => Some(x)
         }
     }
-
-    some?() { true }
 }
 
 tag Ok {
@@ -2107,6 +2105,9 @@ macro dbg(*args) {
 
     let results = ty.Id(name: ty.gensym())
 
+    let pp? = ty.IfDef(name: 'Printer', module: 'help')
+    let pp  = $$[ $$pp?.map\(__().print(_)).or-else($${::show}) $$]
+
     ty.Block([
         $$[ let $$results = [] $$],
         *[
@@ -2115,7 +2116,7 @@ macro dbg(*args) {
         ],
         $$[
             let maxw = $$results.map\(#_.1).max()
-            let show = $${::show}
+            let show = $$pp
 
             for (r, src) in $$results {
                 eprint(
@@ -2491,13 +2492,27 @@ class AnyOf {
     __match__(x) { x in @xs }
 }
 
-function memoized(f) {
-    let memo = %{*: f(*it.0, **%{k: v for (k, v) in it.1})}
-    return function (*args, %kwargs) {
-        let kwargs = kwargs.list().sort(by: &0)
-        memo[(args, kwargs)]
+class MemoizedFunction {
+    init(f) {
+        @func = f
+        self.reset()
     }
+
+    reset() {
+        @memo = %{*: (@func)(*it.0, **%{k: v for (k, v) in it.1})}
+    }
+
+    __call__(*args, %kwargs) {
+        @memo[(
+            args,
+            kwargs.list().sort!(by: &0)
+        )]
+    }
+
+    cache { @memo }
 }
+
+let memoized = MemoizedFunction
 
 macro __walk! {
     function walk(tree, f) {

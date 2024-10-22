@@ -87,7 +87,7 @@
 #define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 
-#ifndef aada
+#if 0
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
      && fprintf(                                \
@@ -384,11 +384,6 @@ mkexpr(Ty *ty)
 {
         Expr *e = amA0(sizeof *e);
         e->arena = GetArenaAlloc(ty);
-        e->origin = NULL;
-        e->constraint = NULL;
-        e->is_method = false;
-        e->symbolized = false;
-        e->has_resources = false;
         e->filename = filename;
         e->start = tok()->start;
         e->end = tok()->end;
@@ -410,26 +405,14 @@ mkfunc(Ty *ty)
 {
         Expr *f = mkexpr(ty);
 
-        static _Thread_local int t = -1;
+        static volatile int t = -1;
 
         f->type = EXPRESSION_FUNCTION;
         f->rest = -1;
         f->ikwargs = -1;
-        f->return_type = NULL;
+        f->class = -1;
         f->ftype = FT_NONE;
-        f->name = NULL;
-        f->doc = NULL;
-        f->proto = NULL;
-        f->body = NULL;
-        f->has_defer = false;
-        f->is_overload = false;
         f->t = ++t;
-
-        vec_init(f->params);
-        vec_init(f->dflts);
-        vec_init(f->constraints);
-        vec_init(f->decorators);
-        vec_init(f->functions);
 
         return f;
 }
@@ -4830,22 +4813,8 @@ parse_function_definition(Ty *ty)
         }
 
         Expr *f = prefix_function(ty);
-        if (f->name == NULL)
+        if (f->name == NULL) {
                 error(ty, "anonymous function definition used in statement context");
-
-        // TODO: We don't really need this anymore with ty.getSource()
-        if (s->type == STATEMENT_FUN_MACRO_DEFINITION) {
-                /*
-                avI(f->params, "raw", 0);
-                avI(f->dflts, NULL, 0);
-                avI(f->constraints, NULL, 0);
-                if (f->rest != -1) {
-                        f->rest += 1;
-                }
-                if (f->ikwargs != -1) {
-                        f->ikwargs += 1;
-                }
-                */
         }
 
         if (
@@ -4854,7 +4823,6 @@ parse_function_definition(Ty *ty)
                      f->name[1] == '\0' ||
                      f->name[0] != '$'  ||
                      contains(OperatorCharset, f->name[1])
-                
                 )
         ) {
                 s->type = STATEMENT_OPERATOR_DEFINITION;

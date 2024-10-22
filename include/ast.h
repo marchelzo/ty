@@ -223,11 +223,12 @@ struct expression {
         } type;
 #undef X
 
-        struct location start;
-        struct location end;
+        Location start;
+        Location end;
         char const *filename;
 
-        bool symbolized;
+        Scope *xscope;
+
         bool has_resources;
 
         union {
@@ -339,9 +340,9 @@ struct expression {
                         vec(Symbol *) param_symbols;
                         vec(Symbol *) bound_symbols;
                         Stmt *body;
-                        bool is_method;
                         bool is_overload;
                         bool has_defer;
+                        int class;
                         int ikwargs;
                         int rest;
                         int t;
@@ -404,10 +405,14 @@ struct statement {
                 TY_STATEMENT_TYPES
         } type;
 #undef X
-        struct location start;
-        struct location end;
+        Location start;
+        Location end;
         char const *filename;
+
+        Scope *xscope;
+
         Namespace *ns;
+
         union {
                 struct {
                         struct expression *expression;
@@ -473,6 +478,8 @@ struct statement {
         };
 };
 
+inline static bool
+is_method(Expr const *e) { return e->class != -1; }
 
 char const *
 ExpressionTypeName(Expr const *e);

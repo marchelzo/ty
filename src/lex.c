@@ -273,6 +273,7 @@ nextchar(Ty *ty)
         }
 
         SRC += 1;
+        state.loc.byte += 1;
 
         return c;
 }
@@ -1113,6 +1114,10 @@ lexop(Ty *ty)
                 if (C(0) == '%' && C(1) == '{' && i != 0)
                         break;
 
+                /* Another one: --@i should decrement @i, not apply --@ to i */
+                if (i > 0 && C(0) == '@' && idchar(C(1)))
+                        break;
+
                 if (i == MAX_OP_LEN) {
                         error(
                                 ty,
@@ -1416,6 +1421,7 @@ lex_init(Ty *ty, char const *file, char const *src)
         state = (LexState) {
                 .loc = (Location) {
                         .s = src,
+                        .byte = 0,
                         .line = 0,
                         .col = 0
                 },

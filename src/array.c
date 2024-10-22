@@ -404,12 +404,15 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
                 n = array->array->count;
                 break;
         case 2:
-                if (ARG(1).type != VALUE_INTEGER)
-                        zP("the second argument to array.sort() must be an integer");
+                if (ARG(1).type != VALUE_INTEGER) {
+                        zP("Array.sort(): expected integer but got: %s", VSC(&ARG(1)));
+                }
                 n = ARG(1).integer;
         case 1:
-                if (ARG(0).type != VALUE_INTEGER)
-                        zP("the first argument to array.sort() must be an integer");
+                if (ARG(0).type != VALUE_INTEGER) {
+                        XLOG("Array.sort(): expected integer but got: %s", VSC(&ARG(0)));
+                        zP("Array.sort(): expected integer but got: %s", VSC(&ARG(0)));
+                }
                 i = ARG(0).integer;
                 break;
         default:
@@ -2038,6 +2041,15 @@ array_clone(Ty *ty, Value *array, int argc, Value *kwargs)
         return v;
 }
 
+static Value
+array_ptr(Ty *ty, Value *array, int argc, Value *kwargs)
+{
+        if (argc != 0)
+                zP("Array.ptr(): expected 0 arguments but got %d", argc);
+
+        return PTR(array->array);
+}
+
 #define DEFINE_NO_MUT(name) \
         static Value \
         array_ ## name ## _no_mut(Ty *ty, Value *array, int argc, Value *kwargs) \
@@ -2117,6 +2129,7 @@ DEFINE_METHOD_TABLE(
         { .name = "partition",         .func = array_partition_no_mut        },
         { .name = "partition!",        .func = array_partition               },
         { .name = "pop",               .func = array_pop                     },
+        { .name = "ptr",               .func = array_ptr                     },
         { .name = "push",              .func = array_push                    },
         { .name = "remove",            .func = array_remove_no_mut           },
         { .name = "remove!",           .func = array_remove                  },

@@ -3,7 +3,7 @@ import ty (bt)
 import ty.parse as parse
 
 pub macro repl(cond, *exprs) {
-    let sourceStrings = raw.drop(1).map(parse.show)
+    let sourceStrings = exprs.map(&.src)
     let width = sourceStrings.map(&len).max() ?? 0
     let formatString = "%{width}s"
 

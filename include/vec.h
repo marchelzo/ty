@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 
-typedef ptrdiff_t vec_z;
+typedef size_t vec_z;
 
 inline static vec_z
 fit2(vec_z cap, vec_z min)

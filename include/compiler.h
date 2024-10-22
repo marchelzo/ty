@@ -9,7 +9,7 @@ typedef struct location Location;
 typedef struct expression Expr;
 typedef struct symbol Symbol;
 
-struct eloc {
+typedef struct eloc {
         union {
                 uintptr_t p_start;
                 size_t start_off;
@@ -22,7 +22,7 @@ struct eloc {
         Location end;
         char const *filename;
         Expr const *e;
-};
+} ExprLocation;
 
 typedef struct expr_list ExprList;
 
@@ -112,12 +112,11 @@ typedef struct compiler_state {
 
         int label;
 
-        Scope *method;
         Scope *fscope;
+        Scope *implicit_fscope;
 
         Scope *macro_scope;
 
-        Scope *implicit_fscope;
         Expr *implicit_func;
 
         Expr *origin;
@@ -190,8 +189,17 @@ compiler_load_prelude(Ty *ty);
 Location
 compiler_find_definition(Ty *ty, char const *file, int line, int col);
 
+ExprLocation *
+compiler_find_expr_x(Ty *ty, char const *code, bool func);
+
 Expr const *
 compiler_find_expr(Ty *ty, char const *ip);
+
+Expr const *
+compiler_find_func(Ty *ty, char const *ip);
+
+char *
+compiler_find_next_line(Ty *ty, char const *ip);
 
 bool
 compiler_has_module(Ty *ty, char const *path);

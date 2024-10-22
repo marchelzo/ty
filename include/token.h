@@ -12,14 +12,6 @@
 #include "ast.h"
 #include "ty.h"
 
-typedef struct regex {
-        pcre *pcre;
-        pcre_extra *extra;
-        char const *pattern;
-        bool gc;
-        bool detailed;
-} Regex;
-
 typedef struct {
         StringVector strings;
         vec(LexState) expressions;

@@ -1,12 +1,13 @@
 #ifndef INTERN_H_INCLUDED
 #define INTERN_H_INCLUDED
 
+#include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
 
 #include "vec.h"
 
-enum { INTERN_TABLE_SIZE = 32 };
+enum { INTERN_TABLE_SIZE = 128 };
 
 typedef struct {
         int64_t id;
