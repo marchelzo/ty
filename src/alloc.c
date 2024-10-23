@@ -49,7 +49,6 @@ NewArena(Ty *ty, size_t cap)
         A.gc = false;
 
         if (UNLIKELY(A.base == NULL)) {
-                raise(SIGTRAP);
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
         }
 
