@@ -687,8 +687,7 @@ tagged(Ty *ty, int tag, Value v, ...)
 
         va_start(ap, v);
 
-        static vec(Value) vs;
-        vs.count = 0;
+        vec(Value) vs = {0};
 
         Value next = va_arg(ap, Value);
 
@@ -696,10 +695,10 @@ tagged(Ty *ty, int tag, Value v, ...)
                 goto TagAndReturn;
         }
 
-        avP(vs, v);
+        svP(vs, v);
 
         while (next.type != VALUE_NONE) {
-                avP(vs, next);
+                svP(vs, next);
                 next = va_arg(ap, Value);
         }
 

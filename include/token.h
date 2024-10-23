@@ -26,6 +26,7 @@ typedef struct token {
                 TOKEN_AT = '@',
                 TOKEN_BANG = '!',
                 TOKEN_QUESTION = '?',
+                TOKEN_EQ = '=',
 
                 /*
                  * We start the enumeration constants slightly below INT_MAX so that they
@@ -33,7 +34,7 @@ typedef struct token {
                  * can literally be '(', which is a nice way to avoid verbose names like
                  * TOKEN_OPEN_PAREN.
                  */
-                TOKEN_KEYWORD = INT_MAX - 256,
+                TOKEN_KEYWORD = INT_MAX - 4096,
                 TOKEN_IDENTIFIER,
                 TOKEN_STRING,
                 TOKEN_SPECIAL_STRING,
@@ -49,7 +50,6 @@ typedef struct token {
                 TOKEN_PERCENT,
                 TOKEN_NOT_EQ,
                 TOKEN_DBL_EQ,
-                TOKEN_EQ,
                 TOKEN_PLUS_EQ,
                 TOKEN_STAR_EQ,
                 TOKEN_DIV_EQ,
@@ -80,6 +80,7 @@ typedef struct token {
                 TOKEN_COMMENT,
                 TOKEN_DIRECTIVE,
                 TOKEN_ERROR,
+                TOKEN_TYPE_MAX
         } type;
 
         int8_t pp;
@@ -91,7 +92,7 @@ typedef struct token {
 
         union {
                 enum {
-                        KEYWORD_RETURN,
+                        KEYWORD_RETURN = INT_MAX - 512,
                         KEYWORD_BREAK,
                         KEYWORD_LET,
                         KEYWORD_CONTINUE,

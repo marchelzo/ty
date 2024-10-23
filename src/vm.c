@@ -4556,7 +4556,7 @@ vm_init(Ty *ty, int ac, char **av)
         pcre_malloc = malloc;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
-        amN(1ULL << 30);
+        amN(1ULL << 22);
 
         curl_global_init(CURL_GLOBAL_ALL);
 
@@ -4657,6 +4657,7 @@ Next:
                 );
         }
 
+        printf("VM Error: %s\n", ERR);
         LOG("VM Error: %s", ERR);
 
         longjmp(JB, 1);

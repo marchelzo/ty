@@ -444,6 +444,8 @@ BUILTIN_FUNCTION(eval);
 
 BUILTIN_FUNCTION(ty_parse);
 
+BUILTIN_FUNCTION(ty_tokenize);
+
 BUILTIN_FUNCTION(ty_disassemble);
 
 BUILTIN_FUNCTION(ty_copy_source);
