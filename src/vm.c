@@ -4657,7 +4657,6 @@ Next:
                 );
         }
 
-        printf("VM Error: %s\n", ERR);
         LOG("VM Error: %s", ERR);
 
         longjmp(JB, 1);
