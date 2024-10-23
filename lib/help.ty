@@ -286,8 +286,9 @@ class Printer {
             return
         }
 
-        let state = self.save()
         @visiting.push(id-of-x)
+
+        let state = self.save()
 
         function printList(xs, open, close, color) {
             try {

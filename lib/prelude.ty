@@ -699,6 +699,10 @@ class Int {
         Float.clamp.bind(self)(*args)
     }
 
+    range(start, end) {
+        (self + start)...(self + end)
+    }
+
     __fmt__(spec, w, n) {
         if spec.match?(/[%[:alpha:]]/) {
             fmt("%{spec}", (n ?? w) if '*' in spec, self)
@@ -1693,16 +1697,33 @@ class Range : Iterable {
         return "({@a} .. {@b})"
     }
 
+    contains?(r: Range | InclusiveRange) {
+        (r.low() :: self) && (r.high() :: self)
+    }
+
     contains?(k) {
         k :: self
+    }
+
+    clamp(a, b) {
+        return Range(
+            max(a ?? self.low(), self.low()),
+            min(b ?? self.high(), self.high())
+        )
     }
 
     __match__(x) {
         (x :: (Int | Float)) && (x >= @low() && x <= @high())
     }
 
+    slice { [self.low(), #self] }
+
     has?(k) {
         k :: self
+    }
+
+    has-all?(*ks) {
+        ks.all?(k -> k :: self)
     }
 
     __iter__() {
