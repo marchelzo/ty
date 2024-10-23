@@ -6874,12 +6874,38 @@ E2:
         }
 }
 
-BUILTIN_FUNCTION(ty_parse)
+BUILTIN_FUNCTION(ty_tokenize)
 {
-        ASSERT_ARGC("ty.parse(ty)", 1);
+        ASSERT_ARGC("ty.tokenize()", 1);
 
         if (ARG(0).type != VALUE_STRING) {
-                zP("ty.parse(ty): expected string but got: %s", VSC(&ARG(0)));
+                zP("ty.tokenize(): expected string but got: %s", VSC(&ARG(0)));
+        }
+
+        B.count = 0;
+        vec_push_unchecked(B, '\0');
+        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
+        vec_push_unchecked(B, '\0');
+
+        Arena old = amNg(1 << 18);
+
+        TokenVector tokens;
+        if (!tokenize(ty, B.items + 1, &tokens)) {
+                ReleaseArena(ty, old);
+                return NIL;
+        }
+
+        ReleaseArena(ty, old);
+
+        return make_tokens(ty, &tokens);
+}
+
+BUILTIN_FUNCTION(ty_parse)
+{
+        ASSERT_ARGC("ty.parse()", 1);
+
+        if (ARG(0).type != VALUE_STRING) {
+                zP("ty.parse(): expected string but got: %s", VSC(&ARG(0)));
         }
 
         B.count = 0;

@@ -76,7 +76,6 @@
                 return e; \
         } \
 
-
 #define T0 (token(0)->type)
 #define T1 (token(1)->type)
 #define T2 (token(2)->type)
@@ -183,6 +182,7 @@
 #define           tok()           ((tok)(ty))
 #define        token(i)         ((token)(ty, (i)))
 #define         skip(n)          ((skip)(ty, (n)))
+#define  try_consume(t)   ((try_consume)(ty, (t)))
 #define have_keyword(k)  ((have_keyword)(ty, (k)))
 #define    unconsume(t)     ((unconsume)(ty, (t)))
 
@@ -1020,6 +1020,15 @@ expect_keyword(Ty *ty, int type)
                         TERM(0)
                 );
         }
+}
+
+inline static bool
+(try_consume)(Ty *ty, int t)
+{
+        return (T0 == t || K0 == t)
+             ? (next(), true)
+             : false
+             ;
 }
 
 inline static void
@@ -5178,13 +5187,18 @@ parse_method(Ty *ty, Location start, Expr *decorator_macro, char const *doc, exp
         }
 }
 
+typedef struct {
+        char *name;
+        Expr *constraint;
+        Expr *dflt;
+} FuncParam;
+
 static Stmt *
 parse_class_definition(Ty *ty)
 {
         Location start = tok()->start;
 
         bool tag = K0 == KEYWORD_TAG;
-
         consume_keyword(tag ? KEYWORD_TAG : KEYWORD_CLASS);
 
         expect(TOKEN_IDENTIFIER);
@@ -5192,10 +5206,58 @@ parse_class_definition(Ty *ty)
         Stmt *s = mktagdef(ty, tok()->identifier);
         if (!tag)
                 s->type = STATEMENT_CLASS_DEFINITION;
+        s->start = start;
 
         next();
 
-        s->start = start;
+
+        /*
+         * Allow some optional parameters here that will implicitly become
+         * parameters of the init() method which are immediately assigned
+         * to instance variables of the same name.
+         *
+         * e.g.
+         *      class Foo(name: String, xs) {
+         *              init() {
+         *                      assert @name == name
+         *                      assert @xs == xs
+         *              }
+         *      }
+         *
+         * is equivalent to
+         *
+         *      class Foo {
+         *              init(name: String, xs) {
+         *                      @name = name
+         *                      @xs = xs
+         *                      assert @name == name
+         *                      assert @xs == xs
+         *              }
+         *      }
+         */
+        Expr *init = NULL;
+        vec(FuncParam) init_params = {0};
+        if (!tag && try_consume('(')) while (!try_consume(')')) {
+                FuncParam param;
+
+                expect(TOKEN_IDENTIFIER);
+                param.name = tok()->identifier;
+                next();
+
+                param.constraint = try_consume(':')
+                                 ? parse_expr(ty, 0)
+                                 : NULL;
+
+                param.dflt = try_consume('=')
+                           ? parse_expr(ty, 0)
+                           : NULL;
+                
+                if (T0 != ')') {
+                        consume(',');
+                }
+
+                avP(init_params, param);
+        }
 
         if (T0 == ':') {
                 next();
@@ -5364,10 +5426,56 @@ parse_class_definition(Ty *ty)
                                                 decorators
                                         )
                                 );
+
+                                if (strcmp(vvL(s->tag.methods)[0]->name, "init") == 0) {
+                                        init = vvL(s->tag.methods)[0];
+                                }
                         }
                 }
                 setctx(ty, LEX_PREFIX);
                 consume('}');
+        }
+
+        if (vN(init_params) > 0) {
+                if (init == NULL) {
+                        init = mkfunc(ty);
+                        init->name = "init";
+                        init->body = mkstmt(ty);
+                        init->body->type = STATEMENT_BLOCK;
+                        avP(s->tag.methods, init);
+                }
+
+                if (init->body->type != STATEMENT_BLOCK) {
+                        EStart = init->start;
+                        EEnd = init->end;
+                        error(ty, "non-block init() body with implicit classs parameters");
+                }
+
+                for (int i = 0; i < vN(init_params); ++i) {
+                        FuncParam *param = v_(init_params, i);
+
+                        avI(init->params,      param->name,       i);
+                        avI(init->constraints, param->constraint, i);
+                        avI(init->dflts,       param->dflt,       i);
+
+                        Expr *assignment = mkexpr(ty);
+                        assignment->type = EXPRESSION_EQ;
+                        assignment->target = mkexpr(ty);
+                        assignment->target->type = EXPRESSION_MEMBER_ACCESS;
+                        assignment->target->object = mkexpr(ty);
+                        assignment->target->object->type = EXPRESSION_IDENTIFIER;
+                        assignment->target->object->identifier = "self";
+                        assignment->target->member_name = param->name;
+                        assignment->value = mkexpr(ty);
+                        assignment->value->type = EXPRESSION_IDENTIFIER;
+                        assignment->value->identifier = param->name;
+
+                        Stmt *stmt = mkstmt(ty);
+                        stmt->type = STATEMENT_EXPRESSION;
+                        stmt->expression = assignment;
+
+                        avP(init->body->statements, stmt);
+                }
         }
 
         s->end = End;
@@ -5644,6 +5752,34 @@ pns(Namespace const *ns, bool end)
         putchar(end ? '\n' : '.');
 }
 #endif
+
+bool
+tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
+{
+        LexState save;
+        TokenVector tokens_ = tokens;
+
+        lex_save(ty, &save);
+        
+        lex_init(ty, "(tokenize)", source);
+        lex_keep_comments(ty, true);
+
+        vec_init(tokens);
+
+        setctx(ty, LEX_PREFIX);
+
+        while (T0 != TOKEN_END) {
+                do { next(); } while (get_prefix_parser(ty) != NULL);
+                next();
+        }
+
+        *tokens_out = tokens;
+
+        lex_start(ty, &save);
+        tokens = tokens_;
+
+        return true;
+}
 
 bool
 parse_ex(

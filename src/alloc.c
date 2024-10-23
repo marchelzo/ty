@@ -20,7 +20,6 @@ ExpandArena(Ty *ty)
 {
         size_t size = 2 * (A.end - (A.base + RESERVED));
         Arena old = A.gc ? NewArenaGC(ty, size) : NewArena(ty, size);
-
         *NextArena(&A) = old;
 }
 
@@ -50,6 +49,7 @@ NewArena(Ty *ty, size_t cap)
         A.gc = false;
 
         if (UNLIKELY(A.base == NULL)) {
+                raise(SIGTRAP);
                 panic("out of memory: couldn't allocate new %zu-byte arena", cap);
         }
 

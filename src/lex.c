@@ -997,7 +997,10 @@ uatou(Ty *ty, char const *s, char const **end, int base)
                 if (n == sizeof num - 1) {
                         error(ty, "invalid numeric literal: %.*s", n, num);
                 }
-                if (isxdigit(s[i]) || ((base == 0) && s[i] == 'x' && i == 1)) {
+                if (
+                        (isdigit(s[i]) && (s[i] - '0') < base)
+                     || (base == 16 && isxdigit(s[i]))
+                ) {
                         num[n++] = s[i];
                 } else if (s[i] != '_') {
                         break;
@@ -1005,8 +1008,9 @@ uatou(Ty *ty, char const *s, char const **end, int base)
         }
 
         num[n] = '\0';
-
         *end = s + i;
+
+        errno = 0;
 
         return strtoull(num, NULL, base);
 }
@@ -1015,27 +1019,34 @@ static Token
 lexnum(Ty *ty)
 {
         char *end;
-        errno = 0;
-        int base;
 
-        intmax_t integer;
-        // Allow integer constants like 0b10100010
-        if (C(0) == '0' && C(1) == 'b') {
-                integer = uatou(ty, SRC + 2, (char const **)&end, 2);
-        } else {
-                integer = uatou(ty, SRC, (char const **)&end, 0);
-        }
+        int base = (C(0) != '0') ? 10 : (
+                   (C(1) == 'b') ? (nextchar(ty), nextchar(ty), 2)
+                 : (C(1) == 'o') ? (nextchar(ty), nextchar(ty), 8)
+                 : (C(1) == 'x') ? (nextchar(ty), nextchar(ty), 16)
+                 : /*----------------------------------------*/ 8
+        );
 
-        int n = end - SRC;
-
-        Token num;
+        intmax_t integer = uatou(ty, SRC, (char const **)&end, base);
 
         if (errno != 0) {
                 char const *err = strerror(errno);
                 error(ty, "invalid numeric literal: %c%s", tolower(err[0]), err + 1);
         }
 
-        if (C(n) == '.' && !isalpha(C(n + 1)) && C(n + 1) != '_' && C(n + 1) != '.') {
+        int n = end - SRC;
+        Token num;
+
+        if (
+                (C(n) == 'e')
+             || (C(n) == 'E')
+             || (
+                        C(n) == '.'
+                     && !isalpha(C(n + 1))
+                     && C(n + 1) != '_'
+                     && C(n + 1) != '.'
+                )
+        ) {
                 errno = 0;
                 double real = strtod(SRC, &end);
                 n = end - SRC;
@@ -1083,7 +1094,9 @@ lexnum(Ty *ty)
                                 TERM(39)
                         );
                 }
+
                 while (SRC != end) nextchar(ty);
+
                 num = mkinteger(ty, integer);
         }
 

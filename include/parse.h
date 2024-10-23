@@ -47,4 +47,7 @@ make_with(Ty *ty, struct expression *e, statement_vector defs, struct statement 
 char *
 gensym(Ty *ty);
 
+bool
+tokenize(Ty *ty, char const *source, TokenVector *tokens_out);
+
 #endif
