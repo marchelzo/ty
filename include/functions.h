@@ -497,5 +497,7 @@ BUILTIN_FUNCTION(tdb_ip);
 BUILTIN_FUNCTION(tdb_breakpoint);
 BUILTIN_FUNCTION(tdb_context);
 BUILTIN_FUNCTION(tdb_locals);
+BUILTIN_FUNCTION(tdb_stack);
+BUILTIN_FUNCTION(tdb_backtrace);
 
 #endif

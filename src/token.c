@@ -184,6 +184,7 @@ token_show_type(Ty *ty, int type)
         case TOKEN_DIRECTIVE:          return "compile-time directive";
         case TOKEN_END:                return "end of input";
         case TOKEN_COMMENT:            return "comment";
+        case TOKEN_REGEX:              return "regex";
         case TOKEN_ERROR:              return "ERROR";
         default:                       snprintf(token_show_buffer, 512, "token '%c'", type); return sclone(ty, token_show_buffer);
         }
@@ -195,6 +196,7 @@ token_showx(Ty *ty, struct token const *t, char const *c)
         switch (t->type) {
         case TOKEN_IDENTIFIER: snprintf(token_show_buffer, 512, "identifier '%s'", t->identifier);         break;
         case TOKEN_STRING:     snprintf(token_show_buffer, 512, "string '%s'", t->string);                 break;
+        case TOKEN_REGEX:      snprintf(token_show_buffer, 512, "regex /%s/", t->regex->pattern);          break;
         case TOKEN_INTEGER:    snprintf(token_show_buffer, 512, "integer '%"PRIiMAX"'", t->integer);       break;
         case TOKEN_REAL:       snprintf(token_show_buffer, 512, "real '%f'", t->real);                     break;
         case TOKEN_KEYWORD:    snprintf(token_show_buffer, 512, "keyword '%s'", keyword_show(t->keyword)); break;

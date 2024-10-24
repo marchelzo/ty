@@ -6,6 +6,8 @@
 #include "ty.h"
 #include "location.h"
 
+typedef struct token Token;
+
 typedef enum LexContext {
         LEX_PREFIX  = 1,
         LEX_INFIX   = 2,
@@ -46,8 +48,11 @@ lex_rewind(Ty *ty, struct location const *where);
 void
 lex_end(Ty *ty);
 
-struct token
+Token
 lex_token(Ty *ty, LexContext ctx);
+
+int
+lex_peek_byte(Ty *ty);
 
 int
 lex_peek_char(Ty *ty, char *out);

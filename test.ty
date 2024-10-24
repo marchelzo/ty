@@ -4,6 +4,7 @@ import chalk (..)
 import time
 import tp (ThreadPool)
 import ty
+import dbg
 
 let start = time.utime()
 
@@ -17,6 +18,10 @@ let m = pen(bold, brightMagenta)
 let b = pen(bold, blue)
 
 let TY_PATH = getenv('TY_PATH') ?? ty.executable
+
+dbg(TY_PATH)
+
+dbg("{TY_PATH} tests/{'test'}")
 
 function getTyCommand(test) {
     if __windows__ {
@@ -39,8 +44,8 @@ function doTest(name) {
             passed += 1
             let elapsedMs = (time.utime() - testStart) / 1000.0
             let elapsed = match elapsedMs <=> 100.0 {
-                1 => "({elapsedMs / 1000.0#.2g}s)",
-                _ => "({elapsedMs#d}ms)",
+                1 => "({elapsedMs / 1000.0:.2g}s)",
+                _ => "({elapsedMs:d}ms)",
             }
 
             "{g('PASS')} {yellow(elapsed)}"

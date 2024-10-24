@@ -181,3 +181,9 @@ op_dispatch(int op, int t1, int t2)
 
         return ref;
 }
+
+void
+op_dump(int op)
+{
+        // TODO
+}

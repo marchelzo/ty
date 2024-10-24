@@ -731,18 +731,20 @@ value_show_colorx(Ty *ty, struct value const *v)
                 snprintf(buffer, sizeof buffer, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
         case VALUE_OBJECT:;
-                xvP(visiting, v->object);
-
                 for (int i = 0; i < vN(visiting); ++i) {
                         if (*v_(visiting, i) == v->object) {
                                 goto BasicObject;
                         }
                 }
+
+                xvP(visiting, v->object);
+
 #ifdef TY_NO_LOG
                 Value *fp = class_method(ty, v->class, "__str__");
 #else
                 struct value *fp = NULL;
 #endif
+
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
                         Value str = vm_eval_function(ty, fp, v, NULL);
                         gP(&str);

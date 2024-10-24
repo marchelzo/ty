@@ -1544,7 +1544,7 @@ class Iter : Iterable {
 
     all?(pred=id) {
         for x in self {
-            if !pred(x) { return false }
+            if x !:: pred { return false }
         }
 
         return true
@@ -2158,7 +2158,7 @@ macro time! {
     // (
     lex.next()
 
-    let (p, e) = parse.stmt(0, raw: true)
+    let e = parse.stmt(0)
 
     // )
     lex.next()
@@ -2172,7 +2172,7 @@ macro time! {
             ':',
             __line__,
             ': ',
-            $$(ty.String(parse.show(p))),
+            $$(ty.String(parse.show(e))),
             ': ',
             (e - s) / 1.0e6,
             's',

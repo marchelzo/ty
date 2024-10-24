@@ -86,7 +86,7 @@
 #define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 
-#if 0
+#if 1
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
      && fprintf(                                \
@@ -684,7 +684,8 @@ setctx(Ty *ty, int ctx)
 
         lctx = ctx;
 
-        Token const *t = tok();
+        Location seek = (ctx == LEX_FMT) ? token(-1)->end : tok()->start;
+        bool nl = tok()->nl;
 
         PLOGC('\n');
 
@@ -696,14 +697,14 @@ setctx(Ty *ty, int ctx)
                 TokenIndex,
                 TERM(0),
                 TERM(97;3;1),
-                (int)strcspn(t->start.s, "\n"),
-                t->start.s,
+                (int)strcspn(seek.s, "\n"),
+                seek.s,
                 TERM(91;1),
                 TERM(0)
         );
 
-        lex_rewind(ty, &t->start);
-        lex_need_nl(ty, t->nl);
+        lex_rewind(ty, &seek);
+        lex_need_nl(ty, nl);
 
         // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
 
@@ -712,7 +713,7 @@ setctx(Ty *ty, int ctx)
                 tokens.count -= 1;
         }
 
-        while (tokens.count > 0 && vvL(tokens)->start.s == t->start.s) {
+        while (tokens.count > 0 && vvL(tokens)->start.s == seek.s) {
                 PLOG("  Pop tokens[%zu]: %s", tokens.count - 1, token_show(ty, vvL(tokens)));
                 tokens.count -= 1;
         }
@@ -1073,6 +1074,8 @@ iter_sugar(Ty *ty, Expr **target, Expr **iterable)
 inline static bool
 op_fixup(Ty *ty, int i)
 {
+        setctx(ty, LEX_INFIX);
+
         switch (token(i)->type) {
         default:                return false;
         case TOKEN_DBL_EQ:      token(i)->identifier = "==";   break;
@@ -1279,9 +1282,9 @@ Expr *
 extend_string(Ty *ty, Expr *s)
 {
         while (
-                T0 == TOKEN_STRING ||
-                T0 == TOKEN_SPECIAL_STRING ||
-                (
+                T0 == TOKEN_STRING
+             || T0 == '"'
+             || (
                         T0 == TOKEN_IDENTIFIER &&
                         is_macro(ty, tok()->module, tok()->identifier)
                 )
@@ -1310,6 +1313,77 @@ prefix_string(Ty *ty)
         e->string = tok()->string;
 
         consume(TOKEN_STRING);
+
+        return extend_string(ty, e);
+}
+
+static char *
+ss_next_str(Ty *ty)
+{
+        char *str;
+
+        setctx(ty, LEX_FMT);
+        str = tok()->string;
+
+        consume(TOKEN_STRING);
+
+        return str;
+}
+
+static Expr *
+ss_inner(Ty *ty)
+{
+        Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_SPECIAL_STRING;
+
+        avP(e->strings, ss_next_str(ty));
+
+        while (setctx(ty, LEX_PREFIX), T0 == '{') {
+                Location start = tok()->start;
+
+                next();
+
+                avP(e->expressions, parse_expr(ty, 0));
+
+                if (T0 == ':' || T0 == '#') {
+                        next();
+                        avP(e->fmts, ss_inner(ty));
+                } else {
+                        avP(e->fmts, NULL);
+                }
+
+                if (T0 == ':' || T0 == '#') {
+                        next();
+                        avP(e->fmt_args, parse_expr(ty, 0));
+                } else {
+                        avP(e->fmt_args, NULL);
+                }
+
+                Location end = tok()->end;
+                avP(e->widths, end.col - start.col);
+
+                consume('}');
+
+                avP(e->strings, ss_next_str(ty));
+        }
+
+        e->end = End;
+
+        return e;
+}
+
+static Expr *
+prefix_ss(Ty *ty)
+{
+        Expr *e;
+        Location start = tok()->start;
+
+        consume('"');
+        e = ss_inner(ty);
+        consume('"');
+
+        e->start = start;
+        e->end = End;
 
         return extend_string(ty, e);
 }
@@ -3956,6 +4030,8 @@ get_prefix_parser(Ty *ty)
         case TOKEN_FUN_SPECIAL_STRING: return prefix_fun_special_string;
         case TOKEN_REGEX:              return prefix_regex;
 
+        case '"':                      return prefix_ss;
+
         case TOKEN_IDENTIFIER:         return prefix_identifier;
         case TOKEN_KEYWORD:            goto Keyword;
 
@@ -4555,6 +4631,8 @@ parse_for_loop(Ty *ty)
                 }
 
                 s->each.body = parse_statement(ty, -1);
+
+                s->end = End;
 
                 return s;
         }
@@ -5251,7 +5329,7 @@ parse_class_definition(Ty *ty)
                 param.dflt = try_consume('=')
                            ? parse_expr(ty, 0)
                            : NULL;
-                
+
                 if (T0 != ')') {
                         consume(',');
                 }
@@ -5760,17 +5838,24 @@ tokenize(Ty *ty, char const *source, TokenVector *tokens_out)
         TokenVector tokens_ = tokens;
 
         lex_save(ty, &save);
-        
+
         lex_init(ty, "(tokenize)", source);
         lex_keep_comments(ty, true);
 
         vec_init(tokens);
 
-        setctx(ty, LEX_PREFIX);
+        while (T0 != TOKEN_END && T0 != TOKEN_ERROR) {
+                while (get_prefix_parser(ty) != NULL) {
+                        next();
+                }
 
-        while (T0 != TOKEN_END) {
-                do { next(); } while (get_prefix_parser(ty) != NULL);
+                setctx(ty, LEX_INFIX);
+
                 next();
+        }
+
+        while (vN(tokens) > 0 && vvL(tokens)->type == TOKEN_END) {
+                vvX(tokens);
         }
 
         *tokens_out = tokens;

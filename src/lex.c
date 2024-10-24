@@ -591,12 +591,19 @@ skiptoken(Ty *ty)
 
         SAVE_(jmp_buf, jb);
 
+        static int d = -1;
+
+        d += 1;
+
         if (setjmp(jb) != 0) {
                 state = save;
                 nextchar(ty);
         } else {
-                (void)dotoken(ty, LEX_PREFIX);
+                Token t = dotoken(ty, LEX_PREFIX);
+                printf("%*sSkipped: %s\n", d * 4, "", token_show(ty, &t));
         }
+
+        d -= 1;
 
         RESTORE_(jb);
 }
@@ -616,7 +623,7 @@ lexexpr(Ty *ty)
                 case '\'':
                 case '"':
                 case '`':
-                        (void)skiptoken(ty);
+                        skiptoken(ty);
                         continue;
                 }
                 nextchar(ty);
@@ -806,25 +813,28 @@ Unterminated:
         error(ty, "unterminated docstring literal starting on line %d", Start.line + 1);
 }
 
-static Token
+Token
 lexspecialstr(Ty *ty)
 {
-        Location start = Start;
-        SpecialString *special = amA0(sizeof *special);
+        return (Token) {0};
+}
 
-        vec(char) str;
-        vec_init(str);
+static Token
+lex_ss_string(Ty *ty)
+{
+        vec(char) str = {0};
 
-        nextchar(ty);
-
-        bool finished = false;
-
-Start:
-
-        while (C(0) != '"') {
+        for (;;) {
                 switch (C(0)) {
-                case '\0': goto Unterminated;
-                case '{':  goto LexExpr;
+                case '\0':
+                        goto Unterminated;
+
+                case '"':
+                case '{':
+                case '}':
+                        avP(str, '\0');
+                        return mkstring(ty, str.items);
+
                 case '\\':
                         nextchar(ty);
                         switch (C(0)) {
@@ -888,51 +898,21 @@ Start:
                                 }
 
                                 continue;
-                        case '^':
-                                nextchar(ty);
-                                str.count = 0;
-                                continue;
-                        case '$':
-                                nextchar(ty);
-                                finished = true;
-                                continue;
                         }
+                        /* fallthrough */
                 default:
-                        if (finished) (void)nextchar(ty);
-                        else          avP(str, nextchar(ty));
+                        avP(str, nextchar(ty));
+                        break;
+
                 }
         }
 
-        nextchar(ty) == '"';
-
-        avP(str, '\0');
-        avP(special->strings, str.items);
-
-        Token t = mktoken(ty, TOKEN_SPECIAL_STRING);
-        t.special = special;
-        t.start = start;
-
-        return t;
-
-LexExpr:
-        avP(str, '\0');
-        avP(special->strings, str.items);
-        vec_init(str);
-
-        /* Eat the initial { */
-        nextchar(ty);
-
-        LexState st = state;
-        st.end = lexexpr(ty);
-        st.keep_comments = false;
-        st.need_nl = false;
-
-        avP(special->expressions, st);
-
-        goto Start;
-
 Unterminated:
-        error(ty, "unterminated string literal starting on line %d", Start.line + 1);
+        error(
+                ty,
+                "unterminated string literal starting on line %d",
+                Start.line + 1
+        );
 }
 
 static Token
@@ -1256,12 +1236,16 @@ dotoken(Ty *ty, int ctx)
 {
         Location start = Start = state.loc;
 
+        state.ctx = ctx;
+
+        if (ctx == LEX_FMT) {
+                return lex_ss_string(ty);
+        }
+
         if (skipspace(ty)) {
                 Start = start; // :^)
                 return mktoken(ty, TOKEN_NEWLINE);
         }
-
-        state.ctx = ctx;
 
         if (SRC >= END) {
                 return (Token) {
@@ -1385,6 +1369,9 @@ dotoken(Ty *ty, int ctx)
                         return lexrawstr(ty);
                 }
         } else if (C(0) == '"') {
+                nextchar(ty);
+                return mktoken(ty, '"');
+        } else if (C(0) == '"') {
                 if (C(1) == '"' && C(2) == '"') {
                         return lexspecialdocstring(ty);
                 } else {
@@ -1499,6 +1486,12 @@ Location
 lex_pos(Ty *ty)
 {
         return state.loc;
+}
+
+int
+lex_peek_byte(Ty *ty)
+{
+        return C(0);
 }
 
 int

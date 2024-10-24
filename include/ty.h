@@ -882,6 +882,9 @@ tdb_step_line(Ty *ty);
 Value
 tdb_locals(Ty *ty);
 
+void
+tdb_backtrace(Ty *ty);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -261,4 +261,7 @@ op_add(int op, int t1, int t2, int ref);
 int
 op_dispatch(int op, int t1, int t2);
 
+void
+op_dump(int op);
+
 #endif

@@ -686,12 +686,11 @@ add_location(Ty *ty, Expr const *e, size_t start_off, size_t end_off)
                 ((struct eloc) {
                         .start_off = start_off,
                         .end_off = end_off,
-                        .start = e->start,
-                        .end = e->end,
-                        .filename = state.filename,
                         .e = e
                 })
         );
+
+        ((Expr *)e)->xfunc = state.func;
 }
 
 static void
@@ -2105,6 +2104,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SPECIAL_STRING:
                 for (int i = 0; i < e->expressions.count; ++i) {
                         symbolize_expression(ty, scope, e->expressions.items[i]);
+                        symbolize_expression(ty, scope, *v_(e->fmts, i));
                         symbolize_expression(ty, scope, *v_(e->fmt_args, i));
                 }
                 break;
@@ -2297,11 +2297,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->function_symbol = NULL;
                 }
 
-                scope = scope_new(ty, e->name == NULL ? "(anon)" : e->name, scope, true);
-                LOG("%s got scope %p (global=%p, state.global=%p)", e->name == NULL ? "(anon)" : e->name, scope, global, state.global);
+                subscope = scope_new(ty, e->name == NULL ? "(anon)" : e->name, scope, true);
+                LOG("%s got scope %p (global=%p, state.global=%p)", e->name == NULL ? "(anon)" : e->name, subscope, global, state.global);
 
                 if (e->type == EXPRESSION_IMPLICIT_FUNCTION) {
-                        state.implicit_fscope = scope;
+                        state.implicit_fscope = subscope;
                         state.implicit_func = e;
                         e->type = EXPRESSION_FUNCTION;
                 }
@@ -2312,29 +2312,31 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                  * This is trash.
                  */
                 if (is_method(e)) {
-                        Symbol *s = scope_add_i(ty, scope, "self", e->params.count);
+                        Symbol *s = scope_add_i(ty, subscope, "self", e->params.count);
                         s->file = state.filename;
                         s->loc = state.start;
                 }
 
                 for (size_t i = 0; i < e->params.count; ++i) {
-                        symbolize_expression(ty, scope, e->dflts.items[i]);
-                        avP(e->param_symbols, addsymbol(ty, scope, e->params.items[i]));
+                        symbolize_expression(ty, subscope, e->dflts.items[i]);
+                        avP(e->param_symbols, addsymbol(ty, subscope, e->params.items[i]));
                 }
 
                 for (size_t i = 0; i < e->params.count; ++i) {
-                        symbolize_expression(ty, scope, e->constraints.items[i]);
+                        symbolize_expression(ty, subscope, e->constraints.items[i]);
                 }
 
-                symbolize_expression(ty, scope, e->return_type);
+                symbolize_expression(ty, subscope, e->return_type);
 
-                symbolize_statement(ty, scope, e->body);
+                symbolize_statement(ty, subscope, e->body);
 
-                e->scope = scope;
-                e->bound_symbols.items = scope->owned.items;
-                e->bound_symbols.count = scope->owned.count;
+                e->scope = subscope;
+                e->bound_symbols.items = subscope->owned.items;
+                e->bound_symbols.count = subscope->owned.count;
 
+                // TODO: Why set this here?
                 state.func = func;
+
                 state.implicit_fscope = implicit_fscope;
                 state.implicit_func = implicit_func;
 
@@ -3450,25 +3452,33 @@ emit_special_string(Ty *ty, Expr const *e)
         }
 
         for (int i = 0; i < e->expressions.count; ++i) {
-                char const *fmt = *v_(e->fmts, i);
+                Expr const *fmt = *v_(e->fmts, i);
                 Expr const *arg = *v_(e->fmt_args, i);
                 Expr const *ex = *v_(e->expressions, i);
                 int width = *v_(e->widths, i);
 
+                int argc = 2;
+
                 if (fmt == NULL) {
                         emit_expression(ty, ex);
                         emit_instr(ty, INSTR_TO_STRING);
-                } else if (arg == NULL ) {
-                        emit_expression(ty, ex);
-                        emit_instr(ty, INSTR_FMT1);
-                        emit_string(ty, fmt);
-                        emit_int(ty, width);
                 } else {
-                        emit_expression(ty, arg);
+                        emit_expression(ty, fmt);
+
+                        emit_instr(ty, INSTR_INTEGER);
+                        emit_integer(ty, width);
+
+                        if (arg != NULL) {
+                                emit_expression(ty, arg);
+                                argc += 1;
+                        }
+
                         emit_expression(ty, ex);
-                        emit_instr(ty, INSTR_FMT2);
-                        emit_string(ty, fmt);
-                        emit_int(ty, width);
+
+                        emit_instr(ty, INSTR_CALL_METHOD);
+                        emit_int(ty, argc);
+                        emit_int(ty, NAMES.fmt);
+                        emit_int(ty, 0);
                 }
 
                 if (e->strings.items[i + 1][0] != '\0') {
@@ -6644,6 +6654,7 @@ source_forget_arena(void const *arena)
                 if (p != NULL && *p == arena) {
                         source_map.items[i] = NULL;
                 } else if (p != NULL) {
+                        // TODO
                 }
         }
 }
@@ -7681,7 +7692,7 @@ cstmt(Ty *ty, Value *v)
 
         s->arena = GetArenaAlloc(ty);
 
-        //printf("cstmt(ty): %s\n", value_show_color(ty, v));
+        //printf("cstmt(): %s\n", value_show_color(ty, v));
 
         if (src == NULL && wrapped_type(ty, v) == VALUE_TUPLE) {
                 Value *src_val = tuple_get(v, "src");
@@ -7950,7 +7961,7 @@ cstmt(Ty *ty, Value *v)
                 s->type = STATEMENT_EXPRESSION;
                 s->expression = cexpr(ty, v);
                 if (s->expression == NULL) {
-                        fail(ty, "cexpr(ty) returned NULL: %s", value_show_color(ty, v));
+                        fail(ty, "cexpr() returned null pointer: %s", value_show_color(ty, v));
                 }
                 if (s->filename == NULL && s->expression->filename != NULL) {
                         s->filename = s->expression->filename;
@@ -9289,7 +9300,7 @@ CompilationTrace(Ty *ty)
 int
 WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool first)
 {
-        char buffer[512];
+        char buffer[1024], fun_buffer[256];
 
         if (
                 e == NULL ||
@@ -9313,18 +9324,53 @@ WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool fi
                 );
         }
 
+        int vt100bytes = 0;
+
+        if (e->xfunc != NULL && e->xfunc->name != NULL) {
+                vt100bytes += strlen(TERM(36;1));
+                vt100bytes += strlen(TERM(0));
+                if (e->xfunc->class == -1) {
+                        snprintf(
+                                fun_buffer,
+                                sizeof fun_buffer,
+                                "[%s%s%s]",
+                                TERM(36;1),
+                                e->xfunc->name,
+                                TERM(0)
+                        );
+                } else {
+                        vt100bytes += strlen(TERM(94));
+                        vt100bytes += strlen(TERM(0));
+                        snprintf(
+                                fun_buffer,
+                                sizeof fun_buffer,
+                                "[%s%s%s.%s%s%s]",
+                                TERM(94),
+                                class_name(ty, e->xfunc->class),
+                                TERM(0),
+                                TERM(36;1),
+                                e->xfunc->name,
+                                TERM(0)
+                        );
+                }
+        } else {
+                fun_buffer[0] = '\0';
+        }
+
         etw = min(etw, 24);
         int margin = 44 - etw;
 
+        vt100bytes += 7 * strlen(TERM(00));
         snprintf(
                 buffer,
-                sizeof buffer - 1,
-                "%*s %s%s%s:%s%d%s:%s%d %s%*s%s",
+                sizeof buffer,
+                "%*s %s%s%s%s:%s%d%s:%s%d %s%*s%s",
                 margin,
                 first ? "at" : "from",
                 TERM(34),
                 file,
                 TERM(39),
+                fun_buffer,
                 TERM(33),
                 line + 1,
                 TERM(39),
@@ -9337,7 +9383,7 @@ WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool fi
         );
 
         char const *where = buffer;
-        int m = strlen(buffer) - 7*strlen(TERM(00));
+        int m = strlen(buffer) - vt100bytes;
 
         while (m > 54) {
                 m -= 1;
@@ -9855,8 +9901,6 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(FMT1)
                 CASE(FMT2)
-                        SKIPSTR();
-                        READVALUE(n);
                         break;
                 CASE(TO_STRING)
                         break;

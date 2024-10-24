@@ -6612,6 +6612,14 @@ make_token(Ty *ty, Token const *t)
                         "int",    INTEGER(t->integer),
                         NULL
                 );
+        case TOKEN_REAL:
+                return vTn(
+                        "type",   T(int),
+                        "start",  start,
+                        "end",    end,
+                        "float",  INTEGER(t->real),
+                        NULL
+                );
         case TOKEN_STRING:
                 return vTn(
                         "type",   T(string),
@@ -6672,6 +6680,18 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_CMP:
                 type = "<=>";
                 break;
+        case TOKEN_STAR_EQ:
+                type = "*=";
+                break;
+        case TOKEN_PLUS_EQ:
+                type = "+=";
+                break;
+        case TOKEN_MINUS_EQ:
+                type = "-=";
+                break;
+        case TOKEN_DIV_EQ:
+                type = "/=";
+                break;
         case TOKEN_WTF:
                 type = "??";
                 break;
@@ -6692,7 +6712,7 @@ make_token(Ty *ty, Token const *t)
                 type = "f-string";
                 break;
         case TOKEN_NEWLINE:
-                type = "\n";
+                type = "\\n";
                 break;
         case TOKEN_REGEX:
                 type = "regex";
@@ -6703,7 +6723,7 @@ make_token(Ty *ty, Token const *t)
 
         int tlen;
         if (type == NULL) {
-                char const *charset = "[](){}<>;.,?`~=!@#$%^&*()-_~+|\\\n";
+                char const *charset = "[](){}<>;.,?`~=!@#$%^&*/()-_~+|\"\\\n";
 
                 if ((type = strchr(charset, t->type)) == NULL) {
                         tlen = 0;
@@ -7217,7 +7237,9 @@ BUILTIN_FUNCTION(parse_show)
 
         Value expr = ARG(0);
 
-        Expr const *src = (expr.type == VALUE_PTR) ? expr.ptr : source_lookup(ty, expr.src);
+        Expr const *src = (expr.type == VALUE_PTR)
+                        ? expr.ptr
+                        : source_lookup(ty, expr.src);
 
         if (src == NULL) {
                 return NIL;
@@ -7275,6 +7297,8 @@ BUILTIN_FUNCTION(tdb_eval)
 
         if (!DEBUGGING) return NIL;
 
+        ty = TDB->ty;
+
         B.count = 0;
         vec_push_unchecked(B, '\0');
         vec_push_n_unchecked(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
@@ -7330,6 +7354,14 @@ BUILTIN_FUNCTION(tdb_list)
         return NIL;
 }
 
+BUILTIN_FUNCTION(tdb_stack)
+{
+        Array *stack = vA();
+        *stack = *(Array *)&TDB->host->stack;
+        return ARRAY(stack);
+}
+
+
 BUILTIN_FUNCTION(tdb_span)
 {
         ASSERT_ARGC_2("tdb.list()", 0, 1);
@@ -7370,6 +7402,16 @@ BUILTIN_FUNCTION(tdb_step)
         ASSERT_ARGC("tdb.step()", 0);
         TDB_MUST_BE(STOPPED);
         return BOOLEAN(tdb_step_line(TDB->host));
+}
+
+BUILTIN_FUNCTION(tdb_backtrace)
+{
+        ASSERT_ARGC("tdb.backtrace()", 0);
+        TDB_MUST_BE(STOPPED);
+
+        tdb_backtrace(TDB->host);
+
+        return NIL;
 }
 
 BUILTIN_FUNCTION(tdb_ip)

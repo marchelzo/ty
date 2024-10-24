@@ -329,9 +329,6 @@ static TyThreadReturnValue
 vm_run_thread(void *p);
 
 static void
-DebugStackTrace(Ty *ty);
-
-static void
 InitializeTY(void)
 {
 #define X(op, id) intern(&xD.b_ops, id)
@@ -1918,14 +1915,16 @@ DoBinaryOp(Ty *ty, int n, bool exec)
 {
         int i = op_dispatch(n, ClassOf(top() - 1), ClassOf(top()));
 
-        if (i == -1) zP(
-                "no matching implementation of %s%s%s\n"
-                FMT_MORE "%s left%s: %s"
-                FMT_MORE "%sright%s: %s\n",
-                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0),
-                TERM(95), TERM(0), VSC(top() - 1),
-                TERM(95), TERM(0), VSC(top())
-        );
+        if (i == -1) {
+                zP(
+                        "no matching implementation of %s%s%s\n"
+                        FMT_MORE "%s left%s: %s"
+                        FMT_MORE "%sright%s: %s\n",
+                        TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0),
+                        TERM(95), TERM(0), VSC(top() - 1),
+                        TERM(95), TERM(0), VSC(top())
+                );
+        }
 
         dont_printf(
                 "matching implementation of %s%s%s: %d\n"
@@ -2214,7 +2213,7 @@ vm_try_exec(Ty *ty, char *code)
 
         size_t nframes = FRAMES.count;
 
-        // FIXME: don't need to allocate a new STACK
+        // FIXME: don't need to allocate a new stack
         TryStack ts = TRY_STACK;
         vec_init(TRY_STACK);
 
@@ -3110,10 +3109,8 @@ Throw:
                         push(NIL);
                         break;
                 CASE(FMT1)
-                        READSTR(str);
                         READVALUE(z);
                         v = pop();
-                        push(xSz(str));
                         push(INTEGER(z));
                         push(v);
                         n = 2;
@@ -3121,7 +3118,6 @@ Throw:
                         b = false;
                         goto CallMethod;
                 CASE(FMT2)
-                        READSTR(str);
                         READVALUE(z);
                         v = pop();
                         value = pop();
@@ -4567,7 +4563,6 @@ vm_init(Ty *ty, int ac, char **av)
         AddThread(ty, TyThreadSelf());
 
         if (setjmp(JB) != 0) {
-                Error = ERR;
                 return false;
         }
 
@@ -4659,11 +4654,13 @@ Next:
 
         LOG("VM Error: %s", ERR);
 
+        Error = ERR;
+
         longjmp(JB, 1);
 }
 
-static void
-DebugStackTrace(Ty *ty)
+void
+tdb_backtrace(Ty *ty)
 {
         FrameStack frames = FRAMES;
         char const *ip = IP;
@@ -4724,7 +4721,6 @@ vm_execute_file(Ty *ty, char const *path)
                         TERM(91;1), "Error", TERM(0),
                         TERM(95), path, TERM(0)
                 );
-                Error = ERR;
                 return false;
         }
 
@@ -4797,7 +4793,6 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         char * volatile code = NULL;
 
         if (setjmp(JB) != 0) {
-                Error = ERR;
                 filename = NULL;
                 return false;
         }
@@ -4835,12 +4830,15 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 return true;
         }
 
-
-
         if (setjmp(JB) != 0) {
-                Error = ERR;
                 filename = NULL;
                 return false;
+        }
+
+        if (DEBUGGING) {
+                IP = ty->code;
+                TDB_IS_NOW(STOPPED);
+                tdb_go(ty);
         }
 
         vm_exec(ty, ty->code);
@@ -5908,9 +5906,16 @@ tdb_eval_hook(Ty *ty)
 {
         Value *hook = v_(Globals, NAMES.tdb_hook);
 
-        if (hook->type != VALUE_NIL) {
-                vm_call(TDB->ty, hook, 0);
+        if (hook->type == VALUE_NIL) {
+                return;
         }
+
+        if (setjmp(TDB->ty->jb) != 0) {
+                fprintf(stderr, "Error while running tdb hook: %s\n", vm_error(TDB->ty));
+                return;
+        }
+
+        vm_call(TDB->ty, hook, 0);
 }
 
 Value
@@ -6143,7 +6148,7 @@ tdb_go(Ty *ty)
                 return;
 
         case 'B':
-                DebugStackTrace(ty);
+                tdb_backtrace(ty);
                 break;
 
         case 'b':
