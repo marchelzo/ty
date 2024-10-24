@@ -74,6 +74,7 @@ usage(void)
                 "    -b            Basic mode: no batteries included. Only has an effect when ty is       \0"
                 "                  running as a REPL or when the program was specified using -e           \0"
                 "    -c            Exit after compilation without executing the program                   \0"
+                "    -d            Run the program under the interactive TDB debugger                     \0"
                 "    -e EXPR       Evaluate and print EXPR                                                \0"
                 "    -f FILE       Interpret FILE before continuing. This differs from -M in that *all*   \0"
                 "                  top-level symbols from FILE will be visible, not just public ones      \0"
@@ -223,6 +224,7 @@ pollute_with_bloat(void)
                 ty,
                 "import help (..)\n"
                 "import json     \n"
+                "import base64   \n"
                 "import math     \n"
                 "import ty       \n"
                 "import os       \n"
@@ -456,6 +458,9 @@ ProcessArgs(char *argv[], bool first)
                                 case 'c':
                                         CompileOnly = true;
                                         break;
+                                case 'd':
+                                        if (!first) tdb_start(ty);
+                                        break;
                                 case 'L':
                                         EnableLogging |= KindOfEnableLogging;
                                         KindOfEnableLogging = true;
@@ -593,8 +598,6 @@ main(int argc, char **argv)
         if (argv[0] == NULL && stdin_is_tty()) {
                 repl(ty);
         }
-
-        tdb_start(ty);
 
         FILE *file;
         char const *filename;

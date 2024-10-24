@@ -226,7 +226,7 @@ struct expression {
         Location start;
         Location end;
         char const *filename;
-
+        Expr *xfunc;
         Scope *xscope;
 
         bool has_resources;
@@ -286,10 +286,10 @@ struct expression {
                 };
                 struct {
                         StringVector strings;
-                        vec(char *) fmts;
+                        expression_vector fmts;
+                        expression_vector fmt_args;
                         int_vector widths;
                         expression_vector expressions;
-                        expression_vector fmt_args;
                 };
                 struct {
                         union {
@@ -350,7 +350,7 @@ struct expression {
                         unsigned char mtype;
                 };
                 struct {
-                        struct expression *function;
+                        Expr *function;
                         expression_vector args;
                         expression_vector fconds;
                         expression_vector kwargs;
@@ -409,6 +409,7 @@ struct statement {
         Location end;
         char const *filename;
 
+        Expr *xfunc;
         Scope *xscope;
 
         Namespace *ns;

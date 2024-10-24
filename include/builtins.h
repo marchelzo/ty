@@ -724,10 +724,12 @@ static struct {
 {.module = "tdb", .name = "step",       .value = BUILTIN(builtin_tdb_step)},
 {.module = "tdb", .name = "list",       .value = BUILTIN(builtin_tdb_list)},
 {.module = "tdb", .name = "state",      .value = BUILTIN(builtin_tdb_state)},
+{.module = "tdb", .name = "stack",      .value = BUILTIN(builtin_tdb_stack)},
 {.module = "tdb", .name = "context",    .value = BUILTIN(builtin_tdb_context)},
-{.module = "tdb", .name = "locals",    .value = BUILTIN(builtin_tdb_locals)},
+{.module = "tdb", .name = "locals",     .value = BUILTIN(builtin_tdb_locals)},
 {.module = "tdb", .name = "ip",         .value = BUILTIN(builtin_tdb_ip)},
 {.module = "tdb", .name = "breakpoint", .value = BUILTIN(builtin_tdb_breakpoint)},
+{.module = "tdb", .name = "backtrace",  .value = BUILTIN(builtin_tdb_backtrace)},
 
 #ifndef _WIN32
 #  include "ioctl_constants.h"
