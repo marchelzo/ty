@@ -55,6 +55,11 @@ typedef struct token {
                 TOKEN_DIV_EQ,
                 TOKEN_MINUS_EQ,
                 TOKEN_PERCENT_EQ,
+                TOKEN_AND_EQ,
+                TOKEN_OR_EQ,
+                TOKEN_XOR_EQ,
+                TOKEN_SHL_EQ,
+                TOKEN_SHR_EQ,
                 TOKEN_ARROW,
                 TOKEN_FAT_ARROW,
                 TOKEN_SQUIGGLY_ARROW,
@@ -137,16 +142,18 @@ typedef struct token {
 
                 struct {
                         char *module;
-                        char *identifier;
+                        union {
+                                char *identifier;
+                                char *operator;
+                                char *string;
+                                char *comment;
+                        };
                         bool raw;
                 };
 
                 Expr *e;
                 Regex const *regex;
                 SpecialString *special;
-                char *comment;
-                char *operator;
-                char *string;
                 double real;
                 intmax_t integer;
         };

@@ -156,6 +156,15 @@ compiler_init(Ty *ty);
 int
 compiler_get_completions(Ty *ty, char const *mod, char const *prefix, char **out, int max);
 
+int
+compiler_get_namespace_completions(
+        Ty *ty,
+        Expr const *ns,
+        char const *prefix,
+        char **out,
+        int max
+);
+
 void
 compiler_load_builtin_modules(Ty *ty);
 

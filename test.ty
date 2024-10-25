@@ -19,16 +19,12 @@ let b = pen(bold, blue)
 
 let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
-dbg(TY_PATH)
-
-dbg("{TY_PATH} tests/{'test'}")
-
 function getTyCommand(test) {
-    if __windows__ {
+#|if __windows__
         "{TY_PATH} tests\\{test}"
-    } else {
+#|else
         "{TY_PATH} tests/{test}"
-    }
+#|]
 }
 
 function doTest(name) {

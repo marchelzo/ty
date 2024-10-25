@@ -126,7 +126,14 @@ void
 scope_capture_all(Ty *ty, struct scope *scope, struct scope const *stop);
 
 int
-scope_get_completions(Ty *ty, struct scope *scope, char const *prefix, char **out, int max);
+scope_get_completions(
+        Ty *ty,
+        Scope *scope,
+        char const *prefix,
+        char **out,
+        int max,
+        bool recursive
+);
 
 #ifndef TY_RELEASE
 char const *

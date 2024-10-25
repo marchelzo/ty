@@ -574,10 +574,12 @@ class Int {
         int(x ?? 0)
     }
 
-    ^(b)    { bit.XOR(self, b)        }
-
     **(x) {
         type(x)(math.pow(self, x))
+    }
+
+    ~() {
+        bit.complement(self)
     }
 
     upto*(b: Int) {
@@ -2269,8 +2271,9 @@ function nextEnumValue(last) {
     if lex.peek().type == '=' {
         lex.next()
         (name, parse.expr(0))
-    } else {
-        (name, ty.Add(last, ty.Int(1)))
+    } else match last {
+        ty.Add(n, ty.Int(i)) => (name, ty.Add(n, ty.Int(i + 1))),
+        n                    => (name, ty.Add(n, ty.Int(1)))
     }
 }
 
@@ -2283,7 +2286,7 @@ macro enum! {
 
         while lex.peek().type != '}' {
             let (e, val) = nextEnumValue(i)
-            vars.push(ty.Let(ty.Id(name: e), val))
+            vars.push(ty.Let(ty.Id(name: e), val, public: true))
             if lex.peek().type == ',' lex.next()
             i = val
         }
@@ -2308,7 +2311,7 @@ macro enum! {
 
         lex.next()
 
-        ty.Let(ty.Id(name: name), ty.Record(entries))
+        ty.Let(ty.Id(name: name), ty.Record(entries), public: true)
     }
 }
 
@@ -2890,14 +2893,10 @@ macro __desugar_partial__(call) {
     return go(args, mkcall, max(depth, 1))
 }
 
-function |(a: Int, b: Int) { bit.OR(a, b)  }
-function &(a: Int, b: Int) { bit.AND(a, b) }
-
 function >>(x, f) { f(x) }
 function <<(f, x) { f(x) }
 
-function >>(n: Int, m: Int) { bit.shiftRight(n, m) }
-function <<(n: Int, m: Int) { bit.shiftLeft(n, m)  }
+macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5] = $$a.match!($$b)
 
 function sink(file) match file {
     nil => print@(*, **, :flush),

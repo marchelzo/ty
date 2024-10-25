@@ -38,7 +38,7 @@ static Ty vvv;
 Ty *ty;
 TY xD;
 
-#define MAX_COMPLETIONS 240
+#define MAX_COMPLETIONS 512
 
 static int color_mode = TY_COLOR_AUTO;
 static bool use_readline;
@@ -324,6 +324,9 @@ complete(char const *s, int start, int end)
                 struct value *v = vm_get(ty, -1);
 
                 switch (v->type) {
+                case VALUE_NAMESPACE:
+                        n += compiler_get_namespace_completions(ty, v->namespace, s, completions, MAX_COMPLETIONS);
+                        break;
                 case VALUE_OBJECT:
                         n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
                         n += itable_get_completions(ty, v->object, s, completions + n, MAX_COMPLETIONS - n);

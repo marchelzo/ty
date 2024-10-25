@@ -435,10 +435,19 @@ scope_set_symbol(Ty *ty, int s)
 }
 
 int
-scope_get_completions(Ty *ty, Scope *scope, char const *prefix, char **out, int max)
+scope_get_completions(
+        Ty *ty,
+        Scope *scope,
+        char const *prefix,
+        char **out,
+        int max,
+        bool recursive
+)
 {
         int n = 0;
         int prefix_len = strlen(prefix);
+
+        if (scope == NULL || max == 0) return 0;
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
@@ -447,6 +456,15 @@ scope_get_completions(Ty *ty, Scope *scope, char const *prefix, char **out, int 
                         }
                 }
         }
+
+        if (recursive) n += scope_get_completions(
+                ty,
+                scope->parent,
+                prefix,
+                out + n,
+                max - n,
+                true
+        );
 
         return n;
 }

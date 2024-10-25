@@ -9,6 +9,7 @@
 BUILTIN_FUNCTION(print);
 
 BUILTIN_FUNCTION(doc);
+BUILTIN_FUNCTION(set_doc);
 
 BUILTIN_FUNCTION(ident);
 
@@ -461,29 +462,22 @@ BUILTIN_FUNCTION(ty_gc);
 BUILTIN_FUNCTION(ty_bt);
 
 BUILTIN_FUNCTION(token_next);
-
 BUILTIN_FUNCTION(token_peek);
 
 BUILTIN_FUNCTION(parse_source);
-
 BUILTIN_FUNCTION(parse_expr);
-
 BUILTIN_FUNCTION(parse_stmt);
-
 BUILTIN_FUNCTION(parse_fail);
-
 BUILTIN_FUNCTION(parse_show);
 
 BUILTIN_FUNCTION(lex_peek_char);
-
 BUILTIN_FUNCTION(lex_next_char);
+BUILTIN_FUNCTION(lex_state);
 
 BUILTIN_FUNCTION(ty_unlock);
-
 BUILTIN_FUNCTION(ty_lock);
 
 BUILTIN_FUNCTION(ptr_typed);
-
 BUILTIN_FUNCTION(ptr_untyped);
 
 BUILTIN_FUNCTION(tdb_eval);

@@ -594,6 +594,11 @@ inline static char const *
 proto_of(struct value const *f)
 {
         uintptr_t p;
+
+        if (f->xinfo != NULL && f->xinfo->proto != NULL) {
+                return f->xinfo->proto;
+        }
+
         memcpy(&p, (char *)f->info + FUN_PROTO, sizeof p);
         return (p == 0) ?  "()" : (char const *)p;
 }
@@ -602,6 +607,11 @@ inline static char const *
 doc_of(struct value const *f)
 {
         uintptr_t p;
+
+        if (f->xinfo != NULL && f->xinfo->doc != NULL) {
+                return f->xinfo->doc;
+        }
+
         memcpy(&p, (char *)f->info + FUN_DOC, sizeof p);
         return (char const *)p;
 }
@@ -609,7 +619,14 @@ doc_of(struct value const *f)
 inline static char const *
 name_of(struct value const *f)
 {
-        return (char *)f->info + FUN_NAME;
+        uintptr_t p;
+
+        if (f->xinfo != NULL && f->xinfo->name != NULL) {
+                return f->xinfo->name;
+        }
+
+        memcpy(&p, (char *)f->info + FUN_NAME, sizeof p);
+        return (char const *)p;
 }
 
 inline static char *

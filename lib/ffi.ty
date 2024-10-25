@@ -2,6 +2,7 @@ import ffi as c
 import ty
 import ty.token (next, peek)
 import ty.parse (expr, stmt, fail)
+import ty.lex as lex
 import ptr (typed)
 
 let cifs = Sync(%{})
@@ -29,7 +30,7 @@ pub function wrap(lib, name, rType, *aTypes) {
         let interface = getCif(rType.ctype(), *aTypes)
         let argStorage = [c.new(t) for t in aTypes]
 
-        return function (*args, out = rType()) {
+        return function func(*args, out = rType()) {
             for arg, i in args {
                 c.store(aTypes[i], argStorage[i], arg)
             }
@@ -42,10 +43,11 @@ pub function wrap(lib, name, rType, *aTypes) {
         let interface = getCif(rType, *aTypes)
         let argStorage = [c.new(t) for t in aTypes]
 
-        return function (*args) {
+        return function func(*args) {
             for arg, i in args {
                 c.store(aTypes[i], argStorage[i], arg)
             }
+
             c.call(interface, fp, *argStorage)
         }
     }
@@ -117,41 +119,202 @@ pub function cstr(s) {
     return p
 }
 
+
+function nexttype() {
+    let parts = []
+
+    let ignore = "
+        int        union   atomic    restrict
+        const      struct  _Atomic   volatile
+        signed     auto    noreturn  _Noreturn
+    ".words()
+
+    while match (peek().type, peek(1).type) {
+        (')', _),
+        (_, '(')     => { break                 },
+        (_, '.')     => { return expr(1)        },
+        ('const', _) => { next()                },
+        ('id', _)    => { parts.push(next().id) }
+    }
+
+    let type-string = parts.filter!((not in ignore)).sort!(:desc).unwords()
+
+    let t = match type-string {
+        /\benum\b/ => c.int,
+
+        'void' => c.void,
+
+        'char'    => c.char,
+        'short'   => c.short,
+        'int', '' => c.int,
+        'long'    => c.long,
+
+        'unsigned char'  => c.uchar,
+        'unsigned short' => c.ushort
+        'unsigned'       => c.uint,
+        'unsigned int'   => c.uint,
+        'unsigned long'  => c.ulong,
+
+        'size_t',
+        'uintmax_t',
+        'uintptr_t',
+        'unsigned long long' => c.u64,
+
+        'ssize_t',
+        'intmax_t',
+        'intptr_t',
+        'long long',
+        'ptrdiff_t' => c.i64,
+
+        'int8_t'  => c.i8,
+        'int16_t' => c.i16,
+        'int32_t' => c.i32,
+        'int64_t' => c.i64,
+
+        'uint8_t'  => c.u8,
+        'uint16_t' => c.u16,
+        'uint32_t' => c.u32,
+        'uint64_t' => c.u64,
+
+        'float'  => c.float,
+        'double' => c.double,
+
+        'bool' or '_Bool' => c.u8,
+
+        name => ty.Id({name})
+    }
+
+    if !match?(t, ty.Id(_)) {
+        t = ty.Value(t)
+    }
+
+    if peek().type == '*' || peek().type == '**' {
+        // Just kidding it's actually a pointer
+        t = ty.Value(c.ptr)
+        next()
+    }
+
+    if peek().type == '[' {
+        // Just kidding it's actually a pointer :^)
+        t = ty.Value(c.ptr)
+        next()
+        while next().type != ']' {}
+    }
+
+    return t
+}
+
+function nextproto() {
+        // (
+        next()
+
+        let ps = []
+        while peek().type != ')' {
+            ps.push(nexttype())
+            while peek().type == ',' || peek().type == 'comment' {
+                break if next().type == ','
+            }
+        }
+
+        // )
+        next()
+
+        return ps
+}
+
+function lspan(s1, s2=lex.state()) {
+    let b1 = s1.position.byte
+    let b2 = s2.position.byte
+    s1.source.bsplice(b1, b2)
+}
+
+function lstep(s1) {
+    let s2 = lex.state()
+    return (s2, lspan(s1, s2))
+}
+
 function fun() {
     let public = peek().type == 'pub'
     if public { next() }
 
-    let lib = if peek().type != 'function' {
-        expr(99)
-    } ?? ty.Nil
+    let (lib, prefix) = match (peek().type, peek(1)) {
+        ('function', _) => (ty.Nil, ''),
+
+        ('id', {str, *}) => (expr(99), next().str),
+
+        x => (expr(99), '')
+    }
 
     // function
     next()
 
-    let name = next().id
-
-    // (
-    next()
-
-    let ps = []
-    while peek().type != ')' {
-        ps.push(expr(0))
-        while peek().type == ',' || peek().type == 'comment' || peek().type == 'id' {
-            break if next().type == ','
-        }
+    function mkfdef(name, rt, ps, proto-string, doc-string) {
+        let args = [
+            ty.Arg(arg: lib),
+            ty.Arg(arg: ty.String(prefix + name)),
+            ty.Arg(arg: rt),
+            *(ty.Arg(arg: p) for p in ps)
+        ]
+        ty.Let((
+            ty.Id(name: name),
+            ty.Call(
+                func: ty.Value(set-doc),
+                args: [
+                    ty.Arg(arg: ty.Call(func: ty.Value(wrap), args: args)),
+                    ty.Arg(name: 'name', arg: ty.String(name)),
+                    ty.Arg(name: 'proto', arg: ty.String(proto-string)) if proto-string,
+                    ty.Arg(name: 'doc', arg: ty.String(doc-string)) if doc-string,
+                ]
+            ),
+            public: public
+        ))
     }
 
-    // )
-    next()
+    if peek().type == 'id' {
+        let name = next().id
 
-    // ->
-    next()
+        let ps = nextproto()
 
-    let rt = expr(0)
+        // ->
+        next()
 
-    let args = [ty.Arg(arg: lib), ty.Arg(arg: ty.String(name)), ty.Arg(arg: rt), *(ty.Arg(arg: p) for p in ps)]
+        let rt = expr(0)
 
-    ty.Let(ty.Id(name: name), ty.Call(func: ty.Value(wrap), args: args), public: public)
+        return mkfdef(name, rt, ps)
+    } else {
+        // {
+        next()
+        
+        let funs = []
+
+        while peek().type != '}' {
+            let doc = nil
+
+            while peek().type == 'comment' {
+                doc = "{doc ?? ''}{next().comment}"
+            }
+
+            let st = lex.state()            
+            let rt = nexttype()
+            let rt-string = lspan(st)
+
+            let name = next().id
+
+            let st = lex.state()
+            let ps = nextproto()
+            let proto-string = lspan(st)
+
+            if peek().type == ';' { next() }
+
+            let proto-string = "({proto-string.strip().comb(/^\(|\)$/)})"
+            funs.push(mkfdef(name, rt, ps, "{proto-string} -> {rt-string.strip()}", doc))
+        }
+
+        // }
+        next()
+
+        return ty.Multi(funs)
+    }
 }
 
 /*
@@ -453,7 +616,7 @@ function clos() {
 }
 
 pub macro C! {
-    if 'function' in [peek(), peek(1), peek(2)].map(&.type) {
+    if 'function' in [peek(it) for ..8].map(&.type) {
         fun()
     } else if peek().?id == 'struct' {
         strct()

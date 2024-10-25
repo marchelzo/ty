@@ -64,6 +64,7 @@ enum {
         GC_THREAD,
         GC_REGEX,
         GC_ARENA,
+        GC_FUN_INFO,
         GC_ANY
 };
 
