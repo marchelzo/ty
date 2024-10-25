@@ -233,27 +233,75 @@ op_builtin_mod(Ty *ty)
         return false;
 }
 
+inline static bool
+op_builtin_and(Ty *ty)
+{
+        Value const *left = look(-1);
+        Value const *right = look(0);
 
-struct value
-binary_operator_multiplication(Ty *ty, struct value const *left, struct value const *right);
+        switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_INTEGER):
+                COMPLETE(INTEGER(left->integer & right->integer));
+        }
 
-struct value
-binary_operator_division(Ty *ty, struct value const *left, struct value const *right);
+        return false;
+}
 
-struct value
-binary_operator_subtraction(Ty *ty, struct value const *left, struct value const *right);
+inline static bool
+op_builtin_or(Ty *ty)
+{
+        Value const *left = look(-1);
+        Value const *right = look(0);
 
-struct value
-binary_operator_remainder(Ty *ty, struct value const *left, struct value const *right);
+        switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_INTEGER):
+                COMPLETE(INTEGER(left->integer | right->integer));
+        }
 
-struct value
-_operator_equality(Ty *ty, struct value const *left, struct value const *right);
+        return false;
+}
 
-struct value
-unary_operator_negate(Ty *ty, struct value const *operand);
+inline static bool
+op_builtin_xor(Ty *ty)
+{
+        Value const *left = look(-1);
+        Value const *right = look(0);
 
-struct value
-unary_operator_not(Ty *ty, struct value const *operand);
+        switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_INTEGER):
+                COMPLETE(INTEGER(left->integer ^ right->integer));
+        }
+
+        return false;
+}
+
+inline static bool
+op_builtin_shl(Ty *ty)
+{
+        Value const *left = look(-1);
+        Value const *right = look(0);
+
+        switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_INTEGER):
+                COMPLETE(INTEGER(left->integer << right->integer));
+        }
+
+        return false;
+}
+
+inline static bool
+op_builtin_shr(Ty *ty)
+{
+        Value const *left = look(-1);
+        Value const *right = look(0);
+
+        switch (PACK_TYPES(left->type, right->type)) {
+        case PAIR_OF(VALUE_INTEGER):
+                COMPLETE(INTEGER(left->integer >> right->integer));
+        }
+
+        return false;
+}
 
 void
 op_add(int op, int t1, int t2, int ref);

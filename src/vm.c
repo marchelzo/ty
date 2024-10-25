@@ -335,6 +335,10 @@ InitializeTY(void)
         TY_BINARY_OPERATORS;
 #undef X
 
+#define X(op, id) intern(&xD.u_ops, id)
+        TY_UNARY_OPERATORS;
+#undef X
+
         srandom(time(NULL));
 }
 
@@ -1022,9 +1026,8 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
-                char const *name = name_of(f);
+                char const *name = ((char *)f->info) + FUN_PARAM_NAMES;
                 for (int i = 0; i < np; ++i) {
-                        name += strlen(name) + 1;
                         if (i == irest || i == ikwargs) {
                                 continue;
                         }
@@ -1032,6 +1035,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                         if (arg != NULL) {
                                 *local(ty, i) = *arg;
                         }
+                        name += strlen(name) + 1;
                 }
         }
 
@@ -1840,6 +1844,11 @@ ClassLookup:
 }
 
 inline static void
+DoUnaryOp(Ty *ty, int n, bool exec)
+{
+}
+
+inline static void
 DoGeq(Ty *ty)
 {
         Value v = BOOLEAN(value_compare(ty, top() - 1, top()) >= 0);
@@ -1985,6 +1994,7 @@ DoMutDiv(Ty *ty)
                 zP("bad target pointer :(");
         }
 }
+
 inline static void
 DoMutMul(Ty *ty)
 {
@@ -2128,6 +2138,206 @@ DoMutAdd(Ty *ty)
                 vp = poptarget();
                 call(ty, vp, &OBJECT(o, c), 0, 0, true);
                 top()[-1] = vm_2op(ty, OP_ADD, top(), top() - 1);
+                pop();
+                call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutAnd(Ty *ty)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct itable *o;
+        Value *vp, *vp2, val, x;
+        void *v = vp = (void *)(p & ~PMASK3);
+        unsigned char b;
+
+        switch (p & PMASK3) {
+        case 0:
+                x = pop();
+                if ((val = vm_try_2op(ty, OP_MUT_AND, vp, &x)).type != VALUE_NONE) {
+                        vp = &val;
+                } else {
+                        *vp = vm_2op(ty, OP_BIT_AND, vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                if (UNLIKELY(top()->type != VALUE_INTEGER)) {
+                        zP("attempt to AND byte with non-integer");
+                }
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] &= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = TARGETS.items[TARGETS.count].gc;
+                vp = poptarget();
+                call(ty, vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = vm_2op(ty, OP_BIT_AND, top(), top() - 1);
+                pop();
+                call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutOr(Ty *ty)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct itable *o;
+        Value *vp, *vp2, val, x;
+        void *v = vp = (void *)(p & ~PMASK3);
+        unsigned char b;
+
+        switch (p & PMASK3) {
+        case 0:
+                x = pop();
+                if ((val = vm_try_2op(ty, OP_MUT_OR, vp, &x)).type != VALUE_NONE) {
+                        vp = &val;
+                } else {
+                        *vp = vm_2op(ty, OP_BIT_OR, vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                if (UNLIKELY(top()->type != VALUE_INTEGER)) {
+                        zP("attempt to OR byte with non-integer");
+                }
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] |= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = TARGETS.items[TARGETS.count].gc;
+                vp = poptarget();
+                call(ty, vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = vm_2op(ty, OP_BIT_OR, top(), top() - 1);
+                pop();
+                call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutXor(Ty *ty)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct itable *o;
+        Value *vp, *vp2, val, x;
+        void *v = vp = (void *)(p & ~PMASK3);
+        unsigned char b;
+
+        switch (p & PMASK3) {
+        case 0:
+                x = pop();
+                if ((val = vm_try_2op(ty, OP_MUT_XOR, vp, &x)).type != VALUE_NONE) {
+                        vp = &val;
+                } else {
+                        *vp = vm_2op(ty, OP_BIT_XOR, vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                if (UNLIKELY(top()->type != VALUE_INTEGER)) {
+                        zP("attempt to XOR byte with non-integer");
+                }
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] ^= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = TARGETS.items[TARGETS.count].gc;
+                vp = poptarget();
+                call(ty, vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = vm_2op(ty, OP_BIT_XOR, top(), top() - 1);
+                pop();
+                call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutShl(Ty *ty)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct itable *o;
+        Value *vp, *vp2, val, x;
+        void *v = vp = (void *)(p & ~PMASK3);
+        unsigned char b;
+
+        switch (p & PMASK3) {
+        case 0:
+                x = pop();
+                if ((val = vm_try_2op(ty, OP_MUT_SHL, vp, &x)).type != VALUE_NONE) {
+                        vp = &val;
+                } else {
+                        *vp = vm_2op(ty, OP_BIT_SHL, vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                if (UNLIKELY(top()->type != VALUE_INTEGER)) {
+                        zP("attempt to left-shift byte by non-integer");
+                }
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] <<= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = TARGETS.items[TARGETS.count].gc;
+                vp = poptarget();
+                call(ty, vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = vm_2op(ty, OP_BIT_SHL, top(), top() - 1);
+                pop();
+                call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+inline static void
+DoMutShr(Ty *ty)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct itable *o;
+        Value *vp, *vp2, val, x;
+        void *v = vp = (void *)(p & ~PMASK3);
+        unsigned char b;
+
+        switch (p & PMASK3) {
+        case 0:
+                x = pop();
+                if ((val = vm_try_2op(ty, OP_MUT_SHR, vp, &x)).type != VALUE_NONE) {
+                        vp = &val;
+                } else {
+                        *vp = vm_2op(ty, OP_BIT_SHR, vp, &x);
+                }
+                push(*vp);
+                break;
+        case 1:
+                if (UNLIKELY(top()->type != VALUE_INTEGER)) {
+                        zP("attempt to right-shift byte by non-integer");
+                }
+                b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] >>= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = TARGETS.items[TARGETS.count].gc;
+                vp = poptarget();
+                call(ty, vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = vm_2op(ty, OP_BIT_SHR, top(), top() - 1);
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
@@ -3731,6 +3941,36 @@ Throw:
                                 goto BinaryOp;
                         }
                         break;
+                CASE(BIT_AND)
+                        if (!op_builtin_and(ty)) {
+                                n = OP_BIT_AND;
+                                goto BinaryOp;
+                        }
+                        break;
+                CASE(BIT_OR)
+                        if (!op_builtin_or(ty)) {
+                                n = OP_BIT_OR;
+                                goto BinaryOp;
+                        }
+                        break;
+                CASE(BIT_XOR)
+                        if (!op_builtin_xor(ty)) {
+                                n = OP_BIT_XOR;
+                                goto BinaryOp;
+                        }
+                        break;
+                CASE(SHR)
+                        if (!op_builtin_shr(ty)) {
+                                n = OP_BIT_SHR;
+                                goto BinaryOp;
+                        }
+                        break;
+                CASE(SHL)
+                        if (!op_builtin_shl(ty)) {
+                                n = OP_BIT_SHL;
+                                goto BinaryOp;
+                        }
+                        break;
                 CASE(EQ)
                         DoEq(ty);
                         break;
@@ -3888,10 +4128,42 @@ Throw:
                 CASE(MUT_SUB)
                         DoMutSub(ty);
                         break;
+                CASE(MUT_AND)
+                        DoMutAnd(ty);
+                        break;
+                CASE(MUT_OR)
+                        DoMutOr(ty);
+                        break;
+                CASE(MUT_XOR)
+                        DoMutXor(ty);
+                        break;
+                CASE(MUT_SHL)
+                        DoMutShl(ty);
+                        break;
+                CASE(MUT_SHR)
+                        DoMutShr(ty);
+                        break;
                 CASE(BINARY_OP)
                         READVALUE(n);
                 BinaryOp:
                         DoBinaryOp(ty, n, false);
+                        break;
+                CASE(UNARY_OP)
+                        READVALUE(n);
+
+                        z = ClassOf(top());
+                        vp = class_lookup_method_i(ty, z, n);
+
+                        if (vp == NULL) {
+                                zP(
+                                        "no matching implementation of %s%s%s for %s\n",
+                                        TERM(95;1), intern_entry(&xD.members, n)->name, TERM(0),
+                                        VSC(top())
+                                );
+                        }
+
+                        call(ty, vp, top(), 0, 0, false);
+
                         break;
                 CASE(DEFINE_TAG)
                 {
@@ -4021,6 +4293,10 @@ Throw:
                 CASE(PATCH_ENV)
                         READVALUE(n);
                         *top()->env[n] = *top();
+                        break;
+                CASE(NAMESPACE)
+                        READVALUE(s);
+                        push(NAMESPACE((Expr *)s));
                         break;
                 CASE(TAIL_CALL)
                         n = vvL(FRAMES)->f.info[4];
@@ -4535,6 +4811,8 @@ vm_init(Ty *ty, int ac, char **av)
         build_blob_method_table();
 
         NAMES.call      = M_ID("__call__");
+        NAMES.contains  = M_ID("contains?");
+        NAMES.count     = M_ID("__count__");
         NAMES.fmt       = M_ID("__fmt__");
         NAMES.json      = M_ID("__json__");
         NAMES.len       = M_ID("__len__");
@@ -5303,11 +5581,18 @@ vm_2op(Ty *ty, int op, Value const *a, Value const *b)
         case OP_LEQ: DoLeq(ty); return pop();
         case OP_GT:  DoGt(ty);  return pop();
         case OP_LT:  DoLt(ty);  return pop();
+
         case OP_ADD: if (op_builtin_add(ty)) return pop(); break;
         case OP_SUB: if (op_builtin_sub(ty)) return pop(); break;
         case OP_MUL: if (op_builtin_mul(ty)) return pop(); break;
         case OP_DIV: if (op_builtin_div(ty)) return pop(); break;
         case OP_MOD: if (op_builtin_mod(ty)) return pop(); break;
+
+        case OP_BIT_AND: if (op_builtin_and(ty)) return pop(); break;
+        case OP_BIT_OR:  if (op_builtin_or(ty))  return pop(); break;
+        case OP_BIT_XOR: if (op_builtin_xor(ty)) return pop(); break;
+        case OP_BIT_SHL: if (op_builtin_shl(ty)) return pop(); break;
+        case OP_BIT_SHR: if (op_builtin_shr(ty)) return pop(); break;
         }
 
         DoBinaryOp(ty, op, true);
@@ -5405,6 +5690,7 @@ StepInstruction(char const *ip)
 #define SKIPSTR() (ip += strlen(ip) + 1)
 #define SKIPVALUE(x) (memcpy(&x, ip, sizeof x), (ip += sizeof x))
 
+        Expr *expr;
         uintptr_t s;
         intmax_t k;
         bool b = false;
@@ -6021,6 +6307,8 @@ tdb_step_over(Ty *ty)
 {
         ty = TDB->host;
 
+        Expr *expr;
+
         switch (*IP) {
         CASE(HALT)
                 return true;
@@ -6065,6 +6353,8 @@ tdb_step_into(Ty *ty)
         int i;
 
         ty = TDB->host;
+
+        Expr *expr;
 
         switch (*IP) {
         CASE(CALL)

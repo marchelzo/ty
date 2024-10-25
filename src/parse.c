@@ -474,12 +474,17 @@ inline static Token *
 {
         Token t;
 
-        while (tokens.count <= i + TokenIndex) {
+        while (vN(tokens) <= i + TokenIndex) {
                 if (tokens.count == TokenIndex) {
                         lex_save(ty, &CtxCheckpoint);
                 }
 
                 t = lex_token(ty, lctx);
+
+                //if (vN(tokens) > 0 && vvL(tokens)->start.s == t.start.s) {
+                //        *vvL(tokens) = t;
+                //        return vvL(tokens);
+                //}
 
                 PLOG(
                         "%sAdd tokens%s[%d]: %s",
@@ -488,6 +493,7 @@ inline static Token *
                         (int)tokens.count,
                         token_show(ty, &t)
                 );
+
                 avP(tokens, t);
         }
 
@@ -708,7 +714,7 @@ setctx(Ty *ty, int ctx)
 
         // TODO: Should we be discarding LEX_FAKE tokens? (i.e. tokens that were unconsume()d)
 
-        while (tokens.count > TokenIndex) {
+        while (tokens.count > TokenIndex && v_(tokens, TokenIndex)->ctx != LEX_FMT) {
                 PLOG("  Pop tokens[%zu]: %s", tokens.count - 1, token_show(ty, vvL(tokens)));
                 tokens.count -= 1;
         }
@@ -1323,11 +1329,45 @@ ss_next_str(Ty *ty)
         char *str;
 
         setctx(ty, LEX_FMT);
+
+        if (T0 != TOKEN_STRING) {
+                // TODO: this shouldn't be necessary. we threw away a SS string
+                // and were unable to rewind back through preprocessor-generated
+                // tokens in order to produce it again
+                return "";
+        }
+
         str = tok()->string;
 
         consume(TOKEN_STRING);
 
         return str;
+}
+
+static void
+ss_skip_inner(Ty *ty)
+{
+        ss_next_str(ty);
+
+        while (setctx(ty, LEX_PREFIX), T0 == '{') {
+                next();
+
+                parse_expr(ty, 0);
+
+                if (T0 == ':' || T0 == '#') {
+                        next();
+                        ss_skip_inner(ty);
+                }
+
+                if (T0 == ':' || T0 == '#') {
+                        next();
+                        parse_expr(ty, 0);
+                }
+
+                consume('}');
+
+                ss_next_str(ty);
+        }
 }
 
 static Expr *
@@ -1370,6 +1410,14 @@ ss_inner(Ty *ty)
         e->end = End;
 
         return e;
+}
+
+static void
+skip_ss(Ty *ty)
+{
+        consume('"');
+        ss_skip_inner(ty);
+        consume('"');
 }
 
 static Expr *
@@ -3541,9 +3589,51 @@ infix_eq(Ty *ty, Expr *left)
 }
 
 static Expr *
+prefix_complement(Ty *ty)
+{
+        Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_UNARY_OP;
+        e->uop = "~";
+
+        next();
+
+        e->operand = parse_expr(ty, 8);
+        e->end = End;
+
+        return e;
+}
+
+static Expr *
 prefix_user_op(Ty *ty)
 {
-        error(ty, "not implemented");
+        Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_UNARY_OP;
+        e->uop = tok()->operator;
+        
+        next();
+
+        e->operand = parse_expr(ty, 9);
+        e->end = End;
+
+        return e;
+}
+
+static Expr *
+infix_complement(Ty *ty, Expr *left)
+{
+        Expr *e = mkexpr(ty);
+
+        e->type = EXPRESSION_USER_OP;
+        e->start = left->start;
+        e->left = left;
+        e->op_name = "~";
+
+        next();
+
+        e->right = parse_expr(ty, 7);
+        e->end = End;
+
+        return e;
 }
 
 static Expr *
@@ -4015,6 +4105,12 @@ BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  2, true)
 BINARY_LVALUE_OPERATOR(star_eq,  STAR_EQ,  2, true)
 BINARY_LVALUE_OPERATOR(div_eq,   DIV_EQ,   2, true)
 BINARY_LVALUE_OPERATOR(minus_eq, MINUS_EQ, 2, true)
+
+BINARY_LVALUE_OPERATOR(and_eq, AND_EQ, 2, true)
+BINARY_LVALUE_OPERATOR(or_eq,  OR_EQ,  2, true)
+BINARY_LVALUE_OPERATOR(xor_eq, XOR_EQ, 2, true)
+BINARY_LVALUE_OPERATOR(shl_eq, SHL_EQ, 2, true)
+BINARY_LVALUE_OPERATOR(shr_eq, SHR_EQ, 2, true)
 /* * * * | end of infix parsers | * * * */
 
 static prefix_parse_fn *
@@ -4060,6 +4156,7 @@ get_prefix_parser(Ty *ty)
         case TOKEN_INC:                return prefix_inc;
         case TOKEN_DEC:                return prefix_dec;
         case TOKEN_USER_OP:            return prefix_user_op;
+        case '~':                      return prefix_complement;
 
         case TOKEN_ARROW:              return prefix_arrow;
 
@@ -4140,6 +4237,7 @@ get_infix_parser(Ty *ty)
         case TOKEN_GEQ:            return infix_geq;
         case TOKEN_LEQ:            return infix_leq;
         case TOKEN_CMP:            return infix_cmp;
+        case '~':                  return infix_complement;
         case TOKEN_NOT_EQ:         return infix_not_eq;
         case TOKEN_DBL_EQ:         return infix_dbl_eq;
         case TOKEN_CHECK_MATCH:    return infix_check_match;
@@ -4216,6 +4314,8 @@ get_infix_prec(Ty *ty)
         case TOKEN_LEQ:            return 7;
         case TOKEN_GT:             return 7;
         case TOKEN_LT:             return 7;
+
+        case '~':                  return 7;
 
         case TOKEN_NOT_EQ:         return 6;
         case TOKEN_DBL_EQ:         return 6;
@@ -6253,6 +6353,11 @@ pp_if(Ty *ty)
                         EStart = it.start;
                         EEnd = it.end;
                         error(ty, "unterminated conditional directive");
+                }
+
+                if (tokenx(0)->type == '"') {
+                        skip_ss(ty);
+                        continue;
                 }
 
                 if (tokenx(0)->type != TOKEN_DIRECTIVE) {

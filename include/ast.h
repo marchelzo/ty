@@ -157,6 +157,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(SLICE), \
         X(METHOD_CALL), \
         X(USER_OP), \
+        X(UNARY_OP), \
         X(BIT_AND), \
         X(BIT_OR), \
         X(MATCH_ANY), \
@@ -189,6 +190,11 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(STAR_EQ), \
         X(DIV_EQ), \
         X(MINUS_EQ), \
+        X(AND_EQ), \
+        X(OR_EQ), \
+        X(XOR_EQ), \
+        X(SHL_EQ), \
+        X(SHR_EQ), \
         X(PREFIX_MINUS), \
         X(PREFIX_HASH), \
         X(PREFIX_AT), \
@@ -241,6 +247,7 @@ struct expression {
                 void *p;
                 Expr *throw;
                 struct {
+                        char const *uop;
                         struct expression *operand;
                         struct scope *escope;
                 };

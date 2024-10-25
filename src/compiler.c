@@ -586,6 +586,14 @@ eloc_cmp(void const *a_, void const *b_)
         return 0;
 }
 
+#define edbg(e) ((edbg)(ty, (e)))
+static char *
+(edbg)(Ty *ty, Expr const *e)
+{
+        Value v = tyexpr(ty, e);
+        return VSC(&v);
+}
+
 char const *
 show_expr_type(Ty *ty, Expr const *e)
 {
@@ -1474,6 +1482,82 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
         }
 }
 
+static bool
+try_fun_macro_op(Ty *ty, Scope *scope, Expr *e)
+{
+        Symbol *sym = scope_lookup(ty, scope, e->op_name);
+
+        if (sym == NULL || !sym->fun_macro) {
+                return false;
+        }
+
+        Expr *fun = NewExpr(ty, EXPRESSION_IDENTIFIER);
+        fun->xscope = scope;
+        fun->identifier = (char *)e->op_name;
+        fun->scope = sym->scope;
+        fun->symbol = sym;
+
+        Expr *left = e->left;
+        Expr *right =  e->right;
+
+        e->type = EXPRESSION_FUNCTION_CALL;
+        e->function = fun;
+
+        vec_init(e->args);
+        vec_init(e->fconds);
+
+        avP(e->args, left);
+        avP(e->fconds, NULL);
+
+        avP(e->args, right);
+        avP(e->fconds, NULL);
+
+        invoke_fun_macro(ty, scope, e);
+
+        return true;
+}
+
+static void
+fix_part(Ty *ty, struct condpart *p, Scope *scope)
+{
+        if (p->target != NULL) {
+                return;
+        }
+
+        if (
+                p->e->type != EXPRESSION_USER_OP
+             || !try_fun_macro_op(ty, scope, p->e)
+        ) {
+                if (p->e->type != EXPRESSION_FUNCTION_CALL) {
+                        return;
+                }
+
+                symbolize_expression(ty, scope, p->e->function);
+
+                if (
+                        p->e->function->type != EXPRESSION_IDENTIFIER
+                     || !p->e->function->symbol->fun_macro
+                ) {
+                        return;
+                }
+
+                invoke_fun_macro(ty, scope, p->e);
+        }
+
+        if (p->e->type == EXPRESSION_EQ) {
+                p->target = p->e->target;
+                p->e = p->e->value;
+                p->def = false;
+        } else if (
+                p->e->type == EXPRESSION_STATEMENT
+             && p->e->statement->type == STATEMENT_DEFINITION
+        ) {
+                p->target = p->e->statement->target;
+                p->e = p->e->statement->value;
+                p->def = true;
+        }
+}
+
 void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
 {
@@ -1765,6 +1849,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 symbolize_pattern_(ty, scope, e->left, reuse, def);
                 for (int i = 0; i < e->p_cond.count; ++i) {
                         struct condpart *p = e->p_cond.items[i];
+                        fix_part(ty, p, scope);
                         symbolize_pattern_(ty, scope, p->target, reuse, p->def);
                         symbolize_expression(ty, scope, p->e);
                 }
@@ -1942,41 +2027,6 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         GC_RESUME();
 }
 
-static bool
-try_fun_macro_op(Ty *ty, Scope *scope, Expr *e)
-{
-        Symbol *sym = scope_lookup(ty, scope, e->op_name);
-
-        if (sym == NULL || !sym->fun_macro) {
-                return false;
-        }
-
-        Expr *fun = NewExpr(ty, EXPRESSION_IDENTIFIER);
-        fun->xscope = scope;
-        fun->identifier = (char *)e->op_name;
-        fun->scope = sym->scope;
-        fun->symbol = sym;
-
-        Expr *left = e->left;
-        Expr *right =  e->right;
-
-        e->type = EXPRESSION_FUNCTION_CALL;
-        e->function = fun;
-
-        vec_init(e->args);
-        vec_init(e->fconds);
-
-        avP(e->args, left);
-        avP(e->fconds, NULL);
-
-        avP(e->args, right);
-        avP(e->fconds, NULL);
-
-        invoke_fun_macro(ty, scope, e);
-
-        return true;
-}
-
 static Scope *
 GetNamespace(Ty *ty, Namespace *ns)
 {
@@ -2145,6 +2195,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, subscope, e->thens.items[i]);
                 }
                 break;
+        case EXPRESSION_UNARY_OP:
+                if (try_fun_macro_op(ty, scope, e)) {
+                        symbolize_expression(ty, scope, e);
+                } else {
+                        symbolize_expression(ty, scope, e->operand);
+                }
+                break;
         case EXPRESSION_USER_OP:
                 if (try_fun_macro_op(ty, scope, e)) {
                         symbolize_expression(ty, scope, e);
@@ -2275,6 +2332,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_STAR_EQ:
         case EXPRESSION_DIV_EQ:
         case EXPRESSION_MINUS_EQ:
+        case EXPRESSION_AND_EQ:
+        case EXPRESSION_OR_EQ:
+        case EXPRESSION_XOR_EQ:
+        case EXPRESSION_SHL_EQ:
+        case EXPRESSION_SHR_EQ:
                 symbolize_expression(ty, scope, e->value);
                 symbolize_lvalue(ty, scope, e->target, false, false);
                 break;
@@ -2635,6 +2697,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 subscope = scope_new(ty, "(while)", scope, false);
                 for (int i = 0; i < s->While.parts.count; ++i) {
                         struct condpart *p = s->While.parts.items[i];
+                        fix_part(ty, p, scope);
                         symbolize_expression(ty, subscope, p->e);
                         symbolize_pattern(ty, subscope, p->target, NULL, p->def);
                 }
@@ -2647,6 +2710,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_statement(ty, scope, s->iff.then);
                         for (int i = 0; i < s->iff.parts.count; ++i) {
                                 struct condpart *p = s->iff.parts.items[i];
+                                fix_part(ty, p, scope);
                                 symbolize_pattern(ty, scope, p->target, NULL, p->def);
                                 symbolize_expression(ty, subscope, p->e);
                         }
@@ -2655,6 +2719,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_statement(ty, subscope, s->iff.otherwise);
                         for (int i = 0; i < s->iff.parts.count; ++i) {
                                 struct condpart *p = s->iff.parts.items[i];
+                                fix_part(ty, p, scope);
                                 symbolize_expression(ty, subscope, p->e);
                                 symbolize_pattern(ty, subscope, p->target, NULL, p->def);
 
@@ -2815,8 +2880,9 @@ emit_ulong(Ty *ty, unsigned long k)
                 avP(state.code, s[i]);
 }
 
+#define emit_symbol(s) ((emit_symbol)(ty, (uintptr_t)(s)))
 inline static void
-emit_symbol(Ty *ty, uintptr_t sym)
+(emit_symbol)(Ty *ty, uintptr_t sym)
 {
         LOG("emitting symbol: %"PRIuPTR, sym);
         char const *s = (char *) &sym;
@@ -3158,8 +3224,8 @@ emit_function(Ty *ty, Expr const *e)
         // Is this function hidden (i.e. omitted from stack trace messages)?
         avP(state.code, e->type == EXPRESSION_MULTI_FUNCTION);
 
-        emit_symbol(ty, (uintptr_t)e->proto);
-        emit_symbol(ty, (uintptr_t)e->doc);
+        emit_symbol(e->proto);
+        emit_symbol(e->doc);
 
 #ifdef TY_ENABLE_PROFILING
         if (e->name == NULL) {
@@ -3171,12 +3237,12 @@ emit_function(Ty *ty, Expr const *e)
                         state.filename,
                         e->start.line + 1
                 );
-                emit_string(ty, buffer);
+                emit_symbol(sclonea(ty, buffer));
         } else {
-                emit_string(ty, e->name);
+                emit_symbol(e->name);
         }
 #else
-        emit_string(ty, e->name == NULL ? "(anonymous function)" : e->name);
+        emit_symbol((e->name == NULL) ? "(anonymous function)" : e->name);
 #endif
 
         LOG("COMPILING FUNCTION: %s", scope_name(ty, e->scope));
@@ -3927,7 +3993,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
         case EXPRESSION_REGEX:
                 emit_tgt(ty, pattern->match_symbol, state.fscope, true);
                 FAIL_MATCH_IF(TRY_REGEX);
-                emit_symbol(ty, (uintptr_t) pattern->regex);
+                emit_symbol((uintptr_t) pattern->regex);
                 need_loc = true;
                 break;
         case EXPRESSION_TUPLE:
@@ -5082,11 +5148,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         state.start = e->start;
         state.end = e->end;
 
+        int op;
         size_t start = state.code.count;
-        char const *method = NULL;
-
         TryState *try = get_try(ty, 0);
-
         void *ctx = PushContext(ty, e);
 
         switch (e->type) {
@@ -5108,7 +5172,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
         case EXPRESSION_VALUE:
                 emit_instr(ty, INSTR_VALUE);
-                emit_symbol(ty, (uintptr_t)e->v);
+                emit_symbol((uintptr_t)e->v);
                 break;
         case EXPRESSION_MATCH:
                 emit_match_expression(ty, e);
@@ -5124,10 +5188,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         emit_expression(ty, e->right);
                         emit_instr(ty, INSTR_RANGE);
                 } else {
-                        method = "__count__";
                         emit_instr(ty, INSTR_CALL_METHOD);
                         emit_int(ty, 0);
-                        emit_int(ty, M_ID(method));
+                        emit_int(ty, NAMES.count);
                         emit_int(ty, 0);
                 }
                 break;
@@ -5168,7 +5231,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_EVAL:
                 emit_expression(ty, e->operand);
                 emit_instr(ty, INSTR_EVAL);
-                emit_symbol(ty, (uintptr_t)e->escope);
+                emit_symbol((uintptr_t)e->escope);
                 break;
         case EXPRESSION_TAG:
                 emit_instr(ty, INSTR_TAG);
@@ -5176,7 +5239,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
         case EXPRESSION_REGEX:
                 emit_instr(ty, INSTR_REGEX);
-                emit_symbol(ty, (uintptr_t)e->regex);
+                emit_symbol((uintptr_t)e->regex);
                 break;
         case EXPRESSION_ARRAY:
                 emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -5360,32 +5423,43 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_SPREAD:
                 emit_spread(ty, e->value, false);
                 break;
+        case EXPRESSION_UNARY_OP:
+                emit_expression(ty, e->operand);
+                emit_instr(ty, INSTR_UNARY_OP);
+                emit_int(ty, intern(&xD.members, e->uop)->id);
+                break;
         case EXPRESSION_USER_OP:
                 emit_expression(ty, e->left);
                 emit_expression(ty, e->right);
-                emit_instr(ty, INSTR_BINARY_OP);
-                emit_int(ty, intern(&xD.b_ops, e->op_name)->id);
+
+                switch ((op = intern(&xD.b_ops, e->op_name)->id)) {
+                case OP_BIT_XOR: emit_instr(ty, INSTR_BIT_XOR);   break;
+                case OP_BIT_SHL: emit_instr(ty, INSTR_SHL);       break;
+                case OP_BIT_SHR: emit_instr(ty, INSTR_SHR);       break;
+
+                default:
+                        emit_instr(ty, INSTR_BINARY_OP);
+                        emit_int(ty, op);
+                }
+                
                 break;
         case EXPRESSION_BIT_OR:
                 emit_expression(ty, e->left);
                 emit_expression(ty, e->right);
-                emit_instr(ty, INSTR_BINARY_OP);
-                emit_int(ty, OP_BIT_OR);
+                emit_instr(ty, INSTR_BIT_OR);
                 break;
         case EXPRESSION_BIT_AND:
                 emit_expression(ty, e->left);
                 emit_expression(ty, e->right);
-                emit_instr(ty, INSTR_BINARY_OP);
-                emit_int(ty, OP_BIT_AND);
+                emit_instr(ty, INSTR_BIT_AND);
                 break;
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
-                method = "contains?";
                 emit_expression(ty, e->left);
                 emit_expression(ty, e->right);
                 emit_instr(ty, INSTR_CALL_METHOD);
                 emit_int(ty, 1);
-                emit_int(ty, M_ID(method));
+                emit_int(ty, NAMES.contains);
                 emit_int(ty, 0);
                 if (e->type == EXPRESSION_NOT_IN) {
                         emit_instr(ty, INSTR_NOT);
@@ -5534,6 +5608,31 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_expression(ty, e->value);
                 emit_instr(ty, INSTR_MUT_SUB);
                 break;
+        case EXPRESSION_AND_EQ:
+                emit_target(ty, e->target, false);
+                emit_expression(ty, e->value);
+                emit_instr(ty, INSTR_MUT_AND);
+                break;
+        case EXPRESSION_OR_EQ:
+                emit_target(ty, e->target, false);
+                emit_expression(ty, e->value);
+                emit_instr(ty, INSTR_MUT_OR);
+                break;
+        case EXPRESSION_XOR_EQ:
+                emit_target(ty, e->target, false);
+                emit_expression(ty, e->value);
+                emit_instr(ty, INSTR_MUT_XOR);
+                break;
+        case EXPRESSION_SHR_EQ:
+                emit_target(ty, e->target, false);
+                emit_expression(ty, e->value);
+                emit_instr(ty, INSTR_MUT_SHR);
+                break;
+        case EXPRESSION_SHL_EQ:
+                emit_target(ty, e->target, false);
+                emit_expression(ty, e->value);
+                emit_instr(ty, INSTR_MUT_SHL);
+                break;
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
                         if (e->tconds.items[i] != NULL) {
@@ -5575,7 +5674,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         emit_expression(ty, e->template.exprs.items[i]);
                 }
                 emit_instr(ty, INSTR_RENDER_TEMPLATE);
-                emit_symbol(ty, (uintptr_t)e);
+                emit_symbol((uintptr_t)e);
+                break;
+        case EXPRESSION_NAMESPACE:
+                emit_instr(ty, INSTR_NAMESPACE);
+                emit_symbol(e);
                 break;
         default:
                 fail(ty, "expression unexpected in this context: %s", ExpressionTypeName(e));
@@ -6123,7 +6226,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
 
         // TODO: which makes more sense here?
         //emit_instr(ty, INSTR_EXEC_CODE);
-        //emit_symbol(ty, (uintptr_t) m.code);
+        //emit_symbol((uintptr_t) m.code);
         vm_exec(ty, code);
 
         return module_scope;
@@ -6560,20 +6663,33 @@ module_prefix(char const *path, char const *id)
 }
 
 int
+compiler_get_namespace_completions(
+        Ty *ty,
+        Expr const *ns,
+        char const *prefix,
+        char **out,
+        int max
+)
+{
+        return scope_get_completions(ty, ns->scope, prefix, out, max, false);
+}
+
+int
 compiler_get_completions(Ty *ty, char const *mod, char const *prefix, char **out, int max)
 {
-        int n = 0;
-
         if (mod == NULL) {
-                n += scope_get_completions(ty, state.global, prefix, out + n, max - n);
-                n += scope_get_completions(ty, global, prefix, out + n, max - n);
-                return n;
+                return scope_get_completions(ty, state.global, prefix, out, max, true);
         }
 
         for (int i = 0; i < state.imports.count; ++i) {
                 if (module_match(state.imports.items[i].name, mod)) {
-                        return n + scope_get_completions(ty, state.imports.items[i].scope, prefix, out + n, max - n);
+                        return scope_get_completions(ty, state.imports.items[i].scope, prefix, out, max, false);
                 }
+        }
+
+        char const *last_dot = strrchr(prefix, '.');
+
+        if (last_dot != NULL) {
         }
 
         return 0;
@@ -7258,7 +7374,7 @@ tyexpr(Ty *ty, Expr const *e)
                         if (e->fmts.items[i] == NULL) {
                                 vAp(v.array, expr);
                         } else {
-                                Value s = vSs(e->fmts.items[i], strlen(e->fmts.items[i]));
+                                Value s = tyexpr(ty, e->fmts.items[i]);
                                 Value w = INTEGER(e->widths.items[i]);
                                 vAp(v.array, QUADRUPLE(expr, s, w, arg));
                         }
@@ -7739,7 +7855,7 @@ cstmt(Ty *ty, Value *v)
                 f.tags = tags_push(ty, 0, TyFunc);
                 s->type = STATEMENT_FUNCTION_DEFINITION;
                 s->value = cexpr(ty, &f);
-                s->doc = NULL;
+                s->doc = s->value->doc;
                 s->target = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 s->target->identifier = mkcstr(ty, t_(v, "name"));
                 break;
@@ -7986,6 +8102,8 @@ cexpr(Ty *ty, Value *v)
         Expr *e = amA0(sizeof *e);
         Expr *src = source_lookup(ty, v->src);
 
+        //printf("cexpr(): %s\n", value_show_color(ty, v));
+
         e->arena = GetArenaAlloc(ty);
 
         if (src == NULL && wrapped_type(ty, v) == VALUE_TUPLE) {
@@ -8172,7 +8290,7 @@ cexpr(Ty *ty, Value *v)
                                 avP(e->strings, mkcstr(ty, x));
                         } else if (x->type == VALUE_TUPLE) {
                                 avP(e->expressions, cexpr(ty, &x->items[0]));
-                                avP(e->fmts, mkcstr(ty, &x->items[1]));
+                                avP(e->fmts, cexpr(ty, &x->items[1]));
                                 avP(e->widths, (x->count > 2) ? x->items[2].integer : 0);
                                 avP(e->fmt_args, cexpr(ty, tget_nn(x, 3)));
                         } else {
@@ -8321,9 +8439,11 @@ cexpr(Ty *ty, Value *v)
                 Value *params = tuple_get(v, "params");
                 Value *rt = tuple_get(v, "rt");
                 Value *decorators = tuple_get(v, "decorators");
+                Value *doc = tuple_get(v, "doc");
+                Value *proto = tuple_get(v, "proto");
                 e->name = (name != NULL && name->type != VALUE_NIL) ? mkcstr(ty, name) : NULL;
-                e->doc = NULL;
-                e->proto = NULL;
+                e->doc = (doc != NULL && doc->type != VALUE_NIL) ? mkcstr(ty, doc) : NULL;
+                e->proto = (proto != NULL && proto->type != VALUE_NIL) ? mkcstr(ty, proto) : NULL;
                 e->return_type = (rt != NULL && rt->type != VALUE_NIL) ? cexpr(ty, rt) : NULL;
                 if (decorators != NULL && decorators->type != VALUE_NIL) {
                         for (int i = 0; i < decorators->array->count; ++i) {
@@ -10012,32 +10132,30 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(GT)
                 CASE(LEQ)
                 CASE(GEQ)
-                        break;
                 CASE(CMP)
-                        break;
                 CASE(GET_TAG)
-                        break;
                 CASE(LEN)
-                        break;
                 CASE(PRE_INC)
-                        break;
                 CASE(POST_INC)
-                        break;
                 CASE(PRE_DEC)
-                        break;
                 CASE(POST_DEC)
-                        break;
                 CASE(MUT_ADD)
-                        break;
                 CASE(MUT_MUL)
-                        break;
                 CASE(MUT_DIV)
-                        break;
                 CASE(MUT_SUB)
-                         break;
+                CASE(MUT_AND)
+                CASE(MUT_OR)
+                CASE(MUT_XOR)
+                CASE(MUT_SHL)
+                CASE(MUT_SHR)
+                        break;
                 CASE(BINARY_OP)
                         READVALUE_(n);
                         DUMPSTR(intern_entry(&xD.b_ops, n)->name);
+                        break;
+                CASE(UNARY_OP)
+                        READVALUE_(n);
+                        DUMPSTR(intern_entry(&xD.members, n)->name);
                         break;
                 CASE(DEFINE_TAG)
                 {
@@ -10123,6 +10241,9 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
                         break;
                 }
+                CASE(NAMESPACE)
+                        READVALUE(s);
+                        break;
                 CASE(PATCH_ENV)
                         READVALUE(n);
                         break;

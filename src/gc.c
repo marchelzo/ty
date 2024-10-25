@@ -68,6 +68,10 @@ collect(Ty *ty, struct alloc *a)
         case GC_ARENA:
                 source_forget_arena(p);
                 break;
+        case GC_FUN_INFO:
+                mF(((FunUserInfo *)p)->doc);
+                mF(((FunUserInfo *)p)->proto);
+                mF(((FunUserInfo *)p)->name);
         }
 }
 

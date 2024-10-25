@@ -1425,6 +1425,7 @@ lex_init(Ty *ty, char const *file, char const *src)
                         .line = 0,
                         .col = 0
                 },
+                .start = src,
                 .end = src + strlen(src),
                 .need_nl = false,
                 .keep_comments = true,

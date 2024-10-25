@@ -437,6 +437,14 @@ value_showx(Ty *ty, Value const *v)
         case VALUE_NIL:
                 snprintf(buffer, 1024, "%s", "nil");
                 break;
+        case VALUE_NAMESPACE:
+                snprintf(
+                        buffer,
+                        sizeof buffer,
+                        "<namespace '%s'>",
+                        v->namespace->name
+                );
+                break;
         case VALUE_ARRAY:
                 s = show_array(ty, v, false);
                 break;
@@ -553,7 +561,19 @@ value_show_colorx(Ty *ty, struct value const *v)
                 snprintf(buffer, sizeof buffer, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
                 break;
         case VALUE_NIL:
-                snprintf(buffer, sizeof buffer, "%s%s%s", TERM(95), "nil", TERM(0));
+                snprintf(buffer, sizeof buffer, "%snil%s", TERM(95), TERM(0));
+                break;
+        case VALUE_NAMESPACE:
+                snprintf(
+                        buffer,
+                        sizeof buffer,
+                        "%s<namespace %s'%s'%s>%s",
+                        TERM(93),
+                        TERM(95),
+                        v->namespace->name,
+                        TERM(93),
+                        TERM(0)
+                );
                 break;
         case VALUE_ARRAY:
                 s = show_array(ty, v, true);
@@ -1145,6 +1165,9 @@ mark_function(Ty *ty, struct value const *v)
 
         if (*from_eval(v))
                 MARK(v->info);
+
+        if (v->xinfo != NULL)
+                MARK(v->xinfo);
 
         if (n == 0 || MARKED(v->env))
                 return;

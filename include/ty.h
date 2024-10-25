@@ -21,6 +21,7 @@ typedef struct value      Value;
 typedef struct expression Expr;
 typedef struct statement  Stmt;
 typedef struct symbol     Symbol;
+typedef struct scope      Scope;
 typedef struct frame      Frame;
 typedef struct target     Target;
 
@@ -58,6 +59,12 @@ typedef struct regex {
         bool detailed;
 } Regex;
 
+typedef struct {
+        char *name;
+        char *proto;
+        char *doc;
+} FunUserInfo;
+
 typedef struct dict Dict;
 
 typedef struct generator Generator;
@@ -87,6 +94,7 @@ enum {
         VALUE_INDEX            ,
         VALUE_NONE             ,
         VALUE_UNINITIALIZED    ,
+        VALUE_NAMESPACE        ,
         VALUE_PTR              ,
         VALUE_REF              ,
         VALUE_THREAD           ,
@@ -120,7 +128,8 @@ enum {
         FUN_HIDDEN      = FUN_FROM_EVAL   + 1,
         FUN_PROTO       = FUN_HIDDEN      + 1,
         FUN_DOC         = FUN_PROTO       + sizeof (uintptr_t),
-        FUN_NAME        = FUN_DOC         + sizeof (uintptr_t)
+        FUN_NAME        = FUN_DOC         + sizeof (uintptr_t),
+        FUN_PARAM_NAMES = FUN_NAME        + sizeof (uintptr_t)
 };
 
 struct value {
@@ -184,7 +193,9 @@ struct value {
                 struct {
                         int *info;
                         Value **env;
+                        FunUserInfo *xinfo;
                 };
+                Expr *namespace;
                 Generator *gen;
         };
 };
@@ -363,16 +374,18 @@ typedef struct ty {
 } Ty;
 
 typedef struct {
-        int missing;
-        int slice;
+        int call;
+        int contains;
+        int count;
         int fmt;
-        int str;
-        int question;
-        int subscript;
+        int json;
         int len;
         int match;
-        int json;
-        int call;
+        int missing;
+        int question;
+        int slice;
+        int str;
+        int subscript;
 
         int exit_hooks;
         int tdb_hook;
@@ -542,12 +555,18 @@ extern bool ColorProfile;
         X(ENSURE_SAME_KEYS), \
         X(RENDER_TEMPLATE), \
         X(BINARY_OP), \
+        X(UNARY_OP), \
         X(TRAP), \
         X(TRAP_TY), \
         X(ADD), \
         X(SUB), \
         X(MUL), \
         X(DIV), \
+        X(BIT_AND), \
+        X(BIT_OR), \
+        X(BIT_XOR), \
+        X(SHL), \
+        X(SHR), \
         X(MOD), \
         X(EQ), \
         X(NEQ), \
@@ -561,12 +580,19 @@ extern bool ColorProfile;
         X(MUT_MUL), \
         X(MUT_DIV), \
         X(MUT_SUB), \
+        X(MUT_AND), \
+        X(MUT_OR), \
+        X(MUT_XOR), \
+        X(MUT_SHL), \
+        X(MUT_SHR), \
         X(NEG), \
         X(NOT), \
         X(QUESTION), \
         X(COUNT), \
         X(PATCH_ENV), \
-        X(GET_TAG)
+        X(GET_TAG), \
+        X(NAMESPACE)
+
 
 #define X(i) INSTR_ ## i
 enum {
@@ -594,6 +620,7 @@ enum {
 #define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
 #define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
 #define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
+#define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,      .namespace      = (ns),                                                  .tags = 0 })
 #define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
 #define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
 #define THREAD(t)                ((Value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
@@ -691,33 +718,57 @@ enum {
 #define TRIPLE(a, b, c)       TRIPLE_(ty, (a), (b), (c))
 #define QUADRUPLE(a, b, c, d) QUADRUPLE_(ty, (a), (b), (c), (d))
 
+#define TY_UNARY_OPERATORS   \
+        X(COMPL,      "~"),  \
+        X(NEG,        "-"),  \
+        X(NOT,        "!"),  \
+        X(COUNT,      "#"),  \
+        X(QUESTION,   "?"),  \
+        X(DEC,       "--"),  \
+        X(INC,       "++"),  \
+        X(UOP_MAX,    "z")
+
 #define TY_BINARY_OPERATORS  \
         X(ADD,       "+"),   \
         X(SUB,       "-"),   \
         X(MUL,       "*"),   \
         X(DIV,       "/"),   \
         X(MOD,       "%"),   \
-        X(MUT_ADD,   "+="),  \
-        X(MUT_SUB,   "-="),  \
-        X(MUT_MUL,   "*="),  \
-        X(MUT_DIV,   "/="),  \
-        X(MUT_MOD,   "%="),  \
+        X(BIT_AND,   "&"),   \
+        X(BIT_OR,    "|"),   \
+        X(BIT_XOR,   "^"),   \
+        X(BIT_SHL,  "<<"),   \
+        X(BIT_SHR,  ">>"),   \
+        X(MUT_ADD,  "+="),   \
+        X(MUT_SUB,  "-="),   \
+        X(MUT_MUL,  "*="),   \
+        X(MUT_DIV,  "/="),   \
+        X(MUT_MOD,  "%="),   \
+        X(MUT_AND,  "&="),   \
+        X(MUT_OR,   "|="),   \
+        X(MUT_XOR,  "^="),   \
+        X(MUT_SHL, "<<="),   \
+        X(MUT_SHR, ">>="),   \
         X(AND,      "&&"),   \
         X(OR,       "||"),   \
-        X(BIT_OR,    "|"),   \
-        X(BIT_AND,   "&"),   \
-        X(BIT_XOR,   "^"),   \
         X(EQL,      "=="),   \
         X(NEQ,      "!="),   \
         X(CMP,     "<=>"),   \
         X(GT,        ">"),   \
         X(LT,        "<"),   \
         X(GEQ,      ">="),   \
-        X(LEQ,      "<=")
+        X(LEQ,      "<="),   \
+        X(BOP_MAX,  "zz")
 
 #define X(op, id) OP_ ## op
 enum {
         TY_BINARY_OPERATORS
+};
+#undef X
+
+#define X(op, id) OP_ ## op
+enum {
+        TY_UNARY_OPERATORS
 };
 #undef X
 

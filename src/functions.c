@@ -6443,6 +6443,51 @@ mdocs(Ty *ty, struct itable const *t, struct array *a)
         }
 }
 
+BUILTIN_FUNCTION(set_doc)
+{
+        ASSERT_ARGC("set-doc()", 1);
+
+        Value f = ARG(0);
+
+        if (f.type != VALUE_FUNCTION) {
+                zP("set-doc(): expected function but got: %s", VSC(&f));
+        }
+
+        Value *name = NAMED("name");
+        Value *proto = NAMED("proto");
+        Value *doc = NAMED("doc");
+
+        if (f.xinfo == NULL) {
+                f.xinfo = mAo0(sizeof (FunUserInfo), GC_ANY);
+        }
+
+        if (name != NULL && name->type != VALUE_NIL) {
+                if (name->type != VALUE_STRING) {
+                        zP("set-doc(): non-string passed as `name`: %s", VSC(name));
+                }
+                BufferCString(name);
+                f.xinfo->name = sclone(ty, buffer);
+        }
+
+        if (proto != NULL && proto->type != VALUE_NIL) {
+                if (proto->type != VALUE_STRING) {
+                        zP("set-doc(): non-string passed as `proto`: %s", VSC(proto));
+                }
+                BufferCString(proto);
+                f.xinfo->proto = sclone(ty, buffer);
+        }
+
+        if (doc != NULL && doc->type != VALUE_NIL) {
+                if (doc->type != VALUE_STRING) {
+                        zP("set-doc(): non-string passed as `doc`: %s", VSC(doc));
+                }
+                BufferCString(doc);
+                f.xinfo->doc = sclone(ty, buffer);
+        }
+
+        return f;
+}
+
 BUILTIN_FUNCTION(doc)
 {
         char mod[256];
@@ -6496,7 +6541,7 @@ BUILTIN_FUNCTION(doc)
         if (s == NULL || s->doc == NULL)
                 return NIL;
 
-        return vSs(s->doc, strlen(s->doc));
+        return vSsz(s->doc);
 }
 
 BUILTIN_FUNCTION(ty_gc)
@@ -6716,6 +6761,9 @@ make_token(Ty *ty, Token const *t)
                 break;
         case TOKEN_REGEX:
                 type = "regex";
+                break;
+        case TOKEN_USER_OP:
+                type = t->operator;
                 break;
         }
 
@@ -7097,6 +7145,29 @@ BUILTIN_FUNCTION(ty_strip_source)
         e.src = 0;
 
         return e;
+}
+
+BUILTIN_FUNCTION(lex_state)
+{
+        ASSERT_ARGC("ty.lex.state()", 0);
+
+        Value *sync = NAMED("noSync");
+        LexState st;
+
+        if (sync == NULL || !value_truthy(ty, sync)) {
+                parse_sync_lex(ty);
+        }
+
+        lex_save(ty, &st);
+
+        return vTn(
+                "source",       xSs(st.start, st.end - st.start),
+                "position",     make_location(ty, &st.loc),
+                "context",      INTEGER(st.ctx),
+                "keepComments", BOOLEAN(st.keep_comments),
+                "keepNewline",  BOOLEAN(st.need_nl),
+                "blankLine",    BOOLEAN(st.blank_line)
+        );
 }
 
 BUILTIN_FUNCTION(lex_peek_char)
