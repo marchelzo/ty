@@ -84,6 +84,18 @@ struct value;
         X(Sub)                  \
         X(Div)                  \
         X(Mod)                  \
+        X(Shl)                  \
+        X(Shr)                  \
+        X(Xor)                  \
+        X(MutAdd)               \
+        X(MutSub)               \
+        X(MutMul)               \
+        X(MutDiv)               \
+        X(MutAnd)               \
+        X(MutOr)                \
+        X(MutXor)               \
+        X(MutShl)               \
+        X(MutShr)               \
         X(Block)                \
         X(Multi)                \
         X(With)                 \

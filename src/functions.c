@@ -6683,72 +6683,34 @@ make_token(Ty *ty, Token const *t)
                 );
         case TOKEN_END:
                 return NIL;
-        case TOKEN_DOT_DOT:
-                type = "..";
-                break;
-        case TOKEN_DOT_DOT_DOT:
-                type = "...";
-                break;
-        case TOKEN_AT:
-                type = "@";
-                break;
-        case TOKEN_INC:
-                type = "++";
-                break;
-        case TOKEN_BANG:
-                type = "!";
-                break;
-        case TOKEN_EQ:
-                type = "=";
-                break;
-        case TOKEN_NOT_EQ:
-                type = "!=";
-                break;
-        case TOKEN_STAR:
-                type = "*";
-                break;
-        case TOKEN_PLUS:
-                type = "+";
-                break;
-        case TOKEN_LT:
-                type = "<";
-                break;
-        case TOKEN_GT:
-                type = ">";
-                break;
-        case TOKEN_LEQ:
-                type = "<=";
-                break;
-        case TOKEN_GEQ:
-                type = ">=";
-                break;
-        case TOKEN_CMP:
-                type = "<=>";
-                break;
-        case TOKEN_STAR_EQ:
-                type = "*=";
-                break;
-        case TOKEN_PLUS_EQ:
-                type = "+=";
-                break;
-        case TOKEN_MINUS_EQ:
-                type = "-=";
-                break;
-        case TOKEN_DIV_EQ:
-                type = "/=";
-                break;
-        case TOKEN_WTF:
-                type = "??";
-                break;
-        case TOKEN_ARROW:
-                type = "->";
-                break;
-        case TOKEN_FAT_ARROW:
-                type = "=>";
-                break;
-        case TOKEN_SQUIGGLY_ARROW:
-                type = "~>";
-                break;
+        case TOKEN_DOT_DOT:         type = "..";   break;
+        case TOKEN_DOT_DOT_DOT:     type = "...";  break;
+        case TOKEN_AT:              type = "@";    break;
+        case TOKEN_INC:             type = "++";   break;
+        case TOKEN_BANG:            type = "!";    break;
+        case TOKEN_EQ:              type = "=";    break;
+        case TOKEN_NOT_EQ:          type = "!=";   break;
+        case TOKEN_STAR:            type = "*";    break;
+        case TOKEN_PLUS:            type = "+";    break;
+        case TOKEN_LT:              type = "<";    break;
+        case TOKEN_GT:              type = ">";    break;
+        case TOKEN_LEQ:             type = "<=";   break;
+        case TOKEN_GEQ:             type = ">=";   break;
+        case TOKEN_CMP:             type = "<=>";  break;
+        case TOKEN_STAR_EQ:         type = "*=";   break;
+        case TOKEN_PLUS_EQ:         type = "+=";   break;
+        case TOKEN_MINUS_EQ:        type = "-=";   break;
+        case TOKEN_DIV_EQ:          type = "/=";   break;
+        case TOKEN_AND_EQ:          type = "&=";   break;
+        case TOKEN_OR_EQ:           type = "|=";   break;
+        case TOKEN_XOR_EQ:          type = "^=";   break;
+        case TOKEN_SHL_EQ:          type = "<<=";  break;
+        case TOKEN_SHR_EQ:          type = ">>=";  break;
+        case TOKEN_WTF:             type = "??";   break;
+        case TOKEN_ARROW:           type = "->";   break;
+        case TOKEN_FAT_ARROW:       type = "=>";   break;
+        case TOKEN_SQUIGGLY_ARROW:  type = "~>";   break;
+
         case TOKEN_KEYWORD:
                 type = (char *)keyword_show(t->keyword);
                 break;

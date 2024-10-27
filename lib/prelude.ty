@@ -2896,6 +2896,8 @@ macro __desugar_partial__(call) {
 function >>(x, f) { f(x) }
 function <<(f, x) { f(x) }
 
+function ?>(x, f) { (x == nil) ? x : f(x) }
+
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5] = $$a.match!($$b)
 
 function sink(file) match file {
@@ -2919,6 +2921,16 @@ function sink(file) match file {
         return print@(*, **, file=file, :flush)
     }
 }
+
+class ScopeGuard(cleanup-func) {
+    __drop__() {
+        (@cleanup-func)()
+    }
+}
+
+macro guard(cleanup-func) $$[
+    let ^_ = ScopeGuard($$cleanup-func)
+$$]
 
 operator **   10 right
 operator <<   7  left

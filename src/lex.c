@@ -183,12 +183,14 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed)
         if (JITStack != NULL)
                 pcre_assign_jit_stack(extra, NULL, JITStack);
 
-        struct regex *r = amA(sizeof *r);
+        Regex *r = amA(sizeof *r);
         r->pattern = pat;
         r->pcre = re;
         r->extra = extra;
         r->gc = false;
         r->detailed = detailed;
+
+        pcre_fullinfo(re, extra, PCRE_INFO_CAPTURECOUNT, &r->ncap);
 
         return (Token) {
                 .type = TOKEN_REGEX,

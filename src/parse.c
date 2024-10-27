@@ -86,7 +86,7 @@
 #define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 
-#if 1
+#if 0
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
      && fprintf(                                \
@@ -218,14 +218,6 @@ static TokenVector tokens;
 static expression_vector TemplateExprs;
 
 static Namespace *CurrentNamespace = NULL;
-
-typedef struct {
-        intrusive_vec(Token);
-        Location start;
-        Location end;
-} CachedDirective;
-
-static vec(CachedDirective) PreProcCache;
 
 static int TokenIndex = 0;
 LexContext lctx = LEX_PREFIX;
@@ -1097,6 +1089,13 @@ op_fixup(Ty *ty, int i)
         case TOKEN_STAR_EQ:     token(i)->identifier = "*=";   break;
         case TOKEN_MINUS_EQ:    token(i)->identifier = "-=";   break;
         case TOKEN_DIV_EQ:      token(i)->identifier = "/=";   break;
+        case TOKEN_SHL_EQ:      token(i)->identifier = "<<=";  break;
+        case TOKEN_SHR_EQ:      token(i)->identifier = ">>=";  break;
+        case TOKEN_SHL:         token(i)->identifier = "<<";   break;
+        case TOKEN_SHR:         token(i)->identifier = ">>";   break;
+        case TOKEN_XOR_EQ:      token(i)->identifier = "^=";   break;
+        case TOKEN_AND_EQ:      token(i)->identifier = "&=";   break;
+        case TOKEN_OR_EQ:       token(i)->identifier = "|=";   break;
         case '&':               token(i)->identifier = "&";    break;
         case '|':               token(i)->identifier = "|";    break;
         case '^':               token(i)->identifier = "^";    break;
@@ -3805,9 +3804,18 @@ infix_member_access(Ty *ty, Expr *left)
 
         e->object = left;
 
-        expect(TOKEN_IDENTIFIER);
-        char *id = tok()->identifier;
-        consume(TOKEN_IDENTIFIER);
+        char *id;
+        if (tok()->type == '$$') {
+                id = 1 + (char *)parse_expr(ty, 99);
+        } else {
+                expect(TOKEN_IDENTIFIER);
+                id = tok()->identifier;
+                consume(TOKEN_IDENTIFIER);
+
+                if (1 & (uintptr_t)id) {
+                        id = sclonea(ty, id);
+                }
+        }
 
         if (!have_without_nl(ty, '(') && !have_without_nl(ty, '$') && !have_without_nl(ty, TOKEN_AT)) {
                 e->type = EXPRESSION_MEMBER_ACCESS;
@@ -4089,15 +4097,18 @@ BINARY_OPERATOR(geq,      GEQ,         7, false)
 BINARY_OPERATOR(leq,      LEQ,         7, false)
 BINARY_OPERATOR(cmp,      CMP,         7, false)
 
-BINARY_OPERATOR(not_eq,      NOT_EQ,    6, false)
-BINARY_OPERATOR(dbl_eq,      DBL_EQ,    6, false)
+BINARY_OPERATOR(not_eq,   NOT_EQ,    6, false)
+BINARY_OPERATOR(dbl_eq,   DBL_EQ,    6, false)
 
 BINARY_OPERATOR(and,      AND,         5, false)
+BINARY_OPERATOR(xor,      XOR,         5, false)
+BINARY_OPERATOR(shl,      SHL,         5, false)
+BINARY_OPERATOR(shr,      SHR,         5, false)
 BINARY_OPERATOR(bit_and,  BIT_AND,     5, false)
 BINARY_OPERATOR(bit_or,   BIT_OR,      5, false)
 
-BINARY_OPERATOR(or,           OR,          4, false)
-BINARY_OPERATOR(wtf,          WTF,         4, false)
+BINARY_OPERATOR(or,       OR,          4, false)
+BINARY_OPERATOR(wtf,      WTF,         4, false)
 
 BINARY_OPERATOR(check_match, CHECK_MATCH,  3, false)
 
@@ -4208,8 +4219,6 @@ get_infix_parser(Ty *ty)
         case TOKEN_DOT_MAYBE:      return infix_member_access;
         case '[':                  return infix_subscript;
         case ',':                  return infix_list;
-        case '&':                  return infix_bit_and;
-        case '|':                  return infix_bit_or;
         case TOKEN_INC:            return postfix_inc;
         case TOKEN_DEC:            return postfix_dec;
         case TOKEN_ARROW:          return infix_arrow_function;
@@ -4225,8 +4234,22 @@ get_infix_parser(Ty *ty)
         case TOKEN_STAR_EQ:        return infix_star_eq;
         case TOKEN_DIV_EQ:         return infix_div_eq;
         case TOKEN_MINUS_EQ:       return infix_minus_eq;
+
+        case TOKEN_AND_EQ:         return infix_and_eq;
+        case TOKEN_OR_EQ:          return infix_or_eq;
+        case TOKEN_XOR_EQ:         return infix_xor_eq;
+        case TOKEN_SHL_EQ:         return infix_shl_eq;
+        case TOKEN_SHR_EQ:         return infix_shr_eq;
+
         case TOKEN_MAYBE_EQ:
         case TOKEN_EQ:             return infix_eq;
+
+        case TOKEN_SHL:            return infix_shl;
+        case TOKEN_SHR:            return infix_shr;
+        case '^':                  return infix_xor;
+        case '&':                  return infix_bit_and;
+        case '|':                  return infix_bit_or;
+
         case TOKEN_STAR:           return infix_star;
         case TOKEN_DIV:            return infix_div;
         case TOKEN_PERCENT:        return infix_percent;
@@ -4315,12 +4338,16 @@ get_infix_prec(Ty *ty)
         case TOKEN_GT:             return 7;
         case TOKEN_LT:             return 7;
 
+        case TOKEN_SHL:            return 7;
+        case TOKEN_SHR:            return 7;
+
         case '~':                  return 7;
 
         case TOKEN_NOT_EQ:         return 6;
         case TOKEN_DBL_EQ:         return 6;
 
         case TOKEN_AND:            return 5;
+        case '^':                  return 5;
         case '&':                  return 5;
         case '|':                  return NoPipe ? -3 : 5;
 
@@ -4340,6 +4367,13 @@ get_infix_prec(Ty *ty)
         case TOKEN_PLUS_EQ:        return 2;
         case TOKEN_STAR_EQ:        return 2;
         case TOKEN_DIV_EQ:         return 2;
+
+        case TOKEN_AND_EQ:         return 2;
+        case TOKEN_OR_EQ:          return 2;
+        case TOKEN_XOR_EQ:         return 2;
+        case TOKEN_SHR_EQ:         return 2;
+        case TOKEN_SHL_EQ:         return 2;
+
         case TOKEN_MINUS_EQ:       return 2;
         case TOKEN_ARROW:          return 2;
 
@@ -4504,7 +4538,8 @@ assignment_lvalue(Ty *ty, Expr *e)
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
-                        //e->type = EXPRESSION_MATCH_ANY;
+                        // TODO: ??
+                        // e->type = EXPRESSION_MATCH_ANY;
                 }
                 /* fallthrough */
         case EXPRESSION_MATCH_NOT_NIL:
@@ -4516,6 +4551,7 @@ assignment_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
         case EXPRESSION_SPREAD:
+        case EXPRESSION_TEMPLATE_HOLE:
                 return e;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
@@ -5652,7 +5688,7 @@ parse_class_definition(Ty *ty)
                         stmt->type = STATEMENT_EXPRESSION;
                         stmt->expression = assignment;
 
-                        avP(init->body->statements, stmt);
+                        avI(init->body->statements, stmt, i);
                 }
         }
 

@@ -77,7 +77,7 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                         *(void **)p = (void *)v->blob->items;
                         break;
                 case VALUE_OBJECT:
-                        f = class_method(ty, v->class, "__ptr__");
+                        f = class_lookup_method_i(ty, v->class, NAMES.ptr);
                         if (f != NULL)
                                 *(void **)p = vm_call_method(ty, v, f, 0).ptr;
                         else
@@ -101,7 +101,7 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                         break;
 
                 case VALUE_OBJECT:
-                        f = class_method(ty, v->class, "__ptr__");
+                        f = class_lookup_method_i(ty, v->class, NAMES.ptr);
                         if (f != NULL)
                                 memcpy(p, vm_call_method(ty, v, f, 0).ptr, t->size);
                         else
@@ -359,6 +359,10 @@ cffi_new(Ty *ty, int argc, Value *kwargs)
         Value p = TPTR(t, aligned_alloc(align, size));
 #endif
 
+        if (p.ptr == NULL) {
+                return NIL;
+        }
+
         if (argc == 2) {
                 Value v = ARG(1);
                 store(ty, t, p.ptr, &v);
@@ -563,9 +567,9 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
                 }
         }
 
-        char buf[4096] __attribute__((aligned (_Alignof (max_align_t))));
+        char  buf[4096] __attribute__((aligned (_Alignof (max_align_t))));
         Value *out = NAMED("out");
-        void *ret;
+        void  *ret;
 
         if (out == NULL) {
                 ret = buf;

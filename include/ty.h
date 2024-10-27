@@ -57,6 +57,7 @@ typedef struct regex {
         char const *pattern;
         bool gc;
         bool detailed;
+        int ncap;
 } Regex;
 
 typedef struct {
@@ -382,6 +383,7 @@ typedef struct {
         int len;
         int match;
         int missing;
+        int ptr;
         int question;
         int slice;
         int str;
@@ -539,6 +541,7 @@ extern bool ColorProfile;
         X(TRY_TUPLE_MEMBER), \
         X(TRY_TAG_POP), \
         X(TRY_REGEX), \
+        X(ASSIGN_REGEX_MATCHES), \
         X(TRY_ASSIGN_NON_NIL), \
         X(BAD_MATCH), \
         X(BAD_CALL), \
@@ -600,35 +603,35 @@ enum {
 };
 #undef X
 
-#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,        .integer        = (k),                                                   .tags = 0 })
-#define REAL(f)                  ((Value){ .type = VALUE_REAL,           .real           = (f),                                                   .tags = 0 })
-#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                                   .tags = 0 })
-#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,          .array          = (a),                                                   .tags = 0 })
-#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),  .ids = (ns),                      .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
-#define DICT(d)                  ((Value){ .type = VALUE_DICT,           .dict           = (d),                                                   .tags = 0 })
-#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,          .regex          = (r),                                                   .tags = 0 })
-#define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                                                .tags = 0 })
-#define PTR(p)                   ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                                   .tags = 0 })
-#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,  .extra = (t),                    .tags = 0 })
-#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                                  .tags = 0 })
-#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (t),                    .tags = 0 })
-#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),                   .tags = 0 })
-#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                                   .tags = 0 })
-#define REF(p)                   ((Value){ .type = VALUE_REF,            .ptr            = (p),                                                   .tags = 0 })
-#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                                   .tags = 0 })
-#define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                                   .tags = 0 })
-#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                                  .tags = 0 })
-#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                                   .tags = 0 })
-#define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,      .namespace      = (ns),                                                  .tags = 0 })
-#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
-#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                                   .tags = 0 })
-#define THREAD(t)                ((Value){ .type = VALUE_THREAD,         .thread         = (t),                                                   .tags = 0 })
-#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),                     .tags = 0 })
-#define NIL                      ((Value){ .type = VALUE_NIL,                                                                                     .tags = 0 })
-#define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),     .tags = 0 })
-#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                  .tags = 0 })
-#define NONE                     ((Value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                  .tags = 0 })
+#define INTEGER(k)               ((Value){ .type = VALUE_INTEGER,        .integer        = (k),                                  .tags = 0 })
+#define REAL(f)                  ((Value){ .type = VALUE_REAL,           .real           = (f),                                  .tags = 0 })
+#define BOOLEAN(b)               ((Value){ .type = VALUE_BOOLEAN,        .boolean        = (b),                                  .tags = 0 })
+#define ARRAY(a)                 ((Value){ .type = VALUE_ARRAY,          .array          = (a),                                  .tags = 0 })
+#define TUPLE(vs, ns, n, gc)     ((Value){ .type = VALUE_TUPLE,          .items          = (vs), .count = (n),  .ids = (ns),     .tags = 0 })
+#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                  .tags = 0 })
+#define DICT(d)                  ((Value){ .type = VALUE_DICT,           .dict           = (d),                                  .tags = 0 })
+#define REGEX(r)                 ((Value){ .type = VALUE_REGEX,          .regex          = (r),                                  .tags = 0 })
+#define FUNCTION()               ((Value){ .type = VALUE_FUNCTION,                                                               .tags = 0 })
+#define PTR(p)                   ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,                  .tags = 0 })
+#define TPTR(t, p)               ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = NULL,  .extra = (t),   .tags = 0 })
+#define GCPTR(p, gcp)            ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp),                 .tags = 0 })
+#define TGCPTR(p, t, gcp)        ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (t),   .tags = 0 })
+#define EPTR(p, gcp, ep)         ((Value){ .type = VALUE_PTR,            .ptr            = (p),  .gcptr = (gcp), .extra = (ep),  .tags = 0 })
+#define BLOB(b)                  ((Value){ .type = VALUE_BLOB,           .blob           = (b),                                  .tags = 0 })
+#define REF(p)                   ((Value){ .type = VALUE_REF,            .ptr            = (p),                                  .tags = 0 })
+#define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                  .tags = 0 })
+#define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                  .tags = 0 })
+#define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                 .tags = 0 })
+#define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                  .tags = 0 })
+#define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,      .namespace      = (ns),                                 .tags = 0 })
+#define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),    .tags = 0 })
+#define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                  .tags = 0 })
+#define THREAD(t)                ((Value){ .type = VALUE_THREAD,         .thread         = (t),                                  .tags = 0 })
+#define BUILTIN_METHOD(n, m, t)  ((Value){ .type = VALUE_BUILTIN_METHOD, .builtin_method = (m),  .this   = (t),  .name = (n),    .tags = 0 })
+#define NIL                      ((Value){ .type = VALUE_NIL,                                                                    .tags = 0 })
+#define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),        .tags = 0 })
+#define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                     .tags = 0 })
+#define NONE                     ((Value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                     .tags = 0 })
 
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)
 #define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
@@ -891,7 +894,7 @@ RestoreScratch(Ty *ty, ScratchSave save)
 #define TDB           (ty->tdb)
 #define TDB_TY        ((Ty *)(ty->tdb)->ty)
 #define TDB_STATE     ((TDB == NULL) ? TDB_STATE_OFF : TDB->state)
-#define TDB_IS(x)     (TDB_STATE == TDB_STATE_ ## x)
+#define TDB_IS(x)     (TDB_STATE == (TDB_STATE_ ## x))
 #define TDB_IS_NOW(x) (TDB->state = TDB_STATE_ ## x)
 #define DEBUGGING     (!TDB_IS(OFF))
 

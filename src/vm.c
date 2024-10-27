@@ -93,13 +93,14 @@
 #define DOJUMP(c)    (IP = (c) + load_int((c)) + sizeof (int))
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
+  static _Thread_local Expr *expr;
   #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP - 1); LOG("%07ju:%s:%d:%d: " #i, (uintptr_t)(IP - 1) & 0xFFFFFF, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
 #else
   #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
-#define inline __attribute__((always_inline)) inline
+#define Inline __attribute__((always_inline)) inline
 
 #define MatchError do {                                          \
         top()->tags = tags_push(ty, top()->tags, TAG_MATCH_ERR); \
@@ -159,7 +160,6 @@ static SigfnStack sigfns;
 #define pushtarget(t, g) ((pushtarget)(ty, (t), (g)))
 
 #ifdef TY_ENABLE_PROFILING
-
 bool UseWallTime = false;
 FILE *ProfileOut = NULL;
 
@@ -335,7 +335,7 @@ InitializeTY(void)
         TY_BINARY_OPERATORS;
 #undef X
 
-#define X(op, id) intern(&xD.u_ops, id)
+#define X(op, id) intern(&xD.members, id)
         TY_UNARY_OPERATORS;
 #undef X
 
@@ -361,14 +361,6 @@ InitializeTy(Ty *ty)
         ty->prng[1] = splitmix64(&seed);
         ty->prng[2] = splitmix64(&seed);
         ty->prng[3] = splitmix64(&seed);
-}
-
-static void
-LockThreads(Ty *ty, int *threads, int n)
-{
-        for (int i = 0; i < n; ++i) {
-                TyMutexLock(MyGroup->ThreadLocks.items[threads[i]]);
-        }
 }
 
 inline static void
@@ -1027,15 +1019,16 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
                 char const *name = ((char *)f->info) + FUN_PARAM_NAMES;
-                for (int i = 0; i < np; ++i) {
+                for (int i = 0; i < np; ++i, name += strlen(name) + 1) {
                         if (i == irest || i == ikwargs) {
                                 continue;
                         }
+
                         Value *arg = dict_get_member(ty, kwargs.dict, name);
+
                         if (arg != NULL) {
                                 *local(ty, i) = *arg;
                         }
-                        name += strlen(name) + 1;
                 }
         }
 
@@ -1844,11 +1837,6 @@ ClassLookup:
 }
 
 inline static void
-DoUnaryOp(Ty *ty, int n, bool exec)
-{
-}
-
-inline static void
 DoGeq(Ty *ty)
 {
         Value v = BOOLEAN(value_compare(ty, top() - 1, top()) >= 0);
@@ -2473,10 +2461,6 @@ vm_exec(Ty *ty, char *code)
 
         BuiltinMethod *func;
 
-#ifndef TY_RELEASE
-        Expr *expr;
-#endif
-
         PopulateGlobals(ty);
 
 #ifdef TY_ENABLE_PROFILING
@@ -3060,17 +3044,27 @@ Throw:
                 CASE(TRY_REGEX)
                         READJUMP(jump);
                         READVALUE(s);
-                        v = REGEX((struct regex *) s);
+                        v = REGEX((Regex *) s);
                         value = value_apply_callable(ty, &v, top());
-                        vp = poptarget();
                         if (value.type == VALUE_NIL) {
                                 DOJUMP(jump);
-                        } else if (value.type == VALUE_STRING) {
-                                *vp = value;
                         } else {
-                                for (int i = 0; i < value.array->count; ++i) {
-                                        vp[i] = value.array->items[i];
+                                push(value);
+                        }
+                        break;
+                CASE(ASSIGN_REGEX_MATCHES)
+                        READVALUE(n);
+                        vp = poptarget();
+                        v = pop();
+                        if (v.type == VALUE_ARRAY) {
+                                for (i = 0; i < v.array->count; ++i) {
+                                        vp[i] = v.array->items[i];
                                 }
+                                while (i < n + 1) {
+                                        vp[i++] = NIL;
+                                }
+                        } else {
+                                *vp = v;
                         }
                         break;
                 CASE(ENSURE_DICT)
@@ -4818,6 +4812,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.len       = M_ID("__len__");
         NAMES.match     = M_ID("__match__");
         NAMES.missing   = M_ID("__missing__");
+        NAMES.ptr       = M_ID("__ptr__");
         NAMES.question  = M_ID("__question__");
         NAMES.slice     = M_ID("__slice__");
         NAMES.str       = M_ID("__str__");
@@ -4915,7 +4910,7 @@ vm_panic(Ty *ty, char const *fmt, ...)
 
                 can_yield = GetCurrentGenerator(ty) != NULL;
 Next:
-                IP = vvX(FRAMES)->ip;
+                IP = (char *)vvX(FRAMES)->ip;
         }
 
         if (n < sz && CompilationDepth(ty) > 1) {
@@ -5690,7 +5685,6 @@ StepInstruction(char const *ip)
 #define SKIPSTR() (ip += strlen(ip) + 1)
 #define SKIPVALUE(x) (memcpy(&x, ip, sizeof x), (ip += sizeof x))
 
-        Expr *expr;
         uintptr_t s;
         intmax_t k;
         bool b = false;
@@ -5860,6 +5854,9 @@ StepInstruction(char const *ip)
         CASE(TRY_REGEX)
                 SKIPVALUE(n);
                 SKIPVALUE(s);
+                break;
+        CASE(ASSIGN_REGEX_MATCHES)
+                SKIPVALUE(n);
                 break;
         CASE(ENSURE_DICT)
                 SKIPVALUE(n);
@@ -6038,29 +6035,19 @@ StepInstruction(char const *ip)
         CASE(GT)
         CASE(LEQ)
         CASE(GEQ)
-                break;
         CASE(CMP)
-                break;
         CASE(GET_TAG)
-                break;
         CASE(LEN)
-                break;
         CASE(PRE_INC)
-                break;
         CASE(POST_INC)
-                break;
         CASE(PRE_DEC)
-                break;
         CASE(POST_DEC)
-                break;
         CASE(MUT_ADD)
-                break;
         CASE(MUT_MUL)
-                break;
         CASE(MUT_DIV)
-                break;
         CASE(MUT_SUB)
                  break;
+        CASE(UNARY_OP)
         CASE(BINARY_OP)
                 SKIPVALUE(n);
                 break;
@@ -6307,8 +6294,6 @@ tdb_step_over(Ty *ty)
 {
         ty = TDB->host;
 
-        Expr *expr;
-
         switch (*IP) {
         CASE(HALT)
                 return true;
@@ -6353,8 +6338,6 @@ tdb_step_into(Ty *ty)
         int i;
 
         ty = TDB->host;
-
-        Expr *expr;
 
         switch (*IP) {
         CASE(CALL)

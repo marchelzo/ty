@@ -48,6 +48,8 @@ typedef struct token {
                 TOKEN_STAR,
                 TOKEN_DIV,
                 TOKEN_PERCENT,
+                TOKEN_SHL,
+                TOKEN_SHR,
                 TOKEN_NOT_EQ,
                 TOKEN_DBL_EQ,
                 TOKEN_PLUS_EQ,
