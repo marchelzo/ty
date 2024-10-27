@@ -186,7 +186,7 @@ execln(Ty *ty, char *line)
                 tdb_set_break(ty, code_of(v));
 
                 puts("Breakpoint set.");
-                
+
                 goto End;
         } else if (strncmp(line, "dis ", 4) == 0) {
                 dump(&buffer, "print(ty.disassemble(%s));", line + 4);

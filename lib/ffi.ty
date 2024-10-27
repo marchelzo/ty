@@ -284,7 +284,7 @@ function fun() {
     } else {
         // {
         next()
-        
+
         let funs = []
 
         while peek().type != '}' {
@@ -294,7 +294,7 @@ function fun() {
                 doc = "{doc ?? ''}{next().comment}"
             }
 
-            let st = lex.state()            
+            let st = lex.state()
             let rt = nexttype()
             let rt-string = lspan(st)
 
@@ -385,7 +385,7 @@ function strct() {
             $$[self.`<p>` = `<p>` ?? c.new($$ctype) $$],
             *[
                 $$[
-                    if $${name} in kws { 
+                    if $${name} in kws {
                         $$(ty.MemberAccess($$[ self $$], name)) = kws[$${name}]
                     }
                 $$] for {t, name, count} in members

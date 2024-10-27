@@ -3608,7 +3608,7 @@ prefix_user_op(Ty *ty)
         Expr *e = mkexpr(ty);
         e->type = EXPRESSION_UNARY_OP;
         e->uop = tok()->operator;
-        
+
         next();
 
         e->operand = parse_expr(ty, 9);
