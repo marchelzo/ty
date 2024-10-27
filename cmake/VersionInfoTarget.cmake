@@ -1,3 +1,29 @@
+#[=============================================================================[
+MIT License
+
+Copyright (c) 2024 Stephen Karavos
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+#]=============================================================================]
+#
+# source: <https://github.com/skaravos/CMakeVersionInfoTarget>
+#
 cmake_minimum_required(VERSION 3.10)
 
 #[=============================================================================[
@@ -5,25 +31,30 @@ cmake_minimum_required(VERSION 3.10)
     1. a C/C++ static library target that contains project version info
     2. [internal] a cmake custom target that queries version info at build time
 
-  add_version_info_target(NAME <unique_target_name>
-                         [LINK_TO targets...]
-                         [NAMESPACE namespaces...]
-                         [LANGUAGE language]
+  add_version_info_target(NAME unique_target_name
+                         [LINK_TO <target>...]
+                         [NAMESPACE <namespace>...]
+                         [LANGUAGE <language>]
                          [GIT_WORK_TREE <git_work_tree>]
                          [PROJECT_NAME <name>]
                          [PROJECT_VERSION <version>]
                         )
 
-  NAME <unique_target_name>  (required)
+  NAME <unique_target_name>
+    (required)
     provides the name of the static library target to create
     An alias target will also be created: 'VersionInfo::<unique_target_name>'
 
-  LINK_TO targets... (optional)
+  LINK_TO <target> ...
+    (optional)
     if provided, this library will be automatically linked to all given targets
 
-  NAMESPACE namespaces... (optional; default="VersionInfo")
+  NAMESPACE <namespace> ...
+    (optional; default="VersionInfo")
     if provided, the variables contained in the generated headers files will be
     enclosed in a namespace (C++) or have an underscore_separated prefix (C).
+    NOTE: to disable the default namespace entirely and declare the variables
+          in the global scope, you can provide an empty string as the namespace
 
       ex. (LANGUAGE=C++)
         # CMakeLists.txt
@@ -43,26 +74,59 @@ cmake_minimum_required(VERSION 3.10)
         extern const char* const Abc_XyZ_ProjectName;
         ...
 
-  LANGUAGE language (optional;default=CXX)
+  LANGUAGE <language>
+    (optional; default=CXX)
     specify the language used for the header and source files (C or CXX)
 
-  GIT_WORK_TREE (optional)
+  GIT_WORK_TREE <git_work_tree> (optional)
     if provided, git commit information will be queried at build-time
+    from the provided <git_work_tree>.
     NOTE: this option requires cmake to be able to find_package(Git)
+    NOTE: if the git_work_tree is provided as a relative path it will be
+          considered relative to the \${CMAKE_CURRENT_SOURCE_DIR}
 
-  PROJECT_NAME <name>  (optional; default=name of current project)
-    if provided, the target will use the given name instead of the current
-    project name.
+  PROJECT_NAME <name>
+    (optional; default=\${PROJECT_NAME})
+    if provided, the generated library will contain the given project <name>
+    instead of the current cmake project name taken from the \${PROJECT_NAME}
+    cmake variable
 
-  PROJECT_VERSION <version>  (optional; default=version of current project)
-    if provided, the target will use the given version instead of the current
-    project version.
-    NOTE: must be provided in the form <major[.minor[.patch[[.-]tweak]]>
-    NOTE: the 'tweak' version can be separated using either a period or a hyphen
-          e.g. both 1.0.1.1 and 1.0.1-rev1 are valid versions
+  PROJECT_VERSION <version>
+    (optional; default=\${PROJECT_VERSION})
+    if provided, the given version string will be parsed into sub-components
+    and inserted into the generated library.
+    NOTE: the version string must match the form
+          major[.minor[.patch[.tweak]]][-suffix]
+    NOTE: leading zeroes in version components are preserved
+    NOTE: the major, minor, patch and tweak versions must be numeric, but the
+          optional suffix can contain any characters that aren't double-quotes,
+          backslashes, percent signs, or whitespace.
+          e.g. the following are all valid versions
+            - 1
+            - 1.2
+            - 1.2.3
+            - 1.2.3.4
+            - 1.2.3.4-rc1
+            - 1.2.3-alpha0
+            - 1.2-beta#1
+            - 1-derang3d_suff!x-with^-$pec;a|-c#@ra[ters
 
 #]=============================================================================]
 function(add_version_info_target)
+
+  # --- functions for err messages
+
+  function (__invalid_argument ARG_NAME)
+    message(FATAL_ERROR "invalid argument: ${ARG_NAME}\n" ${ARGN})
+  endfunction()
+
+  function (__unknown_argument ARG_NAME)
+    message(FATAL_ERROR "unknown argument: ${ARG_NAME}\n" ${ARGN})
+  endfunction()
+
+  function (__missing_argument ARG_NAME)
+    message(FATAL_ERROR "missing argument: ${ARG_NAME}\n" ${ARGN})
+  endfunction()
 
   # --- parse arguments
 
@@ -80,67 +144,80 @@ function(add_version_info_target)
   message(STATUS "add_version_info_target('${arg_NAME}')")
 
   foreach(_arg IN LISTS arg_UNPARSED_ARGUMENTS)
-    message(WARNING "Unparsed argument: ${_arg}")
+    __unknown_argument("${_arg}")
+  endforeach()
+
+  foreach(_arg IN LISTS arg_KEYWORDS_MISSING_VALUES)
+    __invalid_argument("${_arg}" "cannot be provided without a value")
   endforeach()
 
   # --- validate arguments
 
   if (NOT arg_NAME)
-    message(FATAL_ERROR "NAME parameter is required")
+    __missing_argument("NAME"
+      "a unique name is always required for the version info target")
+  endif()
+
+  if (NOT arg_PROJECT_VERSION AND ("${PROJECT_VERSION}" STREQUAL ""))
+    __missing_argument("PROJECT_VERSION"
+      "is required because cmake variable \${PROJECT_VERSION} is not set")
   endif()
 
   if (TARGET ${arg_NAME})
-    message(WARNING "A target with this NAME[${arg_NAME}] already exists")
+    __invalid_argument("NAME" "provided value refers to a target that already exists [${arg_NAME}]")
   endif()
 
   foreach(_ns ${arg_NAMESPACE})
     if(NOT _ns MATCHES "^[_a-zA-Z][_a-zA-Z0-9]*$")
-      message(FATAL_ERROR "Provided NAMESPACE [${_ns}] isn't valid in C/C++")
+      __invalid_argument("NAMESPACE" "provided value isn't valid in C/C++ [${_ns}]")
     endif()
   endforeach()
 
   foreach(_tgt ${arg_LINK_TO})
     if (NOT TARGET ${_tgt})
-      message(FATAL_ERROR "LINK_TO parameter invalid: [${_tgt}] isn't a target")
+      __invalid_argument("LINK_TO" "provided value isn't an existing cmake target [${_tgt}]")
     endif()
   endforeach()
 
   if (arg_GIT_WORK_TREE)
-    if (NOT EXISTS "${arg_GIT_WORK_TREE}")
-      message(FATAL_ERROR "Provided GIT_WORK_TREE does not exist")
+    get_filename_component(_git_work_tree "${arg_GIT_WORK_TREE}" ABSOLUTE
+      BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+    if (NOT EXISTS "${_git_work_tree}")
+      __invalid_argument("GIT_WORK_TREE" "provided directory does not exist [${arg_GIT_WORK_TREE}]")
     endif()
     find_package(Git REQUIRED QUIET)
     if (NOT GIT_EXECUTABLE)
-      message(FATAL_ERROR "Parameter GIT_WORK_TREE provided but Git not found")
+      __invalid_argument("GIT_WORK_TREE" "'git' executable could not be found")
     endif()
     execute_process(
       COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
-      WORKING_DIRECTORY ${arg_GIT_WORK_TREE}
+      WORKING_DIRECTORY ${_git_work_tree}
       RESULT_VARIABLE _git_result
       OUTPUT_QUIET
       ERROR_QUIET
     )
     if (NOT _git_result EQUAL 0)
-      message(FATAL_ERROR "Provided GIT_WORK_TREE is not a git repository")
+      __invalid_argument("GIT_WORK_TREE"
+        "provided directory is not a git repository [${_git_work_tree}]")
     endif()
   endif()
 
-  if (arg_LANGUAGE AND (NOT "${arg_LANGUAGE}" MATCHES [[^(C|CXX|C\+\+)$]]))
-    message(FATAL_ERROR "Parameter LANGUAGE must be one of: C or CXX")
+  if (arg_LANGUAGE AND (NOT "${arg_LANGUAGE}" MATCHES [[^(C|CXX|C\+\+|CPP)$]]))
+    __invalid_argument("LANGUAGE" "must be one of: C or CXX")
   endif()
 
   # --- determine language to use
 
   if (${arg_LANGUAGE} STREQUAL "C")
     if (NOT CMAKE_C_COMPILER)
-      message(FATAL_ERROR "LANGUAGE C specified but no C compiler found")
+      __invalid_argument("LANGUAGE" "C specified but no C compiler found")
     endif()
     set(_language "C")
     set(_hdr_ext  "h")
     set(_src_ext  "c")
   else()
     if (NOT CMAKE_CXX_COMPILER)
-      message(FATAL_ERROR "LANGUAGE CXX specified but no CXX compiler found")
+      __invalid_argument("LANGUAGE" "CXX specified but no CXX compiler found")
     endif()
     set(_language "CXX")
     set(_hdr_ext  "hpp")
@@ -163,20 +240,23 @@ function(add_version_info_target)
   # --- determine version to use
 
   if (arg_PROJECT_VERSION)
-    string(REGEX MATCH [[([0-9]+)(\.([0-9]+)(\.([0-9]+)([.-]([A-Za-z0-9]+))?)?)?]]
-           _matched "${arg_PROJECT_VERSION}")
-    set(_version       "${CMAKE_MATCH_0}")
-    set(_version_major "${CMAKE_MATCH_1}")
-    set(_version_minor "${CMAKE_MATCH_3}")
-    set(_version_patch "${CMAKE_MATCH_5}")
-    set(_version_tweak "${CMAKE_MATCH_7}")
+    set(_project_version ${arg_PROJECT_VERSION})
   else()
-    set(_version       ${PROJECT_VERSION})
-    set(_version_major ${PROJECT_VERSION_MAJOR})
-    set(_version_minor ${PROJECT_VERSION_MINOR})
-    set(_version_patch ${PROJECT_VERSION_PATCH})
-    set(_version_tweak ${PROJECT_VERSION_TWEAK})
+    set(_project_version ${PROJECT_VERSION})
   endif()
+
+  set(_suffix_ch_set "^\n\t \%\"\\") # <-- no whitespace, percent, double-quote, or backslash
+  if (NOT "${_project_version}" MATCHES
+          "^([0-9]+)(\\.([0-9]+)(\\.([0-9]+)(\\.([0-9]+))?)?)?(-([${_suffix_ch_set}]+))?$")
+    __invalid_argument("PROJECT_VERSION"
+      "version must be of the form: ^major[.minor[.patch[.tweak]]][-suffix]$")
+  endif()
+  set(_version        "${CMAKE_MATCH_0}")
+  set(_version_major  "${CMAKE_MATCH_1}")
+  set(_version_minor  "${CMAKE_MATCH_3}")
+  set(_version_patch  "${CMAKE_MATCH_5}")
+  set(_version_tweak  "${CMAKE_MATCH_7}")
+  set(_version_suffix "${CMAKE_MATCH_9}")
 
   # --- determine project name
 
@@ -224,29 +304,30 @@ function(add_version_info_target)
 
   # create header and source file templates (that will be configured at build)
   __create_vinfo_header_template(
-    TEMPLATE_FILEPATH       ${_vinfo_hdr_in}
-    TARGET_NAME             ${arg_NAME}
-    LANGUAGE                ${_language}
-    NAMESPACE_ACCESS_PREFIX ${_namespace_access_prefix}
-    NAMESPACE_SCOPE_OPENING ${_namespace_scope_opening}
-    NAMESPACE_SCOPE_CLOSING ${_namespace_scope_closing}
-    GIT_WORK_TREE           ${arg_GIT_WORK_TREE}
+    TEMPLATE_FILEPATH       "${_vinfo_hdr_in}"
+    TARGET_NAME             "${arg_NAME}"
+    LANGUAGE                "${_language}"
+    NAMESPACE_ACCESS_PREFIX "${_namespace_access_prefix}"
+    NAMESPACE_SCOPE_OPENING "${_namespace_scope_opening}"
+    NAMESPACE_SCOPE_CLOSING "${_namespace_scope_closing}"
+    GIT_WORK_TREE           "${_git_work_tree}"
   )
   __create_vinfo_source_template(
-    TEMPLATE_FILEPATH       ${_vinfo_src_in}
-    TARGET_NAME             ${arg_NAME}
-    LANGUAGE                ${_language}
-    PROJECT_NAME            ${_project_name}
-    PROJECT_VERSION         ${_version}
-    PROJECT_VERSION_MAJOR   ${_version_major}
-    PROJECT_VERSION_MINOR   ${_version_minor}
-    PROJECT_VERSION_PATCH   ${_version_patch}
-    PROJECT_VERSION_TWEAK   ${_version_tweak}
-    NAMESPACE_ACCESS_PREFIX ${_namespace_access_prefix}
-    NAMESPACE_SCOPE_OPENING ${_namespace_scope_opening}
-    NAMESPACE_SCOPE_CLOSING ${_namespace_scope_closing}
-    NAMESPACE_SCOPE_RESOLVE ${_namespace_scope_resolve}
-    GIT_WORK_TREE           ${arg_GIT_WORK_TREE}
+    TEMPLATE_FILEPATH       "${_vinfo_src_in}"
+    TARGET_NAME             "${arg_NAME}"
+    LANGUAGE                "${_language}"
+    PROJECT_NAME            "${_project_name}"
+    PROJECT_VERSION         "${_version}"
+    PROJECT_VERSION_MAJOR   "${_version_major}"
+    PROJECT_VERSION_MINOR   "${_version_minor}"
+    PROJECT_VERSION_PATCH   "${_version_patch}"
+    PROJECT_VERSION_TWEAK   "${_version_tweak}"
+    PROJECT_VERSION_SUFFIX  "${_version_suffix}"
+    NAMESPACE_ACCESS_PREFIX "${_namespace_access_prefix}"
+    NAMESPACE_SCOPE_OPENING "${_namespace_scope_opening}"
+    NAMESPACE_SCOPE_CLOSING "${_namespace_scope_closing}"
+    NAMESPACE_SCOPE_RESOLVE "${_namespace_scope_resolve}"
+    GIT_WORK_TREE           "${_git_work_tree}"
   )
 
   # we use file(APPEND ...) here to generate a temporary copies of the source
@@ -268,7 +349,7 @@ function(add_version_info_target)
       -D_VINFO_HDR=${_vinfo_hdr}
       -D_VINFO_SRC_IN=${_vinfo_src_in}
       -D_VINFO_SRC=${_vinfo_src}
-      -D_GIT_WORK_TREE=${arg_GIT_WORK_TREE}
+      -D_GIT_WORK_TREE=${_git_work_tree}
       -D_BUILD_TYPE=$<CONFIG>
       -P ${_vinfo_query_cmake}
     COMMENT
@@ -327,20 +408,10 @@ endfunction()
                             INTERNAL FUNCTION
 #]=============================================================================]
 function(__create_vinfo_header_template)
-
-  # extract TARGET_NAME from argument list
-  cmake_parse_arguments(PARSE_ARGV 0 arg "" "TARGET_NAME" "")
-
-  # if the given arguments haven't changed since the last call, do nothing
-  string(SHA256 _argn_hash "${ARGN}")
-  string(MAKE_C_IDENTIFIER "${arg_TARGET_NAME}" _tn)
-  if ("${_argn_hash}" STREQUAL "${_CREATE_VINFO_HEADER_TEMPLATE_LASTHASH_${_tn}}")
-    return()
-  endif()
-
   # --- parse arguments
 
   set(_singleargs
+    TARGET_NAME
     TEMPLATE_FILEPATH        # absolute path to generated header file
     LANGUAGE                 # "C" or "CXX"
     NAMESPACE_ACCESS_PREFIX  # variable prefix   (only used in C)
@@ -348,7 +419,14 @@ function(__create_vinfo_header_template)
     NAMESPACE_SCOPE_CLOSING  # namespace closing (only used in C++)
     GIT_WORK_TREE            # if-defined, insert git related variables
   )
-  cmake_parse_arguments(arg "" "${_singleargs}" "" ${arg_UNPARSED_ARGUMENTS})
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "${_singleargs}" "")
+
+  # if the given arguments haven't changed since the last call, do nothing
+  string(SHA256 _argn_hash "${ARGN}")
+  string(MAKE_C_IDENTIFIER "${arg_TARGET_NAME}" _tn)
+  if ("${_argn_hash}" STREQUAL "${_CREATE_VINFO_HEADER_TEMPLATE_LASTHASH_${_tn}}")
+    return()
+  endif()
 
   # --- setup language-specific template features
 
@@ -364,7 +442,7 @@ function(__create_vinfo_header_template)
 
   # --- setup git-specific template variables
 
-  if (arg_GIT_WORK_TREE)
+  if (_git_work_tree)
     if ("${arg_LANGUAGE}" STREQUAL "C")
       set(_git_var_uncommittedchanges
           "extern const int         ${_namespace_prefix}GitUncommittedChanges; // 0 - false, 1 - true")
@@ -393,6 +471,7 @@ extern const char* const ${_namespace_prefix}ProjectVersionMajor;
 extern const char* const ${_namespace_prefix}ProjectVersionMinor;
 extern const char* const ${_namespace_prefix}ProjectVersionPatch;
 extern const char* const ${_namespace_prefix}ProjectVersionTweak;
+extern const char* const ${_namespace_prefix}ProjectVersionSuffix;
 extern const char* const ${_namespace_prefix}CompilerId;
 extern const char* const ${_namespace_prefix}CompilerVersion;
 extern const char* const ${_namespace_prefix}Architecture; // x86  x64
@@ -419,19 +498,10 @@ endfunction() # __create_vinfo_header_template
 #]=============================================================================]
 function(__create_vinfo_source_template)
 
-  # extract TARGET_NAME from argument list
-  cmake_parse_arguments(PARSE_ARGV 0 arg "" "TARGET_NAME" "")
-
-  # if the given arguments haven't changed since the last call, do nothing
-  string(SHA256 _argn_hash "${ARGN}")
-  string(MAKE_C_IDENTIFIER "${arg_TARGET_NAME}" _tn)
-  if ("${_argn_hash}" STREQUAL "${_CREATE_VINFO_SOURCE_TEMPLATE_LASTHASH_${_tn}}")
-    return()
-  endif()
-
   # --- parse arguments
 
   set(_singleargs
+    TARGET_NAME
     TEMPLATE_FILEPATH       # absolute path to generated header file
     LANGUAGE                # "C" or "CXX"
     PROJECT_NAME            # self-explanatory
@@ -440,13 +510,21 @@ function(__create_vinfo_source_template)
     PROJECT_VERSION_MINOR   # self-explanatory
     PROJECT_VERSION_PATCH   # self-explanatory
     PROJECT_VERSION_TWEAK   # self-explanatory
+    PROJECT_VERSION_SUFFIX  # self-explanatory
     NAMESPACE_ACCESS_PREFIX # self-explanatory (only used in C)
     NAMESPACE_SCOPE_OPENING # self-explanatory (only used in C++)
     NAMESPACE_SCOPE_CLOSING # self-explanatory (only used in C++)
     NAMESPACE_SCOPE_RESOLVE # self-explanatory (only used in C++)
     GIT_WORK_TREE           # if-defined, insert git related variables
   )
-  cmake_parse_arguments(arg "" "${_singleargs}" "" ${arg_UNPARSED_ARGUMENTS})
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "${_singleargs}" "")
+
+  # if the given arguments haven't changed since the last call, do nothing
+  string(SHA256 _argn_hash "${ARGN}")
+  string(MAKE_C_IDENTIFIER "${arg_TARGET_NAME}" _tn)
+  if ("${_argn_hash}" STREQUAL "${_CREATE_VINFO_SOURCE_TEMPLATE_LASTHASH_${_tn}}")
+    return()
+  endif()
 
   # --- setup language-specific template features
 
@@ -499,16 +577,17 @@ function(__create_vinfo_source_template)
 #include \"${arg_TARGET_NAME}/VersionInfo.${_extension}\"
 
 ${_namespace_opening}
-const char* const ${_namespace_prefix}ProjectName         = \"${arg_PROJECT_NAME}\";
-const char* const ${_namespace_prefix}ProjectVersion      = \"${arg_PROJECT_VERSION}\";
-const char* const ${_namespace_prefix}ProjectVersionMajor = \"${arg_PROJECT_VERSION_MAJOR}\";
-const char* const ${_namespace_prefix}ProjectVersionMinor = \"${arg_PROJECT_VERSION_MINOR}\";
-const char* const ${_namespace_prefix}ProjectVersionPatch = \"${arg_PROJECT_VERSION_PATCH}\";
-const char* const ${_namespace_prefix}ProjectVersionTweak = \"${arg_PROJECT_VERSION_TWEAK}\";
-const char* const ${_namespace_prefix}CompilerId          = \"${_compiler_id}\";
-const char* const ${_namespace_prefix}CompilerVersion     = \"${_compiler_version}\";
-const char* const ${_namespace_prefix}Architecture        = \"${CMAKE_SYSTEM_PROCESSOR}\";
-const char* const ${_namespace_prefix}BuildType           = \"@_BUILD_TYPE@\";
+const char* const ${_namespace_prefix}ProjectName          = \"${arg_PROJECT_NAME}\";
+const char* const ${_namespace_prefix}ProjectVersion       = \"${arg_PROJECT_VERSION}\";
+const char* const ${_namespace_prefix}ProjectVersionMajor  = \"${arg_PROJECT_VERSION_MAJOR}\";
+const char* const ${_namespace_prefix}ProjectVersionMinor  = \"${arg_PROJECT_VERSION_MINOR}\";
+const char* const ${_namespace_prefix}ProjectVersionPatch  = \"${arg_PROJECT_VERSION_PATCH}\";
+const char* const ${_namespace_prefix}ProjectVersionTweak  = \"${arg_PROJECT_VERSION_TWEAK}\";
+const char* const ${_namespace_prefix}ProjectVersionSuffix = \"${arg_PROJECT_VERSION_SUFFIX}\";
+const char* const ${_namespace_prefix}CompilerId           = \"${_compiler_id}\";
+const char* const ${_namespace_prefix}CompilerVersion      = \"${_compiler_version}\";
+const char* const ${_namespace_prefix}Architecture         = \"${CMAKE_SYSTEM_PROCESSOR}\";
+const char* const ${_namespace_prefix}BuildType            = \"@_BUILD_TYPE@\";
 
 ${_git_var_uncommittedchanges}
 ${_git_var_gitcommithash}
@@ -535,6 +614,7 @@ const char* const ${_namespace_prefix}VersionSummaryDetailed =
 \"\\nProjectVersionMinor='${arg_PROJECT_VERSION_MINOR}'\"
 \"\\nProjectVersionPatch='${arg_PROJECT_VERSION_PATCH}'\"
 \"\\nProjectVersionTweak='${arg_PROJECT_VERSION_TWEAK}'\"
+\"\\nProjectVersionSuffix='${arg_PROJECT_VERSION_SUFFIX}'\"
 \"\\nCompilerId='${_compiler_id}'\"
 \"\\nCompilerVersion='${_compiler_version}'\"
 \"\\nArchitecture='${CMAKE_SYSTEM_PROCESSOR}'\"
