@@ -5,9 +5,9 @@ import ty.parse (expr, stmt, fail)
 import ty.lex as lex
 import ptr (typed)
 
-let cifs = Sync(%{})
+pub cifs = Sync(%{})
 
-function getCif(rt, *aTypes, nFixed) {
+pub function getCif(rt, *aTypes, nFixed) {
     let signature = (rt, aTypes, nFixed)
 
     sync!(cifs) {
@@ -382,25 +382,13 @@ function strct() {
         name: 'init',
         params: [ty.Param(name: '<p>'), ty.Kwargs('kws')],
         body: ty.Multi([
-            ty.Assign(
-                ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
-                ty.Wtf(
-                    ty.Id(name: '<p>'),
-                    ty.Call(
-                        func: ty.Value(c.new),
-                        args: [ty.Arg(arg: ctype)]
-                    )
-                )
-            ),
+            $$[self.`<p>` = `<p>` ?? c.new($$ctype) $$],
             *[
-                ty.If(
-                    [ty.In(ty.String(name), $$[ kws $$])],
-                    ty.Assign(
-                        ty.MemberAccess(ty.Id(name: 'self'), name),
-                        $$[kws[$$(ty.String(name))]$$]
-                    ),
-                    nil
-                ) for {t, name, count} in members
+                $$[
+                    if $${name} in kws { 
+                        $$(ty.MemberAccess($$[ self $$], name)) = kws[$${name}]
+                    }
+                $$] for {t, name, count} in members
             ]
         ])
     )

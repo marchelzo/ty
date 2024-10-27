@@ -410,7 +410,6 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
                 n = ARG(1).integer;
         case 1:
                 if (ARG(0).type != VALUE_INTEGER) {
-                        XLOG("Array.sort(): expected integer but got: %s", VSC(&ARG(0)));
                         zP("Array.sort(): expected integer but got: %s", VSC(&ARG(0)));
                 }
                 i = ARG(0).integer;

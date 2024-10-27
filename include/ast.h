@@ -160,6 +160,9 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(UNARY_OP), \
         X(BIT_AND), \
         X(BIT_OR), \
+        X(XOR), \
+        X(SHL), \
+        X(SHR), \
         X(MATCH_ANY), \
         X(MATCH_NOT_NIL), \
         X(MATCH_REST), \
@@ -415,7 +418,6 @@ struct statement {
         Location start;
         Location end;
         char const *filename;
-
         Expr *xfunc;
         Scope *xscope;
 

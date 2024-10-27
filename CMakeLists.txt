@@ -192,7 +192,7 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::gumbo::gumbo
     unofficial::pcre::pcre
     utf8proc
-    $<$<NOT:$<BOOL:${WIN32}>>:${CMAKE_DL_LIBS}>
+    $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>

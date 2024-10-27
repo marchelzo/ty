@@ -39,6 +39,15 @@ scope_name(Ty *ty, Scope const *s)
 }
 #endif
 
+inline static void
+initsym(Symbol *s)
+{
+        memset(s, 0, sizeof *s);
+        s->tag   = -1;
+        s->class = -1;
+        s->ci    = -1;
+}
+
 inline static Symbol *
 local_lookup(Scope const *s, char const *id)
 {
@@ -172,8 +181,8 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
         int i = h % SYMBOL_TABLE_SIZE;
 
         Symbol *sym = amA(sizeof *sym);
-        *sym = (Symbol){0};
 
+        initsym(sym);
         sym->identifier = id;
         sym->namespace = true;
         sym->scope = ns;
@@ -192,19 +201,10 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
 
         Symbol *sym = amA(sizeof *sym);
 
+        initsym(sym);
         sym->identifier = id;
-        sym->doc = NULL;
         sym->symbol = SYMBOL++;
-        sym->public = false;
-        sym->cnst = false;
-        sym->macro = false;
-        sym->fun_macro = false;
-        sym->tag = -1;
-        sym->class = -1;
         sym->scope = s;
-        sym->captured = false;
-        sym->ci = -1;
-        sym->namespace = false;
 
                       // s->function == global, or
         sym->global = s->function->parent == NULL ||
