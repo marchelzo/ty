@@ -721,6 +721,8 @@ Coerce:
 
         a = ARG(0);
         switch (a.type) {
+        default:
+                return NIL;
         case VALUE_INTEGER:                                               return a;
         case VALUE_REAL:    v.integer = a.real;                           return v;
         case VALUE_BOOLEAN: v.integer = a.boolean;                        return v;
@@ -735,7 +737,6 @@ Coerce:
                 memcpy(buffer, a.string, a.bytes);
                 buffer[a.bytes] = '\0';
                 goto String;
-        default:                                                          return NIL;
         }
 
 CustomBase:
@@ -754,9 +755,11 @@ CustomBase:
 
         if (s.bytes >= sizeof buffer)
                 goto TooBig;
+
         memcpy(buffer, s.string, s.bytes);
         buffer[s.bytes] = '\0';
 
+String:
         /*
          * The 0b syntax for base-2 integers is not standard C, so the strto* family of
          * functions doesn't recognize it. Thus, we must handle it specially here.
@@ -766,14 +769,12 @@ CustomBase:
                 string += 2;
         }
 
-String:
-
         errno = 0;
 
         char *end;
         intmax_t n = strtoimax(string, &end, base);
 
-        if (errno != 0 || *end != '\0')
+        if (errno != 0 || *end != '\0' || end == string)
                 return NIL;
 
         return INTEGER(n);
