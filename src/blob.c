@@ -302,10 +302,10 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
         int n;
 
         if (argc > 0 && ARG(0).type != VALUE_INTEGER)
-                zP("the first argument to blob.str() must be an integer");
+                zP("Blob.str(): expected integer but got: %s", VSC(&ARG(0)));
 
         if (argc > 1 && ARG(1).type != VALUE_INTEGER)
-                zP("the second argument to blob.str() must be an integer");
+                zP("Blob.str(): expected integer but got: %s", VSC(&ARG(1)));
 
         switch (argc) {
         case 0:
@@ -314,7 +314,7 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
                 break;
         case 1:
                 start = ARG(0).integer;
-                n = blob->blob->count - start;
+                n = INT_MAX;
                 break;
         case 2:
                 start = ARG(0).integer;
@@ -324,8 +324,14 @@ blob_str(Ty *ty, Value *blob, int argc, Value *kwargs)
                 zP("blob.str() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
-        if (start < 0 || n < 0 || (n + start) > blob->blob->count)
-                zP("invalid arguments to blob.str()");
+        if (start < 0) {
+                start += blob->blob->count;
+        }
+
+        n = max(0, min(n, blob->blob->count - start));
+
+        if (start < 0 || (n + start) > blob->blob->count)
+                zP("Blob.str(): invalid argument(s): start=%d, n=%d, size=%zu", start, n, blob->blob->count);
 
         char *s = value_string_alloc(ty, 2 * n);
         int i = 0;
@@ -358,10 +364,10 @@ blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
         int n;
 
         if (argc > 0 && ARG(0).type != VALUE_INTEGER)
-                zP("the first argument to blob.str() must be an integer");
+                zP("Blob.str!(): expected integer but got: %s", VSC(&ARG(0)));
 
         if (argc > 1 && ARG(1).type != VALUE_INTEGER)
-                zP("the second argument to blob.str() must be an integer");
+                zP("Blob.str!(): expected integer but got: %s", VSC(&ARG(1)));
 
         switch (argc) {
         case 0:
@@ -370,18 +376,24 @@ blob_str_unsafe(Ty *ty, Value *blob, int argc, Value *kwargs)
                 break;
         case 1:
                 start = ARG(0).integer;
-                n = blob->blob->count - start;
+                n = INT_MAX;
                 break;
         case 2:
                 start = ARG(0).integer;
                 n = ARG(1).integer;
                 break;
         default:
-                zP("blob.str() expects 0, 1, or 2 arguments but got %d", argc);
+                zP("blob.str!() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
-        if (start < 0 || n < 0 || (n + start) > blob->blob->count)
-                zP("invalid arguments to blob.str()");
+        if (start < 0) {
+                start += blob->blob->count;
+        }
+
+        n = max(0, min(n, blob->blob->count - start));
+
+        if (start < 0 || (n + start) > blob->blob->count)
+                zP("Blob.str!(): invalid argument(s): start=%d, n=%d, size=%zu", start, n, blob->blob->count);
 
         return vSs((char const *)blob->blob->items + start, n);
 }
