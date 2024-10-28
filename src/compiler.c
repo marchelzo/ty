@@ -1255,7 +1255,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 e->type = EXPRESSION_IDENTIFIER;
                 e->identifier = id;
                 e->namespace = left;
-                e->module = NULL;
+                e->module = "";
                 e->symbol = sym;
                 e->xscope = (Scope *)scope;
                 e->xfunc = state.func;
@@ -1830,9 +1830,6 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
         fixup_access(ty, scope, e, true);
         try_symbolize_application(ty, scope, e);
 
-        if (e->xscope != NULL)
-                goto End;
-
         if (e->type == EXPRESSION_IDENTIFIER && is_tag(ty, e))
                 goto Tag;
 
@@ -1858,11 +1855,20 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 ) {
                         e->type = EXPRESSION_MUST_EQUAL;
 
-                        Scope *s = (e->module == NULL || *e->module == '\0')
-                                 ? scope
-                                 : get_import_scope(ty, e->module);
+                        // XXX: fixup_access() left us with an IDENTIFIER which is
+                        //      already resolved to a symbol. Ideally we wouldn't
+                        //      even need to be aware of that here--we should just
+                        //      be able to call getymbol() again below and arrive
+                        //      at the same result. But namespaces are kind of a
+                        //      hack  right now  so we  need to treat  this as a
+                        //      special case.
+                        if (e->namespace == NULL) {
+                                Scope *s = (e->module == NULL || *e->module == '\0')
+                                         ? scope
+                                         : get_import_scope(ty, e->module);
 
-                        e->symbol = getsymbol(ty, s, e->identifier, NULL);
+                                e->symbol = getsymbol(ty, s, e->identifier, NULL);
+                        }
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
