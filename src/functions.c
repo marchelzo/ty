@@ -6825,7 +6825,7 @@ BUILTIN_FUNCTION(ty_disassemble)
 
                 break;
         default:
-                zP("I don't know how to dissasemble that yet :( %s", VSC(&what));
+                zP("I don't know how to disassemble that yet :( %s", VSC(&what));
         }
 
         byte_vector text = {0};
