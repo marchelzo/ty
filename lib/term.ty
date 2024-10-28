@@ -1,0 +1,507 @@
+import os (..)
+import termios (..)
+import help (pretty-print as pp)
+import unibi
+
+pub namespace mod {
+    pub SHIFT = 1 << 0
+    pub ALT   = 1 << 1
+    pub CTRL  = 1 << 2
+    pub SUPER = 1 << 3
+}
+
+pub namespace event {
+    tag Text;
+    tag Mouse;
+    tag Key {
+        nice-name() {
+            nice-key-name(self)
+        }
+    }
+
+}
+
+pub namespace keys {
+    pub ESCAPE = 'ESCAPE'
+    pub ENTER = 'ENTER'
+    pub TAB = 'TAB'
+    pub BACKSPACE = 'BACKSPACE'
+    pub INSERT = 'INSERT'
+    pub DELETE = 'DELETE'
+    pub LEFT = 'LEFT'
+    pub RIGHT = 'RIGHT'
+    pub UP = 'UP'
+    pub DOWN = 'DOWN'
+    pub PAGE_UP = 'PAGE_UP'
+    pub PAGE_DOWN = 'PAGE_DOWN'
+    pub HOME = 'HOME'
+    pub END = 'END'
+    pub CAPS_LOCK = 'CAPS_LOCK'
+    pub SCROLL_LOCK = 'SCROLL_LOCK'
+    pub NUM_LOCK = 'NUM_LOCK'
+    pub PRINT_SCREEN = 'PRINT_SCREEN'
+    pub PAUSE = 'PAUSE'
+    pub MENU = 'MENU'
+    pub F1 = 'F1'
+    pub F2 = 'F2'
+    pub F3 = 'F3'
+    pub F4 = 'F4'
+    pub F5 = 'F5'
+    pub F6 = 'F6'
+    pub F7 = 'F7'
+    pub F8 = 'F8'
+    pub F9 = 'F9'
+    pub F10 = 'F10'
+    pub F11 = 'F11'
+    pub F12 = 'F12'
+    pub F13 = 'F13'
+    pub F14 = 'F14'
+    pub F15 = 'F15'
+    pub F16 = 'F16'
+    pub F17 = 'F17'
+    pub F18 = 'F18'
+    pub F19 = 'F19'
+    pub F20 = 'F20'
+    pub F21 = 'F21'
+    pub F22 = 'F22'
+    pub F23 = 'F23'
+    pub F24 = 'F24'
+    pub F25 = 'F25'
+    pub F26 = 'F26'
+    pub F27 = 'F27'
+    pub F28 = 'F28'
+    pub F29 = 'F29'
+    pub F30 = 'F30'
+    pub F31 = 'F31'
+    pub F32 = 'F32'
+    pub F33 = 'F33'
+    pub F34 = 'F34'
+    pub F35 = 'F35'
+    pub KP_0 = 'KP_0'
+    pub KP_1 = 'KP_1'
+    pub KP_2 = 'KP_2'
+    pub KP_3 = 'KP_3'
+    pub KP_4 = 'KP_4'
+    pub KP_5 = 'KP_5'
+    pub KP_6 = 'KP_6'
+    pub KP_7 = 'KP_7'
+    pub KP_8 = 'KP_8'
+    pub KP_9 = 'KP_9'
+    pub KP_DECIMAL = 'KP_DECIMAL'
+    pub KP_DIVIDE = 'KP_DIVIDE'
+    pub KP_MULTIPLY = 'KP_MULTIPLY'
+    pub KP_SUBTRACT = 'KP_SUBTRACT'
+    pub KP_ADD = 'KP_ADD'
+    pub KP_ENTER = 'KP_ENTER'
+    pub KP_EQUAL = 'KP_EQUAL'
+    pub KP_SEPARATOR = 'KP_SEPARATOR'
+    pub KP_LEFT = 'KP_LEFT'
+    pub KP_RIGHT = 'KP_RIGHT'
+    pub KP_UP = 'KP_UP'
+    pub KP_DOWN = 'KP_DOWN'
+    pub KP_PAGE_UP = 'KP_PAGE_UP'
+    pub KP_PAGE_DOWN = 'KP_PAGE_DOWN'
+    pub KP_HOME = 'KP_HOME'
+    pub KP_END = 'KP_END'
+    pub KP_INSERT = 'KP_INSERT'
+    pub KP_DELETE = 'KP_DELETE'
+    pub KP_BEGIN = 'KP_BEGIN'
+    pub MEDIA_PLAY = 'MEDIA_PLAY'
+    pub MEDIA_PAUSE = 'MEDIA_PAUSE'
+    pub MEDIA_PLAY_PAUSE = 'MEDIA_PLAY_PAUSE'
+    pub MEDIA_REVERSE = 'MEDIA_REVERSE'
+    pub MEDIA_STOP = 'MEDIA_STOP'
+    pub MEDIA_FAST_FORWARD = 'MEDIA_FAST_FORWARD'
+    pub MEDIA_REWIND = 'MEDIA_REWIND'
+    pub MEDIA_TRACK_NEXT = 'MEDIA_TRACK_NEXT'
+    pub MEDIA_TRACK_PREVIOUS = 'MEDIA_TRACK_PREVIOUS'
+    pub MEDIA_RECORD = 'MEDIA_RECORD'
+    pub LOWER_VOLUME = 'LOWER_VOLUME'
+    pub RAISE_VOLUME = 'RAISE_VOLUME'
+    pub MUTE_VOLUME = 'MUTE_VOLUME'
+    pub LEFT_SHIFT = 'LEFT_SHIFT'
+    pub LEFT_CONTROL = 'LEFT_CONTROL'
+    pub LEFT_ALT = 'LEFT_ALT'
+    pub LEFT_SUPER = 'LEFT_SUPER'
+    pub LEFT_HYPER = 'LEFT_HYPER'
+    pub LEFT_META = 'LEFT_META'
+    pub RIGHT_SHIFT = 'RIGHT_SHIFT'
+    pub RIGHT_CONTROL = 'RIGHT_CONTROL'
+    pub RIGHT_ALT = 'RIGHT_ALT'
+    pub RIGHT_SUPER = 'RIGHT_SUPER'
+    pub RIGHT_HYPER = 'RIGHT_HYPER'
+    pub RIGHT_META = 'RIGHT_META'
+    pub ISO_LEVEL3_SHIFT = 'ISO_LEVEL3_SHIFT'
+    pub ISO_LEVEL5_SHIFT = 'ISO_LEVEL5_SHIFT'
+}
+
+let function-keys = %{
+    "27u":    keys.ESCAPE,
+    "13u":    keys.ENTER,
+    "9u":     keys.TAB,
+    "127u":   keys.BACKSPACE,
+    "2~":     keys.INSERT,
+    "3~":     keys.DELETE,
+    "1D":     keys.LEFT,
+    "1C":     keys.RIGHT,
+    "1A":     keys.UP,
+    "1B":     keys.DOWN,
+    "5~":     keys.PAGE_UP,
+    "6~":     keys.PAGE_DOWN,
+    "1H":     keys.HOME,
+    "7~":     keys.HOME,
+    "1F":     keys.END,
+    "8~":     keys.END,
+    "57358u": keys.CAPS_LOCK,
+    "57359u": keys.SCROLL_LOCK,
+    "57360u": keys.NUM_LOCK,
+    "57361u": keys.PRINT_SCREEN,
+    "57362u": keys.PAUSE,
+    "57363u": keys.MENU,
+    "1P":     keys.F1,
+    "11~":    keys.F1,
+    "1Q":     keys.F2,
+    "12~":    keys.F2,
+    "13~":    keys.F3,
+    "1S":     keys.F4,
+    "14~":    keys.F4,
+    "15~":    keys.F5,
+    "17~":    keys.F6,
+    "18~":    keys.F7,
+    "19~":    keys.F8,
+    "20~":    keys.F9,
+    "21~":    keys.F10,
+    "23~":    keys.F11,
+    "24~":    keys.F12,
+    "57376u": keys.F13,
+    "57377u": keys.F14,
+    "57378u": keys.F15,
+    "57379u": keys.F16,
+    "57380u": keys.F17,
+    "57381u": keys.F18,
+    "57382u": keys.F19,
+    "57383u": keys.F20,
+    "57384u": keys.F21,
+    "57385u": keys.F22,
+    "57386u": keys.F23,
+    "57387u": keys.F24,
+    "57388u": keys.F25,
+    "57389u": keys.F26,
+    "57390u": keys.F27,
+    "57391u": keys.F28,
+    "57392u": keys.F29,
+    "57393u": keys.F30,
+    "57394u": keys.F31,
+    "57395u": keys.F32,
+    "57396u": keys.F33,
+    "57397u": keys.F34,
+    "57398u": keys.F35,
+    "57399u": keys.KP_0,
+    "57400u": keys.KP_1,
+    "57401u": keys.KP_2,
+    "57402u": keys.KP_3,
+    "57403u": keys.KP_4,
+    "57404u": keys.KP_5,
+    "57405u": keys.KP_6,
+    "57406u": keys.KP_7,
+    "57407u": keys.KP_8,
+    "57408u": keys.KP_9,
+    "57409u": keys.KP_DECIMAL,
+    "57410u": keys.KP_DIVIDE,
+    "57411u": keys.KP_MULTIPLY,
+    "57412u": keys.KP_SUBTRACT,
+    "57413u": keys.KP_ADD,
+    "57414u": keys.KP_ENTER,
+    "57415u": keys.KP_EQUAL,
+    "57416u": keys.KP_SEPARATOR,
+    "57417u": keys.KP_LEFT,
+    "57418u": keys.KP_RIGHT,
+    "57419u": keys.KP_UP,
+    "57420u": keys.KP_DOWN,
+    "57421u": keys.KP_PAGE_UP,
+    "57422u": keys.KP_PAGE_DOWN,
+    "57423u": keys.KP_HOME,
+    "57424u": keys.KP_END,
+    "57425u": keys.KP_INSERT,
+    "57426u": keys.KP_DELETE,
+    "1E":     keys.KP_BEGIN,
+    "57427~": keys.KP_BEGIN,
+    "57428u": keys.MEDIA_PLAY,
+    "57429u": keys.MEDIA_PAUSE,
+    "57430u": keys.MEDIA_PLAY_PAUSE,
+    "57431u": keys.MEDIA_REVERSE,
+    "57432u": keys.MEDIA_STOP,
+    "57433u": keys.MEDIA_FAST_FORWARD,
+    "57434u": keys.MEDIA_REWIND,
+    "57435u": keys.MEDIA_TRACK_NEXT,
+    "57436u": keys.MEDIA_TRACK_PREVIOUS,
+    "57437u": keys.MEDIA_RECORD,
+    "57438u": keys.LOWER_VOLUME,
+    "57439u": keys.RAISE_VOLUME,
+    "57440u": keys.MUTE_VOLUME,
+    "57441u": keys.LEFT_SHIFT,
+    "57442u": keys.LEFT_CONTROL,
+    "57443u": keys.LEFT_ALT,
+    "57444u": keys.LEFT_SUPER,
+    "57445u": keys.LEFT_HYPER,
+    "57446u": keys.LEFT_META,
+    "57447u": keys.RIGHT_SHIFT,
+    "57448u": keys.RIGHT_CONTROL,
+    "57449u": keys.RIGHT_ALT,
+    "57450u": keys.RIGHT_SUPER,
+    "57451u": keys.RIGHT_HYPER,
+    "57452u": keys.RIGHT_META,
+    "57453u": keys.ISO_LEVEL3_SHIFT,
+    "57454u": keys.ISO_LEVEL5_SHIFT
+}
+
+function title(s) { s[0].upper() + s[1;].lower() }
+
+function nice-key-name(ev) {
+    let out = match ev {
+        {_key: $k, *} => do { ev.mods &= ~mod.SHIFT; chr(k) },
+        {key: k :: String, *} => k.split('_').map(title).str(),
+        {key: k :: Int, *}    => chr(k)
+    }
+
+    let out = match out {
+        '\n', '\r' => 'Enter',
+        ' '        => 'Space',
+        '\t'       => 'Tab',
+        chr(127)   => 'Backspace',
+        chr(27)    => 'Esc',
+        _          => out
+    }
+
+    if ev.mods & mod.SHIFT { out = "S-{out}"   }
+    if ev.mods & mod.ALT   { out = "M-{out}"   }
+    if ev.mods & mod.CTRL  { out = "C-{out}"   }
+    if ev.mods & mod.SUPER { out = "Cmd-{out}" }
+
+    return out 
+}
+
+namespace ctlseq {
+    namespace pattern {
+        pub m-ev-sgr   = /^\x1b\[<(\d+);(\d+);(\d+)([mM])/
+        pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?(.)/
+    }
+
+    namespace handler {
+        function m-ev-sgr($1, $2, $3, $4) {
+            let st = int($1)
+            let x  = int($2)
+            let y  = int($3)
+            let t  = ($4 == 'm') ? 0 : 1
+
+            let motion? = st & 0b00100000
+            let button  = st & 0b11000011
+            let mods    = st & 0b00011100
+
+            yield event.Mouse({
+                motion?,
+                button,
+                mods,
+                x, y
+            })
+        }
+
+        function k-ev-based($1, $2, $3, $4) {
+            let (key, _key, base) = match keys.function-keys("{$1 || 1}{$4}") {
+                Some(sp) => (sp, nil, nil),
+                None     => match $1.split(':').map(int) ?? [] {
+                    [?key, ?_key, ?base] => (key, _key, base),
+                }
+            }
+
+            let [?mods, ?ev] = ($2 || '1').split(':').map(int)
+            let text = $3.split(':').map(int).remove(nil)
+
+            yield event.Key({
+                key, _key, base,
+                mods: (mods ?? 1) - 1,
+                event: ev ?? 1,
+                text
+            })
+
+            if #text != 0 {
+                yield event.Text(text.map(chr).str())
+            }
+        }
+    }
+}
+
+function yield-basic(ch, extra-mods=0) {
+    let c = ord(ch)
+
+    let (key, mods) = match c {
+        1        => ('a',  mod.CTRL),
+        2        => ('b',  mod.CTRL),
+        3        => ('c',  mod.CTRL),
+        4        => ('d',  mod.CTRL),
+        9        => ('Tab',       0),
+        10 or 13 => ('Enter',     0),
+        27       => ('Escape',    0),
+        32       => ('Space',     0),
+        127      => ('Backspace', 0),
+        _        => (nil,       nil)
+    }
+
+    if key == nil {
+        yield event.Text(ch)
+    }
+
+    if c < 256 {
+        yield event.Key({
+            key:  key ?? c,
+            _key: c,
+            _base: nil,
+            mods: (mods ?? 0) | extra-mods,
+            event: 1,
+            text: [c]
+        })
+    }
+
+}
+
+class TermIO {
+    init(fd=0) {
+        @fd = fd
+        @event-stream = self._read-events()
+        @ti-keys = %{}
+        let $unibi-term = unibi.Term()
+        for i in unibi.strs {
+            if unibi.name(i).match?(/^key_/)
+               and let $str = unibi-term[i]
+               and str.size() > 0 {
+                @ti-keys[str] = i
+            }
+        }
+    }
+
+    start(a) {
+        @saved-termios = tcgetattr(@fd)
+        let copy = {*@saved-termios}
+        copy.lflag &= ~ICANON
+        copy.lflag &= ~ECHO
+        copy.lflag &= ~ECHONL
+        tcsetattr(@fd, TCSANOW, copy)
+        write(
+            @fd,
+            "\x1b[>{1|2|4|8|16}u" // kitty progressive enchancement for keyboard input
+            "\x1b[?1003h"         // turn on mouse event reporting
+            "\x1b[?1006h"         // ask for SGR-style mouse reporting instead of X10 compatibility mode
+        )
+    }
+
+    stop() {
+        write(
+            @fd,
+            "\x1b[<1u"     // restore initial keyboard input mode
+            "\x1b[?1003l"  // turn off all the private modes we turned on
+            "\x1b[?1006l"
+        )
+        tcsetattr(@fd, TCSANOW, @saved-termios)
+    }
+
+    _read-events*() {
+        let buf = Blob()
+        let i = 0
+
+        while 1 {
+            if i == #buf {
+                i = 0
+                buf.clear()
+                read(@fd, buf, 8192)
+            }
+
+            let plain = Blob()
+            while i < #buf && buf[i] != 0x1b {
+                plain.push(buf[i++])
+            }
+
+            let n = 0
+            for plain.str!().chars() {
+                yield-basic(it)
+                n += it.size()
+            }
+
+            // The last bit of `plain` wasn't valid utf8, but since we're at the
+            // end of our buffer it could just be that we're in the middle of a
+            // valid codepoint. We'll put our leftover bytes back into the buffer
+            // and hope that our next read() completes something valid.
+            if n < #plain && i == #buf {
+                buf.push(plain.str!(n))
+            }
+
+            let ctlseqs = [
+                (ctlseq.pattern.m-ev-sgr,   ctlseq.handler.m-ev-sgr),
+                (ctlseq.pattern.k-ev-based, ctlseq.handler.k-ev-based),
+            ]
+
+            // Let's see if we have a terminfo entry that matches
+            while i < #buf && buf[i] == 0x1b {
+                for key-str, k in @ti-keys {
+                    let n = key-str.size()
+                    if buf.str!(i, n) == key-str {
+                        i += n
+
+                        match k {
+                            unibi.string.key_btab   => yield-basic('\t'),
+                            unibi.string.key_sleft  => ctlseq.handler.k-ev-based(1, '2:1', '', 'D'),
+                            unibi.string.key_sright => ctlseq.handler.k-ev-based(1, '2:1', '', 'C')
+                            _ => {}
+                        }
+
+                        continue continue
+                    }
+                }
+
+                // No terminfo match, let's hope we 
+                // event in the kitty-progressive-enhancement format
+                for (pattern, handler) in ctlseqs {
+                    if let $captures = buf.str!(i).match!(pattern) {
+                        handler(*captures[1;])
+                        i += #captures[0]
+                        continue continue
+                    }
+                }
+
+                // If we get here that means we have 0x1b but don't know how
+                // how to parse what follows it. Not sure what to do here
+                // besides skip the ESC and hope for the best :^)
+                i += 1
+            }
+        }
+    }
+
+    next-event() {
+        return (@event-stream)()
+    }
+}
+
+pub function __test() {
+    let tio = TermIO()
+
+    tio.start()
+    on-exit(tio.stop)
+
+    while let Some(ev) = tio.next-event() {
+        match ev {
+            event.Text(s) => {
+                if s == 'z' { break }
+            },
+
+            event.Key(k) => {
+                if k.key == ord('z') { break }
+                if k.event in [1, 2] {
+                    print(nice-key-name(k))
+                }
+            },
+
+            event.Mouse(mev) => {
+                pp(mev)
+            }
+        }
+    }
+}
