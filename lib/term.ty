@@ -1,7 +1,7 @@
 import os (..)
 import termios (..)
 import help (pretty-print as pp)
-import unibi
+import unibilium as unibi
 
 pub namespace mod {
     pub SHIFT = 1 << 0

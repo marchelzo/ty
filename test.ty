@@ -4,7 +4,6 @@ import chalk (..)
 import time
 import tp (ThreadPool)
 import ty
-import dbg
 
 let start = time.utime()
 
