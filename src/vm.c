@@ -3045,8 +3045,10 @@ Throw:
                         READJUMP(jump);
                         READVALUE(s);
                         v = REGEX((Regex *) s);
-                        value = value_apply_callable(ty, &v, top());
-                        if (value.type == VALUE_NIL) {
+                        if (
+                                top()->type != VALUE_STRING
+                             || (value = value_apply_callable(ty, &v, top())).type == VALUE_NIL
+                        ) {
                                 DOJUMP(jump);
                         } else {
                                 push(value);
