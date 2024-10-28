@@ -749,7 +749,7 @@ CustomBase:
         if (b.type != VALUE_INTEGER)
                 zP("non-integer passed as second argument to int()");
         if (b.integer < 0 || b.integer == 1 || b.integer > 36)
-                zP("invalid base passed to int(): expected 0 or 2..36, but got %d", (int) b.integer);
+                zP("invalid base passed to int(): expected 0 or 2..36, but got %"PRIiMAX, b.integer);
 
         base = b.integer;
 
