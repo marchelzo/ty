@@ -1153,8 +1153,22 @@ mark_generator(Ty *ty, struct value const *v)
 
         value_mark(ty, &v->gen->f);
 
-        for (int i = 0; i < v->gen->frame.count; ++i) {
-                value_mark(ty, &v->gen->frame.items[i]);
+        for (int i = 0; i < vN(v->gen->frame); ++i) {
+                value_mark(ty, v_(v->gen->frame, i));
+        }
+
+        for (int i = 0; i < v->gen->targets.count; ++i) {
+                if ((((uintptr_t)v_(v->gen->targets, i)->t) & 0x07) == 0) {
+                        value_mark(ty, v_(v->gen->targets, i)->t);
+                }
+        }
+
+        for (int i = 0; i < vN(v->gen->deferred); ++i) {
+                value_mark(ty, v_(v->gen->deferred, i));
+        }
+
+        for (int i = 0; i < vN(v->gen->to_drop); ++i) {
+                value_mark(ty, v_(v->gen->to_drop, i));
         }
 }
 
