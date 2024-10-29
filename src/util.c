@@ -17,6 +17,7 @@
 #include <windows.h>
 #else
 #include <sys/mman.h>
+#include <libgen.h>
 #endif
 
 #if !defined(S_ISREG) && defined(S_IFMT) && defined(S_IFREG)
@@ -141,6 +142,40 @@ slurp(Ty *ty, char const *path)
 
                 return s.items + 1;
         }
+}
+
+bool
+get_directory_where_chad_looks_for_runtime_dependencies(char *buffer)
+{
+#if defined(__APPLE__)
+        pid_t pid = getpid();
+        char path[PROC_PIDPATHINFO_MAXSIZE];
+
+        if (proc_pidpath(pid, path, sizeof path) <= 0) {
+                return false;
+        }
+
+        return dirname_r(path, buffer) != NULL;
+#elif defined(__linux__)
+        char path[PATH_MAX + 1], *dir;
+        ssize_t len = readlink("/proc/self/exe", path, PATH_MAX);
+        if (len <= 0)
+                return false;
+        path[len] = '\0';
+        if ((dir = dirname(path)) == NULL)
+                return false;
+        strcpy(buffer, dir);
+        return true;
+#elif defined(_WIN32)
+        DWORD len = GetModuleFileName(NULL, buffer, MAX_PATH);
+        if (len == 0)
+                return false;
+        buffer[len] = '\0';
+        PathRemoveFileSpecA(buffer);
+        return true;
+#else
+        return false;
+#endif
 }
 
 Value
