@@ -315,7 +315,7 @@ namespace ctlseq {
             }
 
             let [?mods, ?ev] = ($2 || '1').split(':').map(int)
-            let text = $3.split(':').filter(/\d+/).map(int)
+            let text = $3.split(':').map(int).remove(nil)
 
             yield event.Key({
                 key, _key, base,
@@ -458,8 +458,8 @@ class TermIO {
                     }
                 }
 
-                // No terminfo match, let's hope we 
-                // event in the kitty-progressive-enhancement format
+                // No terminfo match, let's hope that means we have a mouse event,
+                // or a keyboard event in the kitty progressive-enhancement format
                 for (pattern, handler) in ctlseqs {
                     if let $captures = buf.str!(i).match!(pattern) {
                         handler(*captures[1;])
