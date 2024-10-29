@@ -2,6 +2,9 @@ import ffi as c (C!)
 import help
 
 let $unibi = c.dlopen('unibilium.dylib')
+          ?? c.dlopen('unibilium.dll')
+          ?? c.dlopen('libunibilium.so')
+          ?? c.dlopen('unibilium.so')
 
 pub namespace boolean {
     enum! {
