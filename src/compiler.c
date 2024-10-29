@@ -4115,7 +4115,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         state.match_fails = fails_save;
                 }
 
-                emit_instr(ty, INSTR_BAD_MATCH);
+                FAIL_MATCH_IF(JUMP);
 
                 for (int i = 0; i < matched.count; ++i) {
                         PATCH_JUMP(matched.items[i]);
