@@ -315,7 +315,7 @@ namespace ctlseq {
             }
 
             let [?mods, ?ev] = ($2 || '1').split(':').map(int)
-            let text = $3.split(':').map(int).remove(nil)
+            let text = $3.split(':').filter(/\d+/).map(int)
 
             yield event.Key({
                 key, _key, base,
@@ -385,6 +385,7 @@ class TermIO {
         copy.lflag &= ~ICANON
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
+        copy.iflag |= IGNBRK
         tcsetattr(@fd, TCSANOW, copy)
         write(
             @fd,
