@@ -154,6 +154,7 @@ static SigfnStack sigfns;
 #define pop()   ((pop)(ty))
 #define peek()  ((peek)(ty))
 #define push(x) ((push)(ty, (x)))
+#define swap()  ((swap)(ty))
 
 #define poptarget()      ((poptarget)(ty))
 #define peektarget()     ((peektarget)(ty))
@@ -836,6 +837,12 @@ inline static void
         xvP(STACK, v);
         LOG("PUSH: %s", VSC(&v));
         print_stack(ty, 10);
+}
+
+inline static void
+(swap)(Ty *ty)
+{
+        SWAP(Value, top()[-1], top()[0]);
 }
 
 inline static Value *
@@ -3572,9 +3579,7 @@ Throw:
                         }
                         break;
                 CASE(SWAP)
-                        v = top()[-1];
-                        top()[-1] = top()[0];
-                        top()[0] = v;
+                        swap();
                         break;
                 CASE(REVERSE)
                         READVALUE(n);
@@ -3788,12 +3793,15 @@ Throw:
                         i = NAMES.slice;
                         goto CallMethod;
                 CASE(SUBSCRIPT)
-                        subscript = pop();
-                        container = pop();
+                        subscript = top()[0];
+                        container = top()[-1];
 
                         switch (container.type) {
                         case VALUE_ARRAY:
-                                push(ArraySubscript(ty, container, subscript, true));
+                                v = ArraySubscript(ty, container, subscript, true);
+                                pop();
+                                pop();
+                                push(v);
                                 break;
                         case VALUE_TUPLE:
                                 if (LIKELY(subscript.type == VALUE_INTEGER)) {
@@ -3801,10 +3809,15 @@ Throw:
                                                 subscript.integer += container.count;
                                         }
                                         if (subscript.integer < 0 || subscript.integer >= container.count) {
-                                                push(TAG(gettag(ty, NULL, "IndexError")));
+                                                v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
+                                                pop();
+                                                pop();
+                                                push(v);
                                                 goto Throw;
                                                 zP("list index out of range in subscript expression");
                                         }
+                                        pop();
+                                        pop();
                                         push(container.items[subscript.integer]);
                                 } else {
                                         zP(
@@ -3814,33 +3827,35 @@ Throw:
                                 }
                                 break;
                         case VALUE_STRING:
-                                push(subscript);
                                 v = get_string_method("char")(ty, &container, 1, NULL);
+                                pop();
                                 pop();
                                 push(v);
                                 break;
                         case VALUE_BLOB:
-                                push(subscript);
                                 v = get_blob_method("get")(ty, &container, 1, NULL);
+                                pop();
                                 pop();
                                 push(v);
                                 break;
                         case VALUE_DICT:
                                 vp = dict_get_value(ty, container.dict, &subscript);
+                                pop();
+                                pop();
                                 push((vp == NULL) ? NIL : *vp);
                                 break;
                         case VALUE_OBJECT:
-                                vp = class_method(ty, container.class, "__subscript__");
+                                vp = class_lookup_method_i(ty, container.class, NAMES.subscript);
                                 if (vp != NULL) {
-                                        push(subscript);
+                                        swap();
+                                        pop();
                                         call(ty, vp, &container, 1, 0, false);
                                 } else {
                                         goto BadContainer;
                                 }
                                 break;
                         case VALUE_CLASS:
-                                push(subscript);
-                                push(container);
+                                swap();
                                 n = 1;
                                 b = false;
                                 i = NAMES.subscript;
@@ -3855,9 +3870,13 @@ Throw:
                                 v = cffi_load(ty, 2, NULL);
                                 pop();
                                 pop();
+                                pop();
+                                pop();
                                 push(v);
                                 break;
                         case VALUE_NIL:
+                                pop();
+                                pop();
                                 push(NIL);
                                 break;
                         default:

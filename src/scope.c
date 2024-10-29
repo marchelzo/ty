@@ -142,7 +142,11 @@ scope_lookup(Ty *ty, Scope const *s, char const *id)
                 return NULL;
         }
 
-        if (sym->scope->function != s->function && !sym->global) {
+        if (
+                sym->scope->function != s->function
+             && !sym->global
+             && !sym->namespace
+        ) {
                 vec(Scope *) scopes = {0};
 
                 Scope *scope = s->function;
