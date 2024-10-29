@@ -648,25 +648,37 @@ method_cmp(void const *a_, void const *b_)
 static char *
 try_slurp_module(Ty *ty, char const *name)
 {
-        char pathbuf[512];
+        char chadbuf[2048];
+        char pathbuf[2048];
 
         char const *home = getenv("HOME");
 
         if (home == NULL)
                 home = getenv("USERPROFILE");
 
-        if (home == NULL)
-                fail(ty, "unable to get USERPROFILE / HOME from the environment");
+        char *source = NULL;
 
-        snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
-
-        char *source = slurp(ty, pathbuf);
-        if (source == NULL) {
-                snprintf(pathbuf, sizeof pathbuf, "%s.ty", name);
-                source = slurp(ty, pathbuf);
+        if (home != NULL) {
+                snprintf(pathbuf, sizeof pathbuf, "%s/.ty/%s.ty", home, name);
+                if ((source = slurp(ty, pathbuf)) != NULL) {
+                        return source;
+                }
         }
 
-        return source;
+        if (get_directory_where_chad_looks_for_runtime_dependencies(chadbuf)) {
+                snprintf(pathbuf, sizeof pathbuf, "%s/lib/%s.ty", chadbuf, name);
+                if ((source = slurp(ty, pathbuf)) != NULL) {
+                        return source;
+                }
+                snprintf(pathbuf, sizeof pathbuf, "%s/../lib/%s.ty", chadbuf, name);
+                if ((source = slurp(ty, pathbuf)) != NULL) {
+                        return source;
+                }
+        }
+
+        snprintf(pathbuf, sizeof pathbuf, "%s.ty", name);
+
+        return slurp(ty, pathbuf);
 }
 
 static char *
@@ -675,7 +687,7 @@ slurp_module(Ty *ty, char const *name)
         char *source = try_slurp_module(ty, name);
 
         if (source == NULL) {
-                fail(ty, "failed to load module: %s", name);
+                fail(ty, "failed to load module: %s%s%s", TERM(93;1), name, TERM(0));
         }
 
         return source;

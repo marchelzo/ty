@@ -253,6 +253,9 @@ term_width(char const *s, int n)
 Value
 this_executable(Ty *ty);
 
+bool
+get_directory_where_chad_looks_for_runtime_dependencies(char *buffer);
+
 #endif
 
 /* vim: set sts=8 sw=8 expandtab: */
