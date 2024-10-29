@@ -125,9 +125,6 @@ static _Atomic(uint64_t) tid = 1;
                 zP(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
 
-//#define EVAL_PROLOGUE "(function () {"
-//#define EVAL_EPILOGUE "})()"
-
 #define EVAL_PROLOGUE "(do {"
 #define EVAL_EPILOGUE "})"
 
@@ -951,6 +948,18 @@ float_from(Ty *ty, Value const *v, char const *spec, int n)
 }
 
 inline static void
+utobsx(char *s, uintmax_t z)
+{
+        int const w = CHAR_BIT * sizeof (uintmax_t);
+        uintmax_t m = UINTMAX_C(1) << (w - 1);
+
+        while (m != 0 && (z & m) == 0) { m >>= 1; }
+        do { *s++ = '0' + !!(z & m); m >>= 1; } while (m != 0);
+
+        *s = '\0';
+}
+
+inline static void
 AddThousandsSep(char *s, int c)
 {
         char const *start = s;
@@ -1073,6 +1082,7 @@ MissingArgument:
 
                         Value arg = ARG(ai);
 
+                        char b[256];
                         char scratch[256];
                         int si = 0;
 
@@ -1114,6 +1124,20 @@ MissingArgument:
                                 if (spec.xsep != '\0') {
                                         AddThousandsSep(&buffer[spec.blank], spec.xsep);
                                 }
+
+                                break;
+                        case 'b':
+                                scratch[si++] = 's';
+                                scratch[si] = '\0';
+
+                                utobsx(b, (uintmax_t)int_from(ty, &arg, start, nspec));
+
+                                snprintf(
+                                        buffer,
+                                        sizeof buffer,
+                                        scratch,
+                                        b
+                                );
 
                                 break;
                         case 'f':
@@ -5115,9 +5139,7 @@ BUILTIN_FUNCTION(termios_tcgetattr)
                 vvP(*cc, t.c_cc[i]);
         }
 
-        OKGC(cc);
-
-        return vTn(
+        Value v = vTn(
                 "iflag", INTEGER(t.c_iflag),
                 "oflag", INTEGER(t.c_oflag),
                 "cflag", INTEGER(t.c_cflag),
@@ -5127,6 +5149,10 @@ BUILTIN_FUNCTION(termios_tcgetattr)
                 "cc", BLOB(cc),
                 NULL
         );
+
+        OKGC(cc);
+
+        return v;
 #endif
 }
 

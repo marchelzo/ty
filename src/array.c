@@ -1437,18 +1437,19 @@ static Value
 array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
-                zP("the partition method on arrays expects 1 argument but got %d", argc);
+                zP("Array.partition(): expected 1 argument but got %d", argc);
 
         Value pred = ARG(0);
 
         if (!CALLABLE(pred))
-                zP("non-predicate passed to the partition method on array");
+                zP("Array.partition(): expected callable but got: %s", VSC(&pred));
 
         int n = array->array->count;
-        struct array *yes = vA();
-        struct array *no = vA();
 
+        Array *yes = vA();
         NOGC(yes);
+
+        Array *no = vA();
         NOGC(no);
 
         for (int i = 0; i < n; ++i) {
@@ -1459,7 +1460,7 @@ array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
                 }
         }
 
-        struct array *result = vA();
+        Array *result = vA();
         NOGC(result);
 
         vAp(result, ARRAY(yes));
@@ -1582,8 +1583,6 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
                 zP("array.flat() expects 0 or 1 arguments but got %d", argc);
         }
 
-        struct array *r = vA();
-
         vec(Value *) stack = {0};
         vec(int) dstack = {0};
 
@@ -1591,18 +1590,21 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
 
         if (argc == 1) {
                 if (ARG(0).type != VALUE_INTEGER) {
-                        zP("the argument to array.flat() must be an integer");
+                        zP("Array.flat(): expected Int but got: %s", VSC(&ARG(0)));
                 }
                 maxdepth = ARG(0).integer;
         } else {
                 maxdepth = INT_MAX;
         }
 
+        SCRATCH_SAVE();
+
+        Array *r = vA();
         NOGC(r);
 
         for (int i = 0; i < array->array->count; ++i) {
-                vvP(stack, &array->array->items[i]);
-                vvP(dstack, 1);
+                svP(stack, &array->array->items[i]);
+                svP(dstack, 1);
                 while (stack.count > 0) {
                         Value *v = *vvX(stack);
                         int d = *vvX(dstack);
@@ -1610,15 +1612,16 @@ array_flat(Ty *ty, Value *array, int argc, Value *kwargs)
                                 vAp(r, *v);
                         } else {
                                 for (int i = v->array->count - 1; i >= 0; --i) {
-                                        vvP(stack, &v->array->items[i]);
-                                        vvP(dstack, d + 1);
+                                        svP(stack, &v->array->items[i]);
+                                        svP(dstack, d + 1);
                                 }
                         }
                 }
         }
 
-        vvF(stack);
         OKGC(r);
+
+        SCRATCH_RESTORE();
 
         return ARRAY(r);
 

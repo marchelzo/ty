@@ -12,7 +12,7 @@
 #include "vm.h"
 
 #define     look(i) (&ty->stack.items[ty->stack.count - 1] + i)
-#define COMPLETE(x) do { ty->stack.items[--ty->stack.count - 1] = x; return true; } while (0)
+#define COMPLETE(x) do { Value x__ = x; ty->stack.items[--ty->stack.count - 1] = x__; return true; } while (0)
 
 inline static bool
 op_builtin_add(Ty *ty)
