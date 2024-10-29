@@ -198,6 +198,7 @@ target_link_libraries(${_tgt_ty_interface}
     $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>
     $<$<BOOL:${WIN32}>:unofficial::getopt-win32::getopt>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
+    $<$<BOOL:${WIN32}>:Shlwapi.lib>
 )
 
 target_include_directories(${_tgt_ty_interface}
