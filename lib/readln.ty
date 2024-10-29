@@ -1,4 +1,4 @@
-import termkey (..)
+import term (TermIO)
 import errno
 import ffi as c (C!)
 import os (..)
@@ -7,7 +7,7 @@ import ioctls (..)
 
 let ERASE_LINE = "\x1b[2K"
 
-let tk = nil
+let tio = nil
 let defaultPrompt = nil
 let defaultComplete = nil
 let termFd = nil
@@ -54,9 +54,7 @@ pub function init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
     termFd = fd
     defaultPrompt = prompt
     defaultComplete = complete
-    if !(tk = termkey_new(fd, ctrl_c ? TERMKEY_FLAG_CTRLC : 0)) {
-        throw Err(errno.get())
-    }
+    tio = TermIO(fd)
 }
 
 function termDimensions() {
@@ -110,7 +108,7 @@ function fitItems(items, W) {
 }
 
 pub function readln(prompt=nil, complete=nil, erase=true) {
-    if tk == nil {
+    if tio == nil {
         init()
     }
 
@@ -130,14 +128,8 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
         line.str() ?? ''
     }
 
-    let pKey = c.new(TermKeyKey)
-    let keyBuffer = Blob()
-
-    keyBuffer.reserve(256)
-
-    termkey_start(tk)
-
-    defer termkey_stop(tk)
+    tio.start()
+    defer tio.stop()
 
     let hi = 0
     let hPrefix = nil
@@ -157,10 +149,18 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
 
         write(termFd, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
 
-        termkey_waitkey(tk, pKey)
-        termkey_strfkey(tk, keyBuffer, 256, pKey, TERMKEY_FORMAT_VIM)
+        if not let Some(key) = tio.next-event() {
+            continue
+        }
 
-        let key = c.as_str(keyBuffer.ptr())
+        let key = match key {
+            term.event.Text(_) as t
+                => t,
+            term.event.Key({event: 1 or 2, *})
+                => "<{key.nice-name()}>",
+            _
+                => do continue
+        }
 
         let hiStart = hi
 
@@ -316,7 +316,7 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
                 let (fd, tmp) = mktemp()
                 close(fd)
 
-                termkey_stop(tk)
+                tio.stop()
 
                 let editor = spawn(
                     [getenv('EDITOR'), tmp],
@@ -326,7 +326,7 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
                 )
                 waitpid(editor.pid)
 
-                termkey_start(tk)
+                tio.start()
 
                 let out = slurp(tmp).comb(/\r/).sub(/\n+/, ' ').trim()
                 if #out > 0 {
@@ -335,9 +335,11 @@ pub function readln(prompt=nil, complete=nil, erase=true) {
                 }
             },
 
-            ch => {
-                line.insert(i++, ch.clone())
-            }
+            term.event.Text(s) => {
+                line.insert(i++, s)
+            },
+
+            _ => {}
         }
 
         if hi != hiStart {
@@ -372,7 +374,7 @@ function progressString(progress: Float, width: Int) {
 }
 
 pub function progress(work, prefix, width, effects=id, cleanup=false) {
-    if tk == nil {
+    if tio == nil {
         init()
     }
 
