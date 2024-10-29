@@ -15,6 +15,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shlwapi.h>
 #else
 #include <sys/mman.h>
 #include <libgen.h>
