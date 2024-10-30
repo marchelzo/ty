@@ -318,17 +318,6 @@ function fun() {
     }
 }
 
-function mkstruct(*ts) {
-    let ts_ = []
-
-    for t in ts {
-        dbg(t)
-        ts_.push((t :: Class) ? t.ctype() : t)
-    }
-
-    c.struct(*ts_)
-}
-
 /*
  * C! struct Foo {
  *      c.int a;
@@ -490,21 +479,19 @@ function strct() {
                 )
             )
         } else {
-            dbg(t)
-
-            let t2 = ty.Cond(
+            let t_ = ty.Cond(
                 $$[ type($$t) == Class $$],
-                ty.MethodCall(object: t, method: 'ctype', args: []),
+                $$[ $$t.ctype() $$],
                 t
             )
 
             let getter-body = ty.Cond(
                 $$[ type($$t) == Class $$],
-                $$[ (c.pmember |> $$t)($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i))) $$],
+                $$[ $$t($${c.pmember}($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i)))) $$],
                 $$[ c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i))) $$]
             )
 
-            structArgs.push(ty.Arg(arg: t2))
+            structArgs.push(ty.Arg(arg: t_))
             getters.push(
                 ty.Func(
                     name: name,
@@ -562,7 +549,7 @@ function strct() {
         ty.Let(
             ctype,
             ty.Call(
-                func: ty.Value(mkstruct),
+                func: ty.Value(c.struct),
                 args: structArgs
             )
         ),
