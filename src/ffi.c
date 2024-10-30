@@ -563,7 +563,7 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
                         vec_nogc_push(args, ARG(i).ptr);
                 } else {
                         free(args.items);
-                        zP("non-pointer passed as argument %d to ffi.call()", i + 1);
+                        zP("non-pointer passed as argument %d to ffi.call(): %s", i + 1, VSC(&ARG(i)));
                 }
         }
 
@@ -791,7 +791,7 @@ cffi_struct(Ty *ty, int argc, Value *kwargs)
                 Value member = ARG(i);
 
                 if (member.type != VALUE_PTR) {
-                        zP("non-pointer passed to ffi.struct()");
+                        zP("non-pointer passed to ffi.struct(): %s", VSC(&member));
                 }
 
                 t->elements[i] = member.ptr;

@@ -131,10 +131,11 @@ function nexttype() {
 
     while match (peek().type, peek(1).type) {
         (')', _),
-        (_, '(')     => { break                 },
-        (_, '.')     => { return expr(1)        },
-        ('const', _) => { next()                },
-        ('id', _)    => { parts.push(next().id) }
+        (_, '(')       => { break                 },
+        (_, '.')       => { return expr(1)        },
+        ('const', _)   => { next()                },
+        ('comment', _) => { next()                },
+        ('id', _)      => { parts.push(next().id) },
     }
 
     let type-string = parts.filter!((not in ignore)).sort!(:desc).unwords()
@@ -317,6 +318,17 @@ function fun() {
     }
 }
 
+function mkstruct(*ts) {
+    let ts_ = []
+
+    for t in ts {
+        dbg(t)
+        ts_.push((t :: Class) ? t.ctype() : t)
+    }
+
+    c.struct(*ts_)
+}
+
 /*
  * C! struct Foo {
  *      c.int a;
@@ -478,14 +490,26 @@ function strct() {
                 )
             )
         } else {
-            structArgs.push(ty.Arg(arg: t))
+            dbg(t)
+
+            let t2 = ty.Cond(
+                $$[ type($$t) == Class $$],
+                ty.MethodCall(object: t, method: 'ctype', args: []),
+                t
+            )
+
+            let getter-body = ty.Cond(
+                $$[ type($$t) == Class $$],
+                $$[ (c.pmember |> $$t)($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i))) $$],
+                $$[ c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i))) $$]
+            )
+
+            structArgs.push(ty.Arg(arg: t2))
             getters.push(
                 ty.Func(
                     name: name,
                     params: [],
-                    body: $$[
-                        c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i)))
-                    $$]
+                    body: getter-body
                 )
             )
             setters.push(
@@ -538,7 +562,7 @@ function strct() {
         ty.Let(
             ctype,
             ty.Call(
-                func: ty.Value(c.struct),
+                func: ty.Value(mkstruct),
                 args: structArgs
             )
         ),
