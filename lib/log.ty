@@ -1,10 +1,11 @@
 import ty
 import ty.parse as parse
 import ty.token (next)
-import os (write, isatty)
+import os (..)
 import time
 import chalk
 import thread
+import io
 
 enum! {
     CRITICAL,
@@ -49,7 +50,6 @@ function threadPen() {
 class Logger {
     init(name) {
         @name = name
-        @color = isatty(2)
         @indent = 4
         @level = WARN
         @stack = []
@@ -67,6 +67,17 @@ class Logger {
                 "{tString} {levelName} {threadString}"
             }
         }
+
+        @fd = if let $path = getenv('TY_LOG') and 
+                 let fd = open(path, O_RDWR | O_TRUNC | O_CREAT, 0644) and
+                 fd >= 0 {
+            fd
+        } else {
+            2
+        }
+
+        @color = isatty(@fd)
+        @file = io.open(@fd, 'w+')
     }
 
     setLevel(level) {
@@ -84,7 +95,7 @@ class Logger {
             } else {
                 "{@name}[{@stack.join('.')}]"
             }
-            write(2, (@prefix)(level, @color) + " {@color ? namePen(name) : name}: {msg}\n")
+            @file.write((@prefix)(level, @color) + " {@color ? namePen(name) : name}: {msg}\n")
         }
     }
 

@@ -1,7 +1,10 @@
 import os (..)
 import termios (..)
-import help (pretty-print as pp)
+import help (pretty-print as pp, pretty)
 import unibilium as unibi
+import log (..)
+
+let ppp = pretty@(*, color=false)
 
 pub namespace mod {
     pub SHIFT = 1 << 0
@@ -414,6 +417,7 @@ class TermIO {
                 i = 0
                 buf.clear()
                 read(@fd, buf, 8192)
+                warn!("Read: {ppp(buf.str!())}")
             }
 
             let plain = Blob()
@@ -477,7 +481,9 @@ class TermIO {
     }
 
     next-event() {
-        return (@event-stream)()
+        let ev = (@event-stream)()
+        warn!("Returning event: {ppp(ev)}")
+        return ev
     }
 }
 

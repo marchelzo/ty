@@ -222,6 +222,8 @@ BUILTIN_FUNCTION(os_flock);
 BUILTIN_FUNCTION(os_spawn);
 
 BUILTIN_FUNCTION(os_stat);
+BUILTIN_FUNCTION(os_lstat);
+BUILTIN_FUNCTION(os_fstat);
 
 BUILTIN_FUNCTION(os_truncate);
 

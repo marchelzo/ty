@@ -130,6 +130,8 @@ static struct {
 { .module = "os",     .name = "flock",             .value = BUILTIN(builtin_os_flock)                      },
 { .module = "os",     .name = "spawn",             .value = BUILTIN(builtin_os_spawn)                      },
 { .module = "os",     .name = "stat",              .value = BUILTIN(builtin_os_stat)                       },
+{ .module = "os",     .name = "lstat",             .value = BUILTIN(builtin_os_lstat)                      },
+{ .module = "os",     .name = "fstat",             .value = BUILTIN(builtin_os_fstat)                      },
 { .module = "os",     .name = "truncate",          .value = BUILTIN(builtin_os_truncate)                   },
 { .module = "os",     .name = "ftruncate",         .value = BUILTIN(builtin_os_ftruncate)                  },
 { .module = "os",     .name = "realpath",          .value = BUILTIN(builtin_os_realpath)                   },
