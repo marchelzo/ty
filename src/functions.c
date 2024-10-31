@@ -2598,7 +2598,7 @@ BUILTIN_FUNCTION(os_chdir)
 {
         ASSERT_ARGC("os.chdir()", 1);
 
-        struct value dir = ARG(0);
+        Value dir = ARG(0);
 
         if (dir.type == VALUE_STRING) {
                 if (dir.bytes >= sizeof buffer) {
@@ -2615,7 +2615,7 @@ BUILTIN_FUNCTION(os_chdir)
                 return INTEGER(fchdir(dir.integer));
 #endif
         } else {
-                zP("the argument to os.chdir() must be a path or a file descriptor");
+                zP("os.chdir(): expected path (String) or file descriptor (Int) but got: %s", VSC(&dir));
         }
 
 
@@ -4965,6 +4965,74 @@ BUILTIN_FUNCTION(os_truncate)
         return INTEGER(truncate_file(B.items, size.integer));
 }
 
+inline static Value
+xstatv(int ret, StatStruct const *st)
+{
+        if (ret != 0)
+               return NIL;
+
+        return value_named_tuple(
+                ty,
+                "st_dev", INTEGER(st->st_dev),
+                "st_ino", INTEGER(st->st_ino),
+                "st_mode", INTEGER(st->st_mode),
+                "st_nlink", INTEGER(st->st_nlink),
+                "st_uid", INTEGER(st->st_uid),
+                "st_gid", INTEGER(st->st_gid),
+                "st_rdev", INTEGER(st->st_rdev),
+                "st_size", INTEGER(st->st_size),
+#ifndef _WIN32
+                "st_blocks", INTEGER(st->st_blocks),
+                "st_blksize", INTEGER(st->st_blksize),
+#endif
+#ifdef __APPLE__
+                "st_atim", timespec_tuple(ty, &st->st_atimespec),
+                "st_mtim", timespec_tuple(ty, &st->st_mtimespec),
+                "st_ctim", timespec_tuple(ty, &st->st_ctimespec),
+#elif defined(__linux__)
+                "st_atim", timespec_tuple(ty, &st->st_atim),
+                "st_mtim", timespec_tuple(ty, &st->st_mtim),
+                "st_ctim", timespec_tuple(ty, &st->st_ctim),
+#elif defined(_WIN32)
+                "st_atim", INTEGER(st->st_atime),
+                "st_mtim", INTEGER(st->st_mtime),
+                "st_ctim", INTEGER(st->st_ctime),
+#endif
+                NULL
+        );
+}
+
+
+BUILTIN_FUNCTION(os_fstat)
+{
+        ASSERT_ARGC("os.fstat()", 1);
+
+        StatStruct s;
+
+        Value fd = ARG(0);
+        if (fd.type != VALUE_INTEGER)
+                zP("os.fstat(): expected a file descriptor (Int) but got: %s", VSC(&fd));
+
+        return xstatv(fstat(fd.integer, &s), &s);
+}
+
+BUILTIN_FUNCTION(os_lstat)
+{
+        ASSERT_ARGC("os.lstat()", 1);
+
+        StatStruct s;
+
+        struct value path = ARG(0);
+        if (path.type != VALUE_STRING)
+                zP("the argument to os.lstat() must be a string");
+
+        B.count = 0;
+        vvPn(B, path.string, path.bytes);
+        vvP(B, '\0');
+
+        return xstatv(lstat(B.items, &s), &s);
+}
+
 BUILTIN_FUNCTION(os_stat)
 {
         ASSERT_ARGC("os.stat()", 1);
@@ -4979,40 +5047,7 @@ BUILTIN_FUNCTION(os_stat)
         vvPn(B, path.string, path.bytes);
         vvP(B, '\0');
 
-        int r = stat(B.items, &s);
-        if (r != 0)
-               return NIL;
-
-        return value_named_tuple(
-                ty,
-                "st_dev", INTEGER(s.st_dev),
-                "st_ino", INTEGER(s.st_ino),
-                "st_mode", INTEGER(s.st_mode),
-                "st_nlink", INTEGER(s.st_nlink),
-                "st_uid", INTEGER(s.st_uid),
-                "st_gid", INTEGER(s.st_gid),
-                "st_rdev", INTEGER(s.st_rdev),
-                "st_size", INTEGER(s.st_size),
-#ifndef _WIN32
-                "st_blocks", INTEGER(s.st_blocks),
-                "st_blksize", INTEGER(s.st_blksize),
-#endif
-#ifdef __APPLE__
-                "st_atim", timespec_tuple(ty, &s.st_atimespec),
-                "st_mtim", timespec_tuple(ty, &s.st_mtimespec),
-                "st_ctim", timespec_tuple(ty, &s.st_ctimespec),
-#elif defined(__linux__)
-                "st_atim", timespec_tuple(ty, &s.st_atim),
-                "st_mtim", timespec_tuple(ty, &s.st_mtim),
-                "st_ctim", timespec_tuple(ty, &s.st_ctim),
-#elif defined(_WIN32)
-                "st_atim", INTEGER(s.st_atime),
-                "st_mtim", INTEGER(s.st_mtime),
-                "st_ctim", INTEGER(s.st_ctime),
-#endif
-                NULL
-        );
-
+        return xstatv(stat(B.items, &s), &s);
 }
 
 static int
