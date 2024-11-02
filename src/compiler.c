@@ -670,7 +670,7 @@ try_slurp_module(Ty *ty, char const *name)
                 if ((source = slurp(ty, pathbuf)) != NULL) {
                         return source;
                 }
-                snprintf(pathbuf, sizeof pathbuf, "%s/../lib/%s.ty", chadbuf, name);
+                snprintf(pathbuf, sizeof pathbuf, "%s/../lib/ty/%s.ty", chadbuf, name);
                 if ((source = slurp(ty, pathbuf)) != NULL) {
                         return source;
                 }
