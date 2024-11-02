@@ -5018,6 +5018,9 @@ BUILTIN_FUNCTION(os_fstat)
 
 BUILTIN_FUNCTION(os_lstat)
 {
+#ifdef _WIN32
+        NOT_ON_WINDOWS("os.lstat()");
+#else
         ASSERT_ARGC("os.lstat()", 1);
 
         StatStruct s;
@@ -5031,6 +5034,7 @@ BUILTIN_FUNCTION(os_lstat)
         vvP(B, '\0');
 
         return xstatv(lstat(B.items, &s), &s);
+#endif
 }
 
 BUILTIN_FUNCTION(os_stat)
