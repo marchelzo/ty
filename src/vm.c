@@ -1669,8 +1669,8 @@ AddTupleEntry(Ty *ty, int_vector *ids, ValueVector *values, int id, Value const 
                 }
         }
 
-        vvP(*ids, id);
-        vvP(*values, *v);
+        svP(*ids, id);
+        svP(*values, *v);
 }
 
 inline static bool
