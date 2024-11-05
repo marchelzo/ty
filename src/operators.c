@@ -14,6 +14,11 @@
 #include "vec.h"
 #include "vm.h"
 
+enum {
+        OP_CACHE_MISS = -2,
+        OP_NO_IMPL    = -1
+};
+
 typedef struct {
         uint32_t t1;
         uint32_t t2;
@@ -63,7 +68,7 @@ check_cache(DispatchCache const *c, uint64_t key)
                 else                            return c->items[m].ref;
         }
 
-        return -1;
+        return OP_CACHE_MISS;
 }
 
 
@@ -112,7 +117,7 @@ check_slow(DispatchList const *list, int t1, int t2)
                 }
         }
 
-        return (match != NULL) ? match->ref : -1;
+        return (match != NULL) ? match->ref : OP_NO_IMPL;
 }
 
 void
@@ -158,7 +163,7 @@ op_dispatch(int op, int t1, int t2)
 
         if (_2.ops.count <= op) {
                 TyRwLockRdUnlock(&_2.lock);
-                return -1;
+                return OP_NO_IMPL;
         }
 
         DispatchGroup *group = _2.ops.items[op];
@@ -170,7 +175,7 @@ op_dispatch(int op, int t1, int t2)
 
         TyRwLockRdUnlock(&group->lock);
 
-        if (ref == -1) {
+        if (ref == OP_CACHE_MISS) {
                 TyRwLockWrLock(&group->lock);
 
                 ref = check_slow(&group->defs, t1, t2);
