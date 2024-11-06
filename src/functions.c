@@ -32,6 +32,10 @@
 #include <sys/epoll.h>
 #endif
 
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
+
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -5145,6 +5149,31 @@ BUILTIN_FUNCTION(os_fcntl)
 
         zP("os.fcntl() functionality not implemented yet");
 #endif
+}
+
+BUILTIN_FUNCTION(os_cpu_count)
+{
+        int nCPU;
+#ifdef _WIN32
+        SYSTEM_INFO sysinfo;
+        GetSystemInfo(&sysinfo);
+        nCPU = sysinfo.dwNumberOfProcessors;
+#elif defined(__APPLE__) || defined(__MACH__)
+        int mib[2];
+        size_t len = sizeof nCPU;
+
+        mib[0] = CTL_HW;
+        mib[1] = HW_NCPU;
+
+        if (sysctl(mib, 2, &nCPU, &len, NULL, 0) != 0) {
+                nCPU = -1;
+        }
+#elif defined(__linux__)
+        nCPU = sysconf(_SC_NPROCESSORS_ONLN);
+#else
+        nCPU = -1;
+#endif
+        return (nCPU <= 0) ? NIL : INTEGER(nCPU);
 }
 
 BUILTIN_FUNCTION(os_isatty)
