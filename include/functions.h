@@ -233,6 +233,8 @@ BUILTIN_FUNCTION(os_realpath);
 
 BUILTIN_FUNCTION(os_fork);
 
+BUILTIN_FUNCTION(os_cpu_count);
+
 BUILTIN_FUNCTION(os_isatty);
 
 BUILTIN_FUNCTION(termios_tcgetattr);
