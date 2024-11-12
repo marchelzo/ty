@@ -157,8 +157,7 @@ string(Ty *ty)
         if (next() != '"')
                 FAIL;
 
-        vec(char) str;
-        vec_init(str);
+        vec(char) str = {0};
 
         char b[8] = {0};
         unsigned hex;
