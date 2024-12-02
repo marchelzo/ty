@@ -68,7 +68,7 @@ class Logger {
             }
         }
 
-        @fd = if let $path = getenv('TY_LOG') and 
+        @fd = if let $path = getenv('TY_LOG') and
                  let fd = open(path, O_RDWR | O_TRUNC | O_CREAT, 0644) and
                  fd >= 0 {
             fd
