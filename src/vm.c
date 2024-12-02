@@ -4899,8 +4899,10 @@ vm_panic(Ty *ty, char const *fmt, ...)
         n += vsnprintf(ERR + n, max(sz - n, 0), fmt, ap);
         va_end(ap);
 
-        if (n < sz)
+        if (n < sz) {
                 ERR[n++] = '\n';
+                ERR[n  ] = '\0';
+        }
 
         bool can_yield = false;
 
