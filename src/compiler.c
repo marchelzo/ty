@@ -9597,12 +9597,30 @@ WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool fi
 {
         char buffer[1024], fun_buffer[256];
 
-        if (
-                e == NULL ||
-                e->type == EXPRESSION_STATEMENT ||
-                e->type == STATEMENT_EXPRESSION
-        ) {
+        if (e == NULL) {
                 return 0;
+        }
+
+        if (e->type == STATEMENT_EXPRESSION) {
+                return WriteExpressionTrace(
+                        ty,
+                        out,
+                        cap,
+                        ((Stmt const *)e)->expression,
+                        etw,
+                        first
+                );
+        }
+
+        if (e->type == EXPRESSION_STATEMENT) {
+                return WriteExpressionTrace(
+                        ty,
+                        out,
+                        cap,
+                        (Expr const *)e->statement,
+                        etw,
+                        first
+                );
         }
 
         char const *file = (e->filename == NULL) ? "(unknown)" : e->filename;
