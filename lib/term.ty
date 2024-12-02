@@ -281,7 +281,7 @@ function nice-key-name(ev) {
     if ev.mods & mod.CTRL  { out = "C-{out}"   }
     if ev.mods & mod.SUPER { out = "Cmd-{out}" }
 
-    return out 
+    return out
 }
 
 namespace ctlseq {

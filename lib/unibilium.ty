@@ -1,4 +1,4 @@
-import ffi as c (C!) 
+import ffi as c (C!)
 import help
 
 let $unibi = c.dlopen('unibilium.dylib')
@@ -646,7 +646,7 @@ class Term {
         if cap :: nums {
             return get_num(@term, cap)
         }
-        
+
         if cap :: strs {
             return get_str(@term, cap) ?> c.str
         }
