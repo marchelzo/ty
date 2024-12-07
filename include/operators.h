@@ -93,15 +93,16 @@ op_builtin_add(Ty *ty)
         }
 
         case PAIR_OF(VALUE_DICT):
-                COMPLETE(
-                        DICT(
-                                DictUpdate(
-                                        ty,
-                                        DictClone(ty, left->dict),
-                                        right->dict
-                                )
-                        )
-                );
+        {
+                Dict *new = DictClone(ty, left->dict);
+                NOGC(new);
+
+                DictUpdate(ty, new, right->dict);
+
+                OKGC(new);
+
+                COMPLETE(DICT(new));
+        }
         }
 
         return false;
