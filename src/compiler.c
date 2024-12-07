@@ -5042,10 +5042,9 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                                         after = true;
                                 }
                                 emit_target(ty, target->elements.items[i], def);
-                                emit_instr(ty, INSTR_ARRAY_REST);
+                                FAIL_MATCH_IF(ARRAY_REST);
                                 emit_int(ty, i);
                                 emit_int(ty, target->elements.count - i - 1);
-                                emit_int(ty, sizeof (int) + 1);
                                 emit_instr(ty, INSTR_JUMP);
                                 emit_int(ty, 1);
                                 emit_instr(ty, INSTR_BAD_MATCH);
