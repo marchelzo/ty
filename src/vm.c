@@ -3008,8 +3008,9 @@ Throw:
                         vec_push_unchecked(DEFER_STACK, ARRAY(vA()));
                         break;
                 CASE(DEFER)
-                        v = pop();
-                        vAp(vvL(DEFER_STACK)->array, v);
+                        vp = top();
+                        vAp(vvL(DEFER_STACK)->array, *vp);
+                        pop();
                         break;
                 CASE(CLEANUP)
                         v = *vvL(DEFER_STACK);
@@ -4018,6 +4019,9 @@ Throw:
                                 case VALUE_REGEX:     *top() = BOOLEAN(class_is_subclass(ty, CLASS_REGEX, v.class));     break;
                                 default:              *top() = BOOLEAN(false);                                       break;
                                 }
+                        } else if (top()->type == VALUE_TAG) {
+                                v = pop();
+                                *top() = BOOLEAN(tags_first(ty, top()->tags) == v.tag);
                         } else if (top()->type == VALUE_BOOLEAN) {
                                 v = pop();
                                 *top() = v;
@@ -4931,7 +4935,8 @@ vm_panic(Ty *ty, char const *fmt, ...)
                         }
                 }
 
-                can_yield = GetCurrentGenerator(ty) != NULL;
+                Generator *gen;
+                can_yield = (gen = GetCurrentGenerator(ty)) != NULL && vN(gen->calls) > 0;
 Next:
                 IP = (char *)vvX(FRAMES)->ip;
         }
