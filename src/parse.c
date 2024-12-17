@@ -3995,7 +3995,7 @@ infix_kw_in(Ty *ty, Expr *left)
 
         consume_keyword(KEYWORD_IN);
 
-        e->right = parse_expr(ty, 3);
+        e->right = parse_expr(ty, 6);
         e->end = e->right->end;
 
         return e;
