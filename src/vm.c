@@ -4181,7 +4181,9 @@ Throw:
                                 );
                         }
 
-                        call(ty, vp, top(), 0, 0, false);
+                        v = pop();
+
+                        call(ty, vp, &v, 0, 0, false);
 
                         break;
                 CASE(DEFINE_TAG)
