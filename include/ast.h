@@ -126,6 +126,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(NIL), \
         X(SELF), \
         X(LIST), \
+        X(CHOICE_PATTERN), \
         X(IN), \
         X(NOT_IN), \
         X(KEEP_LOC), /* Below here we store Location in instruction pointer index */ \
