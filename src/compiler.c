@@ -1928,6 +1928,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 break;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
+        case EXPRESSION_CHOICE_PATTERN:
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_pattern_(ty, scope, e->es.items[i], reuse, def);
                 }
@@ -4099,6 +4100,20 @@ emit_try_match_(Ty *ty, Expr const *pattern)
 
                 break;
         case EXPRESSION_LIST:
+        {
+                int n = pattern->es.count;
+
+                emit_instr(ty, INSTR_FIX_TO);
+                emit_int(ty, n);
+
+                for (int i = 0; i < n; ++i) {
+                        emit_try_match_(ty, pattern->es.items[n - 1 - i]);
+                        emit_instr(ty, INSTR_POP);
+                }
+
+                break;
+        }
+        case EXPRESSION_CHOICE_PATTERN:
         {
                 vec(JumpPlaceholder) matched = {0};
 
@@ -8065,6 +8080,10 @@ cstmt(Ty *ty, Value *v)
                         avP(s->match.patterns, cexpr(ty, &_case->items[0]));
                         avP(s->match.statements, cstmt(ty, &_case->items[1]));
                         avP(s->match.conds, NULL);
+
+                        if ((*vvL(s->match.patterns))->type == EXPRESSION_LIST) {
+                                (*vvL(s->match.patterns))->type = EXPRESSION_CHOICE_PATTERN;
+                        }
                 }
                 break;
         }

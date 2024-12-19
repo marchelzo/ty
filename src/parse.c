@@ -1438,6 +1438,7 @@ prefix_ss(Ty *ty)
 static Expr *
 prefix_special_string(Ty *ty)
 {
+/*
         Expr *e = mkexpr(ty);
         e->type = EXPRESSION_SPECIAL_STRING;
 
@@ -1516,6 +1517,9 @@ prefix_special_string(Ty *ty)
         setctx(ty, LEX_INFIX);
 
         return extend_string(ty, e);
+*/
+
+        return NULL;
 }
 
 static Expr *
@@ -2065,7 +2069,7 @@ parse_pattern(Ty *ty)
         if (T0 == ',') {
                 Expr *p = mkexpr(ty);
 
-                p->type = EXPRESSION_LIST;
+                p->type = EXPRESSION_CHOICE_PATTERN;
                 p->start = pattern->start;
 
                 vec_init(p->es);

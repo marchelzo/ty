@@ -77,7 +77,7 @@ let n = c.new(c.int)
 let x = c.new(c.int)
 let y = c.new(c.int)
 
-pub initscr = () -> stdscr = initscr()
+pub initscr = () -> do { stdscr = initscr() }
 
 pub function getmaxyx(win = stdscr) {
 	(getmaxy(win), getmaxx(win))
