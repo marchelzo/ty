@@ -119,6 +119,7 @@ struct value;
         X(TagPattern)           \
         X(Tagged)               \
         X(PatternAlias)         \
+        X(ChoicePattern)        \
         X(MemberAccess)         \
         X(Subscript)            \
         X(Slice)                \

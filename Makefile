@@ -22,7 +22,6 @@ LDFLAGS += -lffi
 LDFLAGS += $(shell pcre-config --libs)
 LDFLAGS += $(shell pkg-config --libs gumbo)
 LDFLAGS += $(shell pkg-config --libs libcurl)
-LDFLAGS += $(shell pkg-config --libs libcurl)
 
 ifdef JEMALLOC
         LDFLAGS += -L$(shell jemalloc-config --libdir)

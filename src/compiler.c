@@ -1604,6 +1604,14 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
 
         bool tag_pattern = e->type == EXPRESSION_TAG_PATTERN_CALL;
 
+        if (e->type == EXPRESSION_FUNCTION_CALL) {
+                fixup_access(ty, scope, e->function, false);
+        }
+
+        if (e->type == EXPRESSION_METHOD_CALL) {
+                fixup_access(ty, scope, e, false);
+        }
+
         if (
                 tag_pattern ||
                 (
@@ -1656,6 +1664,7 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
         } else if (
                 (e->type == EXPRESSION_TAG_APPLICATION)
              && (e->identifier != EmptyString)
+             && (e->namespace == NULL)
         ) {
                 e->symbol = (e->xscope != NULL) ? e->symbol : getsymbol(
                         ty,
@@ -1864,6 +1873,11 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                              || scope_locally_defined(ty, scope, e->identifier)
                              || e->module != NULL
                         )
+                     && (
+                                reuse == NULL
+                             || e->module != NULL
+                             || (existing = scope_local_lookup(ty, reuse, e->identifier)) == NULL
+                        )
                 ) {
                         e->type = EXPRESSION_MUST_EQUAL;
 
@@ -1926,9 +1940,28 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         symbolize_pattern_(ty, scope, e->values.items[i], reuse, def);
                 }
                 break;
+        case EXPRESSION_CHOICE_PATTERN:
+        {
+                Scope *shared = scope_new(ty, "(match-shared)", scope, false);
+
+                for (int i = 0; i < e->es.count; ++i) {
+                        Scope *subscope = scope_new(ty, "(match-branch)", scope, false);
+                        symbolize_pattern_(
+                                ty,
+                                subscope,
+                                e->es.items[i],
+                                shared,
+                                def
+                        );
+                        scope_copy(ty, shared, subscope);
+                }
+
+                scope_copy(ty, scope, shared);
+
+                break;
+        }
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
-        case EXPRESSION_CHOICE_PATTERN:
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_pattern_(ty, scope, e->es.items[i], reuse, def);
                 }
@@ -4121,11 +4154,17 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                         JumpGroup fails_save = state.match_fails;
                         InitJumpGroup(&state.match_fails);
 
+
                         emit_try_match_(ty, pattern->es.items[i]);
                         avP(matched, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP));
 
                         EMIT_GROUP_LABEL(state.match_fails, ":Fail");
                         patch_jumps_to(&state.match_fails, state.code.count);
+
+                        if (i + 1 < pattern->es.count) {
+                                emit_instr(ty, INSTR_RESTORE_STACK_POS);
+                                emit_instr(ty, INSTR_SAVE_STACK_POS);
+                        }
 
                         state.match_fails = fails_save;
                 }
@@ -7215,7 +7254,7 @@ tyexpr(Ty *ty, Expr const *e)
                 NOGC(v.array);
                 for (int i = 0; i < e->es.count; ++i) {
                         vAp(v.array, tyexpr(ty, e->es.items[i]));
-                        continue;
+/*
                         vAp(
                                 v.array,
                                 tagged(
@@ -7231,11 +7270,23 @@ tyexpr(Ty *ty, Expr const *e)
                                         NONE
                                 )
                         );
+*/
                 }
                 OKGC(v.array);
-                break;
+/*
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, 0, TyRecord);
+*/
+                break;
+        case EXPRESSION_CHOICE_PATTERN:
+                v = ARRAY(vA());
+                NOGC(v.array);
+                for (int i = 0; i < e->es.count; ++i) {
+                        vAp(v.array, tyexpr(ty, e->es.items[i]));
+                }
+                OKGC(v.array);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(ty, 0, TyChoicePattern);
                 break;
         case EXPRESSION_YIELD:
                 v = ARRAY(vA());
@@ -8469,6 +8520,20 @@ cexpr(Ty *ty, Value *v)
                         avP(e->names, name != NULL && name->type != VALUE_NIL ? mkcstr(ty, name) : NULL);
                         avP(e->required, optional != NULL ? !optional->boolean : true);
                         avP(e->tconds, cond != NULL && cond->type != VALUE_NIL ? cexpr(ty, cond) : NULL);
+                }
+
+                break;
+        }
+        case TyChoicePattern:
+        {
+                e->type = EXPRESSION_CHOICE_PATTERN;
+
+                for (int i = 0; i < v->array->count; ++i) {
+                        Value *entry = &v->array->items[i];
+                        avP(e->es, cexpr(ty, entry));
+                        avP(e->names, NULL);
+                        avP(e->required, true);
+                        avP(e->tconds, NULL);
                 }
 
                 break;
