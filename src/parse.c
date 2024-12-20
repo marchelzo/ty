@@ -4496,7 +4496,9 @@ patternize(Ty *ty, Expr *e)
                 e->tagged = patternize(ty, e->tagged);
                 return e;
         case EXPRESSION_LIST:
+                e->type = EXPRESSION_CHOICE_PATTERN;
         case EXPRESSION_TUPLE:
+        case EXPRESSION_CHOICE_PATTERN:
                 for (int i = 0; i < e->es.count; ++i) {
                         e->es.items[i] = patternize(ty, e->es.items[i]);
                 }

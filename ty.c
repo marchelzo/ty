@@ -550,13 +550,13 @@ ProcessArgs(char *argv[], bool first)
                                         }
                                         break;
                                 default:
-                                        fprintf(stderr, "Unrecognized option -%c\n", *opt);
+                                        fprintf(stderr, "ty: unrecognized option `-%c`\n", *opt);
                                         exit(1);
                                 }
                         }
                 } else {
 BadOption:
-                        fprintf(stderr, "Unrecognized option %s\n", argv[argi]);
+                        fprintf(stderr, "ty: unrecognized option `%s`\n", argv[argi]);
                         exit(1);
                 }
 NextOption:
