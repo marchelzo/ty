@@ -156,18 +156,16 @@ class Function : Iter {
         apply(self, x, *ys)
     }
 
+    iter*(x) {
+        while true { yield (x = self(x)) }
+    }
+
     __match__(x) {
         self(x)
     }
 
     __next__() {
         Some(self())
-    }
-
-    iter(x) {
-        generator {
-            while true { yield (x = self(x)) }
-        }
     }
 
     &&&(g) {
