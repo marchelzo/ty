@@ -91,6 +91,7 @@ static struct {
         { "+=",  TOKEN_PLUS_EQ        },
         { "*=",  TOKEN_STAR_EQ        },
         { "/=",  TOKEN_DIV_EQ         },
+        { "%=",  TOKEN_MOD_EQ         },
         { "-=",  TOKEN_MINUS_EQ       },
 
         { "|=",   TOKEN_OR_EQ         },
@@ -161,7 +162,7 @@ token_show_type(Ty *ty, int type)
         case TOKEN_STAR_EQ:            return "operator '*='";
         case TOKEN_DIV_EQ:             return "operator '/='";
         case TOKEN_MINUS_EQ:           return "operator '-='";
-        case TOKEN_PERCENT_EQ:         return "operator '%='";
+        case TOKEN_MOD_EQ:             return "operator '%='";
         case TOKEN_EQ:                 return "token '='";
         case TOKEN_MAYBE_EQ:           return "token '?='";
         case TOKEN_WTF:                return "token '??'";

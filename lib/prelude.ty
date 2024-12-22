@@ -164,6 +164,12 @@ class Function : Iter {
         Some(self())
     }
 
+    iter(x) {
+        generator {
+            while true { yield (x = self(x)) }
+        }
+    }
+
     &&&(g) {
         x -> (self(x), g(x))
     }
@@ -230,11 +236,21 @@ class Array : Iterable {
         for x, i in self {
             if x :: Array {
                 for idx in x.indices() {
-                    yield (idx :: Array) ? ([i] + idx) : [i, idx]
+                    yield tuple(*((idx :: Array) ? ([i] + idx) : [i, idx]))
                 }
             } else {
                 yield i
             }
+        }
+    }
+
+    permutations*() {
+        let xs = self.sort()
+
+        yield xs
+
+        while $xs = xs.next-permutation!() {
+            yield xs
         }
     }
 
@@ -1028,6 +1044,10 @@ class Iterable {
         @__iter__().count(x)
     }
 
+    count-by(pred) {
+        @__iter__().count-by(pred)
+    }
+
     intersperse(x) {
         @__iter__().intersperse(x)
     }
@@ -1311,6 +1331,16 @@ class Iter : Iterable {
 
     unwords() {
         return @join(' ')
+    }
+
+    count-by(pred) {
+        let n = 0
+
+        for x in self {
+            if pred(x) { n += 1 }
+        }
+
+        return n
     }
 
     count(x) {
