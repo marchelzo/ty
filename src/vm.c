@@ -4961,10 +4961,8 @@ vm_panic(Ty *ty, char const *fmt, ...)
                 ERR[n  ] = '\0';
         }
 
-        bool can_yield = false;
-
         for (int i = 0; IP != NULL && n < sz; ++i) {
-                if (FRAMES.count > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
+                if (vN(FRAMES) > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
                         /*
                          * This code is part of a hidden function; we don't want it
                          * to show up in stack traces.
@@ -4979,8 +4977,9 @@ vm_panic(Ty *ty, char const *fmt, ...)
                         n += WriteExpressionOrigin(ty, ERR + n, sz - n, expr->origin);
                 }
 
-                if (FRAMES.count == 0) {
-                        if (can_yield) {
+                while (vN(FRAMES) == 0) {
+                        Generator *gen;
+                        if ((gen = GetCurrentGenerator(ty)) != NULL && vN(gen->frames) > 0) {
                                 FRAMES.count += 1;
                                 co_yield(ty);
                         } else {
@@ -4988,8 +4987,10 @@ vm_panic(Ty *ty, char const *fmt, ...)
                         }
                 }
 
-                Generator *gen;
-                can_yield = (gen = GetCurrentGenerator(ty)) != NULL && vN(gen->calls) > 0;
+                if (vN(FRAMES) == 0) {
+                        break;
+                }
+
 Next:
                 IP = (char *)vvX(FRAMES)->ip;
         }
