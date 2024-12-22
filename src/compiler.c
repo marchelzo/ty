@@ -2432,6 +2432,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_PLUS_EQ:
         case EXPRESSION_STAR_EQ:
         case EXPRESSION_DIV_EQ:
+        case EXPRESSION_MOD_EQ:
         case EXPRESSION_MINUS_EQ:
         case EXPRESSION_AND_EQ:
         case EXPRESSION_OR_EQ:
@@ -5727,6 +5728,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_expression(ty, e->value);
                 emit_instr(ty, INSTR_MUT_DIV);
                 break;
+        case EXPRESSION_MOD_EQ:
+                emit_target(ty, e->target, false);
+                emit_expression(ty, e->value);
+                emit_instr(ty, INSTR_MUT_MOD);
+                break;
         case EXPRESSION_MINUS_EQ:
                 emit_target(ty, e->target, false);
                 emit_expression(ty, e->value);
@@ -7562,6 +7568,9 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_DIV_EQ:
                 v = tagged(ty, TyMutDiv, tyexpr(ty, e->target), tyexpr(ty, e->value), NONE);
                 break;
+        case EXPRESSION_MOD_EQ:
+                v = tagged(ty, TyMutMod, tyexpr(ty, e->target), tyexpr(ty, e->value), NONE);
+                break;
         case EXPRESSION_AND_EQ:
                 v = tagged(ty, TyMutAnd, tyexpr(ty, e->target), tyexpr(ty, e->value), NONE);
                 break;
@@ -8793,6 +8802,11 @@ cexpr(Ty *ty, Value *v)
                 break;
         case TyMutDiv:
                 e->type = EXPRESSION_DIV_EQ;
+                e->target = cexpr(ty, &v->items[0]);
+                e->value = cexpr(ty, &v->items[1]);
+                break;
+        case TyMutMod:
+                e->type = EXPRESSION_MOD_EQ;
                 e->target = cexpr(ty, &v->items[0]);
                 e->value = cexpr(ty, &v->items[1]);
                 break;
@@ -10422,6 +10436,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(MUT_ADD)
                 CASE(MUT_MUL)
                 CASE(MUT_DIV)
+                CASE(MUT_MOD)
                 CASE(MUT_SUB)
                 CASE(MUT_AND)
                 CASE(MUT_OR)

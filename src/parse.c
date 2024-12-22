@@ -1089,6 +1089,7 @@ op_fixup(Ty *ty, int i)
         case TOKEN_STAR_EQ:     token(i)->identifier = "*=";   break;
         case TOKEN_MINUS_EQ:    token(i)->identifier = "-=";   break;
         case TOKEN_DIV_EQ:      token(i)->identifier = "/=";   break;
+        case TOKEN_MOD_EQ:      token(i)->identifier = "%=";   break;
         case TOKEN_SHL_EQ:      token(i)->identifier = "<<=";  break;
         case TOKEN_SHR_EQ:      token(i)->identifier = ">>=";  break;
         case TOKEN_SHL:         token(i)->identifier = "<<";   break;
@@ -4119,6 +4120,7 @@ BINARY_OPERATOR(check_match, CHECK_MATCH,  3, false)
 BINARY_LVALUE_OPERATOR(plus_eq,  PLUS_EQ,  2, true)
 BINARY_LVALUE_OPERATOR(star_eq,  STAR_EQ,  2, true)
 BINARY_LVALUE_OPERATOR(div_eq,   DIV_EQ,   2, true)
+BINARY_LVALUE_OPERATOR(mod_eq,   MOD_EQ,   2, true)
 BINARY_LVALUE_OPERATOR(minus_eq, MINUS_EQ, 2, true)
 
 BINARY_LVALUE_OPERATOR(and_eq, AND_EQ, 2, true)
@@ -4237,6 +4239,7 @@ get_infix_parser(Ty *ty)
         case TOKEN_PLUS_EQ:        return infix_plus_eq;
         case TOKEN_STAR_EQ:        return infix_star_eq;
         case TOKEN_DIV_EQ:         return infix_div_eq;
+        case TOKEN_MOD_EQ:         return infix_mod_eq;
         case TOKEN_MINUS_EQ:       return infix_minus_eq;
 
         case TOKEN_AND_EQ:         return infix_and_eq;
@@ -4371,6 +4374,7 @@ get_infix_prec(Ty *ty)
         case TOKEN_PLUS_EQ:        return 2;
         case TOKEN_STAR_EQ:        return 2;
         case TOKEN_DIV_EQ:         return 2;
+        case TOKEN_MOD_EQ:         return 2;
 
         case TOKEN_AND_EQ:         return 2;
         case TOKEN_OR_EQ:          return 2;

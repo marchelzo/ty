@@ -1991,6 +1991,54 @@ DoMutDiv(Ty *ty)
 }
 
 inline static void
+DoMutMod(Ty *ty)
+{
+        uintptr_t c, p = (uintptr_t)poptarget();
+        struct itable *o;
+        INT32_C(4);
+        Value *vp, *vp2, val, x;
+        void *v = vp = (void *)(p & ~PMASK3);
+        unsigned char b;
+
+        switch (p & PMASK3) {
+        case 0:
+                if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "%=")) != NULL) {
+                        gP(vp);
+                        call(ty, vp2, vp, 1, 0, true);
+                        gX();
+                        pop();
+                } else {
+                        x = pop();
+                        if ((val = vm_try_2op(ty, OP_MUT_MOD, vp, &x)).type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_MOD, vp, &x);
+                        }
+                }
+                push(*vp);
+                break;
+        case 1:
+                if (UNLIKELY(top()->type != VALUE_INTEGER)) {
+                        zP("attempt to divide byte by non-integer: %s", VSC(top()));
+                }
+                b = ((struct blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] %= pop().integer;
+                push(INTEGER(b));
+                break;
+        case 2:
+                c = (uintptr_t)poptarget();
+                o = TARGETS.items[TARGETS.count].gc;
+                vp = poptarget();
+                call(ty, vp, &OBJECT(o, c), 0, 0, true);
+                top()[-1] = vm_2op(ty, OP_MOD, top(), top() - 1);
+                pop();
+                call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        default:
+                zP("bad target pointer :(");
+        }
+}
+
+inline static void
 DoMutMul(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
@@ -4144,6 +4192,9 @@ Throw:
                 CASE(MUT_DIV)
                         DoMutDiv(ty);
                         break;
+                CASE(MUT_MOD)
+                        DoMutMod(ty);
+                        break;
                 CASE(MUT_SUB)
                         DoMutSub(ty);
                         break;
@@ -6075,6 +6126,7 @@ StepInstruction(char const *ip)
         CASE(MUT_ADD)
         CASE(MUT_MUL)
         CASE(MUT_DIV)
+        CASE(MUT_MOD)
         CASE(MUT_SUB)
                  break;
         CASE(UNARY_OP)

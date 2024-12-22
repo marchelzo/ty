@@ -582,6 +582,7 @@ extern bool ColorProfile;
         X(MUT_ADD), \
         X(MUT_MUL), \
         X(MUT_DIV), \
+        X(MUT_MOD), \
         X(MUT_SUB), \
         X(MUT_AND), \
         X(MUT_OR), \

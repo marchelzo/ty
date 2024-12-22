@@ -193,6 +193,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(PLUS_EQ), \
         X(STAR_EQ), \
         X(DIV_EQ), \
+        X(MOD_EQ), \
         X(MINUS_EQ), \
         X(AND_EQ), \
         X(OR_EQ), \

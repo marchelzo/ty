@@ -56,7 +56,7 @@ typedef struct token {
                 TOKEN_STAR_EQ,
                 TOKEN_DIV_EQ,
                 TOKEN_MINUS_EQ,
-                TOKEN_PERCENT_EQ,
+                TOKEN_MOD_EQ,
                 TOKEN_AND_EQ,
                 TOKEN_OR_EQ,
                 TOKEN_XOR_EQ,

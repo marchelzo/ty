@@ -91,6 +91,7 @@ struct value;
         X(MutSub)               \
         X(MutMul)               \
         X(MutDiv)               \
+        X(MutMod)               \
         X(MutAnd)               \
         X(MutOr)                \
         X(MutXor)               \
