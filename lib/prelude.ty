@@ -417,6 +417,10 @@ class Dict : Iterable {
         self[x] ?= nil
     }
 
+    &(o) {
+        %{k: v for k, v in self if k in o}
+    }
+
     iterValues*() {
         for _, v in self {
             yield v
