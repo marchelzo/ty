@@ -140,7 +140,6 @@ static SigfnStack sigfns;
 #define TARGETS (ty->targets)
 #define FRAMES  (ty->frames)
 
-#define DEFER_STACK (ty->defer_stack)
 #define DROP_STACK  (ty->drop_stack)
 #define JB          (ty->jb)
 #define RC          (ty->rc)
@@ -262,8 +261,8 @@ typedef struct {
         ValueStack *stack;
         FrameStack *frames;
         TargetStack *targets;
-        ValueStack *defer_stack;
         ValueStack *drop_stack;
+        TryStack *try_stack;
         void *root_set;
         AllocList *allocs;
         size_t *memory_used;
@@ -905,7 +904,6 @@ co_yield(Ty *ty)
         SWAP(TargetStack, gen->targets, TARGETS);
         SWAP(CallStack, gen->calls, CALLS);
         SWAP(FrameStack, gen->frames, FRAMES);
-        SWAP(ValueVector, gen->deferred, DEFER_STACK);
         SWAP(ValueVector, gen->to_drop, DROP_STACK);
 
         vec_push_n_unchecked(gen->frame, STACK.items + n, STACK.count - n - 1);
@@ -1090,7 +1088,6 @@ call_co(Ty *ty, Value *v, int n)
         SWAP(TargetStack, v->gen->targets, TARGETS);
         SWAP(SPStack, v->gen->sps, SP_STACK);
         SWAP(FrameStack, v->gen->frames, FRAMES);
-        SWAP(ValueVector, v->gen->deferred, DEFER_STACK);
         SWAP(ValueVector, v->gen->to_drop, DROP_STACK);
 
         for (int i = 0; i < v->gen->frame.count; ++i) {
@@ -1182,7 +1179,7 @@ AddThread(Ty *ty, TyThread self)
         MyStorage = (ThreadStorage) {
                 .stack = &STACK,
                 .frames = &FRAMES,
-                .defer_stack = &DEFER_STACK,
+                .try_stack = &TRY_STACK,
                 .drop_stack = &DROP_STACK,
                 .targets = &TARGETS,
                 .root_set = GCRootSet(ty),
@@ -1245,6 +1242,12 @@ CleanupThread(void *ctx)
 
         TyMutexUnlock(&MyGroup->Lock);
 
+        for (int i = 0; i < TRY_STACK.capacity; ++i) {
+                struct try *t = *v_(TRY_STACK, i);
+                vvF(t->defer);
+                free(t);
+        }
+
         TyMutexDestroy(MyLock);
         free(MyLock);
         free((void *)MyState);
@@ -1255,7 +1258,6 @@ CleanupThread(void *ctx)
         mF(TARGETS.items);
         mF(TRY_STACK.items);
         mF(THROW_STACK.items);
-        mF(DEFER_STACK.items);
         mF(DROP_STACK.items);
         free(ty->allocs.items);
 
@@ -1517,10 +1519,17 @@ DoThrow(Ty *ty)
                 while (DROP_STACK.count > t_[0]->ds) {
                         DoDrop(ty);
                 }
+                for (int i = 0; i < t_[0]->defer.count; ++i) {
+                        vmC(&t_[0]->defer.items[i], 0);
+                }
         }
 
         while (DROP_STACK.count > t->ds) {
                 DoDrop(ty);
+        }
+
+        for (int i = 0; i < t->defer.count; ++i) {
+                vmC(&t->defer.items[i], 0);
         }
 
         TRY_STACK.count -= vvL(TRY_STACK) - tp;
@@ -2514,6 +2523,8 @@ vm_exec(Ty *ty, char *code)
         char *str;
         char const *method;
 
+        struct try *t;
+
         BuiltinMethod *func;
 
         PopulateGlobals(ty);
@@ -3015,13 +3026,13 @@ Throw:
                 {
                         READVALUE(n);
                         struct try *t;
-                        size_t n_tstk = TRY_STACK.count;
-                        if (UNLIKELY(n_tstk == TRY_STACK.capacity)) {
+                        size_t ntry = TRY_STACK.count;
+                        if (UNLIKELY(ntry == TRY_STACK.capacity)) {
                                 do {
-                                        t = mrealloc(NULL, sizeof *t);
+                                        t = alloc0(sizeof *t);
                                         vvP(TRY_STACK, t);
                                 } while (TRY_STACK.count != TRY_STACK.capacity);
-                                TRY_STACK.count = n_tstk;
+                                TRY_STACK.count = ntry;
                         }
                         t = TRY_STACK.items[TRY_STACK.count++];
                         if (setjmp(t->jb) != 0) {
@@ -3037,6 +3048,7 @@ Throw:
                         t->cs = CALLS.count;
                         t->ts = TARGETS.count;
                         t->ds = DROP_STACK.count;
+                        t->defer.count = 0;
                         t->ctxs = FRAMES.count;
                         t->nsp = SP_STACK.count;
                         t->executing = false;
@@ -3053,19 +3065,16 @@ Throw:
                         vec_push_unchecked(*vvL(DROP_STACK)->array, peek());
                         break;
                 CASE(PUSH_DEFER_GROUP)
-                        vec_push_unchecked(DEFER_STACK, ARRAY(vA()));
                         break;
                 CASE(DEFER)
-                        vp = top();
-                        vAp(vvL(DEFER_STACK)->array, *vp);
-                        pop();
+                        t = *GetCurrentTry(ty);
+                        xvP(t->defer, pop());
                         break;
                 CASE(CLEANUP)
-                        v = *vvL(DEFER_STACK);
-                        for (int i = 0; i < v.array->count; ++i) {
-                                vmC(&v.array->items[i], 0);
+                        t = vvL(TRY_STACK)[1];
+                        for (int i = 0; i < t->defer.count; ++i) {
+                                vmC(&t->defer.items[i], 0);
                         }
-                        vvX(DEFER_STACK);
                         break;
                 CASE(ENSURE_LEN)
                         READJUMP(jump);
@@ -4964,7 +4973,7 @@ vm_panic(Ty *ty, char const *fmt, ...)
         for (int i = 0; IP != NULL && n < sz; ++i) {
                 if (vN(FRAMES) > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
                         /*
-                         * This code is part of a hidden function; we don't want it
+                         * This code is part of a hidden function -- we don't want it
                          * to show up in stack traces.
                          */
                         goto Next;
@@ -4981,6 +4990,8 @@ vm_panic(Ty *ty, char const *fmt, ...)
                         Generator *gen;
                         if ((gen = GetCurrentGenerator(ty)) != NULL && vN(gen->frames) > 0) {
                                 FRAMES.count += 1;
+                                STACK.count = vvL(FRAMES)->fp;
+                                push(NIL);
                                 co_yield(ty);
                         } else {
                                 break;
@@ -5719,9 +5730,12 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
                 value_mark(ty, &storage->stack->items[i]);
         }
 
-        GCLOG("Marking DEFER_STACK");
-        for (int i = 0; i < storage->defer_stack->count; ++i) {
-                value_mark(ty, &storage->defer_stack->items[i]);
+        GCLOG("Marking try stack");
+        for (int i = 0; i < vN(*storage->try_stack); ++i) {
+                struct try *t = *v_(*storage->try_stack, i);
+                for (int i = 0; i < vN(t->defer); ++i) {
+                        value_mark(ty, v_(t->defer, i));
+                }
         }
 
         GCLOG("Marking drop stack");

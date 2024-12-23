@@ -3413,24 +3413,20 @@ emit_function(Ty *ty, Expr const *e)
         state.function_resources = state.resources;
 
         Stmt *body = e->body;
-        Stmt try;
-        Stmt cleanup;
 
         if (e->has_defer) {
-                try.type = STATEMENT_TRY_CLEAN;
-                try.start = body->start;
-                try.end = body->end;
-                try.try.s = body;
-                vec_init(try.try.patterns);
-                vec_init(try.try.handlers);
+                Stmt *try = NewStmt(ty, STATEMENT_TRY_CLEAN);
+                try->start = body->start;
+                try->end = body->end;
+                try->try.s = body;
 
-                cleanup.type = STATEMENT_CLEANUP;
-                cleanup.start = body->start;
-                cleanup.end = body->end;
+                Stmt *cleanup = NewStmt(ty, STATEMENT_CLEANUP);
+                cleanup->start = body->start;
+                cleanup->end = body->end;
 
-                try.try.finally = &cleanup;
+                try->try.finally = cleanup;
 
-                body = &try;
+                body = try;
         }
 
         if (e->type == EXPRESSION_GENERATOR) {
@@ -6177,7 +6173,7 @@ compile(Ty *ty, char const *source)
                 longjmp(jb, 1);
         }
 
-        statement_vector multi_functions = {0};
+        statement_vector expanded = {0};
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 if (
@@ -6202,27 +6198,31 @@ compile(Ty *ty, char const *source)
                         def->target->identifier = multi->name;
 
                         define_function(ty, def);
-                        symbolize_statement(ty, state.global, def);
+
+                        avP(expanded, def);
 
                         int m = 0;
                         do {
+                                avP(expanded, p[i + m]);
                                 p[i + m]->pub = false;
                                 p[i + m]->value->is_overload = true;
                                 snprintf(buffer, sizeof buffer, "%s#%d", multi->name, m + 1);
                                 p[i + m]->target->identifier = p[i + m]->value->name = sclonea(ty, buffer);
                                 avP(multi->functions, (Expr *)p[i + m]);
                                 define_function(ty, p[i + m]);
-                                symbolize_statement(ty, state.global, p[i + m]);
                                 m += 1;
                         } while (
                                 p[i + m] != NULL &&
                                 p[i + m]->type == STATEMENT_FUNCTION_DEFINITION &&
                                 strcmp(multi->name, p[i + m]->target->identifier) == 0
                         );
-
-                        avP(multi_functions, def);
+                } else {
+                        avP(expanded, p[i]);
                 }
         }
+
+        avP(expanded, NULL);
+        p = expanded.items;
 
         for (size_t i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, state.global, p[i]);
@@ -6266,10 +6266,6 @@ compile(Ty *ty, char const *source)
                                 p[end_of_defs = j + 1] = s;
                         }
                 }
-        }
-
-        for (int i = 0; i < multi_functions.count; ++i) {
-                emit_statement(ty, multi_functions.items[i], false);
         }
 
         for (int i = 0; i < end_of_defs; ++i) {

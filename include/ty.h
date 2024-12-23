@@ -280,6 +280,7 @@ struct try {
         char *catch;
         char *finally;
         char *end;
+        ValueVector defer;
 };
 
 typedef struct ThrowCtx {
@@ -350,7 +351,6 @@ typedef struct ty {
 
         jmp_buf jb;
         TryStack try_stack;
-        ValueStack defer_stack;
         ValueStack drop_stack;
         vec(ThrowCtx) throw_stack;
 
@@ -674,7 +674,8 @@ enum {
 #define vvP(a, b)        vec_push((a), (b))
 #define vvI(a, b, c)     vec_insert((a), (b), (c))
 #define vvIn(a, b, c, d) vec_insert_n(a, (b), (c), (d))
-#define vvF(a)           vec_empty((a))
+#define vvF(a)           mF((a).items)
+#define vv0(v)           vec_empty(v)
 #define vvR(a, b)        vec_reserve((a), (b))
 
 #define vvX  vec_pop
