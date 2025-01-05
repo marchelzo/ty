@@ -171,16 +171,18 @@ void
 _gc_push(Ty *ty, Value const *v);
 
 void
+_gc_pop(Ty *ty);
+
+void
 gc_immortalize(Ty *ty, Value const *v);
 
 #if 0
-#define gc_push(ty, v) do { GCLOG("gc_push(ty): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(v); } while (0)
+#define gc_push(ty, v) do { GCLOG("gc_push(): " __FILE__ ":%d: %p", __LINE__, (v)); _gc_push(ty, v); } while (0)
+#define gc_pop(ty) do { GCLOG("gc_pop(): " __FILE__ ":%d: %p", __LINE__, *vvL(*GCRoots(ty))); _gc_pop(ty); } while (0)
 #else
 #define gc_push _gc_push
+#define gc_pop _gc_pop
 #endif
-
-void
-gc_pop(Ty *ty);
 
 void
 gc_clear_root_set(Ty *ty);
@@ -257,8 +259,8 @@ GCForget(Ty *ty, AllocList *allocs, size_t *used);
 void
 GCTakeOwnership(Ty *ty, AllocList *new);
 
-void *
-GCRootSet(Ty *ty);
+GCRootSet *
+GCRoots(Ty *ty);
 
 void *
 GCImmortalSet(Ty *ty);

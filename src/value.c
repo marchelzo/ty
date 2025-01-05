@@ -1170,6 +1170,10 @@ mark_generator(Ty *ty, struct value const *v)
         for (int i = 0; i < vN(v->gen->to_drop); ++i) {
                 value_mark(ty, v_(v->gen->to_drop, i));
         }
+
+        for (int i = 0; i < vN(v->gen->gc_roots); ++i) {
+                value_mark(ty, *v_(v->gen->gc_roots, i));
+        }
 }
 
 inline static void

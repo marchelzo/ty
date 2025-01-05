@@ -1,5 +1,7 @@
 #include <string.h>
 
+#include <libco.h>
+
 #include "gc.h"
 #include "dict.h"
 #include "object.h"
@@ -11,8 +13,8 @@
 #include "compiler.h"
 #include "itable.h"
 
-static _Thread_local vec(Value const *) RootSet;
-static vec(Value const *) ImmortalSet;
+static _Thread_local GCRootSet RootSet;
+static GCRootSet ImmortalSet;
 
 _Thread_local int GC_OFF_COUNT = 0;
 
@@ -28,27 +30,46 @@ collect(Ty *ty, struct alloc *a)
         struct value finalizer;
         struct regex *re;
         Thread *t;
+        Generator *gen;
 
         switch (a->type) {
-        case GC_ARRAY:     mF(((struct array *)p)->items);    break;
-        case GC_BLOB:      mF(((struct blob *)p)->items);     break;
-        case GC_DICT:      dict_free(ty, p);                           break;
+        case GC_ARRAY:     mF(((struct array *)p)->items); break;
+        case GC_BLOB:      mF(((struct blob *)p)->items);  break;
+        case GC_DICT:      dict_free(ty, p);               break;
+
         case GC_GENERATOR:
-                mF(((Generator *)p)->frame.items);
-                mF(((Generator *)p)->calls.items);
-                mF(((Generator *)p)->frames.items);
-                mF(((Generator *)p)->targets.items);
-                mF(((Generator *)p)->sps.items);
-                mF(((Generator *)p)->deferred.items);
-                mF(((Generator *)p)->to_drop.items);
+                gen = p;
+
+                mF(gen->frame.items);
+                mF(gen->calls.items);
+                mF(gen->frames.items);
+                mF(gen->targets.items);
+                mF(gen->sps.items);
+                mF(gen->deferred.items);
+                mF(gen->to_drop.items);
+                free(gen->gc_roots.items);
+
+                for (int i = 0; i < gen->try_stack.capacity; ++i) {
+                        free(*v_(gen->try_stack, i));
+                }
+
+                free(gen->try_stack.items);
+
+                GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
+
+                co_delete(gen->co);
+
                 break;
         case GC_THREAD:
                 t = p;
+
                 if (t->v.type == VALUE_NONE) {
                         TyThreadDetach(((Thread *)p)->t);
                 }
+
                 TyMutexDestroy(&t->mutex);
                 TyCondVarDestroy(&t->cond);
+
                 break;
         case GC_OBJECT:
                 o = OBJECT((struct itable *)p, ((struct itable *)p)->class);
@@ -147,7 +168,7 @@ gc_immortalize(Ty *ty, Value const *v)
 }
 
 void
-gc_pop(Ty *ty)
+_gc_pop(Ty *ty)
 {
         --RootSet.count;
 }
@@ -182,8 +203,8 @@ gc_root_set_count(Ty *ty)
         return RootSet.count;
 }
 
-void *
-GCRootSet(Ty *ty)
+GCRootSet *
+GCRoots(Ty *ty)
 {
         return &RootSet;
 }

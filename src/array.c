@@ -2052,15 +2052,15 @@ array_ptr(Ty *ty, Value *array, int argc, Value *kwargs)
         return PTR(array->array);
 }
 
-#define DEFINE_NO_MUT(name) \
-        static Value \
+#define DEFINE_NO_MUT(name)                                                      \
+        static Value                                                             \
         array_ ## name ## _no_mut(Ty *ty, Value *array, int argc, Value *kwargs) \
-        { \
-                Value clone = array_clone(ty, array, 0, NULL); \
-                gP(&clone); \
-                Value result = array_ ## name(ty, &clone, argc, kwargs); \
-                gX(); \
-                return result; \
+        {                                                                        \
+                Value clone = array_clone(ty, array, 0, NULL);                   \
+                gP(&clone);                                                      \
+                Value result = array_ ## name(ty, &clone, argc, kwargs);         \
+                gX();                                                            \
+                return result;                                                   \
         }
 
 DEFINE_NO_MUT(enumerate);
