@@ -209,6 +209,20 @@ op_builtin_sub(Ty *ty)
                 }
                 t = (left->extra == NULL) ? &ffi_type_uint8 : left->extra;
                 COMPLETE(INTEGER(((char *)left->ptr - (char *)right->ptr) / t->size));
+
+        case PAIR_OF(VALUE_DICT):
+        {
+                Value new = DICT(DictClone(ty, left->dict));
+                NOGC(new.dict);
+
+                vm_push(ty, right);
+                dict_subtract(ty, &new, 1, NULL);
+                vm_pop(ty);
+
+                OKGC(new.dict);
+
+                COMPLETE(new);
+        }
         }
 
         return false;

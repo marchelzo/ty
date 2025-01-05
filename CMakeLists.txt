@@ -102,6 +102,12 @@ else()
   add_dependencies(${_tgt_ioctlconstants_h} ${_tgt_gen_ioctl_h})
 endif()
 
+# ---
+#  target: libco
+# ---
+add_library(libco)
+target_sources(libco PRIVATE libco/libco.c)
+target_compile_definitions(libco PRIVATE LIBCO_MP)
 
 # ---
 #  target: ty
@@ -192,6 +198,7 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::gumbo::gumbo
     unofficial::pcre::pcre
     utf8proc
+    libco
     $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
     $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
@@ -204,6 +211,7 @@ target_link_libraries(${_tgt_ty_interface}
 target_include_directories(${_tgt_ty_interface}
   INTERFACE
     ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/libco
 )
 
 target_compile_definitions(${_tgt_ty_interface}

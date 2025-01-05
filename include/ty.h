@@ -10,6 +10,8 @@
 
 #include <pcre.h>
 
+
+#include "libco.h"
 #include "vec.h"
 #include "intern.h"
 #include "panic.h"
@@ -29,6 +31,7 @@ typedef vec(int)            int_vector;
 typedef vec(char)           byte_vector;
 typedef vec(char *)         CallStack;
 typedef vec(Value)          ValueVector;
+typedef vec(Value const *)  GCRootSet;
 typedef ValueVector         ValueStack;
 typedef vec(char *)         StringVector;
 typedef vec(char const *)   ConstStringVector;
@@ -211,13 +214,17 @@ struct generator {
         char *ip;
         Value f;
         int fp;
+        int ExecDepth;
         ValueVector frame;
         FrameStack frames;
         CallStack calls;
         SPStack sps;
         TargetStack targets;
+        TryStack try_stack;
         ValueVector deferred;
         ValueVector to_drop;
+        GCRootSet gc_roots;
+        cothread_t co;
 };
 
 struct thread {

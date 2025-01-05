@@ -94,7 +94,16 @@
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
   static _Thread_local Expr *expr;
-  #define CASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP - 1); LOG("%07ju:%s:%d:%d: " #i, (uintptr_t)(IP - 1) & 0xFFFFFF, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define CASE(i)                                    \
+        case INSTR_ ## i:                            \
+        expr = compiler_find_expr(ty, IP - 1);       \
+        LOG(                                         \
+                "%07ju:%s:%d:%d: " #i,               \
+                (uintptr_t)(IP - 1) & 0xFFFFFFFF,    \
+                expr ? expr->filename : "(unknown)", \
+                (expr ? expr->start.line : 0) + 1,   \
+                (expr ? expr->start.col : 0) + 1     \
+        );
 #else
   #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
@@ -122,6 +131,7 @@ static char iter_fix[] = { INSTR_SENTINEL, INSTR_RETURN_PRESERVE_CTX };
 InternedNames NAMES;
 
 _Thread_local int EvalDepth = 0;
+_Thread_local int ExecDepth = 0;
 
 static ValueVector Globals;
 
@@ -314,6 +324,8 @@ static ThreadGroup MainGroup;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 #endif
 
+static _Thread_local vec(cothread_t) CoThreads;
+
 static _Thread_local Ty *MyTy;
 _Thread_local TyMutex *MyLock;
 static _Thread_local TyThreadState *MyState;
@@ -327,6 +339,8 @@ MarkStorage(Ty *ty, ThreadStorage const *storage);
 
 static TyThreadReturnValue
 vm_run_thread(void *p);
+
+static Value cthread_go(Ty *ty);
 
 static void
 InitializeTY(void)
@@ -883,9 +897,107 @@ SpecialTarget(Ty *ty)
         return (((uintptr_t)TARGETS.items[TARGETS.count - 1].t) & PMASK3) != 0;
 }
 
+static bool
+co_yield_value(Ty *ty);
+
+noreturn static void
+do_co(void)
+{
+        Ty *ty = MyTy;
+
+        for (;;) {
+                vm_exec(ty, IP);
+                co_yield_value(ty);
+        }
+}
+
+inline static bool
+GeneratorIsSuspended(Generator *gen)
+{
+        return gen->ip != NULL;
+}
+
+inline static Generator *
+GetCurrentGenerator(Ty *ty)
+{
+        int n = FRAMES.items[0].fp;
+
+        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
+                return NULL;
+        }
+
+        return STACK.items[n - 1].gen;
+}
+
+inline static Generator *
+GetNextGenerator(Generator *gen)
+{
+        int n = v_(gen->frames, 0)->fp;
+
+        if (
+                n == 0
+             || v_(STACK, n - 1)->type != VALUE_GENERATOR
+             || v_(STACK, n - 1)->gen == gen
+        ) {
+                return NULL;
+        }
+
+        return v_(STACK, n - 1)->gen;
+}
+
+inline static Generator *
+GetGeneratorForFrame(Ty *ty, int i)
+{
+        int n = FRAMES.items[i].fp;
+
+        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
+                return NULL;
+        }
+
+        return STACK.items[n - 1].gen;
+}
+
+inline static cothread_t
+GetFreeCoThread(Ty *ty)
+{
+        if (vN(CoThreads) == 0) {
+                xvP(CoThreads, co_create(1u << 22, do_co));
+        }
+
+        return *vvX(CoThreads);
+}
 
 static bool
-co_yield(Ty *ty)
+co_abort(Ty *ty)
+{
+        if (FRAMES.count == 0 || STACK.count == 0)
+                return false;
+
+        int n = FRAMES.items[0].fp;
+
+        if (v_(STACK, n - 1)->type != VALUE_GENERATOR) {
+                return false;
+        }
+
+        Generator *gen = v_(STACK, n - 1)->gen;
+        STACK.count = n - 1;
+
+        SWAP(SPStack, gen->sps, SP_STACK);
+        SWAP(TargetStack, gen->targets, TARGETS);
+        SWAP(CallStack, gen->calls, CALLS);
+        SWAP(FrameStack, gen->frames, FRAMES);
+        SWAP(ValueVector, gen->to_drop, DROP_STACK);
+        SWAP(TryStack, gen->try_stack, TRY_STACK);
+        SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
+
+        vvX(FRAMES);
+        IP = *vvX(CALLS);
+
+        return true;
+}
+
+static bool
+co_yield_value(Ty *ty)
 {
         if (FRAMES.count == 0 || STACK.count == 0)
                 return false;
@@ -905,8 +1017,11 @@ co_yield(Ty *ty)
         SWAP(CallStack, gen->calls, CALLS);
         SWAP(FrameStack, gen->frames, FRAMES);
         SWAP(ValueVector, gen->to_drop, DROP_STACK);
+        SWAP(TryStack, gen->try_stack, TRY_STACK);
+        SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
+        SWAP(int, gen->ExecDepth, ExecDepth);
 
-        vec_push_n_unchecked(gen->frame, STACK.items + n, STACK.count - n - 1);
+        uvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
 
         STACK.items[n - 1] = peek();
         STACK.count = n;
@@ -915,31 +1030,22 @@ co_yield(Ty *ty)
 
         IP = *vvX(CALLS);
 
+        if (gen->ExecDepth > 1) {
+                cothread_t co = gen->co;
+                gen->co = co_active();
+                LOG("co_switch(): exit recursed co=%p", (void *)gen->co);
+                co_switch(co);
+        } else {
+                cothread_t co = gen->co;
+                gen->co = NULL;
+                xvP(CoThreads, co_active());
+                LOG("co_switch(): exit normal co=%p", (void *)gen->co);
+                co_switch(co);
+        }
+
+        LOG("Back from yield");
+
         return true;
-}
-
-inline static Generator *
-GetGeneratorForFrame(Ty *ty, int i)
-{
-        int n = FRAMES.items[i].fp;
-
-        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
-                return NULL;
-        }
-
-        return STACK.items[n - 1].gen;
-}
-
-inline static Generator *
-GetCurrentGenerator(Ty *ty)
-{
-        int n = FRAMES.items[0].fp;
-
-        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
-                return NULL;
-        }
-
-        return STACK.items[n - 1].gen;
 }
 
 #ifdef TY_RELEASE
@@ -1041,14 +1147,19 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         print_stack(ty, max(bound + 2, 5));
 
         if (exec) {
-                vec_push_unchecked(CALLS, &halt);
-                gP(f);
                 Generator *gen = GetCurrentGenerator(ty);
+
+                //gP(f);
+
+                vec_push_unchecked(CALLS, &halt);
+                //printf("call(): ExecDepth=%d\n", ExecDepth);
                 vm_exec(ty, code);
+
                 if (UNLIKELY(GetCurrentGenerator(ty) != gen)) {
-                        zP("sus usage of coroutine yield");
+                        zP("sus use of coroutine yield");
                 }
-                gX();
+
+                //gX();
         } else {
                 vec_push_unchecked(CALLS, IP);
                 IP = code;
@@ -1056,23 +1167,28 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 }
 
 inline static void
-call_co(Ty *ty, Value *v, int n)
+call_co_ex(Ty *ty, Value *v, int n, char *whence)
 {
+        if (UNLIKELY(!GeneratorIsSuspended(v->gen))) {
+                zP("attempt to invoke an already-active coroutine");
+        }
+
         if (v->gen->ip != code_of(&v->gen->f)) {
                 if (n == 0) {
                         vec_push_unchecked(v->gen->frame, NIL);
                 } else {
-                        vec_push_n_unchecked(v->gen->frame, top() - (n - 1), n);
+                        vec_push_n_unchecked(v->gen->frame, vZ(STACK) - n, n);
                         STACK.count -= n;
                 }
         }
 
         push(*v);
         call(ty, &v->gen->f, NULL, 0, 0, false);
+        *vvL(CALLS) = whence;
         STACK.count = vvL(FRAMES)->fp;
 
         if (v->gen->frames.count == 0) {
-                vvP(v->gen->frames, *vvL(FRAMES));
+                uvP(v->gen->frames, *vvL(FRAMES));
         } else {
                 v->gen->frames.items[0] = *vvL(FRAMES);
         }
@@ -1089,12 +1205,35 @@ call_co(Ty *ty, Value *v, int n)
         SWAP(SPStack, v->gen->sps, SP_STACK);
         SWAP(FrameStack, v->gen->frames, FRAMES);
         SWAP(ValueVector, v->gen->to_drop, DROP_STACK);
+        SWAP(TryStack, v->gen->try_stack, TRY_STACK);
+        SWAP(GCRootSet, v->gen->gc_roots, *GCRoots(ty));
+        SWAP(int, v->gen->ExecDepth, ExecDepth);
 
         for (int i = 0; i < v->gen->frame.count; ++i) {
                 push(v->gen->frame.items[i]);
         }
 
         IP = v->gen->ip;
+        v->gen->ip = NULL;
+
+        if (v->gen->co != NULL) {
+                cothread_t co = v->gen->co;
+                v->gen->co = co_active();
+                LOG("co_switch(): enter existing co=%p", (void *)co);
+                co_switch(co);
+        } else {
+                cothread_t co = GetFreeCoThread(ty);
+                v->gen->co = co_active();
+                LOG("co_switch(): enter free co=%p IP=%ju", (void *)co, ((uintptr_t)IP) & 0xFFFFFFFF);
+                co_switch(co);
+
+        }
+}
+
+static void
+call_co(Ty *ty, Value *v, int n)
+{
+        call_co_ex(ty, v, n, IP);
 }
 
 uint64_t
@@ -1182,7 +1321,7 @@ AddThread(Ty *ty, TyThread self)
                 .try_stack = &TRY_STACK,
                 .drop_stack = &DROP_STACK,
                 .targets = &TARGETS,
-                .root_set = GCRootSet(ty),
+                .root_set = GCRoots(ty),
                 .allocs = &ty->allocs,
                 .memory_used = &MemoryUsed
         };
@@ -1261,7 +1400,7 @@ CleanupThread(void *ctx)
         mF(DROP_STACK.items);
         free(ty->allocs.items);
 
-        vec(Value const *) *root_set = GCRootSet(ty);
+        vec(Value const *) *root_set = GCRoots(ty);
         free(root_set->items);
 
         if (group_remaining == 0) {
@@ -1470,12 +1609,13 @@ DoDrop(Ty *ty)
         vvX(DROP_STACK);
 }
 
-inline static struct try **
+inline static struct try *
 GetCurrentTry(Ty *ty)
 {
-        for (int i = 0; i < TRY_STACK.count; ++i) {
-                struct try **t = vvL(TRY_STACK) - i;
-                if ((*t)->state == TRY_TRY || (*t)->state == TRY_FINALLY) {
+        for (int i = vN(TRY_STACK); i >= 0; --i) {
+                struct try *t = *v_(TRY_STACK, i);
+
+                if (!t->executing) {
                         return t;
                 }
         }
@@ -1486,70 +1626,65 @@ GetCurrentTry(Ty *ty)
 inline static noreturn void
 DoThrow(Ty *ty)
 {
-        struct try **tp = GetCurrentTry(ty);
+        Value ex = pop();
 
-        if (UNLIKELY(tp == NULL)) {
-                ThrowCtx c = *vvX(THROW_STACK);
+        //printf("Throw: %s\n", VSC(&ex));
+        //xprint_stack(ty, 10);
 
-                FRAMES.count = c.ctxs;
-                IP = (char *)c.ip;
+        for (;;) {
+                if (vN(TRY_STACK) != 0) {
+                        struct try *t = *vvL(TRY_STACK);
 
-                zP("uncaught exception: %s%s%s", TERM(31), VSC(top()), TERM(39));
-        }
+                        if (UNLIKELY(t->executing)) {
+                                zP(
+                                        "an exception was thrown while handling another exception: %s%s%s",
+                                        TERM(31), VSC(&ex), TERM(39)
+                                );
+                        }
 
-        struct try *t = *tp;
+                        t->executing = true;
+                        t->state = TRY_FINALLY;
 
-        if (UNLIKELY(t->state == TRY_FINALLY)) {
-                zP(
-                        "an exception was thrown while handling another exception: %s%s%s",
-                        TERM(31), VSC(top()), TERM(39)
-                );
-        }
+                        if (t->finally != NULL) {
+                                vm_exec(ty, t->finally);
+                        }
 
-        t->state = TRY_THROW;
-        t->executing = true;
+                        while (DROP_STACK.count > t->ds) {
+                                DoDrop(ty);
+                        }
 
-        Value v = pop();
+                        for (int i = 0; i < t->defer.count; ++i) {
+                                vmC(&t->defer.items[i], 0);
+                        }
 
-        for (struct try **t_ = vvL(TRY_STACK); t_ != tp; --t_) {
-                t_[0]->state = TRY_FINALLY;
-                if (t_[0]->finally != NULL) {
-                        vm_exec(ty, t_[0]->finally);
+                        STACK.count = t->sp;
+
+                        push(SENTINEL);
+                        push(ex);
+
+                        SP_STACK.count = t->nsp;
+                        FRAMES.count = t->ctxs;
+                        TARGETS.count = t->ts;
+                        CALLS.count = t->cs;
+                        IP = t->catch;
+
+
+                        //printf("truncate: %zu -> %zu\n", GCRoots(ty)->count, (size_t)t->gc);
+                        gc_truncate_root_set(ty, t->gc);
+
+                        longjmp(t->jb, 1);
+                        /* unreachable */
                 }
-                while (DROP_STACK.count > t_[0]->ds) {
-                        DoDrop(ty);
+
+                if (!co_abort(ty)) {
+                        ThrowCtx c = *vvX(THROW_STACK);
+
+                        FRAMES.count = c.ctxs;
+                        IP = (char *)c.ip;
+
+                        zP("uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
                 }
-                for (int i = 0; i < t_[0]->defer.count; ++i) {
-                        vmC(&t_[0]->defer.items[i], 0);
-                }
         }
-
-        while (DROP_STACK.count > t->ds) {
-                DoDrop(ty);
-        }
-
-        for (int i = 0; i < t->defer.count; ++i) {
-                vmC(&t->defer.items[i], 0);
-        }
-
-        TRY_STACK.count -= vvL(TRY_STACK) - tp;
-
-        STACK.count = t->sp;
-
-        push(SENTINEL);
-        push(v);
-
-        SP_STACK.count = t->nsp;
-        FRAMES.count = t->ctxs;
-        TARGETS.count = t->ts;
-        CALLS.count = t->cs;
-        IP = t->catch;
-
-
-        gc_truncate_root_set(ty, t->gc);
-
-        longjmp(t->jb, 1);
-        /* unreachable */
 }
 
 inline static Value
@@ -2533,6 +2668,8 @@ vm_exec(Ty *ty, char *code)
         char *StartIPLocal = LastIP;
 #endif
 
+        ExecDepth += 1;
+
         for (;;) {
         if (ty->GC_OFF_COUNT == 0 && MyGroup->WantGC) {
                 WaitGC(ty);
@@ -3001,11 +3138,14 @@ Throw:
                                 .ctxs = FRAMES.count,
                                 .ip = IP
                         }));
-                        // Fallthrough
+                        DoThrow(ty);
                 CASE(RETHROW)
+                        vvX(TRY_STACK);
                         DoThrow(ty);
                 CASE(FINALLY)
                 {
+                        //puts("Finally");
+                        //xprint_stack(ty, 10);
                         struct try *t = *vvX(TRY_STACK);
                         t->state = TRY_FINALLY;
                         if (t->finally != NULL)
@@ -3016,33 +3156,40 @@ Throw:
                         --TRY_STACK.count;
                         break;
                 CASE(RESUME_TRY)
-                        vvL(TRY_STACK)[0]->state = TRY_TRY;
+                        //vvL(TRY_STACK)[0]->state = TRY_TRY;
                         break;
                 CASE(CATCH)
-                        --THROW_STACK.count;
-                        vvL(TRY_STACK)[0]->state = TRY_CATCH;
+                        //--THROW_STACK.count;
+                        vvL(TRY_STACK)[0]->executing = false;
                         break;
                 CASE(TRY)
                 {
-                        READVALUE(n);
                         struct try *t;
                         size_t ntry = TRY_STACK.count;
+
                         if (UNLIKELY(ntry == TRY_STACK.capacity)) {
                                 do {
                                         t = alloc0(sizeof *t);
-                                        vvP(TRY_STACK, t);
+                                        uvP(TRY_STACK, t);
                                 } while (TRY_STACK.count != TRY_STACK.capacity);
                                 TRY_STACK.count = ntry;
                         }
+
                         t = TRY_STACK.items[TRY_STACK.count++];
+
                         if (setjmp(t->jb) != 0) {
                                 break;
                         }
+
+                        READVALUE(n);
                         t->catch = IP + n;
+
                         READVALUE(n);
                         t->finally = (n == -1) ? NULL : IP + n;
+
                         READVALUE(n);
                         t->end = (n == -1) ? NULL : IP + n;
+
                         t->sp = STACK.count;
                         t->gc = gc_root_set_count(ty);
                         t->cs = CALLS.count;
@@ -3053,6 +3200,7 @@ Throw:
                         t->nsp = SP_STACK.count;
                         t->executing = false;
                         t->state = TRY_TRY;
+
                         break;
                 }
                 CASE(DROP)
@@ -3067,7 +3215,7 @@ Throw:
                 CASE(PUSH_DEFER_GROUP)
                         break;
                 CASE(DEFER)
-                        t = *GetCurrentTry(ty);
+                        t = GetCurrentTry(ty);
                         xvP(t->defer, pop());
                         break;
                 CASE(CLEANUP)
@@ -3402,9 +3550,9 @@ Throw:
                         goto CallMethod;
                 CASE(TO_STRING)
                         if (top()->type == VALUE_PTR) {
-                            char *s = VSC(top());
-                            pop();
-                            push(STRING_NOGC(s, strlen(s)));
+                                char *s = VSC(top());
+                                pop();
+                                push(STRING_NOGC(s, strlen(s)));
                         } else {
                                 n = 0;
                                 i = NAMES.str;
@@ -3413,26 +3561,28 @@ Throw:
                         }
                         break;
                 CASE(YIELD)
-                        if (UNLIKELY(!co_yield(ty))) {
-                                zP("attempt to yield from outside generator context");
+                {
+                        Generator *gen = GetCurrentGenerator(ty);
+
+                        if (UNLIKELY(gen == NULL)) {
+                                zP("attempt to yield from outside of a generator context");
                         }
-                        break;
+
+                        ExecDepth -= 1;
+
+                        return;
+                }
                 CASE(MAKE_GENERATOR)
-                        v = GENERATOR(mAo(sizeof *v.gen, GC_GENERATOR));
-                        NOGC(v.gen);
+                        v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));
+
+                        n = STACK.count - vvL(FRAMES)->fp;
+                        uvPn(v.gen->frame, STACK.items + STACK.count - n, n);
+
                         v.gen->ip = IP;
                         v.gen->f = vvL(FRAMES)->f;
-                        n = STACK.count - vvL(FRAMES)->fp;
-                        vec_init(v.gen->frame);
-                        vec_push_n_unchecked(v.gen->frame, STACK.items + STACK.count - n, n);
-                        vec_init(v.gen->sps);
-                        vec_init(v.gen->targets);
-                        vec_init(v.gen->calls);
-                        vec_init(v.gen->frames);
-                        vec_init(v.gen->deferred);
-                        vec_init(v.gen->to_drop);
+
                         push(v);
-                        OKGC(v.gen);
+
                         goto Return;
                 CASE(VALUE)
                         READVALUE(s);
@@ -3538,10 +3688,8 @@ Throw:
                                 }
                                 break;
                         case VALUE_GENERATOR:
-                                vec_push_unchecked(CALLS, IP);
-                                call_co(ty, &v, 0);
-                                *vvL(v.gen->calls) = next_fix;
-                                break;
+                                call_co_ex(ty, &v, 0, IP);
+                                goto YieldFix;
                         default:
                         NoIter:
                                 GC_STOP();
@@ -3581,6 +3729,7 @@ Throw:
                         push(NONE);
                         break;
                 CASE(NONE_IF_NIL)
+                YieldFix:
                         if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
                                 *top() = NONE;
                         } else if (
@@ -3589,7 +3738,7 @@ Throw:
                                         tags_first(ty, top()->tags) == TAG_SOME
                                 )
                         ) {
-                                zP("iterator returned invalid type. Expected None or Some(ty, x) but got %s", VSC(top()));
+                                zP("iterator returned invalid type. Expected None or Some(x) but got %s", VSC(top()));
                         } else {
                                 top()->tags = tags_pop(ty, top()->tags);
                                 if (top()->tags == 0) {
@@ -4503,6 +4652,8 @@ Throw:
                                  * Builtin functions may not preserve the stack size, so instead
                                  * of subtracting `n` after calling the builtin function, we compute
                                  * the desired final stack size in advance.
+                                 *
+                                 * XXX: ??
                                  */
                                 if (nkw > 0) {
                                         container = pop();
@@ -4518,9 +4669,10 @@ Throw:
                                 push(v);
                                 break;
                         case VALUE_GENERATOR:
+                                gX();
                                 if (nkw > 0) { pop(); }
                                 call_co(ty, &v, n);
-                                break;
+                                goto NextInstruction;
                         case VALUE_TAG:
                                 if (nkw > 0) {
                                         container = pop();
@@ -4588,14 +4740,12 @@ Throw:
                                 if (nkw > 0) {
                                         container = pop();
                                         gP(&container);
-                                        k = STACK.count - n;
                                         v = v.builtin_method(ty, v.this, n, &container);
                                         gX();
                                 } else {
-                                        k = STACK.count - n;
                                         v = v.builtin_method(ty, v.this, n, NULL);
                                 }
-                                STACK.count = k;
+                                STACK.count -= n;
                                 push(v);
                                 break;
                         case VALUE_NIL:
@@ -4828,6 +4978,7 @@ SetupMethodCall:
                         LOG("returning: IP = %p", IP);
                         break;
                 CASE(HALT)
+                        ExecDepth -= 1;
                         IP = save;
                         LOG("halting: IP = %p", IP);
                         return;
@@ -4992,7 +5143,8 @@ vm_panic(Ty *ty, char const *fmt, ...)
                                 FRAMES.count += 1;
                                 STACK.count = vvL(FRAMES)->fp;
                                 push(NIL);
-                                co_yield(ty);
+                                co_yield_value(ty);
+                                // XXX: Should just co_abort()
                         } else {
                                 break;
                         }

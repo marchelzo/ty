@@ -17,6 +17,7 @@ LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
+LDFLAGS += -lco
 LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
 LDFLAGS += $(shell pcre-config --libs)

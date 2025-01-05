@@ -3526,11 +3526,6 @@ emit_function(Ty *ty, Expr const *e)
 
         LOG("state.fscope: %s", scope_name(ty, state.fscope));
 
-        if (e->function_symbol != NULL) {
-                emit_tgt(ty, e->function_symbol, e->scope->parent, false);
-                emit_instr(ty, INSTR_ASSIGN);
-        }
-
         if (self_cap != -1) {
                 emit_instr(ty, INSTR_PATCH_ENV);
                 emit_int(ty, self_cap);
@@ -3550,6 +3545,11 @@ emit_function(Ty *ty, Expr const *e)
                         fail(ty, "bro?");
                 }
                 emit_expression(ty, c);
+        }
+
+        if (e->function_symbol != NULL) {
+                emit_tgt(ty, e->function_symbol, e->scope->parent, false);
+                emit_instr(ty, INSTR_ASSIGN);
         }
 }
 
@@ -3799,7 +3799,7 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
 
         bool returns = emit_statement(ty, s->try.s, want_result);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP, end);
+        PLACEHOLDER_JUMP(INSTR_JUMP, finally);
 
         offset_vector successes_save = state.match_successes;
         vec_init(state.match_successes);
@@ -3810,13 +3810,18 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
                 returns &= emit_catch(ty, s->try.patterns.items[i], NULL, s->try.handlers.items[i], want_result);
         }
 
-        emit_instr(ty, INSTR_FINALLY);
+        if (s->try.finally != NULL) {
+                begin_finally(ty);
+                returns &= emit_statement(ty, s->try.finally, false);
+                end_finally(ty);
+        }
+
         emit_instr(ty, INSTR_RETHROW);
 
         patch_jumps_to(&state.match_successes, state.code.count);
-        PATCH_JUMP(end);
-
         state.match_successes = successes_save;
+
+        PATCH_JUMP(finally);
 
         emit_instr(ty, INSTR_FINALLY);
 
