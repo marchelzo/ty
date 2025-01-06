@@ -132,15 +132,22 @@ function nexttype() {
     while match (peek().type, peek(1).type) {
         (')', _),
         (_, '(')       => { break                 },
-        (_, '.')       => { return expr(1)        },
+        (_, '.')       => {
+            let e = expr(1)
+
+            // Allow stuff like f(c.int error_code) by just ignoring the identifier
+            if peek().type == 'id' { next() }
+
+            return e
+        },
         ('const', _)   => { next()                },
         ('comment', _) => { next()                },
         ('id', _)      => { parts.push(next().id) },
     }
 
-    let type-string = parts.filter!((not in ignore)).sort!(:desc).unwords()
+    parts.filter!((not in ignore))
 
-    let t = match type-string {
+    let t = match parts.sort(:desc).unwords() {
         /\benum\b/ => c.int,
 
         'void' => c.void,
@@ -151,7 +158,7 @@ function nexttype() {
         'long'    => c.long,
 
         'unsigned char'  => c.uchar,
-        'unsigned short' => c.ushort
+        'unsigned short' => c.ushort,
         'unsigned'       => c.uint,
         'unsigned int'   => c.uint,
         'unsigned long'  => c.ulong,
@@ -182,7 +189,7 @@ function nexttype() {
 
         'bool' or '_Bool' => c.u8,
 
-        name => ty.Id({name})
+        _ => ty.Id({name: parts[0]})
     }
 
     if !match?(t, ty.Id(_)) {
