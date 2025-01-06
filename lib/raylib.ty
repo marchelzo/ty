@@ -1,0 +1,705 @@
+import ffi as c (C!)
+
+let $raylib = c.dlopen('libraylib.dylib')
+
+pub KEY_NULL            = 0;        // Key: NULL, used for no key pressed
+
+// Alphanumeric keys
+
+pub KEY_APOSTROPHE      = 39       // Key: '
+pub KEY_COMMA           = 44       // Key: ,
+pub KEY_MINUS           = 45       // Key: -
+pub KEY_PERIOD          = 46       // Key: .
+pub KEY_SLASH           = 47       // Key: /
+pub KEY_ZERO            = 48       // Key: 0
+pub KEY_ONE             = 49       // Key: 1
+pub KEY_TWO             = 50       // Key: 2
+pub KEY_THREE           = 51       // Key: 3
+pub KEY_FOUR            = 52       // Key: 4
+pub KEY_FIVE            = 53       // Key: 5
+pub KEY_SIX             = 54       // Key: 6
+pub KEY_SEVEN           = 55       // Key: 7
+pub KEY_EIGHT           = 56       // Key: 8
+pub KEY_NINE            = 57       // Key: 9
+pub KEY_SEMICOLON       = 59       // Key: ;
+pub KEY_EQUAL           = 61       // Key: =
+pub KEY_A               = 65       // Key: A | a
+pub KEY_B               = 66       // Key: B | b
+pub KEY_C               = 67       // Key: C | c
+pub KEY_D               = 68       // Key: D | d
+pub KEY_E               = 69       // Key: E | e
+pub KEY_F               = 70       // Key: F | f
+pub KEY_G               = 71       // Key: G | g
+pub KEY_H               = 72       // Key: H | h
+pub KEY_I               = 73       // Key: I | i
+pub KEY_J               = 74       // Key: J | j
+pub KEY_K               = 75       // Key: K | k
+pub KEY_L               = 76       // Key: L | l
+pub KEY_M               = 77       // Key: M | m
+pub KEY_N               = 78       // Key: N | n
+pub KEY_O               = 79       // Key: O | o
+pub KEY_P               = 80       // Key: P | p
+pub KEY_Q               = 81       // Key: Q | q
+pub KEY_R               = 82       // Key: R | r
+pub KEY_S               = 83       // Key: S | s
+pub KEY_T               = 84       // Key: T | t
+pub KEY_U               = 85       // Key: U | u
+pub KEY_V               = 86       // Key: V | v
+pub KEY_W               = 87       // Key: W | w
+pub KEY_X               = 88       // Key: X | x
+pub KEY_Y               = 89       // Key: Y | y
+pub KEY_Z               = 90       // Key: Z | z
+pub KEY_LEFT_BRACKET    = 91       // Key: [
+pub KEY_BACKSLASH       = 92       // Key: '\'
+pub KEY_RIGHT_BRACKET   = 93       // Key: ]
+pub KEY_GRAVE           = 96       // Key: `
+
+// Function keys
+pub KEY_SPACE           = 32       // Key: Space
+pub KEY_ESCAPE          = 256      // Key: Esc
+pub KEY_ENTER           = 257      // Key: Enter
+pub KEY_TAB             = 258      // Key: Tab
+pub KEY_BACKSPACE       = 259      // Key: Backspace
+pub KEY_INSERT          = 260      // Key: Ins
+pub KEY_DELETE          = 261      // Key: Del
+pub KEY_RIGHT           = 262      // Key: Cursor right
+pub KEY_LEFT            = 263      // Key: Cursor left
+pub KEY_DOWN            = 264      // Key: Cursor down
+pub KEY_UP              = 265      // Key: Cursor up
+pub KEY_PAGE_UP         = 266      // Key: Page up
+pub KEY_PAGE_DOWN       = 267      // Key: Page down
+pub KEY_HOME            = 268      // Key: Home
+pub KEY_END             = 269      // Key: End
+pub KEY_CAPS_LOCK       = 280      // Key: Caps lock
+pub KEY_SCROLL_LOCK     = 281      // Key: Scroll down
+pub KEY_NUM_LOCK        = 282      // Key: Num lock
+pub KEY_PRINT_SCREEN    = 283      // Key: Print screen
+pub KEY_PAUSE           = 284      // Key: Pause
+pub KEY_F1              = 290      // Key: F1
+pub KEY_F2              = 291      // Key: F2
+pub KEY_F3              = 292      // Key: F3
+pub KEY_F4              = 293      // Key: F4
+pub KEY_F5              = 294      // Key: F5
+pub KEY_F6              = 295      // Key: F6
+pub KEY_F7              = 296      // Key: F7
+pub KEY_F8              = 297      // Key: F8
+pub KEY_F9              = 298      // Key: F9
+pub KEY_F10             = 299      // Key: F10
+pub KEY_F11             = 300      // Key: F11
+pub KEY_F12             = 301      // Key: F12
+pub KEY_LEFT_SHIFT      = 340      // Key: Shift left
+pub KEY_LEFT_CONTROL    = 341      // Key: Control left
+pub KEY_LEFT_ALT        = 342      // Key: Alt left
+pub KEY_LEFT_SUPER      = 343      // Key: Super left
+pub KEY_RIGHT_SHIFT     = 344      // Key: Shift right
+pub KEY_RIGHT_CONTROL   = 345      // Key: Control right
+pub KEY_RIGHT_ALT       = 346      // Key: Alt right
+pub KEY_RIGHT_SUPER     = 347      // Key: Super right
+pub KEY_KB_MENU         = 348      // Key: KB menu
+
+// Keypad keys
+pub KEY_KP_0            = 320      // Key: Keypad 0
+pub KEY_KP_1            = 321      // Key: Keypad 1
+pub KEY_KP_2            = 322      // Key: Keypad 2
+pub KEY_KP_3            = 323      // Key: Keypad 3
+pub KEY_KP_4            = 324      // Key: Keypad 4
+pub KEY_KP_5            = 325      // Key: Keypad 5
+pub KEY_KP_6            = 326      // Key: Keypad 6
+pub KEY_KP_7            = 327      // Key: Keypad 7
+pub KEY_KP_8            = 328      // Key: Keypad 8
+pub KEY_KP_9            = 329      // Key: Keypad 9
+pub KEY_KP_DECIMAL      = 330      // Key: Keypad .
+pub KEY_KP_DIVIDE       = 331      // Key: Keypad /
+pub KEY_KP_MULTIPLY     = 332      // Key: Keypad *
+pub KEY_KP_SUBTRACT     = 333      // Key: Keypad -
+pub KEY_KP_ADD          = 334      // Key: Keypad +
+pub KEY_KP_ENTER        = 335      // Key: Keypad Enter
+pub KEY_KP_EQUAL        = 336      // Key: Keypad =
+
+// Android key buttons
+pub KEY_BACK            = 4        // Key: Android back button
+pub KEY_MENU            = 82       // Key: Android menu button
+pub KEY_VOLUME_UP       = 24       // Key: Android volume up button
+pub KEY_VOLUME_DOWN     = 25        // Key: Android volume down button
+
+pub FLAG_VSYNC_HINT         = 0x00000040   // Set to try enabling V-Sync on GPU
+pub FLAG_FULLSCREEN_MODE    = 0x00000002   // Set to run program in fullscreen
+pub FLAG_WINDOW_RESIZABLE   = 0x00000004   // Set to allow resizable window
+pub FLAG_WINDOW_UNDECORATED = 0x00000008   // Set to disable window decoration (frame and buttons)
+pub FLAG_WINDOW_HIDDEN      = 0x00000080   // Set to hide window
+pub FLAG_WINDOW_MINIMIZED   = 0x00000200   // Set to minimize window (iconify)
+pub FLAG_WINDOW_MAXIMIZED   = 0x00000400   // Set to maximize window (expanded to monitor)
+pub FLAG_WINDOW_UNFOCUSED   = 0x00000800   // Set to window non focused
+pub FLAG_WINDOW_TOPMOST     = 0x00001000   // Set to window always on top
+pub FLAG_WINDOW_ALWAYS_RUN  = 0x00000100   // Set to allow windows running while minimized
+pub FLAG_WINDOW_TRANSPARENT = 0x00000010   // Set to allow transparent framebuffer
+pub FLAG_WINDOW_HIGHDPI     = 0x00002000   // Set to support HighDPI
+pub FLAG_WINDOW_MOUSE_PASSTHROUGH = 0x00004000 // Set to support mouse passthrough, only supported when FLAG_WINDOW_UNDECORATED
+pub FLAG_BORDERLESS_WINDOWED_MODE = 0x00008000 // Set to run program in borderless windowed mode
+pub FLAG_MSAA_4X_HINT       = 0x00000020   // Set to try enabling MSAA 4X
+pub FLAG_INTERLACED_HINT    = 0x00010000    // Set to try enabling interlaced video format (for V3D)
+
+pub TEXTURE_WRAP_REPEAT         = 0                // Repeats texture in tiled mode
+pub TEXTURE_WRAP_CLAMP          = 1                     // Clamps texture to edge pixel in tiled mode
+pub TEXTURE_WRAP_MIRROR_REPEAT  = 2             // Mirrors and repeats the texture in tiled mode
+pub TEXTURE_WRAP_MIRROR_CLAMP   = 3         // Mirrors and clamps to border the texture in tiled mode
+
+// Vector2, 2 components
+C! struct Vector2 {
+    c.float x;                // Vector x component
+    c.float y;                // Vector y component
+}
+
+// Vector3, 3 components
+C! struct Vector3 {
+    c.float x;                // Vector x component
+    c.float y;                // Vector y component
+    c.float z;                // Vector z component
+}
+
+// Vector4, 4 components
+C! struct Vector4 {
+    c.float x;                // Vector x component
+    c.float y;                // Vector y component
+    c.float z;                // Vector z component
+    c.float w;                // Vector w component
+}
+
+// Quaternion, 4 components (Vector4 alias)
+let Quaternion = Vector4
+
+// Matrix, 4x4 components, column major, OpenGL style, right-handed
+C! struct Matrix {
+    c.float m0, m4, m8, m12;  // Matrix first row (4 components)
+    c.float m1, m5, m9, m13;  // Matrix second row (4 components)
+    c.float m2, m6, m10, m14; // Matrix third row (4 components)
+    c.float m3, m7, m11, m15; // Matrix fourth row (4 components)
+}
+
+// Color, 4 components, R8G8B8A8 (32bit)
+C! struct Color {
+    c.u8 r;        // Color red value
+    c.u8 g;        // Color green value
+    c.u8 b;        // Color blue value
+    c.u8 a;        // Color alpha value
+}
+
+// Rectangle, 4 components
+C! struct Rectangle {
+    c.float x;                // Rectangle top-left corner position x
+    c.float y;                // Rectangle top-left corner position y
+    c.float width;            // Rectangle width
+    c.float height;           // Rectangle height
+}
+
+// Image, pixel data stored in CPU memory (RAM)
+C! struct Image {
+    c.ptr data;               // Image raw data
+    c.int width;              // Image base width
+    c.int height;             // Image base height
+    c.int mipmaps;            // Mipmap levels, 1 by default
+    c.int format;             // Data format (PixelFormat type)
+}
+
+// Texture, tex data stored in GPU memory (VRAM)
+C! struct Texture {
+    c.uint id;                // OpenGL texture id
+    c.int width;              // Texture base width
+    c.int height;             // Texture base height
+    c.int mipmaps;            // Mipmap levels, 1 by default
+    c.int format;             // Data format (PixelFormat type)
+}
+
+C! struct Camera2D {
+    Vector2_C offset;         // Camera offset (displacement from target)
+    Vector2_C target;         // Camera target (rotation and zoom origin)
+    c.float rotation;         // Camera rotation in degrees
+    c.float zoom;             // Camera zoom (scaling), should be 1.0f by default
+}
+
+// Camera, defines position/orientation in 3d space
+C! struct Camera3D {
+    Vector3_C position;       // Camera position
+    Vector3_C target;         // Camera target it looks-at
+    Vector3_C up;             // Camera up vector (rotation over its axis)
+    c.float fovy;           // Camera field-of-view aperture in Y (degrees) in perspective, used as near plane width in orthographic
+    c.int projection;       // Camera projection: CAMERA_PERSPECTIVE or CAMERA_ORTHOGRAPHIC
+}
+
+// RenderTexture, fbo for texture rendering
+C! struct RenderTexture {
+    c.uint id;        // OpenGL framebuffer object id
+    Texture_C texture;  // Color buffer attachment texture
+    Texture_C depth;    // Depth buffer attachment texture
+}
+
+// Shader
+C! struct Shader {
+    c.uint id;        // Shader program id
+    c.ptr locs;       // Shader locations array (RL_MAX_SHADER_LOCATIONS) (int *)
+}
+
+// Ray, ray for raycasting
+C! struct Ray {
+    Vector3_C position;       // Ray position (origin)
+    Vector3_C direction;      // Ray direction
+}
+
+let Camera_C = Camera3D_C
+
+// File path list
+C! struct FilePathList {
+    c.uint capacity;          // Filepaths max entries
+    c.uint count;             // Filepaths entries count
+    c.ptr paths;              // Filepaths entries (char **)
+}
+
+// Automation event
+C! struct AutomationEvent {
+    c.uint frame;             // Event frame
+    c.uint type;              // Event type (AutomationEventType)
+    c.int params[4];          // Event parameters (if required)
+}
+
+// Automation event list
+C! struct AutomationEventList {
+    c.uint capacity;          // Events max entries (MAX_AUTOMATION_EVENTS)
+    c.uint count;             // Events entries count
+    c.ptr events;             // Events entries (AutomationEvent *)
+}
+
+// GlyphInfo, font characters glyphs info
+C! struct GlyphInfo {
+    c.int value;              // Character value (Unicode)
+    c.int offsetX;            // Character offset X when drawing
+    c.int offsetY;            // Character offset Y when drawing
+    c.int advanceX;           // Character advance position X
+    Image_C image;            // Character image data
+}
+
+// Font, font texture and GlyphInfo array data
+C! struct Font {
+    c.int baseSize;           // Base size (default chars height)
+    c.int glyphCount;         // Number of glyph characters
+    c.int glyphPadding;       // Padding around the glyph characters
+    Texture_C texture;        // Texture atlas containing the glyphs
+    c.ptr recs;               // Rectangles in texture for the glyphs (Rectangle *)
+    c.ptr glyphs;             // Glyphs info data (Glyph *)
+}
+
+// Wave, audio wave data
+C! struct Wave {
+    c.int frameCount;    // Total number of frames (considering channels)
+    c.int sampleRate;    // Frequency (samples per second)
+    c.int sampleSize;    // Bit depth (bits per sample): 8, 16, 32 (24 not supported)
+    c.int channels;      // Number of channels (1-mono, 2-stereo, ...)
+    c.ptr data;                 // Buffer data pointer
+}
+
+// AudioStream, custom audio stream
+C! struct AudioStream {
+    c.ptr buffer;       // Pointer to internal data used by the audio system
+    c.ptr processor; // Pointer to internal data processor, useful for audio effects
+
+    c.int sampleRate;    // Frequency (samples per second)
+    c.int sampleSize;    // Bit depth (bits per sample): 8, 16, 32 (24 not supported)
+    c.int channels;      // Number of channels (1-mono, 2-stereo, ...)
+}
+
+// Sound
+C! struct Sound {
+    AudioStream_C stream;         // Audio stream
+    c.uint frameCount;    // Total number of frames (considering channels)
+}
+
+// Music, audio stream, anything longer than ~10 seconds should be streamed
+C! struct Music {
+    AudioStream_C stream;         // Audio stream
+    c.uint frameCount;    // Total number of frames (considering channels)
+    c.u8 looping;               // Music looping enable
+
+    c.int ctxType;                // Type of music context (audio filetype)
+    c.ptr ctxData;              // Audio context data, depends on type
+} Music;
+
+// Window-related functions
+C! raylib function InitWindow(c.int /* width */, c.int /* height */, c.ptr /* title */) -> c.void   // Initialize window and OpenGL context
+C! raylib function CloseWindow() -> c.void                                      // Close window and unload OpenGL context
+C! raylib function WindowShouldClose() -> c.u8                                // Check if application should close (KEY_ESCAPE pressed or windows close icon clicked)
+C! raylib function IsWindowReady() -> c.u8                                    // Check if window has been initialized successfully
+C! raylib function IsWindowFullscreen() -> c.u8                               // Check if window is currently fullscreen
+C! raylib function IsWindowHidden() -> c.u8                                   // Check if window is currently hidden (only PLATFORM_DESKTOP)
+C! raylib function IsWindowMinimized() -> c.u8                                // Check if window is currently minimized (only PLATFORM_DESKTOP)
+C! raylib function IsWindowMaximized() -> c.u8                                // Check if window is currently maximized (only PLATFORM_DESKTOP)
+C! raylib function IsWindowFocused() -> c.u8                                  // Check if window is currently focused (only PLATFORM_DESKTOP)
+C! raylib function IsWindowResized() -> c.u8                                  // Check if window has been resized last frame
+C! raylib function IsWindowState(c.uint /* flag */) -> c.u8                       // Check if one specific window flag is enabled
+C! raylib function SetWindowState(c.uint /* flags */) -> c.void                     // Set window configuration state using flags (only PLATFORM_DESKTOP)
+C! raylib function ClearWindowState(c.uint /* flags */) -> c.void                   // Clear window configuration state flags
+C! raylib function ToggleFullscreen() -> c.void                                 // Toggle window state: fullscreen/windowed (only PLATFORM_DESKTOP)
+C! raylib function ToggleBorderlessWindowed() -> c.void                         // Toggle window state: borderless windowed (only PLATFORM_DESKTOP)
+C! raylib function MaximizeWindow() -> c.void                                   // Set window state: maximized, if resizable (only PLATFORM_DESKTOP)
+C! raylib function MinimizeWindow() -> c.void                                   // Set window state: minimized, if resizable (only PLATFORM_DESKTOP)
+C! raylib function RestoreWindow() -> c.void                                    // Set window state: not minimized/maximized (only PLATFORM_DESKTOP)
+C! raylib function SetWindowIcon(Image_C) -> c.void                             // Set icon for window (single image, RGBA 32bit, only PLATFORM_DESKTOP)
+C! raylib function SetWindowIcons(c.ptr /* Image *images */, c.int /* count */) -> c.void               // Set icon for window (multiple images, RGBA 32bit, only PLATFORM_DESKTOP)
+C! raylib function SetWindowTitle(c.ptr /* title */) -> c.void                      // Set title for window (only PLATFORM_DESKTOP and PLATFORM_WEB)
+C! raylib function SetWindowPosition(c.int /* x */, c.int /* y */) -> c.void                        // Set window position on screen (only PLATFORM_DESKTOP)
+C! raylib function SetWindowMonitor(c.int /* monitor */) -> c.void                          // Set monitor for the current window
+C! raylib function SetWindowMinSize(c.int /* width */, c.int /* height */) -> c.void                // Set window minimum dimensions (for FLAG_WINDOW_RESIZABLE)
+C! raylib function SetWindowMaxSize(c.int /* width */, c.int /* height */) -> c.void                // Set window maximum dimensions (for FLAG_WINDOW_RESIZABLE)
+C! raylib function SetWindowSize(c.int /* width */, c.int /* height */) -> c.void                   // Set window dimensions
+C! raylib function SetWindowOpacity(c.float /* opacity */) -> c.void                        // Set window opacity [0.0f..1.0f] (only PLATFORM_DESKTOP)
+C! raylib function SetWindowFocused() -> c.void                                 // Set window focused (only PLATFORM_DESKTOP)
+C! raylib function GetWindowHandle() -> c.ptr                                   // Get native window handle (void *)
+C! raylib function GetScreenWidth() -> c.int                                    // Get current screen width
+C! raylib function GetScreenHeight() -> c.int                                   // Get current screen height
+C! raylib function GetRenderWidth() -> c.int                                    // Get current render width (it considers HiDPI)
+C! raylib function GetRenderHeight() -> c.int                                   // Get current render height (it considers HiDPI)
+C! raylib function GetMonitorCount() -> c.int                                   // Get number of connected monitors
+C! raylib function GetCurrentMonitor() -> c.int                                 // Get current connected monitor
+C! raylib function GetMonitorPosition(c.int /* monitor */) -> Vector2_C                     // Get specified monitor position
+C! raylib function GetMonitorWidth(c.int /* monitor */) -> c.int                            // Get specified monitor width (current video mode used by monitor)
+C! raylib function GetMonitorHeight(c.int /* monitor */) -> c.int                           // Get specified monitor height (current video mode used by monitor)
+C! raylib function GetMonitorPhysicalWidth(c.int /* monitor */) -> c.int                    // Get specified monitor physical width in millimetres
+C! raylib function GetMonitorPhysicalHeight(c.int /* monitor */) -> c.int                   // Get specified monitor physical height in millimetres
+C! raylib function GetMonitorRefreshRate(c.int /* monitor */) -> c.int                      // Get specified monitor refresh rate
+C! raylib function GetWindowPosition() -> Vector2_C                             // Get window position XY on monitor
+C! raylib function GetWindowScaleDPI() -> Vector2_C                             // Get window scale DPI factor
+C! raylib function GetMonitorName(c.int /* monitor */) -> c.ptr /* char const */                    // Get the human-readable, UTF-8 encoded name of the specified monitor
+C! raylib function SetClipboardText(c.ptr /* text */) -> c.void                     // Set clipboard text content
+C! raylib function GetClipboardText() -> c.ptr /* char const */                         // Get clipboard text content
+C! raylib function EnableEventWaiting() -> c.void                               // Enable waiting for events on EndDrawing(), no automatic event polling
+C! raylib function DisableEventWaiting() -> c.void                              // Disable waiting for events on EndDrawing(), automatic events polling
+
+// Cursor-related functions
+C! raylib function ShowCursor() -> c.void                                       // Shows cursor
+C! raylib function HideCursor() -> c.void                                       // Hides cursor
+C! raylib function IsCursorHidden() -> c.u8                                   // Check if cursor is not visible
+C! raylib function EnableCursor() -> c.void                                     // Enables cursor (unlock cursor)
+C! raylib function DisableCursor() -> c.void                                    // Disables cursor (lock cursor)
+C! raylib function IsCursorOnScreen() -> c.u8                                 // Check if cursor is on the screen
+
+// Drawing-related functions
+C! raylib function ClearBackground(Color_C color) -> c.void                           // Set background color (framebuffer clear color)
+C! raylib function BeginDrawing() -> c.void                                     // Setup canvas (framebuffer) to start drawing
+C! raylib function EndDrawing() -> c.void                                       // End canvas drawing and swap buffers (double buffering)
+C! raylib function BeginMode2D(Camera2D_C camera) -> c.void                           // Begin 2D mode with custom camera (2D)
+C! raylib function EndMode2D() -> c.void                                        // Ends 2D mode with custom camera
+C! raylib function BeginMode3D(Camera3D_C camera) -> c.void                           // Begin 3D mode with custom camera (3D)
+C! raylib function EndMode3D() -> c.void                                        // Ends 3D mode and returns to default 2D orthographic mode
+C! raylib function BeginTextureMode(RenderTexture_C target) -> c.void               // Begin drawing to render texture
+C! raylib function EndTextureMode() -> c.void                                   // Ends drawing to render texture
+C! raylib function BeginShaderMode(Shader_C shader) -> c.void                         // Begin custom shader drawing
+C! raylib function EndShaderMode() -> c.void                                    // End custom shader drawing (use default shader)
+C! raylib function BeginBlendMode(c.int /* mode */) -> c.void                               // Begin blending mode (alpha, additive, multiplied, subtract, custom)
+C! raylib function EndBlendMode() -> c.void                                     // End blending mode (reset to default: alpha blending)
+C! raylib function BeginScissorMode(c.int /* x */, c.int /* y */, c.int /* width */, c.int /* height */) -> c.void  // Begin scissor mode (define screen area for following drawing)
+C! raylib function EndScissorMode() -> c.void                                   // End scissor mode
+
+// Shader management functions
+// NOTE: Shader functionality is not available on OpenGL 1.1
+C! raylib function LoadShader(c.ptr /* vsFileName */, c.ptr /* fsFileName */) -> Shader_C    // Load shader from files and bind default locations
+C! raylib function LoadShaderFromMemory(c.ptr /* vsCode */, c.ptr /* fsCode */) -> Shader_C  // Load shader from code strings and bind default locations
+C! raylib function IsShaderReady(Shader_C shader) -> c.u8                                    // Check if a shader is ready
+C! raylib function GetShaderLocation(Shader_C shader, c.ptr /* uniformName */) -> c.int        // Get shader uniform location
+C! raylib function GetShaderLocationAttrib(Shader_C shader, c.ptr /* attribName */) -> c.int   // Get shader attribute location
+C! raylib function SetShaderValue(Shader_C shader, c.int /* locIndex */, c.ptr /* void *value */, c.int /* uniformType */) -> c.void                // Set shader uniform value
+C! raylib function SetShaderValueV(Shader_C shader, c.int /* locIndex */, c.ptr /* void *value */, c.int /* uniformType */, c.int /* count */) -> c.void    // Set shader uniform value vector
+C! raylib function SetShaderValueMatrix(Shader_C shader, c.int /* locIndex */, Matrix_C mat) -> c.void          // Set shader uniform value (matrix 4x4)
+C! raylib function SetShaderValueTexture(Shader_C shader, c.int /* locIndex */, Texture_C texture) -> c.void  // Set shader uniform value for texture (sampler2d)
+C! raylib function UnloadShader(Shader_C shader) -> c.void                                     // Unload shader from GPU memory (VRAM)
+
+// Screen-space-related functions
+C! raylib function GetMouseRay(Vector2_C mousePosition, Camera_C camera) -> Ray_C       // Get a ray trace from mouse position
+C! raylib function GetCameraMatrix(Camera_C camera) -> Matrix_C                       // Get camera transform matrix (view matrix)
+C! raylib function GetCameraMatrix2D(Camera2D_C camera) -> Matrix_C                   // Get camera 2d transform matrix
+C! raylib function GetWorldToScreen(Vector3_C position, Camera_C camera) -> Vector2_C   // Get the screen space position for a 3d world space position
+C! raylib function GetScreenToWorld2D(Vector2_C position, Camera2D_C camera) -> Vector2_C  // Get the world space position for a 2d camera screen space position
+C! raylib function GetWorldToScreenEx(Vector3_C position, Camera_C camera, c.int /* width */, c.int /* height */) -> Vector2_C  // Get size position for a 3d world space position
+C! raylib function GetWorldToScreen2D(Vector2_C position, Camera2D_C camera) -> Vector2_C  // Get the screen space position for a 2d camera world space position
+
+// Timing-related functions
+C! raylib function SetTargetFPS(c.int /* fps */) -> c.void                                  // Set target FPS (maximum)
+C! raylib function GetFrameTime() -> c.float                                    // Get time in seconds for last frame drawn (delta time)
+C! raylib function GetTime() -> c.double                                        // Get elapsed time in seconds since InitWindow()
+C! raylib function GetFPS() -> c.int                                            // Get current FPS
+
+// Custom frame control functions
+// NOTE: Those functions are intended for advance users that want full control over the frame processing
+// By default EndDrawing() does this job: draws everything + SwapScreenBuffer() + manage frame timing + PollInputEvents()
+// To avoid that behaviour and control frame processes manually, enable in config.h: SUPPORT_CUSTOM_FRAME_CONTROL
+C! raylib function SwapScreenBuffer() -> c.void                                 // Swap back buffer with front buffer (screen drawing)
+C! raylib function PollInputEvents() -> c.void                                  // Register all input events
+C! raylib function WaitTime(c.double seconds) -> c.void                               // Wait for some time (halt program execution)
+
+// Random values generation functions
+C! raylib function SetRandomSeed(c.uint /* seed */) -> c.void                       // Set the seed for the random number generator
+C! raylib function GetRandomValue(c.int /* min */, c.int /* max */) -> c.int                        // Get a random value between min and max (both included)
+C! raylib function LoadRandomSequence(c.uint /* count */, c.int /* min */, c.int /* max */) -> c.ptr // Load random values sequence, no values repeated (int *)
+C! raylib function UnloadRandomSequence(c.ptr /* int *sequence */) -> c.void                    // Unload random values sequence
+
+// Misc. functions
+C! raylib function TakeScreenshot(c.ptr /* fileName */) -> c.void                   // Takes a screenshot of current screen (filename extension defines format)
+C! raylib function SetConfigFlags(c.uint /* flags */) -> c.void                     // Setup init configuration flags (view FLAGS)
+C! raylib function OpenURL(c.ptr /* url */) -> c.void                               // Open URL with default system browser (if available)
+
+// NOTE: Following functions implemented in module [utils]
+//------------------------------------------------------------------
+pub LogTrace = c.wrapVar(raylib, 'TraceLog', 2, c.int, c.int, c.ptr)                        // Show trace log messages (LOG_DEBUG, LOG_INFO, LOG_WARNING, LOG_ERROR...)
+C! raylib function SetTraceLogLevel(c.int /* logLevel */) -> c.void                         // Set the current threshold (minimum) log level
+C! raylib function MemAlloc(c.uint /* size */) -> c.ptr                          // Internal memory allocator
+C! raylib function MemRealloc(c.ptr /* void *ptr */, c.uint /* size */) -> c.ptr             // Internal memory reallocator
+C! raylib function MemFree(c.ptr /* void *ptr */) -> c.void                                     // Internal memory free
+
+// Set custom callbacks
+// WARNING: Callbacks setup is intended for advance users
+let TraceLogCallback = c.ptr
+let LoadFileDataCallback = c.ptr
+let SaveFileDataCallback = c.ptr
+let LoadFileTextCallback = c.ptr
+let SaveFileTextCallback = c.ptr
+C! raylib function SetTraceLogCallback(TraceLogCallback) -> c.void          // Set custom trace log
+C! raylib function SetLoadFileDataCallback(LoadFileDataCallback) -> c.void  // Set custom file binary data loader
+C! raylib function SetSaveFileDataCallback(SaveFileDataCallback) -> c.void  // Set custom file binary data saver
+C! raylib function SetLoadFileTextCallback(LoadFileTextCallback) -> c.void  // Set custom file text data loader
+C! raylib function SetSaveFileTextCallback(SaveFileTextCallback) -> c.void  // Set custom file text data saver
+
+// Files management functions
+C! raylib function LoadFileData(c.ptr /* fileName */, c.ptr /* int *dataSize */) -> c.ptr // Load file data as byte array (read)
+C! raylib function UnloadFileData(c.ptr /* char *data */) -> c.void                    // Unload file data allocated by LoadFileData()
+C! raylib function SaveFileData(c.ptr /* fileName */, c.ptr /* void *data */, c.int /* dataSize */) -> c.u8  // Save data to file from byte array (write), returns true on success
+C! raylib function ExportDataAsCode(c.ptr /* char *data */, c.int /* dataSize */, c.ptr /* fileName */) -> c.u8  // Export data to code (.h), returns true on success
+C! raylib function LoadFileText(c.ptr /* fileName */) -> c.ptr                   // Load text data from file (read), returns a '\0' terminated string
+C! raylib function UnloadFileText(c.ptr /* char *text */) -> c.void                             // Unload file text data allocated by LoadFileText()
+C! raylib function SaveFileText(c.ptr /* fileName */, c.ptr /* char *text */) -> c.u8         // Save text data to file (write), string must be '\0' terminated, returns true on success
+//------------------------------------------------------------------
+
+// File system functions
+C! raylib function FileExists(c.ptr /* fileName */) -> c.u8                       // Check if file exists
+C! raylib function DirectoryExists(c.ptr /* dirPath */) -> c.u8                   // Check if a directory path exists
+C! raylib function IsFileExtension(c.ptr /* fileName */, c.ptr /* ext */) -> c.u8  // Check file extension (including point: .png, .wav)
+C! raylib function GetFileLength(c.ptr /* fileName */) -> c.int                     // Get file length in bytes (NOTE: GetFileSize() conflicts with windows.h)
+C! raylib function GetFileExtension(c.ptr /* fileName */) -> c.ptr /* char const */         // Get pointer to extension for a filename string (includes dot: '.png')
+C! raylib function GetFileName(c.ptr /* filePath */) -> c.ptr /* char const */              // Get pointer to filename for a path string
+C! raylib function GetFileNameWithoutExt(c.ptr /* filePath */) -> c.ptr /* char const */    // Get filename string without extension (uses static string)
+C! raylib function GetDirectoryPath(c.ptr /* filePath */) -> c.ptr /* char const */         // Get full path for a given fileName with path (uses static string)
+C! raylib function GetPrevDirectoryPath(c.ptr /* dirPath */) -> c.ptr /* char const */      // Get previous directory path for a given path (uses static string)
+C! raylib function GetWorkingDirectory() -> c.ptr /* char const */                      // Get current working directory (uses static string)
+C! raylib function GetApplicationDirectory() -> c.ptr /* char const */                  // Get the directory of the running application (uses static string)
+C! raylib function ChangeDirectory(c.ptr /* dir */) -> c.u8                       // Change working directory, return true on success
+C! raylib function IsPathFile(c.ptr /* path */) -> c.u8                           // Check if a given path is a file or a directory
+C! raylib function LoadDirectoryFiles(c.ptr /* dirPath */) -> FilePathList_C       // Load directory filepaths
+C! raylib function LoadDirectoryFilesEx(c.ptr /* basePath */, c.ptr /* filter */, c.u8 /* bool scanSubdirs */) -> FilePathList_C // Load directory filepaths with extension filtering and recursive directory scan
+C! raylib function UnloadDirectoryFiles(FilePathList_C files) -> c.void               // Unload filepaths
+C! raylib function IsFileDropped() -> c.u8                                    // Check if a file has been dropped into window
+C! raylib function LoadDroppedFiles() -> FilePathList_C                        // Load dropped filepaths
+C! raylib function UnloadDroppedFiles(FilePathList_C files) -> c.void                 // Unload dropped filepaths
+C! raylib function GetFileModTime(c.ptr /* fileName */) -> c.long                   // Get file modification time (last write time)
+
+// Compression/Encoding functionality
+C! raylib function CompressData(c.ptr /* char *data */, c.int /* dataSize */, c.ptr /* int *compDataSize */) -> c.ptr        // Compress data (DEFLATE algorithm), memory must be MemFree()
+C! raylib function DecompressData(c.ptr /* char *compData */, c.int /* compDataSize */, c.ptr /* int *dataSize */) -> c.ptr  // Decompress data (DEFLATE algorithm), memory must be MemFree()
+C! raylib function EncodeDataBase64(c.ptr /* char *data */, c.int /* dataSize */, c.ptr /* int *outputSize */) -> c.ptr               // Encode data to Base64 string, memory must be MemFree()
+C! raylib function DecodeDataBase64(c.ptr /* char *data */, c.ptr /* int *outputSize */) -> c.ptr                    // Decode Base64 string data, memory must be MemFree()
+
+// Automation events functionality
+C! raylib function LoadAutomationEventList(c.ptr /* fileName */) -> AutomationEventList_C                // Load automation events list from file, NULL for empty list, capacity = MAX_AUTOMATION_EVENTS
+C! raylib function UnloadAutomationEventList(c.ptr /* AutomationEventList *list */) -> c.void                         // Unload automation events list from file
+C! raylib function ExportAutomationEventList(AutomationEventList_C /* list */, c.ptr /* fileName */) -> c.u8    // Export automation events list as text file
+C! raylib function SetAutomationEventList(c.ptr /* AutomationEventList *list */) -> c.void                            // Set automation event list to record to
+C! raylib function SetAutomationEventBaseFrame(c.int /* frame */) -> c.void                                       // Set automation event internal base frame to start recording
+C! raylib function StartAutomationEventRecording() -> c.void                                          // Start recording automation events (AutomationEventList must be set)
+C! raylib function StopAutomationEventRecording() -> c.void                                           // Stop recording automation events
+C! raylib function PlayAutomationEvent(AutomationEvent_C event) -> c.void                                   // Play a recorded automation event
+
+//------------------------------------------------------------------------------------
+// Input Handling Functions (Module: core)
+//------------------------------------------------------------------------------------
+
+// Input-related functions: keyboard
+C! raylib function IsKeyPressed(c.int /* key */) -> c.u8                              // Check if a key has been pressed once
+C! raylib function IsKeyPressedRepeat(c.int /* key */) -> c.u8                        // Check if a key has been pressed again (Only PLATFORM_DESKTOP)
+C! raylib function IsKeyDown(c.int /* key */) -> c.u8                                 // Check if a key is being pressed
+C! raylib function IsKeyReleased(c.int /* key */) -> c.u8                             // Check if a key has been released once
+C! raylib function IsKeyUp(c.int /* key */) -> c.u8                                   // Check if a key is NOT being pressed
+C! raylib function GetKeyPressed() -> c.int                                 // Get key pressed (keycode), call it multiple times for keys queued, returns 0 when the queue is empty
+C! raylib function GetCharPressed() -> c.int                                // Get char pressed (unicode), call it multiple times for chars queued, returns 0 when the queue is empty
+C! raylib function SetExitKey(c.int /* key */) -> c.void                                // Set a custom key to exit program (default is ESC)
+
+// Input-related functions: gamepads
+C! raylib function IsGamepadAvailable(c.int /* gamepad */) -> c.u8                    // Check if a gamepad is available
+C! raylib function GetGamepadName(c.int /* gamepad */) -> c.ptr /* char const */                // Get gamepad internal name id
+C! raylib function IsGamepadButtonPressed(c.int /* gamepad */, c.int /* button */) -> c.u8    // Check if a gamepad button has been pressed once
+C! raylib function IsGamepadButtonDown(c.int /* gamepad */, c.int /* button */) -> c.u8       // Check if a gamepad button is being pressed
+C! raylib function IsGamepadButtonReleased(c.int /* gamepad */, c.int /* button */) -> c.u8   // Check if a gamepad button has been released once
+C! raylib function IsGamepadButtonUp(c.int /* gamepad */, c.int /* button */) -> c.u8         // Check if a gamepad button is NOT being pressed
+C! raylib function GetGamepadButtonPressed() -> c.int                       // Get the last gamepad button pressed
+C! raylib function GetGamepadAxisCount(c.int /* gamepad */) -> c.int                    // Get gamepad axis count for a gamepad
+C! raylib function GetGamepadAxisMovement(c.int /* gamepad */, c.int /* axis */) -> c.float     // Get axis movement value for a gamepad axis
+C! raylib function SetGamepadMappings(c.ptr /* mappings */) -> c.int            // Set internal gamepad mappings (SDL_GameControllerDB)
+
+// Input-related functions: mouse
+C! raylib function IsMouseButtonPressed(c.int /* button */) -> c.u8                   // Check if a mouse button has been pressed once
+C! raylib function IsMouseButtonDown(c.int /* button */) -> c.u8                      // Check if a mouse button is being pressed
+C! raylib function IsMouseButtonReleased(c.int /* button */) -> c.u8                  // Check if a mouse button has been released once
+C! raylib function IsMouseButtonUp(c.int /* button */) -> c.u8                        // Check if a mouse button is NOT being pressed
+C! raylib function GetMouseX() -> c.int                                     // Get mouse position X
+C! raylib function GetMouseY() -> c.int                                     // Get mouse position Y
+C! raylib function GetMousePosition() -> Vector2_C                          // Get mouse position XY
+C! raylib function GetMouseDelta() -> Vector2_C                             // Get mouse delta between frames
+C! raylib function SetMousePosition(c.int /* x */, c.int /* y */) -> c.void                     // Set mouse position XY
+C! raylib function SetMouseOffset(c.int /* offsetX */, c.int /* offsetY */) -> c.void           // Set mouse offset
+C! raylib function SetMouseScale(c.float /* scaleX */, c.float /* scaleY */) -> c.void          // Set mouse scaling
+C! raylib function GetMouseWheelMove() -> c.float                           // Get mouse wheel movement for X or Y, whichever is larger
+C! raylib function GetMouseWheelMoveV() -> Vector2_C                        // Get mouse wheel movement for both X and Y
+C! raylib function SetMouseCursor(c.int /* cursor */) -> c.void                         // Set mouse cursor
+
+// Input-related functions: touch
+C! raylib function GetTouchX() -> c.int                                     // Get touch position X for touch point 0 (relative to screen size)
+C! raylib function GetTouchY() -> c.int                                     // Get touch position Y for touch point 0 (relative to screen size)
+C! raylib function GetTouchPosition(c.int /* index */) -> Vector2_C                     // Get touch position XY for a touch point index (relative to screen size)
+C! raylib function GetTouchPointId(c.int /* index */) -> c.int                          // Get touch point identifier for given index
+C! raylib function GetTouchPointCount() -> c.int                            // Get number of touch points
+
+//------------------------------------------------------------------------------------
+// Gestures and Touch Handling Functions (Module: rgestures)
+//------------------------------------------------------------------------------------
+C! raylib function SetGesturesEnabled(c.uint /* flags */) -> c.void       // Enable a set of gestures using flags
+C! raylib function IsGestureDetected(c.uint /* gesture */) -> c.u8      // Check if a gesture have been detected
+C! raylib function GetGestureDetected() -> c.int                      // Get latest detected gesture
+C! raylib function GetGestureHoldDuration() -> c.float                // Get gesture hold time in milliseconds
+C! raylib function GetGestureDragVector() -> Vector2_C                // Get gesture drag vector
+C! raylib function GetGestureDragAngle() -> c.float                   // Get gesture drag angle
+C! raylib function GetGesturePinchVector() -> Vector2_C               // Get gesture pinch delta
+C! raylib function GetGesturePinchAngle() -> c.float                  // Get gesture pinch angle
+
+//------------------------------------------------------------------------------------
+// Camera System Functions (Module: rcamera)
+//------------------------------------------------------------------------------------
+C! raylib function UpdateCamera(c.ptr /* Camera *camera */, c.int /* mode */) -> c.void       // Update camera position for selected mode
+C! raylib function UpdateCameraPro(c.ptr /* Camera *camera */, Vector3_C /* movement */, Vector3_C /* rotation */, c.float /* zoom */) -> c.void  // Update camera movement/rotation
+
+C! raylib function DrawText(c.ptr text, c.int posX, c.int posY, c.int fontSize, Color_C color) -> c.void      // Draw text (using default font)
+C! raylib function DrawTextEx(Font_C font, c.ptr text, Vector2_C pos, c.float fontSize, c.float spacing, Color_C tint) -> c.void      // Draw text (using default font)
+C! raylib function DrawFPS(c.int posX, c.int posY) -> c.void
+
+C! raylib function LoadFontEx(c.ptr filename, c.int fontSize, c.ptr codepoints, c.int codepointCount) -> Font_C
+C! raylib function LoadFont(c.ptr /* char const *filename */) -> Font_C
+C! raylib function LoadImageAnim(c.ptr filename, c.ptr frames /* int * */) -> Image
+C! raylib function UpdateTexture(Texture_C texture, c.ptr pixels) -> c.void // Update GPU texture with new data
+C! raylib function DrawTexture(Texture_C texture, c.int posX, c.int posY, Color_C tint) -> c.void // Draw a Texture2D
+C! raylib function DrawTextureEx(Texture texture, Vector2 position, c.float rotation, c.float scale, Color tint) -> c.void
+C! raylib function DrawTextureRec(Texture texture, Rectangle source, Vector2 position, Color tint) -> c.void
+C! raylib function DrawTexturePro(Texture texture, Rectangle source, Rectangle dest, Vector2 origin, c.float rotation, Color tint) -> c.void
+C! raylib function LoadTextureFromImage(Image_C image) -> Texture
+C! raylib function LoadTexture(c.ptr filename) -> Texture
+
+C! raylib function DrawRectangle(c.int posX, c.int posY, c.int width, c.int height, Color color) -> c.void
+C! raylib function DrawRectangleLines(c.int posX, c.int posY, c.int width, c.int height, Color color) -> c.void
+C! raylib function DrawRectangleLinesEx(Rectangle rect, c.float thick, Color color) -> c.void
+C! raylib function DrawLineStrip(c.ptr points, c.int count, Color color) -> c.void
+
+// Basic shapes collision detection functions
+C! raylib function CheckCollisionRecs(Rectangle rec1, Rectangle rec2) -> c.u8                                           // Check collision between two rectangles
+C! raylib function CheckCollisionCircles(Vector2 center1, c.float radius1, Vector2 center2, c.float radius2) -> c.u8        // Check collision between two circles
+C! raylib function CheckCollisionCircleRec(Vector2 center, c.float radius, Rectangle rec) -> c.u8                         // Check collision between circle and rectangle
+C! raylib function CheckCollisionPointRec(Vector2 point, Rectangle rec) -> c.u8                                         // Check if point is inside rectangle
+C! raylib function CheckCollisionPointCircle(Vector2 point, Vector2 center, c.float radius) -> c.u8                       // Check if point is inside circle
+C! raylib function CheckCollisionPointTriangle(Vector2 point, Vector2 p1, Vector2 p2, Vector2 p3) -> c.u8               // Check if point is inside a triangle
+C! raylib function CheckCollisionPointPoly(Vector2 point, c.ptr points, c.int pointCount) -> c.u8                      // Check if point is within a polygon described by array of vertices
+C! raylib function CheckCollisionLines(Vector2 startPos1, Vector2 endPos1, Vector2 startPos2, Vector2 endPos2, c.ptr collisionPoint) -> c.u8 // Check the collision between two lines defined by two points each, returns collision point by reference
+C! raylib function CheckCollisionPointLine(Vector2 point, Vector2 p1, Vector2 p2, c.int threshold) -> c.u8                // Check if point belongs to line created between two points [p1] and [p2] with defined margin in pixels [threshold]
+C! raylib function GetCollisionRec(Rectangle rec1, Rectangle rec2) -> Rectangle                                         // Get collision rectangle for two rectangles collision
+
+C! raylib function ImageCopy(Image) -> Image
+C! raylib function ImageFlipHorizontal(c.ptr image) -> c.void
+
+let AudioCallback = c.ptr
+
+// Audio device management functions
+C! raylib function InitAudioDevice() -> c.void                                      // Initialize audio device and context
+C! raylib function CloseAudioDevice() -> c.void                                     // Close the audio device and context
+C! raylib function IsAudioDeviceReady() -> c.u8                                   // Check if audio device has been initialized successfully
+C! raylib function SetMasterVolume(c.float volume) -> c.void                              // Set master volume (listener)
+C! raylib function GetMasterVolume() -> c.float                                     // Get master volume (listener)
+
+// Wave/Sound loading/unloading functions
+C! raylib function LoadWave(c.ptr fileName) -> Wave                             // Load wave data from file
+C! raylib function LoadWaveFromMemory(c.ptr fileType, c.ptr fileData, c.int dataSize) -> Wave  // Load wave from memory buffer, fileType refers to extension: i.e. '.wav'
+C! raylib function IsWaveReady(Wave wave) -> c.u8                                     // Checks if wave data is ready
+C! raylib function LoadSound(c.ptr fileName) -> Sound                           // Load sound from file
+C! raylib function LoadSoundFromWave(Wave wave) -> Sound                              // Load sound from wave data
+C! raylib function LoadSoundAlias(Sound source) -> Sound                              // Create a new sound that shares the same sample data as the source sound, does not own the sound data
+C! raylib function IsSoundReady(Sound sound) -> c.u8                                  // Checks if a sound is ready
+C! raylib function UpdateSound(Sound sound, c.ptr data, c.int sampleCount) -> c.void  // Update sound buffer with new data
+C! raylib function UnloadWave(Wave wave) -> c.void                                      // Unload wave data
+C! raylib function UnloadSound(Sound sound) -> c.void                                   // Unload sound
+C! raylib function UnloadSoundAlias(Sound alias) -> c.void                              // Unload a sound alias (does not deallocate sample data)
+C! raylib function ExportWave(Wave wave, c.ptr fileName) -> c.u8                // Export wave data to file, returns true on success
+C! raylib function ExportWaveAsCode(Wave wave, c.ptr fileName) -> c.u8          // Export wave sample data to code (.h), returns true on success
+
+// Wave/Sound management functions
+C! raylib function PlaySound(Sound sound) -> c.void                                     // Play a sound
+C! raylib function StopSound(Sound sound) -> c.void                                     // Stop playing a sound
+C! raylib function PauseSound(Sound sound) -> c.void                                    // Pause a sound
+C! raylib function ResumeSound(Sound sound) -> c.void                                   // Resume a paused sound
+C! raylib function IsSoundPlaying(Sound sound) -> c.u8                                // Check if a sound is currently playing
+C! raylib function SetSoundVolume(Sound sound, c.float volume) -> c.void                  // Set volume for a sound (1.0 is max level)
+C! raylib function SetSoundPitch(Sound sound, c.float pitch) -> c.void                    // Set pitch for a sound (1.0 is base level)
+C! raylib function SetSoundPan(Sound sound, c.float pan) -> c.void                        // Set pan for a sound (0.5 is center)
+C! raylib function WaveCopy(Wave wave) -> Wave                                        // Copy a wave to a new wave
+C! raylib function WaveCrop(c.ptr wave, c.int initSample, c.int finalSample) -> c.void      // Crop a wave to defined samples range
+C! raylib function WaveFormat(c.ptr wave, c.int sampleRate, c.int sampleSize, c.int channels) -> c.void  // Convert wave data to desired format
+C! raylib function LoadWaveSamples(Wave wave ) -> c.ptr                              // Load samples data from wave as a 32bit c.float data array
+C! raylib function UnloadWaveSamples(c.ptr samples) -> c.void                          // Unload samples data loaded with LoadWaveSamples()
+
+// Music management functions
+C! raylib function LoadMusicStream(c.ptr fileName) -> Music                     // Load music stream from file
+C! raylib function LoadMusicStreamFromMemory(c.ptr fileType, c.ptr data, c.int dataSize) -> Music  // Load music stream from data
+C! raylib function IsMusicReady(Music music) -> c.u8                                  // Checks if a music stream is ready
+C! raylib function UnloadMusicStream(Music music) -> c.void                             // Unload music stream
+C! raylib function PlayMusicStream(Music music) -> c.void                               // Start music playing
+C! raylib function IsMusicStreamPlaying(Music music) -> c.u8                          // Check if music is playing
+C! raylib function UpdateMusicStream(Music music) -> c.void                             // Updates buffers for music streaming
+C! raylib function StopMusicStream(Music music) -> c.void                               // Stop music playing
+C! raylib function PauseMusicStream(Music music) -> c.void                              // Pause music playing
+C! raylib function ResumeMusicStream(Music music) -> c.void                             // Resume playing paused music
+C! raylib function SeekMusicStream(Music music, c.float position) -> c.void               // Seek music to a position (in seconds)
+C! raylib function SetMusicVolume(Music music, c.float volume) -> c.void                  // Set volume for music (1.0 is max level)
+C! raylib function SetMusicPitch(Music music, c.float pitch) -> c.void                    // Set pitch for a music (1.0 is base level)
+C! raylib function SetMusicPan(Music music, c.float pan) -> c.void                        // Set pan for a music (0.5 is center)
+C! raylib function GetMusicTimeLength(Music music) -> c.float                           // Get music time length (in seconds)
+C! raylib function GetMusicTimePlayed(Music music) -> c.float                           // Get current music time played (in seconds)
+
+// AudioStream management functions
+C! raylib function LoadAudioStream(c.uint sampleRate, c.uint sampleSize, c.uint channels) -> AudioStream  // Load audio stream (to stream raw audio pcm data)
+C! raylib function IsAudioStreamReady(AudioStream stream) -> c.u8                     // Checks if an audio stream is ready
+C! raylib function UnloadAudioStream(AudioStream stream) -> c.void                      // Unload audio stream and free memory
+C! raylib function UpdateAudioStream(AudioStream stream, c.ptr data, c.int frameCount) -> c.void  // Update audio stream buffers with data
+C! raylib function IsAudioStreamProcessed(AudioStream stream) -> c.u8                 // Check if any audio stream buffers requires refill
+C! raylib function PlayAudioStream(AudioStream stream) -> c.void                        // Play audio stream
+C! raylib function PauseAudioStream(AudioStream stream) -> c.void                       // Pause audio stream
+C! raylib function ResumeAudioStream(AudioStream stream) -> c.void                      // Resume audio stream
+C! raylib function IsAudioStreamPlaying(AudioStream stream) -> c.u8                   // Check if audio stream is playing
+C! raylib function StopAudioStream(AudioStream stream) -> c.void                        // Stop audio stream
+C! raylib function SetAudioStreamVolume(AudioStream stream, c.float volume) -> c.void     // Set volume for audio stream (1.0 is max level)
+C! raylib function SetAudioStreamPitch(AudioStream stream, c.float pitch) -> c.void       // Set pitch for audio stream (1.0 is base level)
+C! raylib function SetAudioStreamPan(AudioStream stream, c.float pan) -> c.void           // Set pan for audio stream (0.5 is centered)
+C! raylib function SetAudioStreamBufferSizeDefault(c.int size) -> c.void                  // Default size for new audio streams
+C! raylib function SetAudioStreamCallback(AudioStream stream, AudioCallback callback) -> c.void  // Audio thread callback to request new data
+
+C! raylib function AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor) -> c.void  // Attach audio stream processor to stream, receives the samples as s
+C! raylib function DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor) -> c.void  // Detach audio stream processor from stream
+
+C! raylib function AttachAudioMixedProcessor(AudioCallback processor) -> c.void  // Attach audio stream processor to the entire audio pipeline, receives the samples as s
+C! raylib function DetachAudioMixedProcessor(AudioCallback processor) -> c.void  // Detach audio stream processor from the entire audio pipeline
+
+pub function mkcolor(r, g, b, a=255) {
+    Color(r: r, g: g, b: b, a: a)
+}
+
+pub RED = mkcolor(255, 0, 0)
+pub BLACK = mkcolor(10, 10, 10)
+pub GREEN = mkcolor(0, 255, 0)
+pub WHITE = mkcolor(255, 255, 255)
