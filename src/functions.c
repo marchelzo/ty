@@ -1033,7 +1033,7 @@ BUILTIN_FUNCTION(fmt)
                         int t = getfmt(&end, fmt + n, &spec);
                         int nspec = (int)(end - start);
 
-                        i  = end - fmt;
+                        i  = (end - 1) - fmt;
 
                         if (t == '\0') {
 BadFormatSpecifier:
