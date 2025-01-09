@@ -1078,6 +1078,10 @@ op_fixup(Ty *ty, int i)
         default:                return false;
         case TOKEN_DBL_EQ:      token(i)->identifier = "==";   break;
         case TOKEN_CMP:         token(i)->identifier = "<=>";  break;
+        case TOKEN_LEQ:         token(i)->identifier = "<=";   break;
+        case TOKEN_LT:          token(i)->identifier = "<";    break;
+        case TOKEN_GEQ:         token(i)->identifier = ">=";   break;
+        case TOKEN_GT:          token(i)->identifier = ">";    break;
         case TOKEN_PLUS:        token(i)->identifier = "+";    break;
         case TOKEN_DIV:         token(i)->identifier = "/";    break;
         case TOKEN_MINUS:       token(i)->identifier = "-";    break;

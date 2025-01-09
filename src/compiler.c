@@ -9959,15 +9959,14 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         dump(
                 out,
-                "%s%s: %s%s: %s:%s  (code = %ju)\n",
+                "%s%s: %s%s: %s:%s\n",
                 TERM(32),
                 name,
                 TERM(34),
                 annotation->module,
                 TERM(33),
                 annotation->name,
-                TERM(0),
-                (uintptr_t)code
+                TERM(0)
         );
         //dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
         dont_printf("        %s%s:%s\n", TERM(34), name, TERM(0));

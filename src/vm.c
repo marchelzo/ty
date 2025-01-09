@@ -1990,7 +1990,12 @@ ClassLookup:
 inline static void
 DoGeq(Ty *ty)
 {
-        Value v = BOOLEAN(value_compare(ty, top() - 1, top()) >= 0);
+        Value v = vm_try_2op(ty, OP_GEQ, top() - 1, top());
+
+        if (v.type == VALUE_NONE) {
+                v = BOOLEAN(value_compare(ty, top() - 1, top()) >= 0);
+        }
+
         pop();
         pop();
         push(v);
@@ -1999,7 +2004,12 @@ DoGeq(Ty *ty)
 inline static void
 DoGt(Ty *ty)
 {
-        Value v = BOOLEAN(value_compare(ty, top() - 1, top()) > 0);
+        Value v = vm_try_2op(ty, OP_GT, top() - 1, top());
+
+        if (v.type == VALUE_NONE) {
+                v = BOOLEAN(value_compare(ty, top() - 1, top()) > 0);
+        }
+
         pop();
         pop();
         push(v);
@@ -2008,7 +2018,12 @@ DoGt(Ty *ty)
 inline static void
 DoLeq(Ty *ty)
 {
-        Value v = BOOLEAN(value_compare(ty, top() - 1, top()) <= 0);
+        Value v = vm_try_2op(ty, OP_LEQ, top() - 1, top());
+
+        if (v.type == VALUE_NONE) {
+                v = BOOLEAN(value_compare(ty, top() - 1, top()) <= 0);
+        }
+
         pop();
         pop();
         push(v);
@@ -2017,7 +2032,12 @@ DoLeq(Ty *ty)
 inline static void
 DoLt(Ty *ty)
 {
-        Value v = BOOLEAN(value_compare(ty, top() - 1, top()) < 0);
+        Value v = vm_try_2op(ty, OP_LT, top() - 1, top());
+
+        if (v.type == VALUE_NONE) {
+                v = BOOLEAN(value_compare(ty, top() - 1, top()) < 0);
+        }
+
         pop();
         pop();
         push(v);

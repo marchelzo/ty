@@ -44,7 +44,6 @@
             "name": "base-osx",
             "hidden": true,
             "inherits": "base",
-            "generator": "Unix Makefiles",
             "cacheVariables": {
                 "VCPKG_TARGET_TRIPLET": "arm64-osx",
                 "VCPKG_CMAKE_SYSTEM_NAME": "Darwin",
