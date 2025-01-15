@@ -7,7 +7,7 @@ let s = '''
             throw 50
         }
     } catch _ {
-        "FAIL"
+        "PASS"
     }
 
 '''
@@ -15,9 +15,5 @@ let s = '''
 try {
     print(__eval__(s))
 } catch Err(e) {
-    if 'in a finally block' in e {
-        print('PASS')
-    } else {
-        print(e)
-    }
+    print(e)
 }
