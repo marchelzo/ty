@@ -975,7 +975,7 @@ co_abort(Ty *ty)
 
         int n = FRAMES.items[0].fp;
 
-        if (v_(STACK, n - 1)->type != VALUE_GENERATOR) {
+        if (n == 0 || v_(STACK, n - 1)->type != VALUE_GENERATOR) {
                 return false;
         }
 
@@ -1612,7 +1612,9 @@ DoDrop(Ty *ty)
 inline static struct try *
 GetCurrentTry(Ty *ty)
 {
-        for (int i = vN(TRY_STACK); i >= 0; --i) {
+        return *vvL(TRY_STACK);
+
+        for (int i = vN(TRY_STACK) - 1; i >= 0; --i) {
                 struct try *t = *v_(TRY_STACK, i);
 
                 if (!t->executing) {
@@ -1623,57 +1625,57 @@ GetCurrentTry(Ty *ty)
         return NULL;
 }
 
-inline static noreturn void
+inline static bool
 DoThrow(Ty *ty)
 {
-        Value ex = pop();
+        Value ex = peek();
 
         //printf("Throw: %s\n", VSC(&ex));
         //xprint_stack(ty, 10);
 
         for (;;) {
-                if (vN(TRY_STACK) != 0) {
+                while (vN(TRY_STACK) > 0 && vvL(TRY_STACK)[0]->state == TRY_FINALLY) {
+                        vvX(TRY_STACK);
+                }
+
+                if (vN(TRY_STACK) > 0) {
                         struct try *t = *vvL(TRY_STACK);
 
-                        if (UNLIKELY(t->executing)) {
+                        switch (t->state) {
+                        case TRY_TRY:
+                                t->state = TRY_THROW;
+
+                                while (DROP_STACK.count > t->ds) {
+                                        DoDrop(ty);
+                                }
+
+                                STACK.count = t->sp;
+                                SP_STACK.count = t->nsp;
+                                FRAMES.count = t->ctxs;
+                                TARGETS.count = t->ts;
+                                CALLS.count = t->cs;
+                                IP = t->catch;
+
+                                //printf("truncate: %zu -> %zu\n", GCRoots(ty)->count, (size_t)t->gc);
+                                gc_truncate_root_set(ty, t->gc);
+
+                                push(SENTINEL);
+                                push(ex);
+
+                                t->state = TRY_CATCH;
+
+                                longjmp(t->jb, 1);
+                        case TRY_CATCH:
+                                t->state = TRY_THROW;
+                                t->end = NULL;
+                                IP = t->finally;
+                                return false;
+                        case TRY_THROW:
                                 zP(
                                         "an exception was thrown while handling another exception: %s%s%s",
                                         TERM(31), VSC(&ex), TERM(39)
                                 );
                         }
-
-                        t->executing = true;
-                        t->state = TRY_FINALLY;
-
-                        if (t->finally != NULL) {
-                                vm_exec(ty, t->finally);
-                        }
-
-                        while (DROP_STACK.count > t->ds) {
-                                DoDrop(ty);
-                        }
-
-                        for (int i = 0; i < t->defer.count; ++i) {
-                                vmC(&t->defer.items[i], 0);
-                        }
-
-                        STACK.count = t->sp;
-
-                        push(SENTINEL);
-                        push(ex);
-
-                        SP_STACK.count = t->nsp;
-                        FRAMES.count = t->ctxs;
-                        TARGETS.count = t->ts;
-                        CALLS.count = t->cs;
-                        IP = t->catch;
-
-
-                        //printf("truncate: %zu -> %zu\n", GCRoots(ty)->count, (size_t)t->gc);
-                        gc_truncate_root_set(ty, t->gc);
-
-                        longjmp(t->jb, 1);
-                        /* unreachable */
                 }
 
                 if (!co_abort(ty)) {
@@ -2661,6 +2663,7 @@ vm_try_exec(Ty *ty, char *code)
 void
 vm_exec(Ty *ty, char *code)
 {
+        Expr *expr;
         char *jump;
         char *save = IP;
         IP = code;
@@ -3158,29 +3161,41 @@ Throw:
                                 .ctxs = FRAMES.count,
                                 .ip = IP
                         }));
+
                         DoThrow(ty);
+
+                        break;
                 CASE(RETHROW)
-                        vvX(TRY_STACK);
-                        DoThrow(ty);
-                CASE(FINALLY)
                 {
-                        //puts("Finally");
-                        //xprint_stack(ty, 10);
-                        struct try *t = *vvX(TRY_STACK);
-                        t->state = TRY_FINALLY;
-                        if (t->finally != NULL)
-                                vm_exec(ty, t->finally);
+                        struct try *t = GetCurrentTry(ty);
+                        t->state = TRY_THROW;
+                        t->end = NULL;
+                        IP = t->finally;
                         break;
                 }
-                CASE(POP_TRY)
-                        --TRY_STACK.count;
+                CASE(FINALLY)
+                {
+                        struct try *t = GetCurrentTry(ty);
+                        //printf("Finally: ntry=%zu  ndefer=%zu\n", vN(TRY_STACK), vN(t->defer));
+                        t->state = TRY_FINALLY;
+                        t->end = IP;
+                        IP = t->finally;
                         break;
-                CASE(RESUME_TRY)
-                        //vvL(TRY_STACK)[0]->state = TRY_TRY;
+                }
+                CASE(END_TRY)
+                {
+                        struct try *t = *vvX(TRY_STACK);
+
+                        if (t->end == NULL) {
+                                DoThrow(ty);
+                        } else {
+                                IP = t->end;
+                        }
+
                         break;
+                }
                 CASE(CATCH)
-                        //--THROW_STACK.count;
-                        vvL(TRY_STACK)[0]->executing = false;
+                        vvL(TRY_STACK)[0]->state = TRY_FINALLY;
                         break;
                 CASE(TRY)
                 {
@@ -3237,9 +3252,11 @@ Throw:
                 CASE(DEFER)
                         t = GetCurrentTry(ty);
                         xvP(t->defer, pop());
+                        //printf("Push defer: ntry=%zu  ndefer=%zu t=%p\n", vN(TRY_STACK), vN(t->defer), (void *)t);
                         break;
                 CASE(CLEANUP)
-                        t = vvL(TRY_STACK)[1];
+                        t = *vvL(TRY_STACK);
+                        //printf("Running %zu cleanup funcs ntry=%zu t=%p\n", vN(t->defer), vN(TRY_STACK), (void *)t);
                         for (int i = 0; i < t->defer.count; ++i) {
                                 vmC(&t->defer.items[i], 0);
                         }
@@ -5332,6 +5349,7 @@ vm_load_program(Ty *ty, char const *source, char const *file)
 
         if (setjmp(JB) != 0) {
                 filename = NULL;
+                GC_RESUME();
                 return false;
         }
 
@@ -5339,6 +5357,7 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         if (code == NULL) {
                 filename = NULL;
                 Error = compiler_error(ty);
+                GC_RESUME();
                 return false;
         }
 
@@ -5621,7 +5640,11 @@ vm_throw(Ty *ty, Value const *v)
                 .ip = IP
         }));
 
-        DoThrow(ty);
+        if (!DoThrow(ty)) {
+                vm_exec(ty, IP);
+        }
+
+        abort();
 }
 
 FrameStack *
@@ -6082,9 +6105,7 @@ StepInstruction(char const *ip)
                 break;
         CASE(FINALLY)
                 break;
-        CASE(POP_TRY)
-                break;
-        CASE(RESUME_TRY)
+        CASE(END_TRY)
                 break;
         CASE(CATCH)
                 break;
