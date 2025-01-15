@@ -421,6 +421,10 @@ class Dict : Iterable {
         %{k: v for k, v in self if k in o}
     }
 
+    <=(o) {
+        ![*self].any?((not in o))
+    }
+
     iterValues*() {
         for _, v in self {
             yield v
@@ -2930,7 +2934,7 @@ function <<(f, x) { f(x) }
 
 function ?>(x, f) { (x == nil) ? x : f(x) }
 
-macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5] = $$a.match!($$b)
+macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] = $$a.match!($$b)
 
 function sink(file) match file {
     nil => print@(*, **, :flush),
