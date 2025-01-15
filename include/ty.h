@@ -416,8 +416,13 @@ extern bool ColorProfile;
 
 #define dont_printf(...) do { } while (0)
 
+#if 0
+#define GC_STOP() do { GCLOG("GC_STOP(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT + 1); ty->GC_OFF_COUNT += 1; } while (0)
+#define GC_RESUME() do { GCLOG("GC_RESUME(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT - 1); ty->GC_OFF_COUNT -= 1; } while (0)
+#else
 #define GC_STOP()   (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
+#endif
 
 #ifdef _WIN32
 #  define UNLIKELY(x)  (x)
@@ -531,7 +536,7 @@ extern bool ColorProfile;
         X(RETHROW), \
         X(TRY), \
         X(CATCH), \
-        X(POP_TRY), \
+        X(END_TRY), \
         X(RESUME_TRY), \
         X(FINALLY), \
         X(PUSH_DEFER_GROUP), \

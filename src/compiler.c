@@ -3810,33 +3810,25 @@ emit_try(Ty *ty, Stmt const *s, bool want_result)
                 returns &= emit_catch(ty, s->try.patterns.items[i], NULL, s->try.handlers.items[i], want_result);
         }
 
-        if (s->try.finally != NULL) {
-                begin_finally(ty);
-                returns &= emit_statement(ty, s->try.finally, false);
-                end_finally(ty);
-        }
-
         emit_instr(ty, INSTR_RETHROW);
 
         patch_jumps_to(&state.match_successes, state.code.count);
         state.match_successes = successes_save;
 
-        PATCH_JUMP(finally);
+        emit_instr(ty, INSTR_CATCH);
 
-        emit_instr(ty, INSTR_FINALLY);
+        PATCH_JUMP(finally);
+        PATCH_OFFSET(finally_offset);
 
         if (s->try.finally != NULL) {
-                PLACEHOLDER_JUMP(INSTR_JUMP, end_real);
-                PATCH_OFFSET(finally_offset);
                 begin_finally(ty);
                 returns &= emit_statement(ty, s->try.finally, false);
                 end_finally(ty);
-                PATCH_OFFSET(end_offset);
-                emit_instr(ty, INSTR_HALT);
-                PATCH_JUMP(end_real);
-        } else {
-                returns = false;
         }
+
+        emit_instr(ty, INSTR_END_TRY);
+
+        PATCH_OFFSET(end_offset);
 
         end_try(ty);
 
@@ -4221,15 +4213,11 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
 
         bool returns = false;
 
-        emit_instr(ty, INSTR_CATCH);
-
         if (s != NULL) {
                 returns = emit_statement(ty, s, want_result);
         } else if (want_result) {
                 emit_instr(ty, INSTR_NIL);
         }
-
-        emit_instr(ty, INSTR_RESUME_TRY);
 
         emit_instr(ty, INSTR_JUMP);
         avP(state.match_successes, state.code.count);
@@ -5534,9 +5522,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_yield(ty, (Expr const **)e->es.items, e->es.count, true);
                 break;
         case EXPRESSION_THROW:
-                if (try != NULL && try->finally) {
-                        fail(ty, "invalid 'throw' statement (occurs in a finally block)");
-                }
+                //if (try != NULL && try->finally) {
+                //        fail(ty, "invalid 'throw' statement (occurs in a finally block)");
+                //}
                 emit_expression(ty, e->throw);
                 emit_instr(ty, INSTR_THROW);
                 break;
@@ -6067,7 +6055,7 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
         add_location(ty, (Expr *)s, start, state.code.count);
 
-#if defined(TY_ENABLE_PROFILING)
+#if 0 && defined(TY_ENABLE_PROFILING)
         if (
                 s->type != STATEMENT_BLOCK &&
                 s->type != STATEMENT_MULTI &&
@@ -10190,12 +10178,8 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(RETHROW)
                         break;
                 CASE(FINALLY)
-                {
                         break;
-                }
-                CASE(POP_TRY)
-                        break;
-                CASE(RESUME_TRY)
+                CASE(END_TRY)
                         break;
                 CASE(CATCH)
                         break;
