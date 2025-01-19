@@ -2246,6 +2246,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         );
                 }
                 break;
+        case EXPRESSION_OPERATOR:
+                e->op.u = intern(&xD.members, e->op.id)->id;
+                e->op.b = intern(&xD.b_ops, e->op.id)->id;
+                break;
         case EXPRESSION_COMPILE_TIME:
                 comptime(ty, scope, e);
                 break;
@@ -2656,7 +2660,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                  *
                  *     class Foo {
                  *          <%>(other: Bar) {
-                 *                  ...
+                 *              ...
                  *          }
                  *     }
                  *
@@ -5269,6 +5273,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
                 emit_load(ty, e->symbol, state.fscope);
                 break;
+        case EXPRESSION_OPERATOR:
+                emit_instr(ty, INSTR_OPERATOR);
+                emit_int(ty, e->op.u);
+                emit_int(ty, e->op.b);
+                break;
         case EXPRESSION_IFDEF:
                 emit_load(ty, e->symbol, state.fscope);
                 emit_instr(ty, INSTR_TAG_PUSH);
@@ -7478,6 +7487,9 @@ tyexpr(Ty *ty, Expr const *e)
                         NONE
                 );
                 break;
+        case EXPRESSION_OPERATOR:
+                v = tagged(ty, TyOperator, vSsz(e->op.id), NONE);
+                break;
         case EXPRESSION_REGEX:
                 v = tagged(ty, TyRegex, REGEX(e->regex), NONE);
                 break;
@@ -8357,6 +8369,10 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_REGEX;
                 e->regex = v->regex;
                 break;
+        case TyOperator:
+                e->type = EXPRESSION_OPERATOR;
+                e->op.id = mkcstr(ty, t_(v, 0));
+                break;
         case TyId:
         {
                 e->type = EXPRESSION_IDENTIFIER;
@@ -9231,6 +9247,7 @@ Expr *
 typarse(
         Ty *ty,
         Expr *e,
+        Expr *self,
         Location const *start,
         Location const *end
 )
@@ -9269,7 +9286,11 @@ typarse(
         state.mstart = *start;
         state.mend = *end;
 
-        Value expr = vmC(&m, 0);
+        Value vSelf = self == NULL ? NIL : tyexpr(ty, self);
+        Value expr;
+
+        vmP(&vSelf);
+        expr = vmC(&m, 1);
         vmP(&expr);
 
         state.macro_scope = macro_scope_save;
@@ -10525,6 +10546,10 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(PATCH_ENV)
                         READVALUE(n);
+                        break;
+                CASE(OPERATOR)
+                        READVALUE(i);
+                        READVALUE(j);
                         break;
                 CASE(TAIL_CALL)
                         break;

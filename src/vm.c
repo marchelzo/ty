@@ -114,7 +114,8 @@
 #define MatchError do {                                          \
         top()->tags = tags_push(ty, top()->tags, TAG_MATCH_ERR); \
         top()->type |= VALUE_TAGGED;                             \
-        goto Throw;                                              \
+        RaiseException(ty);                                      \
+        goto NextInstruction;                                    \
 } while (0)
 
 #define X(i) #i
@@ -340,7 +341,8 @@ MarkStorage(Ty *ty, ThreadStorage const *storage);
 static TyThreadReturnValue
 vm_run_thread(void *p);
 
-static Value cthread_go(Ty *ty);
+inline static void
+DoUnaryOp(Ty *ty, int op, bool exec);
 
 static void
 InitializeTY(void)
@@ -493,7 +495,7 @@ DoGC(Ty *ty)
         GCLOG("Trying to do GC. Used = %zu, DeadUsed = %zu", MemoryUsed, MyGroup->DeadUsed);
 
         if (!TyMutexTryLock(&MyGroup->GCLock)) {
-                GCLOG("Couldn't take GC lock: calling WaitGC(ty) on thread %llu", TID);
+                GCLOG("Couldn't take GC lock: calling WaitGC() on thread %llu", TID);
                 WaitGC(ty);
                 return;
         }
@@ -1300,11 +1302,11 @@ NewThread(Ty *ty, Thread *t, Value *call, Value *name, bool isolated)
 static void
 AddThread(Ty *ty, TyThread self)
 {
-        GCLOG("AddThread(ty): %llu: taking lock", TID);
+        GCLOG("AddThread(): %llu: taking lock", TID);
 
         TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("AddThread(ty): %llu: took lock", TID);
+        GCLOG("AddThread(): %llu: took lock", TID);
 
         GC_STOP();
 
@@ -1336,7 +1338,7 @@ AddThread(Ty *ty, TyThread self)
 
         TyMutexUnlock(&MyGroup->Lock);
 
-        GCLOG("AddThread(ty): %llu: finished", TID);
+        GCLOG("AddThread(): %llu: finished", TID);
 }
 
 static void
@@ -1624,7 +1626,6 @@ GetCurrentTry(Ty *ty)
 
         return NULL;
 }
-
 inline static bool
 DoThrow(Ty *ty)
 {
@@ -1687,6 +1688,17 @@ DoThrow(Ty *ty)
                         zP("uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
                 }
         }
+}
+
+inline static bool
+RaiseException(Ty *ty)
+{
+        vvP(THROW_STACK, ((ThrowCtx) {
+                .ctxs = FRAMES.count,
+                .ip = IP
+        }));
+
+        return DoThrow(ty);
 }
 
 inline static Value
@@ -1829,6 +1841,23 @@ search_int(int const *zs, int z)
         return false;
 }
 
+inline static void
+DoTag(Ty *ty, int tag, int n, Value *kws)
+{
+        if (n == 1 && kws == NULL) {
+                top()->tags = tags_push(ty, top()->tags, tag);
+                top()->type |= VALUE_TAGGED;
+        } else {
+                GC_STOP();
+                Value v = builtin_tuple(ty, n, kws);
+                STACK.count -= n;
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(ty, v.tags, tag);
+                push(v);
+                GC_RESUME();
+        }
+}
+
 Value
 GetMember(Ty *ty, Value v, int member, bool b)
 {
@@ -1954,22 +1983,29 @@ GetMember(Ty *ty, Value v, int member, bool b)
                 break;
         case VALUE_OBJECT:
                 vp = itable_lookup(ty, v.object, member);
+
                 if (vp != NULL) {
                         return *vp;
                 }
+
                 n = v.class;
 ClassLookup:
                 vp = class_lookup_getter_i(ty, n, member);
+
                 if (vp != NULL) {
                         return vmC(&METHOD(member, vp, &v), 0);
                 }
+
                 vp = class_lookup_method_i(ty, n, member);
+
                 if (vp != NULL) {
                         this = mAo(sizeof *this, GC_VALUE);
                         *this = v;
                         return METHOD(member, vp, this);
                 }
+
                 vp = b ? class_lookup_method_i(ty, n, NAMES.missing) : NULL;
+
                 if (vp != NULL) {
                         char const *name = M_NAME(member);
                         this = mAo(sizeof (Value [3]), GC_VALUE);
@@ -1977,16 +2013,468 @@ ClassLookup:
                         this[1] = STRING_NOGC(name, strlen(name));
                         return METHOD(NAMES.missing, vp, this);
                 }
+
                 break;
         case VALUE_TAG:
                 vp = tags_lookup_static(ty, v.tag, member);
+
                 if (vp == NULL) {
                         vp = tags_lookup_method_i(ty, v.tag, member);
                 }
+
                 return (vp == NULL) ? NONE : *vp;
         }
 
         return NONE;
+}
+
+static void
+DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
+{
+        Value v = *f;
+        Value *vp;
+        Value value;
+        Value container;
+        Value subscript;
+        Value a, b;
+        intmax_t k;
+
+        if (n == -1) {
+                n = STACK.count - *vvX(SP_STACK) - nkw;
+        }
+
+        /* TODO: optimize more tail calls */
+#if 0
+        if (tco) {
+                vvX(FRAMES);
+                IP = *vvX(CALLS);
+                tco = false;
+        }
+#endif
+
+        /*
+         * Move all the keyword args into a dict.
+         *
+         *   TODO: find a better way of handling kwargs
+         *
+         *   Right now there's way too much branching on (nkw > 0), and we have
+         *   to worry about popping the kwargs dict from the stack for any cases
+         *   that don't use call()
+         *
+         *   Overall very cringe...
+         */
+        if (nkw > 0) {
+                if (!AutoThis) {
+                        gP(&v);
+                } else {
+                        gP(v.this);
+                        AutoThis = false;
+                }
+                GC_STOP();
+                container = DICT(dict_new(ty));
+                for (int i = 0; i < nkw; ++i, SKIPSTR()) {
+                        if (top()->type == VALUE_NONE) {
+                                pop();
+                                continue;
+                        }
+                        if (IP[0] == '*') {
+                                if (top()->type == VALUE_DICT) {
+                                        DictUpdate(ty, container.dict, top()->dict);
+                                        pop();
+                                } else if (
+                                        LIKELY(
+                                                top()->type == VALUE_TUPLE &&
+                                                top()->ids != NULL
+                                        )
+                                ) {
+                                        for (int i = 0; i < top()->count; ++i) {
+                                                if (top()->ids[i] != -1) {
+                                                        dict_put_member(
+                                                                ty,
+                                                                container.dict,
+                                                                intern_entry(&xD.members, top()->ids[i])->name,
+                                                                top()->items[i]
+                                                        );
+                                                }
+                                        }
+                                        pop();
+                                } else {
+                                        zP(
+                                                "attempt to splat invalid value in function call: %s%s%s%s%s",
+                                                TERM(34),
+                                                TERM(1),
+                                                VSC(top()),
+                                                TERM(22),
+                                                TERM(39)
+                                        );
+                                }
+                        } else {
+                                dict_put_member(ty, container.dict, IP, pop());
+                        }
+                }
+                push(container);
+                GC_RESUME();
+        } else {
+                container = NIL;
+                if (!AutoThis) {
+                        gP(&v);
+                } else {
+                        gP(v.this);
+                        AutoThis = false;
+                }
+        }
+
+        switch (v.type) {
+        case VALUE_FUNCTION:
+                LOG("CALLING %s with %d arguments", VSC(&v), n);
+                print_stack(ty, n);
+                call(ty, &v, NULL, n, nkw, false);
+                break;
+        case VALUE_BUILTIN_FUNCTION:
+                /*
+                 * Builtin functions may not preserve the stack size, so instead
+                 * of subtracting `n` after calling the builtin function, we compute
+                 * the desired final stack size in advance.
+                 *
+                 * XXX: ??
+                 */
+                if (nkw > 0) {
+                        container = pop();
+                        gP(&container);
+                        k = STACK.count - n;
+                        v = v.builtin_function(ty, n, &container);
+                        gX();
+                } else {
+                        k = STACK.count - n;
+                        v = v.builtin_function(ty, n, NULL);
+                }
+
+                STACK.count = k;
+                push(v);
+
+                break;
+        case VALUE_GENERATOR:
+                gX();
+                if (nkw > 0) { pop(); }
+                call_co(ty, &v, n);
+                return;
+        case VALUE_OPERATOR:
+                gX();
+
+                if (nkw > 0) pop();
+
+                switch (n) {
+                case 1:
+                        DoUnaryOp(ty, v.uop, false);
+                        break;
+                case 2:
+                        b = pop();
+                        a = pop();
+                        push(vm_2op(ty, v.bop, &a, &b));
+                        break;
+                default:
+                        push(TAG(gettag(ty, NULL, "DispatchError")));
+                        RaiseException(ty);
+                        break;
+                }
+
+                return;
+        case VALUE_TAG:
+                if (nkw > 0) {
+                        container = pop();
+                        DoTag(ty, v.tag, n, &container);
+                } else {
+                        DoTag(ty, v.tag, n, NULL);
+                }
+                break;
+        case VALUE_OBJECT:
+                vp = class_lookup_method_i(ty, v.class, NAMES.call);
+
+                if (vp == NULL) {
+                        goto NotCallable;
+                }
+
+                call(ty, vp, &v, n, nkw, false);
+
+                break;
+        case VALUE_CLASS:
+                vp = class_method(ty, v.class, "init");
+
+                if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
+                        if (LIKELY(vp != NULL)) {
+                                call(ty, vp, NULL, n, nkw, true);
+                        } else {
+                                zP("primitive class has no init method. Was prelude loaded?");
+                        }
+                } else {
+                        value = OBJECT(object_new(ty, v.class), v.class);
+                        if (vp != NULL) {
+                                gP(&value);
+                                call(ty, vp, &value, n, nkw, true);
+                                gX();
+                                pop();
+                        } else {
+                                STACK.count -= n + (nkw > 0);
+                        }
+                        push(value);
+                }
+
+                break;
+        case VALUE_METHOD:
+                if (v.name == NAMES.missing) {
+                        push(NIL);
+                        memmove(top() - (n - 1), top() - n, n * sizeof (Value));
+                        top()[-n++] = v.this[1];
+                }
+
+                call(ty, v.method, v.this, n, nkw, false);
+
+                break;
+        case VALUE_REGEX:
+                if (nkw > 0) {
+                        pop();
+                }
+
+                if (UNLIKELY(n != 1)) {
+                        zP("attempt to apply a regex to an invalid number of values");
+                }
+
+
+                value = peek();
+
+                if (UNLIKELY(value.type != VALUE_STRING)) {
+                        zP("attempt to apply a regex to a non-string: %s", VSC(&value));
+                }
+
+                push(v);
+                v = get_string_method("match!")(ty, &value, 1, NULL);
+                pop();
+                *top() = v;
+
+                break;
+        case VALUE_BUILTIN_METHOD:
+                if (nkw > 0) {
+                        container = pop();
+                        gP(&container);
+                        v = v.builtin_method(ty, v.this, n, &container);
+                        gX();
+                } else {
+                        v = v.builtin_method(ty, v.this, n, NULL);
+                }
+
+                STACK.count -= n;
+                push(v);
+
+                break;
+        case VALUE_NIL:
+                STACK.count -= n + (nkw > 0);
+                push(NIL);
+                break;
+        case VALUE_DICT:
+                if (nkw > 0) { pop(); }
+                value = peek();
+                push(v);
+                vp = dict_get_value(ty, v.dict, &value);
+                STACK.count -= 2;
+                if (vp == NULL) {
+                        push(None);
+                } else {
+                        push(Some(ty, *vp));
+                }
+                break;
+        case VALUE_ARRAY:
+                if (nkw > 0) { pop(); }
+                subscript = peek();
+                push(v);
+                value = ArraySubscript(ty, v, subscript, false);
+                STACK.count -= 2;
+                push(value);
+                break;
+        default:
+NotCallable:
+                zP("attempt to call non-callable value %s", VSC(&v));
+        }
+
+        gX();
+}
+
+static void
+CallMethod(Ty *ty, int i, int n, int nkw, bool b)
+{
+        int class;
+        Value v;
+        Value value;
+        Value attr;
+        Value *self;
+        Value *vp;
+        BuiltinMethod *func;
+        char const *method;
+
+        if (n == -1) {
+                n = STACK.count - *vvX(SP_STACK) - nkw - 1;
+        }
+
+        value = peek();
+        vp = NULL;
+        func = NULL;
+        self = NULL;
+
+        for (int tags = value.tags; tags != 0; tags = tags_pop(ty, tags)) {
+                vp = tags_lookup_method_i(ty, tags_first(ty, tags), i);
+                if (vp != NULL) {
+                        value.tags = tags_pop(ty, tags);
+                        if (value.tags == 0) {
+                                value.type &= ~VALUE_TAGGED;
+                        }
+                        self = &value;
+                        break;
+                }
+        }
+
+        /*
+         * If we get here and self is a null pointer, none of the value's tags (if it even had any)
+         * supported the  method call, so we must now see if the inner value itself can handle the method
+         * call.
+         */
+        if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
+        case VALUE_TAG:
+                vp = class_lookup_immediate_i(ty, CLASS_TAG, i);
+                if (vp == NULL) {
+                        vp = tags_lookup_static(ty, value.tag, i);
+                }
+                if (vp == NULL) {
+                        vp = tags_lookup_method_i(ty, value.tag, i);
+                }
+                if (vp == NULL) {
+                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
+                }
+                break;
+        case VALUE_STRING:
+                func = get_string_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_STRING;
+                        goto ClassLookup;
+                }
+                break;
+        case VALUE_DICT:
+                func = get_dict_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_DICT;
+                        goto ClassLookup;
+                }
+                break;
+        case VALUE_ARRAY:
+                func = get_array_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_ARRAY;
+                        goto ClassLookup;
+                }
+                break;
+        case VALUE_BLOB:
+                func = get_blob_method_i(i);
+                if (func == NULL) {
+                        class = CLASS_BLOB;
+                        goto ClassLookup;
+                }
+                break;
+        case VALUE_INTEGER:
+                class = CLASS_INT;
+                goto ClassLookup;
+        case VALUE_REAL:
+                class = CLASS_FLOAT;
+                goto ClassLookup;
+        case VALUE_BOOLEAN:
+                class = CLASS_BOOL;
+                goto ClassLookup;
+        case VALUE_REGEX:
+                class = CLASS_REGEX;
+                goto ClassLookup;
+        case VALUE_FUNCTION:
+        case VALUE_BUILTIN_FUNCTION:
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:
+                class = CLASS_FUNCTION;
+                goto ClassLookup;
+        case VALUE_GENERATOR:
+                class = CLASS_GENERATOR;
+                goto ClassLookup;
+        case VALUE_TUPLE:
+                vp = tuple_get(&value, intern_entry(&xD.members, i)->name);
+                if (vp == NULL) {
+                        class = CLASS_TUPLE;
+                        goto ClassLookup;
+                } else {
+                        self = NULL;
+                }
+                break;
+        case VALUE_CLASS: /* lol */
+                vp = class_lookup_immediate_i(ty, CLASS_CLASS, i);
+                if (vp == NULL) {
+                        vp = class_lookup_static_i(ty, value.class, i);
+                }
+                if (vp == NULL) {
+                        vp = class_lookup_method_i(ty, value.class, i);
+                }
+                if (vp == NULL) {
+                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
+                }
+                break;
+        case VALUE_OBJECT:
+                class = value.class;
+ClassLookup:
+                vp = class_lookup_method_i(ty, class, i);
+
+                if (vp == NULL) {
+                        attr = GetMember(ty, value, i, false);
+                        vp = (attr.type == VALUE_NONE) ? NULL : &attr;
+                        self = NULL;
+                }
+
+                break;
+        case VALUE_NIL:
+                STACK.count -= (n + 1 + nkw);
+                push(NIL);
+                return;
+        }
+
+        if (func != NULL) {
+                pop();
+                value.type &= ~VALUE_TAGGED;
+                value.tags = 0;
+                v = BUILTIN_METHOD(i, func, &value);
+                DoCall(ty, &v, n, nkw, true);
+                return;
+        }
+
+        if (
+                (vp == NULL && value.type == VALUE_OBJECT)
+             && (vp = class_lookup_method_i(ty, value.class, NAMES.missing)) != NULL
+        ) {
+                method = M_NAME(i);
+                v = pop();
+                push(NIL);
+                memmove(top() - (n - 1), top() - n, n * sizeof (Value));
+                top()[-n++] = STRING_NOGC(method, strlen(method));
+                push(v);
+                self = &value;
+        }
+
+        if (vp != NULL) {
+                pop();
+
+                if (self != NULL) {
+                        v = METHOD(i, vp, self);
+                        DoCall(ty, &v, n, nkw, true);
+                } else {
+                        v = *vp;
+                        DoCall(ty, &v, n, nkw, false);
+                }
+        } else if (b) {
+                STACK.count -= (n + 1 + nkw);
+                push(NIL);
+        } else {
+                zP("call to non-existent method '%s' on %s", M_NAME(i), VSC(&value));
+        }
 }
 
 inline static void
@@ -2078,6 +2566,90 @@ DoNeq(Ty *ty)
         pop();
         pop();
         push(v);
+}
+
+inline static void
+DoNot(Ty *ty)
+{
+        Value v = pop();
+        push(BOOLEAN(!value_truthy(ty, &v)));
+}
+
+inline static void
+DoQuestion(Ty *ty, bool exec)
+{
+        if (top()->type == VALUE_NIL) {
+                *top() = BOOLEAN(false);
+        } else {
+                CallMethod(ty, NAMES.question, 0, 0, false);
+                if (exec) vm_exec(ty, IP);
+        }
+}
+
+inline static void
+DoNeg(Ty *ty)
+{
+        Value v = pop();
+
+        if (v.type == VALUE_INTEGER) {
+                push(INTEGER(-v.integer));
+        } else if (v.type == VALUE_REAL) {
+                push(REAL(-v.real));
+        } else {
+                zP("unary - applied to non-numeric operand: %s", VSC(&v));
+        }
+}
+
+inline static void
+DoCount(Ty *ty, bool exec)
+{
+        Value v = pop();
+
+        switch (v.type) {
+        case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
+        case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
+        case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
+        case VALUE_STRING:
+                push(get_string_method_i(NAMES.len)(ty, &v, 0, NULL));
+                break;
+        case VALUE_OBJECT:
+                push(v);
+                CallMethod(ty, NAMES._len_, 0, 0, false);
+                if (exec) vm_exec(ty, IP);
+                break;
+        default:
+                zP("# applied to operand of invalid type: %s", VSC(&v));
+        }
+}
+
+inline static void
+DoUnaryOp(Ty *ty, int op, bool exec)
+{
+        int z;
+        Value v;
+        Value *vp;
+
+        switch (op) {
+        case OP_COUNT:    DoCount(ty, exec);    return;
+        case OP_NEG:      DoNeg(ty);            return;
+        case OP_NOT:      DoNot(ty);            return;
+        case OP_QUESTION: DoQuestion(ty, exec); return;
+        }
+
+        z = ClassOf(top());
+        vp = class_lookup_method_i(ty, z, op);
+
+        if (vp == NULL) {
+                zP(
+                        "no matching implementation of %s%s%s for %s\n",
+                        TERM(95;1), intern_entry(&xD.members, op)->name, TERM(0),
+                        VSC(top())
+                );
+        }
+
+        v = pop();
+
+        call(ty, vp, &v, 0, 0, exec);
 }
 
 inline static void
@@ -2585,23 +3157,6 @@ DoAssign(Ty *ty)
         }
 }
 
-inline static void
-DoTag(Ty *ty, int tag, int n, Value *kws)
-{
-        if (n == 1 && kws == NULL) {
-                top()->tags = tags_push(ty, top()->tags, tag);
-                top()->type |= VALUE_TAGGED;
-        } else {
-                GC_STOP();
-                Value v = builtin_tuple(ty, n, kws);
-                STACK.count -= n;
-                v.type |= VALUE_TAGGED;
-                v.tags = tags_push(ty, v.tags, tag);
-                push(v);
-                GC_RESUME();
-        }
-}
-
 static void
 splat(Ty *ty, Dict *d, Value *v)
 {
@@ -2674,8 +3229,6 @@ vm_exec(Ty *ty, char *code)
         double x;
         int n, nkw = 0, i, j, z, tag;
         unsigned long h;
-
-        bool AutoThis = false;
 
         Value v, key, value, container, subscript, *vp, *vp2, *self;
         char *str;
@@ -2931,7 +3484,8 @@ vm_exec(Ty *ty, char *code)
                                                         NONE
                                                 )
                                         );
-                                        goto Throw;
+                                        RaiseException(ty);
+                                        break;
                                 }
                                 pushtarget(&container.array->items[subscript.integer], container.array);
                         } else if (container.type == VALUE_DICT) {
@@ -2946,7 +3500,8 @@ vm_exec(Ty *ty, char *code)
                                 if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
                                         // TODO: Not sure which is the best behavior here
                                         push(TAG(gettag(ty, NULL, "IndexError")));
-                                        goto Throw;
+                                        RaiseException(ty);
+                                        goto NextInstruction;
                                         zP("blob index out of range in subscript expression");
                                 }
                                 pushtarget((Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
@@ -3105,7 +3660,8 @@ vm_exec(Ty *ty, char *code)
                         push(TAG(gettag(ty, NULL, "DispatchError")));
                         vvX(FRAMES);
                         IP = *vvX(CALLS);
-                        goto Throw;
+                        RaiseException(ty);
+                        break;
                 CASE(BAD_CALL)
                         v = peek();
 
@@ -3156,14 +3712,7 @@ vm_exec(Ty *ty, char *code)
 
                         break;
                 CASE(THROW)
-Throw:
-                        vvP(THROW_STACK, ((ThrowCtx) {
-                                .ctxs = FRAMES.count,
-                                .ip = IP
-                        }));
-
-                        DoThrow(ty);
-
+                        RaiseException(ty);
                         break;
                 CASE(RETHROW)
                 {
@@ -3569,10 +4118,8 @@ Throw:
                         v = pop();
                         push(INTEGER(z));
                         push(v);
-                        n = 2;
-                        i = NAMES.fmt;
-                        b = false;
-                        goto CallMethod;
+                        CallMethod(ty, NAMES.fmt, 2, 0, false);
+                        break;
                 CASE(FMT2)
                         READVALUE(z);
                         v = pop();
@@ -3581,20 +4128,15 @@ Throw:
                         push(INTEGER(z));
                         push(value);
                         push(v);
-                        n = 3;
-                        i = NAMES.fmt;
-                        b = false;
-                        goto CallMethod;
+                        CallMethod(ty, NAMES.fmt, 3, 0, false);
+                        break;
                 CASE(TO_STRING)
                         if (top()->type == VALUE_PTR) {
                                 char *s = VSC(top());
                                 pop();
                                 push(STRING_NOGC(s, strlen(s)));
                         } else {
-                                n = 0;
-                                i = NAMES.str;
-                                b = false;
-                                goto CallMethod;
+                                CallMethod(ty, NAMES.str, 0, 0, false);
                         }
                         break;
                 CASE(YIELD)
@@ -4035,7 +4577,8 @@ Throw:
                         n = 3;
                         nkw = 0;
                         i = NAMES.slice;
-                        goto CallMethod;
+                        CallMethod(ty, i, n, nkw, false);
+                        break;
                 CASE(SUBSCRIPT)
                         subscript = top()[0];
                         container = top()[-1];
@@ -4052,16 +4595,19 @@ Throw:
                                         if (subscript.integer < 0) {
                                                 subscript.integer += container.count;
                                         }
+
                                         if (subscript.integer < 0 || subscript.integer >= container.count) {
                                                 v = tagged(ty, TAG_INDEX_ERR, container, subscript, NONE);
                                                 pop();
                                                 pop();
                                                 push(v);
-                                                goto Throw;
-                                                zP("list index out of range in subscript expression");
+                                                RaiseException(ty);
+                                                break;
                                         }
+
                                         pop();
                                         pop();
+
                                         push(container.items[subscript.integer]);
                                 } else {
                                         zP(
@@ -4100,10 +4646,8 @@ Throw:
                                 break;
                         case VALUE_CLASS:
                                 swap();
-                                n = 1;
-                                b = false;
-                                i = NAMES.subscript;
-                                goto CallMethod;
+                                CallMethod(ty, NAMES.subscript, 1, 0, false);
+                                break;
                         case VALUE_PTR:
                                 if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                                         zP("non-integer used to subscript pointer: %s", VSC(&subscript));
@@ -4129,46 +4673,16 @@ Throw:
                         }
                         break;
                 CASE(NOT)
-                        v = pop();
-                        push(BOOLEAN(!value_truthy(ty, &v)));
+                        DoNot(ty);
                         break;
                 CASE(QUESTION)
-                        if (top()->type == VALUE_NIL) {
-                                *top() = BOOLEAN(false);
-                        } else {
-                                n = 0;
-                                b = false;
-                                i = NAMES.question;
-                                goto CallMethod;
-                        }
+                        DoQuestion(ty, false);
                         break;
                 CASE(NEG)
-                        v = pop();
-                        if (v.type == VALUE_INTEGER) {
-                                push(INTEGER(-v.integer));
-                        } else if (v.type == VALUE_REAL) {
-                                push(REAL(-v.real));
-                        } else {
-                                zP("unary - applied to non-numeric operand: %s", VSC(&v));
-                        }
+                        DoNeg(ty);
                         break;
                 CASE(COUNT)
-                        v = pop();
-                        switch (v.type) {
-                        case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
-                        case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
-                        case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
-                        case VALUE_STRING:
-                                push(get_string_method("len")(ty, &v, 0, NULL));
-                                break;
-                        case VALUE_OBJECT:
-                                push(v);
-                                n = 0;
-                                b = false;
-                                i = NAMES.len;
-                                goto CallMethod;
-                        default: zP("# applied to operand of invalid type: %s", VSC(&v));
-                        }
+                        DoCount(ty, false);
                         break;
                 CASE(ADD)
                         if (!op_builtin_add(ty)) {
@@ -4260,7 +4774,7 @@ Throw:
                                 case VALUE_FUNCTION:  *top() = BOOLEAN(class_is_subclass(ty, CLASS_FUNCTION, v.class));  break;
                                 case VALUE_GENERATOR: *top() = BOOLEAN(class_is_subclass(ty, CLASS_GENERATOR, v.class)); break;
                                 case VALUE_REGEX:     *top() = BOOLEAN(class_is_subclass(ty, CLASS_REGEX, v.class));     break;
-                                default:              *top() = BOOLEAN(false);                                       break;
+                                default:              *top() = BOOLEAN(false);                                           break;
                                 }
                         } else if (top()->type == VALUE_TAG) {
                                 v = pop();
@@ -4269,11 +4783,7 @@ Throw:
                                 v = pop();
                                 *top() = v;
                         } else {
-                                n = 1;
-                                nkw = 0;
-                                b = false;
-                                i = NAMES.match;
-                                goto CallMethod;
+                                CallMethod(ty, NAMES.match, 1, 0, false);
                         }
                         break;
                 CASE(LT)
@@ -4415,22 +4925,7 @@ Throw:
                         break;
                 CASE(UNARY_OP)
                         READVALUE(n);
-
-                        z = ClassOf(top());
-                        vp = class_lookup_method_i(ty, z, n);
-
-                        if (vp == NULL) {
-                                zP(
-                                        "no matching implementation of %s%s%s for %s\n",
-                                        TERM(95;1), intern_entry(&xD.members, n)->name, TERM(0),
-                                        VSC(top())
-                                );
-                        }
-
-                        v = pop();
-
-                        call(ty, vp, &v, 0, 0, false);
-
+                        DoUnaryOp(ty, n, false);
                         break;
                 CASE(DEFINE_TAG)
                 {
@@ -4565,6 +5060,11 @@ Throw:
                         READVALUE(s);
                         push(NAMESPACE((Expr *)s));
                         break;
+                CASE(OPERATOR)
+                        READVALUE(i);
+                        READVALUE(j);
+                        push(OPERATOR(i, j));
+                        break;
                 CASE(TAIL_CALL)
                         n = vvL(FRAMES)->f.info[4];
 
@@ -4591,230 +5091,10 @@ Throw:
                         READVALUE(n);
                         READVALUE(nkw);
 
-                        if (n == -1) {
-                                n = STACK.count - *vvX(SP_STACK) - nkw;
-                        }
+                        DoCall(ty, &v, n, nkw, false);
 
-                        /* TODO: optimize more tail calls */
-#if 0
-                        if (tco) {
-                                vvX(FRAMES);
-                                IP = *vvX(CALLS);
-                                tco = false;
-                        }
-#endif
-
-                        /*
-                         * Move all the keyword args into a dict.
-                         *
-                         *   TODO: find a better way of handling kwargs
-                         *
-                         *   Right now there's way too much branching on (nkw > 0), and we have
-                         *   to worry about popping the kwargs dict from the stack for any cases
-                         *   that don't use call()
-                         *
-                         *   Overall very cringe...
-                         */
-                        if (nkw > 0) {
-                        CallKwArgs:
-                                if (!AutoThis) {
-                                        gP(&v);
-                                } else {
-                                        gP(v.this);
-                                        AutoThis = false;
-                                }
-                                GC_STOP();
-                                container = DICT(dict_new(ty));
-                                for (int i = 0; i < nkw; ++i, SKIPSTR()) {
-                                        if (top()->type == VALUE_NONE) {
-                                                pop();
-                                                continue;
-                                        }
-                                        if (IP[0] == '*') {
-                                                if (top()->type == VALUE_DICT) {
-                                                        DictUpdate(ty, container.dict, top()->dict);
-                                                        pop();
-                                                } else if (
-                                                        LIKELY(
-                                                                top()->type == VALUE_TUPLE &&
-                                                                top()->ids != NULL
-                                                        )
-                                                ) {
-                                                        for (int i = 0; i < top()->count; ++i) {
-                                                                if (top()->ids[i] != -1) {
-                                                                        dict_put_member(
-                                                                                ty,
-                                                                                container.dict,
-                                                                                intern_entry(&xD.members, top()->ids[i])->name,
-                                                                                top()->items[i]
-                                                                        );
-                                                                }
-                                                        }
-                                                        pop();
-                                                } else {
-                                                        zP(
-                                                                "attempt to splat invalid value in function call: %s%s%s%s%s",
-                                                                TERM(34),
-                                                                TERM(1),
-                                                                VSC(top()),
-                                                                TERM(22),
-                                                                TERM(39)
-                                                        );
-                                                }
-                                        } else {
-                                                dict_put_member(ty, container.dict, IP, pop());
-                                        }
-                                }
-                                push(container);
-                                GC_RESUME();
-                        } else {
-                                container = NIL;
-                        Call:
-                                if (!AutoThis) {
-                                        gP(&v);
-                                } else {
-                                        gP(v.this);
-                                        AutoThis = false;
-                                }
-                        }
-
-                        switch (v.type) {
-                        case VALUE_FUNCTION:
-                                LOG("CALLING %s with %d arguments", VSC(&v), n);
-                                print_stack(ty, n);
-                                call(ty, &v, NULL, n, nkw, false);
-                                break;
-                        case VALUE_BUILTIN_FUNCTION:
-                                /*
-                                 * Builtin functions may not preserve the stack size, so instead
-                                 * of subtracting `n` after calling the builtin function, we compute
-                                 * the desired final stack size in advance.
-                                 *
-                                 * XXX: ??
-                                 */
-                                if (nkw > 0) {
-                                        container = pop();
-                                        gP(&container);
-                                        k = STACK.count - n;
-                                        v = v.builtin_function(ty, n, &container);
-                                        gX();
-                                } else {
-                                        k = STACK.count - n;
-                                        v = v.builtin_function(ty, n, NULL);
-                                }
-                                STACK.count = k;
-                                push(v);
-                                break;
-                        case VALUE_GENERATOR:
-                                gX();
-                                if (nkw > 0) { pop(); }
-                                call_co(ty, &v, n);
-                                goto NextInstruction;
-                        case VALUE_TAG:
-                                if (nkw > 0) {
-                                        container = pop();
-                                        DoTag(ty, v.tag, n, &container);
-                                } else {
-                                        DoTag(ty, v.tag, n, NULL);
-                                }
-                                break;
-                        case VALUE_OBJECT:
-                                vp = class_lookup_method_i(ty, v.class, NAMES.call);
-
-                                if (vp == NULL) {
-                                        goto NotCallable;
-                                }
-
-                                call(ty, vp, &v, n, nkw, false);
-
-                                break;
-                        case VALUE_CLASS:
-                                vp = class_method(ty, v.class, "init");
-                                if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
-                                        if (LIKELY(vp != NULL)) {
-                                                call(ty, vp, NULL, n, nkw, true);
-                                        } else {
-                                                zP("primitive class has no init method. Was prelude loaded?");
-                                        }
-                                } else {
-                                        value = OBJECT(object_new(ty, v.class), v.class);
-                                        if (vp != NULL) {
-                                                gP(&value);
-                                                call(ty, vp, &value, n, nkw, true);
-                                                gX();
-                                                pop();
-                                        } else {
-                                                STACK.count -= n + (nkw > 0);
-                                        }
-                                        push(value);
-                                }
-                                break;
-                        case VALUE_METHOD:
-                                if (v.name == NAMES.missing) {
-                                        push(NIL);
-                                        memmove(top() - (n - 1), top() - n, n * sizeof (Value));
-                                        top()[-n++] = v.this[1];
-                                }
-                                call(ty, v.method, v.this, n, nkw, false);
-                                break;
-                        case VALUE_REGEX:
-                                if (nkw > 0) {
-                                        pop();
-                                }
-                                if (UNLIKELY(n != 1)) {
-                                        zP("attempt to apply a regex to an invalid number of values");
-                                }
-                                value = peek();
-                                if (UNLIKELY(value.type != VALUE_STRING)) {
-                                        zP("attempt to apply a regex to a non-string: %s", VSC(&value));
-                                }
-                                push(v);
-                                v = get_string_method("match!")(ty, &value, 1, NULL);
-                                pop();
-                                *top() = v;
-                                break;
-                        case VALUE_BUILTIN_METHOD:
-                                if (nkw > 0) {
-                                        container = pop();
-                                        gP(&container);
-                                        v = v.builtin_method(ty, v.this, n, &container);
-                                        gX();
-                                } else {
-                                        v = v.builtin_method(ty, v.this, n, NULL);
-                                }
-                                STACK.count -= n;
-                                push(v);
-                                break;
-                        case VALUE_NIL:
-                                STACK.count -= n + (nkw > 0);
-                                push(NIL);
-                                break;
-                        case VALUE_DICT:
-                                if (nkw > 0) { pop(); }
-                                value = peek();
-                                push(v);
-                                vp = dict_get_value(ty, v.dict, &value);
-                                STACK.count -= 2;
-                                if (vp == NULL) {
-                                        push(None);
-                                } else {
-                                        push(Some(ty, *vp));
-                                }
-                                break;
-                        case VALUE_ARRAY:
-                                if (nkw > 0) { pop(); }
-                                subscript = peek();
-                                push(v);
-                                value = ArraySubscript(ty, v, subscript, false);
-                                STACK.count -= 2;
-                                push(value);
-                                break;
-                        default:
-NotCallable:
-                                zP("attempt to call non-callable value %s", VSC(&v));
-                        }
-                        gX();
                         nkw = 0;
+
                         break;
                 CASE(TRY_CALL_METHOD)
                 CASE(CALL_METHOD)
@@ -4824,164 +5104,8 @@ NotCallable:
                         READVALUE(i);
                         READVALUE(nkw);
 
-CallMethod:
-                        if (n == -1) {
-                                n = STACK.count - *vvX(SP_STACK) - nkw - 1;
-                        }
+                        CallMethod(ty, i, n, nkw, b);
 
-                        value = peek();
-                        vp = NULL;
-                        func = NULL;
-                        self = NULL;
-
-                        for (int tags = value.tags; tags != 0; tags = tags_pop(ty, tags)) {
-                                vp = tags_lookup_method_i(ty, tags_first(ty, tags), i);
-                                if (vp != NULL) {
-                                        value.tags = tags_pop(ty, tags);
-                                        if (value.tags == 0) {
-                                                value.type &= ~VALUE_TAGGED;
-                                        }
-                                        self = &value;
-                                        break;
-                                }
-                        }
-
-                        /*
-                         * If we get here and self is a null pointer, none of the value's tags (if it even had any)
-                         * supported the  method call, so we must now see if the inner value itself can handle the method
-                         * call.
-                         */
-                        if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
-                        case VALUE_TAG:
-                                vp = class_lookup_immediate_i(ty, CLASS_TAG, i);
-                                if (vp == NULL) {
-                                        vp = tags_lookup_static(ty, value.tag, i);
-                                }
-                                if (vp == NULL) {
-                                        vp = tags_lookup_method_i(ty, value.tag, i);
-                                }
-                                if (vp == NULL) {
-                                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
-                                }
-                                break;
-                        case VALUE_STRING:
-                                func = get_string_method_i(i);
-                                if (func == NULL)
-                                        vp = class_lookup_method_i(ty, CLASS_STRING, i);
-                                break;
-                        case VALUE_DICT:
-                                func = get_dict_method_i(i);
-                                if (func == NULL)
-                                        vp = class_lookup_method_i(ty, CLASS_DICT, i);
-                                break;
-                        case VALUE_ARRAY:
-                                func = get_array_method_i(i);
-                                if (func == NULL)
-                                        vp = class_lookup_method_i(ty, CLASS_ARRAY, i);
-                                break;
-                        case VALUE_BLOB:
-                                func = get_blob_method_i(i);
-                                if (func == NULL)
-                                        vp = class_lookup_method_i(ty, CLASS_BLOB, i);
-                                break;
-                        case VALUE_INTEGER:
-                                vp = class_lookup_method_i(ty, CLASS_INT, i);
-                                break;
-                        case VALUE_REAL:
-                                vp = class_lookup_method_i(ty, CLASS_FLOAT, i);
-                                break;
-                        case VALUE_BOOLEAN:
-                                vp = class_lookup_method_i(ty, CLASS_BOOL, i);
-                                break;
-                        case VALUE_REGEX:
-                                vp = class_lookup_method_i(ty, CLASS_REGEX, i);
-                                break;
-                        case VALUE_FUNCTION:
-                        case VALUE_BUILTIN_FUNCTION:
-                        case VALUE_METHOD:
-                        case VALUE_BUILTIN_METHOD:
-                                vp = class_lookup_method_i(ty, CLASS_FUNCTION, i);
-                                break;
-                        case VALUE_GENERATOR:
-                                vp = class_lookup_method_i(ty, CLASS_GENERATOR, i);
-                                break;
-                        case VALUE_TUPLE:
-                                vp = tuple_get(&value, intern_entry(&xD.members, i)->name);
-                                if (vp == NULL) {
-                                        vp = class_lookup_method_i(ty, CLASS_TUPLE, i);
-                                } else {
-                                        self = NULL;
-                                }
-                                break;
-                        case VALUE_CLASS: /* lol */
-                                vp = class_lookup_immediate_i(ty, CLASS_CLASS, i);
-                                if (vp == NULL) {
-                                        vp = class_lookup_static_i(ty, value.class, i);
-                                }
-                                if (vp == NULL) {
-                                        vp = class_lookup_method_i(ty, value.class, i);
-                                }
-                                if (vp == NULL) {
-                                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
-                                }
-                                break;
-                        case VALUE_OBJECT:
-                                vp = itable_lookup(ty, value.object, i);
-                                if (vp == NULL) {
-                                        vp = class_lookup_method_i(ty, value.class, i);
-                                } else {
-                                        self = NULL;
-                                }
-                                break;
-                        case VALUE_NIL:
-                                STACK.count -= (n + 1 + nkw);
-                                push(NIL);
-                                continue;
-                        }
-
-                        if (func != NULL) {
-                                pop();
-                                value.type &= ~VALUE_TAGGED;
-                                value.tags = 0;
-                                AutoThis = true;
-                                v = BUILTIN_METHOD(i, func, &value);
-                                if (nkw > 0) {
-                                        goto CallKwArgs;
-                                } else {
-                                        goto Call;
-                                }
-                        } else if (vp != NULL) {
-SetupMethodCall:
-                                pop();
-                                if (self != NULL) {
-                                        AutoThis = true;
-                                        v = METHOD(i, vp, self);
-                                } else {
-                                        v = *vp;
-                                }
-                                if (nkw > 0) {
-                                        goto CallKwArgs;
-                                } else {
-                                        goto Call;
-                                }
-                        } else if (b) {
-                                STACK.count -= (n + 1 + nkw);
-                                push(NIL);
-                        } else if (value.type == VALUE_OBJECT) {
-                                method = M_NAME(i);
-                                vp = class_lookup_method_i(ty, value.class, NAMES.missing);
-                                if (vp != NULL) {
-                                        v = pop();
-                                        push(NIL);
-                                        memmove(top() - (n - 1), top() - n, n * sizeof (Value));
-                                        top()[-n++] = STRING_NOGC(method, strlen(method));
-                                        push(v);
-                                        self = &value;
-                                        goto SetupMethodCall;
-                                }
-                        } else {
-                                zP("call to non-existent method '%s' on %s", M_NAME(i), VSC(&value));
-                        }
                         break;
                 CASE(SAVE_STACK_POS)
                         vvP(SP_STACK, STACK.count);
@@ -5084,7 +5208,8 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.count     = M_ID("__count__");
         NAMES.fmt       = M_ID("__fmt__");
         NAMES.json      = M_ID("__json__");
-        NAMES.len       = M_ID("__len__");
+        NAMES._len_     = M_ID("__len__");
+        NAMES.len       = M_ID("len");
         NAMES.match     = M_ID("__match__");
         NAMES.missing   = M_ID("__missing__");
         NAMES.ptr       = M_ID("__ptr__");
@@ -5752,7 +5877,8 @@ Collect:
 Value
 vm_call(Ty *ty, Value const *f, int argc)
 {
-        Value r, *vp;
+        Value a, b, r;
+        Value *vp;
         size_t n = STACK.count - argc;
 
         switch (f->type) {
@@ -5770,6 +5896,18 @@ vm_call(Ty *ty, Value const *f, int argc)
                 r = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
                 return r;
+        case VALUE_OPERATOR:
+                switch (argc) {
+                case 1:
+                        DoUnaryOp(ty, f->uop, true);
+                        return pop();
+                case 2:
+                        b = pop();
+                        a = pop();
+                        return vm_2op(ty, f->bop, &a, &b);
+                default:
+                        vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
+                }
         case VALUE_TAG:
                 r = pop();
                 r.tags = tags_push(ty, r.tags, f->tag);
@@ -5814,6 +5952,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
         va_list ap;
         Value r;
         Value const *v;
+        Value a, b;
 
         va_start(ap, f);
         argc = 0;
@@ -5842,11 +5981,23 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 r = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
                 return r;
+        case VALUE_OPERATOR:
+                switch (argc) {
+                case 1:
+                        DoUnaryOp(ty, f->uop, true);
+                        return pop();
+                case 2:
+                        b = pop();
+                        a = pop();
+                        return vm_2op(ty, f->bop, &a, &b);
+                default:
+                        vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
+                }
         case VALUE_TAG:
                 DoTag(ty, f->tag, argc, NULL);
                 return pop();
         default:
-                zP("Non-callable value passed to vm_eval_function(ty): %s", VSC(f));
+                zP("Non-callable value passed to vm_eval_function(): %s", VSC(f));
         }
 }
 
@@ -5915,7 +6066,7 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
 {
         vec(Value const *) *root_set = storage->root_set;
 
-        GCLOG("Marking root set (%zu items)", gc_root_set_count(ty));
+        GCLOG("Marking root set (%zu items)", gc_root_set_count());
         for (int i = 0; i < root_set->count; ++i) {
                 value_mark(ty, root_set->items[i]);
         }
@@ -6406,6 +6557,10 @@ StepInstruction(char const *ip)
         }
         CASE(PATCH_ENV)
                 SKIPVALUE(n);
+                break;
+        CASE(OPERATOR)
+                SKIPVALUE(i);
+                SKIPVALUE(j);
                 break;
         CASE(TAIL_CALL)
                 break;

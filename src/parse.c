@@ -447,6 +447,20 @@ mkdef(Ty *ty, Expr *lvalue, char *name)
         return s;
 }
 
+#define to_expr(e) ((to_expr)(ty, (e)))
+inline static Expr *
+(to_expr)(Ty *ty, Stmt *s)
+{
+        Expr *e = mkexpr(ty);
+        e->type = STATEMENT_EXPRESSION;
+        e->start = s->start;
+        e->end = s->end;
+
+        e->statement = s;
+
+        return e;
+}
+
 #define to_stmt(e) ((to_stmt)(ty, (e)))
 inline static Stmt *
 (to_stmt)(Ty *ty, Expr *e)
@@ -1629,6 +1643,18 @@ prefix_dollar(Ty *ty)
         return e;
 }
 
+inline static bool
+is_operator(char const *id)
+{
+        for (int i = 0; id[i] != '\0'; ++i) {
+                if (!contains(OperatorCharset, id[i])) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
 static Expr *
 prefix_identifier(Ty *ty)
 {
@@ -1643,7 +1669,14 @@ prefix_identifier(Ty *ty)
         consume(TOKEN_IDENTIFIER);
 
         if (is_macro(ty, e->module, e->identifier)) {
-                return typarse(ty, e, &e->start, &token(-1)->end);
+                return typarse(ty, e, NULL, &e->start, &token(-1)->end);
+        }
+
+        if (is_operator(e->identifier)) {
+                e->type = EXPRESSION_OPERATOR;
+                e->op.id = e->identifier;
+                e->end = End;
+                return e;
         }
 
         // TODO: maybe get rid of this
@@ -3723,6 +3756,40 @@ infix_subscript(Ty *ty, Expr *left)
 
         consume('[');
 
+        if (T0 == ']') {
+                Expr *xs = mkid(gensym(ty));
+                char *i = gensym(ty);
+
+                next();
+
+                e->type = EXPRESSION_SUBSCRIPT;
+                e->container = xs;
+                e->subscript = mkid(i);
+                e->subscript->start = e->start;
+                e->end = End;
+
+                Expr *f = mkfunc(ty);
+                avP(f->params, i);
+                avP(f->dflts, NULL);
+                avP(f->constraints, NULL);
+                f->body = mkret(ty, e);
+                f->start = left->start;
+                f->end = End;
+
+                Stmt *def = mkstmt(ty);
+                def->type = STATEMENT_DEFINITION;
+                def->pub = false;
+                def->target = xs;
+                def->value = left;
+
+                Stmt *multi = mkstmt(ty);
+                multi->type = STATEMENT_MULTI;
+                avP(multi->statements, def);
+                avP(multi->statements, to_stmt(f));
+
+                return to_expr(multi);
+        }
+
         Expr *i;
         if (T0 == ';') {
                 i = NULL;
@@ -3818,13 +3885,34 @@ infix_member_access(Ty *ty, Expr *left)
                 id = 1 + (char *)parse_expr(ty, 99);
         } else {
                 expect(TOKEN_IDENTIFIER);
+
                 id = tok()->identifier;
-                consume(TOKEN_IDENTIFIER);
+
+                if (is_fun_macro(ty, tok()->module, id)) {
+                        Expr *macro = prefix_identifier(ty);
+                        Expr *call = infix_function_call(ty, macro);
+                        avI(call->args, left, 0);
+                        avI(call->fconds, NULL, 0);
+                        return call;
+                }
+
+                if (is_macro(ty, tok()->module, id)) {
+                        Expr *macro = mkexpr(ty);
+                        macro->type = EXPRESSION_IDENTIFIER;
+                        macro->identifier = id;
+                        macro->module = tok()->module;
+                        next();
+                        macro->end = End;
+                        return typarse(ty, macro, left, &macro->start, &token(-1)->end);
+                }
 
                 if (1 & (uintptr_t)id) {
                         id = sclonea(ty, id);
                 }
+
+                consume(TOKEN_IDENTIFIER);
         }
+
 
         if (!have_without_nl(ty, '(') && !have_without_nl(ty, '$') && !have_without_nl(ty, TOKEN_AT)) {
                 e->type = EXPRESSION_MEMBER_ACCESS;
@@ -5023,6 +5111,8 @@ parse_function_definition(Ty *ty)
                 } else {
                         s->type = STATEMENT_MACRO_DEFINITION;
                         unconsume(')');
+                        unconsume(TOKEN_IDENTIFIER);
+                        tok()->identifier = "self";
                         unconsume('(');
                 }
 
@@ -5332,7 +5422,13 @@ parse_expr(Ty *ty, int prec)
                 if (f == NULL) {
                         error(ty, "unexpected token after expression: %s", token_show(ty, tok()));
                 }
-                if ((T1 == ']' || (have_not_in(ty) && token(2)->type == ']')) && !is_postfix(tok())) {
+                if (
+                        (
+                                (T1 == ']' && T0 != '[')
+                             || (have_not_in(ty) && token(2)->type == ']')
+                        )
+                     && !is_postfix(tok())
+                ) {
                         // Special case for operator slices. Very based!
                         goto End;
                 }

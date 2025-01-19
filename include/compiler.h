@@ -265,7 +265,7 @@ Value
 CToTyStmt(Ty *ty, Stmt *);
 
 Expr *
-typarse(Ty *ty, Expr *, Location const *start, Location const *end);
+typarse(Ty *ty, Expr *e, Expr *self, Location const *start, Location const *end);
 
 Value
 compiler_eval(Ty *ty, Expr *e);

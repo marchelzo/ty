@@ -482,6 +482,9 @@ value_showx(Ty *ty, Value const *v)
                 else
                         snprintf(buffer, 1024, "<builtin function '%s::%s'>", v->module, M_NAME(v->name));
                 break;
+        case VALUE_OPERATOR:
+                snprintf(buffer, 1024, "<operator %s>", M_NAME(v->uop));
+                break;
         case VALUE_CLASS:
                 snprintf(buffer, 1024, "<class %s>", class_name(ty, v->class));
                 break;
@@ -700,6 +703,19 @@ value_show_colorx(Ty *ty, struct value const *v)
                                 TERM(96),
                                 TERM(0)
                         );
+                break;
+        case VALUE_OPERATOR:
+                snprintf(
+                        buffer,
+                        sizeof buffer,
+                        "%s<%soperator %s%s%s>%s",
+                        TERM(96),
+                        TERM(92),
+                        TERM(94),
+                        M_NAME(v->uop),
+                        TERM(96),
+                        TERM(0)
+                );
                 break;
         case VALUE_CLASS:
                 snprintf(
@@ -937,6 +953,7 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
+        case VALUE_OPERATOR:
                 vmP(v);
                 b = vmC(p, 1);
                 return value_truthy(ty, &b);
@@ -981,6 +998,7 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v)
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_METHOD:
         case VALUE_BUILTIN_METHOD:
+        case VALUE_OPERATOR:
         case VALUE_CLASS:
         case VALUE_TAG:
         case VALUE_DICT:

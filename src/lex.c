@@ -998,7 +998,7 @@ uatou(Ty *ty, char const *s, char const **end, int base)
 }
 
 static Token
-lexnum(Ty *ty)
+lexnum(Ty *ty, bool float_ok)
 {
         char *end;
 
@@ -1020,13 +1020,15 @@ lexnum(Ty *ty)
         Token num;
 
         if (
-                (C(n) == 'e')
-             || (C(n) == 'E')
-             || (
-                        C(n) == '.'
-                     && !isalpha(C(n + 1))
-                     && C(n + 1) != '_'
-                     && C(n + 1) != '.'
+                float_ok && (
+                        (C(n) == 'e')
+                     || (C(n) == 'E')
+                     || (
+                                C(n) == '.'
+                             && !isalpha(C(n + 1))
+                             && C(n + 1) != '_'
+                             && C(n + 1) != '.'
+                        )
                 )
         ) {
                 errno = 0;
@@ -1363,7 +1365,7 @@ dotoken(Ty *ty, int ctx)
         ) {
                 return lexop(ty);
         } else if (isdigit(C(0))) {
-                return lexnum(ty);
+                return lexnum(ty, ctx == LEX_PREFIX);
         } else if (C(0) == '\'') {
                 if (C(1) == '\'' && C(2) == '\'') {
                         return lexdocstring(ty);

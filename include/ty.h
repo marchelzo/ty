@@ -86,6 +86,7 @@ enum {
         VALUE_TAG              ,
         VALUE_ARRAY            ,
         VALUE_DICT             ,
+        VALUE_OPERATOR         ,
         VALUE_REGEX            , // CALLABLE here and above
         VALUE_INTEGER          ,
         VALUE_REAL             ,
@@ -161,6 +162,10 @@ struct value {
                 struct {
                         int class;
                         struct itable *object;
+                };
+                struct {
+                        int uop;
+                        int bop;
                 };
                 struct {
                         union {
@@ -388,6 +393,7 @@ typedef struct {
         int fmt;
         int json;
         int len;
+        int _len_;
         int match;
         int missing;
         int ptr;
@@ -605,6 +611,7 @@ extern bool ColorProfile;
         X(NOT), \
         X(QUESTION), \
         X(COUNT), \
+        X(OPERATOR), \
         X(PATCH_ENV), \
         X(GET_TAG), \
         X(NAMESPACE)
@@ -636,6 +643,7 @@ enum {
 #define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                  .tags = 0 })
 #define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                 .tags = 0 })
 #define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                  .tags = 0 })
+#define OPERATOR(u, b)           ((Value){ .type = VALUE_OPERATOR,       .uop            = (u),  .bop    = (b),                  .tags = 0 })
 #define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,      .namespace      = (ns),                                 .tags = 0 })
 #define METHOD(n, m, t)          ((Value){ .type = VALUE_METHOD,         .method         = (m),  .this   = (t),  .name = (n),    .tags = 0 })
 #define GENERATOR(g)             ((Value){ .type = VALUE_GENERATOR,      .gen            = (g),                                  .tags = 0 })
@@ -700,7 +708,7 @@ enum {
 
 #define avP(a, b)        VPush(a, b)
 #define avPn(a, b, c)    VPushN(a, b, c)
-#define avI(a, b, c)     VInsert(a, b, c)
+#define avI(v, x, i)     VInsert(v, x, i)
 #define avIn(a, b, c, d) VInsertN(a, b, c, d)
 #define avPv(a, b)       VPushN((a), ((b).items), ((b).count))
 
