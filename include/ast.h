@@ -127,6 +127,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(SELF), \
         X(LIST), \
         X(CHOICE_PATTERN), \
+        X(OPERATOR), \
         X(IN), \
         X(NOT_IN), \
         X(KEEP_LOC), /* Below here we store Location in instruction pointer index */ \
@@ -303,6 +304,11 @@ struct expression {
                         int_vector widths;
                         expression_vector expressions;
                 };
+                struct {
+                        int u;
+                        int b;
+                        char *id;
+                } op;
                 struct {
                         union {
                                 struct expression *tagged;

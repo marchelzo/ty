@@ -179,7 +179,7 @@ op_dispatch(int op, int t1, int t2)
                 TyRwLockWrLock(&group->lock);
 
                 ref = check_slow(&group->defs, t1, t2);
-                update_cache(&group->cache, key,ref);
+                update_cache(&group->cache, key, ref);
 
                 TyRwLockWrUnlock(&group->lock);
         }

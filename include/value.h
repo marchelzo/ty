@@ -65,6 +65,7 @@ struct value;
         X(NotIn)                \
         X(Eq)                   \
         X(Matches)              \
+        X(Operator)             \
         X(Or)                   \
         X(And)                  \
         X(BitAnd)               \
@@ -671,6 +672,7 @@ ClassOf(Value const *v)
         case VALUE_METHOD:            return CLASS_FUNCTION;
         case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
+        case VALUE_OPERATOR:          return CLASS_FUNCTION;
         }
 
         return CLASS_TOP;
