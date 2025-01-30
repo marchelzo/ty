@@ -102,6 +102,7 @@ typedef struct compiler_state {
 
         JumpGroup match_fails;
         JumpGroup match_successes;
+        expression_vector match_assignments;
 
         offset_vector generator_returns;
 

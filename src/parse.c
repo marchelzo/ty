@@ -3137,6 +3137,19 @@ prefix_template_expr(Ty *ty)
 }
 
 static Expr *
+prefix_greater(Ty *ty)
+{
+        Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_REF_PATTERN;
+
+        consume('>');
+
+        e->target = assignment_lvalue(ty, parse_expr(ty, 0));
+
+        return e;
+}
+
+static Expr *
 prefix_carat(Ty *ty)
 {
         consume('^');
@@ -3617,6 +3630,14 @@ infix_eq(Ty *ty, Expr *left)
 
         e->start = left->start;
         e->target = assignment_lvalue(ty, left);
+
+        if (get_prefix_parser(ty) == NULL) {
+                e->type = (e->type == EXPRESSION_EQ)
+                        ? EXPRESSION_REF_PATTERN
+                        : EXPRESSION_REF_MAYBE_PATTERN;
+                e->end = End;
+                return e;
+        }
 
         if (left->type == EXPRESSION_LIST) {
                 e->value = parse_expr(ty, -1);
@@ -4251,6 +4272,7 @@ get_prefix_parser(Ty *ty)
         case '\\':                     return prefix_slash;
         case '$':                      return prefix_dollar;
         case '^':                      return prefix_carat;
+        case '>':                      return prefix_greater;
 
         case TOKEN_TEMPLATE_BEGIN:     return prefix_template;
         case '$$':                     return prefix_template_expr;
@@ -4521,6 +4543,9 @@ definition_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_SPREAD:
         case EXPRESSION_TEMPLATE_HOLE:
                 return e;
+        case EXPRESSION_REF_PATTERN:
+                e->target = definition_lvalue(ty, e->target);
+                return e;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
@@ -4682,6 +4707,9 @@ assignment_lvalue(Ty *ty, Expr *e)
                         e->values.items[i] = assignment_lvalue(ty, e->values.items[i]);
                 }
                 return e;
+        case EXPRESSION_REF_PATTERN:
+                e->target = assignment_lvalue(ty, e->target);
+                break;
         default:
                 error(ty, "expression is not a valid assignment lvalue: %s", ExpressionTypeName(e));
         }
@@ -4729,7 +4757,7 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
                         goto Error;
                 break;
         case LV_EACH:
-                if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_IN)
+                if (K0 == KEYWORD_IN)
                         break;
                 if (T0 != ',')
                         goto Error;
@@ -4779,7 +4807,7 @@ parse_target_list(Ty *ty)
                         T1 == '[' ||
                         T1 == '{' ||
                         (T1 == '%' && token(2)->type == '{') ||
-                        true /* TODO: why were we doing these lookaheads? */
+                        true /* FIXME: why were we doing these lookaheads? */
                 )
         ) {
                 next();
@@ -5111,8 +5139,6 @@ parse_function_definition(Ty *ty)
                 } else {
                         s->type = STATEMENT_MACRO_DEFINITION;
                         unconsume(')');
-                        unconsume(TOKEN_IDENTIFIER);
-                        tok()->identifier = "self";
                         unconsume('(');
                 }
 
@@ -5142,6 +5168,12 @@ parse_function_definition(Ty *ty)
         Expr *f = prefix_function(ty);
         if (f->name == NULL) {
                 error(ty, "anonymous function definition used in statement context");
+        }
+
+        if (s->type == STATEMENT_MACRO_DEFINITION) {
+                avI(f->params, "self", 0);
+                avI(f->constraints, NULL, 0);
+                avI(f->dflts, NULL, 0);
         }
 
         if (
