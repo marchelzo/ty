@@ -326,6 +326,7 @@ static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 #endif
 
 static _Thread_local vec(cothread_t) CoThreads;
+static _Thread_local Ty *co_ty;
 
 static _Thread_local Ty *MyTy;
 _Thread_local TyMutex *MyLock;
@@ -905,11 +906,12 @@ co_yield_value(Ty *ty);
 noreturn static void
 do_co(void)
 {
-        Ty *ty = MyTy;
+        Ty *ty = co_ty;
 
         for (;;) {
                 vm_exec(ty, IP);
                 co_yield_value(ty);
+                ty = co_ty;
         }
 }
 
@@ -1006,7 +1008,7 @@ co_yield_value(Ty *ty)
 
         int n = FRAMES.items[0].fp;
 
-        if (STACK.items[n - 1].type != VALUE_GENERATOR) {
+        if (n == 0 || STACK.items[n - 1].type != VALUE_GENERATOR) {
                 return false;
         }
 
@@ -1217,6 +1219,8 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
 
         IP = v->gen->ip;
         v->gen->ip = NULL;
+
+        co_ty = ty;
 
         if (v->gen->co != NULL) {
                 cothread_t co = v->gen->co;
@@ -1701,6 +1705,26 @@ RaiseException(Ty *ty)
         return DoThrow(ty);
 }
 
+static void
+YieldFix(Ty *ty)
+{
+        if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
+                *top() = NONE;
+        } else if (
+                !LIKELY(
+                        top()->tags != 0 &&
+                        tags_first(ty, top()->tags) == TAG_SOME
+                )
+        ) {
+                zP("iterator returned invalid type. Expected None or Some(...) but got %s", VSC(top()));
+        } else {
+                top()->tags = tags_pop(ty, top()->tags);
+                if (top()->tags == 0) {
+                        top()->type &= ~VALUE_TAGGED;
+                }
+        }
+}
+
 inline static Value
 ArraySubscript(Ty *ty, Value container, Value subscript, bool strict)
 {
@@ -1718,14 +1742,12 @@ Start:
                 ip = IP;
                 for (;;) {
                         call_co(ty, &subscript, 0);
-                        *vvL(subscript.gen->calls) = &halt;
-                        vec_push_unchecked(subscript.gen->calls, next_fix);
-                        vm_exec(ty, IP);
+                        YieldFix(ty);
                         Value r = pop();
                         if (r.type == VALUE_NONE)
                                 break;
                         if (UNLIKELY(r.type != VALUE_INTEGER))
-                                zP("iterator yielded non-integer array index in subscript expression");
+                                zP("iterator yielded non-integer array index in subscript expression: %s", VSC(&r));
                         if (r.integer < 0)
                                 r.integer += container.array->count;
                         if (r.integer < 0 || r.integer >= container.array->count) {
@@ -3462,7 +3484,7 @@ vm_exec(Ty *ty, char *code)
                                 }
                                 pushtarget(vp, v.items);
                         } else {
-                                zP("assignment to member of non-object");
+                                zP("assignment to member of non-object: %s", VSC(&v));
                         }
                         break;
                 CASE(TARGET_SUBSCRIPT)
@@ -4268,7 +4290,8 @@ vm_exec(Ty *ty, char *code)
                                 break;
                         case VALUE_GENERATOR:
                                 call_co_ex(ty, &v, 0, IP);
-                                goto YieldFix;
+                                YieldFix(ty);
+                                break;
                         default:
                         NoIter:
                                 GC_STOP();
@@ -4308,22 +4331,7 @@ vm_exec(Ty *ty, char *code)
                         push(NONE);
                         break;
                 CASE(NONE_IF_NIL)
-                YieldFix:
-                        if (top()->type == VALUE_TAG && top()->tag == TAG_NONE) {
-                                *top() = NONE;
-                        } else if (
-                                !LIKELY(
-                                        top()->tags != 0 &&
-                                        tags_first(ty, top()->tags) == TAG_SOME
-                                )
-                        ) {
-                                zP("iterator returned invalid type. Expected None or Some(x) but got %s", VSC(top()));
-                        } else {
-                                top()->tags = tags_pop(ty, top()->tags);
-                                if (top()->tags == 0) {
-                                        top()->type &= ~VALUE_TAGGED;
-                                }
-                        }
+                        YieldFix(ty);
                         break;
                 CASE(NONE_IF_NOT)
                         READJUMP(jump);
@@ -6066,7 +6074,7 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
 {
         vec(Value const *) *root_set = storage->root_set;
 
-        GCLOG("Marking root set (%zu items)", gc_root_set_count());
+        GCLOG("Marking root set (%zu items)", gc_root_set_count(ty));
         for (int i = 0; i < root_set->count; ++i) {
                 value_mark(ty, root_set->items[i]);
         }
@@ -6633,7 +6641,11 @@ tdb_eval_hook(Ty *ty)
                 return;
         }
 
+        LOG("tdb_eval_hook(): START");
+
         vm_call(TDB->ty, hook, 0);
+
+        LOG("tdb_eval_hook(): END");
 }
 
 Value

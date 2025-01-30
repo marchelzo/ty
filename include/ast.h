@@ -130,6 +130,8 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(OPERATOR), \
         X(IN), \
         X(NOT_IN), \
+        X(REF_PATTERN), \
+        X(REF_MAYBE_PATTERN), \
         X(KEEP_LOC), /* Below here we store Location in instruction pointer index */ \
         X(TUPLE), \
         X(IDENTIFIER), \
@@ -333,7 +335,10 @@ struct expression {
                 };
                 struct {
                         struct expression *target;
-                        struct expression *value;
+                        union {
+                                struct expression *value;
+                                Symbol *tmp;
+                        };
                 };
                 struct {
                         struct expression *subject;

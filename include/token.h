@@ -27,6 +27,8 @@ typedef struct token {
                 TOKEN_BANG = '!',
                 TOKEN_QUESTION = '?',
                 TOKEN_EQ = '=',
+                TOKEN_LT = '<',
+                TOKEN_GT = '>',
 
                 /*
                  * We start the enumeration constants slightly below INT_MAX so that they
@@ -70,8 +72,6 @@ typedef struct token {
                 TOKEN_CMP,
                 TOKEN_LEQ,
                 TOKEN_GEQ,
-                TOKEN_LT,
-                TOKEN_GT,
                 TOKEN_INC,
                 TOKEN_DEC,
                 TOKEN_DOT_MAYBE,

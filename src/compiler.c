@@ -148,6 +148,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc);
 static void
 emit_assignment(Ty *ty, Expr *target, Expr const *e, bool maybe, bool def);
 
+static void
+emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def);
+
 static bool
 emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool want_result);
 
@@ -1752,7 +1755,6 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                         target->symbol = getsymbol(ty, scope, target->identifier, &target->local);
 
                         if (target->symbol->cnst) {
-                        ConstAssignment:
                                 fail(
                                         ty,
                                         "assignment to const variable %s%s%s%s%s",
@@ -1767,6 +1769,9 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 if (target->type == EXPRESSION_RESOURCE_BINDING) {
                         state.resources += 1;
                 }
+                break;
+        case EXPRESSION_REF_PATTERN:
+                symbolize_lvalue_(ty, scope, target->target, false, pub);
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
@@ -1920,6 +1925,10 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         symbolize_pattern_(ty, scope, e->aliased, reuse, def);
                 }
                 e->local = true;
+                break;
+        case EXPRESSION_REF_PATTERN:
+                symbolize_lvalue(ty, scope, e->target, false, false);
+                e->tmp = tmpsymbol(ty, scope);
                 break;
         case EXPRESSION_KW_AND:
                 symbolize_pattern_(ty, scope, e->left, reuse, def);
@@ -2808,7 +2817,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_statement(ty, subscope, s->While.block);
                 break;
         case STATEMENT_IF:
-                // if not let Ok(ty, x) = f() or not [y] = bar() {
+                // if not let Ok(x) = f() or not [y] = bar() { ... }
                 subscope = scope_new(ty, "(if)", scope, false);
                 if (s->iff.neg) {
                         symbolize_statement(ty, scope, s->iff.then);
@@ -3753,7 +3762,7 @@ emit_return(Ty *ty, Stmt const *s)
                 return true;
         }
 
-        if (s->returns.count > 0 ) for (int i = 0; i < s->returns.count; ++i) {
+        if (s->returns.count > 0) for (int i = 0; i < s->returns.count; ++i) {
                 emit_expression(ty, s->returns.items[i]);
         } else {
                 emit_instr(ty, INSTR_NIL);
@@ -4144,6 +4153,13 @@ emit_try_match_(Ty *ty, Expr const *pattern)
 
                 break;
         }
+        case EXPRESSION_REF_PATTERN:
+        {
+                emit_tgt(ty, pattern->tmp, state.fscope, true);
+                emit_instr(ty, INSTR_ASSIGN);
+                avP(state.match_assignments, pattern);
+                break;
+        }
         case EXPRESSION_CHOICE_PATTERN:
         {
                 vec(JumpPlaceholder) matched = {0};
@@ -4251,6 +4267,9 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         JumpGroup fails_save = state.match_fails;
         InitJumpGroup(&state.match_fails);
 
+        expression_vector assignments = state.match_assignments;
+        vec_init(state.match_assignments);
+
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_PUSH_DROP_GROUP);
                 state.resources += 1;
@@ -4268,6 +4287,13 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         emit_instr(ty, INSTR_CLEAR_EXTRA);
 
         bool returns = false;
+
+        for (int i = 0; i < vN(state.match_assignments); ++i) {
+                Expr *e = *v_(state.match_assignments, i);
+                emit_load(ty, e->tmp, state.fscope);
+                emit_assignment2(ty, e->target, false, false);
+                emit_instr(ty, INSTR_POP);
+        }
 
         if (s != NULL) {
                 returns = emit_statement(ty, s, want_result);
@@ -4289,6 +4315,7 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
         state.match_fails = fails_save;
+        state.match_assignments = assignments;
 
         return returns;
 }
@@ -4306,6 +4333,9 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         JumpGroup fails_save = state.match_fails;
         InitJumpGroup(&state.match_fails);
 
+        expression_vector assignments = state.match_assignments;
+        vec_init(state.match_assignments);
+
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_PUSH_DROP_GROUP);
                 state.resources += 1;
@@ -4320,7 +4350,15 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
          */
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
         emit_instr(ty, INSTR_CLEAR_EXTRA);
+
+        for (int i = 0; i < vN(state.match_assignments); ++i) {
+                Expr *e = *v_(state.match_assignments, i);
+                emit_load(ty, e->tmp, state.fscope);
+                emit_assignment2(ty, e->target, false, false);
+        }
+
         emit_expression(ty, e);
+
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_DROP);
                 state.resources -= 1;
@@ -4339,6 +4377,7 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         emit_instr(ty, INSTR_RESTORE_STACK_POS);
 
         state.match_fails = fails_save;
+        state.match_assignments = assignments;
 }
 
 static bool
@@ -4489,6 +4528,9 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         JumpGroup fails_save = state.match_fails;
         InitJumpGroup(&state.match_fails);
 
+        expression_vector assignments = state.match_assignments;
+        vec_init(state.match_assignments);
+
         bool has_resources = false;
 
         for (int i = 0; i < s->iff.parts.count; ++i) {
@@ -4527,6 +4569,13 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
 
         bool returns = false;
 
+        for (int i = 0; i < vN(state.match_assignments); ++i) {
+                Expr *e = *v_(state.match_assignments, i);
+                emit_load(ty, e->tmp, state.fscope);
+                emit_assignment2(ty, e->target, false, false);
+                emit_instr(ty, INSTR_POP);
+        }
+
         if (s->iff.otherwise != NULL) {
                 returns |= emit_statement(ty, s->iff.otherwise, want_result);
         } else if (want_result) {
@@ -4550,6 +4599,7 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
 
         state.match_successes = successes_save;
         state.match_fails = fails_save;
+        state.match_assignments = assignments;
 
         return returns;
 }
@@ -4579,6 +4629,9 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 
         JumpGroup fails_save = state.match_fails;
         InitJumpGroup(&state.match_fails);
+
+        expression_vector assignments = state.match_assignments;
+        vec_init(state.match_assignments);
 
         bool has_resources = false;
 
@@ -4616,6 +4669,13 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
                 }
         }
 
+        for (int i = 0; i < vN(state.match_assignments); ++i) {
+                Expr *e = *v_(state.match_assignments, i);
+                emit_load(ty, e->tmp, state.fscope);
+                emit_assignment2(ty, e->target, false, false);
+                emit_instr(ty, INSTR_POP);
+        }
+
         bool returns = emit_statement(ty, s->iff.then, want_result);
         PLACEHOLDER_JUMP(INSTR_JUMP, done);
 
@@ -4641,6 +4701,7 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
 
         state.match_successes = successes_save;
         state.match_fails = fails_save;
+        state.match_assignments = assignments;
 
         return returns;
 }
@@ -4711,6 +4772,9 @@ emit_target(Ty *ty, Expr *target, bool def)
                 emit_expression(ty, target->container);
                 emit_expression(ty, target->subscript);
                 emit_instr(ty, INSTR_TARGET_SUBSCRIPT);
+                break;
+        case EXPRESSION_REF_PATTERN:
+                emit_target(ty, target->target, false);
                 break;
         default:
                 fail(ty, "oh no!");

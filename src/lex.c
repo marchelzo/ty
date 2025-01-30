@@ -1352,8 +1352,8 @@ dotoken(Ty *ty, int ctx)
                 nextchar(ty);
                 return mktoken(ty, '$');
         } else if (
-                contains(OperatorCharset, C(0)) ||
-                (
+                contains(OperatorCharset, C(0))
+             || (
                         C(0) == ':' &&
                         contains(OperatorCharset, C(1)) &&
                         C(1) != '-' &&
