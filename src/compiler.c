@@ -808,6 +808,18 @@ end_loop(Ty *ty)
         vvX(state.loops);
 }
 
+inline static int
+RequiredParameterCount(Expr const *e)
+{
+        for (int i = 0; i < vN(e->params); ++i) {
+                if (*v_(e->dflts, i) != NULL) {
+                        return i;
+                }
+        }
+
+        return 0;
+}
+
 inline static bool
 is_call(Expr const *e)
 {
@@ -2486,7 +2498,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 vec_init(e->param_symbols);
 
                 /*
-                 * This is trash.
+                 * TODO: Consider alternatives
                  */
                 if (is_method(e)) {
                         Symbol *s = scope_add_i(ty, subscope, "self", e->params.count);
@@ -2494,6 +2506,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         s->loc = state.start;
                 }
 
+                bool required = true;
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(ty, subscope, e->dflts.items[i]);
                         avP(e->param_symbols, addsymbol(ty, subscope, e->params.items[i]));
@@ -3454,11 +3467,12 @@ emit_function(Ty *ty, Expr const *e)
                 patch_jumps_to(&state.generator_returns, end.off);
         } else if (e->type == EXPRESSION_MULTI_FUNCTION) {
                 for (int i = 0; i < e->functions.count; ++i) {
+                        Expr *f = *v_(e->functions, i);
                         if (!is_method(e)) {
                                 emit_instr(ty, INSTR_SAVE_STACK_POS);
                                 emit_load_instr(ty, "@", INSTR_LOAD_LOCAL, 0);
                                 emit_spread(ty, NULL, false);
-                                emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)e->functions.items[i])->target->symbol->i);
+                                emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)f)->target->symbol->i);
                                 CHECK_INIT();
                                 emit_instr(ty, INSTR_CALL);
                                 emit_int(ty, -1);
@@ -3469,7 +3483,7 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_load_instr(ty, "@", INSTR_LOAD_LOCAL, 0);
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
                                 emit_instr(ty, INSTR_TARGET_MEMBER);
-                                emit_int(ty, M_ID(e->functions.items[i]->name));
+                                emit_int(ty, M_ID(f->name));
                                 emit_instr(ty, INSTR_ASSIGN);
                                 emit_instr(ty, INSTR_RETURN_IF_NOT_NONE);
                                 emit_instr(ty, INSTR_POP);
@@ -3480,7 +3494,7 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
                                 emit_instr(ty, INSTR_CALL_METHOD);
                                 emit_int(ty, -1);
-                                emit_int(ty, M_ID(e->functions.items[i]->name));
+                                emit_int(ty, M_ID(f->name));
                                 emit_int(ty, 0);
                                 emit_instr(ty, INSTR_RETURN_IF_NOT_NONE);
                                 emit_instr(ty, INSTR_POP);
@@ -3888,7 +3902,7 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
         end_loop(ty);
 }
 
-static bool
+inline static bool
 has_any_names(Expr const *e)
 {
         for (int i = 0; i < e->names.count; ++i) {
@@ -5232,8 +5246,8 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                                         // FIXME: should we handle elements after the match-rest?
                                         emit_target(ty, target->es.items[i], def);
                                         emit_instr(ty, INSTR_TUPLE_REST);
+                                        emit_int(ty, 2 * sizeof (int) + 1);
                                         emit_int(ty, i);
-                                        emit_int(ty, sizeof (int) + 1);
                                         emit_instr(ty, INSTR_JUMP);
                                         emit_int(ty, 1);
                                         emit_instr(ty, INSTR_BAD_MATCH);
@@ -8522,7 +8536,7 @@ cexpr(Ty *ty, Value *v)
                         e->identifier = (char *)EmptyString;
                         e->constraint = t;
                 } else {
-                        *e = *t;
+                        COPY_EXPR(e, t);
                 }
 
                 if (v->count < 2) {
@@ -8533,6 +8547,9 @@ cexpr(Ty *ty, Value *v)
                         e->tagged = NewExpr(ty, EXPRESSION_TUPLE);
                         for (int i = 1; i < v->count; ++i) {
                                 avP(e->tagged->es, cexpr(ty, &v->items[i]));
+                                avP(e->tagged->names, NULL);
+                                avP(e->tagged->tconds, NULL);
+                                avP(e->tagged->required, true);
                         }
                 }
 

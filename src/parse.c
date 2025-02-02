@@ -1357,7 +1357,7 @@ ss_next_str(Ty *ty)
 
         str = tok()->string;
 
-        consume(TOKEN_STRING);
+        next();
 
         return str;
 }
@@ -1405,7 +1405,21 @@ ss_inner(Ty *ty)
 
                 if (T0 == ':' || T0 == '#') {
                         next();
-                        avP(e->fmts, ss_inner(ty));
+
+                        Expr *fmt = ss_inner(ty);
+                        char *last = *vvL(fmt->strings);
+
+                        /*
+                         * Strip trailing spaces from the format specifier so
+                         * {x:-.2f   } becomes just '-.2f' -- trailing spaces
+                         * are used purely to control the width which gets passed
+                         * to __fmt__
+                         */
+                        for (int i = strlen(last) - 1; i >= 0 && isspace(last[i]); --i) {
+                                last[i] = '\0';
+                        }
+
+                        avP(e->fmts, fmt);
                 } else {
                         avP(e->fmts, NULL);
                 }
@@ -1418,7 +1432,7 @@ ss_inner(Ty *ty)
                 }
 
                 Location end = tok()->end;
-                avP(e->widths, end.col - start.col);
+                avP(e->widths, end.s - start.s);
 
                 consume('}');
 
@@ -4220,8 +4234,8 @@ BINARY_OPERATOR(dbl_eq,   DBL_EQ,    6, false)
 
 BINARY_OPERATOR(and,      AND,         5, false)
 BINARY_OPERATOR(xor,      XOR,         5, false)
-BINARY_OPERATOR(shl,      SHL,         5, false)
-BINARY_OPERATOR(shr,      SHR,         5, false)
+BINARY_OPERATOR(shl,      SHL,         7, false)
+BINARY_OPERATOR(shr,      SHR,         7, false)
 BINARY_OPERATOR(bit_and,  BIT_AND,     5, false)
 BINARY_OPERATOR(bit_or,   BIT_OR,      5, false)
 
@@ -4576,7 +4590,7 @@ definition_lvalue(Ty *ty, Expr *e)
                 if (e->elements.count == 0)
                         break;
                 for (size_t i = 0; i < e->elements.count; ++i)
-                        e->elements.items[i] = assignment_lvalue(ty, e->elements.items[i]);
+                        e->elements.items[i] = definition_lvalue(ty, e->elements.items[i]);
                 return e;
         case EXPRESSION_DICT:
                 if (e->keys.count == 0)
@@ -4594,7 +4608,7 @@ definition_lvalue(Ty *ty, Expr *e)
                                 e->values.items[i] = e->keys.items[i];
                                 e->keys.items[i] = key;
                         }
-                        e->values.items[i] = assignment_lvalue(ty, e->values.items[i]);
+                        e->values.items[i] = definition_lvalue(ty, e->values.items[i]);
                 }
                 return e;
         }
@@ -4662,6 +4676,8 @@ assignment_lvalue(Ty *ty, Expr *e)
 {
         Expr *v;
 
+        try_symbolize_application(ty, NULL, e);
+
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
                 if (strcmp(e->identifier, "_") == 0 && e->module == NULL) {
@@ -4711,6 +4727,8 @@ assignment_lvalue(Ty *ty, Expr *e)
                 e->target = assignment_lvalue(ty, e->target);
                 break;
         default:
+                EStart = e->start;
+                EEnd = e->end;
                 error(ty, "expression is not a valid assignment lvalue: %s", ExpressionTypeName(e));
         }
 }

@@ -227,6 +227,12 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         sizeof (Expr) - offsetof(Expr, has_resources) - 1 \
 )
 
+#define COPY_EXPR(dst, src) memcpy( \
+        ((char *)(dst)) + offsetof(Expr, has_resources) + 1, \
+        ((char *)(src)) + offsetof(Expr, has_resources) + 1, \
+        sizeof (Expr) - offsetof(Expr, has_resources) - 1 \
+)
+
 struct expression {
         void *arena;
         Expr *origin;
