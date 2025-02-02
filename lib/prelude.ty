@@ -2139,7 +2139,7 @@ macro showCode {
     e
 }
 
-macro match?(e, p) {
+macro matches?(e, p) {
     if p != nil {
         $$[
             match $$e {
