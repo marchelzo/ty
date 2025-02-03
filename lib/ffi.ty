@@ -140,9 +140,11 @@ function nexttype() {
 
             return e
         },
-        ('const', _)   => { next()                },
-        ('comment', _) => { next()                },
-        ('id', _)      => { parts.push(next().id) },
+        ('const', _)   => { next()                  },
+        ('comment', _) => { next()                  },
+        ('id', _)      => { parts.push(next().id)   },
+        ('*',  _),
+        ('**', _)      => { next(); parts.push('*') }
     }
 
     parts.filter!((not in ignore))
@@ -192,7 +194,7 @@ function nexttype() {
         _ => ty.Id({name: parts[0]})
     }
 
-    if !match?(t, ty.Id(_)) {
+    if !matches?(t, ty.Id(_)) {
         t = ty.Value(t)
     }
 
@@ -207,6 +209,10 @@ function nexttype() {
         t = ty.Value(c.ptr)
         next()
         while next().type != ']' {}
+    }
+
+    if '*' in parts {
+        t = ty.Value(c.ptr)
     }
 
     return t
