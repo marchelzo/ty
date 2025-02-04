@@ -10063,7 +10063,7 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
 
         char const *caption;
 
-        for (char const *c = code; c != end; DebugScan || xvP(*out, '\n')) {
+        for (char const *c = code; end == NULL || c < end; DebugScan || xvP(*out, '\n')) {
                 uintptr_t pc = (uintptr_t)c;
 
                 if (DEBUGGING) {

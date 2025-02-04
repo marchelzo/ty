@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <inttypes.h>
 #include <stdalign.h>
+#include <assert.h>
 
 #include <pcre.h>
 
@@ -434,10 +435,20 @@ extern bool ColorProfile;
 #  define UNLIKELY(x)  (x)
 #  define LIKELY(x)    (x)
 #  define EXPECT(x, y) (x)
+#  ifndef TY_RELEASE
+#    define UNREACHABLE(msg) assert(! "" msg)
+#  else
+#    define UNREACHABLE(msg) __assume(0)
+#  endif
 #else
 #  define UNLIKELY(x)  __builtin_expect((x), 0)
 #  define LIKELY(x)    __builtin_expect((x), 1)
 #  define EXPECT(x, y) __builtin_expect((x), (y))
+#  ifndef TY_RELEASE
+#    define UNREACHABLE(msg) assert(! "" msg)
+#  else
+#    define UNREACHABLE(msg) __builtin_unreachable()
+#  endif
 #endif
 
 #define TY_INSTRUCTIONS \

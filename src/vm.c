@@ -907,12 +907,8 @@ noreturn static void
 do_co(void)
 {
         Ty *ty = co_ty;
-
-        for (;;) {
-                vm_exec(ty, IP);
-                co_yield_value(ty);
-                ty = co_ty;
-        }
+        vm_exec(ty, IP);
+        UNREACHABLE();
 }
 
 inline static bool
@@ -965,10 +961,10 @@ inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
         if (vN(CoThreads) == 0) {
-                xvP(CoThreads, co_create(1u << 22, do_co));
+                return co_create(1u << 22, do_co);
+        } else {
+                return co_derive(*vvX(CoThreads), 1u << 22, do_co);
         }
-
-        return *vvX(CoThreads);
 }
 
 static bool
@@ -1035,19 +1031,19 @@ co_yield_value(Ty *ty)
         IP = *vvX(CALLS);
 
         if (gen->ExecDepth > 1) {
+                LOG("co_yield() [%p]: switch to [%p] with %s (RECURSED)", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
-                LOG("co_switch(): exit recursed co=%p", (void *)gen->co);
                 co_switch(co);
         } else {
+                LOG("co_yield() [%p]: switch to [%p] with %s", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
                 xvP(CoThreads, co_active());
-                LOG("co_switch(): exit normal co=%p", (void *)gen->co);
                 co_switch(co);
         }
 
-        LOG("Back from yield");
+        LOG("co_yield() [%p]: resume", co_active());
 
         return true;
 }
@@ -1153,17 +1149,12 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         if (exec) {
                 Generator *gen = GetCurrentGenerator(ty);
 
-                //gP(f);
-
                 vec_push_unchecked(CALLS, &halt);
-                //printf("call(): ExecDepth=%d\n", ExecDepth);
                 vm_exec(ty, code);
 
                 if (UNLIKELY(GetCurrentGenerator(ty) != gen)) {
                         zP("sus use of coroutine yield");
                 }
-
-                //gX();
         } else {
                 vec_push_unchecked(CALLS, IP);
                 IP = code;
@@ -1220,20 +1211,21 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         IP = v->gen->ip;
         v->gen->ip = NULL;
 
-        co_ty = ty;
-
         if (v->gen->co != NULL) {
                 cothread_t co = v->gen->co;
                 v->gen->co = co_active();
-                LOG("co_switch(): enter existing co=%p", (void *)co);
+                LOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&v->gen->f), (void *)co);
                 co_switch(co);
         } else {
                 cothread_t co = GetFreeCoThread(ty);
                 v->gen->co = co_active();
-                LOG("co_switch(): enter free co=%p IP=%ju", (void *)co, ((uintptr_t)IP) & 0xFFFFFFFF);
+                LOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&v->gen->f), (void *)co);
+                co_ty = ty;
                 co_switch(co);
 
         }
+
+        LOG("co_call() [%p]: back from %s with %s", co_active(), name_of(&v->gen->f), VSC(top()));
 }
 
 static void
@@ -3267,6 +3259,7 @@ vm_exec(Ty *ty, char *code)
 #endif
 
         ExecDepth += 1;
+        LOG("vm_exec(): ==> %d", ExecDepth);
 
         for (;;) {
         if (ty->GC_OFF_COUNT == 0 && MyGroup->WantGC) {
@@ -4169,9 +4162,9 @@ vm_exec(Ty *ty, char *code)
                                 zP("attempt to yield from outside of a generator context");
                         }
 
-                        ExecDepth -= 1;
+                        co_yield_value(ty);
 
-                        return;
+                        break;
                 }
                 CASE(MAKE_GENERATOR)
                         v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));
@@ -5149,7 +5142,7 @@ vm_exec(Ty *ty, char *code)
                 CASE(HALT)
                         ExecDepth -= 1;
                         IP = save;
-                        LOG("halting: IP = %p", IP);
+                        LOG("vm_exec(): <== %d (HALT: IP=%p)", ExecDepth, (void *)IP);
                         return;
                 }
         }
@@ -5231,6 +5224,7 @@ vm_init(Ty *ty, int ac, char **av)
         InitThreadGroup(ty, MyGroup = &MainGroup);
 
         pcre_malloc = malloc;
+        pcre_free = free;
         JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
 
         amN(1ULL << 22);
@@ -5307,17 +5301,8 @@ vm_panic(Ty *ty, char const *fmt, ...)
                         n += WriteExpressionOrigin(ty, ERR + n, sz - n, expr->origin);
                 }
 
-                while (vN(FRAMES) == 0) {
-                        Generator *gen;
-                        if ((gen = GetCurrentGenerator(ty)) != NULL && vN(gen->frames) > 0) {
-                                FRAMES.count += 1;
-                                STACK.count = vvL(FRAMES)->fp;
-                                push(NIL);
-                                co_yield_value(ty);
-                                // XXX: Should just co_abort()
-                        } else {
-                                break;
-                        }
+                while (vN(FRAMES) == 0 && co_abort(ty)) {
+                        ;
                 }
 
                 if (vN(FRAMES) == 0) {
@@ -5358,8 +5343,10 @@ tdb_backtrace(Ty *ty)
         int n = 0;
         Generator *gen = NULL;
 
+        int nf = vN(frames);
+
         for (int i = 0; ip != NULL && n < sz; ++i) {
-                if (vN(frames) > 0 && ((char *)vvL(frames)->f.info)[FUN_HIDDEN]) {
+                if (nf > 0 && ((char *)v_(frames, nf - 1)->f.info)[FUN_HIDDEN]) {
                         /*
                          * This code is part of a hidden function; we don't want it
                          * to show up in stack traces.
@@ -5374,23 +5361,25 @@ tdb_backtrace(Ty *ty)
                         n += WriteExpressionOrigin(ty, buf + n, sz - n, expr->origin);
                 }
 
-                if (vN(frames) == 0) {
+                if (nf == 0) {
                         if (gen != NULL) {
                                 frames = gen->frames;
+                                nf = vN(frames);
+                                gen = NULL;
                         } else {
                                 break;
                         }
+                } else {
+                        gen = (nf == 0)                     ? NULL
+                            : (v_(frames, nf - 1)->fp == 0) ? NULL
+                            : (v_(STACK, v_(frames, nf - 1)->fp - 1)->type != VALUE_GENERATOR) ? NULL
+                            :  v_(STACK, v_(frames, nf - 1)->fp - 1)->gen;
                 }
 
-                gen = (vN(frames) == 0)     ? NULL
-                    : (vvL(frames)->fp == 0) ? NULL
-                    : (v_(STACK, vvL(frames)->fp - 1)->type != VALUE_GENERATOR) ? NULL
-                    : v_(STACK, vvL(frames)->fp - 1)->gen;
-
 Next:
-                ip = vN(frames) == 0
+                ip = (nf == 0)
                    ? NULL
-                   : vvX(frames)->ip;
+                   : v_(frames, --nf)->ip;
         }
 
         fputs(buf, stdout);

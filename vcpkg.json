@@ -7,7 +7,6 @@
         "utf8proc",
         "sqlite3",
         "gumbo",
-        "pcre",
-        "getopt"
+        "pcre"
     ]
 }
