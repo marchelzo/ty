@@ -44,11 +44,6 @@ find_package(CURL CONFIG REQUIRED)
 # defines target(s): OpenSSL::SSL, OpenSSL::Crypto, OpenSSL::applink
 find_package(OpenSSL REQUIRED)
 
-if (WIN32)
-  # defines target(s): unofficial::getopt-win32::getopt
-  find_package(unofficial-getopt-win32 CONFIG REQUIRED)
-endif()
-
 # ---
 #   global compiler variables
 # ---
@@ -203,7 +198,6 @@ target_link_libraries(${_tgt_ty_interface}
     $<$<NOT:$<BOOL:${WIN32}>>:unofficial-readline>
     $<$<NOT:$<BOOL:${WIN32}>>:m>
     $<$<BOOL:${WIN32}>:unofficial::readline-win32::readline>
-    $<$<BOOL:${WIN32}>:unofficial::getopt-win32::getopt>
     $<$<BOOL:${WIN32}>:ws2_32> # winsock2
     $<$<BOOL:${WIN32}>:Shlwapi.lib>
 )

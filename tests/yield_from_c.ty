@@ -1,0 +1,12 @@
+let g = nil
+let s = ''
+
+g = generator {
+    'pass:fail'.chars().map(-> s += (yield it)(it))
+}
+
+let f = -> g(&upper)
+
+[*f.take(5)]
+
+print(s)
