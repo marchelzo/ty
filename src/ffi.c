@@ -560,7 +560,7 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
         vec(void *) args = {0};
         for (int i = 2; i < argc; ++i) {
                 if (ARG(i).type == VALUE_PTR) {
-                        vec_nogc_push(args, ARG(i).ptr);
+                        xvP(args, ARG(i).ptr);
                 } else {
                         free(args.items);
                         zP("non-pointer passed as argument %d to ffi.call(): %s", i + 1, VSC(&ARG(i)));
