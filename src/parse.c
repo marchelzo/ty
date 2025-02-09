@@ -4921,6 +4921,10 @@ parse_for_loop(Ty *ty)
                 return s;
         }
 
+        if (T0 == '(') {
+                next();
+        }
+
         if (T0 == ';') {
                 next();
                 s->for_loop.init = NULL;
@@ -4937,6 +4941,7 @@ parse_for_loop(Ty *ty)
         consume(';');
 
         if (T0 == ')') {
+                next();
                 s->for_loop.next = NULL;
         } else {
                 s->for_loop.next = parse_expr(ty, 0);

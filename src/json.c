@@ -219,10 +219,10 @@ array(Ty *ty)
         if (next() != '[')
                 FAIL;
 
-        struct array *a = vA();
+        Array *a = vA();
 
         while (peek() != '\0' && peek() != ']') {
-                xvP(*a, value(ty));
+                vvP(*a, value(ty));
                 space();
                 if (peek() != ']' && next() != ',')
                         FAIL;
@@ -240,15 +240,15 @@ object(Ty *ty)
         if (next() != '{')
                 FAIL;
 
-        struct dict *obj = dict_new(ty);
+        Dict *obj = dict_new(ty);
 
         while (peek() != '\0' && peek() != '}') {
                 space();
-                struct value key = string(ty);
+                Value key = string(ty);
                 space();
                 if (next() != ':')
                         FAIL;
-                struct value val = value(ty);
+                Value val = value(ty);
                 dict_put_value(ty, obj, key, val);
                 space();
                 if (peek() != '}' && next() != ',')

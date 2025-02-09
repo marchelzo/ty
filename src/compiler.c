@@ -8071,6 +8071,10 @@ cparts(Ty *ty, Value *v)
 Stmt *
 cstmt(Ty *ty, Value *v)
 {
+        if (v == NULL || v->type == VALUE_NIL) {
+                return NULL;
+        }
+
         Stmt *s = amA0(sizeof *s);
         Stmt *src = source_lookup(ty, v->src);
 
