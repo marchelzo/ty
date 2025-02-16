@@ -357,8 +357,9 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
-                        if (conflict != NULL && conflict->scope != src && conflict->public)
+                        if (conflict != NULL && conflict->scope != src && conflict->public) {
                                 return conflict->identifier;
+                        }
                 }
         }
 
@@ -405,10 +406,10 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                                 vec(Scope *) scopes = {0};
 
                                 while (
-                                        fscope != stop->function &&
-                                        fscope->parent->function != stop->function &&
-                                        fscope->function != sym->scope->function &&
-                                        fscope->parent->function != sym->scope->function
+                                                          fscope != stop->function
+                                     && fscope->parent->function != stop->function
+                                     &&         fscope->function != sym->scope->function
+                                     && fscope->parent->function != sym->scope->function
                                 ) {
                                         avP(scopes, fscope);
                                         fscope = fscope->parent->function;
@@ -420,7 +421,7 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
                                         parent_index = scope_capture(ty, scopes.items[i], sym, parent_index);
                                 }
 
-                                LOG("scope_capture_all: DONE capturing %s", sym->identifier);
+                                LOG("scope_capture_all: done capturing %s", sym->identifier);
                         }
                 }
         }

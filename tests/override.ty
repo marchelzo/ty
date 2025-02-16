@@ -23,11 +23,13 @@ if B().bar(4) != 20 {
 }
 
 try {
-    __eval__($$[
+    print(__eval__($$[
         B().foo(12)
-    $$])
+    $$]))
 } catch Err(msg) {
     if 'return value' in msg {
         print('PASS')
+    } else {
+        print(msg)
     }
 }

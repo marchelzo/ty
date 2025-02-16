@@ -7,6 +7,17 @@ import ptr (typed)
 
 pub cifs = Sync(%{})
 
+tag Union;
+tag Struct;
+
+function next!(t) {
+    while peek().type == 'comment' { next() }
+    if peek().type != t {
+        fail("expected `{t}` but found: {peek()}")
+    }
+    next()
+}
+
 pub function getCif(rt, *aTypes, nFixed) {
     let signature = (rt, aTypes, nFixed)
 
@@ -109,6 +120,8 @@ pub strlen = wrap(nil, 'strlen', c.u64, c.ptr)
 pub memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
 pub strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)
 pub memset = wrap(nil, 'memset', c.void, c.ptr, c.int, c.u64)
+pub syscall = wrapVar(nil, 'syscall', 1, c.long, c.long)
+pub strcpy = wrap(nil, 'strcpy', c.ptr, c.ptr, c.ptr)
 
 pub function cstr(s) {
     let p = c.alloc(s.size() + 1)
@@ -119,8 +132,7 @@ pub function cstr(s) {
     return p
 }
 
-
-function nexttype() {
+function nexttype(array-to-ptr? = true) {
     let parts = []
 
     let ignore = "
@@ -131,15 +143,16 @@ function nexttype() {
 
     while match (peek().type, peek(1).type) {
         (')', _),
-        (_, '(')       => { break                 },
+        (_, '('),
+        (';', _) => { break },
+
         (_, '.')       => {
             let e = expr(1)
 
             // Allow stuff like f(c.int error_code) by just ignoring the identifier
-            if peek().type == 'id' { next() }
-
-            return e
+            return e, if peek().type == 'id' { next().id }
         },
+
         ('const', _)   => { next()                  },
         ('comment', _) => { next()                  },
         ('id', _)      => { parts.push(next().id)   },
@@ -204,7 +217,7 @@ function nexttype() {
         next()
     }
 
-    if peek().type == '[' {
+    if array-to-ptr? && peek().type == '[' {
         // Just kidding it's actually a pointer :^)
         t = ty.Value(c.ptr)
         next()
@@ -215,7 +228,7 @@ function nexttype() {
         t = ty.Value(c.ptr)
     }
 
-    return t
+    return t, parts(-1).or-else(nil)
 }
 
 function nextproto() {
@@ -350,47 +363,115 @@ function strct() {
         next_()
     }
 
-    let peek = function() {
-        while peek_().type == 'comment' {
-            next_()
+    let peek = function (i=0) {
+        let j = 0
+
+        for (;;) {
+            while peek_(j).type == 'comment' { j += 1 }
+            if i == 0 { return peek_(j) }
+            i -= 1
+            j += 1
         }
-        peek_()
     }
 
     // struct
-    next()
+    next!('id')
 
     let structName = next().id
 
-    // {
-    next()
+    next!('{')
 
     let members = []
 
     while peek().type != '}' {
-        let t = expr(0)
-        let names = []
-        let getName = -> do {
-            let name = next().id
-            let count = if peek().type == '[' {
-                next() // [
-                let n = expr(0)
-                next() // ]
-                n
-            }
-            members.push({t, name, count})
-        }
-        getName()
-        while peek().type == ',' {
+        let get-count = -> if peek().type == '[' {
             next()
-            getName()
+            let n = expr(0)
+            next!(']')
+            n
         }
-        next() // ;
+
+        let get-decl = -> do {
+            let t, name = nexttype(array-to-ptr?=false)
+            let names = [(name, get-count())]
+
+            while peek().type == ',' {
+                next()
+                names.push((next().id, get-count()))
+            }
+
+            next!(';')
+
+            [{t, name, count} for (name, count) in names]
+        }
+
+        if peek().?id == 'union' {
+            let types = []
+            let decls = []
+            next() // union
+            next!('{')
+            while peek().type != '}' {
+                if peek().?id == 'struct' {
+                    next() // struct
+                    next!('{')
+                    let inner = []
+
+                    while peek().type != '}' {
+                        inner += get-decl()
+                    }
+
+                    next!('}')
+
+                    if (peek().type, peek(1).?type) == ('id', ';') {
+                        let pre = next().id
+                        inner.map!(field -> {*field, name: "{pre}_{field.name}"})
+                    }
+
+                    next!(';')
+
+                    decls.push(Struct(inner))
+                } else {
+                    let decl = get-decl()
+                    if #decl != 1 {
+                        fail("avoid doing this: {decl}")
+                    }
+                    decls.push(decl[0])
+                }
+            }
+
+            next!('}')
+            next!(';')
+
+            let type-alternatives = ty.Array(
+                decls.map(match {
+                    Struct(inner) => do {
+                        let ts = inner.map(decl -> ty.Arg(arg: decl.t))
+                        ty.Call(func: ty.Value(c.struct), args: ts)
+                    },
+
+                    decl => decl.t
+                }).map(t -> ty.ArrayItem(item: t))
+            )
+            
+            let type = $$[ $$type-alternatives.max-by($${c.size}) $$]
+
+            members.push(Union(type, decls))
+        } else {
+            members += get-decl()
+        }
     }
 
-    next() // }
+    next!('}')
 
     let ctype = ty.Id(name: "{structName}_C")
+
+    let member-names = members.map(match {
+        Union(_, decls) => decls.map(match {
+            Struct(inner) => inner.map(&.name),
+            decl          => decl.name,
+        }),
+        decl              => decl.name
+    }).flat()
 
     let init = ty.Func(
         name: 'init',
@@ -402,7 +483,7 @@ function strct() {
                     if $${name} in kws {
                         $$(ty.MemberAccess($$[ self $$], name)) = kws[$${name}]
                     }
-                $$] for {t, name, count} in members
+                $$] for name in member-names
             ]
         ])
     )
@@ -436,75 +517,67 @@ function strct() {
     let getters = []
     let setters = []
 
-    for {name, t, count}, i in members {
+    function add-member(i, name, t, count, off=0) {
+        if i == nil {
+            i = #structArgs
+
+            let mkstruct = (t, n) -> c.struct(*[t for ..n])
+
+            if count != nil {
+                structArgs.push(ty.Arg(arg: $$[ $${mkstruct}($$t, $$count) $$]))
+            } else {
+                let t_ = ty.Cond(
+                    $$[ type($$t) == Class $$],
+                    $$[ $$t.ctype() $$],
+                    t
+                )
+                structArgs.push(ty.Arg(arg: t_))
+            }
+        }
+
         if count != nil {
-            let n = ty.eval(count)
-            structArgs.push(ty.Arg(arg: ty.Call(func: ty.Value(c.struct), args: [ty.Arg(arg: t) for _ in ..n])))
             methods.push(
                 ty.Func(
                     name: name,
                     params: [ty.Gather('args')],
-                    body: ty.If(
-                        [ty.GT(ty.Count(ty.Id(name: 'args')), ty.Int(0))],
-                        ty.Block([
-                            ty.Let(ty.Array([ty.ArrayItem(item: ty.Id(name: 'x'))]), ty.Id(name: 'args')),
-                            ty.Let(
-                                ty.Id(name: 'p'),
-                                ty.MethodCall(
-                                    object: ty.Id(name: 'x'),
-                                    method: 'ptr',
-                                    args: []
-                                )
-                            ),
-                            ty.Call(
-                                func: ty.Value(memcpy),
-                                args: [
-                                    ty.Arg(
-                                        arg: ty.Call(
-                                            func: ty.Value(c.pmember),
-                                            args: [
-                                                ty.Arg(arg: ctype),
-                                                ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
-                                                ty.Arg(arg: ty.Int(i)),
-                                            ]
-                                        )
-                                    ),
-                                    ty.Arg(arg: ty.Wtf(ty.Id(name: 'p'), ty.Id(name: 'x'))),
-                                    ty.Arg(arg: ty.Mul(ty.Call(func: ty.Value(c.size), args: [ty.Arg(arg: t)]), ty.Value(n)))
-                                ]
-                            )
-                        ]),
-                        ty.Call(
-                            func: ty.Value(typed),
-                            args: [
-                                ty.Arg(arg: ty.Call(
-                                    func: ty.Value(c.pmember),
-                                    args: [
-                                        ty.Arg(arg: ctype),
-                                        ty.Arg(arg: ty.MemberAccess(ty.Id(name: 'self'), '<p>')),
-                                        ty.Arg(arg: ty.Int(i)),
-                                    ]
-                                )),
-                                ty.Arg(arg: t)
-                            ]
-                        )
-                    )
+                    body: $$[
+                        if #args > 0 {
+                            let [x] = args
+                            let p = x.ptr()
+                            $${memcpy}($${c.pmember}($$ctype, self.`<p>`, $${i}), p ?? x, $${c.size}($$t) * $$count)
+                        } else {
+                            $${typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $$t)
+                        }
+                    $$]
                 )
             )
         } else {
-            let t_ = ty.Cond(
-                $$[ type($$t) == Class $$],
-                $$[ $$t.ctype() $$],
-                t
-            )
+            let pmem = (off == 0) ? $$[
+                $${c.pmember}($$ctype, self.`<p>`, $${i})
+            $$] : $$[
+                $${ptr.typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off
+            $$]
 
-            let getter-body = ty.Cond(
-                $$[ type($$t) == Class $$],
-                $$[ $$t($${c.pmember}($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i)))) $$],
-                $$[ c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i))) $$]
-            )
+            let mem = (off == 0) ? $$[
+                $${c.member}($$ctype, self.`<p>`, $${i})
+            $$] : $$[
+                $${c.load}($$t, $${ptr.typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off)
+            $$]
 
-            structArgs.push(ty.Arg(arg: t_))
+            let store = (off == 0) ? $$[
+                $${c.member}($$ctype, self.`<p>`, $${i}, `<member>`)
+            $$] : $$[
+                $${c.store}($$t, $${ptr.typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off, `<member>`)
+            $$]
+
+            let getter-body = $$[
+                (type($$t) == Class) ? $$t($$pmem) : $$mem
+            $$]
+
+            let setter-body = $$[
+                (type($$t) == Class) ? die('not implemented') : $$store
+            $$]
+
             getters.push(
                 ty.Func(
                     name: name,
@@ -515,14 +588,41 @@ function strct() {
             setters.push(
                 ty.Func(
                     name: name,
-                    params: [ty.Param(name: 'x')],
-                    body: $$[
-                        c.member($$ctype, $$(ty.MemberAccess(ty.Id(name: 'self'), '<p>')), $$(ty.Int(i)), x)
-                    $$]
+                    params: [ty.Param(name: '<member>')],
+                    body: setter-body
                 )
             )
         }
     }
+
+    for member, i in members {
+        match member {
+            Union(ut, decls) => do {
+                structArgs.push(ty.Arg(arg: ut))
+                for match decls {
+                    Struct(inner) => do {
+                        let off = $$[ 0 $$]
+                        for {name, t, count} in inner {
+                            add-member(i, name, t, count, off = off)
+                            off = ty.Add(off, $$[ $${c.size}($$t) $$])
+                        }
+                    },
+
+                    {name, t, count} => {
+                        add-member(i, name, t, count)
+                    }
+                }
+            },
+
+            {name, t, count} => do {
+                add-member(nil, name, t, count)
+            }
+        }
+    }
+
+    // FIXME
+    // print(structName)
+    // for arg in structArgs { match arg { ty.Arg({arg: ty.Cond(_, _, t), *}) => print(t), _ => print(arg) } }
 
     let show = ty.Func(
         name: '__str__',
@@ -571,7 +671,7 @@ function strct() {
             methods: [get, __ptr__, init, size, show, *methods],
             getters: getters,
             setters: setters,
-            statics: [ctypeFunction]
+            statics: [ctypeFunction, size]
         )
     ])
 }

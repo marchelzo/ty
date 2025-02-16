@@ -48,6 +48,7 @@ struct class_definition {
         bool pub;
         char *name;
         char const *doc;
+        Location loc;
         struct expression *super;
         expression_vector methods;
         expression_vector getters;
@@ -69,168 +70,170 @@ typedef struct class_definition ClassDefinition;
 enum { FT_NONE, FT_FUNC, FT_GEN };
 enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
 
-#define TY_STATEMENT_TYPES \
-        X(FOR_LOOP), \
-        X(EACH_LOOP), \
-        X(DEFINITION), \
-        X(FUNCTION_DEFINITION), \
-        X(OPERATOR_DEFINITION), \
-        X(MACRO_DEFINITION), \
-        X(FUN_MACRO_DEFINITION), \
-        X(TAG_DEFINITION), \
-        X(CLASS_DEFINITION), \
-        X(WHILE), \
-        X(WHILE_MATCH), \
-        X(IF_LET), \
-        X(MATCH), \
-        X(IF), \
-        X(RETURN), \
-        X(GENERATOR_RETURN), \
-        X(NEXT), \
-        X(CONTINUE), \
-        X(BREAK), \
-        X(TRY), \
-        X(DEFER), \
-        X(CLEANUP), \
-        X(TRY_CLEAN), \
-        X(DROP), \
-        X(BLOCK), \
-        X(MULTI), \
-        X(HALT), \
-        X(NULL), \
-        X(EXPRESSION), \
-        X(IMPORT), \
+#define TY_STATEMENT_TYPES        \
+        X(FOR_LOOP),              \
+        X(EACH_LOOP),             \
+        X(DEFINITION),            \
+        X(FUNCTION_DEFINITION),   \
+        X(OPERATOR_DEFINITION),   \
+        X(MACRO_DEFINITION),      \
+        X(FUN_MACRO_DEFINITION),  \
+        X(TAG_DEFINITION),        \
+        X(CLASS_DEFINITION),      \
+        X(WHILE),                 \
+        X(WHILE_MATCH),           \
+        X(IF_LET),                \
+        X(MATCH),                 \
+        X(IF),                    \
+        X(RETURN),                \
+        X(GENERATOR_RETURN),      \
+        X(NEXT),                  \
+        X(CONTINUE),              \
+        X(BREAK),                 \
+        X(TRY),                   \
+        X(DEFER),                 \
+        X(CLEANUP),               \
+        X(TRY_CLEAN),             \
+        X(DROP),                  \
+        X(BLOCK),                 \
+        X(MULTI),                 \
+        X(HALT),                  \
+        X(NULL),                  \
+        X(EXPRESSION),            \
+        X(USE),                   \
+        X(IMPORT),                \
         X(EXPORT)
 
-#define TY_EXPRESSION_TYPES \
-        X(FUNCTION), \
-        X(IMPLICIT_FUNCTION), \
-        X(GENERATOR), \
-        X(INTEGER), \
-        X(BOOLEAN), \
-        X(STRING), \
-        X(REAL), \
-        X(ARRAY), \
-        X(ARRAY_COMPR), \
-        X(STATEMENT), \
-        X(DICT), \
-        X(DICT_COMPR), \
-        X(TAG), \
-        X(CONDITIONAL), \
-        X(COMPILE_TIME), \
-        X(EQ), \
-        X(MAYBE_EQ), \
-        X(TICK), \
-        X(PREFIX_QUESTION), \
-        X(PREFIX_BANG), \
-        X(NIL), \
-        X(SELF), \
-        X(LIST), \
-        X(CHOICE_PATTERN), \
-        X(OPERATOR), \
-        X(IN), \
-        X(NOT_IN), \
-        X(REF_PATTERN), \
-        X(REF_MAYBE_PATTERN), \
-        X(KEEP_LOC), /* Below here we store Location in instruction pointer index */ \
-        X(TUPLE), \
-        X(IDENTIFIER), \
-        X(RESOURCE_BINDING), \
-        X(DEFINED), \
-        X(WITH), \
-        X(YIELD), \
-        X(THROW), \
-        X(TAG_APPLICATION), \
-        X(TAG_PATTERN_CALL), \
-        X(TAG_PATTERN), \
-        X(ALIAS_PATTERN), \
-        X(TEMPLATE), \
-        X(TEMPLATE_HOLE), \
-        X(TEMPLATE_VHOLE), \
-        X(SPREAD), \
-        X(SPLAT), \
-        X(MUST_EQUAL), \
-        X(REGEX), \
-        X(SPECIAL_STRING), \
-        X(FUNCTION_CALL), \
-        X(MEMBER_ACCESS), \
-        X(MODULE), \
-        X(NAMESPACE), \
-        X(SELF_ACCESS), \
-        X(SUBSCRIPT), \
-        X(SLICE), \
-        X(METHOD_CALL), \
-        X(USER_OP), \
-        X(UNARY_OP), \
-        X(BIT_AND), \
-        X(BIT_OR), \
-        X(XOR), \
-        X(SHL), \
-        X(SHR), \
-        X(MATCH_ANY), \
-        X(MATCH_NOT_NIL), \
-        X(MATCH_REST), \
-        X(DOT_DOT), \
-        X(DOT_DOT_DOT), \
-        X(MATCH), \
-        X(VIEW_PATTERN), \
-        X(NOT_NIL_VIEW_PATTERN), \
-        X(PLUS), \
-        X(MINUS), \
-        X(STAR), \
-        X(DIV), \
-        X(PERCENT), \
-        X(AND), \
-        X(OR), \
-        X(KW_AND), \
-        X(KW_OR), \
-        X(WTF), \
-        X(LT), \
-        X(LEQ), \
-        X(GT), \
-        X(GEQ), \
-        X(CMP), \
-        X(DBL_EQ), \
-        X(NOT_EQ), \
-        X(CHECK_MATCH), \
-        X(PLUS_EQ), \
-        X(STAR_EQ), \
-        X(DIV_EQ), \
-        X(MOD_EQ), \
-        X(MINUS_EQ), \
-        X(AND_EQ), \
-        X(OR_EQ), \
-        X(XOR_EQ), \
-        X(SHL_EQ), \
-        X(SHR_EQ), \
-        X(PREFIX_MINUS), \
-        X(PREFIX_HASH), \
-        X(PREFIX_AT), \
-        X(PREFIX_INC), \
-        X(PREFIX_DEC), \
-        X(POSTFIX_INC), \
-        X(POSTFIX_DEC), \
-        X(PTR), \
-        X(EVAL), \
-        X(IFDEF), \
-        X(NONE), \
-        X(MULTI_FUNCTION), \
-        X(MACRO_INVOCATION), \
-        X(FUN_MACRO_INVOCATION), \
-        X(CTX_INFO), \
-        X(VALUE), \
+#define TY_EXPRESSION_TYPES                                                           \
+        X(FUNCTION),                                                                  \
+        X(IMPLICIT_FUNCTION),                                                         \
+        X(GENERATOR),                                                                 \
+        X(INTEGER),                                                                   \
+        X(BOOLEAN),                                                                   \
+        X(STRING),                                                                    \
+        X(REAL),                                                                      \
+        X(ARRAY),                                                                     \
+        X(ARRAY_COMPR),                                                               \
+        X(STATEMENT),                                                                 \
+        X(DICT),                                                                      \
+        X(DICT_COMPR),                                                                \
+        X(TAG),                                                                       \
+        X(CONDITIONAL),                                                               \
+        X(COMPILE_TIME),                                                              \
+        X(EQ),                                                                        \
+        X(MAYBE_EQ),                                                                  \
+        X(TICK),                                                                      \
+        X(PREFIX_QUESTION),                                                           \
+        X(PREFIX_BANG),                                                               \
+        X(NIL),                                                                       \
+        X(SELF),                                                                      \
+        X(LIST),                                                                      \
+        X(OR_LIST),                                                                   \
+        X(CHOICE_PATTERN),                                                            \
+        X(OPERATOR),                                                                  \
+        X(IN),                                                                        \
+        X(NOT_IN),                                                                    \
+        X(REF_PATTERN),                                                               \
+        X(REF_MAYBE_PATTERN),                                                         \
+        X(KEEP_LOC), /* Below here we store Location in instruction pointer index */  \
+        X(TUPLE),                                                                     \
+        X(IDENTIFIER),                                                                \
+        X(RESOURCE_BINDING),                                                          \
+        X(DEFINED),                                                                   \
+        X(WITH),                                                                      \
+        X(YIELD),                                                                     \
+        X(THROW),                                                                     \
+        X(TAG_APPLICATION),                                                           \
+        X(TAG_PATTERN_CALL),                                                          \
+        X(TAG_PATTERN),                                                               \
+        X(ALIAS_PATTERN),                                                             \
+        X(TEMPLATE),                                                                  \
+        X(TEMPLATE_HOLE),                                                             \
+        X(TEMPLATE_VHOLE),                                                            \
+        X(SPREAD),                                                                    \
+        X(SPLAT),                                                                     \
+        X(MUST_EQUAL),                                                                \
+        X(REGEX),                                                                     \
+        X(SPECIAL_STRING),                                                            \
+        X(FUNCTION_CALL),                                                             \
+        X(MEMBER_ACCESS),                                                             \
+        X(MODULE),                                                                    \
+        X(NAMESPACE),                                                                 \
+        X(SELF_ACCESS),                                                               \
+        X(SUBSCRIPT),                                                                 \
+        X(SLICE),                                                                     \
+        X(METHOD_CALL),                                                               \
+        X(USER_OP),                                                                   \
+        X(UNARY_OP),                                                                  \
+        X(BIT_AND),                                                                   \
+        X(BIT_OR),                                                                    \
+        X(XOR),                                                                       \
+        X(SHL),                                                                       \
+        X(SHR),                                                                       \
+        X(MATCH_ANY),                                                                 \
+        X(MATCH_NOT_NIL),                                                             \
+        X(MATCH_REST),                                                                \
+        X(DOT_DOT),                                                                   \
+        X(DOT_DOT_DOT),                                                               \
+        X(MATCH),                                                                     \
+        X(VIEW_PATTERN),                                                              \
+        X(NOT_NIL_VIEW_PATTERN),                                                      \
+        X(PLUS),                                                                      \
+        X(MINUS),                                                                     \
+        X(STAR),                                                                      \
+        X(DIV),                                                                       \
+        X(PERCENT),                                                                   \
+        X(AND),                                                                       \
+        X(OR),                                                                        \
+        X(KW_AND),                                                                    \
+        X(KW_OR),                                                                     \
+        X(WTF),                                                                       \
+        X(LT),                                                                        \
+        X(LEQ),                                                                       \
+        X(GT),                                                                        \
+        X(GEQ),                                                                       \
+        X(CMP),                                                                       \
+        X(DBL_EQ),                                                                    \
+        X(NOT_EQ),                                                                    \
+        X(CHECK_MATCH),                                                               \
+        X(PLUS_EQ),                                                                   \
+        X(STAR_EQ),                                                                   \
+        X(DIV_EQ),                                                                    \
+        X(MOD_EQ),                                                                    \
+        X(MINUS_EQ),                                                                  \
+        X(AND_EQ),                                                                    \
+        X(OR_EQ),                                                                     \
+        X(XOR_EQ),                                                                    \
+        X(SHL_EQ),                                                                    \
+        X(SHR_EQ),                                                                    \
+        X(PREFIX_MINUS),                                                              \
+        X(PREFIX_HASH),                                                               \
+        X(PREFIX_AT),                                                                 \
+        X(PREFIX_INC),                                                                \
+        X(PREFIX_DEC),                                                                \
+        X(POSTFIX_INC),                                                               \
+        X(POSTFIX_DEC),                                                               \
+        X(PTR),                                                                       \
+        X(EVAL),                                                                      \
+        X(IFDEF),                                                                     \
+        X(NONE),                                                                      \
+        X(MULTI_FUNCTION),                                                            \
+        X(MACRO_INVOCATION),                                                          \
+        X(FUN_MACRO_INVOCATION),                                                      \
+        X(CTX_INFO),                                                                  \
+        X(VALUE),                                                                     \
         X(MAX_TYPE)
 
-#define ZERO_EXPR(e) memset( \
+#define ZERO_EXPR(e) memset(                               \
         ((char *)(e)) + offsetof(Expr, has_resources) + 1, \
-        0, \
-        sizeof (Expr) - offsetof(Expr, has_resources) - 1 \
+        0,                                                 \
+        sizeof (Expr) - offsetof(Expr, has_resources) - 1  \
 )
 
-#define COPY_EXPR(dst, src) memcpy( \
+#define COPY_EXPR(dst, src) memcpy(                          \
         ((char *)(dst)) + offsetof(Expr, has_resources) + 1, \
         ((char *)(src)) + offsetof(Expr, has_resources) + 1, \
-        sizeof (Expr) - offsetof(Expr, has_resources) - 1 \
+        sizeof (Expr) - offsetof(Expr, has_resources) - 1    \
 )
 
 struct expression {
@@ -245,7 +248,7 @@ struct expression {
 
         Location start;
         Location end;
-        char const *filename;
+        char const *file;
         Expr *xfunc;
         Scope *xscope;
 
@@ -308,7 +311,7 @@ struct expression {
                 struct {
                         StringVector strings;
                         expression_vector fmts;
-                        expression_vector fmt_args;
+                        expression_vector fmtfs;
                         int_vector widths;
                         expression_vector expressions;
                 };
@@ -436,7 +439,7 @@ struct statement {
 #undef X
         Location start;
         Location end;
-        char const *filename;
+        char const *file;
         Expr *xfunc;
         Scope *xscope;
 
@@ -459,6 +462,10 @@ struct statement {
                         bool pub;
                         bool hiding;
                 } import;
+                struct {
+                        StringVector name;
+                        StringVector names;
+                } use;
                 union {
                         struct class_definition tag;
                         struct class_definition class;

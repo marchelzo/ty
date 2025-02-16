@@ -1,4 +1,5 @@
 #include <ffi.h>
+#include <stdatomic.h>
 
 #include "ty.h"
 #include "polyfill_dlfcn.h"
@@ -19,42 +20,106 @@ float_from(Value const *v)
 inline static intmax_t
 int_from(Value const *v)
 {
-        return (v->type == VALUE_INTEGER) ? v->integer : v->real;
+        return (v->type == VALUE_INTEGER) ? v->integer
+             : (v->type == VALUE_PTR)     ? (intptr_t)v->ptr
+             : v->real;
+}
+
+static void
+xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
+{
+        Value *f;
+
+        switch (t->type) {
+        case FFI_TYPE_INT:
+                *(_Atomic int *)p = int_from(v);
+                break;
+        case FFI_TYPE_UINT8:
+                *(_Atomic uint8_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_UINT16:
+                *(_Atomic uint16_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_UINT32:
+                *(_Atomic uint32_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_UINT64:
+                *(_Atomic uint64_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_SINT8:
+                *(_Atomic int8_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_SINT16:
+                *(_Atomic int16_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_SINT32:
+                *(_Atomic int32_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_SINT64:
+                *(_Atomic int64_t *)p = int_from(v);
+                break;
+        case FFI_TYPE_POINTER:
+                switch (v->type) {
+                case VALUE_PTR:
+                        *(void * _Atomic *)p = v->ptr;
+                        break;
+                case VALUE_INTEGER:
+                        *(void * _Atomic *)p = (void *)v->integer;
+                        break;
+                case VALUE_STRING:
+                        *(void * _Atomic *)p = (void *)v->string;
+                        break;
+                case VALUE_NIL:
+                        *(void * _Atomic *)p = NULL;
+                        break;
+                case VALUE_BLOB:
+                        *(void * _Atomic *)p = (void *)v->blob->items;
+                        break;
+                case VALUE_OBJECT:
+                        f = class_lookup_method_i(ty, v->class, NAMES.ptr);
+                        if (f != NULL)
+                                *(void * _Atomic *)p = vm_call_method(ty, v, f, 0).ptr;
+                        else
+                                *(void * _Atomic *)p = NULL;
+                        break;
+                }
+                break;
+        }
 }
 
 static void
 store(Ty *ty, ffi_type *t, void *p, Value const *v)
 {
         size_t offsets[64];
-        Value *f, ptr;
+        Value *f;
 
         switch (t->type) {
         case FFI_TYPE_INT:
                 *(int *)p = int_from(v);
                 break;
-        case FFI_TYPE_UINT32:
-                *(uint32_t *)p = int_from(v);
+        case FFI_TYPE_UINT8:
+                *(uint8_t *)p = int_from(v);
                 break;
         case FFI_TYPE_UINT16:
                 *(uint16_t *)p = int_from(v);
                 break;
+        case FFI_TYPE_UINT32:
+                *(uint32_t *)p = int_from(v);
+                break;
         case FFI_TYPE_UINT64:
                 *(uint64_t *)p = int_from(v);
                 break;
-        case FFI_TYPE_UINT8:
-                *(uint8_t *)p = int_from(v);
-                break;
-        case FFI_TYPE_SINT32:
-                *(int32_t *)p = int_from(v);
+        case FFI_TYPE_SINT8:
+                *(int8_t *)p = int_from(v);
                 break;
         case FFI_TYPE_SINT16:
                 *(int16_t *)p = int_from(v);
                 break;
+        case FFI_TYPE_SINT32:
+                *(int32_t *)p = int_from(v);
+                break;
         case FFI_TYPE_SINT64:
                 *(int64_t *)p = int_from(v);
-                break;
-        case FFI_TYPE_SINT8:
-                *(int8_t *)p = int_from(v);
                 break;
         case FFI_TYPE_FLOAT:
                 *(float *)p = float_from(v);
@@ -66,6 +131,9 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                 switch (v->type) {
                 case VALUE_PTR:
                         *(void **)p = v->ptr;
+                        break;
+                case VALUE_INTEGER:
+                        *(void **)p = (void *)v->integer;
                         break;
                 case VALUE_STRING:
                         *(void **)p = (void *)v->string;
@@ -110,6 +178,32 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                 }
                 break;
         }
+}
+
+static Value
+xload(Ty *ty, ffi_type *t, void const *p)
+{
+        void * _Atomic const *vp;
+        Value v;
+        int n;
+
+        switch (t->type) {
+        case FFI_TYPE_INT:    return INTEGER(*(int _Atomic const *)p);
+        case FFI_TYPE_SINT8:  return INTEGER(*(int8_t _Atomic const *)p);
+        case FFI_TYPE_SINT16: return INTEGER(*(int16_t _Atomic const *)p);
+        case FFI_TYPE_SINT32: return INTEGER(*(int32_t _Atomic const *)p);
+        case FFI_TYPE_SINT64: return INTEGER(*(int64_t _Atomic const *)p);
+        case FFI_TYPE_UINT8:  return INTEGER(*(uint8_t _Atomic const *)p);
+        case FFI_TYPE_UINT16: return INTEGER(*(uint16_t _Atomic const *)p);
+        case FFI_TYPE_UINT32: return INTEGER(*(uint32_t _Atomic const *)p);
+        case FFI_TYPE_UINT64: return INTEGER(*(uint64_t _Atomic const *)p);
+
+        case FFI_TYPE_POINTER:
+                vp = p;
+                return (*vp == NULL) ? NIL : PTR(*vp);
+        }
+
+        return NIL;
 }
 
 static Value
@@ -480,6 +574,22 @@ cffi_load(Ty *ty, int argc, Value *kwargs)
 }
 
 Value
+cffi_load_atomic(Ty *ty, int argc, Value *kwargs)
+{
+        ffi_type *t;
+
+        switch (argc) {
+        case 1:
+                t = (ARG(0).extra == NULL) ? &ffi_type_uint8 : ARG(0).extra;
+                return xload(ty, t, ARG(0).ptr);
+        case 2:
+                return xload(ty, ARG(0).ptr, ARG(1).ptr);
+        default:
+                zP("atomic.load(): expected 1 or 2 arguments but got %d", argc);
+        }
+}
+
+Value
 cffi_load_n(Ty *ty, int argc, Value *kwargs)
 {
         ffi_type *t = ARG(0).ptr;
@@ -518,20 +628,57 @@ cffi_store(Ty *ty, int argc, Value *kwargs)
                 vVal = ARG(1);
                 break;
         default:
-                zP("ffi.store(ty): expected 2 or 3 arguments but got %d", argc);
+                zP("ffi.store(): expected 2 or 3 arguments but got %d", argc);
         }
 
         if (vPtr.type != VALUE_PTR) {
-                zP("ffi.store(ty): expected pointer but got: %s", VSC(&vPtr));
+                zP("ffi.store(): expected pointer but got: %s", VSC(&vPtr));
         }
 
         if (vType.type == VALUE_NONE) {
                 vType = PTR(vPtr.extra == NULL ? &ffi_type_uint8 : (ffi_type *)vPtr.extra);
         } else if (vType.type != VALUE_PTR) {
-                zP("ffi.store(ty): expected pointer but got: %s", VSC(&vType));
+                zP("ffi.store(): expected pointer but got: %s", VSC(&vType));
         }
 
         store(ty, vType.ptr, vPtr.ptr, &vVal);
+
+        return NIL;
+}
+
+Value
+cffi_store_atomic(Ty *ty, int argc, Value *kwargs)
+{
+        Value vType;
+        Value vPtr;
+        Value vVal;
+
+        switch (argc) {
+        case 3:
+                vType = ARG(0);
+                vPtr = ARG(1);
+                vVal = ARG(2);
+                break;
+        case 2:
+                vType = NONE;
+                vPtr = ARG(0);
+                vVal = ARG(1);
+                break;
+        default:
+                zP("atomic.store(): expected 2 or 3 arguments but got %d", argc);
+        }
+
+        if (vPtr.type != VALUE_PTR) {
+                zP("atomic.store(): expected pointer but got: %s", VSC(&vPtr));
+        }
+
+        if (vType.type == VALUE_NONE) {
+                vType = PTR(vPtr.extra == NULL ? &ffi_type_uint8 : (ffi_type *)vPtr.extra);
+        } else if (vType.type != VALUE_PTR) {
+                zP("atomic.store(): expected pointer but got: %s", VSC(&vType));
+        }
+
+        xstore(ty, vType.ptr, vPtr.ptr, &vVal);
 
         return NIL;
 }

@@ -50,6 +50,8 @@ static struct {
         { "yield",       KEYWORD_YIELD     },
         { "Next",        KEYWORD_NEXT      },
         { "generator",   KEYWORD_GENERATOR },
+        { "use",         KEYWORD_USE       },
+        { "where",       KEYWORD_WHERE     },
         { "static",      KEYWORD_STATIC    },
         { "namespace",   KEYWORD_NAMESPACE },
         { "__eval__",    KEYWORD_EVAL      },

@@ -114,6 +114,8 @@ typedef struct token {
                         KEYWORD_FOR,
                         KEYWORD_IN,
                         KEYWORD_WHILE,
+                        KEYWORD_USE,
+                        KEYWORD_WHERE,
                         KEYWORD_TRUE,
                         KEYWORD_FALSE,
                         KEYWORD_CONST,

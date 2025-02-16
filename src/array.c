@@ -395,43 +395,43 @@ array_slice(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 {
+        char const *_name__ = "Array.sort()";
+
         int i;
         int n;
 
+        Array const *xs = array->array;
+
+        CHECK_ARGC(0, 1, 2);
+        
         switch (argc) {
         case 0:
                 i = 0;
-                n = array->array->count;
+                n = vN(*xs);
+                break;
+        case 1:
+                i = INT_ARG(0);
+                n = vN(*xs);
                 break;
         case 2:
-                if (ARG(1).type != VALUE_INTEGER) {
-                        zP("Array.sort(): expected integer but got: %s", VSC(&ARG(1)));
-                }
-                n = ARG(1).integer;
-        case 1:
-                if (ARG(0).type != VALUE_INTEGER) {
-                        zP("Array.sort(): expected integer but got: %s", VSC(&ARG(0)));
-                }
-                i = ARG(0).integer;
+                i = INT_ARG(0);
+                n = INT_ARG(1);
                 break;
-        default:
-                zP("array.sort() expects 0, 1, or 2 arguments but got %d", argc);
         }
 
-        if (i < 0)
+        if (i < 0) {
                 i += array->array->count;
+        }
 
-        if (argc == 1)
-                n = array->array->count - i;
-
-        if (n < 0 || i < 0 || i + n > array->array->count)
-                zP("invalid index passed to array.sort()");
+        if (n < 0 || i < 0 || i + n > vN(*xs)) {
+                zP("Array.sort(): index out of range: i=%d, n=%d, #xs%d", i, n, (int)vN(*xs));
+        }
 
         Value *by = NAMED("by");
         Value *cmp = NAMED("cmp");
 
         if (by != NULL && cmp != NULL) {
-                zP("ambiguous call to Array.sort(): by and cmp both specified");
+                zP("Array.sort(): kwargs `by` and `cmp` both specified");
         }
 
         SortContext ctx = {
@@ -440,13 +440,13 @@ array_sort(Ty *ty, Value *array, int argc, Value *kwargs)
 
         if (by != NULL) {
                 if (!CALLABLE(*by)) {
-                        zP("Array.sort(): `by` is not callable");
+                        zP("Array.sort(): `by` not callable: %s", VSC(by));
                 }
                 ctx.f = *by;
                 rqsort(array->array->items + i, n, sizeof (Value), compare_by, &ctx);
         } else if (cmp != NULL) {
                 if (!CALLABLE(*cmp)) {
-                        zP("Array.sort(): `cmp` is not callable");
+                        zP("Array.sort(): `cmp` not callable: %s", VSC(cmp));
                 }
                 ctx.f = *cmp;
                 rqsort(array->array->items + i, n, sizeof (Value), compare_by2, &ctx);
@@ -1332,7 +1332,7 @@ array_set(Ty *ty, Value *array, int argc, Value *kwargs)
         if (argc != 0)
                 zP("array.set() expects 0 arguments but got %d", argc);
 
-        struct dict *d = dict_new(ty);
+        Dict *d = dict_new(ty);
         NOGC(d);
 
         for (int i = 0; i < array->array->count; ++i) {
@@ -1340,52 +1340,42 @@ array_set(Ty *ty, Value *array, int argc, Value *kwargs)
         }
 
         OKGC(d);
+
         return DICT(d);
 }
 
 static Value
 array_partition(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the partition method on arrays expects 1 argument but got %d", argc);
+        if (argc != 1) {
+                zP("Array.partition!(): expected 1 argument but got %d", argc);
+        }
 
         Value pred = ARG(0);
 
-        if (!CALLABLE(pred))
-                zP("non-predicate passed to the partition method on array");
+        if (!CALLABLE(pred)) {
+                zP("Array.partition!(): expected callable arg0 but got: %s", VSC(&pred));
+        }
 
-        int n = array->array->count;
-        int j = 0;
-        struct array *yes = vA();
-        struct array *no = vA();
+        Array const *xs = array->array;
 
-        NOGC(yes);
-        NOGC(no);
+        if (vN(*xs) == 0) {
+                return *array;
+        }
 
-        for (int i = 0; i < n; ++i) {
-                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
-                        array->array->items[j++] = array->array->items[i];
+        int y = 0;
+        int n = vN(*xs);
+
+        while (y < n) {
+                Value *v = v_(*xs, y);
+                if (value_apply_predicate(ty, &pred, v)) {
+                        y += 1;
                 } else {
-                        vAp(no, array->array->items[i]);
+                        SWAP(Value, *v, *v_(*xs, --n));
                 }
         }
 
-        array->array->count = j;
-        shrink(ty, array);
-
-        yes->items = array->array->items;
-        yes->count = array->array->count;
-        yes->capacity = array->array->capacity;
-
-        vec_init(*array->array);
-
-        vAp(array->array, ARRAY(yes));
-        vAp(array->array, ARRAY(no));
-
-        OKGC(yes);
-        OKGC(no);
-
-        return *array;
+        return ARRAY((Array *)xs);
 }
 
 static Value
@@ -1441,8 +1431,9 @@ array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
 
         Value pred = ARG(0);
 
-        if (!CALLABLE(pred))
+        if (!CALLABLE(pred)) {
                 zP("Array.partition(): expected callable but got: %s", VSC(&pred));
+        }
 
         int n = array->array->count;
 
@@ -1453,25 +1444,20 @@ array_partition_no_mut(Ty *ty, Value *array, int argc, Value *kwargs)
         NOGC(no);
 
         for (int i = 0; i < n; ++i) {
-                if (value_apply_predicate(ty, &pred, &array->array->items[i])) {
-                        vAp(yes, array->array->items[i]);
+                Value *v = v_(*array->array, i);
+                if (value_apply_predicate(ty, &pred, v)) {
+                        vAp(yes, *v);
                 } else {
-                        vAp(no, array->array->items[i]);
+                        vAp(no, *v);
                 }
         }
 
-        Array *result = vA();
-        NOGC(result);
-
-        vAp(result, ARRAY(yes));
-        vAp(result, ARRAY(no));
-
+        Value result = PAIR(ARRAY(yes), ARRAY(no));
 
         OKGC(yes);
         OKGC(no);
-        OKGC(result);
 
-        return ARRAY(result);
+        return result;
 }
 
 static Value

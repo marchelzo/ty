@@ -6,7 +6,7 @@
 #include "intern.h"
 #include "ty.h"
 
-enum { ITABLE_SIZE = 16 };
+enum { ITABLE_SIZE = 32 };
 
 typedef struct value Value;
 

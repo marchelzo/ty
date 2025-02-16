@@ -329,7 +329,10 @@ BUILTIN_FUNCTION(slurp)
                 return NIL;
         }
 
-        Value *use_mmap = NAMED("mmap");
+        Value *mmap_arg = NAMED("mmap");
+
+        bool try_mmap = (mmap_arg == NULL)
+                     || value_truthy(ty, mmap_arg);
 
 #ifdef _WIN32
 #define S_ISLNK(m) 0
@@ -342,27 +345,24 @@ BUILTIN_FUNCTION(slurp)
 #endif
 
 #ifndef _WIN32
-        if ((use_mmap == NULL || value_truthy(ty, use_mmap)) && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))) {
-                size_t n = st.st_size;
+        size_t n = st.st_size;
 
+        if (
+                try_mmap
+             && (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode))
+             && (n > 0) // If stat() says size==0 skip to read() anyway, e.g. for procfs
+        ) {
                 void *m = mmap(NULL, n, PROT_READ, MAP_SHARED, fd, 0);
-                if (m == NULL) {
+                if (m != MAP_FAILED) {
+                        char *s = value_string_alloc(ty, n);
+                        memcpy(s, m, n);
+                        munmap(m, n);
                         close(fd);
-                        return NIL;
+                        return STRING(s, n);
                 }
-
-                char *s = value_string_alloc(ty, n);
-                memcpy(s, m, n);
-
-                munmap(m, n);
-
-                close(fd);
-
-                return STRING(s, n);
-        } else if (!S_ISDIR(st.st_mode)) {
-#else
-        if (1) {
+        }
 #endif
+        if (!S_ISDIR(st.st_mode)) {
                 FILE *f = fdopen(fd, "r");
                 int r;
 
@@ -2214,8 +2214,7 @@ BUILTIN_FUNCTION(os_readdir)
                 "d_ino", INTEGER(entry->d_ino),
                 "d_reclen", INTEGER(entry->d_reclen),
                 "d_type", INTEGER(entry->d_type),
-                "d_name", name,
-                NULL
+                "d_name", name
         );
 
         OKGC(name.string);
@@ -3023,8 +3022,7 @@ BUILTIN_FUNCTION(os_spawn)
                 "hStdout",  PTR((void *)_get_osfhandle(vStdout.integer)),
                 "hStderr",  PTR((void *)_get_osfhandle(vStderr.integer)),
                 "pid",      INTEGER(piProcInfo.dwProcessId),
-                "handle",   PTR((void *)piProcInfo.hProcess),
-                NULL
+                "handle",   PTR((void *)piProcInfo.hProcess)
         );
 }
 #else
@@ -3166,8 +3164,7 @@ BUILTIN_FUNCTION(os_spawn)
                 "stdin",   vStdin,
                 "stdout",  vStdout,
                 "stderr",  vStderr,
-                "pid",     INTEGER(pid),
-                NULL
+                "pid",     INTEGER(pid)
         );
 }
 #endif
@@ -4029,8 +4026,7 @@ BUILTIN_FUNCTION(os_getaddrinfo)
                                 "type",      INTEGER(it->ai_socktype),
                                 "protocol",  INTEGER(it->ai_protocol),
                                 "address",   BLOB(b),
-                                "canonname", NIL,
-                                NULL
+                                "canonname", NIL
                         );
 
                         NOGC(entry.items);
@@ -4098,8 +4094,7 @@ BUILTIN_FUNCTION(os_accept)
 
         struct value v = vTn(
                 "fd",   INTEGER(r),
-                "addr", BLOB(b),
-                NULL
+                "addr", BLOB(b)
         );
 
         OKGC(b);
@@ -4256,8 +4251,7 @@ BUILTIN_FUNCTION(os_poll)
                 fds.array->items[i] = vTn(
                         "fd",      *tuple_get(&fds.array->items[i], "fd"),
                         "events",  *tuple_get(&fds.array->items[i], "events"),
-                        "revents", INTEGER(pfds.items[i].revents),
-                        NULL
+                        "revents", INTEGER(pfds.items[i].revents)
                 );
         }
 
@@ -4565,8 +4559,7 @@ timespec_tuple(Ty *ty, struct timespec const *ts)
 {
         return vTn(
                 "tv_sec",  INTEGER(ts->tv_sec),
-                "tv_nsec", INTEGER(ts->tv_nsec),
-                NULL
+                "tv_nsec", INTEGER(ts->tv_nsec)
         );
 }
 
@@ -5214,8 +5207,7 @@ BUILTIN_FUNCTION(termios_tcgetattr)
                 "lflag", INTEGER(t.c_lflag),
                 "ispeed", INTEGER(t.c_ispeed),
                 "ospeed", INTEGER(t.c_ospeed),
-                "cc", BLOB(cc),
-                NULL
+                "cc", BLOB(cc)
         );
 
         OKGC(cc);
@@ -5369,8 +5361,7 @@ BUILTIN_FUNCTION(time_localtime)
                 "year",  INTEGER(r.tm_year),
                 "wday",  INTEGER(r.tm_wday),
                 "yday",  INTEGER(r.tm_yday),
-                "isdst", BOOLEAN(r.tm_isdst),
-                NULL
+                "isdst", BOOLEAN(r.tm_isdst)
         );
 }
 
@@ -5402,8 +5393,7 @@ BUILTIN_FUNCTION(time_gmtime)
                 "year",  INTEGER(r.tm_year),
                 "wday",  INTEGER(r.tm_wday),
                 "yday",  INTEGER(r.tm_yday),
-                "isdst", BOOLEAN(r.tm_isdst),
-                NULL
+                "isdst", BOOLEAN(r.tm_isdst)
         );
 }
 
@@ -5502,8 +5492,7 @@ BUILTIN_FUNCTION(time_strptime)
                 "year",  INTEGER(r.tm_year),
                 "wday",  INTEGER(r.tm_wday),
                 "yday",  INTEGER(r.tm_yday),
-                "isdst", BOOLEAN(r.tm_isdst),
-                NULL
+                "isdst", BOOLEAN(r.tm_isdst)
         );
 #endif
 }
@@ -6674,7 +6663,7 @@ BUILTIN_FUNCTION(ty_bt)
 
                 entry.items[0] = *f;
                 entry.items[1] = STRING_NOGC(name, strlen(name));
-                entry.items[2] = (e == NULL) ? NIL : STRING_NOGC(e->filename, strlen(e->filename));
+                entry.items[2] = (e == NULL) ? NIL : STRING_NOGC(e->file, strlen(e->file));
                 entry.items[3] = (e == NULL) ? NIL : INTEGER(e->start.line);
                 entry.items[4] = (e == NULL) ? NIL : INTEGER(e->start.col);
 
@@ -6720,8 +6709,7 @@ make_location(Ty *ty, Location const *loc)
         return vTn(
                 "line", INTEGER(loc->line),
                 "col",  INTEGER(loc->col),
-                "byte", INTEGER(loc->byte),
-                NULL
+                "byte", INTEGER(loc->byte)
         );
 }
 
@@ -6741,40 +6729,35 @@ make_token(Ty *ty, Token const *t)
                         "start",  start,
                         "end",    end,
                         "id",     STRING_NOGC(t->identifier, strlen(t->identifier)),
-                        "module", t->module == NULL ? NIL : STRING_NOGC(t->module, strlen(t->module)),
-                        NULL
+                        "module", t->module == NULL ? NIL : STRING_NOGC(t->module, strlen(t->module))
                 );
         case TOKEN_INTEGER:
                 return vTn(
                         "type",   T(int),
                         "start",  start,
                         "end",    end,
-                        "int",    INTEGER(t->integer),
-                        NULL
+                        "int",    INTEGER(t->integer)
                 );
         case TOKEN_REAL:
                 return vTn(
                         "type",   T(int),
                         "start",  start,
                         "end",    end,
-                        "float",  INTEGER(t->real),
-                        NULL
+                        "float",  INTEGER(t->real)
                 );
         case TOKEN_STRING:
                 return vTn(
                         "type",   T(string),
                         "start",  start,
                         "end",    end,
-                        "str",    STRING_NOGC(t->string, strlen(t->string)),
-                        NULL
+                        "str",    STRING_NOGC(t->string, strlen(t->string))
                 );
         case TOKEN_COMMENT:
                 return vTn(
                         "type",    T(comment),
                         "start",   start,
                         "end",     end,
-                        "comment", STRING_NOGC(t->comment, strlen(t->comment)),
-                        NULL
+                        "comment", STRING_NOGC(t->comment, strlen(t->comment))
                 );
         case TOKEN_END:
                 return NIL;
@@ -6842,8 +6825,7 @@ make_token(Ty *ty, Token const *t)
         return vTn(
                 "type",   STRING_NOGC(type, tlen),
                 "start",  start,
-                "end",    end,
-                NULL
+                "end",    end
         );
 }
 
@@ -7065,8 +7047,7 @@ BUILTIN_FUNCTION(ty_parse)
                 result = Err(
                         ty,
                         vTn(
-                                "msg", vSs(msg, strlen(msg)),
-                                NULL
+                                "msg", vSs(msg, strlen(msg))
                         )
                 );
 
@@ -7085,14 +7066,12 @@ BUILTIN_FUNCTION(ty_parse)
                 extra = vTn(
                         "where",    make_location(ty, &stop),
                         "msg",      vSs(msg, strlen(msg)),
-                        tokens_key, vTokens,
-                        NULL
+                        tokens_key, vTokens
                 );
         } else if (tokens_key) {
                 vTokens = make_tokens(ty, &tokens);
                 extra = vTn(
-                        tokens_key, vTokens,
-                        NULL
+                        tokens_key, vTokens
                 );
         }
 
@@ -7147,6 +7126,12 @@ Return:
         return result;
 }
 
+BUILTIN_FUNCTION(ty_id)
+{
+        ASSERT_ARGC("ty.id()", 1);
+        return INTEGER(ARG(0).src);
+}
+
 BUILTIN_FUNCTION(ty_copy_source)
 {
         ASSERT_ARGC("ty.copySource()", 2);
@@ -7176,17 +7161,16 @@ BUILTIN_FUNCTION(ty_get_source)
 
         GC_STOP();
 
-        Value file = (src->filename == NULL)
+        Value file = (src->file == NULL)
                    ? NIL
-                   : vSsz(src->filename);
+                   : vSsz(src->file);
 
         Value result = vTn(
                 "start", make_location(ty, &src->start),
                 "end",   make_location(ty, &src->end),
                 "file",  file,
                 "prog",  xSz(src->start.s - src->start.byte),
-                "src",   xSs(src->start.s, src->end.s - src->start.s),
-                NULL
+                "src",   xSs(src->start.s, src->end.s - src->start.s)
         );
 
         GC_RESUME();
@@ -7600,9 +7584,9 @@ BUILTIN_FUNCTION(tdb_context)
                    : (context->start.s == NULL) ? NIL
                    : xSz(context->start.s - context->start.byte);
 
-        Value file = (context == NULL)           ? NIL
-                   : (context->filename == NULL) ? NIL
-                   : xSz(context->filename);
+        Value file = (context == NULL)       ? NIL
+                   : (context->file == NULL) ? NIL
+                   : xSz(context->file);
 
         return (context == NULL) ? NIL : vTn(
                 "prog",  prog,
@@ -7626,9 +7610,9 @@ BUILTIN_FUNCTION(tdb_state)
                    : (context->start.s == NULL) ? NIL
                    : xSz(context->start.s - context->start.byte);
 
-        Value file = (context == NULL)           ? NIL
-                   : (context->filename == NULL) ? NIL
-                   : xSz(context->filename);
+        Value file = (context == NULL)       ? NIL
+                   : (context->file == NULL) ? NIL
+                   : xSz(context->file);
 
         Value f = (TDB->host->frames.count > 0)
                 ? vvL(TDB->host->frames)->f

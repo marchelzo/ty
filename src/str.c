@@ -1161,7 +1161,7 @@ string_lower(Ty *ty, Value *string, int argc, Value *kwargs)
         char *result = value_string_alloc(ty, 4 * string->bytes);
 
         while (len > 0) {
-                int n = utf8proc_iterate(s, len, &c);
+                int n = max(1, utf8proc_iterate(s, len, &c));
                 s += n;
                 len -= n;
                 c = utf8proc_tolower(c);
@@ -1186,7 +1186,7 @@ string_upper(Ty *ty, Value *string, int argc, Value *kwargs)
         char *result = value_string_alloc(ty, 4 * string->bytes);
 
         while (len > 0) {
-                int n = utf8proc_iterate(s, len, &c);
+                int n = max(1, utf8proc_iterate(s, len, &c));
                 s += n;
                 len -= n;
                 c = utf8proc_toupper(c);

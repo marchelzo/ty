@@ -45,6 +45,12 @@ struct value
 cffi_load_n(Ty *ty, int argc, struct value *kwargs);
 
 struct value
+cffi_store_atomic(Ty *ty, int argc, struct value *kwargs);
+
+struct value
+cffi_load_atomic(Ty *ty, int argc, struct value *kwargs);
+
+struct value
 cffi_call(Ty *ty, int argc, struct value *kwargs);
 
 struct value

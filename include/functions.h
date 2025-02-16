@@ -453,10 +453,9 @@ BUILTIN_FUNCTION(ty_tokenize);
 
 BUILTIN_FUNCTION(ty_disassemble);
 
+BUILTIN_FUNCTION(ty_id);
 BUILTIN_FUNCTION(ty_copy_source);
-
 BUILTIN_FUNCTION(ty_strip_source);
-
 BUILTIN_FUNCTION(ty_get_source);
 
 BUILTIN_FUNCTION(ty_gensym);

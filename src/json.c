@@ -21,7 +21,7 @@ static _Thread_local jmp_buf jb;
 static _Thread_local char const *json;
 static _Thread_local int len;
 
-typedef vec(char) str;
+typedef byte_vector str;
 
 static _Thread_local vec(void const *) Visiting;
 
@@ -316,9 +316,11 @@ encode(Ty *ty, Value const *v, str *out)
                 }
 
                 dump((void *)out, "{\"type\":\"%s\",\"value\":", tn);
+
                 if (!encode(ty, &val, out)) {
                         return false;
                 }
+
                 xvP(*out, '}');
 
                 return true;
@@ -529,4 +531,20 @@ json_encode(Ty *ty, struct value const *v)
         }
 
         return r;
+}
+
+
+bool
+json_dump(Ty *ty, Value const  *v, byte_vector *out)
+{
+        Visiting.count = 0;
+
+        size_t start = vN(*out);
+
+        if (!encode(ty, v, out)) {
+                out->count = start;
+                return false;
+        }
+
+        return true;
 }

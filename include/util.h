@@ -74,6 +74,7 @@ IS_ALIGNED_TO(void const *p, size_t align)
 #endif
 
 extern _Thread_local char ERR[ERR_SIZE];
+extern _Thread_local byte_vector ErrorBuffer;
 
 extern pcre_jit_stack *JITStack;
 enum {
@@ -196,7 +197,32 @@ search_str(StringVector const *ss, char const *s)
         return false;
 }
 
-static void
+static int
+vdump(byte_vector *b, char const *fmt, va_list ap)
+{
+        va_list ap_;
+
+        for (;;) {
+                int avail = b->capacity - b->count;
+                int need;
+
+                va_copy(ap_, ap);
+                need = vsnprintf(b->items + b->count, avail, fmt, ap_);
+                va_end(ap_);
+
+                if (1 + need >= avail) {
+                        xvR(*b, max(b->capacity * 2, 256));
+                        continue;
+                }
+
+                b->count += need;
+                vvL(*b)[1] = '\0';
+
+                return need;
+        }
+}
+
+static int
 dump(byte_vector *b, char const *fmt, ...)
 {
         va_list ap;
@@ -217,8 +243,7 @@ dump(byte_vector *b, char const *fmt, ...)
                 b->count += need;
                 vvL(*b)[1] = '\0';
 
-
-                break;
+                return need;
         }
 }
 
