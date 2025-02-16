@@ -14,9 +14,9 @@ tag IndexError;
 tag DispatchError;
 
 tag None {
-    map()      { None  }
-    flat-map() { None  }
-    or-else(x) { x     }
+    map()      { None }
+    flat-map() { None }
+    or-else(x) { x    }
 
     some?() { false }
 }
@@ -54,7 +54,7 @@ tag Err {
 class Object {
     init(%props) {
         for k, v in props {
-            member(self, k, v)
+            member(k, v)
         }
     }
 
@@ -73,11 +73,11 @@ class Object {
     }
 
     members() {
-        members(self)
+        ::members(self)
     }
 
     member(*args) {
-        member(self, *args)
+        ::member(self, *args)
     }
 
     |(other) {
@@ -153,7 +153,7 @@ class Function : Iter {
     }
 
     apply(x, *ys) {
-        apply(self, x, *ys)
+        ::apply(self, x, *ys)
     }
 
     iter*(x) {
@@ -289,7 +289,7 @@ class Array : Iterable {
     }
 
     str() {
-        @map(str).sum()
+        self.map(::str).sum()
     }
 
     list() {
@@ -338,6 +338,10 @@ class Array : Iterable {
         }
 
         return self
+    }
+
+    tryPop() {
+        (#self > 0) ? Some(self.pop()) : None
     }
 
     __iter__*() {
@@ -438,11 +442,11 @@ class Dict : Iterable {
 
 class String : Iterable {
     init(x) {
-        return str(x)
+        return ::str(x)
     }
 
     int(base: Int = 10) {
-        return int(self, base)
+        return ::int(self, base)
     }
 
     center(n, c = ' ') {
@@ -526,7 +530,7 @@ class String : Iterable {
         let b = Blob()
 
         for octet in self.matches(/../) {
-            if let $x = int(octet, 16) {
+            if let $x = ::int(octet, 16) {
                 b.push(x)
             } else {
                 return nil
@@ -623,19 +627,26 @@ class Int {
     }
 
     str(base: Int = 10) {
-        let digits = '0123456789ABCDEF'
+        match base {
+            2  => fmt('%b', self),
+            8  => fmt('%o', self),
+            10 => fmt('%d', self),
+            16 => fmt('%x', self),
 
-        if base == 10 { return str(self) }
+            _  => do {
+                let digits = '0123456789ABCDEF'
 
-        let s = ''
-        let k = abs(self)
+                let s = ''
+                let k = abs
 
-        while k != 0 || #s == 0 {
-            s = digits[k % base] + s
-            k /= base
+                while k != 0 || #s == 0 {
+                    s = digits[k % base] + s
+                    k /= base
+                }
+
+                (self < 0) ? ('-' + s) : s
+            }
         }
-
-        (self < 0) ? ('-' + s) : s
     }
 
     downto*(b: Int) {
@@ -683,12 +694,12 @@ class Int {
         self % int(n)
     }
 
-    in?(r: Range) {
-        self in r
+    in?(x) {
+        self in x
     }
 
     abs {
-        abs(self)
+        ::abs(self)
     }
 
     pred {
@@ -766,7 +777,7 @@ class Float {
     }
 
     abs {
-        abs(self)
+        ::abs(self)
     }
 
     sqrt {
@@ -801,11 +812,9 @@ class Float {
 
     str(prec: ?Int) {
         if prec == nil {
-            str(self)
+            ::str(self)
         } else {
-            let p10 = math.pow(10, prec)
-            let [whole, ?frac] = str(iround(self * p10) / p10).split('.')
-            return "{whole}.{(frac ?? '').padRight(prec, '0')}"
+            "{self:.{prec}}"
         }
     }
 }
@@ -854,7 +863,7 @@ class Bool {
     __not__() { return !self }
 }
 
-class Regex {
+class Regex : Function {
     init(x) { regex(x) }
 
     ~=(s) { s.match!(self) }
@@ -892,19 +901,46 @@ class Tuple {
         str(self)
     }
 
-    %(t) {
-        let myMembers = members(self)
-        let tMembers = members(t)
+    named? {
+        members(self).keys().any?(\_ !:: Int)
+    }
 
-        for k, v in tMembers {
-            if let $c = myMembers[k] {
-                myMembers[k] = (c.?isTuple() && v.?isTuple()) ? (c % v) : v(c)
-            } else {
-                myMembers[k] = v(nil)
+    %.*(f) {
+        let xs = [*self]
+        tuple(f(xs.0), *xs[1;])
+    }
+
+    .%.*(f) {
+        let xs = [*self]
+        tuple(xs.0, f(xs.1), *xs[2;])
+    }
+
+    ..%.*(f) {
+        let xs = [*self]
+        tuple(xs.0, xs.1, f(xs.2), *xs[3;])
+    }
+
+    %(f: Function) {
+        tuple(*[*self].map(f))
+    }
+
+    %(fs) {
+        if self.named? {
+            let myMembers = members(self)
+            let tMembers = members(fs)
+
+            for k, v in tMembers {
+                if let $c = myMembers[k] {
+                    myMembers[k] = (c.?isTuple() && v.?isTuple()) ? (c % v) : v(c)
+                } else {
+                    myMembers[k] = v(nil)
+                }
             }
-        }
 
-        tuple(**myMembers)
+            tuple(**myMembers)
+        } else {
+            tuple(*[*fs].zip-with(\_(_), [*self]))
+        }
     }
 
     isTuple() {
@@ -1078,12 +1114,36 @@ class Iterable {
         @__iter__().zipWith(f, *its, longest: longest)
     }
 
-    unzip() {
-        @__iter__().unzip()
+    unzip(*args, %kwargs) {
+        @__iter__().unzip(*args, **kwargs)
     }
 
-    unzipWith(f) {
-        @__iter__().unzipWith(f)
+    unzip2(*args, %kwargs) {
+        @__iter__().unzip2(*args, **kwargs)
+    }
+
+    unzip3(*args, %kwargs) {
+        @__iter__().unzip3(*args, **kwargs)
+    }
+
+    unzip4(*args, %kwargs) {
+        @__iter__().unzip4(*args, **kwargs)
+    }
+
+    unzipWith(*args, %kwargs) {
+        @__iter__().unzipWith(*args, **kwargs)
+    }
+
+    unzipWith2(*args, %kwargs) {
+        @__iter__().unzipWith2(*args, **kwargs)
+    }
+
+    unzipWith3(*args, %kwargs) {
+        @__iter__().unzipWith3(*args, **kwargs)
+    }
+
+    unzipWith4(*args, %kwargs) {
+        @__iter__().unzipWith4(*args, **kwargs)
     }
 
     mean() {
@@ -1132,6 +1192,10 @@ class Iterable {
 
     find(p) {
         @__iter__().find(p)
+    }
+
+    >>*(f) {
+        f(*self)
     }
 
     __len__() {
@@ -1202,27 +1266,52 @@ class Iter : Iterable {
         }
     }
 
-    unzipWith(f) {
-        let lists = []
+    unzipWith(f, n=nil) {
+        let lists = match n {
+            $n => [[] for ..n],
 
-        for x in self {
-            let t = f(x)
-            let n = #members(t)
+            nil and let Some(f ~> t) = __next__()
+                and t :: Tuple
+               => [[x] for x in t],
 
-            while #lists < n {
-                lists.push([])
-            }
+            _  => throw IndexError(self, 0)
+        }
 
-            for i in ..n {
-                lists[i].push(t[i])
+        for f ~> t in self {
+            for x, i in t {
+                lists[i].push(x)
             }
         }
 
         return tuple(*lists)
     }
 
-    unzip() {
-        @unzipWith(id)
+    unzipWith2(*args, %kwargs) {
+        unzipWith(*args, **kwargs, f=id, n=2)
+    }
+
+    unzipWith3(*args, %kwargs) {
+        unzipWith(*args, **kwargs, f=id, n=3)
+    }
+
+    unzipWith4(*args, %kwargs) {
+        unzipWith(*args, **kwargs, f=id, n=4)
+    }
+
+    unzip(*args, %kwargs) {
+        unzipWith(*args, **kwargs, f=id)
+    }
+
+    unzip2(*args, %kwargs) {
+        unzipWith(*args, **kwargs, f=id, n=2)
+    }
+
+    unzip3(*args, %kwargs) {
+        unzipWith(f=id, *args, **kwargs, f=id, n=3)
+    }
+
+    unzip4(*args, %kwargs) {
+        unzipWith(*args, **kwargs, f=id, n=4)
     }
 
     zipWith*(f, *its, longest) {
@@ -1316,7 +1405,7 @@ class Iter : Iterable {
     }
 
     join(sep: String) {
-        if not let Some(str ~> $s) = @__next__() {
+        if not let Some(::str ~> $s) = @__next__() {
             return ''
         }
 
@@ -1325,7 +1414,7 @@ class Iter : Iterable {
 
         while let Some(s) = @__next__() {
             b.push(sep)
-            b.push(str(s))
+            b.push(::str(s))
         }
 
         return b.str()
@@ -1431,7 +1520,7 @@ class Iter : Iterable {
         let b = blob()
 
         for s in self {
-            b.push(str(s))
+            b.push(::str(s))
         }
 
         return b.str()
@@ -1629,6 +1718,8 @@ class Iter : Iterable {
             return x
         }
     }
+
+    __next__() { None }
 
     __iter__() { self }
 }
@@ -2179,10 +2270,10 @@ macro dbg(*args) {
 
             for (r, src) in $$results {
                 eprint(
-                    "{__module__                      }:"
-                    "{__func__ ?? '(top)'             }:"
-                    "{__line__                       }: "
-                    "{fmt('%*s', maxw, src)} = {show(r)}",
+                    "{__module__                          }:"
+                    "{__func__ ?? '(top)'                 }:"
+                    "{__line__                           }: "
+                    "{$${fmt}('%*s', maxw, src)} = {show(r)}",
                     flush: true
                  )
             }
@@ -2303,7 +2394,12 @@ macro modify! {
 }
 
 function nextEnumValue(last) {
-    let name = lex.next().id
+    while lex.peek().type == 'comment' { lex.next() }
+
+    if lex.peek().type != 'id' { return nil }
+
+    let name = parse.expr(99)
+
     if lex.peek().type == '=' {
         lex.next()
         (name, parse.expr(0))
@@ -2320,9 +2416,8 @@ macro enum! {
         let vars = []
         let i = ty.Int(-1)
 
-        while lex.peek().type != '}' {
-            let (e, val) = nextEnumValue(i)
-            vars.push(ty.Let(ty.Id(name: e), val, public: true))
+        while lex.peek().type != '}' and let (name, val) = nextEnumValue(i) {
+            vars.push(ty.Let(name, val, public: true))
             if lex.peek().type == ',' lex.next()
             i = val
         }
@@ -2761,6 +2856,13 @@ macro __walk! {
                 walk(i, f)
             ),
 
+            ty.Slice(xs, i, j, k) => ty.Slice(
+                walk(xs, f),
+                walk(i, f),
+                walk(j, f),
+                walk(k, f)
+            ),
+
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
             ty.ArrayCompr({items, pattern, iter, cond}) => ty.ArrayCompr(
@@ -2802,12 +2904,17 @@ macro __walk! {
 
             ty.SpecialString(parts) => ty.SpecialString(
                 parts.map(match {
-                    (e, fmt, w, ?x) => (walk(e, f), fmt, w, x),
-                    e               => walk(e, f)
+                    (e, fmt, w, x) => (walk(e, f), fmt, w, walk(x, f)),
+                    e              => walk(e, f)
                 })
             ),
 
             ty.Wtf(a, b) => ty.Wtf(
+                walk(a, f),
+                walk(b, f)
+            ),
+
+            ty.Matches(a, b) => ty.Matches(
                 walk(a, f),
                 walk(b, f)
             ),
@@ -2935,6 +3042,10 @@ function <<(f, x) { f(x) }
 function ?>(x, f) { (x == nil) ? x : f(x) }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] = $$a.match!($$b)
+
+function .(f: Function, g: Function) {
+    f@(g(*, **))
+}
 
 function sink(file) match file {
     nil => print@(*, **, :flush),

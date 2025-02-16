@@ -123,6 +123,13 @@ check_slow(DispatchList const *list, int t1, int t2)
 void
 op_add(int op, int t1, int t2, int ref)
 {
+        dont_printf(
+                "op_add(): %20s %4s   %-20s\n",
+                class_name(ty, t1),
+                intern_entry(&xD.b_ops, op)->name,
+                class_name(ty, t2)
+        );
+
         if (op >= _2.ops.count) {
                 TyRwLockWrLock(&_2.lock);
 

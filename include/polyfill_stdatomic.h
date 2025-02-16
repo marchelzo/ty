@@ -2,7 +2,8 @@
 #define POLYFILL_STDATOMIC_H_INCLUDED 1
 
 #if defined(WIN32) || defined(_WIN32)
-#define _Atomic(T) volatile T
+#define _Atomic volatile
+#define _Atomic(T) T volatile
 #define atomic_bool volatile bool
 #define atomic_uint_least16_t volatile uint_least16_t
 #define atomic_uint64_t volatile uint64_t

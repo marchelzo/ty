@@ -5,22 +5,35 @@
 
 extern bool CheckConstraints;
 
+extern bool FindDefinition;
+extern int QueryLine;
+extern int QueryCol;
+extern char const *QueryFile;
+extern Symbol const *QueryResult;
+
+
 typedef struct location Location;
 typedef struct expression Expr;
 typedef struct symbol Symbol;
+
+enum {
+        TY_NAME_NONE,
+        TY_NAME_VARIABLE,
+        TY_NAME_NAMESPACE,
+        TY_NAME_MODULE
+};
 
 typedef struct eloc {
         union {
                 uintptr_t p_start;
                 size_t start_off;
         };
+
         union {
                 uintptr_t p_end;
                 size_t end_off;
         };
-        Location start;
-        Location end;
-        char const *filename;
+
         Expr const *e;
 } ExprLocation;
 
@@ -40,14 +53,15 @@ struct import {
 typedef vec(struct import) import_vector;
 
 struct module {
+        char const *name;
         char const *path;
         char *code;
         Scope *scope;
         import_vector imports;
 };
 
-typedef vec(struct eloc)      location_vector;
-typedef vec(Symbol *)         symbol_vector;
+typedef vec(struct eloc) location_vector;
+typedef vec(Symbol *)    symbol_vector;
 
 typedef struct {
         intrusive_vec(size_t);
@@ -138,7 +152,9 @@ typedef struct compiler_state {
 
         Scope *global;
 
-        char const *filename;
+        char const *module_name;
+        char const *module_path;
+
         Location start;
         Location end;
 
@@ -303,10 +319,10 @@ void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e);
 
 int
-WriteExpressionTrace(Ty *ty, char *out, int cap, Expr const *e, int etw, bool first);
+WriteExpressionTrace(Ty *ty, byte_vector *out, Expr const *e, int etw, bool first);
 
 int
-WriteExpressionOrigin(Ty *ty, char *out, int cap, Expr const *e);
+WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e);
 
 int
 CompilationDepth(Ty *ty);
@@ -319,6 +335,9 @@ PushCompilerState(Ty *ty, char const *filename);
 
 void
 PopCompilerState(Ty *ty, CompileState state);
+
+CompileState *
+TyCompilerState(Ty *ty);
 
 bool
 IsTopLevel(Symbol const *sym);

@@ -8,73 +8,74 @@
 #include <math.h>
 #include <stdnoreturn.h>
 
-#include "vec.h"
-#include "token.h"
-#include "test.h"
-#include "ast.h"
-#include "util.h"
 #include "alloc.h"
-#include "lex.h"
-#include "operators.h"
+#include "ast.h"
 #include "compiler.h"
-#include "value.h"
-#include "table.h"
+#include "lex.h"
 #include "log.h"
-#include "vm.h"
+#include "operators.h"
 #include "parse.h"
+#include "scope.h"
+#include "table.h"
+#include "test.h"
+#include "token.h"
 #include "ty.h"
+#include "util.h"
+#include "value.h"
+#include "vec.h"
+#include "vm.h"
 
-#define BINARY_OPERATOR(name, t, prec, right_assoc) \
-        static Expr * \
-        infix_ ## name(Ty *ty, Expr *left) \
-        { \
-                Expr *e = mkexpr(ty); \
-                next(); \
-                e->type = EXPRESSION_ ## t; \
-                e->left = left; \
-                e->right = parse_expr(ty, prec - (right_assoc ? 1 : 0)); \
-                e->start = left->start; \
-                e->end = token(-1)->end; \
-                return e; \
-        } \
+#define BINARY_OPERATOR(name, t, prec, right_assoc)                        \
+        static Expr *                                                      \
+        infix_ ## name(Ty *ty, Expr *left)                                 \
+        {                                                                  \
+                Expr *e = mkexpr(ty);                                      \
+                next();                                                    \
+                e->type = EXPRESSION_ ## t;                                \
+                e->left = left;                                            \
+                e->right = parse_expr(ty, prec - (right_assoc ? 1 : 0));   \
+                e->start = left->start;                                    \
+                e->end = token(-1)->end;                                   \
+                return e;                                                  \
+        }                                                                  \
 
-#define BINARY_LVALUE_OPERATOR(name, t, prec, right_assoc) \
-        static Expr * \
-        infix_ ## name(Ty *ty, Expr *left) \
-        { \
-                Expr *e = mkexpr(ty); \
-                consume(TOKEN_ ## t); \
-                e->type = EXPRESSION_ ## t; \
-                e->target = assignment_lvalue(ty, left); \
-                e->value = parse_expr(ty, prec - (right_assoc ? 1 : 0)); \
-                e->start = e->target->start; \
-                e->end = e->value->end; \
-                return e; \
-        } \
+#define BINARY_LVALUE_OPERATOR(name, t, prec, right_assoc)                 \
+        static Expr *                                                      \
+        infix_ ## name(Ty *ty, Expr *left)                                 \
+        {                                                                  \
+                Expr *e = mkexpr(ty);                                      \
+                consume(TOKEN_ ## t);                                      \
+                e->type = EXPRESSION_ ## t;                                \
+                e->target = assignment_lvalue(ty, left);                   \
+                e->value = parse_expr(ty, prec - (right_assoc ? 1 : 0));   \
+                e->start = e->target->start;                               \
+                e->end = e->value->end;                                    \
+                return e;                                                  \
+        }                                                                  \
 
-#define PREFIX_OPERATOR(name, token, prec) \
-        static Expr * \
-        prefix_ ## name(Ty *ty) \
-        { \
-                Expr *e = mkexpr(ty); \
-                consume(TOKEN_ ## token); \
-                e->type = EXPRESSION_PREFIX_ ## token; \
-                e->operand = parse_expr(ty, prec); \
-                e->end = e->operand->end; \
-                return e; \
-        } \
+#define PREFIX_OPERATOR(name, token, prec)                                 \
+        static Expr *                                                      \
+        prefix_ ## name(Ty *ty)                                            \
+        {                                                                  \
+                Expr *e = mkexpr(ty);                                      \
+                consume(TOKEN_ ## token);                                  \
+                e->type = EXPRESSION_PREFIX_ ## token;                     \
+                e->operand = parse_expr(ty, prec);                         \
+                e->end = e->operand->end;                                  \
+                return e;                                                  \
+        }                                                                  \
 
-#define PREFIX_LVALUE_OPERATOR(name, token, prec) \
-        static Expr * \
-        prefix_ ## name(Ty *ty) \
-        { \
-                Expr *e = mkexpr(ty); \
-                consume(TOKEN_ ## token); \
-                e->type = EXPRESSION_PREFIX_ ## token; \
-                e->operand = assignment_lvalue(ty, parse_expr(ty, prec)); \
-                e->end = End; \
-                return e; \
-        } \
+#define PREFIX_LVALUE_OPERATOR(name, token, prec)                          \
+        static Expr *                                                      \
+        prefix_ ## name(Ty *ty)                                            \
+        {                                                                  \
+                Expr *e = mkexpr(ty);                                      \
+                consume(TOKEN_ ## token);                                  \
+                e->type = EXPRESSION_PREFIX_ ## token;                     \
+                e->operand = assignment_lvalue(ty, parse_expr(ty, prec));  \
+                e->end = End;                                              \
+                return e;                                                  \
+        }                                                                  \
 
 #define T0 (token(0)->type)
 #define T1 (token(1)->type)
@@ -85,6 +86,7 @@
 #define K1 ((T1 == TOKEN_KEYWORD) ? token(1)->keyword : -1)
 #define K2 ((T2 == TOKEN_KEYWORD) ? token(2)->keyword : -1)
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
+#define KW(i) ((token(i)->type == TOKEN_KEYWORD) ? token(i)->keyword : -1)
 
 #if 0
 #define PLOGX(fmt, ...) (                       \
@@ -185,6 +187,24 @@
 #define  try_consume(t)   ((try_consume)(ty, (t)))
 #define have_keyword(k)  ((have_keyword)(ty, (k)))
 #define    unconsume(t)     ((unconsume)(ty, (t)))
+
+
+#define with_fun_subscope(...)                                          \
+        if (1) {                                                        \
+                Scope *_saved__scope = ty->pscope;                      \
+                ty->pscope = scope_new(ty, "(p)", ty->pscope, true);    \
+                __VA_ARGS__                                             \
+                ty->pscope = _saved__scope;                             \
+        } else if (0)                                                   \
+
+#define with_subscope(...)                                              \
+        if (1) {                                                        \
+                Scope *_saved__scope = ty->pscope;                      \
+                ty->pscope = scope_new(ty, "(p)", ty->pscope, false)    \
+                __VA_ARGS__                                             \
+                ty->pscope = _saved__scope;                             \
+        } else if (0)                                                   \
+
 
 typedef Expr *
 prefix_parse_fn(Ty *ty);
@@ -376,7 +396,7 @@ mkexpr(Ty *ty)
 {
         Expr *e = amA0(sizeof *e);
         e->arena = GetArenaAlloc(ty);
-        e->filename = filename;
+        e->file = filename;
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -414,7 +434,7 @@ mkstmt(Ty *ty)
 {
         Stmt *s = amA0(sizeof *s);
         s->arena = GetArenaAlloc(ty);
-        s->filename = filename;
+        s->file = filename;
         s->start = tok()->start;
         s->end = tok()->start;
         return s;
@@ -847,7 +867,7 @@ error(Ty *ty, char const *fmt, ...)
                 "%36s %s%s%s:%s%d%s:%s%d%s",
                 "at",
                 TERM(34),
-                filename,
+                TyCompilerState(ty)->module_name,
                 TERM(39),
                 TERM(33),
                 start.line + 1,
@@ -1091,6 +1111,7 @@ op_fixup(Ty *ty, int i)
         switch (token(i)->type) {
         default:                return false;
         case TOKEN_DBL_EQ:      token(i)->identifier = "==";   break;
+        case TOKEN_MAYBE_EQ:    token(i)->identifier = "?=";   break;
         case TOKEN_CMP:         token(i)->identifier = "<=>";  break;
         case TOKEN_LEQ:         token(i)->identifier = "<=";   break;
         case TOKEN_LT:          token(i)->identifier = "<";    break;
@@ -1119,6 +1140,10 @@ op_fixup(Ty *ty, int i)
         case '|':               token(i)->identifier = "|";    break;
         case '^':               token(i)->identifier = "^";    break;
         case '~':               token(i)->identifier = "~";    break;
+        case '?':               token(i)->identifier = "?";    break;
+        case '!':               token(i)->identifier = "!";    break;
+        case '#':               token(i)->identifier = "#";    break;
+        case '.':               token(i)->identifier = ".";    break;
         case TOKEN_USER_OP:                                    break;
         }
 
@@ -1177,43 +1202,38 @@ parse_decorators(Ty *ty)
 {
         expression_vector decorators = {0};
 
-        consume(TOKEN_AT);
-        consume('[');
+        do {
+                consume('@');
+                consume('[');
 
-        while (T0 != ']') {
-                Expr *f = parse_expr(ty, 0);
-                if (f->type != EXPRESSION_FUNCTION_CALL && f->type != EXPRESSION_METHOD_CALL) {
-                        Expr *call = mkexpr(ty);
-                        if (f->type == EXPRESSION_MEMBER_ACCESS) {
-                                call->type = EXPRESSION_METHOD_CALL;
-                                call->sc = NULL;
-                                call->maybe = false;
-                                call->object = f->object;
-                                call->method_name = f->method_name;
-                                vec_init(call->method_args);
-                                vec_init(call->mconds);
-                                vec_init(call->method_kwargs);
-                                vec_init(call->method_kws);
+                for (int i = 0 ; T0 != ']'; ++i) {
+                        Expr *f = parse_expr(ty, 0);
+
+                        if (f->type != EXPRESSION_FUNCTION_CALL && f->type != EXPRESSION_METHOD_CALL) {
+                                Expr *call = mkexpr(ty);
+                                call->start = f->start;
+                                call->end = f->end;
+                                if (f->type == EXPRESSION_MEMBER_ACCESS) {
+                                        call->type = EXPRESSION_METHOD_CALL;
+                                        call->object = f->object;
+                                        call->method_name = f->method_name;
+                                } else {
+                                        call->type = EXPRESSION_FUNCTION_CALL;
+                                        call->function = f;
+                                }
+                                vvI(decorators, call, i);
                         } else {
-                                call->type = EXPRESSION_FUNCTION_CALL;
-                                call->function = f;
-                                vec_init(call->args);
-                                vec_init(call->kws);
-                                vec_init(call->kwargs);
-                                vec_init(call->fconds);
-                                vec_init(call->fkwconds);
+                                vvI(decorators, f, i);
                         }
-                        vvP(decorators, call);
-                } else {
-                        vvP(decorators, f);
+
+                        if (T0 == ',') {
+                                next();
+                        }
                 }
 
-                if (T0 == ',') {
-                        next();
-                }
-        }
+                consume(']');
 
-        consume(']');
+        } while (T0 == '@' && T1 == '[');
 
         return decorators;
 }
@@ -1297,7 +1317,7 @@ merge_strings(Ty *ty, Expr *s1, Expr *s2)
         *last = astrcat(ty, *last, s2->strings.items[0]);
         avPv(s1->expressions, s2->expressions);
         avPv(s1->fmts, s2->fmts);
-        avPv(s1->fmt_args, s2->fmt_args);
+        avPv(s1->fmtfs, s2->fmtfs);
         avPv(s1->widths, s2->widths);
         avPn(s1->strings, s2->strings.items + 1, s2->strings.count - 1);
 }
@@ -1372,14 +1392,14 @@ ss_skip_inner(Ty *ty)
 
                 parse_expr(ty, 0);
 
-                if (T0 == ':' || T0 == '#') {
-                        next();
-                        ss_skip_inner(ty);
-                }
-
-                if (T0 == ':' || T0 == '#') {
+                if (T0 == '@') {
                         next();
                         parse_expr(ty, 0);
+                }
+
+                if (T0 == ':') {
+                        next();
+                        ss_skip_inner(ty);
                 }
 
                 consume('}');
@@ -1403,7 +1423,14 @@ ss_inner(Ty *ty)
 
                 avP(e->expressions, parse_expr(ty, 0));
 
-                if (T0 == ':' || T0 == '#') {
+                if (T0 == '@') {
+                        next();
+                        avP(e->fmtfs, parse_expr(ty, 0));
+                } else {
+                        avP(e->fmtfs, NULL);
+                }
+
+                if (T0 == ':') {
                         next();
 
                         Expr *fmt = ss_inner(ty);
@@ -1419,16 +1446,12 @@ ss_inner(Ty *ty)
                                 last[i] = '\0';
                         }
 
-                        avP(e->fmts, fmt);
+                        bool empty = vN(fmt->strings) == 1
+                               && **vvL(fmt->strings) == 0;
+
+                        avP(e->fmts, !empty ? fmt : NULL);
                 } else {
                         avP(e->fmts, NULL);
-                }
-
-                if (T0 == ':' || T0 == '#') {
-                        next();
-                        avP(e->fmt_args, parse_expr(ty, 0));
-                } else {
-                        avP(e->fmt_args, NULL);
                 }
 
                 Location end = tok()->end;
@@ -1525,9 +1548,9 @@ prefix_special_string(Ty *ty)
                         }
 
                         if (T0 != TOKEN_END) {
-                                avP(e->fmt_args, parse_expr(ty, 0));
+                                avP(e->fmtfs, parse_expr(ty, 0));
                         } else {
-                                avP(e->fmt_args, NULL);
+                                avP(e->fmtfs, NULL);
                         }
 
                         i += 1;
@@ -1614,7 +1637,7 @@ prefix_slash(Ty *ty)
 
         next();
 
-        Expr *body = parse_expr(ty, 99);
+        Expr *body = parse_expr(ty, 1);
 
         Expr *nil = mkexpr(ty);
         nil->type = EXPRESSION_NIL;
@@ -1660,6 +1683,10 @@ prefix_dollar(Ty *ty)
 inline static bool
 is_operator(char const *id)
 {
+        if (strcmp(id, "#") == 0) {
+                return true;
+        }
+
         for (int i = 0; id[i] != '\0'; ++i) {
                 if (!contains(OperatorCharset, id[i])) {
                         return false;
@@ -2171,7 +2198,6 @@ make_with(Ty *ty, Expr *e, statement_vector defs, Stmt *body)
 static Expr *
 prefix_do(Ty *ty)
 {
-        // do
         next();
         return prefix_statement(ty);
 }
@@ -3236,22 +3262,13 @@ prefix_range(Ty *ty)
 }
 
 static Expr *
+infix_subscript(Ty *, Expr *);
+
+static Expr *
 implicit_subscript(Ty *ty, Expr *o)
 {
-        consume('[');
-
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_SUBSCRIPT;
-        e->sc = NULL;
-        e->container = o;
-
-        setctx(ty, LEX_PREFIX);
-        e->subscript = parse_expr(ty, 0);
-
-        consume(']');
-
         Expr *f = mkfunc(ty);
-        f->body = mkret(ty, e);
+        f->body = mkret(ty, infix_subscript(ty, o));
 
         avP(f->params, o->identifier);
         avP(f->dflts, NULL);
@@ -3792,13 +3809,13 @@ infix_subscript(Ty *ty, Expr *left)
         consume('[');
 
         if (T0 == ']') {
-                Expr *xs = mkid(gensym(ty));
+                char *xs = gensym(ty);
                 char *i = gensym(ty);
 
                 next();
 
                 e->type = EXPRESSION_SUBSCRIPT;
-                e->container = xs;
+                e->container = mkid(xs);
                 e->subscript = mkid(i);
                 e->subscript->start = e->start;
                 e->end = End;
@@ -3814,7 +3831,7 @@ infix_subscript(Ty *ty, Expr *left)
                 Stmt *def = mkstmt(ty);
                 def->type = STATEMENT_DEFINITION;
                 def->pub = false;
-                def->target = xs;
+                def->target = mkid(xs);
                 def->value = left;
 
                 Stmt *multi = mkstmt(ty);
@@ -4077,7 +4094,7 @@ infix_kw_or(Ty *ty, Expr *left)
 {
         Expr *e = mkexpr(ty);
 
-        e->type = EXPRESSION_LIST;
+        e->type = EXPRESSION_CHOICE_PATTERN;
         vec_init(e->es);
 
         avP(e->es, left);
@@ -4335,6 +4352,9 @@ Keyword:
         case KEYWORD_FOR:
         case KEYWORD_WHILE:
         case KEYWORD_TRY:
+        case KEYWORD_RETURN:
+        case KEYWORD_CONTINUE:
+        case KEYWORD_BREAK:
                 return prefix_statement;
 
         default:                return NULL;
@@ -4674,8 +4694,6 @@ patternize(Ty *ty, Expr *e)
 static Expr *
 assignment_lvalue(Ty *ty, Expr *e)
 {
-        Expr *v;
-
         try_symbolize_application(ty, NULL, e);
 
         switch (e->type) {
@@ -4725,7 +4743,7 @@ assignment_lvalue(Ty *ty, Expr *e)
                 return e;
         case EXPRESSION_REF_PATTERN:
                 e->target = assignment_lvalue(ty, e->target);
-                break;
+                return e;
         default:
                 EStart = e->start;
                 EEnd = e->end;
@@ -5176,7 +5194,7 @@ parse_function_definition(Ty *ty)
 
         // FIXME: Hack to skip decorators and find the function name
         for (int i = 0; i < 128; ++i) {
-                if (token(i)->type == TOKEN_KEYWORD && token(i)->keyword == KEYWORD_FUNCTION) {
+                if (KW(i) == KEYWORD_FUNCTION) {
                         if (op_fixup(ty, i + 1)) {
                                 s->type = STATEMENT_OPERATOR_DEFINITION;
                         }
@@ -5585,7 +5603,9 @@ parse_class_definition(Ty *ty)
         Stmt *s = mktagdef(ty, tok()->identifier);
         if (!tag)
                 s->type = STATEMENT_CLASS_DEFINITION;
+
         s->start = start;
+        s->class.loc = tok()->start;
 
         next();
 
@@ -5862,6 +5882,45 @@ parse_class_definition(Ty *ty)
         return s;
 }
 
+inline static void
+next_name(Ty *ty, StringVector *names)
+{
+        expect(TOKEN_IDENTIFIER);
+
+        if (tok()->module != NULL) {
+                avP(*names, tok()->module);
+        }
+
+        avP(*names, tok()->identifier);
+
+        next();
+}
+
+static Stmt *
+parse_use(Ty *ty)
+{
+        Stmt *stmt = mkstmt(ty);
+        stmt->type = STATEMENT_USE;
+
+        next();
+
+        do next_name(ty, &stmt->use.name);
+        while (T0 == '.' && (next(), 1));
+
+        if (T0 == '(') {
+                next();
+
+                do next_name(ty, &stmt->use.names);
+                while (T0 == ',' && (next(), 1));
+
+                consume(')');
+        }
+
+        stmt->end = End;
+
+        return stmt;
+}
+
 static Stmt *
 parse_try(Ty *ty)
 {
@@ -6055,6 +6114,7 @@ Keyword:
         case KEYWORD_BREAK:    return parse_break_statement(ty);
         case KEYWORD_CONTINUE: return parse_continue_statement(ty);
         case KEYWORD_TRY:      return parse_try(ty);
+        case KEYWORD_USE:      return parse_use(ty);
         default:               goto Expression;
         }
 

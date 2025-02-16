@@ -183,7 +183,7 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_RESOURCE_BINDING:
                 sym = scope_add(ty, scope, t->identifier);
-                sym->file = t->filename;
+                sym->file = t->file;
                 sym->loc = t->start;
                 V(t->constraint);
                 break;

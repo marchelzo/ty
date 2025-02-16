@@ -178,6 +178,50 @@ enum {
         TAG_ERR
 };
 
+inline static char const *
+TypeName(Ty const *ty, int t0)
+{
+        switch (t0) {
+        case VALUE_INTEGER:             return "Int";
+        case VALUE_REAL:                return "Float";
+        case VALUE_STRING:              return "String";
+        case VALUE_ARRAY:               return "Array";
+        case VALUE_DICT:                return "Dict";
+        case VALUE_BLOB:                return "Blob";
+        case VALUE_OBJECT:              return "Object";
+        case VALUE_BOOLEAN:             return "Bool";
+        case VALUE_REGEX:               return "Regex";
+        case VALUE_OPERATOR:            return "<operator>";
+        case VALUE_CLASS:               return "Class";
+        case VALUE_METHOD:
+        case VALUE_BUILTIN_METHOD:
+        case VALUE_BUILTIN_FUNCTION:
+        case VALUE_FUNCTION:
+                                        return "Function";
+        case VALUE_GENERATOR:           return "Generator";
+        case VALUE_TUPLE:               return "Tuple";
+        case VALUE_TAG:                 return "Tag";
+        case VALUE_THREAD:              return "<thread>";
+        case VALUE_PTR:                 return "<ptr>";
+        case VALUE_NIL:                 return "<nil>";
+
+        default:                        return "<internal>";
+        }
+}
+
+inline static char const *
+ValueTypeName(Ty *ty, Value const *v)
+{
+        if (v->type & VALUE_TAGGED) {
+                return tags_name(ty, tags_first(ty, v->tags));
+        }
+
+        return TypeName(ty, v->type);
+}
+
+char *
+value_show_color(Ty *ty, struct value const *v);
+
 #define DEFINE_METHOD_TABLE(...)                                     \
         static struct {                                              \
                 char const *name;                                    \
@@ -252,6 +296,129 @@ enum {
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
 #define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
 
+#define VA_COUNT_INNER( _1, _2, _3, _4, COUNT, ...) COUNT
+#define                               VA_COUNT(...) VA_COUNT_INNER( __VA_ARGS__, 4, 3, 2, 1, 0)
+#define                                   CAT(a, b) a ## b
+#define                       VA_SELECT_INNER(f, i) CAT(f ## _, i)
+#define                           VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
+
+
+#define CHECK_ARGC_1(n0)                                 \
+        if (argc != n0) {                                \
+                zP(                                      \
+                        "%s: expected %s but got %d",    \
+                        _name__,                         \
+                          (n0 == 0) ? "no arguments"     \
+                        : (n0 == 1) ? "one argument"     \
+                        :             #n0 " arguments",  \
+                        argc                             \
+                );                                       \
+        } else if (0)
+
+#define CHECK_ARGC_2(n0, n1)                                                        \
+        if (argc != n0 && argc != n1) {                                             \
+                zP(                                                                 \
+                        "%s: expected " #n0 " or " #n1 " arguments but got %d",     \
+                        _name__,                                                    \
+                        argc,                                                       \
+                );                                                                  \
+        } else if (0)
+
+#define CHECK_ARGC_3(n0, n1, n2)                         \
+        if (argc != n0 && argc != n1 && argc != n2) {    \
+                zP(                                      \
+                        "%s: expected "                  \
+                        #n0 ", " #n1 ", or " #n2 " "     \
+                        "arguments but got %d",          \
+                        _name__,                         \
+                        argc                             \
+                );                                       \
+        } else if (0)
+
+#define CHECK_ARGC_4(n0, n1, n2, n3)                                 \
+        if (argc != n0 && argc != n1 && argc != n2 && argc != n3) {  \
+                zP(                                                  \
+                        "%s: expected "                              \
+                        #n0 ", " #n1 ", " #n2 ", or " #n2 " "        \
+                        "arguments but got %d",                      \
+                        _name__,                                     \
+                        argc                                         \
+                );                                                   \
+        } else if (0)
+
+#define CHECK_ARGC(...) VA_SELECT(CHECK_ARGC, __VA_ARGS__)
+
+noreturn void vm_panic(Ty *, char const *, ...);
+
+inline static Value
+checked_arg_1(Ty *ty, char const *fun, int i, Value arg, int t0)
+{
+        if (arg.type != t0) {
+                zP(
+                        "%s: expected arg%d: %s but got: %s",
+                        fun,
+                        i,
+                        TypeName(ty, t0),
+                        VSC(&arg)
+                );
+        }
+
+        return arg;
+}
+
+inline static Value
+checked_arg_2(Ty *ty, char const *fun, int i, Value arg, int t0, int t1)
+{
+        if (arg.type != t0 && arg.type != t1) {
+                zP(
+                        "%s: expected arg%d: %s | %s but got: %s",
+                        fun,
+                        i,
+                        TypeName(ty, t0),
+                        TypeName(ty, t1),
+                        VSC(&arg)
+                );
+        }
+
+        return arg;
+}
+
+inline static Value
+checked_arg_3(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2)
+{
+        if (arg.type != t0 && arg.type != t1 && arg.type != t2) {
+                zP(
+                        "%s: expected arg%d: %s | %s | %s but got: %s",
+                        fun,
+                        i,
+                        TypeName(ty, t0),
+                        TypeName(ty, t1),
+                        TypeName(ty, t2),
+                        VSC(&arg)
+                );
+        }
+
+        return arg;
+}
+
+#define ARGx(i, ...)                   \
+        VA_SELECT_INNER(               \
+                checked_arg,           \
+                VA_COUNT(__VA_ARGS__)  \
+        )(                             \
+                ty,                    \
+                _name__,               \
+                i,                     \
+                ARG(i),                \
+                __VA_ARGS__            \
+        )
+
+#define    INT_ARG(i) ARGx(i, VALUE_INTEGER).integer
+#define  FLOAT_ARG(i) ARGx(i, VALUE_REAL).real
+#define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean
+#define  ARRAY_ARG(i) ARGx(i, VALUE_ARRAY).array
+#define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
+
 #if 0
   #define value_mark(ty, v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
 #else
@@ -278,9 +445,6 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v);
 
 char *
 value_show(Ty *ty, struct value const *v);
-
-char *
-value_show_color(Ty *ty, struct value const *v);
 
 char *
 value_string_alloc(Ty *ty, int n);
@@ -364,10 +528,10 @@ tget_tagged(Value const *tuple, uintptr_t k)
 #define  tget_t(t, i, v) ((tget_t) ((t), (uintptr_t)(i), (v)))
 
 int
-tuple_get_completions(Ty *ty, struct value const *v, char const *prefix, char **out, int max);
+tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, int max);
 
 void
-_value_mark(Ty *ty, struct value const *v);
+_value_mark(Ty *ty, Value const *v);
 
 inline static Array *
 value_array_new(Ty *ty)
@@ -395,18 +559,18 @@ value_array_new_sized(Ty *ty, size_t n)
 }
 
 inline static void
-value_array_push(Ty *ty, struct array *a, struct value v)
+value_array_push(Ty *ty, Array *a, Value v)
 {
         if (a->count == a->capacity) {
                 a->capacity = a->capacity ? a->capacity * 2 : 4;
-                mRE(a->items, a->capacity * sizeof (struct value));
+                mRE(a->items, a->capacity * sizeof (Value));
         }
 
         a->items[a->count++] = v;
 }
 
 inline static void
-value_array_reserve(Ty *ty, struct array *a, int count)
+value_array_reserve(Ty *ty, Array *a, int count)
 {
         if (a->capacity >= count)
                 return;
@@ -417,15 +581,15 @@ value_array_reserve(Ty *ty, struct array *a, int count)
         while (a->capacity < count)
                 a->capacity *= 2;
 
-        mRE(a->items, a->capacity * sizeof (struct value));
+        mRE(a->items, a->capacity * sizeof (Value));
 }
 
-inline static struct value
+inline static Value
 STRING_CLONE(Ty *ty, char const *s, int n)
 {
         char *clone = value_string_clone(ty, s, n);
 
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = clone,
@@ -434,13 +598,13 @@ STRING_CLONE(Ty *ty, char const *s, int n)
         };
 }
 
-inline static struct value
+inline static Value
 STRING_CLONE_C(Ty *ty, char const *s)
 {
         int n = strlen(s);
         char *clone = value_string_clone(ty, s, n);
 
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = clone,
@@ -449,13 +613,13 @@ STRING_CLONE_C(Ty *ty, char const *s)
         };
 }
 
-inline static struct value
+inline static Value
 STRING_C_CLONE_C(Ty *ty, char const *s)
 {
         int n = strlen(s);
         char *clone = value_string_clone_nul(ty, s, n);
 
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = clone,
@@ -464,12 +628,12 @@ STRING_C_CLONE_C(Ty *ty, char const *s)
         };
 }
 
-inline static struct value
+inline static Value
 STRING_C_CLONE(Ty *ty, char const *s, int n)
 {
         char *clone = value_string_clone_nul(ty, s, n);
 
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = clone,
@@ -478,10 +642,10 @@ STRING_C_CLONE(Ty *ty, char const *s, int n)
         };
 }
 
-inline static struct value
+inline static Value
 STRING(char *s, int n)
 {
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = s,
@@ -490,10 +654,10 @@ STRING(char *s, int n)
         };
 }
 
-inline static struct value
-STRING_VIEW(struct value s, int offset, int n)
+inline static Value
+STRING_VIEW(Value s, int offset, int n)
 {
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = s.string + offset,
@@ -502,10 +666,10 @@ STRING_VIEW(struct value s, int offset, int n)
         };
 }
 
-inline static struct value
+inline static Value
 STRING_NOGC(char const *s, int n)
 {
-        return (struct value) {
+        return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
                 .string = s,
@@ -528,19 +692,19 @@ STRING_NOGC_C(char const *s)
 
 #define STRING_EMPTY (STRING_NOGC(NULL, 0))
 
-inline static struct value
-PAIR_(Ty *ty, struct value a, struct value b)
+inline static Value
+PAIR_(Ty *ty, Value a, Value b)
 {
-        struct value v = vT(2);
+        Value v = vT(2);
         v.items[0] = a;
         v.items[1] = b;
         return v;
 }
 
-inline static struct value
-TRIPLE_(Ty *ty, struct value a, struct value b, struct value c)
+inline static Value
+TRIPLE_(Ty *ty, Value a, Value b, Value c)
 {
-        struct value v = vT(3);
+        Value v = vT(3);
         v.items[0] = a;
         v.items[1] = b;
         v.items[2] = c;
@@ -563,24 +727,24 @@ QUADRUPLE_(Ty *ty, Value a, Value b, Value c, Value d)
 int
 tags_push(Ty *ty, int, int);
 
-inline static struct value
-Ok(Ty *ty, struct value v)
+inline static Value
+Ok(Ty *ty, Value v)
 {
         v.type |= VALUE_TAGGED;
         v.tags = tags_push(ty, v.tags, TAG_OK);
         return v;
 }
 
-inline static struct value
-Err(Ty *ty, struct value v)
+inline static Value
+Err(Ty *ty, Value v)
 {
         v.type |= VALUE_TAGGED;
         v.tags = tags_push(ty, v.tags, TAG_ERR);
         return v;
 }
 
-inline static struct value
-Some(Ty *ty, struct value v)
+inline static Value
+Some(Ty *ty, Value v)
 {
         v.type |= VALUE_TAGGED;
         v.tags = tags_push(ty, v.tags, TAG_SOME);
@@ -606,7 +770,7 @@ class_of(Value const *v)
 }
 
 inline static char const *
-proto_of(struct value const *f)
+proto_of(Value const *f)
 {
         uintptr_t p;
 
@@ -619,7 +783,7 @@ proto_of(struct value const *f)
 }
 
 inline static char const *
-doc_of(struct value const *f)
+doc_of(Value const *f)
 {
         uintptr_t p;
 
@@ -632,7 +796,7 @@ doc_of(struct value const *f)
 }
 
 inline static char const *
-name_of(struct value const *f)
+name_of(Value const *f)
 {
         uintptr_t p;
 
@@ -644,8 +808,14 @@ name_of(struct value const *f)
         return (char const *)p;
 }
 
+inline static void
+set_name_of(Value const *f, uintptr_t p)
+{
+        memcpy((char *)f->info + FUN_NAME, &p, sizeof p);
+}
+
 inline static char *
-from_eval(struct value const *f)
+from_eval(Value const *f)
 {
         return (char *)f->info + FUN_FROM_EVAL;
 }

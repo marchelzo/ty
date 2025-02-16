@@ -900,6 +900,10 @@ lex_ss_string(Ty *ty)
                                 }
 
                                 continue;
+                        case '<':
+                                nextchar(ty);
+                                nextchar(ty);
+                                continue;
                         }
                         /* fallthrough */
                 default:
@@ -1092,6 +1096,11 @@ lexop(Ty *ty)
 {
         char op[MAX_OP_LEN + 1] = {0};
         size_t i = 0;
+        int type;
+
+        bool touching_id = idchar(C(-1))
+                        || C(-1) == '?'
+                        || C(-1) == '!';
 
         while (
                 contains(OperatorCharset, C(0)) ||
@@ -1115,6 +1124,18 @@ lexop(Ty *ty)
                 if (i > 0 && C(0) == '@' && idchar(C(1)))
                         break;
 
+                /* Another one :^) We want a=#self to mean a = #self, not a #= self...
+                 * This comes up primarily with default function arguments.
+                 */
+                if (
+                        touching_id
+                     && i == 1
+                     && C(-1) == '='
+                     && (C(0) != '=' || contains(OperatorCharset, C(1)))
+                ) {
+                        return mktoken(ty, '=');
+                }
+
                 if (i == MAX_OP_LEN) {
                         error(
                                 ty,
@@ -1128,14 +1149,20 @@ lexop(Ty *ty)
                 }
         }
 
-        int toktype = operator_get_token_type(op);
-        if (toktype == -1) {
+        if (
+                (type = operator_get_token_type(op)) == -1
+             || (
+                        (strcmp(op, ".") == 0)
+                     && isspace(C(-2))
+                     && isspace(C(0))
+                )
+        ) {
                 Token t = mktoken(ty, TOKEN_USER_OP);
                 t.identifier = sclonea(ty, op);
                 return t;
         }
 
-        return mktoken(ty, toktype);
+        return mktoken(ty, type);
 }
 
 static Token
@@ -1209,33 +1236,6 @@ lexcomment(Ty *ty)
 }
 
 static Token
-lexfmt(Ty *ty)
-{
-        nextchar(ty);
-
-        vec(char) fmt = {0};
-
-        skipspace(ty);
-
-        while (C(0) != '\0') {
-                if (C(0) == ':' && C(1) == ':') {
-                        nextchar(ty);
-                        nextchar(ty);
-                        break;
-                }
-                avP(fmt, nextchar(ty));
-        }
-
-        while (fmt.count > 0 && isspace(*vvL(fmt))) {
-                fmt.count -= 1;
-        }
-
-        avP(fmt, '\0');
-
-        return mkstring(ty, fmt.items);
-}
-
-static Token
 dotoken(Ty *ty, int ctx)
 {
         Location start = Start = state.loc;
@@ -1283,8 +1283,6 @@ dotoken(Ty *ty, int ctx)
                 nextchar(ty);
                 state.need_nl = true;
                 return mktoken(ty, TOKEN_DIRECTIVE);
-        } else if (ctx == LEX_FMT && (C(0) == '#' || C(0) == ':')) {
-                return lexfmt(ty);
         } else if (ctx == LEX_PREFIX && C(0) == '/') {
                 return lexregex(ty);
         } else if (haveid(ty)) {

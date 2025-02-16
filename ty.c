@@ -24,6 +24,7 @@
 #include "class.h"
 #include "blob.h"
 #include "str.h"
+#include "json.h"
 #include "dict.h"
 #include "array.h"
 #include "ty.h"
@@ -621,25 +622,53 @@ main(int argc, char **argv)
 
         if (*SymbolLocation != '\0') {
                 char *colon = strchr(SymbolLocation, ':');
-                if (colon == NULL)
-                        return -1;
-                *colon = '\0';
-                int line = atoi(SymbolLocation);
-                int col = atoi(colon + 1);
 
+                if (colon == NULL) {
+                        return 14;
+                }
+
+                *colon = '\0';
+
+                char path[PATH_MAX + 1];
+
+                if (realpath(filename, path) == NULL) {
+                        return 5;
+                }
+
+                FindDefinition = true;
+                QueryFile = path;
+                QueryLine = atoi(SymbolLocation) - 1;
+                QueryCol  = atoi(colon + 1) - 1;
                 CompileOnly = true;
-                if (!vm_execute(ty, source, filename)) {
+
+                if (!vm_execute(ty, source, filename) && QueryResult == NULL) {
+                        fprintf(stderr, "%s\n", vm_error(ty));
                         return 1;
                 }
 
-                Location loc = compiler_find_definition(ty, filename, line - 1, col - 1);
-
-                if (loc.s == NULL) {
-                        return -1;
-                } else {
-                        printf("%s:%d:%d\n", loc.s, loc.line + 1, loc.col + 1);
-                        return 0;
+                if (QueryResult == NULL || QueryResult->file == NULL) {
+                        return 2;
                 }
+
+                Value result = vTn(
+                        "line", INTEGER(QueryResult->loc.line + 1),
+                        "col",  INTEGER(QueryResult->loc.col + 1),
+                        "file", xSz(QueryResult->file),
+                        "doc",  (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc)
+                );
+
+                byte_vector out = {0};
+
+                if (!json_dump(ty, &result, &out)) {
+                        return 3;
+                }
+
+                xvP(out, '\n');
+                xvP(out, '\0');
+
+                fputs(out.items, stdout);
+
+                return 0;
         }
 
         if (!vm_execute(ty, source, filename)) {

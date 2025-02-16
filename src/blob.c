@@ -416,6 +416,54 @@ blob_reserve(Ty *ty, Value *blob, int argc, Value *kwargs)
 }
 
 static Value
+blob_pad(Ty *ty, Value *blob, int argc, Value *kwargs)
+{
+        Value n;
+        Value pad;
+
+        switch (argc) {
+        case 1:
+                n = ARG(0);
+                pad = INTEGER(0);
+                break;
+        case 2:
+                n = ARG(0);
+                pad = ARG(1);
+                break;
+        default:
+                zP("Blob.pad(): expected 1 or 2 arguments but got %d", argc);
+        }
+
+        if (n.type != VALUE_INTEGER) {
+                zP("Blob.pad(): expected arg0: Int but got: %s", VSC(&n));
+        }
+
+        size_t goal = n.integer;
+
+        if (vN(*blob->blob) >= goal) {
+                return BOOLEAN(false);
+        }
+
+        switch (pad.type) {
+        case VALUE_INTEGER:
+                vvR(*blob->blob, goal);
+                memset(vZ(*blob->blob), (uint8_t)pad.integer, goal - vN(*blob->blob));
+                blob->blob->count = blob->blob->capacity;
+                break;
+        case VALUE_STRING:
+                vvR(*blob->blob, goal + pad.bytes);
+                while (vN(*blob->blob) < goal) {
+                        vvPn(*blob->blob, pad.string, pad.bytes);
+                }
+                break;
+        default:
+                zP("Blob.pad(): expected arg1: Int | String but got: %s", VSC(&pad));
+        }
+
+        return BOOLEAN(true);
+}
+
+static Value
 blob_ptr(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc == 0) {
@@ -542,6 +590,7 @@ DEFINE_METHOD_TABLE(
         { .name = "fill",     .func = blob_fill         },
         { .name = "get",      .func = blob_get          },
         { .name = "hex",      .func = blob_hex          },
+        { .name = "pad",      .func = blob_pad          },
         { .name = "ptr",      .func = blob_ptr          },
         { .name = "push",     .func = blob_push         },
         { .name = "reserve",  .func = blob_reserve      },

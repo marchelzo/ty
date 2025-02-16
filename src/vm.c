@@ -100,12 +100,12 @@
         LOG(                                         \
                 "%07ju:%s:%d:%d: " #i,               \
                 (uintptr_t)(IP - 1) & 0xFFFFFFFF,    \
-                expr ? expr->filename : "(unknown)", \
+                expr ? expr->file : "(unknown)",     \
                 (expr ? expr->start.line : 0) + 1,   \
                 (expr ? expr->start.col : 0) + 1     \
         );
 #else
-  #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->filename : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->file : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
@@ -259,6 +259,9 @@ CompareProfileEntriesByLocation(void const *a_, void const *b_)
         return 0;
 }
 
+static void
+ProfileReport(Ty *ty);
+
 static _Thread_local char *LastIP;
 static _Thread_local uint64_t LastThreadTime;
 static _Thread_local uint64_t LastThreadGCTime;
@@ -266,6 +269,10 @@ static TyMutex ProfileMutex;
 static Dict *Samples;
 static Dict *FuncSamples;
 istat prof;
+
+static bool WantReport = false;
+static int64_t LastReportRequest;
+
 #endif
 
 typedef struct {
@@ -681,6 +688,13 @@ add_builtins(Ty *ty, int ac, char **av)
 
         compiler_introduce_symbol(ty, "ty", "executable");
         vvP(Globals, this_executable(ty));
+
+#ifdef _WIN32
+        // TODO
+#else
+        compiler_introduce_symbol(ty, "os", "PAGE_SIZE");
+        vvP(Globals, INTEGER(sysconf(_SC_PAGESIZE)));
+#endif
 
 #ifdef SIGRTMIN
         /* Add this here because SIGRTMIN doesn't expand to a constant */
@@ -1398,7 +1412,7 @@ CleanupThread(void *ctx)
         mF(DROP_STACK.items);
         free(ty->allocs.items);
 
-        vec(Value const *) *root_set = GCRoots(ty);
+        vec(Value const *) *root_set = (void *)GCRoots(ty);
         free(root_set->items);
 
         if (group_remaining == 0) {
@@ -1459,7 +1473,7 @@ vm_run_thread(void *p)
 
         if (setjmp(JB) != 0) {
                 // TODO: do something useful here
-                fprintf(stderr, "Thread %llu dying with error: %s\n", TID, ERR);
+                fprintf(stderr, "Thread %lld dying with error: %s\n", TID, Error);
                 OKGC(t);
                 t->v = NIL;
         } else {
@@ -1549,7 +1563,7 @@ vm_get_sigfn(Ty *ty, int sig)
 void
 vm_do_signal(int sig, siginfo_t *info, void *ctx)
 {
-        Ty const *ty = MyTy;
+        Ty *ty = MyTy;
         Value f = NIL;
 
         pthread_rwlock_rdlock(&SigLock);
@@ -1598,7 +1612,7 @@ DoDrop(Ty *ty)
                 Value v = group.array->items[i];
                 if (v.type != VALUE_OBJECT)
                         continue;
-                Value *f = class_method(ty, v.class, "__drop__");
+                Value *f = class_lookup_method_i(ty, v.class, NAMES._drop_);
                 if (f == NULL)
                         continue;
                 vm_call_method(ty, &v, f, 0);
@@ -1763,10 +1777,10 @@ Start:
                 gP(&subscript);
                 gP(&container);
 
-                vp = class_method(ty, subscript.class, "__next__");
+                vp = class_lookup_method_i(ty, subscript.class, NAMES._next_);
 
                 if (UNLIKELY(vp == NULL)) {
-                        vp = class_method(ty, subscript.class, "__iter__");
+                        vp = class_lookup_method_i(ty, subscript.class, NAMES._iter_);
                         if (UNLIKELY(vp == NULL)) {
                                 zP("non-iterable object used in subscript expression");
                         }
@@ -1898,7 +1912,11 @@ GetMember(Ty *ty, Value v, int member, bool b)
         switch (v.type & ~VALUE_TAGGED) {
         case VALUE_TUPLE:
                 vp = tuple_get_i(&v, member);
-                return (vp == NULL) ? NONE : *vp;
+                if (vp == NULL) {
+                        n = CLASS_TUPLE;
+                        goto ClassLookup;
+                }
+                return *vp;
         case VALUE_DICT:
                 func = get_dict_method_i(member);
                 if (func == NULL) {
@@ -2212,7 +2230,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 
                 break;
         case VALUE_CLASS:
-                vp = class_method(ty, v.class, "init");
+                vp = class_lookup_method_i(ty, v.class, NAMES.init);
 
                 if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
                         if (LIKELY(vp != NULL)) {
@@ -2623,10 +2641,12 @@ DoCount(Ty *ty, bool exec)
         case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
         case VALUE_ARRAY:  push(INTEGER(v.array->count)); break;
         case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
+        case VALUE_TUPLE:  push(INTEGER(v.count));        break;
         case VALUE_STRING:
                 push(get_string_method_i(NAMES.len)(ty, &v, 0, NULL));
                 break;
         case VALUE_OBJECT:
+        case VALUE_CLASS:
                 push(v);
                 CallMethod(ty, NAMES._len_, 0, 0, false);
                 if (exec) vm_exec(ty, IP);
@@ -2667,16 +2687,17 @@ DoUnaryOp(Ty *ty, int op, bool exec)
 }
 
 inline static void
-DoBinaryOp(Ty *ty, int n, bool exec)
+DoBinaryOp(Ty *ty, int op, bool exec)
 {
-        int i = op_dispatch(n, ClassOf(top() - 1), ClassOf(top()));
+        int i = op_dispatch(op, ClassOf(top() - 1), ClassOf(top()));
 
         if (i == -1) {
+                op_dump(op);
                 zP(
                         "no matching implementation of %s%s%s\n"
                         FMT_MORE "%s left%s: %s"
                         FMT_MORE "%sright%s: %s\n",
-                        TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0),
+                        TERM(95;1), intern_entry(&xD.b_ops, op)->name, TERM(0),
                         TERM(95), TERM(0), VSC(top() - 1),
                         TERM(95), TERM(0), VSC(top())
                 );
@@ -2686,7 +2707,7 @@ DoBinaryOp(Ty *ty, int n, bool exec)
                 "matching implementation of %s%s%s: %d\n"
                 FMT_MORE "%s left%s (%d): %s"
                 FMT_MORE "%sright%s (%d): %s\n",
-                TERM(95;1), intern_entry(&xD.b_ops, n)->name, TERM(0), i,
+                TERM(95;1), intern_entry(&xD.b_ops, op)->name, TERM(0), i,
                 TERM(95), TERM(0), ClassOf(top() - 1), VSC(top() - 1),
                 TERM(95), TERM(0), ClassOf(top()),     VSC(top())
         );
@@ -3212,7 +3233,7 @@ vm_try_exec(Ty *ty, char *code)
                 FRAMES.count = nframes;
                 TRY_STACK = ts;
                 IP = save;
-                push(vSsz(ERR));
+                push(vSsz(Error));
                 top()->tags = tags_push(ty, 0, TAG_ERR);
                 top()->type |= VALUE_TAGGED;
                 vm_exec(ty, &throw);
@@ -3308,8 +3329,16 @@ vm_exec(Ty *ty, char *code)
 
                                 TyMutexUnlock(&ProfileMutex);
                         }
+
                         LastIP = IP;
                         LastThreadTime = now;
+
+                        if (WantReport) {
+                                TyMutexLock(&ProfileMutex);
+                                ProfileReport(ty);
+                                TyMutexUnlock(&ProfileMutex);
+                                WantReport = false;
+                        }
                 }
 #endif
                 switch ((unsigned char)*IP++) {
@@ -3367,6 +3396,12 @@ vm_exec(Ty *ty, char *code)
                         *vp = *local(ty, i);
                         *local(ty, i) = REF(vp);
                         vvL(FRAMES)->f.env[j] = vp;
+                        break;
+                CASE(DECORATE)
+                        READVALUE(s);
+                        if (top()->type == VALUE_FUNCTION) {
+                                top()->xinfo = (FunUserInfo *)s;
+                        }
                         break;
                 CASE(EXEC_CODE)
                         READVALUE(s);
@@ -4245,7 +4280,7 @@ vm_exec(Ty *ty, char *code)
                                         vec_push_unchecked(CALLS, IP);
                                         call(ty, vp, &v, 1, 0, false);
                                         *vvL(CALLS) = next_fix;
-                                } else if ((vp = class_method(ty, v.class, "__iter__")) != NULL) {
+                                } else if ((vp = class_lookup_method_i(ty, v.class, NAMES._iter_)) != NULL) {
                                         pop();
                                         pop();
                                         --top()->i;
@@ -4508,7 +4543,7 @@ vm_exec(Ty *ty, char *code)
                         STACK.items[STACK.count - 1] = v;
                         break;
                 CASE(RANGE)
-                        vp = class_method(ty, CLASS_RANGE, "init");
+                        vp = class_lookup_method_i(ty, CLASS_RANGE, NAMES.init);
                         if (UNLIKELY(vp == NULL)) {
                                 zP("failed to load Range class. Was prelude loaded correctly?");
                         }
@@ -4520,7 +4555,7 @@ vm_exec(Ty *ty, char *code)
                         OKGC(v.object);
                         break;
                 CASE(INCRANGE)
-                        vp = class_method(ty, CLASS_INC_RANGE, "init");
+                        vp = class_lookup_method_i(ty, CLASS_INC_RANGE, NAMES.init);
                         if (UNLIKELY (vp == NULL)) {
                                 zP("failed to load InclusiveRange class. Was prelude loaded correctly?");
                         }
@@ -5111,8 +5146,21 @@ vm_exec(Ty *ty, char *code)
                 CASE(SAVE_STACK_POS)
                         vvP(SP_STACK, STACK.count);
                         break;
-                CASE(RESTORE_STACK_POS)
+                CASE(POP_STACK_POS)
                         STACK.count = *vvX(SP_STACK);
+                        break;
+                CASE(RESTORE_STACK_POS)
+                        STACK.count = *vvL(SP_STACK);
+                        break;
+                CASE(DROP_STACK_POS)
+                        vvX(SP_STACK);
+                        break;
+                CASE(DEBUG)
+                        READVALUE(i);
+                        READVALUE(j);
+                        fprintf(stderr, "%-12s  (%d/%d)   (sp=%zu)   (nsp=%zu)\n", IP, i + 1, j, STACK.count, vN(SP_STACK));
+                        SKIPSTR();
+                        xprint_stack(ty, 10);
                         break;
                 CASE(RETURN_IF_NOT_NONE)
                         if (top()->type != VALUE_NONE) {
@@ -5207,12 +5255,16 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.call      = M_ID("__call__");
         NAMES.contains  = M_ID("contains?");
         NAMES.count     = M_ID("__count__");
+        NAMES._drop_    = M_ID("__drop__");
         NAMES.fmt       = M_ID("__fmt__");
+        NAMES.init      = M_ID("init");
+        NAMES._iter_    = M_ID("__iter__");
         NAMES.json      = M_ID("__json__");
         NAMES._len_     = M_ID("__len__");
         NAMES.len       = M_ID("len");
         NAMES.match     = M_ID("__match__");
         NAMES.missing   = M_ID("__missing__");
+        NAMES._next_    = M_ID("__next__");
         NAMES.ptr       = M_ID("__ptr__");
         NAMES.question  = M_ID("__question__");
         NAMES.slice     = M_ID("__slice__");
@@ -5274,18 +5326,15 @@ vm_panic(Ty *ty, char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        int sz = ERR_SIZE - 1;
+        ErrorBuffer.count = 0;
 
-        int n = snprintf(ERR, sz, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
-        n += vsnprintf(ERR + n, max(sz - n, 0), fmt, ap);
+        dump(&ErrorBuffer, "%s%sRuntimeError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
+        vdump(&ErrorBuffer, fmt, ap);
         va_end(ap);
 
-        if (n < sz) {
-                ERR[n++] = '\n';
-                ERR[n  ] = '\0';
-        }
+        dump(&ErrorBuffer, "%c", '\n');
 
-        for (int i = 0; IP != NULL && n < sz; ++i) {
+        for (int i = 0; IP != NULL; ++i) {
                 if (vN(FRAMES) > 0 && ((char *)vvL(FRAMES)->f.info)[FUN_HIDDEN]) {
                         /*
                          * This code is part of a hidden function -- we don't want it
@@ -5296,9 +5345,9 @@ vm_panic(Ty *ty, char const *fmt, ...)
 
                 Expr const *expr = compiler_find_expr(ty, IP - 1);
 
-                n += WriteExpressionTrace(ty, ERR + n, sz - n, expr, 0, i == 0);
+                WriteExpressionTrace(ty, &ErrorBuffer, expr, 0, i == 0);
                 if (expr != NULL && expr->origin != NULL) {
-                        n += WriteExpressionOrigin(ty, ERR + n, sz - n, expr->origin);
+                        WriteExpressionOrigin(ty, &ErrorBuffer, expr->origin);
                 }
 
                 while (vN(FRAMES) == 0 && co_abort(ty)) {
@@ -5313,10 +5362,9 @@ Next:
                 IP = (char *)vvX(FRAMES)->ip;
         }
 
-        if (n < sz && CompilationDepth(ty) > 1) {
-                snprintf(
-                        ERR + n,
-                        sz - n,
+        if (CompilationDepth(ty) > 1) {
+                dump(
+                        &ErrorBuffer,
                         "\n%s%sCompilation context:%s\n%s",
                         TERM(1),
                         TERM(34),
@@ -5325,9 +5373,9 @@ Next:
                 );
         }
 
-        LOG("VM Error: %s", ERR);
+        Error = ErrorBuffer.items;
 
-        Error = ERR;
+        LOG("VM Error: %s", Error);
 
         longjmp(JB, 1);
 }
@@ -5338,14 +5386,12 @@ tdb_backtrace(Ty *ty)
         FrameStack frames = FRAMES;
         char const *ip = IP;
 
-        char buf[8192];
-        int sz = sizeof buf;
-        int n = 0;
+        byte_vector buf = {0};
         Generator *gen = NULL;
 
         int nf = vN(frames);
 
-        for (int i = 0; ip != NULL && n < sz; ++i) {
+        for (int i = 0; ip != NULL; ++i) {
                 if (nf > 0 && ((char *)v_(frames, nf - 1)->f.info)[FUN_HIDDEN]) {
                         /*
                          * This code is part of a hidden function; we don't want it
@@ -5356,9 +5402,9 @@ tdb_backtrace(Ty *ty)
 
                 Expr const *expr = compiler_find_expr(ty, ip - 1);
 
-                n += WriteExpressionTrace(ty, buf + n, sz - n, expr, 0, i == 0);
+                WriteExpressionTrace(ty, &buf, expr, 0, i == 0);
                 if (expr != NULL && expr->origin != NULL) {
-                        n += WriteExpressionOrigin(ty, buf + n, sz - n, expr->origin);
+                        WriteExpressionOrigin(ty, &buf, expr->origin);
                 }
 
                 if (nf == 0) {
@@ -5382,8 +5428,10 @@ Next:
                    : v_(frames, --nf)->ip;
         }
 
-        fputs(buf, stdout);
-        fputc('\n', stdout);
+        xvP(buf, '\n');
+        xvP(buf, '\0');
+
+        fputs(buf.items, stdout);
 }
 
 bool
@@ -5452,81 +5500,10 @@ color_sequence(float p, char *out)
 
         sprintf(out, "\033[38;2;%d;%d;%dm", r, g, b);
 }
-#endif
 
-bool
-vm_load_program(Ty *ty, char const *source, char const *file)
+static void
+ProfileReport(Ty *ty)
 {
-        filename = file;
-
-        GC_STOP();
-
-        gc_clear_root_set(ty);
-        STACK.count = 0;
-        SP_STACK.count = 0;
-        TRY_STACK.count = 0;
-        TARGETS.count = 0;
-
-        char * volatile code = NULL;
-
-        if (setjmp(JB) != 0) {
-                filename = NULL;
-                GC_RESUME();
-                return false;
-        }
-
-        code = compiler_compile_source(ty, source, filename);
-        if (code == NULL) {
-                filename = NULL;
-                Error = compiler_error(ty);
-                GC_RESUME();
-                return false;
-        }
-
-        if (DisassemblyOut != NULL) {
-                byte_vector out = {0};
-                DumpProgram(ty, &out, filename, code, NULL);
-                fwrite(out.items, 1, out.count, DisassemblyOut);
-                free(out.items);
-        }
-
-        GC_RESUME();
-
-        ty->code = code;
-
-        return true;
-}
-
-bool
-vm_execute(Ty *ty, char const *source, char const *file)
-{
-        if (source != NULL && !vm_load_program(ty, source, file)) {
-                return false;
-        }
-
-        if (CompileOnly) {
-                filename = NULL;
-                return true;
-        }
-
-        if (setjmp(JB) != 0) {
-                filename = NULL;
-                return false;
-        }
-
-        if (DEBUGGING) {
-                IP = ty->code;
-                TDB_IS_NOW(STOPPED);
-                tdb_go(ty);
-        }
-
-        vm_exec(ty, ty->code);
-
-        if (PrintResult && STACK.capacity > 0) {
-                printf("%s\n", VSC(top() + 1));
-        }
-
-#ifdef TY_ENABLE_PROFILING
         vec(ProfileEntry) profile = {0};
         vec(ProfileEntry) func_profile = {0};
 
@@ -5606,7 +5583,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 }
         }
 
-        /*
+#if 0
         qsort(profile.items, profile.count, sizeof (ProfileEntry), CompareProfileEntriesByLocation);
 
         int n = 1;
@@ -5718,7 +5695,8 @@ vm_execute(Ty *ty, char const *source, char const *file)
                         code_buffer
                 );
         }
-        */
+
+#endif
 
         fputc('\n', ProfileOut);
 
@@ -5727,7 +5705,97 @@ vm_execute(Ty *ty, char const *source, char const *file)
         fwrite(prog_text.items, 1, prog_text.count, ProfileOut);
         fputc('\n', ProfileOut);
         fputc('\n', ProfileOut);
+}
+
+static void
+ProfilerSIGINT(int _)
+{
+        int64_t now = TyThreadWallTime();
+
+        if (LastReportRequest > 0 && now - LastReportRequest < 3000000000LL) {
+                exit(0);
+        }
+
+        LastReportRequest = now;
+        WantReport = true;
+}
 #endif
+
+bool
+vm_load_program(Ty *ty, char const *source, char const *file)
+{
+        filename = file;
+
+        GC_STOP();
+
+        gc_clear_root_set(ty);
+        STACK.count = 0;
+        SP_STACK.count = 0;
+        TRY_STACK.count = 0;
+        TARGETS.count = 0;
+
+        char * volatile code = NULL;
+
+        if (setjmp(JB) != 0) {
+                filename = NULL;
+                GC_RESUME();
+                return false;
+        }
+
+        code = compiler_compile_source(ty, source, filename);
+        if (code == NULL) {
+                filename = NULL;
+                Error = compiler_error(ty);
+                GC_RESUME();
+                return false;
+        }
+
+        if (DisassemblyOut != NULL) {
+                byte_vector out = {0};
+                DumpProgram(ty, &out, filename, NULL, NULL);
+                fwrite(out.items, 1, out.count, DisassemblyOut);
+                free(out.items);
+        }
+
+        GC_RESUME();
+
+        ty->code = code;
+
+        return true;
+}
+
+bool
+vm_execute(Ty *ty, char const *source, char const *file)
+{
+        if (source != NULL && !vm_load_program(ty, source, file)) {
+                return false;
+        }
+
+        if (CompileOnly) {
+                filename = NULL;
+                return true;
+        }
+
+        if (setjmp(JB) != 0) {
+                filename = NULL;
+                return false;
+        }
+
+        if (DEBUGGING) {
+                IP = ty->code;
+                TDB_IS_NOW(STOPPED);
+                tdb_go(ty);
+        }
+
+#ifdef TY_ENABLE_PROFILING
+        void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
+#endif
+
+        vm_exec(ty, ty->code);
+
+        if (PrintResult && STACK.capacity > 0) {
+                printf("%s\n", VSC(top() + 1));
+        }
 
         filename = NULL;
 
@@ -5819,7 +5887,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                 r.type |= VALUE_TAGGED;
                 return r;
         case VALUE_CLASS:
-                init = class_method(ty, f->class, "init");
+                init = class_lookup_method_i(ty, f->class, NAMES.init);
                 if (f->class < CLASS_PRIMITIVE) {
                         if (LIKELY(init != NULL)) {
                                 call(ty, init, NULL, argc, 0, true);
@@ -5911,7 +5979,7 @@ vm_call(Ty *ty, Value const *f, int argc)
                 r.type |= VALUE_TAGGED;
                 return r;
         case VALUE_CLASS:
-                vp = class_method(ty, f->class, "init");
+                vp = class_lookup_method_i(ty, f->class, NAMES.init);
                 if (f->class < CLASS_PRIMITIVE) {
                         if (LIKELY(vp != NULL)) {
                                 call(ty, vp, NULL, argc, 0, true);
@@ -6163,6 +6231,9 @@ StepInstruction(char const *ip)
         CASE(CAPTURE)
                 SKIPVALUE(i);
                 SKIPVALUE(j);
+                break;
+        CASE(DECORATE)
+                SKIPVALUE(s);
                 break;
         CASE(EXEC_CODE)
                 SKIPVALUE(s);
@@ -6579,7 +6650,7 @@ StepInstruction(char const *ip)
                 break;
         CASE(SAVE_STACK_POS)
                 break;
-        CASE(RESTORE_STACK_POS)
+        CASE(POP_STACK_POS)
                 break;
         CASE(MULTI_RETURN)
                 SKIPVALUE(n);

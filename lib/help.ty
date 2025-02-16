@@ -237,7 +237,7 @@ pub function escapeString(s) {
         '\n' => '\\n',
         '\r' => '\\r',
         '\t' => '\\t',
-        _    => "\\x{m.byte(0)#02x}"
+        _    => "\\x{m.byte(0):02x}"
     })
 }
 

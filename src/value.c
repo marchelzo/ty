@@ -339,8 +339,7 @@ show_tuple(Ty *ty, struct value const *v, bool color)
 static char *
 show_string(Ty *ty, char const *s, size_t n, bool color)
 {
-        vec(char) v;
-        vec_init(v);
+        vec(char) v = {0};
 
 #define COLOR(i) if (color) vvPn(v, TERM(i), strlen(TERM(i)))
 
@@ -377,6 +376,12 @@ show_string(Ty *ty, char const *s, size_t n, bool color)
                 COLOR(95);
                 vvP(v, '\\');
                 vvP(v, '\'');
+                COLOR(92);
+                break;
+        case '\0':
+                COLOR(91);
+                vvP(v, '\\');
+                vvP(v, '0');
                 COLOR(92);
                 break;
         default:

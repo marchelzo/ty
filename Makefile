@@ -1,6 +1,7 @@
 CFLAGS += -std=c11
 CFLAGS += -Wall
 CFLAGS += -Iinclude
+CFLAGS += -Ilibco
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pkg-config --cflags libffi)
 CFLAGS += $(shell pcre-config --cflags)

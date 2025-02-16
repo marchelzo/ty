@@ -130,7 +130,7 @@ pub class Stream : Iter {
     }
 
     blob(bs=1024) {
-        let b = blob()
+        let b = ::blob()
 
         while stdio.fread(@f, bs, b) > 0 {
             ;

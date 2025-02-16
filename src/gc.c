@@ -93,6 +93,7 @@ collect(Ty *ty, struct alloc *a)
                 mF(((FunUserInfo *)p)->doc);
                 mF(((FunUserInfo *)p)->proto);
                 mF(((FunUserInfo *)p)->name);
+                break;
         }
 }
 

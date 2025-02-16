@@ -380,7 +380,7 @@ pub function progress(work, prefix, width, effects=id, cleanup=false) {
 
     for p in work {
         let w = width ?? (termDimensions().1 - 8).clamp(0, 70)
-        write(termFd, "\r{prefix ?? ''}{effects(progressString(p, w))} {p * 100#.1f}%%")
+        write(termFd, "\r{prefix ?? ''}{effects(progressString(p, w))} {p * 100:.1f}%%")
     }
 
     if cleanup {

@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 
-#include "value.h"
+#include "ty.h"
 
 void
 tags_init(Ty *ty);
