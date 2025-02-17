@@ -2390,10 +2390,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 LOG("symbolizing var: %s%s%s", (e->module == NULL ? "" : e->module), (e->module == NULL ? "" : "::"), e->identifier);
 
                 if (e->module == NULL && strcmp(e->identifier, "__module__") == 0) {
-                        if (state.module_path == NULL) {
-                                printf("mod=%s\n", state.module_name);
-                                fail(ty, "aaa");
-                        }
+                        e->type = EXPRESSION_STRING;
+                        e->string = state.module_name;
+                        break;
+                }
+
+                if (e->module == NULL && strcmp(e->identifier, "__file__") == 0) {
                         e->type = EXPRESSION_STRING;
                         e->string = state.module_path;
                         break;
@@ -6739,6 +6741,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
          */
         CompileState save = state;
         state = freshstate(ty);
+        state.module_name = name;
         state.module_path = path;
 
         compile(ty, source);
@@ -6805,17 +6808,15 @@ import_module(Ty *ty, Stmt const *s)
         Scope *module_scope = get_module_scope(name);
 
         /* First make sure we haven't already imported this module, or imported another module
-         * with the same local alias.
+         * with the same local alias. For example,
          *
-         * e.g.,
-         *
-         * import foo
-         * import foo
+         *   import foo
+         *   import foo
          *
          * and
          *
-         * import foo as bar
-         * import baz as bar
+         *   import foo as bar
+         *   import baz as bar
          *
          * are both errors.
          */
@@ -7040,7 +7041,6 @@ compiler_compile_source(Ty *ty, char const *source, char const *file)
 
         dont_printf("mod:      %s\n", state.module_name);
         dont_printf("mod_path: %s\n", state.module_path);
-
 
         int symbol_count = scope_get_symbol(ty);
 

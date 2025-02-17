@@ -1,8 +1,12 @@
 pub class Heap {
-    init() {
+    init(items=[]) {
         self.keys = [];
         self.values = [];
         self.n = 0;
+
+        for (k, v) in items {
+            self.push(k, v)
+        }
     }
 
     swap(i, j) {

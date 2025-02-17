@@ -959,6 +959,13 @@ End:
         longjmp(jb, 1);
 }
 
+#define die_at(e, fmt, ...)                     \
+        do {                                    \
+                EStart = (e)->start;            \
+                EEnd   = (e)->end;              \
+                (error)(ty, fmt, __VA_ARGS__);  \
+        } while (0)
+
 inline static Namespace *
 PushNS(Ty *ty, char *id, bool pub)
 {
@@ -4633,7 +4640,7 @@ definition_lvalue(Ty *ty, Expr *e)
                 return e;
         }
 
-        error(ty, "expression is not a valid definition lvalue: %s", ExpressionTypeName(e));
+        die_at(e, "expression is not a valid definition lvalue: %s", ExpressionTypeName(e));
 }
 
 static Expr *
