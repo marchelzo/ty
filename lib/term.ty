@@ -2,11 +2,22 @@ import os (..)
 import termios (..)
 import help (pretty-print as pp, pretty)
 import unibilium as unibi
-import log (..)
+import errno
+
+#|if getenv('TY_LOG') != nil
+  /.*(/
+  import log (..)
+#|else
+  macro warn!(msg) = do {}
+#|]
 
 let ppp = pretty@(*, color=false)
 
-pub namespace mod {
+pub fn foo() {
+    
+}
+
+pub ns mod {
     pub SHIFT = 1 << 0
     pub ALT   = 1 << 1
     pub CTRL  = 1 << 2
@@ -21,7 +32,6 @@ pub namespace event {
             nice-key-name(self)
         }
     }
-
 }
 
 pub namespace keys {
@@ -264,16 +274,16 @@ function nice-key-name(ev) {
     let out = match ev {
         {_key: $k, *} => do { ev.mods &= ~mod.SHIFT; chr(k) },
         {key: k :: String, *} => k.split('_').map(title).str(),
-        {key: k :: Int, *}    => chr(k)
+        {key: k :: Int,    *} => chr(k)
     }
 
     let out = match out {
-        '\n', '\r' => 'Enter',
-        ' '        => 'Space',
-        '\t'       => 'Tab',
-        chr(127)   => 'Backspace',
-        chr(27)    => 'Esc',
-        _          => out
+        '\n' or '\r' => 'Enter',
+        ' '          => 'Space',
+        '\t'         => 'Tab',
+        chr(127)     => 'Backspace',
+        chr(27)      => 'Esc',
+        _            => out
     }
 
     if ev.mods & mod.SHIFT { out = "S-{out}"   }
@@ -383,7 +393,9 @@ class TermIO {
     }
 
     start(a) {
-        @saved-termios = tcgetattr(@fd)
+        if (@saved-termios = tcgetattr(@fd)) == nil {
+            eprint("Error: {errno.str()}")
+        }
         let copy = {*@saved-termios}
         copy.lflag &= ~ICANON
         copy.lflag &= ~ECHO

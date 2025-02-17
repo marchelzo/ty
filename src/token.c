@@ -21,6 +21,7 @@ static struct {
         { "else",        KEYWORD_ELSE      },
         { "false",       KEYWORD_FALSE     },
         { "for",         KEYWORD_FOR       },
+        { "fn",          KEYWORD_FUNCTION  },
         { "function",    KEYWORD_FUNCTION  },
         { "macro",       KEYWORD_MACRO     },
         { "do",          KEYWORD_DO        },
@@ -54,6 +55,7 @@ static struct {
         { "where",       KEYWORD_WHERE     },
         { "static",      KEYWORD_STATIC    },
         { "namespace",   KEYWORD_NAMESPACE },
+        { "ns",          KEYWORD_NAMESPACE },
         { "__eval__",    KEYWORD_EVAL      },
         { "__defined__", KEYWORD_DEFINED   },
 };
