@@ -6905,7 +6905,7 @@ BUILTIN_FUNCTION(ty_disassemble)
         }
 
         byte_vector text = {0};
-        DumpProgram(ty, &text, name, code, end);
+        DumpProgram(ty, &text, name, code, end, true);
 
         Value result = vSs(text.items, text.count);
 

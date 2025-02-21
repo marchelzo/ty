@@ -498,6 +498,8 @@ extern bool ColorProfile;
         X(INCRANGE),              \
         X(MEMBER_ACCESS),         \
         X(TRY_MEMBER_ACCESS),     \
+        X(GET_MEMBER),            \
+        X(TRY_GET_MEMBER),        \
         X(SUBSCRIPT),             \
         X(SLICE),                 \
         X(TAIL_CALL),             \
@@ -507,6 +509,8 @@ extern bool ColorProfile;
         X(GET_NEXT),              \
         X(PUSH_INDEX),            \
         X(READ_INDEX),            \
+        X(LOOP_ITER),             \
+        X(LOOP_CHECK),            \
         X(POP),                   \
         X(UNPOP),                 \
         X(DUP),                   \
@@ -524,6 +528,15 @@ extern bool ColorProfile;
         X(JUMP_IF_NIL),           \
         X(JUMP_IF_NOT),           \
         X(JUMP_IF_NONE),          \
+        X(JLE),                   \
+        X(JLT),                   \
+        X(JGE),                   \
+        X(JGT),                   \
+        X(JEQ),                   \
+        X(JNE),                   \
+        X(JUMP_AND),              \
+        X(JUMP_OR),               \
+        X(JUMP_WTF),              \
         X(RETURN),                \
         X(RETURN_PRESERVE_CTX),   \
         X(EXEC_CODE),             \

@@ -1352,13 +1352,18 @@ dotoken(Ty *ty, int ctx)
         } else if (
                 contains(OperatorCharset, C(0))
              || (
-                        C(0) == ':' &&
-                        contains(OperatorCharset, C(1)) &&
-                        C(1) != '-' &&
-                        C(1) != '*' &&
-                        C(1) != '+' &&
-                        C(1) != '.' &&
-                        C(1) != '%'
+                        C(0) == ':'
+                     && (
+                                isspace(C(-1))
+                             || (
+                                        contains(OperatorCharset, C(1))
+                                     && C(1) != '-'
+                                     && C(1) != '*'
+                                     && C(1) != '+'
+                                     && C(1) != '.'
+                                     && C(1) != '%'
+                                )
+                        )
                 )
         ) {
                 return lexop(ty);
