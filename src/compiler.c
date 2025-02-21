@@ -704,6 +704,25 @@ emit_instr(Ty *ty, int c)
                 last1 = -1;
                 last2 = -1;
                 last3 = INSTR_ASSIGN_LOCAL;
+        } else if (
+                last2 == INSTR_TARGET_LOCAL
+             && last3 == INSTR_ASSIGN
+             &&     c == INSTR_POP
+        ) {
+                int i;
+
+                vvX(state.code); // ASSIGN
+                memcpy(&i, vZ(state.code) - sizeof i, sizeof i);
+                vN(state.code) -= sizeof i;
+                vvX(state.code); // TARGET_LOCAL
+
+                avP(state.code, INSTR_ASSIGN_LOCAL);
+                emit_int(ty, i);
+
+                last0 = -1;
+                last1 = -1;
+                last2 = -1;
+                last3 = INSTR_ASSIGN_LOCAL;
         } else {
                 avP(state.code, (char)c);
 
@@ -3726,7 +3745,7 @@ add_annotation(Ty *ty, char const *name, uintptr_t start, uintptr_t end)
 
         annotation.patched = false;
         annotation.name    = name;
-        annotation.module  = state.module_path;
+        annotation.module  = state.module_name;
         annotation.start   = start;
         annotation.end     = end;
 
@@ -3900,11 +3919,9 @@ emit_function(Ty *ty, Expr const *e)
                 PLACEHOLDER_JUMP(INSTR_JUMP, skip_dflt);
                 PATCH_JUMP(need_dflt);
                 annotate("%s", s->identifier);
-                emit_instr(ty, INSTR_TARGET_LOCAL);
-                emit_int(ty, s->i);
                 emit_expression(ty, e->dflts.items[i]);
-                emit_instr(ty, INSTR_ASSIGN);
-                emit_instr(ty, INSTR_POP);
+                emit_instr(ty, INSTR_ASSIGN_LOCAL);
+                emit_int(ty, s->i);
                 PATCH_JUMP(skip_dflt);
         }
 
@@ -10704,13 +10721,13 @@ DumpProgram(
 
         dump(
                 out,
-                "%s%s: %s%s: %s:%s\n",
+                "%s%s: %s%s: %s%s:%s\n",
                 TERM(32),
                 name,
                 TERM(34),
-                annotation->module,
+                (annotation == NULL) ? "" : annotation->module,
                 TERM(33),
-                annotation->name,
+                (annotation == NULL) ? "" : annotation->name,
                 TERM(0)
         );
         //dump(out, "%s%s:%s\n", TERM(34), name, TERM(0));
