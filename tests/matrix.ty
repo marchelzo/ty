@@ -1,0 +1,102 @@
+pub class Matrix : Iterable {
+    init(m) { self.m = m }
+
+    cols {
+        #@m[0]
+    }
+
+    rows {
+        #@m
+    }
+
+    col(i) {
+        ColVec([row[i] for row in @m])
+    }
+
+    row(i) {
+        RowVec(@m[i])
+    }
+
+    __call__(i, j) {
+        @m[i][j]
+    }
+
+    __fmt__() { self.__str__() }
+
+    __str__() {
+        '\n' + [row.map(fmt@('% 6.2f', _)).unwords() for row in @m].unlines()
+    }
+}
+
+class Vec : Matrix {
+    __subscript__(i) { @v[i] }
+    __iter__() { @v.__iter__() }
+}
+
+class RowVec(v) : Vec {
+    rows {   1 }
+    cols { #@v }
+
+    row(i: i == 0) { self }
+    col(i)         { ColVec([@v[i]]) }
+
+    __call__(i, j) {
+        @v[j]
+    }
+}
+
+class ColVec(v) : Vec {
+    cols { 1   }
+    rows { #@v }
+
+    col(i: i == 0) { self }
+    row(i)         { RowVec([@v[i]]) }
+
+    __call__(i, j) {
+        @v[i]
+    }
+}
+
+
+let dots = 0
+
+function .(u: Vec, v: Vec) {
+    dots += 1
+    [x * y for (x, y) in u.zip(v)].sum()
+}
+
+function m(s) {
+    Matrix([row.words().map(float) for row in s.lines() if row :: /\d/])
+}
+
+function *(X: Matrix, Y: Matrix) {
+    Matrix([
+        [
+            X.row(i) . Y.col(j)
+            for j in ..Y.cols
+        ]
+        for i in ..X.rows
+    ])
+}
+
+function **(X: Matrix, n: Int) {
+    (X for ..n).fold(`*`)
+}
+
+let P = m('
+     0.75      0.04      0.14      0.07
+                                       
+     0         1.0       2.0       0   
+                                       
+     0.18      0         1.0      -0.44
+                                       
+     0         0.14      0         1.0 
+')
+
+let X = P ** 10
+
+if abs(-61.7444 - [X.row(i).sum() for i in ..X.rows].sum()) < 0.001 {
+    print('PASS')
+} else {
+    print('FAIL')
+}
