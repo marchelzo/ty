@@ -33,7 +33,6 @@
 #include "value.h"
 
 _Thread_local char ERR[ERR_SIZE];
-_Thread_local byte_vector ErrorBuffer;
 
 char *
 sclone_malloc(char const *s)

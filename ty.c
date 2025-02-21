@@ -141,7 +141,7 @@ execln(Ty *ty, char *line)
                 if (line[1] == '!') {
                         system(line + 2) || 0;
                 } else if (!vm_execute_file(ty, line + 1)) {
-                        fprintf(stderr, "%s\n", vm_error(ty));
+                        fprintf(stderr, "%s\n", TyError(ty));
                         good = false;
                 }
                 goto End;
@@ -204,12 +204,12 @@ execln(Ty *ty, char *line)
         buffer.count = 1;
 
         dump(&buffer, "%s\n", line);
-        if (strstr(vm_error(ty), "ParseError") != NULL && repl_exec(ty, v_(buffer, 1)))
+        if (strstr(TyError(ty), "ParseError") != NULL && repl_exec(ty, v_(buffer, 1)))
                 goto End;
 
 Bad:
         good = false;
-        fprintf(stderr, "%s\n", vm_error(ty));
+        fprintf(stderr, "%s\n", TyError(ty));
 
 End:
         fflush(stdout);
@@ -593,7 +593,7 @@ main(int argc, char **argv)
 #endif
 
         if (!vm_init(ty, argc - nopt, argv + nopt)) {
-                fprintf(stderr, "%s\n", vm_error(ty));
+                fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }
 
@@ -642,7 +642,7 @@ main(int argc, char **argv)
                 CompileOnly = true;
 
                 if (!vm_execute(ty, source, filename) && QueryResult == NULL) {
-                        fprintf(stderr, "%s\n", vm_error(ty));
+                        fprintf(stderr, "%s\n", TyError(ty));
                         return 1;
                 }
 
@@ -672,7 +672,7 @@ main(int argc, char **argv)
         }
 
         if (!vm_execute(ty, source, filename)) {
-                fprintf(stderr, "%s\n", vm_error(ty));
+                fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }
 

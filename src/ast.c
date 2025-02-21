@@ -286,11 +286,18 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_BIT_OR:
         case EXPRESSION_BIT_AND:
         case EXPRESSION_KW_OR:
-        case EXPRESSION_KW_AND:
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
                 V(e->left);
                 V(e->right);
+                break;
+        case EXPRESSION_KW_AND:
+                V(e->left);
+                for (int i = 0; i < vN(e->p_cond); ++i) {
+                        struct condpart *p = v__(e->p_cond, i);
+                        VP(p->target);
+                        V(p->e);
+                }
                 break;
         case EXPRESSION_DEFINED:
                 /*

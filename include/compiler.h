@@ -152,6 +152,8 @@ typedef struct compiler_state {
 
         Scope *global;
 
+        Scope *pscope;
+
         char const *module_name;
         char const *module_path;
 
@@ -163,9 +165,6 @@ typedef struct compiler_state {
 
         location_vector expression_locations;
 } CompileState;
-
-char const *
-compiler_error(Ty *ty);
 
 void
 compiler_init(Ty *ty);
@@ -330,8 +329,8 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e);
 int
 CompilationDepth(Ty *ty);
 
-char *
-CompilationTrace(Ty *ty);
+void
+CompilationTrace(Ty *ty, byte_vector *out);
 
 CompileState
 PushCompilerState(Ty *ty, char const *filename);
@@ -341,6 +340,12 @@ PopCompilerState(Ty *ty, CompileState state);
 
 CompileState *
 TyCompilerState(Ty *ty);
+
+void
+CompilerScopePush(Ty *ty);
+
+void
+CompilerScopePop(Ty *ty);
 
 bool
 IsTopLevel(Symbol const *sym);

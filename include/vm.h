@@ -20,9 +20,6 @@ extern _Thread_local int EvalDepth;
 bool
 vm_init(Ty *ty, int ac, char **av);
 
-char const *
-vm_error(Ty *ty);
-
 noreturn void
 vm_panic(Ty *ty, char const *fmt, ...);
 

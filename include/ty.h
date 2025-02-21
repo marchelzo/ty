@@ -386,7 +386,8 @@ typedef struct ty {
         TY *ty;
         TDB *tdb;
 
-        Scope *pscope;
+        byte_vector err;
+
 } Ty;
 
 typedef struct {
@@ -436,6 +437,8 @@ extern bool ColorProfile;
 #define GC_STOP()   (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
 #endif
+
+#define ErrorBuffer (ty->err)
 
 #ifdef _WIN32
 #  define UNLIKELY(x)  (x)
@@ -999,6 +1002,12 @@ tdb_locals(Ty *ty);
 
 void
 tdb_backtrace(Ty *ty);
+
+inline static char const *
+TyError(Ty *ty)
+{
+        return ty->err.items;
+}
 
 #endif
 

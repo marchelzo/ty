@@ -108,7 +108,6 @@ size_t GlobalCount = 0;
 
 static jmp_buf *ujb;
 static jmp_buf jb;
-static char const *Error;
 
 static int builtin_modules;
 static int BuiltinCount;
@@ -607,9 +606,10 @@ fail(Ty *ty, char const *fmt, ...)
 
         va_end(ap);
 
-        dump(&ErrorBuffer, "\n%s", CompilationTrace(ty));
-
-        Error = ErrorBuffer.items;
+        if (CompilationDepth(ty) > 1) {
+                dump(&ErrorBuffer, "\n");
+                CompilationTrace(ty, &ErrorBuffer);
+        }
 
         if (ujb != NULL) {
                 longjmp(*ujb, 1);
@@ -1131,6 +1131,8 @@ freshstate(Ty *ty)
         CompileState s = {0};
 
         s.global = scope_new(ty, "(global)", global, false);
+        s.pscope = scope_new(ty, "(parse)", s.global, false);
+
         s.class = -1;
         s.start = s.end = s.mstart = s.mend = Nowhere;
 
@@ -1778,7 +1780,7 @@ void
 try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
 {
         if (scope == NULL) {
-                scope = state.global;
+                scope = state.pscope;
         }
 
         bool tag_pattern = e->type == EXPRESSION_TAG_PATTERN_CALL;
@@ -2895,6 +2897,10 @@ CompilerDoUse(Ty *ty, Stmt *s, Scope *scope)
 {
         void       *use;
         char const *conflict;
+
+        if (scope == NULL) {
+                scope = state.pscope;
+        }
 
         switch (
                 resolve_name(
@@ -6853,7 +6859,6 @@ compile(Ty *ty, char const *source)
 {
         Stmt **p = parse(ty, source, state.module_path);
         if (p == NULL) {
-                Error = parse_error(ty);
                 longjmp(jb, 1);
         }
 
@@ -7129,12 +7134,6 @@ import_module(Ty *ty, Stmt const *s)
         import_vector pubs = get_module_public_imports(name);
 }
 
-char const *
-compiler_error(Ty *ty)
-{
-        return Error;
-}
-
 void
 compiler_init(Ty *ty)
 {
@@ -7151,7 +7150,7 @@ compiler_load_builtin_modules(Ty *ty)
                 fprintf(
                         stderr,
                         "Aborting, failed to load builtin modules: %s\n",
-                        compiler_error(ty)
+                        TyError(ty)
                 );
                 exit(1);
         }
@@ -7168,7 +7167,7 @@ compiler_load_prelude(Ty *ty)
                 fprintf(
                         stderr,
                         "Aborting, failed to load prelude: %s\n",
-                        compiler_error(ty)
+                        TyError(ty)
                 );
                 exit(1);
         }
@@ -7188,6 +7187,7 @@ compiler_load_prelude(Ty *ty)
         compile(ty, source);
 
         state.global = scope_new(ty, "(prelude)", state.global, false);
+        state.pscope = scope_new(ty, "(parse)", state.global, false);
         state.imports.count = 0;
 
         return state.code.items;
@@ -10234,7 +10234,7 @@ compiler_render_template(Ty *ty, Expr *e)
 
         if (setjmp(jb) != 0) {
                 RESTORE_JB;
-                char const *msg = compiler_error(ty);
+                char const *msg = TyError(ty);
                 v = Err(ty, vSsz(msg));
                 vmE(&v);
         }
@@ -10419,27 +10419,23 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         return n;
 }
 
-char *
-CompilationTrace(Ty *ty)
+void
+CompilationTrace(Ty *ty, byte_vector *out)
 {
-        byte_vector out = {0};
-
         int etw = 0;
         for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
                 etw = max(etw, ExpressionTypeWidth(ctx->e));
         }
 
         for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
-                if (WriteExpressionTrace(ty, &out, ctx->e, etw, ctx == ContextList) == 0) {
+                if (WriteExpressionTrace(ty, out, ctx->e, etw, ctx == ContextList) == 0) {
                         continue;
                 }
 
-                if (WriteExpressionOrigin(ty, &out, ctx->e->origin) == 0) {
+                if (WriteExpressionOrigin(ty, out, ctx->e->origin) == 0) {
                         continue;
                 }
         }
-
-        return out.items;
 }
 
 int
@@ -11425,6 +11421,18 @@ CompileState *
 TyCompilerState(Ty *ty)
 {
         return &state;
+}
+
+void
+CompilerScopePush(Ty *ty)
+{
+        state.pscope = scope_new(ty, "(block)", state.pscope, false);
+}
+
+void
+CompilerScopePop(Ty *ty)
+{
+        state.pscope = state.pscope->parent;
 }
 
 /* vim: set sw=8 sts=8 expandtab: */
