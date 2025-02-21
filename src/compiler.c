@@ -196,6 +196,9 @@ emit_spread(Ty *ty, Expr const *e, bool nils);
 static void
 compile(Ty *ty, char const *source);
 
+inline static void
+emit_int(Ty *ty, int k);
+
 #define X(t) #t
 static char const *ExpressionTypeNames[] = {
         TY_EXPRESSION_TYPES
@@ -672,7 +675,43 @@ dump_source_of(Expr const *e, byte_vector *out)
 inline static void
 emit_instr(Ty *ty, int c)
 {
-        avP(state.code, (char)c);
+        static int last0 = -1;
+        static int last1 = -1;
+        static int last2 = -1;
+        static int last3 = -1;
+
+        // XXX please do better
+        if (
+                last0 == INSTR_SAVE_STACK_POS
+             && last1 == INSTR_TARGET_LOCAL
+             && last2 == INSTR_ASSIGN
+             && last3 == INSTR_POP_STACK_POS
+             &&     c == INSTR_POP
+        ) {
+                int i;
+
+                vvX(state.code); // POP_STACK_POS
+                vvX(state.code); // ASSIGN
+                memcpy(&i, vZ(state.code) - sizeof i, sizeof i);
+                vN(state.code) -= sizeof i;
+                vvX(state.code); // TARGET_LOCAL
+                vvX(state.code); // SAVE_STACK_POS
+
+                avP(state.code, INSTR_ASSIGN_LOCAL);
+                emit_int(ty, i);
+
+                last0 = -1;
+                last1 = -1;
+                last2 = -1;
+                last3 = INSTR_ASSIGN_LOCAL;
+        } else {
+                avP(state.code, (char)c);
+
+                last0 = last1;
+                last1 = last2;
+                last2 = last3;
+                last3 = c;
+        }
 }
 
 static int
@@ -3923,9 +3962,7 @@ emit_function(Ty *ty, Expr const *e)
                 emit_instr(ty, INSTR_MAKE_GENERATOR);
                 emit_statement(ty, body, false);
                 LABEL(end);
-                emit_instr(ty, INSTR_TAG);
-                emit_int(ty, TAG_NONE);
-                emit_instr(ty, INSTR_YIELD);
+                emit_instr(ty, INSTR_YIELD_NONE);
                 emit_instr(ty, INSTR_POP);
                 JUMP(end);
                 patch_jumps_to(&state.generator_returns, end.off);
@@ -4166,13 +4203,9 @@ emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
 
         for (int i = 0; i < n; ++i) {
                 emit_expression(ty, es[i]);
-                if (wrap) {
-                        emit_instr(ty, INSTR_TAG_PUSH);
-                        emit_int(ty, TAG_SOME);
-                }
         }
 
-        emit_instr(ty, INSTR_YIELD);
+        emit_instr(ty, wrap ? INSTR_YIELD_SOME : INSTR_YIELD);
 }
 
 static void
@@ -6726,6 +6759,95 @@ is_proc_def(Stmt const *s)
                s->type == STATEMENT_OPERATOR_DEFINITION;
 }
 
+static bool
+is_arith(Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_PLUS:
+        case EXPRESSION_MINUS:
+        case EXPRESSION_STAR:
+        case EXPRESSION_DIV:
+        case EXPRESSION_PERCENT:
+        case EXPRESSION_BIT_OR:
+        case EXPRESSION_BIT_AND:
+        case EXPRESSION_SHL:
+        case EXPRESSION_SHR:
+                return true;
+        }
+
+        return false;
+}
+
+static Expr *
+zfold(Expr *e, Scope *scope, void *ctx)
+{
+        if (
+                e->type == EXPRESSION_PREFIX_MINUS
+             && e->operand->type == EXPRESSION_INTEGER
+        ) {
+                e->type = EXPRESSION_INTEGER;
+                e->integer = -e->operand->integer;
+                return e;
+        }
+
+        if (
+                e->type == EXPRESSION_UNARY_OP
+             && M_ID(e->uop) == OP_COMPL
+             && e->operand->type == EXPRESSION_INTEGER
+        ) {
+                e->type = EXPRESSION_INTEGER;
+                e->integer = ~e->operand->integer;
+                return e;
+        }
+
+        if (!is_arith(e)) {
+                return e;
+        }
+
+        if (
+                e->left->type != EXPRESSION_INTEGER
+             || e->right->type != EXPRESSION_INTEGER
+        ) {
+                return e;
+        }
+
+        intmax_t a = e->left->integer;
+        intmax_t b = e->right->integer;
+
+        switch (e->type) {
+        case EXPRESSION_PLUS:     e->integer = a + b;  break;
+        case EXPRESSION_MINUS:    e->integer = a - b;  break;
+        case EXPRESSION_STAR:     e->integer = a * b;  break;
+        case EXPRESSION_DIV:      e->integer = a / b;  break;
+        case EXPRESSION_PERCENT:  e->integer = a % b;  break;
+        case EXPRESSION_BIT_OR:   e->integer = a | b;  break;
+        case EXPRESSION_BIT_AND:  e->integer = a & b;  break;
+        case EXPRESSION_SHL:      e->integer = a << b; break;
+        case EXPRESSION_SHR:      e->integer = a >> b; break;
+        default: UNREACHABLE();
+        }
+
+        e->type = EXPRESSION_INTEGER;
+
+        return e;
+}
+
+static Stmt *
+opt(Stmt *stmt)
+{
+        VisitorSet visitor = visit_identitiy(ty);
+
+        visitor.e_post = zfold;
+
+        return visit_statement(
+                ty,
+                stmt,
+                scope_new(ty, "(opt)", state.global, false),
+                &visitor
+        );
+
+}
+
 static void
 compile(Ty *ty, char const *source)
 {
@@ -6733,6 +6855,10 @@ compile(Ty *ty, char const *source)
         if (p == NULL) {
                 Error = parse_error(ty);
                 longjmp(jb, 1);
+        }
+
+        for (int i = 0; p[i] != NULL; ++i) {
+                p[i] = opt(p[i]);
         }
 
         statement_vector expanded = {0};
@@ -10760,9 +10886,11 @@ DumpProgram(
                         READVALUE(n);
                         break;
                 CASE(TARGET_GLOBAL)
+                CASE(ASSIGN_GLOBAL)
                         READVALUE(n);
                         break;
                 CASE(TARGET_LOCAL)
+                CASE(ASSIGN_LOCAL)
                         READVALUE(n);
                         break;
                 CASE(TARGET_REF)
@@ -10952,6 +11080,8 @@ DumpProgram(
                 CASE(TO_STRING)
                         break;
                 CASE(YIELD)
+                CASE(YIELD_SOME)
+                CASE(YIELD_NONE)
                         break;
                 CASE(MAKE_GENERATOR)
                         break;

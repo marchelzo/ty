@@ -543,13 +543,13 @@ DoGC(Ty *ty)
                 if (MyLock == MyGroup->ThreadLocks.items[i]) {
                         continue;
                 }
-                //GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
+                GCLOG("Trying to take lock for thread %llu: %p", (long long unsigned)MyGroup->ThreadList.items[i], (void *)MyGroup->ThreadLocks.items[i]);
                 TyMutexLock(MyGroup->ThreadLocks.items[i]);
                 if (TryFlipTo(MyGroup->ThreadStates.items[i], true)) {
-                        //GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        GCLOG("Thread %llu is running", (long long unsigned)MyGroup->ThreadList.items[i]);
                         runningThreads[nRunning++] = i;
                 } else {
-                        //GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
+                        GCLOG("Thread %llu is blocked", (long long unsigned)MyGroup->ThreadList.items[i]);
                         blockedThreads[nBlocked++] = i;
                 }
         }
@@ -566,7 +566,7 @@ DoGC(Ty *ty)
         TyBarrierWait(&MyGroup->GCBarrierStart);
 
         for (int i = 0; i < nBlocked; ++i) {
-                //GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                GCLOG("Marking thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 MarkStorage(ty, &MyGroup->ThreadStorages.items[blockedThreads[i]]);
         }
 
@@ -591,7 +591,7 @@ DoGC(Ty *ty)
         MyGroup->WantGC = false;
 
         for (int i = 0; i < nBlocked; ++i) {
-                //GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
+                GCLOG("Sweeping thread %llu storage from thread %llu", (long long unsigned)MyGroup->ThreadList.items[blockedThreads[i]], TID);
                 GCSweep(
                         ty,
                         MyGroup->ThreadStorages.items[blockedThreads[i]].allocs,
@@ -1766,7 +1766,7 @@ Start:
                         } else if (strict) {
                                 vAp(a, container.array->items[r.integer]);
                         } else {
-                                vAp(a, Some(ty, container.array->items[r.integer]));
+                                vAp(a, Some(container.array->items[r.integer]));
                         }
                 }
 
@@ -1814,7 +1814,7 @@ Start:
                         } else if (strict) {
                                 vAp(a, container.array->items[r.integer]);
                         } else {
-                                vAp(a, Some(ty, container.array->items[r.integer]));
+                                vAp(a, Some(container.array->items[r.integer]));
                         }
                 }
 
@@ -1834,7 +1834,7 @@ Start:
                 } else if (strict) {
                         return container.array->items[subscript.integer];
                 } else {
-                        return Some(ty, container.array->items[subscript.integer]);
+                        return Some(container.array->items[subscript.integer]);
                 }
         default:
                 zP(
@@ -2315,7 +2315,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 if (vp == NULL) {
                         push(None);
                 } else {
-                        push(Some(ty, *vp));
+                        push(Some(*vp));
                 }
                 break;
         case VALUE_ARRAY:
@@ -3669,7 +3669,7 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(TARGET_GLOBAL)
-                TargetGlobal:
+TargetGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
                         while (Globals.count <= n)
@@ -3682,6 +3682,21 @@ vm_exec(Ty *ty, char *code)
                         READVALUE(n);
                         LOG("Targeting %d", n);
                         pushtarget(local(ty, n), NULL);
+                        break;
+                CASE(ASSIGN_GLOBAL)
+AssignGlobal:
+                        READVALUE(n);
+                        LOG("Global: %d", (int)n);
+                        while (Globals.count <= n)
+                                vec_push_unchecked(Globals, NIL);
+                        Globals.items[n] = pop();
+                        break;
+                CASE(ASSIGN_LOCAL)
+                        if (FRAMES.count == 0)
+                                goto AssignGlobal;
+                        READVALUE(n);
+                        LOG("Targeting %d", n);
+                        *local(ty, n) = pop();
                         break;
                 CASE(TARGET_REF)
                         READVALUE(n);
@@ -4417,6 +4432,7 @@ vm_exec(Ty *ty, char *code)
                         }
                         break;
                 CASE(YIELD)
+Yield:
                 {
                         Generator *gen = GetCurrentGenerator(ty);
 
@@ -4428,6 +4444,12 @@ vm_exec(Ty *ty, char *code)
 
                         break;
                 }
+                CASE(YIELD_NONE)
+                        push(None);
+                        goto Yield;
+                CASE(YIELD_SOME)
+                        *top() = Some(peek());
+                        goto Yield;
                 CASE(MAKE_GENERATOR)
                         v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));
 
@@ -6163,7 +6185,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
         case VALUE_DICT:
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;
                 STACK.count -= argc;
-                return (vp == NULL) ? None : Some(ty, *vp);
+                return (vp == NULL) ? None : Some(*vp);
         case VALUE_ARRAY:
                 r = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
@@ -6255,7 +6277,7 @@ vm_call(Ty *ty, Value const *f, int argc)
         case VALUE_DICT:
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;
                 STACK.count -= argc;
-                return (vp == NULL) ? None : Some(ty, *vp);
+                return (vp == NULL) ? None : Some(*vp);
         case VALUE_ARRAY:
                 r = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
@@ -6522,9 +6544,11 @@ StepInstruction(char const *ip)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_GLOBAL)
+        CASE(ASSIGN_GLOBAL)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_LOCAL)
+        CASE(ASSIGN_LOCAL)
                 SKIPVALUE(n);
                 break;
         CASE(TARGET_REF)
@@ -6708,6 +6732,8 @@ StepInstruction(char const *ip)
         CASE(TO_STRING)
                 break;
         CASE(YIELD)
+        CASE(YIELD_SOME)
+        CASE(YIELD_NONE)
                 break;
         CASE(MAKE_GENERATOR)
                 break;

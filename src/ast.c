@@ -211,6 +211,7 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
                 V(t->subscript);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_DYN_MEMBER_ACCESS:
                 V(t->object);
                 break;
         case EXPRESSION_TUPLE:
