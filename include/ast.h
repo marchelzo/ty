@@ -157,6 +157,8 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(SPECIAL_STRING),                                                            \
         X(FUNCTION_CALL),                                                             \
         X(MEMBER_ACCESS),                                                             \
+        X(DYN_MEMBER_ACCESS),                                                         \
+        X(DYN_METHOD_CALL),                                                           \
         X(MODULE),                                                                    \
         X(NAMESPACE),                                                                 \
         X(SELF_ACCESS),                                                               \
@@ -413,9 +415,13 @@ struct expression {
                 struct {
                         struct expression *object;
                         union {
+                                Expr *member;
                                 char *member_name;
                                 struct {
-                                        char const *method_name;
+                                        union {
+                                                char const *method_name;
+                                                Expr *method;
+                                        };
                                         expression_vector method_args;
                                         expression_vector mconds;
                                         expression_vector method_kwargs;

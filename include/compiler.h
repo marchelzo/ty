@@ -195,6 +195,9 @@ bool
 compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope);
 
 void
+CompilerDoUse(Ty *ty, Stmt *s, Scope *scope);
+
+void
 compiler_clear_location(Ty *ty);
 
 char *
@@ -343,6 +346,13 @@ bool
 IsTopLevel(Symbol const *sym);
 
 char const *
-DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end);
+DumpProgram(
+        Ty *ty,
+        byte_vector *out,
+        char const *name,
+        char const *code,
+        char const *end,
+        bool incl_sub_fns
+);
 
 #endif

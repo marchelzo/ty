@@ -194,9 +194,6 @@ emit_spread(Ty *ty, Expr const *e, bool nils);
 static void
 compile(Ty *ty, char const *source);
 
-char const *
-DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end);
-
 #define X(t) #t
 static char const *ExpressionTypeNames[] = {
         TY_EXPRESSION_TYPES
@@ -1952,6 +1949,8 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 symbolize_expression(ty, scope, target->container);
                 symbolize_expression(ty, scope, target->subscript);
                 break;
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                symbolize_expression(ty, scope, target->member);
         case EXPRESSION_MEMBER_ACCESS:
                 symbolize_expression(ty, scope, target->object);
                 break;
@@ -2673,9 +2672,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->slice.j);
                 symbolize_expression(ty, scope, e->slice.k);
                 break;
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                symbolize_expression(ty, scope, e->member);
         case EXPRESSION_MEMBER_ACCESS:
                 symbolize_expression(ty, scope, e->object);
                 break;
+        case EXPRESSION_DYN_METHOD_CALL:
+                symbolize_expression(ty, scope, e->method);
         case EXPRESSION_METHOD_CALL:
                 symbolize_expression(ty, scope, e->object);
                 for (size_t i = 0;  i < e->method_args.count; ++i)
@@ -2846,11 +2849,56 @@ End:
         RestoreContext(ty, ctx);
 }
 
+void
+CompilerDoUse(Ty *ty, Stmt *s, Scope *scope)
+{
+        void       *use;
+        char const *conflict;
+
+        switch (
+                resolve_name(
+                        ty,
+                        scope,
+                        &s->use.name,
+                        &use
+                )
+        ) {
+        case TY_NAME_VARIABLE:
+                scope_insert(ty, scope, use);
+                break;
+        case TY_NAME_MODULE:
+        case TY_NAME_NAMESPACE:
+                conflict = scope_copy_public(ty, scope, use, false);
+                if (conflict != NULL) {
+                        fail(
+                                ty,
+                                "%suse%s imports conflicting symbol %s%s%s",
+                                TERM(95),
+                                TERM(0),
+                                TERM(93),
+                                conflict,
+                                TERM(0)
+                        );
+                }
+                break;
+        case TY_NAME_NONE:
+                fail(
+                        ty,
+                        "%suse%s references undefined name %s%s%s",
+                        TERM(95),
+                        TERM(0),
+                        TERM(93),
+                        use,
+                        TERM(0)
+                );
+        default:
+                UNREACHABLE("resolve_name(): unrecognized return value");
+        }
+}
+
 static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 {
-        void                 *use;
-        char const      *conflict;
         Scope           *subscope;
         ClassDefinition       *cd;
 
@@ -2872,45 +2920,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 import_module(ty, s);
                 break;
         case STATEMENT_USE:
-                switch (
-                        resolve_name(
-                                ty,
-                                scope,
-                                &s->use.name,
-                                &use
-                        )
-                ) {
-                case TY_NAME_VARIABLE:
-                        scope_insert(ty, scope, use);
-                        break;
-                case TY_NAME_MODULE:
-                case TY_NAME_NAMESPACE:
-                        conflict = scope_copy_public(ty, scope, use, false);
-                        if (conflict != NULL) {
-                                fail(
-                                        ty,
-                                        "%suse%s imports conflicting symbol %s%s%s",
-                                        TERM(95),
-                                        TERM(0),
-                                        TERM(93),
-                                        conflict,
-                                        TERM(0)
-                                );
-                        }
-                        break;
-                case TY_NAME_NONE:
-                        fail(
-                                ty,
-                                "%suse%s references undefined name %s%s%s",
-                                TERM(95),
-                                TERM(0),
-                                TERM(93),
-                                use,
-                                TERM(0)
-                        );
-                default:
-                        UNREACHABLE("resolve_name(): unrecognized return value");
-                }
+                CompilerDoUse(ty, s, scope);
                 break;
         case STATEMENT_DEFER:
                 if (state.func == NULL) {
@@ -3483,6 +3493,47 @@ inline static JumpLabel
 }
 
 static void
+fail_match_if_not(Ty *ty, Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_LT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JGE);
+                break;
+        case EXPRESSION_LEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JGT);
+                break;
+        case EXPRESSION_GT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JLE);
+                break;
+        case EXPRESSION_GEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JLT);
+                break;
+        case EXPRESSION_DBL_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JNE);
+                break;
+        case EXPRESSION_NOT_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JEQ);
+                break;
+        default:
+                emit_expression(ty, e);
+                FAIL_MATCH_IF(JUMP_IF_NOT);
+                break;
+        }
+}
+
+static void
 emit_constraint(Ty *ty, Expr const *c)
 {
         JumpPlaceholder sc;
@@ -3906,13 +3957,8 @@ static void
 emit_and(Ty *ty, Expr const *left, Expr const *right)
 {
         emit_expression(ty, left);
-        emit_instr(ty, INSTR_DUP);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, left_false);
-
-        emit_instr(ty, INSTR_POP);
+        PLACEHOLDER_JUMP(INSTR_JUMP_AND, left_false);
         emit_expression(ty, right);
-
         PATCH_JUMP(left_false);
 }
 
@@ -3920,13 +3966,8 @@ static void
 emit_or(Ty *ty, Expr const *left, Expr const *right)
 {
         emit_expression(ty, left);
-        emit_instr(ty, INSTR_DUP);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF, left_true);
-
-        emit_instr(ty, INSTR_POP);
+        PLACEHOLDER_JUMP(INSTR_JUMP_OR, left_true);
         emit_expression(ty, right);
-
         PATCH_JUMP(left_true);
 }
 
@@ -3934,16 +3975,8 @@ static void
 emit_coalesce(Ty *ty, Expr const *left, Expr const *right)
 {
         emit_expression(ty, left);
-        emit_instr(ty, INSTR_DUP);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NIL, left_nil);
-        PLACEHOLDER_JUMP(INSTR_JUMP, left_good);
-
-        PATCH_JUMP(left_nil);
-
-        emit_instr(ty, INSTR_POP);
+        PLACEHOLDER_JUMP(INSTR_JUMP_WTF, left_good);
         emit_expression(ty, right);
-
         PATCH_JUMP(left_good);
 }
 
@@ -5147,18 +5180,11 @@ emit_dict_compr2(Ty *ty, Expr const *e)
         emit_expression(ty, e->dcompr.iter);
 
         LABEL(start);
-        emit_instr(ty, INSTR_SAVE_STACK_POS);
-        emit_instr(ty, INSTR_SENTINEL);
-        emit_instr(ty, INSTR_CLEAR_RC);
-        emit_instr(ty, INSTR_GET_NEXT);
-        emit_instr(ty, INSTR_READ_INDEX);
+        emit_instr(ty, INSTR_LOOP_ITER);
+        PLACEHOLDER_JUMP(INSTR_LOOP_CHECK, done);
+        emit_int(ty, (int)e->dcompr.pattern->es.count);
 
         add_location(ty, e, start.off, state.code.count);
-
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
-
-        emit_instr(ty, INSTR_FIX_TO);
-        emit_int(ty, (int)e->dcompr.pattern->es.count);
 
         for (int i = 0; i < e->dcompr.pattern->es.count; ++i) {
                 emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -5232,18 +5258,20 @@ emit_array_compr2(Ty *ty, Expr const *e)
         emit_expression(ty, e->compr.iter);
 
         LABEL(start);
-        emit_instr(ty, INSTR_SAVE_STACK_POS);
-        emit_instr(ty, INSTR_SENTINEL);
-        emit_instr(ty, INSTR_CLEAR_RC);
-        emit_instr(ty, INSTR_GET_NEXT);
-        emit_instr(ty, INSTR_READ_INDEX);
+        emit_instr(ty, INSTR_LOOP_ITER);
+        //emit_instr(ty, INSTR_SAVE_STACK_POS);
+        //emit_instr(ty, INSTR_SENTINEL);
+        //emit_instr(ty, INSTR_CLEAR_RC);
+        //emit_instr(ty, INSTR_GET_NEXT);
+        //emit_instr(ty, INSTR_READ_INDEX);
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
+        //PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
+        PLACEHOLDER_JUMP(INSTR_LOOP_CHECK, done);
+
+        //emit_instr(ty, INSTR_FIX_TO);
+        emit_int(ty, (int)e->compr.pattern->es.count);
 
         add_location(ty, e, start.off, state.code.count);
-
-        emit_instr(ty, INSTR_FIX_TO);
-        emit_int(ty, (int)e->compr.pattern->es.count);
 
         for (int i = 0; i < e->compr.pattern->es.count; ++i) {
                 emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -5377,19 +5405,21 @@ emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
         emit_expression(ty, s->each.array);
 
         LABEL(start);
-        emit_instr(ty, INSTR_SAVE_STACK_POS);
-        emit_instr(ty, INSTR_SENTINEL);
-        emit_instr(ty, INSTR_CLEAR_RC);
-        emit_instr(ty, INSTR_GET_NEXT);
-        emit_instr(ty, INSTR_READ_INDEX);
+        emit_instr(ty, INSTR_LOOP_ITER);
+        //emit_instr(ty, INSTR_SAVE_STACK_POS);
+        //emit_instr(ty, INSTR_SENTINEL);
+        //emit_instr(ty, INSTR_CLEAR_RC);
+        //emit_instr(ty, INSTR_GET_NEXT);
+        //emit_instr(ty, INSTR_READ_INDEX);
 
 #ifndef TY_ENABLE_PROFILING
         add_location(ty, s->each.array, start.off, state.code.count);
 #endif
 
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
+        //PLACEHOLDER_JUMP(INSTR_JUMP_IF_NONE, done);
+        PLACEHOLDER_JUMP(INSTR_LOOP_CHECK, done);
 
-        emit_instr(ty, INSTR_FIX_TO);
+        //emit_instr(ty, INSTR_FIX_TO);
         emit_int(ty, (int)s->each.target->es.count);
 
         if (s->each.target->has_resources) {
@@ -5824,6 +5854,14 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_SPLAT:
                 emit_expression(ty, e->value);
                 break;
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                emit_expression(ty, e->object);
+                emit_expression(ty, e->member);
+                if (e->maybe)
+                        emit_instr(ty, INSTR_TRY_GET_MEMBER);
+                else
+                        emit_instr(ty, INSTR_GET_MEMBER);
+                break;
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 emit_expression(ty, e->object);
@@ -5896,6 +5934,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
 
                 break;
+        case EXPRESSION_DYN_METHOD_CALL:
         case EXPRESSION_METHOD_CALL:
                 if (is_variadic(e)) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -5915,7 +5954,13 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 for (size_t i = 0; i < e->method_kwargs.count; ++i) {
                         emit_expression(ty, e->method_kwargs.items[i]);
                 }
+
                 emit_expression(ty, e->object);
+
+                if (e->type == EXPRESSION_DYN_METHOD_CALL) {
+                        emit_expression(ty, e->method);
+                }
+
                 if (e->maybe)
                         emit_instr(ty, INSTR_TRY_CALL_METHOD);
                 else
@@ -5926,7 +5971,14 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         emit_int(ty, e->method_args.count);
                 }
 
-                emit_int(ty, (int)intern(&xD.members, e->method_name)->id);
+                emit_int(
+                        ty,
+                        (
+                                (e->type == EXPRESSION_DYN_METHOD_CALL)
+                              ? -1
+                              : (int)intern(&xD.members, e->method_name)->id
+                        )
+                );
 
                 emit_int(ty, e->method_kwargs.count);
                 for (size_t i = e->method_kws.count; i > 0; --i) {
@@ -7853,9 +7905,11 @@ tyexpr(Ty *ty, Expr const *e)
                 v.tags = tags_push(ty, 0, TyCall);
                 break;
         case EXPRESSION_METHOD_CALL:
+        case EXPRESSION_DYN_METHOD_CALL:
                 v = vTn(
                         "object", tyexpr(ty, e->function),
-                        "method", vSsz(e->method_name),
+                        "method", (e->type == EXPRESSION_METHOD_CALL) ? vSsz(e->method_name)
+                                                                      : tyexpr(ty, e->method),
                         "args", ARRAY(vA())
                 );
                 for (int i = 0; i < e->method_args.count; ++i) {
@@ -7889,22 +7943,27 @@ tyexpr(Ty *ty, Expr const *e)
                                 )
                         );
                 }
+
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(ty, 0, TyMethodCall);
+                v.tags = tags_push(
+                        ty,
+                        0,
+                        (e->type == EXPRESSION_METHOD_CALL) ? TyMethodCall : TyDynMethodCall
+                );
+
+                break;
+        case EXPRESSION_DYN_MEMBER_ACCESS:
+                v = vT(2);
+                v.items[0] = tyexpr(ty, e->object);
+                v.items[1] = tyexpr(ty, e->member);
+                v.type |= VALUE_TAGGED;
+                v.tags = tags_push(ty, 0, TyDynMemberAccess);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
                 v = vT(2);
                 v.items[0] = tyexpr(ty, e->object);
-                if (1 & (uintptr_t)e->member_name) {
-                        Expr *hole = (Expr *)(e->member_name - 1);
-                        if (ty->stack.count > hole->integer)
-                                v.items[1] = *vm_get(ty, hole->integer);
-                        else
-                                v.items[1] = xSz(":(");
-                } else {
-                        v.items[1] = vSsz(e->member_name);
-                }
+                v.items[1] = vSsz(e->member_name);
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, 0, TyMemberAccess);
                 break;
@@ -10361,7 +10420,14 @@ NextCaption(ProgramAnnotation *annotation, char const *pc)
 }
 
 char const *
-DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char const *end)
+DumpProgram(
+        Ty *ty,
+        byte_vector *out,
+        char const *name,
+        char const *code,
+        char const *end,
+        bool incl_sub_fns
+)
 {
 #define CASE(i) case INSTR_ ## i:
 #define PRINTVALUE(x)                                                                      \
@@ -10406,7 +10472,8 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                                 out,
                                 annotations.items[i].name,
                                 (char const *)annotations.items[i].start,
-                                (char const *)annotations.items[i].end
+                                (char const *)annotations.items[i].end,
+                                incl_sub_fns
                         );
                 }
                 return end;
@@ -10588,6 +10655,17 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         READVALUE(n);
                         break;
                 CASE(JUMP_IF_NIL)
+                        READVALUE(n);
+                        break;
+                CASE(JLT)
+                CASE(JLE)
+                CASE(JGT)
+                CASE(JGE)
+                CASE(JEQ)
+                CASE(JNE)
+                CASE(JUMP_OR)
+                CASE(JUMP_AND)
+                CASE(JUMP_WTF)
                         READVALUE(n);
                         break;
                 CASE(TARGET_GLOBAL)
@@ -10809,6 +10887,12 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         break;
                 CASE(GET_NEXT)
                         break;
+                CASE(LOOP_ITER)
+                        break;
+                CASE(LOOP_CHECK);
+                        READVALUE(n);
+                        READVALUE(n);
+                        break;
                 CASE(ARRAY_COMPR)
                         break;
                 CASE(DICT_COMPR)
@@ -10875,6 +10959,9 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                 CASE(TRY_MEMBER_ACCESS)
                 CASE(MEMBER_ACCESS)
                         READMEMBER(n);
+                        break;
+                CASE(TRY_GET_MEMBER)
+                CASE(GET_MEMBER)
                         break;
                 CASE(SLICE)
                 CASE(SUBSCRIPT)
@@ -10980,7 +11067,10 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                         LOG("Bound: %d", bound);
                         LOG("ncaps: %d", ncaps);
 
-                        if (DEBUGGING && (ty->ip > c + hs + size)) {
+                        if (
+                                !incl_sub_fns
+                             || (DEBUGGING && (ty->ip > c + hs + size))
+                        ) {
                                 c += hs + size;
                         } else {
                                 char signature[256];
@@ -10994,7 +11084,14 @@ DumpProgram(Ty *ty, byte_vector *out, char const *name, char const *code, char c
                                 );
 
                                 dump(out, " %s%s%s", TERM(96), signature, TERM(0));
-                                c = DumpProgram(ty, &after, signature, c + hs, c + hs + size);
+                                c = DumpProgram(
+                                        ty,
+                                        &after,
+                                        signature,
+                                        c + hs,
+                                        c + hs + size,
+                                        incl_sub_fns
+                                );
                         }
 
                         for (int i = 0; i < ncaps; ++i) {

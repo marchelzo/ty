@@ -118,11 +118,13 @@ struct value;
         X(ArrayItem)            \
         X(Call)                 \
         X(MethodCall)           \
+        X(DynMethodCall)        \
         X(TagPattern)           \
         X(Tagged)               \
         X(PatternAlias)         \
         X(ChoicePattern)        \
         X(MemberAccess)         \
+        X(DynMemberAccess)      \
         X(Subscript)            \
         X(Slice)                \
         X(NotNil)               \

@@ -258,6 +258,10 @@ static Expr WildCard = {
         .identifier = "_"
 };
 
+static Stmt NullStatement = {
+        .type = STATEMENT_NULL
+};
+
 // Maybe try to use this instead, might be cleaner.
 /*
 static enum {
@@ -3916,6 +3920,7 @@ static Expr *
 infix_member_access(Ty *ty, Expr *left)
 {
         Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_MEMBER_ACCESS;
 
         e->start = left->start;
         e->maybe = T0 == TOKEN_DOT_MAYBE;
@@ -3939,13 +3944,15 @@ infix_member_access(Ty *ty, Expr *left)
 
         e->object = left;
 
-        char *id;
-        if (tok()->type == '$$') {
-                id = 1 + (char *)parse_expr(ty, 99);
+        if (tok()->type == '{') {
+                next();
+                e->member = parse_expr(ty, 1);
+                consume('}');
+                e->type = EXPRESSION_DYN_MEMBER_ACCESS;
         } else {
                 expect(TOKEN_IDENTIFIER);
 
-                id = tok()->identifier;
+                char *id = tok()->identifier;
 
                 if (is_fun_macro(ty, tok()->module, id)) {
                         Expr *macro = prefix_identifier(ty);
@@ -3965,25 +3972,28 @@ infix_member_access(Ty *ty, Expr *left)
                         return typarse(ty, macro, left, &macro->start, &token(-1)->end);
                 }
 
-                if (1 & (uintptr_t)id) {
-                        id = sclonea(ty, id);
-                }
+                e->member_name = id;
 
                 consume(TOKEN_IDENTIFIER);
         }
 
 
-        if (!have_without_nl(ty, '(') && !have_without_nl(ty, '$') && !have_without_nl(ty, TOKEN_AT)) {
-                e->type = EXPRESSION_MEMBER_ACCESS;
-                e->member_name = id;
+        if (
+                !have_without_nl(ty, '(')
+             && !have_without_nl(ty, '$')
+             && !have_without_nl(ty, TOKEN_AT)
+        ) {
                 e->end = End;
                 return e;
+        } else {
+                e->method_name = e->member_name;
+
+                e->type = (e->type == EXPRESSION_MEMBER_ACCESS)
+                        ? EXPRESSION_METHOD_CALL
+                        : EXPRESSION_DYN_METHOD_CALL;
+
+                return parse_method_call(ty, e);
         }
-
-        e->method_name = id;
-        e->type = EXPRESSION_METHOD_CALL;
-
-        return parse_method_call(ty, e);
 }
 
 static Expr *
@@ -4646,7 +4656,7 @@ definition_lvalue(Ty *ty, Expr *e)
 static Expr *
 patternize(Ty *ty, Expr *e)
 {
-        try_symbolize_application(ty, NULL, e);
+        try_symbolize_application(ty, ty->pscope, e);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -4701,7 +4711,7 @@ patternize(Ty *ty, Expr *e)
 static Expr *
 assignment_lvalue(Ty *ty, Expr *e)
 {
-        try_symbolize_application(ty, NULL, e);
+        try_symbolize_application(ty, ty->pscope, e);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -5434,12 +5444,8 @@ parse_continue_statement(Ty *ty)
 static Stmt *
 parse_null_statement(Ty *ty)
 {
-        Stmt *s = mkstmt(ty);
-        s->type = STATEMENT_NULL;
-
         consume(';');
-
-        return s;
+        return &NullStatement;
 }
 
 inline static bool
@@ -5542,11 +5548,15 @@ parse_block(Ty *ty)
         block->type = STATEMENT_BLOCK;
         vec_init(block->statements);
 
+        ty->pscope = scope_new(ty, "(block)", ty->pscope, false);
+
         while (T0 != '}') {
                 Stmt *s = parse_statement(ty, -1);
                 s->end = End;
                 avP(block->statements, s);
         }
+
+        ty->pscope = ty->pscope->parent;
 
         consume('}');
 
@@ -6121,7 +6131,12 @@ Keyword:
         case KEYWORD_BREAK:    return parse_break_statement(ty);
         case KEYWORD_CONTINUE: return parse_continue_statement(ty);
         case KEYWORD_TRY:      return parse_try(ty);
-        case KEYWORD_USE:      return parse_use(ty);
+
+        case KEYWORD_USE:
+                s = parse_use(ty);
+                CompilerDoUse(ty, s, ty->pscope);
+                return s;
+
         default:               goto Expression;
         }
 
@@ -6265,6 +6280,8 @@ parse_ex(
 
         lex_save(ty, &CtxCheckpoint);
         setctx(ty, LEX_PREFIX);
+
+        ty->pscope = scope_new(ty, "(parse)", TyCompilerState(ty)->global, false);
 
         if (setjmp(jb) != 0) {
         Error:
