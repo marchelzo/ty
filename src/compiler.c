@@ -32,6 +32,8 @@
 #define PLACEHOLDER_JUMP(t, name) JumpPlaceholder name = (PLACEHOLDER_JUMP)(ty, (t))
 #define LABEL(name) JumpLabel name = (LABEL)(ty)
 
+#define PLACEHOLDER_JUMP_IF_NOT(e, name) JumpPlaceholder name = (PLACEHOLDER_JUMP_IF_NOT)(ty, (e))
+#define PLACEHOLDER_JUMP_IF(e, name)     JumpPlaceholder name = (PLACEHOLDER_JUMP_IF)    (ty, (e))
 
 #define PATCH_OFFSET(i)                                           \
         do {                                                      \
@@ -3479,6 +3481,74 @@ inline static JumpPlaceholder
         return jmp;
 }
 
+static JumpPlaceholder
+(PLACEHOLDER_JUMP_IF)(Ty *ty, Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_LT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JLT);
+        case EXPRESSION_LEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JLE);
+        case EXPRESSION_GT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JGT);
+        case EXPRESSION_GEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JGE);
+        case EXPRESSION_DBL_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JEQ);
+        case EXPRESSION_NOT_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JNE);
+        default:
+                emit_expression(ty, e);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF);
+        }
+}
+
+static JumpPlaceholder
+(PLACEHOLDER_JUMP_IF_NOT)(Ty *ty, Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_LT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JGE);
+        case EXPRESSION_LEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JGT);
+        case EXPRESSION_GT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JLE);
+        case EXPRESSION_GEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JLT);
+        case EXPRESSION_DBL_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JNE);
+        case EXPRESSION_NOT_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JEQ);
+        default:
+                emit_expression(ty, e);
+                return (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
+        }
+}
+
 inline static JumpLabel
 (LABEL)(Ty *ty)
 {
@@ -3490,6 +3560,47 @@ inline static JumpLabel
         annotate(":L%d", label.label + 1);
 
         return label;
+}
+
+static void
+fail_match_if(Ty *ty, Expr const *e)
+{
+        switch (e->type) {
+        case EXPRESSION_LT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JLT);
+                break;
+        case EXPRESSION_LEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JLE);
+                break;
+        case EXPRESSION_GT:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JGT);
+                break;
+        case EXPRESSION_GEQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JGE);
+                break;
+        case EXPRESSION_DBL_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JEQ);
+                break;
+        case EXPRESSION_NOT_EQ:
+                emit_expression(ty, e->left);
+                emit_expression(ty, e->right);
+                FAIL_MATCH_IF(JNE);
+                break;
+        default:
+                emit_expression(ty, e);
+                FAIL_MATCH_IF(JUMP_IF);
+                break;
+        }
 }
 
 static void
@@ -3563,14 +3674,6 @@ emit_constraint(Ty *ty, Expr const *c)
         }
 }
 
-inline static void
-align_code_to(Ty *ty, size_t n)
-{
-        while (((uintptr_t)(state.code.items + state.code.count)) % (alignof (int)) != ((alignof (int)) - 1))
-                avP(state.code, 0x00);
-        avP(state.code, 0xFF);
-}
-
 static void
 add_annotation(Ty *ty, char const *name, uintptr_t start, uintptr_t end)
 {
@@ -3606,16 +3709,16 @@ PatchAnnotations(Ty *ty)
 static void
 emit_function(Ty *ty, Expr const *e)
 {
-        /*
-         * Save the current reference and bound-symbols vectors so we can
-         * restore them after compiling the current function.
-         */
+        // =====================================================================
+        //
+        // Save a bunch of function-related state so we can restore after this
+        //
         offset_vector selfs_save = state.selfs;
         vec_init(state.selfs);
+
         symbol_vector syms_save = state.bound_symbols;
         state.bound_symbols.items = e->bound_symbols.items;
         state.bound_symbols.count = e->bound_symbols.count;
-        state.function_depth += 1;
 
         LoopStates loops = state.loops;
         vec_init(state.loops);
@@ -3634,6 +3737,7 @@ emit_function(Ty *ty, Expr const *e)
 
         Expr *func_save = state.func;
         state.func = (Expr *)e;
+        // =====================================================================
 
         Symbol **caps        = e->scope->captured.items;
         int     *cap_indices = e->scope->cap_indices.items;
@@ -3665,6 +3769,7 @@ emit_function(Ty *ty, Expr const *e)
                 }
         }
 
+        // ====/ New function /=================================================
         emit_instr(ty, INSTR_FUNCTION);
 
         while (!IS_ALIGNED_FOR(int, vec_last(state.code) + 1)) {
@@ -3909,7 +4014,7 @@ emit_function(Ty *ty, Expr const *e)
         state.loops          = loops;
         state.tries          = tries;
         t                    = t_save;
-        state.function_depth -= 1;
+        // ===========/ Back to parent function /===============================
 
         LOG("state.fscope: %s", scope_name(ty, state.fscope));
 
@@ -4051,7 +4156,7 @@ emit_with(Ty *ty, Expr const *e)
 static void
 emit_yield(Ty *ty, Expr const * const *es, int n, bool wrap)
 {
-        if (state.function_depth == 0) {
+        if (state.func == NULL) {
                 fail(ty, "invalid yield expression (not inside of a function)");
         }
 
@@ -4238,8 +4343,7 @@ emit_for_loop(Ty *ty, Stmt const *s, bool want_result)
 
         JumpPlaceholder end_jump;
         if (s->for_loop.cond != NULL) {
-                emit_expression(ty, s->for_loop.cond);
-                end_jump = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
+                end_jump = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->for_loop.cond);
         }
 
         emit_statement(ty, s->for_loop.body, false);
@@ -4359,10 +4463,10 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 emit_try_match_(ty, pattern->left);
                 for (int i = 0; i < pattern->p_cond.count; ++i) {
                         struct condpart *p = pattern->p_cond.items[i];
-                        emit_expression(ty, p->e);
                         if (p->target == NULL) {
-                                FAIL_MATCH_IF(JUMP_IF_NOT);
+                                fail_match_if_not(ty, p->e);
                         } else {
+                                emit_expression(ty, p->e);
                                 emit_try_match_(ty, p->target);
                                 emit_instr(ty, INSTR_POP);
                         }
@@ -4571,8 +4675,7 @@ emit_try_match_(Ty *ty, Expr const *pattern)
                 emit_instr(ty, INSTR_DUP);
                 emit_expression(ty, pattern);
                 //emit_instr(ty, INSTR_CHECK_MATCH);
-                emit_instr(ty, INSTR_EQ);
-                FAIL_MATCH_IF(JUMP_IF_NOT);
+                FAIL_MATCH_IF(JNE);
                 need_loc = true;
         }
 
@@ -4597,8 +4700,7 @@ emit_catch(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wa
         emit_try_match(ty, pattern);
 
         if (cond != NULL) {
-                emit_expression(ty, cond);
-                FAIL_MATCH_IF(JUMP_IF_NOT);
+                fail_match_if_not(ty, cond);
         }
 
         emit_instr(ty, INSTR_POP_STACK_POS);
@@ -4652,8 +4754,7 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         emit_try_match(ty, pattern);
 
         if (cond != NULL) {
-                emit_expression(ty, cond);
-                FAIL_MATCH_IF(JUMP_IF_NOT);
+                fail_match_if_not(ty, cond);
         }
 
         emit_instr(ty, INSTR_POP_STACK_POS);
@@ -4844,12 +4945,10 @@ emit_while(Ty *ty, Stmt const *s, bool want_result)
         for (int i = 0; i < s->While.parts.count; ++i) {
                 struct condpart *p = s->While.parts.items[i];
                 if (simple) {
-                        emit_expression(ty, p->e);
-                        FAIL_MATCH_IF(JUMP_IF_NOT);
+                        fail_match_if_not(ty, p->e);
                 } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
-                        emit_expression(ty, p->e);
-                        FAIL_MATCH_IF(JUMP_IF_NOT);
+                        fail_match_if_not(ty, p->e);
                         emit_instr(ty, INSTR_POP_STACK_POS);
                 } else {
                         if (p->target->has_resources && !has_resources) {
@@ -4924,12 +5023,10 @@ emit_if_not(Ty *ty, Stmt const *s, bool want_result)
         for (int i = 0; i < s->iff.parts.count; ++i) {
                 struct condpart *p = s->iff.parts.items[i];
                 if (simple) {
-                        emit_expression(ty, p->e);
-                        FAIL_MATCH_IF(JUMP_IF);
+                        fail_match_if(ty, p->e);
                 } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
-                        emit_expression(ty, p->e);
-                        FAIL_MATCH_IF(JUMP_IF);
+                        fail_match_if(ty, p->e);
                         emit_instr(ty, INSTR_POP_STACK_POS);
                 } else {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -5026,12 +5123,10 @@ emit_if(Ty *ty, Stmt const *s, bool want_result)
         for (int i = 0; i < s->iff.parts.count; ++i) {
                 struct condpart *p = s->iff.parts.items[i];
                 if (simple) {
-                        emit_expression(ty, p->e);
-                        FAIL_MATCH_IF(JUMP_IF_NOT);
+                        fail_match_if_not(ty, p->e);
                 } else if (p->target == NULL) {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
-                        emit_expression(ty, p->e);
-                        FAIL_MATCH_IF(JUMP_IF_NOT);
+                        fail_match_if_not(ty, p->e);
                         emit_instr(ty, INSTR_POP_STACK_POS);
                 } else {
                         emit_instr(ty, INSTR_SAVE_STACK_POS);
@@ -5195,8 +5290,7 @@ emit_dict_compr2(Ty *ty, Expr const *e)
 
         JumpPlaceholder cond_fail;
         if (e->dcompr.cond != NULL) {
-                emit_expression(ty, e->dcompr.cond);
-                cond_fail = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
+                cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->dcompr.cond);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
@@ -5282,8 +5376,7 @@ emit_array_compr2(Ty *ty, Expr const *e)
 
         JumpPlaceholder cond_fail;
         if (e->compr.cond != NULL) {
-                emit_expression(ty, e->compr.cond);
-                cond_fail = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
+                cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->compr.cond);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
@@ -5303,8 +5396,7 @@ emit_array_compr2(Ty *ty, Expr const *e)
 
         for (int i = e->elements.count - 1; i >= 0; --i) {
                 if (e->aconds.items[i] != NULL) {
-                        emit_expression(ty, e->aconds.items[i]);
-                        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
+                        PLACEHOLDER_JUMP_IF_NOT(e->aconds.items[i], skip);
                         emit_expression(ty, e->elements.items[i]);
                         PATCH_JUMP(skip);
                 } else {
@@ -5379,8 +5471,7 @@ emit_spread(Ty *ty, Expr const *e, bool nils)
 static void
 emit_conditional(Ty *ty, Expr const *e)
 {
-        emit_expression(ty, e->cond);
-        PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, otherwise);
+        PLACEHOLDER_JUMP_IF_NOT(e->cond, otherwise);
         emit_expression(ty, e->then);
         PLACEHOLDER_JUMP(INSTR_JUMP, end);
         PATCH_JUMP(otherwise);
@@ -5436,8 +5527,7 @@ emit_for_each2(Ty *ty, Stmt const *s, bool want_result)
 
         JumpPlaceholder should_stop;
         if (s->each.stop != NULL) {
-                emit_expression(ty, s->each.stop);
-                should_stop = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
+                should_stop = (PLACEHOLDER_JUMP_IF_NOT)(ty, s->each.stop);
         }
 
         PLACEHOLDER_JUMP(INSTR_JUMP, match);
@@ -5498,8 +5588,12 @@ check_multi(Expr *target, Expr const *e, int *n)
                 return (*n = 1), false;
 
         for (*n = 0; *n < e->es.count; ++*n) {
-                if (is_call(e->es.items[*n]) || e->es.items[*n]->type == EXPRESSION_SPREAD)
+                if (
+                        is_call(e->es.items[*n])
+                     || e->es.items[*n]->type == EXPRESSION_SPREAD
+                ) {
                         return true;
+                }
         }
 
         return *n == target->es.count;
@@ -5801,8 +5895,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_instr(ty, INSTR_SAVE_STACK_POS);
                 for (int i = 0; i < e->elements.count; ++i) {
                         if (e->aconds.items[i] != NULL) {
-                                emit_expression(ty, e->aconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
+                                PLACEHOLDER_JUMP_IF_NOT(e->aconds.items[i], skip);
                                 if (e->optional.items[i]) {
                                         emit_non_nil_expr(ty, e->elements.items[i], false);
                                 } else {
@@ -5898,8 +5991,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         if (e->args.items[i] == NULL) {
                                 continue;
                         } else if (e->fconds.items[i] != NULL) {
-                                emit_expression(ty, e->fconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
+                                PLACEHOLDER_JUMP_IF_NOT(e->fconds.items[i], skip);
                                 emit_expression(ty, e->args.items[i]);
                                 PATCH_JUMP(skip);
                         } else {
@@ -5943,8 +6035,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         if (e->method_args.items[i] == NULL) {
                                 continue;
                         } else if (e->mconds.items[i] != NULL) {
-                                emit_expression(ty, e->mconds.items[i]);
-                                PLACEHOLDER_JUMP(INSTR_JUMP_IF_NOT, skip);
+                                PLACEHOLDER_JUMP_IF_NOT(e->mconds.items[i], skip);
                                 emit_expression(ty, e->method_args.items[i]);
                                 PATCH_JUMP(skip);
                         } else {
