@@ -5416,12 +5416,6 @@ BadTupleMember:
         }
 }
 
-char const *
-vm_error(Ty *ty)
-{
-        return Error;
-}
-
 static void
 RunExitHooks(void)
 {
@@ -5513,7 +5507,6 @@ vm_init(Ty *ty, int ac, char **av)
 
         char *prelude = compiler_load_prelude(ty);
         if (prelude == NULL) {
-                Error = compiler_error(ty);
                 return false;
         }
 
@@ -5583,12 +5576,12 @@ Next:
         if (CompilationDepth(ty) > 1) {
                 dump(
                         &ErrorBuffer,
-                        "\n%s%sCompilation context:%s\n%s",
+                        "\n%s%sCompilation context:%s\n",
                         TERM(1),
                         TERM(34),
-                        TERM(0),
-                        CompilationTrace(ty)
+                        TERM(0)
                 );
+                CompilationTrace(ty, &ErrorBuffer);
         }
 
         Error = ErrorBuffer.items;
@@ -6018,7 +6011,6 @@ vm_load_program(Ty *ty, char const *source, char const *file)
         code = compiler_compile_source(ty, source, filename);
         if (code == NULL) {
                 filename = NULL;
-                Error = compiler_error(ty);
                 GC_RESUME();
                 return false;
         }
@@ -6998,7 +6990,7 @@ tdb_eval_hook(Ty *ty)
         }
 
         if (setjmp(TDB->ty->jb) != 0) {
-                fprintf(stderr, "Error while running tdb hook: %s\n", vm_error(TDB->ty));
+                fprintf(stderr, "Error while running tdb hook: %s\n", TyError(TDB->ty));
                 return;
         }
 

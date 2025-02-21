@@ -6867,7 +6867,7 @@ BUILTIN_FUNCTION(ty_disassemble)
                 end = NULL;
 
                 if (code == NULL) {
-                        snprintf(buffer, sizeof buffer, "%s", compiler_error(ty));
+                        snprintf(buffer, sizeof buffer, "%s", TyError(ty));
                         zP("disassemble(): %s\n=============================================================", buffer);
                 }
 
@@ -6933,7 +6933,7 @@ BUILTIN_FUNCTION(eval)
                 Stmt **prog = parse(ty, B.items + 1, "(eval)");
 
                 if (prog == NULL) {
-                        char const *msg = parse_error(ty);
+                        char const *msg = TyError(ty);
                         Value e = Err(ty, vSs(msg, strlen(msg)));
                         ReleaseArena(ty, old);
                         vmE(&e);
@@ -6944,7 +6944,7 @@ BUILTIN_FUNCTION(eval)
                 if (!compiler_symbolize_expression(ty, e, scope))
 E1:
                 {
-                        char const *msg = compiler_error(ty);
+                        char const *msg = TyError(ty);
                         Value e = Err(ty, vSs(msg, strlen(msg)));
                         ReleaseArena(ty, old);
                         vmE(&e);
@@ -6965,7 +6965,7 @@ E1:
                 if (e == NULL || !compiler_symbolize_expression(ty, e, scope))
 E2:
                 {
-                        char const *msg = compiler_error(ty);
+                        char const *msg = TyError(ty);
                         struct value e = Err(ty, vSs(msg, strlen(msg)));
                         vmE(&e);
                 }
@@ -7041,7 +7041,7 @@ BUILTIN_FUNCTION(ty_parse)
         CompileState compiler_state = PushCompilerState(ty, "(eval)");
 
         if (setjmp(cjb) != 0) {
-                char const *msg = compiler_error(ty);
+                char const *msg = TyError(ty);
 
                 result = Err(
                         ty,
@@ -7056,7 +7056,7 @@ BUILTIN_FUNCTION(ty_parse)
         cjb_save = compiler_swap_jb(ty, &cjb);
 
         if (!parse_ex(ty, B.items + 1, "(eval)", &prog, &stop, &tokens)) {
-                char const *msg = parse_error(ty);
+                char const *msg = TyError(ty);
 
                 if (tokens_key) {
                         vTokens = make_tokens(ty, &tokens);
@@ -7420,7 +7420,7 @@ BUILTIN_FUNCTION(tdb_eval)
 
         Stmt **prog = parse(ty, B.items + 1, "(eval)");
         if (prog == NULL) {
-                char const *msg = parse_error(ty);
+                char const *msg = TyError(ty);
                 Value error = Err(ty, vSsz(msg));
                 ReleaseArena(ty, old);
                 return error;
@@ -7447,7 +7447,7 @@ BUILTIN_FUNCTION(tdb_eval)
         *TDB->host = save;
 // =====================================================================
 
-        char const *msg = compiler_error(ty);
+        char const *msg = TyError(ty);
         Value error = Err(ty, vSsz(msg));
 
         ReleaseArena(ty, old);

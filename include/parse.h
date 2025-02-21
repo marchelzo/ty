@@ -7,9 +7,6 @@
 
 typedef vec(struct token) TokenVector;
 
-char const *
-parse_error(Ty *ty);
-
 struct statement **
 parse(Ty *ty, char const *source, char const *file);
 

@@ -853,17 +853,15 @@ error(Ty *ty, char const *fmt, ...)
         va_list ap;
         va_start(ap, fmt);
 
-        int sz = ERR_SIZE - 1;
-        char *err = ERR;
-        int n = snprintf(ERR, sz, "%s%sParseError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
+        dump(&ErrorBuffer, "%s%sParseError%s%s: ", TERM(1), TERM(31), TERM(22), TERM(39));
+        vdump(&ErrorBuffer, fmt, ap);
 
-        n += vsnprintf(err + n, sz - n, fmt, ap);
         va_end(ap);
 
         Location start = EStart;
         Location end = EEnd;
 
-        char buffer[512];
+        char buffer[1024];
 
         snprintf(
                 buffer,
@@ -889,9 +887,8 @@ error(Ty *ty, char const *fmt, ...)
                 where += 1;
         }
 
-        n += snprintf(
-                ERR + n,
-                sz - n,
+        dump(
+                &ErrorBuffer,
                 "\n\n%s near: ",
                 where
         );
@@ -919,9 +916,8 @@ error(Ty *ty, char const *fmt, ...)
         int length = end.s - start.s;
         int after = strcspn(end.s, "\n");
 
-        n += snprintf(
-                ERR + n,
-                sz - n,
+        dump(
+                &ErrorBuffer,
                 "%s%.*s%s%s%.*s%s%s%.*s%s",
                 TERM(32),
                 before,
@@ -937,9 +933,8 @@ error(Ty *ty, char const *fmt, ...)
                 TERM(39)
         );
 
-        n += snprintf(
-                ERR + n,
-                sz - n,
+        dump(
+                &ErrorBuffer,
                 "\n\t%*s%s%s",
                 before + 35,
                 "",
@@ -947,18 +942,18 @@ error(Ty *ty, char const *fmt, ...)
                 TERM(91)
         );
 
-        for (int i = 0; i < length && n < sz; ++i)
-                ERR[n++] = '^';
+        for (int i = 0; i < length; ++i) {
+                dump(&ErrorBuffer, "^");
+        }
 
-        n += snprintf(
-                ERR + n,
-                sz - n,
+        dump(
+                &ErrorBuffer,
                 "%s%s",
                 TERM(39),
                 TERM(22)
         );
 
-        LOG("Parse Error: %s", ERR);
+        LOG("Parse Error: %s", TyError(ty));
 End:
         longjmp(jb, 1);
 }
@@ -4656,7 +4651,7 @@ definition_lvalue(Ty *ty, Expr *e)
 static Expr *
 patternize(Ty *ty, Expr *e)
 {
-        try_symbolize_application(ty, ty->pscope, e);
+        try_symbolize_application(ty, NULL, e);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -4711,7 +4706,7 @@ patternize(Ty *ty, Expr *e)
 static Expr *
 assignment_lvalue(Ty *ty, Expr *e)
 {
-        try_symbolize_application(ty, ty->pscope, e);
+        try_symbolize_application(ty, NULL, e);
 
         switch (e->type) {
         case EXPRESSION_IDENTIFIER:
@@ -5548,7 +5543,7 @@ parse_block(Ty *ty)
         block->type = STATEMENT_BLOCK;
         vec_init(block->statements);
 
-        ty->pscope = scope_new(ty, "(block)", ty->pscope, false);
+        CompilerScopePush(ty);
 
         while (T0 != '}') {
                 Stmt *s = parse_statement(ty, -1);
@@ -5556,7 +5551,7 @@ parse_block(Ty *ty)
                 avP(block->statements, s);
         }
 
-        ty->pscope = ty->pscope->parent;
+        CompilerScopePop(ty);
 
         consume('}');
 
@@ -6134,7 +6129,7 @@ Keyword:
 
         case KEYWORD_USE:
                 s = parse_use(ty);
-                CompilerDoUse(ty, s, ty->pscope);
+                CompilerDoUse(ty, s, NULL);
                 return s;
 
         default:               goto Expression;
@@ -6156,12 +6151,6 @@ Expression:
         }
 
         return s;
-}
-
-char const *
-parse_error(Ty *ty)
-{
-        return ERR;
 }
 
 static void
@@ -6280,8 +6269,6 @@ parse_ex(
 
         lex_save(ty, &CtxCheckpoint);
         setctx(ty, LEX_PREFIX);
-
-        ty->pscope = scope_new(ty, "(parse)", TyCompilerState(ty)->global, false);
 
         if (setjmp(jb) != 0) {
         Error:

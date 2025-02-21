@@ -74,7 +74,6 @@ IS_ALIGNED_TO(void const *p, size_t align)
 #endif
 
 extern _Thread_local char ERR[ERR_SIZE];
-extern _Thread_local byte_vector ErrorBuffer;
 
 extern pcre_jit_stack *JITStack;
 enum {
