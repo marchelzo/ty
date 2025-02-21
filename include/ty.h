@@ -474,6 +474,8 @@ extern bool ColorProfile;
         X(TARGET_SUBSCRIPT),      \
         X(ASSIGN),                \
         X(MAYBE_ASSIGN),          \
+        X(ASSIGN_LOCAL),          \
+        X(ASSIGN_GLOBAL),         \
         X(ARRAY_REST),            \
         X(TUPLE_REST),            \
         X(RECORD_REST),           \
@@ -570,6 +572,8 @@ extern bool ColorProfile;
         X(DROP_STACK_POS),        \
         X(NEXT),                  \
         X(YIELD),                 \
+        X(YIELD_NONE),            \
+        X(YIELD_SOME),            \
         X(MAKE_GENERATOR),        \
         X(THROW),                 \
         X(RETHROW),               \

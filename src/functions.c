@@ -2698,13 +2698,12 @@ BUILTIN_FUNCTION(os_read)
 
 BUILTIN_FUNCTION(os_write)
 {
-        ASSERT_ARGC_2("os.write()", 2, 3);
+        char const *_name__ = "os.write()";
 
-        struct value file = ARG(0);
-        struct value data = ARG(1);
+        CHECK_ARGC(2, 3);
 
-        if (file.type != VALUE_INTEGER)
-                zP("the first argument to os.write() must be an integer");
+        int fd = INT_ARG(0);
+        Value data = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_INTEGER, VALUE_PTR);
 
         ssize_t n;
         void const *p;
@@ -2732,10 +2731,10 @@ BUILTIN_FUNCTION(os_write)
                 n = ARG(2).integer;
                 break;
         default:
-                zP("invalid argument to os.write()");
+                UNREACHABLE();
         }
 
-        struct value *all = NAMED("all");
+        Value *all = NAMED("all");
         bool write_all = all != NULL && value_truthy(ty, all);
 
         lGv(true);
@@ -2743,7 +2742,7 @@ BUILTIN_FUNCTION(os_write)
         size_t off = 0;
 
         while (n > 0) {
-                ssize_t r = write(file.integer, ((unsigned char const *)p) + off, n);
+                ssize_t r = write(fd, ((unsigned char const *)p) + off, n);
                 if (r < 0) {
                         lTk();
                         return INTEGER(r);
@@ -3202,7 +3201,7 @@ BUILTIN_FUNCTION(thread_join)
                 TyThreadJoin(t->t);
                 lTk();
 
-                return Some(ty, t->v);
+                return Some(t->v);
         } else {
                 zP("thread.join(): expected 2 arguments but got %d", argc);
         }
@@ -3465,7 +3464,7 @@ BUILTIN_FUNCTION(thread_recv)
 
         GCTakeOwnership(ty, (AllocList *)&v.as);
 
-        return Some(ty, v.v);
+        return Some(v.v);
 }
 
 BUILTIN_FUNCTION(thread_close)

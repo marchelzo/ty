@@ -322,7 +322,7 @@ value_show_color(Ty *ty, struct value const *v);
                 zP(                                                                 \
                         "%s: expected " #n0 " or " #n1 " arguments but got %d",     \
                         _name__,                                                    \
-                        argc,                                                       \
+                        argc                                                        \
                 );                                                                  \
         } else if (0)
 
@@ -396,6 +396,25 @@ checked_arg_3(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2)
                         TypeName(ty, t0),
                         TypeName(ty, t1),
                         TypeName(ty, t2),
+                        VSC(&arg)
+                );
+        }
+
+        return arg;
+}
+
+inline static Value
+checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2, int t3)
+{
+        if (arg.type != t0 && arg.type != t1 && arg.type != t2) {
+                zP(
+                        "%s: expected arg%d: %s | %s | %s | %s but got: %s",
+                        fun,
+                        i,
+                        TypeName(ty, t0),
+                        TypeName(ty, t1),
+                        TypeName(ty, t2),
+                        TypeName(ty, t3),
                         VSC(&arg)
                 );
         }
@@ -752,6 +771,8 @@ Some(Ty *ty, Value v)
         v.tags = tags_push(ty, v.tags, TAG_SOME);
         return v;
 }
+
+#define Some(x) (Some)(ty, x)
 
 inline static ptrdiff_t
 code_size_of(Value const *v)
