@@ -2096,7 +2096,7 @@ prefix_record(Ty *ty)
                 expect(TOKEN_IDENTIFIER);
                 avP(e->names, tok()->identifier);
 
-                if (T1 == ':') {
+                if (T1 == ':' || T1 == '=') {
                         next();
                         next();
                 } else if (
