@@ -220,7 +220,7 @@ struct generator {
         char *ip;
         Value f;
         int fp;
-        int ExecDepth;
+        int exec_depth;
         ValueVector frame;
         FrameStack frames;
         CallStack calls;
@@ -353,6 +353,8 @@ typedef struct {
 typedef struct ty {
         char *ip;
         char *code;
+
+        int exec_depth;
 
         ValueStack stack;
         CallStack calls;

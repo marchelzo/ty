@@ -1064,7 +1064,10 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
         if (v1->tags != v2->tags)
                 return false;
 
-        switch (PACK_TYPES(v1->type & ~VALUE_TAGGED, v2->type & ~VALUE_TAGGED)) {
+        int t0 = v1->type & ~VALUE_TAGGED;
+        int t1 = v2->type & ~VALUE_TAGGED;
+
+        switch (PACK_TYPES(t0, t1)) {
         case PAIR_OF(VALUE_INTEGER):
                 return v1->integer == v2->integer;
 
@@ -1114,6 +1117,10 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         case PAIR_OF(VALUE_NIL):
                 return true;
+        }
+
+        if ((t0 | t1) & VALUE_NIL) {
+                return false;
         }
 
         Value v = vm_try_2op(ty, OP_EQL, v1, v2);

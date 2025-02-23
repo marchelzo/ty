@@ -33,9 +33,6 @@ extern LexState *lxst;
 
 #define OperatorCharset "/=<~|!@%^&*-+>?.$"
 
-char const *
-lex_error(Ty *ty);
-
 void
 lex_init(Ty *ty, char const *file, char const *src);
 

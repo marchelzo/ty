@@ -50,9 +50,10 @@ error(Ty *ty, char const *fmt, ...)
 {
         va_list ap;
 
-        int n = snprintf(
-                ERR,
-                ERR_SIZE,
+        ErrorBuffer.count = 0;
+
+        dump(
+                &ErrorBuffer,
                 "%s%sSyntaxError%s%s %s%s%s:%s%d%s:%s%d%s: ",
                 TERM(1),
                 TERM(31),
@@ -69,11 +70,9 @@ error(Ty *ty, char const *fmt, ...)
                 TERM(39)
         );
 
-        if (n < ERR_SIZE) {
-                va_start(ap, fmt);
-                n += vsnprintf(ERR + n, ERR_SIZE - n, fmt, ap);
-                va_end(ap);
-        }
+        va_start(ap, fmt);
+        vdump(&ErrorBuffer, fmt, ap);
+        va_end(ap);
 
         char const *prefix = state.loc.s;
         while (prefix[-1] != '\n' && prefix[-1] != '\0')
@@ -82,9 +81,8 @@ error(Ty *ty, char const *fmt, ...)
         int before = state.loc.s - prefix;
         int after = (state.loc.s[0] == '\0') ? 0 : strcspn(state.loc.s + 1, "\n");
 
-        if (n < ERR_SIZE) n += snprintf(
-                ERR + n,
-                ERR_SIZE - n,
+        dump(
+                &ErrorBuffer,
                 "\n\n\tnear: %.*s%s%s%.1s%s%s%.*s\n",
                 before,
                 prefix,
@@ -97,9 +95,8 @@ error(Ty *ty, char const *fmt, ...)
                 state.loc.s + 1
         );
 
-        if (n < ERR_SIZE) n += snprintf(
-                ERR + n,
-                ERR_SIZE - n,
+        dump(
+                &ErrorBuffer,
                 "\t%*s%s^%s",
                 6 + before,
                 " ",
@@ -1410,12 +1407,6 @@ lex_token(Ty *ty, LexContext ctx)
         }
 
         return dotoken(ty, ctx);
-}
-
-char const *
-lex_error(Ty *ty)
-{
-        return ERR;
 }
 
 void
