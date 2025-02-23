@@ -3,6 +3,7 @@
 import llhttp2 (..)
 import os (..)
 import json
+import errno
 
 function urlDecode(s) {
     s.sub('+', ' ')
@@ -74,9 +75,11 @@ class HttpResponse {
 
         response.push(@body)
 
-        write(c, response, all: true)
+        ::write(c, response, all: true)
     }
 }
+
+tag SocketError;
 
 class HttpServer {
     init(*args, backlog=64) {
@@ -91,8 +94,15 @@ class HttpServer {
 
                 let Ok([addr]) = getaddrinfo(addr, port, AF_INET, SOCK_STREAM, 0)
 
-                bind(@sock, addr)
-                listen(@sock, backlog)
+                let err = bind(@sock, addr)
+                if err != 0 {
+                    throw SocketError("bind(): {errno.str(err)}")
+                }
+
+                let err = listen(@sock, backlog)
+                if err != 0 {
+                    throw SocketError("listen(): {errno.str(err)}")
+                }
             },
 
             [sock] => {

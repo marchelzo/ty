@@ -6,7 +6,7 @@ import ptr (null)
 
 pub class CURL {
     init(url, params) {
-        self.handle = init()
+        self.handle = ::init()
         self.url = curl.url.new()
         self.headers = null
         setopt(self.handle, CURLOPT_FOLLOWLOCATION, true)
@@ -61,9 +61,8 @@ pub class CURL {
     perform() {
         match curl.url.get(@url, curl.url.PART_URL, 0) {
             Ok(url) => {
-                dbg(url)
                 setopt(self.handle, CURLOPT_URL, url)
-                return perform(self.handle)
+                return ::perform(self.handle)
             },
 
             Err(rc) => {
