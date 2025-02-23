@@ -24,8 +24,8 @@ class SQLiteStatement : Iterable {
 
     exec() {
         if self.p {
-            let r = step(self.p)
-            finalize(self.p)
+            let r = ::step(self.p)
+            ::finalize(self.p)
             self.p = nil
             return r
         } else {
@@ -35,7 +35,7 @@ class SQLiteStatement : Iterable {
 
     step() {
         if self.p {
-            self.status = step(self.p)
+            self.status = ::step(self.p)
             return self.status
         } else {
             throw SQLiteError(SQLITE_MISUSE)
@@ -65,7 +65,7 @@ class SQLiteStatement : Iterable {
 
     finalize() {
         if @p {
-            let r = finalize(@p)
+            let r = ::finalize(@p)
             @p = nil
             if r != SQLITE_OK {
                 throw SQLiteError(r)
@@ -77,7 +77,7 @@ class SQLiteStatement : Iterable {
         if !self.p {
             throw SQLiteError(SQLITE_MISUSE)
         }
-        reset(self.p)
+        ::reset(self.p)
         return SQLiteRowIter(self, assoc)
     }
 
@@ -105,7 +105,7 @@ pub class SQLite {
 
     close() {
         if self.db {
-            close(self.db)
+            ::close(self.db)
             self.db = nil
         }
     }
@@ -129,12 +129,12 @@ pub class SQLite {
     }
 
     query(sql, *ps) {
-        if not let $s  = prepare(self.db, sql) {
+        if not let $s  = ::prepare(self.db, sql) {
             throw SQLiteError(error(self.db))
         }
 
         for p, i in ps {
-            match bind(s, i + 1, p) {
+            match ::bind(s, i + 1, p) {
                 SQLITE_OK => { },
                 e         => throw SQLiteError(e)
             }
@@ -144,11 +144,11 @@ pub class SQLite {
     }
 
     changes() {
-        changes(@db)
+        ::changes(@db)
     }
 
     totalChanges() {
-        totalChanges(@db)
+        ::totalChanges(@db)
     }
 
     exec(sql, *ps) {
@@ -156,6 +156,6 @@ pub class SQLite {
     }
 
     errorMessage() {
-        errorMessage(@db)
+        ::errorMessage(@db)
     }
 }
