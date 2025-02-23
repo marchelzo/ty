@@ -132,7 +132,6 @@ static char iter_fix[] = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE
 InternedNames NAMES;
 
 _Thread_local int EvalDepth = 0;
-_Thread_local int ExecDepth = 0;
 
 static ValueVector Globals;
 
@@ -1037,7 +1036,7 @@ co_yield_value(Ty *ty)
         SWAP(ValueVector, gen->to_drop, DROP_STACK);
         SWAP(TryStack, gen->try_stack, TRY_STACK);
         SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
-        SWAP(int, gen->ExecDepth, ExecDepth);
+        SWAP(int, gen->exec_depth, ty->exec_depth);
 
         uvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
 
@@ -1048,7 +1047,7 @@ co_yield_value(Ty *ty)
 
         IP = *vvX(CALLS);
 
-        if (gen->ExecDepth > 1) {
+        if (gen->exec_depth > 1) {
                 LOG("co_yield() [%p]: switch to [%p] with %s (RECURSED)", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
@@ -1220,7 +1219,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         SWAP(ValueVector, v->gen->to_drop, DROP_STACK);
         SWAP(TryStack, v->gen->try_stack, TRY_STACK);
         SWAP(GCRootSet, v->gen->gc_roots, *GCRoots(ty));
-        SWAP(int, v->gen->ExecDepth, ExecDepth);
+        SWAP(int, v->gen->exec_depth, ty->exec_depth);
 
         for (int i = 0; i < v->gen->frame.count; ++i) {
                 push(v->gen->frame.items[i]);
@@ -2572,61 +2571,66 @@ QuietFailure:
         }
 }
 
-TY_INSTR_INLINE static void
-DoGeq(Ty *ty)
-{
-        Value v = vm_try_2op(ty, OP_GEQ, top() - 1, top());
-
-        if (v.type == VALUE_NONE) {
-                v = BOOLEAN(value_compare(ty, top() - 1, top()) >= 0);
-        }
-
-        pop();
-        pop();
-        push(v);
+// ===/ < > <= >= == != /=======================================================
+#define DEFINE_RELATIONAL_OP(name, op, eop)                                     \
+TY_INSTR_INLINE static void                                                     \
+name(Ty *ty)                                                                    \
+{                                                                               \
+        Value v;                                                                \
+                                                                                \
+        switch (PACK_TYPES(top()[-1].type, top()[0].type)) {                    \
+        case PAIR_OF(VALUE_INTEGER):                                            \
+                v = BOOLEAN(top()[-1].integer op top()[0].integer);             \
+                break;                                                          \
+        case PAIR_OF(VALUE_REAL):                                               \
+                v = BOOLEAN(top()[-1].real op top()[0].real);                   \
+                break;                                                          \
+        case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):                             \
+                v = BOOLEAN(top()[-1].integer op top()[0].real);                \
+                break;                                                          \
+        case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):                             \
+                v = BOOLEAN(top()[-1].real op top()[0].integer);                \
+                break;                                                          \
+        default:                                                                \
+                v = vm_try_2op(ty, eop, top() - 1, top());                      \
+                                                                                \
+                if (v.type == VALUE_NONE) {                                     \
+                        v = BOOLEAN(value_compare(ty, top() - 1, top()) op 0);  \
+                }                                                               \
+                                                                                \
+                break;                                                          \
+        }                                                                       \
+                                                                                \
+        pop();                                                                  \
+        pop();                                                                  \
+        push(v);                                                                \
 }
 
-TY_INSTR_INLINE static void
-DoGt(Ty *ty)
+inline static void
+DoEq(Ty *ty)
 {
-        Value v = vm_try_2op(ty, OP_GT, top() - 1, top());
+        Value b = pop();
+        Value a = pop();
 
-        if (v.type == VALUE_NONE) {
-                v = BOOLEAN(value_compare(ty, top() - 1, top()) > 0);
-        }
-
-        pop();
-        pop();
-        push(v);
+        push(BOOLEAN(value_test_equality(ty, &a, &b)));
 }
 
-TY_INSTR_INLINE static void
-DoLeq(Ty *ty)
+inline static void
+DoNeq(Ty *ty)
 {
-        Value v = vm_try_2op(ty, OP_LEQ, top() - 1, top());
+        Value b = pop();
+        Value a = pop();
 
-        if (v.type == VALUE_NONE) {
-                v = BOOLEAN(value_compare(ty, top() - 1, top()) <= 0);
-        }
-
-        pop();
-        pop();
-        push(v);
+        push(BOOLEAN(!value_test_equality(ty, &a, &b)));
 }
 
-TY_INSTR_INLINE static void
-DoLt(Ty *ty)
-{
-        Value v = vm_try_2op(ty, OP_LT, top() - 1, top());
+DEFINE_RELATIONAL_OP(DoGeq, >=, OP_GEQ)
+DEFINE_RELATIONAL_OP(DoGt,   >, OP_GT)
+DEFINE_RELATIONAL_OP(DoLeq, <=, OP_LEQ)
+DEFINE_RELATIONAL_OP(DoLt,   <, OP_LT)
 
-        if (v.type == VALUE_NONE) {
-                v = BOOLEAN(value_compare(ty, top() - 1, top()) < 0);
-        }
-
-        pop();
-        pop();
-        push(v);
-}
+#undef DEFINE_RELATIONAL_OP
+// =============================================================================
 
 TY_INSTR_INLINE static void
 DoCmp(Ty *ty)
@@ -2645,25 +2649,7 @@ DoCmp(Ty *ty)
                 push(INTEGER(0));
 }
 
-TY_INSTR_INLINE static void
-DoEq(Ty *ty)
-{
-        Value v = BOOLEAN(value_test_equality(ty, top() - 1, top()));
-        pop();
-        pop();
-        push(v);
-}
-
-static void
-DoNeq(Ty *ty)
-{
-        Value v = BOOLEAN(!value_test_equality(ty, top() - 1, top()));
-        pop();
-        pop();
-        push(v);
-}
-
-static void
+inline static void
 DoNot(Ty *ty)
 {
         Value v = pop();
@@ -2926,31 +2912,49 @@ DoMutSub(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
         struct itable *o;
-        Value *vp, *vp2, x, val;
+        Value *vp, x, val;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
         switch (p & PMASK3) {
         case 0:
-                if (vp->type == VALUE_DICT) {
-                        if (UNLIKELY(top()->type != VALUE_DICT))
-                                zP("attempt to subtract non-dict from dict");
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer -= top()->integer;
+                        pop();
+                        break;
+                case PAIR_OF(VALUE_REAL):
+                        vp->real -= top()->real;
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
+                        vp->type = VALUE_REAL;
+                        vp->real = vp->integer;
+                        vp->real -= top()->real;
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
+                        vp->real -= top()->integer;
+                        pop();
+                        break;
+                case PAIR_OF(VALUE_DICT):
                         dict_subtract(ty, vp, 1, NULL);
                         pop();
-                } else if (vp->type == VALUE_OBJECT && (vp2 = class_method(ty, vp->class, "-=")) != NULL) {
-                        gP(vp);
-                        call(ty, vp2, vp, 1, 0, true);
-                        gX();
-                        pop();
-                } else {
+                        break;
+                default:
                         x = pop();
+
                         if ((val = vm_try_2op(ty, OP_MUT_SUB, vp, &x)).type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_SUB, vp, &x);
                         }
+
+                        break;
                 }
+
                 push(*vp);
+
                 break;
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
@@ -2984,25 +2988,47 @@ DoMutAdd(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                if (vp->type == VALUE_ARRAY) {
-                        if (UNLIKELY(top()->type != VALUE_ARRAY))
-                                zP("attempt to add non-array to array");
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer += top()->integer;
+                        pop();
+                        break;
+                case PAIR_OF(VALUE_REAL):
+                        vp->real += top()->real;
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_INTEGER, VALUE_REAL):
+                        vp->type = VALUE_REAL;
+                        vp->real = vp->integer;
+                        vp->real += top()->real;
+                        pop();
+                        break;
+                case PACK_TYPES(VALUE_REAL, VALUE_INTEGER):
+                        vp->real += top()->integer;
+                        pop();
+                        break;
+                case PAIR_OF(VALUE_ARRAY):
                         value_array_extend(ty, vp->array, top()->array);
                         pop();
-                } else if (vp->type == VALUE_DICT) {
-                        if (UNLIKELY(top()->type != VALUE_DICT))
-                                zP("attempt to add non-dict to dict");
+                        break;
+                case PAIR_OF(VALUE_DICT):
                         DictUpdate(ty, vp->dict, top()->dict);
                         pop();
-                } else {
+                        break;
+                default:
                         x = pop();
+
                         if ((val = vm_try_2op(ty, OP_MUT_ADD, vp, &x)).type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_ADD, vp, &x);
                         }
+
+                        break;
                 }
+
                 push(*vp);
+
                 break;
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
@@ -3414,25 +3440,20 @@ vm_try_exec(Ty *ty, char *code)
 void
 vm_exec(Ty *ty, char *code)
 {
-        Expr *expr;
         char *jump;
         char *save = IP;
         IP = code;
 
-        uintptr_t s, off;
+        uintptr_t s;
         intmax_t k;
         bool b = false;
         double x;
         int n, nkw = 0, i, j, z, tag;
-        unsigned long h;
 
-        Value v, key, value, container, subscript, *vp, *vp2, *self;
+        Value v, key, value, container, subscript, *vp, *vp2;
         char *str;
-        char const *method;
 
         struct try *t;
-
-        BuiltinMethod *func;
 
         PopulateGlobals(ty);
 
@@ -3440,8 +3461,8 @@ vm_exec(Ty *ty, char *code)
         char *StartIPLocal = LastIP;
 #endif
 
-        ExecDepth += 1;
-        LOG("vm_exec(): ==> %d", ExecDepth);
+        ty->exec_depth += 1;
+        LOG("vm_exec(): ==> %d", ty->exec_depth);
 
         for (;;) {
         if (ty->GC_OFF_COUNT == 0 && MyGroup->WantGC) {
@@ -3491,15 +3512,16 @@ vm_exec(Ty *ty, char *code)
                                 TyMutexUnlock(&ProfileMutex);
                         }
 
-                        LastIP = IP;
-                        LastThreadTime = now;
-
                         if (WantReport) {
                                 TyMutexLock(&ProfileMutex);
                                 ProfileReport(ty);
                                 TyMutexUnlock(&ProfileMutex);
                                 WantReport = false;
                         }
+
+                        LastIP = IP;
+                        LastThreadTime = TyThreadTime();
+
                 }
 #endif
                 switch ((unsigned char)*IP++) {
@@ -3541,7 +3563,6 @@ vm_exec(Ty *ty, char *code)
                         LOG("Loading global: %s (%d)", IP, n);
                         SKIPSTR();
 #endif
-                        //printf("n=%d\n", n);
                         push(Globals.items[n]);
                         break;
                 CASE(CHECK_INIT)
@@ -4828,10 +4849,7 @@ BadTupleMember:
 
                         break;
                 CASE(SLICE)
-                        n = 3;
-                        nkw = 0;
-                        i = NAMES.slice;
-                        CallMethod(ty, i, n, nkw, false);
+                        CallMethod(ty, NAMES.slice, 3, 0, false);
                         break;
                 CASE(SUBSCRIPT)
                         subscript = top()[0];
@@ -5406,9 +5424,9 @@ BadTupleMember:
                         LOG("returning: IP = %p", IP);
                         break;
                 CASE(HALT)
-                        ExecDepth -= 1;
+                        ty->exec_depth -= 1;
                         IP = save;
-                        LOG("vm_exec(): <== %d (HALT: IP=%p)", ExecDepth, (void *)IP);
+                        LOG("vm_exec(): <== %d (HALT: IP=%p)", ty->exec_depth, (void *)IP);
                         return;
                 }
         }

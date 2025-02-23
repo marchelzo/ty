@@ -850,6 +850,8 @@ error(Ty *ty, char const *fmt, ...)
                 goto End;
         }
 
+        ErrorBuffer.count = 0;
+
         va_list ap;
         va_start(ap, fmt);
 

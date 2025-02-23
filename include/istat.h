@@ -8,6 +8,8 @@
 #include "ty.h"
 #include "util.h"
 
+enum { ISTAT_BINS = 1024 };
+
 typedef struct {
         void const *i;
         int64_t n;
@@ -17,7 +19,7 @@ typedef struct {
 typedef vec(istat_entry) istat_bin;
 
 typedef struct {
-        istat_bin bins[256];
+        istat_bin bins[ISTAT_BINS];
 } istat;
 
 inline static istat_entry *
@@ -35,14 +37,14 @@ istat_find(istat_bin const *b, void const *ip)
 static istat_entry *
 istat_lookup(istat const *stat, void const *ip)
 {
-        int i = (uintptr_t)ip % 256;
+        int i = (uintptr_t)ip % ISTAT_BINS;
         return istat_find(&stat->bins[i], ip);
 }
 
 static void
 istat_add(istat *stat, void const *ip, int64_t t)
 {
-        int i = (uintptr_t)ip % 256;
+        int i = (uintptr_t)ip % ISTAT_BINS;
 
         istat_entry *e = istat_find(&stat->bins[i], ip);
 
@@ -64,7 +66,7 @@ istat_count(istat const *stat, int64_t *max_ticks, int64_t *total_ticks)
         *max_ticks = 0;
         *total_ticks = 0;
 
-        for (int i = 0; i < 256; ++i) {
+        for (int i = 0; i < ISTAT_BINS; ++i) {
                 istat_bin const *b = &stat->bins[i];
                 for (int i = 0; i < b->count; ++i) {
                         *total_ticks += b->items[i].t;

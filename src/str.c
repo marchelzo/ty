@@ -748,7 +748,7 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
                         count += 1;
                 }
         } else if (pattern.type == VALUE_REGEX) {
-                int ovec[30];
+                int ovec[128];
                 int len = string->bytes;
                 int rc;
 
@@ -760,7 +760,7 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
                                 0,
                                 0,
                                 ovec,
-                                30
+                                128
                         )) > 0) {
                         count += 1;
                         s += ovec[1];
@@ -917,10 +917,10 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 pcre *re = pattern.regex->pcre;
                 int len = string->bytes;
                 int start = 0;
-                int out[30];
+                int out[128];
                 int rc;
 
-                while ((rc = pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 30)) > 0) {
+                while ((rc = pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 128)) > 0) {
 
                         vvPn(chars, s + start, out[0] - start);
 
@@ -1006,7 +1006,7 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs)
         if (pattern.type != VALUE_REGEX)
                 zP("non-regex passed to the match method on string");
 
-        int ovec[30];
+        int ovec[128];
         int len = string->bytes;
         int rc;
 
@@ -1018,7 +1018,7 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs)
                 0,
                 0,
                 ovec,
-                30
+                128
         );
 
         if (rc < -2)
@@ -1044,7 +1044,7 @@ string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
         Value result = ARRAY(vA());
         gP(&result);
 
-        int ovec[30];
+        int ovec[128];
         char const *s = string->string;
         int len = string->bytes;
         int offset = 0;
@@ -1059,7 +1059,7 @@ string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
                         0,
                         0,
                         ovec,
-                        30
+                        128
                 )) > 0
         ) {
                 vAp(result.array, NIL);
