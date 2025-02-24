@@ -146,18 +146,19 @@ static SigfnStack sigfns;
 
 #define TY_INSTR_INLINE
 
-#define STACK   (ty->stack)
-#define IP      (ty->ip)
-#define CALLS   (ty->calls)
-#define TARGETS (ty->targets)
-#define FRAMES  (ty->frames)
-
-#define DROP_STACK  (ty->drop_stack)
-#define JB          (ty->jb)
+#define STACK       (ty->stack)
+#define IP          (ty->ip)
 #define RC          (ty->rc)
-#define SP_STACK    (ty->sp_stack)
+#define JB          (ty->jb)
 #define THROW_STACK (ty->throw_stack)
-#define TRY_STACK   (ty->try_stack)
+
+#define CALLS       (ty->st.calls)
+#define TARGETS     (ty->st.targets)
+#define FRAMES      (ty->st.frames)
+#define DROP_STACK  (ty->st.to_drop)
+#define SP_STACK    (ty->st.sps)
+#define TRY_STACK   (ty->st.try_stack)
+#define EXEC_DEPTH  (ty->st.exec_depth)
 
 
 #define top()   ((top)(ty))
@@ -649,7 +650,7 @@ PopulateGlobals(Ty *ty)
 
         while (Globals.count < n) {
                 Symbol *sym = compiler_global_sym(ty, Globals.count);
-                vec_push_unchecked(
+                xvP(
                         Globals,
                         IsTopLevel(sym) ? UNINITIALIZED(sym) : NIL
                 );
@@ -665,7 +666,7 @@ add_builtins(Ty *ty, int ac, char **av)
                         builtins[i].value.name = M_ID(builtins[i].name);
                         builtins[i].value.module = builtins[i].module;
                 }
-                vvP(Globals, builtins[i].value);
+                xvP(Globals, builtins[i].value);
         }
 
         Array *args = vA();
@@ -676,24 +677,24 @@ add_builtins(Ty *ty, int ac, char **av)
         }
 
         compiler_introduce_symbol(ty, "os", "args");
-        vvP(Globals, ARRAY(args));
+        xvP(Globals, ARRAY(args));
 
         compiler_introduce_symbol(ty, NULL, "__EXIT_HOOKS__");
         NAMES.exit_hooks = (int)Globals.count;
-        vvP(Globals, ARRAY(vA()));
+        xvP(Globals, ARRAY(vA()));
 
         compiler_introduce_symbol(ty, "tdb", "hook");
         NAMES.tdb_hook = (int)Globals.count;
-        vvP(Globals, NIL);
+        xvP(Globals, NIL);
 
         compiler_introduce_symbol(ty, "ty", "executable");
-        vvP(Globals, this_executable(ty));
+        xvP(Globals, this_executable(ty));
 
 #ifdef _WIN32
         // TODO
 #else
         compiler_introduce_symbol(ty, "os", "PAGE_SIZE");
-        vvP(Globals, INTEGER(sysconf(_SC_PAGESIZE)));
+        xvP(Globals, INTEGER(sysconf(_SC_PAGESIZE)));
 #endif
 
 #ifdef SIGRTMIN
@@ -704,50 +705,50 @@ add_builtins(Ty *ty, int ac, char **av)
 
         /* Add FFI types here because they aren't constant expressions on Windows. */
         compiler_introduce_symbol(ty, "ffi", "char");
-        vvP(Globals, PTR(&ffi_type_schar));
+        xvP(Globals, PTR(&ffi_type_schar));
         compiler_introduce_symbol(ty, "ffi", "short");
-        vvP(Globals, PTR(&ffi_type_sshort));
+        xvP(Globals, PTR(&ffi_type_sshort));
         compiler_introduce_symbol(ty, "ffi", "int");
-        vvP(Globals, PTR(&ffi_type_sint));
+        xvP(Globals, PTR(&ffi_type_sint));
         compiler_introduce_symbol(ty, "ffi", "long");
-        vvP(Globals, PTR(&ffi_type_slong));
+        xvP(Globals, PTR(&ffi_type_slong));
         compiler_introduce_symbol(ty, "ffi", "uchar");
-        vvP(Globals, PTR(&ffi_type_uchar));
+        xvP(Globals, PTR(&ffi_type_uchar));
         compiler_introduce_symbol(ty, "ffi", "ushort");
-        vvP(Globals, PTR(&ffi_type_ushort));
+        xvP(Globals, PTR(&ffi_type_ushort));
         compiler_introduce_symbol(ty, "ffi", "uint");
-        vvP(Globals, PTR(&ffi_type_uint));
+        xvP(Globals, PTR(&ffi_type_uint));
         compiler_introduce_symbol(ty, "ffi", "ulong");
-        vvP(Globals, PTR(&ffi_type_ulong));
+        xvP(Globals, PTR(&ffi_type_ulong));
         compiler_introduce_symbol(ty, "ffi", "u8");
-        vvP(Globals, PTR(&ffi_type_uint8));
+        xvP(Globals, PTR(&ffi_type_uint8));
         compiler_introduce_symbol(ty, "ffi", "u16");
-        vvP(Globals, PTR(&ffi_type_uint16));
+        xvP(Globals, PTR(&ffi_type_uint16));
         compiler_introduce_symbol(ty, "ffi", "u32");
-        vvP(Globals, PTR(&ffi_type_uint32));
+        xvP(Globals, PTR(&ffi_type_uint32));
         compiler_introduce_symbol(ty, "ffi", "u64");
-        vvP(Globals, PTR(&ffi_type_uint64));
+        xvP(Globals, PTR(&ffi_type_uint64));
         compiler_introduce_symbol(ty, "ffi", "i8");
-        vvP(Globals, PTR(&ffi_type_sint8));
+        xvP(Globals, PTR(&ffi_type_sint8));
         compiler_introduce_symbol(ty, "ffi", "i16");
-        vvP(Globals, PTR(&ffi_type_sint16));
+        xvP(Globals, PTR(&ffi_type_sint16));
         compiler_introduce_symbol(ty, "ffi", "i32");
-        vvP(Globals, PTR(&ffi_type_sint32));
+        xvP(Globals, PTR(&ffi_type_sint32));
         compiler_introduce_symbol(ty, "ffi", "i64");
-        vvP(Globals, PTR(&ffi_type_sint64));
+        xvP(Globals, PTR(&ffi_type_sint64));
         compiler_introduce_symbol(ty, "ffi", "float");
-        vvP(Globals, PTR(&ffi_type_float));
+        xvP(Globals, PTR(&ffi_type_float));
         compiler_introduce_symbol(ty, "ffi", "double");
-        vvP(Globals, PTR(&ffi_type_double));
+        xvP(Globals, PTR(&ffi_type_double));
         compiler_introduce_symbol(ty, "ffi", "ptr");
-        vvP(Globals, PTR(&ffi_type_pointer));
+        xvP(Globals, PTR(&ffi_type_pointer));
         compiler_introduce_symbol(ty, "ffi", "void");
-        vvP(Globals, PTR(&ffi_type_void));
+        xvP(Globals, PTR(&ffi_type_void));
 
 #define X(name)                                          \
         do {                                             \
                 compiler_introduce_tag(ty, "ty", #name); \
-                vvP(Globals, TAG(Ty ## name));           \
+                xvP(Globals, TAG(Ty ## name));           \
         } while (0);
 
         TY_AST_NODES
@@ -904,11 +905,7 @@ inline static void
 {
         Target t = { .t = v, .gc = gc };
         if (gc != NULL) NOGC(gc);
-        vvP(TARGETS, t);
-        LOG("TARGETS: (%zu)", TARGETS.count);
-        for (int i = 0; i < TARGETS.count; ++i) {
-                LOG("    %d: %p", i + 1, (void *)TARGETS.items[i].t);
-        }
+        xvP(TARGETS, t);
 }
 
 inline static bool
@@ -949,7 +946,7 @@ GetCurrentGenerator(Ty *ty)
 inline static Generator *
 GetNextGenerator(Generator *gen)
 {
-        int n = v_(gen->frames, 0)->fp;
+        int n = v_(gen->st.frames, 0)->fp;
 
         if (
                 n == 0
@@ -999,12 +996,7 @@ co_abort(Ty *ty)
         Generator *gen = v_(STACK, n - 1)->gen;
         STACK.count = n - 1;
 
-        SWAP(SPStack, gen->sps, SP_STACK);
-        SWAP(TargetStack, gen->targets, TARGETS);
-        SWAP(CallStack, gen->calls, CALLS);
-        SWAP(FrameStack, gen->frames, FRAMES);
-        SWAP(ValueVector, gen->to_drop, DROP_STACK);
-        SWAP(TryStack, gen->try_stack, TRY_STACK);
+        SWAP(co_state, gen->st, ty->st);
         SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
 
         vvX(FRAMES);
@@ -1029,16 +1021,10 @@ co_yield_value(Ty *ty)
         gen->ip = IP;
         gen->frame.count = 0;
 
-        SWAP(SPStack, gen->sps, SP_STACK);
-        SWAP(TargetStack, gen->targets, TARGETS);
-        SWAP(CallStack, gen->calls, CALLS);
-        SWAP(FrameStack, gen->frames, FRAMES);
-        SWAP(ValueVector, gen->to_drop, DROP_STACK);
-        SWAP(TryStack, gen->try_stack, TRY_STACK);
+        SWAP(co_state, gen->st, ty->st);
         SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
-        SWAP(int, gen->exec_depth, ty->exec_depth);
 
-        uvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
+        xvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
 
         STACK.items[n - 1] = peek();
         STACK.count = n;
@@ -1047,7 +1033,7 @@ co_yield_value(Ty *ty)
 
         IP = *vvX(CALLS);
 
-        if (gen->exec_depth > 1) {
+        if (gen->st.exec_depth > 1) {
                 LOG("co_yield() [%p]: switch to [%p] with %s (RECURSED)", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
@@ -1098,8 +1084,6 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 n += 1;
         }
 
-        GC_STOP();
-
         /*
          * If the function was declared with the form f(..., *extra) then we
          * create an array and add any extra arguments to it.
@@ -1109,23 +1093,19 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 
                 Array *extra = vAn(nExtra * (nExtra > 0));
 
-                for (int i = irest; i < argc; ++i) {
-                        extra->items[i - irest] = STACK.items[fp + i];
-                }
-
-                for (int i = irest; i < argc; ++i) {
-                        STACK.items[fp + i] = NIL;
-                }
+                memcpy(v_(*extra, 0), v_(STACK, fp + irest), nExtra * sizeof (Value));
 
                 STACK.items[fp + irest] = ARRAY(extra);
+
+                for (int i = irest + 1; i < argc; ++i) {
+                        STACK.items[fp + i] = NIL;
+                }
         }
 
         if (ikwargs != -1) {
                 // FIXME: don't allocate a dict when there are no kwargs
                 STACK.items[fp + ikwargs] = (nkw > 0) ? kwargs : DICT(dict_new(ty));
         }
-
-        GC_RESUME();
 
         /*
          * Throw away extra arguments.
@@ -1142,7 +1122,7 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
                 STACK.items[fp + np] = self;
         }
 
-        vec_push_unchecked(FRAMES, FRAME(fp, *f, IP));
+        xvP(FRAMES, FRAME(fp, *f, IP));
 
         /* Fill in keyword args (overwriting positional args) */
         if (kwargs.type != VALUE_NIL) {
@@ -1166,14 +1146,14 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
         if (exec) {
                 Generator *gen = GetCurrentGenerator(ty);
 
-                vec_push_unchecked(CALLS, &halt);
+                xvP(CALLS, &halt);
                 vm_exec(ty, code);
 
                 if (UNLIKELY(GetCurrentGenerator(ty) != gen)) {
                         zP("sus use of coroutine yield");
                 }
         } else {
-                vec_push_unchecked(CALLS, IP);
+                xvP(CALLS, IP);
                 IP = code;
         }
 }
@@ -1185,58 +1165,54 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
                 zP("attempt to invoke an already-active coroutine");
         }
 
-        if (v->gen->ip != code_of(&v->gen->f)) {
+        Generator *gen = v->gen;
+
+        if (gen->ip != code_of(&gen->f)) {
                 if (n == 0) {
-                        vec_push_unchecked(v->gen->frame, NIL);
+                        xvP(gen->frame, NIL);
                 } else {
-                        vec_push_n_unchecked(v->gen->frame, vZ(STACK) - n, n);
+                        xvPn(gen->frame, vZ(STACK) - n, n);
                         STACK.count -= n;
                 }
         }
 
         push(*v);
-        call(ty, &v->gen->f, NULL, 0, 0, false);
+        call(ty, &gen->f, NULL, 0, 0, false);
         *vvL(CALLS) = whence;
         STACK.count = vvL(FRAMES)->fp;
 
-        if (v->gen->frames.count == 0) {
-                uvP(v->gen->frames, *vvL(FRAMES));
+        if (vN(gen->st.frames) == 0) {
+                xvP(gen->st.frames, *vvL(FRAMES));
         } else {
-                v->gen->frames.items[0] = *vvL(FRAMES);
+                gen->st.frames.items[0] = *vvL(FRAMES);
         }
 
-        int diff = (int)STACK.count - v->gen->fp;
-        for (int i = 1; i < v->gen->frames.count; ++i) {
-                v->gen->frames.items[i].fp += diff;
+        int diff = (int)vN(STACK) - gen->fp;
+        for (int i = 1; i < vN(gen->st.frames); ++i) {
+                gen->st.frames.items[i].fp += diff;
         }
 
-        v->gen->fp = STACK.count;
+        gen->fp = STACK.count;
 
-        SWAP(CallStack, v->gen->calls, CALLS);
-        SWAP(TargetStack, v->gen->targets, TARGETS);
-        SWAP(SPStack, v->gen->sps, SP_STACK);
-        SWAP(FrameStack, v->gen->frames, FRAMES);
-        SWAP(ValueVector, v->gen->to_drop, DROP_STACK);
-        SWAP(TryStack, v->gen->try_stack, TRY_STACK);
-        SWAP(GCRootSet, v->gen->gc_roots, *GCRoots(ty));
-        SWAP(int, v->gen->exec_depth, ty->exec_depth);
+        SWAP(co_state, gen->st, ty->st);
+        SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
 
-        for (int i = 0; i < v->gen->frame.count; ++i) {
-                push(v->gen->frame.items[i]);
+        for (int i = 0; i < gen->frame.count; ++i) {
+                push(gen->frame.items[i]);
         }
 
-        IP = v->gen->ip;
-        v->gen->ip = NULL;
+        IP = gen->ip;
+        gen->ip = NULL;
 
-        if (v->gen->co != NULL) {
-                cothread_t co = v->gen->co;
-                v->gen->co = co_active();
-                LOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&v->gen->f), (void *)co);
+        if (gen->co != NULL) {
+                cothread_t co = gen->co;
+                gen->co = co_active();
+                LOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&gen->f), (void *)co);
                 co_switch(co);
         } else {
                 cothread_t co = GetFreeCoThread(ty);
-                v->gen->co = co_active();
-                LOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&v->gen->f), (void *)co);
+                gen->co = co_active();
+                LOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&gen->f), (void *)co);
                 co_ty = ty;
                 co_switch(co);
 
@@ -1406,13 +1382,13 @@ CleanupThread(void *ctx)
         free(MyLock);
         free((void *)MyState);
         free(STACK.items);
-        mF(CALLS.items);
-        mF(FRAMES.items);
-        mF(SP_STACK.items);
-        mF(TARGETS.items);
-        mF(TRY_STACK.items);
-        mF(THROW_STACK.items);
-        mF(DROP_STACK.items);
+        free(CALLS.items);
+        free(FRAMES.items);
+        free(SP_STACK.items);
+        free(TARGETS.items);
+        free(TRY_STACK.items);
+        free(THROW_STACK.items);
+        free(DROP_STACK.items);
         free(ty->allocs.items);
 
         vec(Value const *) *root_set = (void *)GCRoots(ty);
@@ -1706,7 +1682,7 @@ DoThrow(Ty *ty)
 TY_INSTR_INLINE static bool
 RaiseException(Ty *ty)
 {
-        vvP(THROW_STACK, ((ThrowCtx) {
+        xvP(THROW_STACK, ((ThrowCtx) {
                 .ctxs = FRAMES.count,
                 .ip = IP
         }));
@@ -3056,7 +3032,7 @@ DoMutAnd(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
         struct itable *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -3096,7 +3072,7 @@ DoMutOr(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
         struct itable *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -3136,7 +3112,7 @@ DoMutXor(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
         struct itable *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -3176,7 +3152,7 @@ DoMutShl(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
         struct itable *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -3216,7 +3192,7 @@ DoMutShr(Ty *ty)
 {
         uintptr_t c, p = (uintptr_t)poptarget();
         struct itable *o;
-        Value *vp, *vp2, val, x;
+        Value *vp, val, x;
         void *v = vp = (void *)(p & ~PMASK3);
         unsigned char b;
 
@@ -3330,7 +3306,7 @@ IterGetNext(Ty *ty)
         case VALUE_OBJECT:
                 if ((vp = class_method(ty, v.class, "__next__")) != NULL) {
                         push(INTEGER(i));
-                        vec_push_unchecked(CALLS, IP);
+                        xvP(CALLS, IP);
                         call(ty, vp, &v, 1, 0, false);
                         *vvL(CALLS) = next_fix;
                 } else if ((vp = class_lookup_method_i(ty, v.class, NAMES._iter_)) != NULL) {
@@ -3338,7 +3314,7 @@ IterGetNext(Ty *ty)
                         pop();
                         --top()->i;
                         /* Have to repeat this instruction */
-                        vec_push_unchecked(CALLS, IP);
+                        xvP(CALLS, IP);
                         call(ty, vp, &v, 0, 0, false);
                         *vvL(CALLS) = iter_fix;
                         return;
@@ -3461,8 +3437,8 @@ vm_exec(Ty *ty, char *code)
         char *StartIPLocal = LastIP;
 #endif
 
-        ty->exec_depth += 1;
-        LOG("vm_exec(): ==> %d", ty->exec_depth);
+        EXEC_DEPTH += 1;
+        LOG("vm_exec(): ==> %d", EXEC_DEPTH);
 
         for (;;) {
         if (ty->GC_OFF_COUNT == 0 && MyGroup->WantGC) {
@@ -3694,7 +3670,7 @@ TargetGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
                         while (Globals.count <= n)
-                                vec_push_unchecked(Globals, NIL);
+                                xvP(Globals, NIL);
                         pushtarget(&Globals.items[n], NULL);
                         break;
                 CASE(TARGET_LOCAL)
@@ -3709,7 +3685,7 @@ AssignGlobal:
                         READVALUE(n);
                         LOG("Global: %d", (int)n);
                         while (Globals.count <= n)
-                                vec_push_unchecked(Globals, NIL);
+                                xvP(Globals, NIL);
                         Globals.items[n] = pop();
                         break;
                 CASE(ASSIGN_LOCAL)
@@ -4067,7 +4043,7 @@ AssignGlobal:
                         if (UNLIKELY(ntry == TRY_STACK.capacity)) {
                                 do {
                                         t = alloc0(sizeof *t);
-                                        uvP(TRY_STACK, t);
+                                        xvP(TRY_STACK, t);
                                 } while (TRY_STACK.count != TRY_STACK.capacity);
                                 TRY_STACK.count = ntry;
                         }
@@ -4103,11 +4079,14 @@ AssignGlobal:
                 CASE(DROP)
                         DoDrop(ty);
                         break;
+                CASE(DISCARD_DROP_GROUP)
+                        vvX(DROP_STACK);
+                        break;
                 CASE(PUSH_DROP_GROUP)
-                        vec_push_unchecked(DROP_STACK, ARRAY(vA()));
+                        xvP(DROP_STACK, ARRAY(vA()));
                         break;
                 CASE(PUSH_DROP)
-                        vec_push_unchecked(*vvL(DROP_STACK)->array, peek());
+                        uvP(*vvL(DROP_STACK)->array, peek());
                         break;
                 CASE(PUSH_DEFER_GROUP)
                         break;
@@ -4475,7 +4454,7 @@ Yield:
                         v = GENERATOR(mAo0(sizeof *v.gen, GC_GENERATOR));
 
                         n = STACK.count - vvL(FRAMES)->fp;
-                        uvPn(v.gen->frame, STACK.items + STACK.count - n, n);
+                        xvPn(v.gen->frame, STACK.items + STACK.count - n, n);
 
                         v.gen->ip = IP;
                         v.gen->f = vvL(FRAMES)->f;
@@ -4515,7 +4494,7 @@ Yield:
                         IterGetNext(ty);
                         break;
                 CASE(LOOP_ITER)
-                        vvP(SP_STACK, STACK.count);
+                        xvP(SP_STACK, STACK.count);
                         push(SENTINEL);
                         RC = 0;
                         IterGetNext(ty);
@@ -5380,7 +5359,7 @@ BadTupleMember:
 
                         break;
                 CASE(SAVE_STACK_POS)
-                        vvP(SP_STACK, STACK.count);
+                        xvP(SP_STACK, STACK.count);
                         break;
                 CASE(POP_STACK_POS)
                         STACK.count = *vvX(SP_STACK);
@@ -5424,9 +5403,9 @@ BadTupleMember:
                         LOG("returning: IP = %p", IP);
                         break;
                 CASE(HALT)
-                        ty->exec_depth -= 1;
+                        EXEC_DEPTH -= 1;
                         IP = save;
-                        LOG("vm_exec(): <== %d (HALT: IP=%p)", ty->exec_depth, (void *)IP);
+                        LOG("vm_exec(): <== %d (HALT: IP=%p)", EXEC_DEPTH, (void *)IP);
                         return;
                 }
         }
@@ -5638,7 +5617,7 @@ tdb_backtrace(Ty *ty)
 
                 if (nf == 0) {
                         if (gen != NULL) {
-                                frames = gen->frames;
+                                frames = gen->st.frames;
                                 nf = vN(frames);
                                 gen = NULL;
                         } else {
@@ -6112,7 +6091,7 @@ vm_throw(Ty *ty, Value const *v)
 {
         push(*v);
 
-        vvP(THROW_STACK, ((ThrowCtx) {
+        xvP(THROW_STACK, ((ThrowCtx) {
                 .ctxs = FRAMES.count,
                 .ip = IP
         }));

@@ -7613,12 +7613,12 @@ BUILTIN_FUNCTION(tdb_state)
                    : (context->file == NULL) ? NIL
                    : xSz(context->file);
 
-        Value f = (TDB->host->frames.count > 0)
-                ? vvL(TDB->host->frames)->f
+        Value f = (TDB->host->st.frames.count > 0)
+                ? vvL(TDB->host->st.frames)->f
                 : NIL;
 
-        Value fp = (TDB->host->frames.count > 0)
-                 ? INTEGER(vvL(TDB->host->frames)->fp)
+        Value fp = (TDB->host->st.frames.count > 0)
+                 ? INTEGER(vvL(TDB->host->st.frames)->fp)
                  : NIL;
 
         return vTn(
