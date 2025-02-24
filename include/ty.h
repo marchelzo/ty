@@ -216,21 +216,24 @@ struct frame {
         char const *ip;
 };
 
-struct generator {
-        char *ip;
-        Value f;
-        int fp;
+typedef struct cothread_state {
         int exec_depth;
-        ValueVector frame;
         FrameStack frames;
         CallStack calls;
         SPStack sps;
         TargetStack targets;
         TryStack try_stack;
-        ValueVector deferred;
         ValueVector to_drop;
-        GCRootSet gc_roots;
+} co_state;
+
+struct generator {
+        int fp;
+        ValueVector frame;
+        char *ip;
         cothread_t co;
+        co_state st;
+        GCRootSet gc_roots;
+        Value f;
 };
 
 struct thread {
@@ -354,27 +357,20 @@ typedef struct ty {
         char *ip;
         char *code;
 
-        int exec_depth;
-
         ValueStack stack;
-        CallStack calls;
-        TargetStack targets;
-        FrameStack frames;
+
+        co_state st;
 
         int rc;
-        SPStack sp_stack;
-
-        jmp_buf jb;
-        TryStack try_stack;
-        ValueStack drop_stack;
-        vec(ThrowCtx) throw_stack;
-
-        uint64_t prng[4];
 
         AllocList allocs;
         size_t memory_used;
         size_t memory_limit;
         int GC_OFF_COUNT;
+
+        ThreadGroup *my_group;
+
+        vec(ThrowCtx) throw_stack;
 
         Arena arena;
 
@@ -383,12 +379,13 @@ typedef struct ty {
                 vec(Arena) arenas;
         } scratch;
 
-        ThreadGroup *my_group;
+        uint64_t prng[4];
 
         TY *ty;
         TDB *tdb;
 
         byte_vector err;
+        jmp_buf jb;
 
 } Ty;
 
@@ -593,6 +590,7 @@ extern bool ColorProfile;
         X(DROP),                  \
         X(PUSH_DROP),             \
         X(PUSH_DROP_GROUP),       \
+        X(DISCARD_DROP_GROUP),    \
         X(TAG_PUSH),              \
         X(DEFINE_TAG),            \
         X(DEFINE_CLASS),          \

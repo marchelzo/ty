@@ -4833,7 +4833,6 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
 
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_DROP);
-                state.resources -= 1;
         }
 
         emit_instr(ty, INSTR_JUMP);
@@ -4843,6 +4842,11 @@ emit_case(Ty *ty, Expr const *pattern, Expr const *cond, Stmt const *s, bool wan
         EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         emit_instr(ty, INSTR_POP_STACK_POS);
+
+        if (pattern->has_resources) {
+                emit_instr(ty, INSTR_DISCARD_DROP_GROUP);
+                state.resources -= 1;
+        }
 
         state.match_fails = fails_save;
         state.match_assignments = assignments;
@@ -4891,7 +4895,6 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
 
         if (pattern->has_resources) {
                 emit_instr(ty, INSTR_DROP);
-                state.resources -= 1;
         }
 
         /*
@@ -4905,6 +4908,11 @@ emit_expression_case(Ty *ty, Expr const *pattern, Expr const *e)
         EMIT_GROUP_LABEL(state.match_fails, ":Fail");
         patch_jumps_to(&state.match_fails, state.code.count);
         emit_instr(ty, INSTR_POP_STACK_POS);
+
+        if (pattern->has_resources) {
+                emit_instr(ty, INSTR_DISCARD_DROP_GROUP);
+                state.resources -= 1;
+        }
 
         state.match_fails = fails_save;
         state.match_assignments = assignments;
