@@ -2698,15 +2698,15 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 }
 
                 if (e->function->type == EXPRESSION_SELF_ACCESS) {
-                        Expr meth_call = *e;
-                        meth_call.type = EXPRESSION_METHOD_CALL;
-                        meth_call.object = e->function->object;
-                        meth_call.method_name = e->function->member_name;
-                        meth_call.method_args = e->args;
-                        meth_call.method_kws = e->kws;
-                        meth_call.method_kwargs = e->kwargs;
-                        meth_call.mconds = e->fconds;
-                        *e = meth_call;
+                        Expr call = *e;
+                        call.type = EXPRESSION_METHOD_CALL;
+                        call.object = e->function->object;
+                        call.method_name = e->function->member_name;
+                        call.method_args = e->args;
+                        call.method_kws = e->kws;
+                        call.method_kwargs = e->kwargs;
+                        call.mconds = e->fconds;
+                        *e = call;
                         symbolize_expression(ty, scope, e);
                         break;
                 }
@@ -6116,10 +6116,12 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         emit_expression(ty, e->method);
                 }
 
-                if (e->maybe)
+                if (e->maybe) {
                         emit_instr(ty, INSTR_TRY_CALL_METHOD);
-                else
+                } else {
                         emit_instr(ty, INSTR_CALL_METHOD);
+                }
+
                 if (is_variadic(e)) {
                         emit_int(ty, -1);
                 } else {
@@ -6136,9 +6138,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 );
 
                 emit_int(ty, e->method_kwargs.count);
+
                 for (size_t i = e->method_kws.count; i > 0; --i) {
                         emit_string(ty, e->method_kws.items[i - 1]);
                 }
+
                 break;
         case EXPRESSION_WITH:
                 emit_with(ty, e);

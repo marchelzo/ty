@@ -177,8 +177,7 @@ mkregex(Ty *ty, char const *pat, int flags, bool detailed)
                 );
         }
 
-        if (JITStack != NULL)
-                pcre_assign_jit_stack(extra, NULL, JITStack);
+        pcre_assign_jit_stack(extra, get_my_pcre_jit_stack, NULL);
 
         Regex *r = amA(sizeof *r);
         r->pattern = pat;

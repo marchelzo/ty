@@ -73,14 +73,6 @@ IS_ALIGNED_TO(void const *p, size_t align)
 #define TRUE_OR(x) if (!(x))
 #endif
 
-extern _Thread_local char ERR[ERR_SIZE];
-
-extern pcre_jit_stack *JITStack;
-enum {
-        JIT_STACK_START = 1 << 10,
-        JIT_STACK_MAX   = 1 << 22
-};
-
 static inline int
 load_int(void const *p)
 {

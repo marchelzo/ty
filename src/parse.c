@@ -840,12 +840,13 @@ inline static void
 noreturn static void
 error(Ty *ty, char const *fmt, ...)
 {
-        if (fmt == NULL)
+        if (fmt == NULL) {
                 goto End;
+        }
 
         if (tokenx(0)->type == TOKEN_ERROR) {
                 /*
-                 * The lexer already wrote an error message into ERR
+                 * The lexer already wrote an error message into ErrorBuffer
                  */
                 goto End;
         }

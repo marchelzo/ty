@@ -32,8 +32,6 @@
 #include "vec.h"
 #include "value.h"
 
-_Thread_local char ERR[ERR_SIZE];
-
 char *
 sclone_malloc(char const *s)
 {
