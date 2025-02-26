@@ -373,6 +373,18 @@ AbortVM(void)
         vm_panic(ty, "oops!");
 }
 
+Ty *
+get_my_ty(void)
+{
+        return MyTy;
+}
+
+pcre_jit_stack *
+get_my_pcre_jit_stack(void *ctx)
+{
+        return MyTy->pcre_stack;
+}
+
 static void
 InitializeTy(Ty *ty)
 {
@@ -386,6 +398,11 @@ InitializeTy(Ty *ty)
         ty->prng[1] = splitmix64(&seed);
         ty->prng[2] = splitmix64(&seed);
         ty->prng[3] = splitmix64(&seed);
+
+        ty->pcre_stack = pcre_jit_stack_alloc(512, 4096 * 64);
+        if (UNLIKELY(ty->pcre_stack == NULL)) {
+                panic("Out of memory!");
+        }
 }
 
 inline static void
@@ -5454,6 +5471,11 @@ RunExitHooks(void)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
+        pcre_malloc = malloc;
+        pcre_free = free;
+
+        curl_global_init(CURL_GLOBAL_ALL);
+
         InitializeTY();
         InitializeTy(ty);
 
@@ -5488,13 +5510,7 @@ vm_init(Ty *ty, int ac, char **av)
 
         InitThreadGroup(ty, MyGroup = &MainGroup);
 
-        pcre_malloc = malloc;
-        pcre_free = free;
-        JITStack = pcre_jit_stack_alloc(JIT_STACK_START, JIT_STACK_MAX);
-
         amN(1ULL << 22);
-
-        curl_global_init(CURL_GLOBAL_ALL);
 
         compiler_init(ty);
 
@@ -5651,9 +5667,8 @@ vm_execute_file(Ty *ty, char const *path)
 {
         char *source = slurp(ty, path);
         if (source == NULL) {
-                snprintf(
-                        ERR,
-                        sizeof ERR,
+                dump(
+                        &ErrorBuffer,
                         "%s%s%s: failed to read source file: %s%s%s",
                         TERM(91;1), "Error", TERM(0),
                         TERM(95), path, TERM(0)

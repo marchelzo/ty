@@ -1344,15 +1344,16 @@ BUILTIN_FUNCTION(regex)
         int off;
 
         pcre *re = pcre_compile(buffer, 0, &err, &off, NULL);
-        if (re == NULL)
+        if (re == NULL) {
                 return NIL;
+        }
 
         pcre_extra *extra = pcre_study(re, PCRE_STUDY_EXTRA_NEEDED | PCRE_STUDY_JIT_COMPILE, &err);
-        if (extra == NULL)
+        if (extra == NULL) {
                 return NIL;
+        }
 
-        if (JITStack != NULL)
-                pcre_assign_jit_stack(extra, NULL, JITStack);
+        pcre_assign_jit_stack(extra, get_my_pcre_jit_stack, NULL);
 
         struct regex *r = mAo(sizeof *r, GC_REGEX);
         r->pcre = re;
@@ -4719,14 +4720,14 @@ BUILTIN_FUNCTION(os_sleep)
         lTk();
 
         switch (ret) {
-        case 0:
-                return NIL;
         case -1:
                 if (errno == EINTR) {
                         return timespec_tuple(ty, &rem);
                 } else {
                         zP("os.sleep(): invalid argument: nanosleep() returned EINVAL");
                 }
+        default:
+                return NIL;
         }
 }
 #endif

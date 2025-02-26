@@ -355,22 +355,27 @@ typedef struct {
 
 typedef struct ty {
         char *ip;
-        char *code;
 
         ValueStack stack;
 
         co_state st;
 
+        int GC_OFF_COUNT;
         int rc;
 
-        AllocList allocs;
         size_t memory_used;
         size_t memory_limit;
-        int GC_OFF_COUNT;
 
+        AllocList allocs;
         ThreadGroup *my_group;
 
+        TryStack try_stack;
+        ValueStack drop_stack;
         vec(ThrowCtx) throw_stack;
+
+        uint64_t prng[4];
+
+        pcre_jit_stack *pcre_stack;
 
         Arena arena;
 
@@ -379,14 +384,12 @@ typedef struct ty {
                 vec(Arena) arenas;
         } scratch;
 
-        uint64_t prng[4];
+        char *code;
+        jmp_buf jb;
+        byte_vector err;
 
         TY *ty;
         TDB *tdb;
-
-        byte_vector err;
-        jmp_buf jb;
-
 } Ty;
 
 typedef struct {
@@ -1008,6 +1011,12 @@ TyError(Ty *ty)
 {
         return ty->err.items;
 }
+
+Ty *
+get_my_ty(void);
+
+pcre_jit_stack *
+get_my_pcre_jit_stack(void *);
 
 #endif
 
