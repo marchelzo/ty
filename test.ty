@@ -4,6 +4,7 @@ import chalk (..)
 import time
 import tp (ThreadPool)
 import ty
+import ffi as c (C!)
 
 let start = time.utime()
 
@@ -26,17 +27,22 @@ function getTyCommand(test) {
 #|]
 }
 
-function doTest(name) {
+C! function strsignal(c.int) -> c.ptr;
+
+function doTest(name: String) {
     let testStart = time.utime()
 
-    let result = match sh(getTyCommand(name), timeoutMs: 2000) {
+    let _, result = sh(getTyCommand(name), timeoutMs: 2000)
+
+    let msg = match result {
         nil => do {
             timedOut += 1
             m('TIMEOUT')
         },
 
-        &strip ~> 'PASS' => do {
+        {stdout: 'PASS\n', stderr: '', status: 0, signal: nil} => do {
             passed += 1
+
             let elapsedMs = (time.utime() - testStart) / 1000.0
             let elapsed = match elapsedMs <=> 100.0 {
                 1 => "({elapsedMs / 1000.0:.2g}s)",
@@ -46,13 +52,24 @@ function doTest(name) {
             "{g('PASS')} {yellow(elapsed)}"
         },
 
-        x => do {
+        _ => do {
             failed += 1
-            r('FAIL')
+            [
+                r('FAIL'),
+                m("  (exit status: {result.status})") if result.status != 0,
+                b("  ({c.as_str(strsignal(result.signal))})") if result.signal != nil,
+                "\n================ {m('STDOUT')} ====================================\n",
+                result.stdout,
+                r('~~~~~'),
+                "\n================ {m('STDERR')} ====================================\n",
+                result.stderr,
+                r('~~~~~'),
+                '\n============================================================\n',
+            ].str()
         }
     }
 
-    print("{b("{name.comb(/\.ty$/):16}")} ... {result}")
+    print("{b("{name.comb(/\.ty$/):16}")} ... {msg}")
 }
 
 let pool = ThreadPool(os.ncpu(), doTest)
@@ -82,3 +99,5 @@ if timedOut > 0 {
 print()
 
 print("{b('Elapsed')}: {b(str(elapsedSec) + 's')}")
+
+exit(Sync.read(failed) + Sync.read(timedOut))

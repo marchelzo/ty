@@ -975,8 +975,10 @@ inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
         if (vN(CoThreads) == 0) {
+                LOG("GetFreeCoThread(): new");
                 return co_create(1u << 22, do_co);
         } else {
+                LOG("GetFreeCoThread(): recycled");
                 return co_derive(*vvX(CoThreads), 1u << 22, do_co);
         }
 }
@@ -1042,6 +1044,7 @@ co_yield_value(Ty *ty)
                 LOG("co_yield() [%p]: switch to [%p] with %s", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
+                gen->st.exec_depth = 0;
                 xvP(CoThreads, co_active());
                 co_switch(co);
         }
@@ -3916,8 +3919,9 @@ AssignGlobal:
                         if (UNLIKELY(!tags_same(ty, tags_first(ty, top()->tags), tag))) {
                                 MatchError;
                         } else {
-                                top()->tags = tags_pop(ty, top()->tags);
-                                top()->type &= ~VALUE_TAGGED;
+                                if ((top()->tags = tags_pop(ty, top()->tags)) == 0) {
+                                        top()->type &= ~VALUE_TAGGED;
+                                }
                         }
                         break;
                 CASE(STEAL_TAG)
