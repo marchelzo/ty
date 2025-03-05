@@ -28,6 +28,7 @@
 #include "vm.h"
 #include "compiler.h"
 #include "istat.h"
+#include "types.h"
 
 #define PLACEHOLDER_JUMP(t, name) JumpPlaceholder name = (PLACEHOLDER_JUMP)(ty, (t))
 #define LABEL(name) JumpLabel name = (LABEL)(ty)
@@ -134,6 +135,16 @@ struct context_entry {
 };
 
 static ContextEntry *ContextList;
+
+static Type const TYPE_INT    = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_INT     };
+static Type const TYPE_FLOAT  = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_FLOAT   };
+static Type const TYPE_BOOL   = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_BOOL    };
+static Type const TYPE_STRING = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_STRING  };
+static Type const TYPE_ARRAY  = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_ARRAY   };
+static Type const TYPE_BLOB   = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_BLOB    };
+static Type const TYPE_DICT   = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_DICT    };
+static Type const TYPE_NIL    = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_NIL     };
+static Type const TYPE_ANY    = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_TOP     };
 
 static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s);
@@ -1684,11 +1695,11 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
         Regex const *re = pattern->regex;
         int n = re->ncap;
 
-        int n_named;
-        pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMECOUNT, &n_named);
+        uint32_t n_named;
+        pcre2_pattern_info(re->pcre2, PCRE2_INFO_NAMECOUNT, &n_named);
 
         char const *names;
-        pcre_fullinfo(re->pcre, re->extra, PCRE_INFO_NAMETABLE, &names);
+        pcre2_pattern_info(re->pcre2, PCRE2_INFO_NAMETABLE, &names);
 
         pattern->match_symbol = addsymbol(ty, scope, "$0");
 

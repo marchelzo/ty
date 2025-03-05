@@ -4,13 +4,14 @@ CFLAGS += -Iinclude
 CFLAGS += -Ilibco
 CFLAGS += -isystem/usr/local/include
 CFLAGS += $(shell pkg-config --cflags libffi)
-CFLAGS += $(shell pcre-config --cflags)
+CFLAGS += $(shell pcre2-config --cflags)
 CFLAGS += $(shell pkg-config --cflags libcurl)
 CFLAGS += $(shell pkg-config --cflags openssl)
 CFLAGS += -Wno-switch
 CFLAGS += -Wno-unused-value
 CFLAGS += -Wno-unused-function
 CFLAGS += -D_GNU_SOURCE
+CFLAGS += -DPCRE2_CODE_UNIT_WIDTH=8
 LDFLAGS += -L/usr/local/lib
 LDFLAGS += -lpthread
 LDFLAGS += -lm
@@ -21,7 +22,7 @@ LDFLAGS += -ldl
 LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
 LDFLAGS += libco/libco.o
-LDFLAGS += $(shell pcre-config --libs)
+LDFLAGS += $(shell pcre2-config --libs8)
 LDFLAGS += $(shell pkg-config --libs gumbo)
 LDFLAGS += $(shell pkg-config --libs libcurl)
 

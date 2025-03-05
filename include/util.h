@@ -8,7 +8,6 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
-#include <pcre.h>
 #include <utf8proc.h>
 
 #include "value.h"

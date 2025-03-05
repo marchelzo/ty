@@ -7,6 +7,6 @@
         "utf8proc",
         "sqlite3",
         "gumbo",
-        "pcre"
+        { "name": "pcre2", "features": ["jit"] }
     ]
 }

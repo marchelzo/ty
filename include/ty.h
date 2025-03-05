@@ -9,8 +9,7 @@
 #include <stdalign.h>
 #include <assert.h>
 
-#include <pcre.h>
-
+#include <pcre2.h>
 
 #include "libco.h"
 #include "vec.h"
@@ -56,12 +55,11 @@ typedef struct blob {
 } Blob;
 
 typedef struct regex {
-        pcre *pcre;
-        pcre_extra *extra;
+        pcre2_code *pcre2;
         char const *pattern;
         bool gc;
         bool detailed;
-        int ncap;
+        uint32_t ncap;
 } Regex;
 
 typedef struct {
@@ -375,7 +373,11 @@ typedef struct ty {
 
         uint64_t prng[4];
 
-        pcre_jit_stack *pcre_stack;
+        struct {
+                pcre2_match_context *ctx;
+                pcre2_jit_stack *stack;
+                pcre2_match_data *match;
+        } pcre2;
 
         Arena arena;
 
@@ -1014,9 +1016,6 @@ TyError(Ty *ty)
 
 Ty *
 get_my_ty(void);
-
-pcre_jit_stack *
-get_my_pcre_jit_stack(void *);
 
 #endif
 
