@@ -19,6 +19,7 @@ struct value;
 
 #define V_ALIGN (_Alignof (Value))
 
+#define CLASS_NIL      -2
 #define CLASS_TOP      -1
 #define CLASS_OBJECT    0
 #define CLASS_CLASS     1

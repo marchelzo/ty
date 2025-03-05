@@ -37,8 +37,8 @@ else()
   list(GET READLINE_LINK_LIBRARIES 0 _readline_imported_location)
   set_target_properties(unofficial-readline PROPERTIES IMPORTED_LOCATION ${_readline_imported_location})
 endif()
-# defines target(s): unofficial::pcre::pcre unofficial::pcre::pcre16 unofficial::pcre::pcre32 unofficial::pcre::pcrecpp
-find_package(unofficial-pcre CONFIG REQUIRED)
+# defines target(s): PCRE2::8BIT, PCRE2::16BIT, PCRE2::32BIT, PCRE2::POSIX
+find_package(pcre2 CONFIG REQUIRED)
 # defines target(s): CURL::libcurl
 find_package(CURL CONFIG REQUIRED)
 # defines target(s): OpenSSL::SSL, OpenSSL::Crypto, OpenSSL::applink
@@ -193,7 +193,7 @@ target_link_libraries(${_tgt_ty_interface}
     unofficial::libffi::libffi
     unofficial::sqlite3::sqlite3
     unofficial::gumbo::gumbo
-    unofficial::pcre::pcre
+    PCRE2::8BIT
     utf8proc
     libco
     $<$<NOT:$<BOOL:${WIN33}>>:${CMAKE_DL_LIBS}>
@@ -218,6 +218,7 @@ target_compile_definitions(${_tgt_ty_interface}
     TY_RELEASE
     TY_NO_LOG
     TY_HAVE_VERSION_INFO
+    PCRE2_CODE_UNIT_WIDTH=8
 )
 
 # ---

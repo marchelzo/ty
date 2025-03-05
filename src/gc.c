@@ -81,8 +81,7 @@ collect(Ty *ty, struct alloc *a)
                 break;
         case GC_REGEX:
                 re = p;
-                pcre_free_study(re->extra);
-                pcre_free(re->pcre);
+                pcre2_code_free(re->pcre2);
                 mF((char *)re->pattern);
                 break;
         case GC_ARENA:

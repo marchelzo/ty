@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <math.h>
 
+#include <pcre2.h>
 #include <utf8proc.h>
 
 #include "vec.h"
@@ -150,43 +151,52 @@ mkstring(Ty *ty, char *string)
 static Token
 mkregex(Ty *ty, char const *pat, int flags, bool detailed)
 {
-        char const *err;
-        int offset;
+        int err;
+        size_t offset;
+        char err_buf[256];
 
-        pcre *re = pcre_compile(pat, flags, &err, &offset, NULL);
+        pcre2_code *re = pcre2_compile(
+                (PCRE2_SPTR)pat,
+                PCRE2_ZERO_TERMINATED,
+                flags,
+                &err,
+                &offset,
+                NULL
+        );
+
         if (re == NULL) {
+                pcre2_get_error_message(err, (uint8_t *)err_buf, sizeof err_buf);
                 error(
                         ty,
-                        "error compiling regular expression: %s/%s/%s at position %d: %s",
+                        "error compiling regular expression: %s/%s/%s at position %zu: %s",
                         TERM(36),
                         pat,
                         TERM(39),
                         offset,
-                        err
+                        err_buf
                 );
         }
 
-        pcre_extra *extra = pcre_study(re, PCRE_STUDY_EXTRA_NEEDED | PCRE_STUDY_JIT_COMPILE, &err);
-        if (extra == NULL) {
+        err = pcre2_jit_compile(re, PCRE2_JIT_COMPLETE);
+        if (err < 0) {
+                pcre2_get_error_message(err, (uint8_t *)err_buf, sizeof err_buf);
                 error(
                         ty,
-                        "error studying regular expression: %s/%s/%s",
+                        "error JIT-compiling regular expression: %s/%s/%s: %s",
                         TERM(36),
-                        err,
-                        TERM(39)
+                        pat,
+                        TERM(39),
+                        err_buf
                 );
         }
-
-        pcre_assign_jit_stack(extra, get_my_pcre_jit_stack, NULL);
 
         Regex *r = amA(sizeof *r);
         r->pattern = pat;
-        r->pcre = re;
-        r->extra = extra;
+        r->pcre2 = re;
         r->gc = false;
         r->detailed = detailed;
 
-        pcre_fullinfo(re, extra, PCRE_INFO_CAPTURECOUNT, &r->ncap);
+        pcre2_pattern_info(re, PCRE2_INFO_CAPTURECOUNT, &r->ncap);
 
         return (Token) {
                 .type = TOKEN_REGEX,
@@ -950,10 +960,11 @@ lexregex(Ty *ty)
 
         while (isalpha(C(0))) {
                 switch (C(0)) {
-                case 'i': flags |= PCRE_CASELESS;  break;
-                case 'u': flags |= PCRE_UTF8;      break;
-                case 'm': flags |= PCRE_MULTILINE; break;
-                case 'v': detailed = true;         break;
+                case 'i': flags |= PCRE2_CASELESS;  break;
+                case 'u': flags |= PCRE2_UTF;       break;
+                case 'm': flags |= PCRE2_MULTILINE; break;
+                case 'x': flags |= PCRE2_EXTENDED;  break;
+                case 'v': detailed = true;          break;
                 default:  error(ty, "invalid regex flag: %s'%c'%s", TERM(36), C(0), TERM(39));
                 }
                 nextchar(ty);

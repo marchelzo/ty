@@ -1328,37 +1328,59 @@ BUILTIN_FUNCTION(tuple)
 
 BUILTIN_FUNCTION(regex)
 {
-        ASSERT_ARGC("regex()", 1);
+        char const *_name__ = "regex()";
 
-        struct value pattern = ARG(0);
+        CHECK_ARGC(1, 2);
 
-        if (pattern.type == VALUE_REGEX)
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+
+        if (pattern.type == VALUE_REGEX) {
                 return pattern;
+        }
 
-        if (pattern.type != VALUE_STRING)
-                zP("non-string passed to regex()");
+        uint32_t options = 0;
+        bool detailed = false;
 
-        snprintf(buffer, sizeof buffer, "%.*s", (int) pattern.bytes, pattern.string);
+        if (argc == 2) {
+                Value flags = ARGx(1, VALUE_STRING);
+                for (int i = 0; i < flags.bytes; ++i) {
+                        switch (flags.string[i]) {
+                        case 'i': options |= PCRE2_CASELESS;  break;
+                        case 'u': options |= PCRE2_UTF;       break;
+                        case 'm': options |= PCRE2_MULTILINE; break;
+                        case 'x': options |= PCRE2_EXTENDED;  break;
+                        case 'v': detailed = true;            break;
+                        }
+                }
+        }
 
-        char const *err;
-        int off;
 
-        pcre *re = pcre_compile(buffer, 0, &err, &off, NULL);
+        int err;
+        size_t off;
+
+        pcre2_code *re = pcre2_compile(
+                (PCRE2_SPTR)pattern.string,
+                pattern.bytes,
+                options,
+                &err,
+                &off,
+                NULL
+        );
+
         if (re == NULL) {
                 return NIL;
         }
 
-        pcre_extra *extra = pcre_study(re, PCRE_STUDY_EXTRA_NEEDED | PCRE_STUDY_JIT_COMPILE, &err);
-        if (extra == NULL) {
+        err = pcre2_jit_compile(re, PCRE2_JIT_COMPLETE);
+        if (err < 0) {
+                pcre2_code_free(re);
                 return NIL;
         }
 
-        pcre_assign_jit_stack(extra, get_my_pcre_jit_stack, NULL);
-
-        struct regex *r = mAo(sizeof *r, GC_REGEX);
-        r->pcre = re;
-        r->extra = extra;
+        Regex *r = mAo(sizeof *r, GC_REGEX);
+        r->pcre2 = re;
         r->pattern = sclone(ty, buffer);
+        r->detailed = detailed;
         r->gc = true;
 
         return REGEX(r);

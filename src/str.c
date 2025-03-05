@@ -1,7 +1,8 @@
+#include <ctype.h>
 #include <string.h>
 
 #include <utf8proc.h>
-#include <ctype.h>
+#include <pcre2.h>
 
 #include "utf8.h"
 #include "value.h"
@@ -71,7 +72,7 @@ Next:
 }
 
 inline static Value
-mkmatch(Ty *ty, Value *s, int offset, int *ovec, int n, bool detailed)
+mkmatch(Ty *ty, Value *s, size_t *ovec, int n, bool detailed)
 {
         if (detailed) {
                 Array *groups = vA();
@@ -80,7 +81,7 @@ mkmatch(Ty *ty, Value *s, int offset, int *ovec, int n, bool detailed)
 
                 for (int i = 0, j = 0; i < n; ++i, j += 2) {
                         Value group = vT(2);
-                        group.items[0] = INTEGER(offset + ovec[j]);
+                        group.items[0] = INTEGER(ovec[j]);
                         group.items[1] = INTEGER(ovec[j + 1] - ovec[j]);
                         NOGC(group.items);
                         vAp(groups, group);
@@ -94,13 +95,13 @@ mkmatch(Ty *ty, Value *s, int offset, int *ovec, int n, bool detailed)
 
                 return vmC(&CLASS(CLASS_RE_MATCH), 2);
         } else if (n == 1) {
-                return STRING_VIEW(*s, offset + ovec[0], ovec[1] - ovec[0]);
+                return STRING_VIEW(*s, ovec[0], ovec[1] - ovec[0]);
         } else {
                 Value match = ARRAY(vA());
                 NOGC(match.array);
 
                 for (int i = 0, j = 0; i < n; ++i, j += 2) {
-                        vvP(*match.array, STRING_VIEW(*s, offset + ovec[j], ovec[j + 1] - ovec[j]));
+                        vvP(*match.array, STRING_VIEW(*s, ovec[j], ovec[j + 1] - ovec[j]));
                 }
 
                 OKGC(match.array);
@@ -145,8 +146,9 @@ string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_chars(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("str.chars() expects no arguments but got %d", argc);
+        char const *_name__ = "String.chars()";
+
+        CHECK_ARGC(0);
 
         uint8_t const *s = (uint8_t *)string->string;
         int size = string->bytes;
@@ -326,29 +328,37 @@ string_search_all(Ty *ty, Value *string, int argc, Value *kwargs)
                         off += n + pattern.bytes;
                 }
         } else {
-                pcre *re = pattern.regex->pcre;
+                pcre2_code *re = pattern.regex->pcre2;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
                 int rc;
-                int out[3];
 
-                while (off < bytes) {
-                        rc = pcre_exec(re, pattern.regex->extra, s + off, bytes, 0, 0, out, 3);
+                for (;;) {
+                        rc = pcre2_match(re, (PCRE2_SPTR)s, 3, off, 0, ty->pcre2.match, ty->pcre2.ctx);
 
-                        if (rc == -1 || rc == -2)
+                        if (rc <= 0) {
                                 break;
+                        }
 
-                        if (rc < -1)
-                                zP("error executing regular expression: %d", rc);
-
-                        n = out[0];
+                        n = ovec[1] - ovec[0];
 
                         stringcount(s + off, n, -1);
 
                         vAp(result.array, INTEGER(offset + outpos.graphemes));
 
-                        stringcount(s + off, out[1], -1);
+                        stringcount(s + off, ovec[1], -1);
 
                         offset += outpos.graphemes;
-                        off += out[1];
+                        off = ovec[1];
+                }
+
+                switch (rc) {
+                        char err[256];
+                case PCRE2_ERROR_NOMATCH:
+                case PCRE2_ERROR_BADOFFSET:
+                        break;
+                default:
+                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
+                        zP("String.searchAll(): PCRE2 error: %s", err);
                 }
         }
 
@@ -361,33 +371,29 @@ string_search_all(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("str.bsearch() expects 1 or 2 arguments but got %d", argc);
+        char const *_name__ = "String.bsearch()";
 
-        Value pattern = ARG(0);
+        CHECK_ARGC(1, 2);
 
-        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
-                zP("the pattern argument to str.bsearch() must be a string or a regex");
-
-        int offset;
-        if (argc == 1)
-                offset = 0;
-        else if (ARG(1).type == VALUE_INTEGER)
-                offset = ARG(1).integer;
-        else
-                zP("the second argument to str.bsearch() must be an integer");
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
+        int64_t offset = (argc == 1) ? 0 : INT_ARG(1);
 
         if (offset < 0) {
                 offset += string->bytes;
         }
 
-        if (offset < 0)
-                zP("invalid offset passed to str.bsearch()");
+        if (offset < 0) {
+                zP("String.search(): invalid offset: %"PRIi64, offset);
+        }
+
+        if (offset >= string->bytes) {
+                return NIL;
+        }
 
         char const *s = string->string + offset;
-        int bytes = string->bytes - offset;
+        int64_t bytes = (int64_t)string->bytes - offset;
 
-        int n;
+        int64_t n;
 
         if (pattern.type == VALUE_STRING) {
                 char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
@@ -396,20 +402,31 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
                         return NIL;
 
                 n = match - s;
-        } else {
-                pcre *re = pattern.regex->pcre;
-                int rc;
-                int out[3];
+        } else if (pattern.type == VALUE_REGEX) {
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+                int rc = pcre2_match(
+                        pattern.regex->pcre2,
+                        (PCRE2_SPTR)s,
+                        bytes,
+                        0,
+                        0,
+                        ty->pcre2.match,
+                        ty->pcre2.ctx
+                );
 
-                rc = pcre_exec(re, pattern.regex->extra, s, bytes, 0, 0, out, 3);
-
-                if (rc == -1 || rc == -2)
+                if (rc == PCRE2_ERROR_NOMATCH) {
                         return NIL;
+                }
 
-                if (rc < -1)
-                        zP("error executing regular expression: %d", rc);
+                if (rc < 0) {
+                        char err[256];
+                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
+                        zP("String.search(): PCRE2 error: %s", err);
+                }
 
-                n = out[0];
+                n = ovec[0];
+        } else {
+                ARGx(0, VALUE_STRING, VALUE_REGEX);
         }
 
         return INTEGER(offset + n);
@@ -418,38 +435,32 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_search(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("str.search() expects 1 or 2 arguments but got %d", argc);
+        char const *_name__ = "String.search()";
 
-        Value pattern = ARG(0);
+        CHECK_ARGC(1, 2);
 
-        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
-                zP("the pattern argument to str.search() must be a string or a regex");
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
 
-        int offset;
-        if (argc == 1)
-                offset = 0;
-        else if (ARG(1).type == VALUE_INTEGER)
-                offset = ARG(1).integer;
-        else
-                zP("the second argument to str.search() must be an integer");
+        int64_t offset = (argc == 1) ? 0 : INT_ARG(1);
 
         if (offset < 0) {
                 stringcount(string->string, string->bytes, -1);
                 offset += outpos.graphemes;
         }
 
-        if (offset < 0)
-                zP("invalid offset passed to str.search()");
+        if (offset < 0) {
+                zP("String.search(): invalid offset: %"PRIi64, offset);
+        }
 
         stringcount(string->string, string->bytes, offset);
-        if (outpos.graphemes != offset)
+        if (outpos.graphemes != offset) {
                 return NIL;
+        }
 
         char const *s = string->string + outpos.bytes;
-        int bytes = string->bytes - outpos.bytes;
+        int64_t bytes = (int64_t)string->bytes - outpos.bytes;
 
-        int n;
+        int64_t n;
 
         if (pattern.type == VALUE_STRING) {
                 char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
@@ -459,19 +470,22 @@ string_search(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 n = match - s;
         } else {
-                pcre *re = pattern.regex->pcre;
-                int rc;
-                int out[3];
+                pcre2_code *re = pattern.regex->pcre2;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
-                rc = pcre_exec(re, pattern.regex->extra, s, bytes, 0, 0, out, 3);
+                int rc = pcre2_match(re, (PCRE2_SPTR)s, bytes, 0, 0, ty->pcre2.match, ty->pcre2.ctx);
 
-                if (rc == -1 || rc == -2)
+                if (rc == PCRE2_ERROR_NOMATCH) {
                         return NIL;
+                }
 
-                if (rc < -1)
-                        zP("error executing regular expression: %d", rc);
+                if (rc < -1) {
+                        char err[256];
+                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
+                        zP("String.search(): PCRE2 error: %s", err);
+                }
 
-                n = out[0];
+                n = ovec[0];
         }
 
         stringcount(s, n, -1);
@@ -526,8 +540,9 @@ string_contains(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_words(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("the words method on strings expects no arguments but got %d", argc);
+        char const *_name__ = "String.words()";
+
+        CHECK_ARGC(0);
 
         gP(string);
 
@@ -580,8 +595,9 @@ End:
 static Value
 string_lines(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("the lines method on strings expects no arguments but got %d", argc);
+        char const *_name__ = "String.lines()";
+
+        CHECK_ARGC(0);
 
         gP(string);
 
@@ -620,14 +636,15 @@ End:
 static Value
 string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("String.split() expects 1 or 2 arguments but got %d", argc);
+        char const *_name__ = "String.split()";
+
+        CHECK_ARGC(1, 2);
 
         char const *s = string->string;
         int len = string->bytes;
         gP(string);
 
-        Value pattern = ARG(0);
+        Value pattern = ARGx(0, VALUE_INTEGER, VALUE_STRING, VALUE_REGEX);
 
         if (pattern.type == VALUE_INTEGER) {
                 int i = pattern.integer;
@@ -648,15 +665,8 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 return ARRAY(parts);
         }
 
-        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING) {
-                zP(
-                        "String.split() expects an Int, String, or Regex but got: %s",
-                        value_show(ty, &pattern)
-                );
-        }
-
-        if (argc == 2 && ARG(1).type != VALUE_INTEGER) {
-                zP("the second argument to String.split() must be an Int");
+        if (argc == 2) {
+                ARGx(1, VALUE_INTEGER);
         }
 
         Value result = ARRAY(vA());
@@ -691,27 +701,28 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 if (i == len)
                         vAp(result.array, STRING_EMPTY);
         } else {
-                pcre *re = pattern.regex->pcre;
-                int len = string->bytes;
+                pcre2_code *re = pattern.regex->pcre2;
+                size_t len = string->bytes;
                 int start = 0;
                 int pstart = 0;
-                int out[3];
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
                 while (start < len) {
                         if ((argc == 2 && result.array->count == ARG(1).integer) ||
-                            pcre_exec(re, pattern.regex->extra, s, len, pstart, 0, out, 3) != 1) {
-                                out[0] = len;
-                                out[1] = len + 1;
+                            pcre2_match(re, (PCRE2_SPTR)s, len, pstart, 0, ty->pcre2.match, ty->pcre2.ctx) != 1) {
+                                ovec[0] = len;
+                                ovec[1] = len + 1;
                         }
 
-                        vAp(result.array, STRING_VIEW(*string, start, out[0] - start));
+                        vAp(result.array, STRING_VIEW(*string, start, ovec[0] - start));
 
-                        pstart = out[1] + (out[0] == out[1]);
-                        start = out[1];
+                        pstart = ovec[1] + (ovec[0] == ovec[1]);
+                        start = ovec[1];
                 }
 
-                if (start == len)
+                if (start == len) {
                         vAp(result.array, STRING_EMPTY);
+                }
         }
 
 End:
@@ -723,24 +734,24 @@ End:
 static Value
 string_count(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("the count method on strings expects exactly 1 argument");
-        }
+        char const *_name__ = "String.count()";
+
+        CHECK_ARGC(1);
 
         Value pattern = ARG(0);
         int count = 0;
 
         char const *s = string->string;
+        size_t len = string->bytes;
 
         if (s == NULL) {
                 return STRING_EMPTY;
         }
 
         if (pattern.type == VALUE_STRING) {
-                char const *p = pattern.string;
-                int len = string->bytes;
-                int plen = pattern.bytes;
                 char const *m;
+                char const *p = pattern.string;
+                int plen = pattern.bytes;
 
                 if (plen > 0) while ((m = sfind(s, len, p, plen)) != NULL) {
                         len -= (m - s + plen);
@@ -748,26 +759,28 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
                         count += 1;
                 }
         } else if (pattern.type == VALUE_REGEX) {
-                int ovec[128];
-                int len = string->bytes;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+                size_t off = 0;
                 int rc;
 
-                while ((rc = pcre_exec(
-                                pattern.regex->pcre,
-                                pattern.regex->extra,
-                                s,
+                for (;;) {
+                        rc = pcre2_match(
+                                pattern.regex->pcre2,
+                                (PCRE2_SPTR)s,
                                 len,
+                                off,
                                 0,
-                                0,
-                                ovec,
-                                128
-                        )) > 0) {
+                                ty->pcre2.match,
+                                ty->pcre2.ctx
+                        );
+
+                        if (rc <= 0) { break; }
+
                         count += 1;
-                        s += ovec[1];
-                        len -= ovec[1];
+                        off = ovec[1];
                 }
         } else {
-                zP("the argument to string.count() must be a string or a regex");
+                ARGx(0, VALUE_STRING, VALUE_REGEX);
         }
 
         return INTEGER(count);
@@ -777,15 +790,12 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
 {
+        char const *_name__ = "String.comb()";
+
+        CHECK_ARGC(1);
+
         vec(char) chars = {0};
-
-        if (argc != 1)
-                zP("the comb method on strings expects 1 arguments but got %d", argc);
-
         Value pattern = ARG(0);
-
-        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
-                zP("the pattern argument to string's comb method must be a regex or a string");
 
         char const *s = string->string;
 
@@ -793,7 +803,9 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 return STRING_EMPTY;
         }
 
-        if (pattern.type == VALUE_STRING) {
+        switch (pattern.type) {
+        case VALUE_STRING:
+        {
                 char const *p = pattern.string;
 
                 int len = string->bytes;
@@ -807,18 +819,27 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 }
 
                 vvPn(chars, s, len);
-        } else {
-                pcre *re = pattern.regex->pcre;
-                int len = string->bytes;
-                int start = 0;
-                int out[3];
 
-                while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
-                        vvPn(chars, s + start, out[0] - start);
-                        start = out[1];
+                break;
+        }
+        case VALUE_REGEX:
+        {
+                pcre2_code *re = pattern.regex->pcre2;
+                size_t len = string->bytes;
+                int start = 0;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+
+                while (pcre2_match(re, (PCRE2_SPTR)s, len, start, 0, ty->pcre2.match, ty->pcre2.ctx) == 1) {
+                        vvPn(chars, s + start, ovec[0] - start);
+                        start = ovec[1];
                 }
 
                 vvPn(chars, s + start, len - start);
+
+                break;
+        }
+        default:
+                ARGx(0, VALUE_STRING, VALUE_REGEX);
         }
 
         Value r = vSs(chars.items, chars.count);
@@ -853,16 +874,13 @@ string_repeat(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 {
+        char const *_name__ = "String.replace()";
+
+        CHECK_ARGC(2);
+
         vec(char) chars = {0};
-
-        if (argc != 2)
-                zP("the replace method on strings expects 2 arguments but got %d", argc);
-
-        Value pattern = ARG(0);
+        Value pattern = ARGx(0, VALUE_REGEX, VALUE_STRING);
         Value replacement = ARG(1);
-
-        if (pattern.type != VALUE_REGEX && pattern.type != VALUE_STRING)
-                zP("the pattern argument to string's replace method must be a regex or a string");
 
         char const *s = string->string;
 
@@ -871,8 +889,13 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 replacement = builtin_str(ty, 1, NULL);
                 vmX();
 
-                if (replacement.type != VALUE_STRING)
-                        zP("non-string replacement passed to string's replace method with a string pattern");
+                if (replacement.type != VALUE_STRING) {
+                        zP(
+                                "String.replace(): non-string replacement passed "
+                                "with a string pattern: %s",
+                                VSC(&replacement)
+                        );
+                }
 
                 char const *p = pattern.string;
                 char const *r = replacement.string;
@@ -892,21 +915,20 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 
                 vvPn(chars, s, len);
         } else if (replacement.type == VALUE_STRING) {
-                pcre *re = pattern.regex->pcre;
-                char const *r = replacement.string;
-                int len = string->bytes;
+                pcre2_code *re = pattern.regex->pcre2;
+                size_t len = string->bytes;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
                 int start = 0;
-                int out[3];
 
-                while (pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 3) == 1) {
-                        if (out[1] == start) {
-                                vvPn(chars, r, replacement.bytes);
+                while (pcre2_match(re, (PCRE2_SPTR)s, len, start, 0, ty->pcre2.match, ty->pcre2.ctx) == 1) {
+                        if (ovec[1] == start) {
+                                vvPn(chars, replacement.string, replacement.bytes);
                                 vvP(chars, s[start]);
-                                start = out[1] + 1;
+                                start = ovec[1] + 1;
                         } else {
-                                vvPn(chars, s + start, out[0] - start);
-                                vvPn(chars, r, replacement.bytes);
-                                start = out[1];
+                                vvPn(chars, s + start, ovec[0] - start);
+                                vvPn(chars, replacement.string, replacement.bytes);
+                                start = ovec[1];
                         }
                 }
 
@@ -914,47 +936,52 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         vvPn(chars, s + start, len - start);
                 }
         } else if (CALLABLE(replacement)) {
-                pcre *re = pattern.regex->pcre;
-                int len = string->bytes;
+                pcre2_code *re = pattern.regex->pcre2;
+                size_t len = string->bytes;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
                 int start = 0;
-                int out[128];
                 int rc;
 
-                while ((rc = pcre_exec(re, pattern.regex->extra, s, len, start, 0, out, 128)) > 0) {
-
-                        vvPn(chars, s + start, out[0] - start);
+                while ((rc = pcre2_match(re, (PCRE2_SPTR)s, len, start, 0, ty->pcre2.match, ty->pcre2.ctx)) > 0) {
+                        vvPn(chars, s + start, ovec[0] - start);
 
                         Value match;
-
                         if (rc == 1) {
-                                match = STRING_VIEW(*string, out[0], out[1] - out[0]);
+                                match = STRING_VIEW(*string, ovec[0], ovec[1] - ovec[0]);
                         } else {
                                 match = ARRAY(vA());
                                 NOGC(match.array);
 
                                 int j = 0;
-                                for (int i = 0; i < rc; ++i, j += 2)
-                                        vvP(*match.array, STRING_VIEW(*string, out[j], out[j + 1] - out[j]));
+                                for (int i = 0; i < rc; ++i, j += 2) {
+                                        vvP(
+                                                *match.array,
+                                                STRING_VIEW(
+                                                        *string,
+                                                        ovec[j],
+                                                        ovec[j + 1] - ovec[j]
+                                                )
+                                        );
+                                }
                         }
 
-                        Value repstr = vm_eval_function(ty, &replacement, &match, NULL);
-                        vmP(&repstr);
-                        repstr = builtin_str(ty, 1, NULL);
+                        Value substitute = vm_eval_function(ty, &replacement, &match, NULL);
+                        vmP(&substitute);
+                        substitute = builtin_str(ty, 1, NULL);
                         vmX();
-                        if (repstr.type != VALUE_STRING)
-                                zP("non-string returned by the replacement function passed to string's replace method");
 
-                        if (match.type == VALUE_ARRAY)
+                        if (match.type == VALUE_ARRAY) {
                                 OKGC(match.array);
+                        }
 
-                        vvPn(chars, repstr.string, repstr.bytes);
+                        vvPn(chars, substitute.string, substitute.bytes);
 
-                        start = out[1];
+                        start = ovec[1];
                 }
 
                 vvPn(chars, s + start, len - start);
         } else {
-                zP("invalid replacement passed to replace method on string");
+                zP("String.replace(): invalid replacement: %s", VSC(&replacement));
         }
 
         Value r = vSs(chars.items, chars.count);
@@ -967,26 +994,20 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the match? method on strings expects 1 argument but got %d", argc);
+        char const *_name__ = "String.match?()";
 
-        Value pattern = ARG(0);
+        CHECK_ARGC(1);
 
-        if (pattern.type != VALUE_REGEX)
-                zP("non-regex passed to the match? method on string");
+        Value pattern = ARGx(0, VALUE_REGEX);
 
-        int len = string->bytes;
-        int rc;
-
-        rc = pcre_exec(
-                pattern.regex->pcre,
-                pattern.regex->extra,
-                string->string,
-                len,
+        int rc = pcre2_match(
+                pattern.regex->pcre2,
+                (PCRE2_SPTR)string->string,
+                string->bytes,
                 0,
                 0,
-                NULL,
-                0
+                ty->pcre2.match,
+                ty->pcre2.ctx
         );
 
         if (rc < -2)
@@ -998,27 +1019,21 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_match(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the match method on strings expects 1 argument but got %d", argc);
+        char const *_name__ = "String.match!()";
 
-        Value pattern = ARG(0);
+        CHECK_ARGC(1);
 
-        if (pattern.type != VALUE_REGEX)
-                zP("non-regex passed to the match method on string");
+        Value pattern = ARGx(0, VALUE_REGEX);
+        size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
-        int ovec[128];
-        int len = string->bytes;
-        int rc;
-
-        rc = pcre_exec(
-                pattern.regex->pcre,
-                pattern.regex->extra,
-                string->string,
-                len,
+        int rc = pcre2_match(
+                pattern.regex->pcre2,
+                (PCRE2_SPTR)string->string,
+                string->bytes,
                 0,
                 0,
-                ovec,
-                128
+                ty->pcre2.match,
+                ty->pcre2.ctx
         );
 
         if (rc < -2)
@@ -1027,51 +1042,53 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs)
         if (rc < 0)
                 return NIL;
 
-        return mkmatch(ty, string, 0, ovec, rc, pattern.regex->detailed);
+        return mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
 }
 
 static Value
 string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the matches method on strings expects 1 argument but got %d", argc);
+        char const *_name__ = "String.matches()";
 
-        Value pattern = ARG(0);
+        CHECK_ARGC(1);
 
-        if (pattern.type != VALUE_REGEX)
-                zP("non-regex passed to the matches method on string");
+        Value pattern = ARGx(0, VALUE_REGEX);
 
         Value result = ARRAY(vA());
         gP(&result);
 
-        int ovec[128];
-        char const *s = string->string;
-        int len = string->bytes;
-        int offset = 0;
+        size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+        size_t offset = 0;
         int rc;
 
-        while (
-                (rc = pcre_exec(
-                        pattern.regex->pcre,
-                        pattern.regex->extra,
-                        s,
-                        len,
+        for (;;) {
+                rc = pcre2_match(
+                        pattern.regex->pcre2,
+                        (PCRE2_SPTR)string->string,
+                        string->bytes,
+                        offset,
                         0,
-                        0,
-                        ovec,
-                        128
-                )) > 0
-        ) {
-                vAp(result.array, NIL);
-                *vvL(*result.array) = mkmatch(ty, string, offset, ovec, rc, pattern.regex->detailed);
+                        ty->pcre2.match,
+                        ty->pcre2.ctx
+                );
 
-                s += ovec[1];
-                offset += ovec[1];
-                len -= ovec[1];
+                if (rc <= 0) { break; }
+
+                vAp(result.array, NIL);
+                *vvL(*result.array) = mkmatch(ty, string, ovec, rc, pattern.regex->detailed);
+
+                offset = ovec[1];
         }
 
-        if (rc < -2)
-                zP("error while executing regular expression: %d", rc);
+        switch (rc) {
+                char err[256];
+        case PCRE2_ERROR_NOMATCH:
+        case PCRE2_ERROR_BADOFFSET:
+                break;
+        default:
+                pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
+                zP("String.matches(): PCRE2 error: %s", err);
+        }
 
         gX();
 
@@ -1101,20 +1118,19 @@ string_byte(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_char(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("the char method on strings expects 1 argument but got %d", argc);
+        char const *_name__ = "String.char()";
 
-        Value i = ARG(0);
+        CHECK_ARGC(1);
 
-        if (i.type != VALUE_INTEGER)
-                zP("non-integer passed to the char method on string");
+        int64_t i = INT_ARG(0);
 
-        if (i.integer < 0)
-                i.integer += string_length(ty, string, 0, NULL).integer;
+        if (i < 0) {
+                i += string_length(ty, string, 0, NULL).integer;
+        }
 
         int cp;
-        int j = i.integer;
-        int offset = 0;
+        int64_t j = i;
+        int64_t offset = 0;
         int n = utf8proc_iterate(string->string, string->bytes, &cp);
 
         while (offset < string->bytes && n > 0 && j --> 0) {
@@ -1131,8 +1147,9 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_bytes(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("str.bytes() expects no arguments but got %d", argc);
+        char const *_name__ = "String.bytes()";
+
+        CHECK_ARGC(0);
 
         Value result = ARRAY(vA());
         NOGC(result.array);
@@ -1149,11 +1166,11 @@ string_bytes(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_lower(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("str.lower() expects no arguments but got %d", argc);
+        char const *_name__ = "String.lower()";
+
+        CHECK_ARGC(0);
 
         utf8proc_int32_t c;
-
         utf8proc_uint8_t *s = (utf8proc_uint8_t *) string->string;
         size_t len = string->bytes;
 
@@ -1174,11 +1191,11 @@ string_lower(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_upper(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("str.upper() expects no arguments but got %d", argc);
+        char const *_name__ = "String.upper()";
+
+        CHECK_ARGC(0);
 
         utf8proc_int32_t c;
-
         utf8proc_uint8_t *s = (utf8proc_uint8_t *) string->string;
         size_t len = string->bytes;
 
@@ -1199,15 +1216,14 @@ string_upper(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("str.padLeft() expects 1 or 2 arguments but got %d", argc);
+        char const *_name__ = "String.padLeft()";
 
-        Value len = ARG(0);
-        if (len.type != VALUE_INTEGER)
-                zP("the first argument to str.padLeft() must be an integer");
+        CHECK_ARGC(1, 2);
+
+        int64_t width = INT_ARG(0);
 
         int string_len = stringwidth(string->string, string->bytes);
-        if (string_len >= len.integer)
+        if (string_len >= width)
                 return *string;
 
         char const *pad;
@@ -1226,19 +1242,19 @@ string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
                 pad_len = outpos.graphemes;
         }
 
-        int n = (len.integer - string_len) / pad_len + 1;
+        int n = (width - string_len) / pad_len + 1;
         char *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
 
         int current = 0;
         int bytes = 0;
-        while (current + pad_len <= len.integer - string_len) {
+        while (current + pad_len <= width - string_len) {
                 memcpy(result + bytes, pad, pad_bytes);
                 current += pad_len;
                 bytes += pad_bytes;
         }
 
-        if (current != len.integer - string_len) {
-                stringcount(pad, pad_bytes, len.integer - string_len - current);
+        if (current != width - string_len) {
+                stringcount(pad, pad_bytes, width - string_len - current);
                 memcpy(result + bytes, pad, outpos.bytes);
                 bytes += outpos.bytes;
         }
@@ -1252,15 +1268,14 @@ string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_pad_right(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("str.padRight() expects 1 or 2 arguments but got %d", argc);
+        char const *_name__ = "String.padRight()";
 
-        Value len = ARG(0);
-        if (len.type != VALUE_INTEGER)
-                zP("the first argument to str.padRight() must be an integer");
+        CHECK_ARGC(1, 2);
+
+        int64_t width = INT_ARG(0);
 
         int current = stringwidth(string->string, string->bytes);
-        if (current >= len.integer)
+        if (current >= width)
                 return *string;
 
         char const *pad;
@@ -1279,19 +1294,19 @@ string_pad_right(Ty *ty, Value *string, int argc, Value *kwargs)
                 pad_len = outpos.graphemes;
         }
 
-        int n = (len.integer - current) / pad_len + 1;
+        int n = (width - current) / pad_len + 1;
         char *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
         int bytes = string->bytes;
         memcpy(result, string->string, bytes);
 
-        while (current + pad_len <= len.integer) {
+        while (current + pad_len <= width) {
                 memcpy(result + bytes, pad, pad_bytes);
                 current += pad_len;
                 bytes += pad_bytes;
         }
 
-        if (current != len.integer) {
-                stringcount(pad, pad_bytes, len.integer - current);
+        if (current != width) {
+                stringcount(pad, pad_bytes, width - current);
                 memcpy(result + bytes, pad, outpos.bytes);
                 bytes += outpos.bytes;
         }

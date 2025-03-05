@@ -963,22 +963,17 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
                 b = vmC(p, 1);
                 return value_truthy(ty, &b);
         case VALUE_REGEX:
-                if (v->type != VALUE_STRING)
+                if (v->type != VALUE_STRING) {
                         zP("regex applied as predicate to non-string");
-                {
-                        char const *s = v->string;
-                        int len = v->bytes;
-                        int rc;
-
-                        rc = pcre_exec(
-                                p->regex->pcre,
-                                p->regex->extra,
-                                s,
-                                len,
+                } else {
+                        int rc = pcre2_match(
+                                p->regex->pcre2,
+                                (PCRE2_SPTR)v->string,
+                                v->bytes,
                                 0,
                                 0,
-                                NULL,
-                                0
+                                ty->pcre2.match,
+                                ty->pcre2.ctx
                         );
 
                         if (rc < -2)
@@ -996,7 +991,7 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
 }
 
 struct value
-value_apply_callable(Ty *ty, struct value *f, struct value *v)
+value_apply_callable(Ty *ty, Value *f, Value *v)
 {
         switch (f->type) {
         case VALUE_FUNCTION:
@@ -1014,29 +1009,25 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v)
                 if (v->type != VALUE_STRING)
                         zP("regex applied as predicate to non-string");
 
-                static _Thread_local int ovec[30];
-                char const *s = v->string;
-                int len = v->bytes;
-                int rc;
+                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
-                rc = pcre_exec(
-                        f->regex->pcre,
-                        f->regex->extra,
-                        s,
-                        len,
+                int rc = pcre2_match(
+                        f->regex->pcre2,
+                        (PCRE2_SPTR)v->string,
+                        v->bytes,
                         0,
                         0,
-                        ovec,
-                        30
+                        ty->pcre2.match,
+                        ty->pcre2.ctx
                 );
 
                 if (rc < -2)
                         zP("error while executing regular expression: %d", rc);
 
-                if (rc < 0)
+                if (rc <= 0)
                         return NIL;
 
-                struct value match;
+                Value match;
 
                 if (rc == 1) {
                         match = STRING_VIEW(*v, ovec[0], ovec[1] - ovec[0]);
@@ -1046,8 +1037,16 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v)
                         value_array_reserve(ty, match.array, rc);
 
                         int j = 0;
-                        for (int i = 0; i < rc; ++i, j += 2)
-                                vAp(match.array, STRING_VIEW(*v, ovec[j], ovec[j + 1] - ovec[j]));
+                        for (int i = 0; i < rc; ++i, j += 2) {
+                                vAp(
+                                        match.array,
+                                        STRING_VIEW(
+                                                *v,
+                                                ovec[j],
+                                                ovec[j + 1] - ovec[j]
+                                        )
+                                );
+                        }
 
                         OKGC(match.array);
                 }

@@ -16,8 +16,8 @@
 #include <stdnoreturn.h>
 #include <locale.h>
 
-#include <pcre.h>
 #include <curl/curl.h>
+#include <pcre2.h>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -379,12 +379,6 @@ get_my_ty(void)
         return MyTy;
 }
 
-pcre_jit_stack *
-get_my_pcre_jit_stack(void *ctx)
-{
-        return MyTy->pcre_stack;
-}
-
 static void
 InitializeTy(Ty *ty)
 {
@@ -399,10 +393,22 @@ InitializeTy(Ty *ty)
         ty->prng[2] = splitmix64(&seed);
         ty->prng[3] = splitmix64(&seed);
 
-        ty->pcre_stack = pcre_jit_stack_alloc(512, 4096 * 64);
-        if (UNLIKELY(ty->pcre_stack == NULL)) {
-                panic("Out of memory!");
+        ty->pcre2.ctx = pcre2_match_context_create(NULL);
+        if (UNLIKELY(ty->pcre2.ctx == NULL)) {
+                panic("1Out of memory!");
         }
+
+        ty->pcre2.match = pcre2_match_data_create(128, NULL);
+        if (UNLIKELY(ty->pcre2.match == NULL)) {
+                panic("2Out of memory!");
+        }
+
+        ty->pcre2.stack = pcre2_jit_stack_create(4096, 4096 * 64, NULL);
+        if (UNLIKELY(ty->pcre2.stack == NULL)) {
+                panic("3Out of memory!");
+        }
+
+        pcre2_jit_stack_assign(ty->pcre2.ctx, NULL, ty->pcre2.stack);
 }
 
 inline static void
@@ -657,8 +663,6 @@ DoGC(Ty *ty)
 #undef BUILTIN
 #undef BOOL_
 #undef POINTER
-
-pcre_jit_stack *JITStack = NULL;
 
 inline static void
 PopulateGlobals(Ty *ty)
@@ -1410,6 +1414,9 @@ CleanupThread(void *ctx)
         free(THROW_STACK.items);
         free(DROP_STACK.items);
         free(ty->allocs.items);
+        pcre2_match_data_free(ty->pcre2.match);
+        pcre2_match_context_free(ty->pcre2.ctx);
+        pcre2_jit_stack_free(ty->pcre2.stack);
 
         vec(Value const *) *root_set = (void *)GCRoots(ty);
         free(root_set->items);
@@ -5471,9 +5478,6 @@ RunExitHooks(void)
 bool
 vm_init(Ty *ty, int ac, char **av)
 {
-        pcre_malloc = malloc;
-        pcre_free = free;
-
         curl_global_init(CURL_GLOBAL_ALL);
 
         InitializeTY();

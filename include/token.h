@@ -3,7 +3,6 @@
 
 #include <limits.h>
 #include <stdint.h>
-#include <pcre.h>
 #include <stdbool.h>
 
 #include "vec.h"

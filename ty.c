@@ -12,8 +12,6 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 
-#include <pcre.h>
-
 #include "vm.h"
 #include "gc.h"
 #include "value.h"

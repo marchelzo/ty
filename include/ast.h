@@ -4,11 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <pcre.h>
-
 #include "location.h"
 #include "vec.h"
 #include "scope.h"
+#include "types.h"
 
 typedef vec(struct expression *) expression_vector;
 
@@ -255,6 +254,8 @@ struct expression {
         Scope *xscope;
 
         bool has_resources;
+
+        Type *_type;
 
         union {
                 intmax_t integer;
