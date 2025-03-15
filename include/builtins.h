@@ -24,6 +24,7 @@ static struct {
   { .module = NULL,         .name = "eprint",                   .value = BUILTIN(builtin_eprint)                 },
   { .module = NULL,         .name = "slurp",                    .value = BUILTIN(builtin_slurp)                  },
   { .module = NULL,         .name = "die",                      .value = BUILTIN(builtin_die)                    },
+  { .module = NULL,         .name = "__debug",                  .value = BUILTIN(builtin___debug)                },
   { .module = NULL,         .name = "doc",                      .value = BUILTIN(builtin_doc)                    },
   { .module = NULL,         .name = "setDoc",                   .value = BUILTIN(builtin_set_doc)                },
   { .module = NULL,         .name = "readLine",                 .value = BUILTIN(builtin_read)                   },

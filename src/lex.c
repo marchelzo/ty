@@ -837,6 +837,8 @@ lex_ss_string(Ty *ty)
                 case '\0':
                         goto Unterminated;
 
+                case '[':
+                        if (state.ctx == LEX_FMT) break;
                 case '"':
                 case '{':
                 case '}':
@@ -911,12 +913,9 @@ lex_ss_string(Ty *ty)
                                 nextchar(ty);
                                 continue;
                         }
-                        /* fallthrough */
-                default:
-                        avP(str, nextchar(ty));
-                        break;
-
                 }
+
+                avP(str, nextchar(ty));
         }
 
 Unterminated:
@@ -1249,7 +1248,7 @@ dotoken(Ty *ty, int ctx)
 
         state.ctx = ctx;
 
-        if (ctx == LEX_FMT) {
+        if (ctx == LEX_FMT || ctx == LEX_XFMT) {
                 return lex_ss_string(ty);
         }
 
@@ -1298,6 +1297,9 @@ dotoken(Ty *ty, int ctx)
                 nextchar(ty);
                 nextchar(ty);
                 return mktoken(ty, TOKEN_CHECK_MATCH);
+        } else if (C(0) == ':' && !isspace(C(-1))) {
+                nextchar(ty);
+                return mktoken(ty, ':');
         } else if (C(0) == '-' && C(1) == '>' && ctx == LEX_PREFIX) {
                 nextchar(ty);
                 nextchar(ty);
@@ -1334,7 +1336,7 @@ dotoken(Ty *ty, int ctx)
         } else if (C(0) == '?' && ctx == LEX_PREFIX) {
                 nextchar(ty);
                 return mktoken(ty, TOKEN_QUESTION);
-        } else if (C(0) == '$' && C(1) == '"') {
+        } else if (false && C(0) == '$' && C(1) == '"') {
                 nextchar(ty);
 
                 Token t = dotoken(ty, ctx);

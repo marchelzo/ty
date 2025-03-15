@@ -406,13 +406,20 @@ BUILTIN_FUNCTION(ident)
 
 BUILTIN_FUNCTION(die)
 {
-        ASSERT_ARGC("die()", 1);
+        char *_name__ = "die()";
 
-        struct value message = ARG(0);
-        if (message.type != VALUE_STRING)
-                zP("the argument to die() must be a string");
+        CHECK_ARGC(1);
+        Value message = ARGx(0, VALUE_STRING);
 
-        zP("%.*s", (int) message.bytes, message.string);
+        zP("%.*s", (int)message.bytes, message.string);
+}
+
+BUILTIN_FUNCTION(__debug)
+{
+        char *_name__ = "__debug()";
+
+        CHECK_ARGC(1);
+        return INTEGER(EnableLogging += INT_ARG(0));
 }
 
 BUILTIN_FUNCTION(read)
@@ -841,11 +848,12 @@ isflag(int c)
 struct fspec {
         bool alt;
         bool blank;
-        bool left;
         bool sep;
         bool sign;
         bool zero;
+        int8_t justify;
         char xsep;
+        int32_t fill;
         char prec[64];
         char width[64];
 };
@@ -856,27 +864,52 @@ getfmt(char const **s, char const *end, struct fspec *out)
         int w = 0;
         int p = 0;
 
-        out->alt    = false;
-        out->blank  = false;
-        out->left   = false;
-        out->sep    = false;
-        out->sign   = false;
-        out->zero   = false;
-        out->xsep   = '\0';
+        out->alt     = false;
+        out->blank   = false;
+        out->justify = 1;
+        out->sep     = false;
+        out->sign    = false;
+        out->fill    = 0;
+        out->xsep    = '\0';
 
-        bool flags = true;
+        int32_t rune;
+        int bytes;
 
-        while (flags && *s < end) {
-                switch (**s) {
-                case '+':  out->sign  = true; break;
-                case '-':  out->left  = true; break;
-                case '0':  out->zero  = true; break;
-                case '#':  out->alt   = true; break;
-                case '\'': out->sep   = true; break;
-                case ' ':  out->blank = true; break;
-                default:   flags = false; continue;
+        for (;;) {
+                if (out->fill == 0) {
+                        bytes = utf8proc_iterate(*s, end - *s, &rune);
+
+                        if (bytes <= 0) {
+                                bytes = 1;
+                                rune = **s;
+                        }
+
+                        if (*s + bytes < end && strchr("<^>", (*s)[bytes]) != NULL) {
+                                out->fill = rune;
+                                *s += bytes;
+                                continue;
+                        }
                 }
+
+                switch (**s) {
+                case '+':  out->sign    = true; break;
+                case '#':  out->alt     = true; break;
+                case '\'': out->sep     = true; break;
+                case ' ':  out->blank   = true; break;
+                case '0':  out->fill    = '0';  break;
+                case '-':  out->justify = -1;   break;
+                case '<':  out->justify = -1;   break;
+                case '^':  out->justify =  0;   break;
+                case '>':  out->justify =  1;   break;
+                default: goto FlagsComplete;
+                }
+
                 *s += 1;
+        }
+
+FlagsComplete:
+        if (out->fill == 0) {
+                out->fill = ' ';
         }
 
         if (*s < end && **s == '*') {
@@ -1095,10 +1128,18 @@ MissingArgument:
                         if (spec.alt)   scratch[si++] = '#';
                         if (spec.blank) scratch[si++] = ' ';
                         if (spec.sign)  scratch[si++] = '+';
-                        if (spec.zero)  scratch[si++] = '0';
-                        if (spec.left)  scratch[si++] = '-';
 
-                        int wlen = strlen(spec.width);
+                        int wlen;
+                        if (spec.fill == '0' && spec.justify != 0) {
+                                scratch[si++] = '0';
+                                if (spec.justify == -1) {
+                                        scratch[si++] = '-';
+                                }
+                                wlen = strlen(spec.width);
+                        } else {
+                                wlen = 0;
+                        }
+
                         int plen = strlen(spec.prec);
 
                         memcpy(scratch + si, spec.width, wlen);
@@ -1256,7 +1297,49 @@ MissingArgument:
                                 goto BadFormatSpecifier;
                         }
 
-                        xvPn(cs, buffer, strlen(buffer));
+                        if (*spec.width) {
+                                int goal = atoi(spec.width);
+                                int curr = term_width(buffer, -1);
+
+                                char fill[4];
+                                int sz = utf8proc_encode_char(spec.fill, fill);
+
+                                if (sz <= 0) {
+                                        fill[0] = (uint8_t)spec.fill;
+                                        sz = 1;
+                                }
+
+                                int pad = max(0, goal - curr);
+                                int odd;
+
+                                switch (spec.justify) {
+                                case 1:
+                                        for (int i = 0; i < pad; ++i) {
+                                                xvPn(cs, fill, sz);
+                                        }
+                                        xvPn(cs, buffer, strlen(buffer));
+                                        break;
+                                case 0:
+                                        odd = pad & 1;
+                                        pad /= 2;
+                                        for (int i = 0; i < pad; ++i) {
+                                                xvPn(cs, fill, sz);
+                                        }
+                                        xvPn(cs, buffer, strlen(buffer));
+                                        for (int i = 0; i < pad + odd; ++i) {
+                                                xvPn(cs, fill, sz);
+                                        }
+                                        break;
+                                case -1:
+                                        xvPn(cs, buffer, strlen(buffer));
+                                        for (int i = 0; i < pad; ++i) {
+                                                xvPn(cs, fill, sz);
+                                        }
+                                        break;
+                                }
+                        } else {
+                                xvPn(cs, buffer, strlen(buffer));
+                        }
                 } else {
                         xvP(cs, fmt[i]);
                 }
@@ -6351,7 +6434,7 @@ BUILTIN_FUNCTION(members_list)
 {
         ASSERT_ARGC("members()", 1);
 
-        struct value o = ARG(0);
+        Value o = ARG(0);
 
         Array *a = vA();
         Value items = ARRAY(a);

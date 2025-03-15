@@ -350,6 +350,9 @@ CompilerScopePop(Ty *ty);
 bool
 IsTopLevel(Symbol const *sym);
 
+Scope *
+GetNamespace(Ty *ty, Namespace *ns);
+
 char const *
 DumpProgram(
         Ty *ty,

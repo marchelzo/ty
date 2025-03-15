@@ -951,7 +951,8 @@ value_truthy(Ty *ty, struct value const *v)
 bool
 value_apply_predicate(Ty *ty, struct value *p, struct value *v)
 {
-        struct value b;
+        Value b;
+        char err[256];
 
         switch (p->type) {
         case VALUE_FUNCTION:
@@ -976,10 +977,16 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
                                 ty->pcre2.ctx
                         );
 
-                        if (rc < -2)
-                                zP("error while executing regular expression: %d", rc);
+                        if (rc >= 0) {
+                                return true;
+                        }
 
-                        return rc == 0;
+                        if (rc == PCRE2_ERROR_NOMATCH) {
+                                return false;
+                        }
+
+                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
+                        zP("apply_predicate(): PCRE2 error: %s", err);
                 }
         case VALUE_TAG:
                 return tags_first(ty, v->tags) == p->tag;

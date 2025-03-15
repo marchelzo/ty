@@ -178,7 +178,6 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
         case EXPRESSION_TAG_PATTERN:
                 VL_(t->tagged);
         case EXPRESSION_IDENTIFIER:
-        case EXPRESSION_SPREAD:
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_RESOURCE_BINDING:
@@ -186,6 +185,9 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
                 sym->file = t->file;
                 sym->loc = t->start;
                 V(t->constraint);
+                break;
+        case EXPRESSION_SPREAD:
+                VL_(t->value);
                 break;
         case EXPRESSION_VIEW_PATTERN:
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
@@ -196,8 +198,9 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
                 VL_(t->tagged);
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < t->elements.count; ++i)
-                        VL_(t->elements.items[i]);
+                for (size_t i = 0; i < t->elements.count; ++i) {
+                        VL_(v__(t->elements, i));
+                }
                 break;
         case EXPRESSION_DICT:
                 V(t->dflt);

@@ -103,6 +103,7 @@ enum {
         VALUE_REF              ,
         VALUE_THREAD           ,
         VALUE_TUPLE            ,
+        VALUE_BREAK            ,
         VALUE_TAGGED           = 1 << 7
 };
 
@@ -407,6 +408,8 @@ typedef struct {
         int _len_;
         int match;
         int missing;
+        int method_missing;
+        int _name_;
         int _next_;
         int ptr;
         int question;
@@ -699,6 +702,7 @@ enum {
 #define INDEX(ix, o, n)          ((Value){ .type = VALUE_INDEX,          .i              = (ix), .off   = (o), .nt = (n),        .tags = 0 })
 #define SENTINEL                 ((Value){ .type = VALUE_SENTINEL,       .i              = 0,    .off   = 0,                     .tags = 0 })
 #define NONE                     ((Value){ .type = VALUE_NONE,           .i              = 0,    .off   = 0,                     .tags = 0 })
+#define BREAK                    ((Value){ .type = VALUE_BREAK,          .i              = 0,    .off   = 0,                     .tags = 0 })
 
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)
 #define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)

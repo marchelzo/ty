@@ -476,7 +476,7 @@ inline static Expr *
 (to_expr)(Ty *ty, Stmt *s)
 {
         Expr *e = mkexpr(ty);
-        e->type = STATEMENT_EXPRESSION;
+        e->type = EXPRESSION_STATEMENT;
         e->start = s->start;
         e->end = s->end;
 
@@ -976,6 +976,9 @@ PushNS(Ty *ty, char *id, bool pub)
         ns->pub = pub;
         ns->braced = true;
         ns->next = CurrentNamespace;
+
+        (void)GetNamespace(ty, ns);
+
         return CurrentNamespace = ns;
 }
 
@@ -1371,11 +1374,11 @@ prefix_string(Ty *ty)
 }
 
 static char *
-ss_next_str(Ty *ty)
+ss_next_str(Ty *ty, bool top)
 {
         char *str;
 
-        setctx(ty, LEX_FMT);
+        setctx(ty, top ? LEX_FMT : LEX_XFMT);
 
         if (T0 != TOKEN_STRING) {
                 // TODO: this shouldn't be necessary. we threw away a SS string
@@ -1392,38 +1395,39 @@ ss_next_str(Ty *ty)
 }
 
 static void
-ss_skip_inner(Ty *ty)
+ss_skip_inner(Ty *ty, bool top)
 {
-        ss_next_str(ty);
+        ss_next_str(ty, top);
 
         while (setctx(ty, LEX_PREFIX), T0 == '{') {
                 next();
 
                 parse_expr(ty, 0);
 
-                if (T0 == '@') {
-                        next();
-                        parse_expr(ty, 0);
-                }
-
                 if (T0 == ':') {
                         next();
-                        ss_skip_inner(ty);
+                        ss_skip_inner(ty, false);
+                }
+
+                if (T0 == '[') {
+                        next();
+                        parse_expr(ty, 0);
+                        consume(']');
                 }
 
                 consume('}');
 
-                ss_next_str(ty);
+                ss_next_str(ty, top);
         }
 }
 
 static Expr *
-ss_inner(Ty *ty)
+ss_inner(Ty *ty, bool top)
 {
         Expr *e = mkexpr(ty);
         e->type = EXPRESSION_SPECIAL_STRING;
 
-        avP(e->strings, ss_next_str(ty));
+        avP(e->strings, ss_next_str(ty, top));
 
         while (setctx(ty, LEX_PREFIX), T0 == '{') {
                 Location start = tok()->start;
@@ -1432,17 +1436,10 @@ ss_inner(Ty *ty)
 
                 avP(e->expressions, parse_expr(ty, 0));
 
-                if (T0 == '@') {
-                        next();
-                        avP(e->fmtfs, parse_expr(ty, 0));
-                } else {
-                        avP(e->fmtfs, NULL);
-                }
-
                 if (T0 == ':') {
                         next();
 
-                        Expr *fmt = ss_inner(ty);
+                        Expr *fmt = ss_inner(ty, false);
                         char *last = *vvL(fmt->strings);
 
                         /*
@@ -1451,7 +1448,7 @@ ss_inner(Ty *ty)
                          * are used purely to control the width which gets passed
                          * to __fmt__
                          */
-                        for (int i = strlen(last) - 1; i >= 0 && isspace(last[i]); --i) {
+                        for (int i = (int)strlen(last) - 1; i >= 0 && isspace(last[i]); --i) {
                                 last[i] = '\0';
                         }
 
@@ -1463,12 +1460,20 @@ ss_inner(Ty *ty)
                         avP(e->fmts, NULL);
                 }
 
+                if (T0 == '[') {
+                        next();
+                        avP(e->fmtfs, parse_expr(ty, 0));
+                        consume(']');
+                } else {
+                        avP(e->fmtfs, NULL);
+                }
+
                 Location end = tok()->end;
                 avP(e->widths, end.s - start.s);
 
                 consume('}');
 
-                avP(e->strings, ss_next_str(ty));
+                avP(e->strings, ss_next_str(ty, top));
         }
 
         e->end = End;
@@ -1480,7 +1485,7 @@ static void
 skip_ss(Ty *ty)
 {
         consume('"');
-        ss_skip_inner(ty);
+        ss_skip_inner(ty, true);
         consume('"');
 }
 
@@ -1491,7 +1496,7 @@ prefix_ss(Ty *ty)
         Location start = tok()->start;
 
         consume('"');
-        e = ss_inner(ty);
+        e = ss_inner(ty, true);
         consume('"');
 
         e->start = start;
@@ -4593,7 +4598,7 @@ definition_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_TEMPLATE_HOLE:
                 return e;
         case EXPRESSION_REF_PATTERN:
-                e->target = definition_lvalue(ty, e->target);
+                e->target = assignment_lvalue(ty, e->target);
                 return e;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
@@ -4622,10 +4627,9 @@ definition_lvalue(Ty *ty, Expr *e)
                 e->right = definition_lvalue(ty, e->right);
                 return e;
         case EXPRESSION_ARRAY:
-                if (e->elements.count == 0)
-                        break;
-                for (size_t i = 0; i < e->elements.count; ++i)
-                        e->elements.items[i] = definition_lvalue(ty, e->elements.items[i]);
+                for (int i = 0; i < vN(e->elements); ++i) {
+                        *v_(e->elements, i) = definition_lvalue(ty, *v_(e->elements, i));
+                }
                 return e;
         case EXPRESSION_DICT:
                 if (e->keys.count == 0)
@@ -5489,7 +5493,6 @@ parse_expr(Ty *ty, int prec)
 
         prefix_parse_fn *f = get_prefix_parser(ty);
         if (f == NULL) {
-                //raise(SIGTRAP);
                 error(
                         ty,
                         "expected expression but found %s%s%s",
@@ -5517,6 +5520,12 @@ parse_expr(Ty *ty, int prec)
                         goto End;
                 }
                 e = f(ty, e);
+        }
+
+        if (have_without_nl(ty, '"')) {
+                Expr *ss = prefix_ss(ty);
+                ss->lang = e;
+                e = ss;
         }
 
 End:
@@ -6157,6 +6166,20 @@ Expression:
 }
 
 static void
+SetNamespace(Stmt *s, Namespace *ns)
+{
+        s->ns = ns;
+
+        if (s->type != STATEMENT_MULTI) {
+                return;
+        }
+
+        for (int i = 0; i < vN(s->statements); ++i) {
+                SetNamespace(v__(s->statements, i), ns);
+        }
+}
+
+static void
 define_top(Ty *ty, Stmt *s, char const *doc)
 {
         switch (s->type) {
@@ -6436,7 +6459,7 @@ parse_ex(
                         error(ty, "This shouldn't happen.");
                 }
 
-                s->ns = CurrentNamespace;
+                SetNamespace(s, CurrentNamespace);
 
                 define_top(ty, s, doc);
 
