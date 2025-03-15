@@ -48,7 +48,7 @@ static char const *print_function = "print";
 static char SymbolLocation[512];
 
 static bool KindOfEnableLogging = false;
-bool EnableLogging = false;
+unsigned EnableLogging = 0;
 
 bool ColorStdout;
 bool ColorStderr;

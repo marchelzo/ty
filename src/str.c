@@ -16,6 +16,27 @@
 static _Thread_local struct stringpos limitpos;
 static _Thread_local struct stringpos outpos;
 
+inline static uint32_t
+codepoint_count(char const *s, size_t n)
+{
+        uint32_t count = 0;
+
+        while (n != 0) {
+                int codepoint;
+                int bytes = utf8proc_iterate(s, n, &codepoint);
+                if (bytes <= 0) {
+                        n -= 1;
+                        s += 1;
+                } else {
+                        count += 1;
+                        n -= bytes;
+                        s += bytes;
+                }
+        }
+
+        return count;
+}
+
 inline static void
 stringcount(char const *s, int byte_lim, int grapheme_lim)
 {
@@ -75,23 +96,21 @@ inline static Value
 mkmatch(Ty *ty, Value *s, size_t *ovec, int n, bool detailed)
 {
         if (detailed) {
-                Array *groups = vA();
+                Value groups = ARRAY(vAn(n));
 
-                NOGC(groups);
+                gP(&groups);
 
                 for (int i = 0, j = 0; i < n; ++i, j += 2) {
                         Value group = vT(2);
                         group.items[0] = INTEGER(ovec[j]);
                         group.items[1] = INTEGER(ovec[j + 1] - ovec[j]);
-                        NOGC(group.items);
-                        vAp(groups, group);
-                        OKGC(group.items);
+                        *v_(*groups.array, i) = group;
                 }
 
                 vmP(s);
-                vmP(&ARRAY(groups));
+                vmP(&groups);
 
-                OKGC(groups);
+                gX();
 
                 return vmC(&CLASS(CLASS_RE_MATCH), 2);
         } else if (n == 1) {
@@ -113,7 +132,15 @@ mkmatch(Ty *ty, Value *s, size_t *ovec, int n, bool detailed)
 static Value
 string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *s = string->string;
+        char *_name__ = "String.len()";
+        CHECK_ARGC(0);
+        return INTEGER(codepoint_count(string->string, string->bytes));
+}
+
+static Value
+string_grapheme_count(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        uint8_t const *s = (uint8_t const *)string->string;
         int size = string->bytes;
         int offset = 0;
         int state = 0;
@@ -642,7 +669,6 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 
         char const *s = string->string;
         int len = string->bytes;
-        gP(string);
 
         Value pattern = ARGx(0, VALUE_INTEGER, VALUE_STRING, VALUE_REGEX);
 
@@ -661,7 +687,6 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 vAp(parts, STRING_VIEW(*string, 0, outpos.bytes));
                 vAp(parts, STRING_VIEW(*string, outpos.bytes, len - outpos.bytes));
                 OKGC(parts);
-                gX();
                 return ARRAY(parts);
         }
 
@@ -670,7 +695,7 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         Value result = ARRAY(vA());
-        NOGC(result.array);
+        gP(&result);
 
         if (pattern.type == VALUE_STRING) {
                 char const *p = pattern.string;
@@ -698,8 +723,9 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                         i += n;
                 }
 
-                if (i == len)
+                if (i == len) {
                         vAp(result.array, STRING_EMPTY);
+                }
         } else {
                 pcre2_code *re = pattern.regex->pcre2;
                 size_t len = string->bytes;
@@ -708,13 +734,24 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
                 while (start < len) {
+                        int n;
                         if ((argc == 2 && result.array->count == ARG(1).integer) ||
-                            pcre2_match(re, (PCRE2_SPTR)s, len, pstart, 0, ty->pcre2.match, ty->pcre2.ctx) != 1) {
+                            (n = pcre2_match(re, (PCRE2_SPTR)s, len, pstart, 0, ty->pcre2.match, ty->pcre2.ctx)) < 1) {
                                 ovec[0] = len;
                                 ovec[1] = len + 1;
                         }
 
                         vAp(result.array, STRING_VIEW(*string, start, ovec[0] - start));
+
+                        if (pattern.regex->detailed && n >= 1) {
+                                vAp(result.array, mkmatch(ty, string, ovec, n, true));
+                        } else {
+                                for (int i = 1; i < n; ++i) {
+                                        int s = ovec[2 * i];
+                                        int e = ovec[2 * i + 1];
+                                        vAp(result.array, STRING_VIEW(*string, s, e - s));
+                                }
+                        }
 
                         pstart = ovec[1] + (ovec[0] == ovec[1]);
                         start = ovec[1];
@@ -727,7 +764,6 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 
 End:
         gX();
-        OKGC(result.array);
         return result;
 }
 
@@ -857,7 +893,10 @@ string_repeat(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         if (ARG(0).type != VALUE_INTEGER || ARG(0).integer < 0) {
-                zP("String.repeat(): argument mut be a non-negative integer");
+                zP(
+                        "String.repeat(): argument is not a non-negative integer: %s",
+                        VSC(&ARG(0))
+                );
         }
 
         char *s = value_string_alloc(ty, string->bytes * ARG(0).integer);
@@ -965,6 +1004,8 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                                 }
                         }
 
+                        start = ovec[1];
+
                         Value substitute = vm_eval_function(ty, &replacement, &match, NULL);
                         vmP(&substitute);
                         substitute = builtin_str(ty, 1, NULL);
@@ -975,8 +1016,6 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         }
 
                         vvPn(chars, substitute.string, substitute.bytes);
-
-                        start = ovec[1];
                 }
 
                 vvPn(chars, s + start, len - start);
@@ -1343,36 +1382,37 @@ string_clone(Ty *ty, Value *string, int argc, Value *kwargs)
 }
 
 DEFINE_METHOD_TABLE(
-        { .name = "bsearch",   .func = string_bsearch    },
-        { .name = "bslice",    .func = string_bslice     },
-        { .name = "byte",      .func = string_byte       },
-        { .name = "bytes",     .func = string_bytes      },
-        { .name = "char",      .func = string_char       },
-        { .name = "chars",     .func = string_chars      },
-        { .name = "clone",     .func = string_clone      },
-        { .name = "comb",      .func = string_comb       },
-        { .name = "contains?", .func = string_contains   },
-        { .name = "count",     .func = string_count      },
-        { .name = "cstr",      .func = string_cstr       },
-        { .name = "len",       .func = string_length     },
-        { .name = "lines",     .func = string_lines      },
-        { .name = "lower",     .func = string_lower      },
-        { .name = "match!",    .func = string_match      },
-        { .name = "match?",    .func = string_is_match   },
-        { .name = "matches",   .func = string_matches    },
-        { .name = "padLeft",   .func = string_pad_left   },
-        { .name = "padRight",  .func = string_pad_right  },
-        { .name = "ptr",       .func = string_ptr        },
-        { .name = "repeat",    .func = string_repeat     },
-        { .name = "replace",   .func = string_replace    },
-        { .name = "search",    .func = string_search     },
-        { .name = "searchAll", .func = string_search_all },
-        { .name = "size",      .func = string_size       },
-        { .name = "slice",     .func = string_slice      },
-        { .name = "split",     .func = string_split      },
-        { .name = "sub",       .func = string_replace    },
-        { .name = "upper",     .func = string_upper      },
-        { .name = "words",     .func = string_words      },
+        { .name = "bsearch",   .func = string_bsearch          },
+        { .name = "bslice",    .func = string_bslice           },
+        { .name = "byte",      .func = string_byte             },
+        { .name = "bytes",     .func = string_bytes            },
+        { .name = "char",      .func = string_char             },
+        { .name = "chars",     .func = string_chars            },
+        { .name = "clone",     .func = string_clone            },
+        { .name = "comb",      .func = string_comb             },
+        { .name = "contains?", .func = string_contains         },
+        { .name = "count",     .func = string_count            },
+        { .name = "cstr",      .func = string_cstr             },
+        { .name = "charCount", .func = string_grapheme_count   },
+        { .name = "len",       .func = string_length           },
+        { .name = "lines",     .func = string_lines            },
+        { .name = "lower",     .func = string_lower            },
+        { .name = "match!",    .func = string_match            },
+        { .name = "match?",    .func = string_is_match         },
+        { .name = "matches",   .func = string_matches          },
+        { .name = "padLeft",   .func = string_pad_left         },
+        { .name = "padRight",  .func = string_pad_right        },
+        { .name = "ptr",       .func = string_ptr              },
+        { .name = "repeat",    .func = string_repeat           },
+        { .name = "replace",   .func = string_replace          },
+        { .name = "search",    .func = string_search           },
+        { .name = "searchAll", .func = string_search_all       },
+        { .name = "size",      .func = string_size             },
+        { .name = "slice",     .func = string_slice            },
+        { .name = "split",     .func = string_split            },
+        { .name = "sub",       .func = string_replace          },
+        { .name = "upper",     .func = string_upper            },
+        { .name = "words",     .func = string_words            },
 );
 
 DEFINE_METHOD_LOOKUP(string)

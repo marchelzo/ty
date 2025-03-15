@@ -1095,6 +1095,8 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 
         Value kwargs = (nkw > 0) ? pop() : NIL;
 
+        gP(&kwargs);
+
         /*
          * This is the index of the beginning of the stack frame for this call to f.
          */
@@ -1166,6 +1168,8 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 
         LOG("Calling %s with %d args, bound = %d, self = %s, env size = %d", VSC(f), argc, bound, VSC(&self), f->info[2]);
         print_stack(ty, max(bound + 2, 5));
+
+        gX();
 
         if (exec) {
                 Generator *gen = GetCurrentGenerator(ty);
@@ -1892,6 +1896,9 @@ DoTag(Ty *ty, int tag, int n, Value *kws)
         }
 }
 
+static void
+CallMethod(Ty *ty, int i, int n, int nkw, bool b);
+
 Value
 GetMember(Ty *ty, Value v, int member, bool b)
 {
@@ -2008,17 +2015,17 @@ GetMember(Ty *ty, Value v, int member, bool b)
                         }
                         break;
                 }
-                vp = class_lookup_static_i(ty, v.class, member);
-                if (vp == NULL) {
-                        vp = class_lookup_method_i(ty, v.class, member);
-                }
-                if (vp == NULL) {
-                        n = CLASS_CLASS;
-                        goto ClassLookup;
-                } else {
+                if ((vp = class_lookup_static_i(ty, v.class, member)) != NULL) {
                         return *vp;
                 }
-                break;
+                if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
+                        return *vp;
+                }
+                if (member == NAMES._name_) {
+                        return xSz(class_name(ty, v.class));
+                }
+                n = CLASS_CLASS;
+                goto ClassLookup;
         case VALUE_OBJECT:
                 vp = itable_lookup(ty, v.object, member);
 
@@ -2031,7 +2038,8 @@ ClassLookup:
                 vp = class_lookup_getter_i(ty, n, member);
 
                 if (vp != NULL) {
-                        return vmC(&METHOD(member, vp, &v), 0);
+                        return b ? (pop(), call(ty, vp, &v, 0, 0, false), BREAK)
+                                 : vmC(&METHOD(member, vp, &v), 0);
                 }
 
                 vp = class_lookup_method_i(ty, n, member);
@@ -2042,14 +2050,19 @@ ClassLookup:
                         return METHOD(member, vp, this);
                 }
 
-                vp = b ? class_lookup_method_i(ty, n, NAMES.missing) : NULL;
+                if (b && (vp = class_lookup_method_i(ty, n, NAMES.missing)) != NULL) {
+                        pop();
+                        push(xSz(M_NAME(member)));
+                        call(ty, vp, &v, 1, 0, false);
+                        return BREAK;
+                }
 
-                if (vp != NULL) {
+                if (b && (vp = class_lookup_method_i(ty, n, NAMES.method_missing)) != NULL) {
                         char const *name = M_NAME(member);
                         this = mAo(sizeof (Value [3]), GC_VALUE);
                         this[0] = v;
                         this[1] = STRING_NOGC(name, strlen(name));
-                        return METHOD(NAMES.missing, vp, this);
+                        return METHOD(NAMES.method_missing, vp, this);
                 }
 
                 break;
@@ -2121,8 +2134,8 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                                         pop();
                                 } else if (
                                         LIKELY(
-                                                top()->type == VALUE_TUPLE &&
-                                                top()->ids != NULL
+                                                top()->type == VALUE_TUPLE
+                                             && (top()->count == 0 || top()->ids != NULL)
                                         )
                                 ) {
                                         for (int i = 0; i < top()->count; ++i) {
@@ -2238,6 +2251,10 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
         case VALUE_CLASS:
                 vp = class_lookup_method_i(ty, v.class, NAMES.init);
 
+                if (vp->type == VALUE_PTR) {
+                        zP("what??");
+                }
+
                 if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
                         if (LIKELY(vp != NULL)) {
                                 call(ty, vp, NULL, n, nkw, true);
@@ -2259,7 +2276,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 
                 break;
         case VALUE_METHOD:
-                if (v.name == NAMES.missing) {
+                if (v.name == NAMES.method_missing) {
                         push(NIL);
                         memmove(top() - (n - 1), top() - n, n * sizeof (Value));
                         top()[-n++] = v.this[1];
@@ -2544,7 +2561,7 @@ ClassLookup:
 
         if (
                 (vp == NULL && value.type == VALUE_OBJECT)
-             && (vp = class_lookup_method_i(ty, value.class, NAMES.missing)) != NULL
+             && (vp = class_lookup_method_i(ty, value.class, NAMES.method_missing)) != NULL
         ) {
                 method = M_NAME(i);
                 v = pop();
@@ -2553,6 +2570,17 @@ ClassLookup:
                 top()[-n++] = STRING_NOGC(method, strlen(method));
                 push(v);
                 self = &value;
+        } else if (
+                (vp == NULL && value.type == VALUE_OBJECT)
+             && (vp = class_lookup_method_i(ty, value.class, NAMES.missing)) != NULL
+        ) {
+                // TODO: Shouldn't need to recurse here
+                push(xSz(M_NAME(i)));
+                call(ty, vp, &value, 1, 0, true);
+                v = pop();
+                pop();
+                DoCall(ty, &v, n, nkw, false);
+                return;
         }
 
         if (vp != NULL) {
@@ -3262,7 +3290,7 @@ TY_INSTR_INLINE
 static void
 DoAssign(Ty *ty)
 {
-        uintptr_t c, p = (uintptr_t)poptarget();
+        uintptr_t m, c, p = (uintptr_t)poptarget();
         void *v = (void *)(p & ~PMASK3);
         struct itable *o;
 
@@ -3275,9 +3303,17 @@ DoAssign(Ty *ty)
                 break;
         case 2:
                 c = (uintptr_t)poptarget();
-                o = TARGETS.items[TARGETS.count].gc;
+                o = vZ(TARGETS)[0].gc;
                 poptarget();
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
+                break;
+        case 3:
+                m = p >> 3;
+                c = (uintptr_t)poptarget();
+                o = vZ(TARGETS)[0].gc;
+                push(xSz(M_NAME(m)));
+                swap();
+                call(ty, class_lookup_setter_i(ty, c, NAMES.missing), &OBJECT(o, c), 2, 0, false);
                 break;
         default:
                 zP("bad target pointer :(");
@@ -3762,6 +3798,24 @@ AssignGlobal:
                                         pushtarget(vp2, NULL);
                                         pushtarget((Value *)(uintptr_t)v.class, v.object);
                                         pushtarget((Value *)(((uintptr_t)vp) | 2), NULL);
+                                        break;
+                                }
+                                vp = class_lookup_setter_i(ty, v.class, NAMES.missing);
+                                if (vp != NULL) {
+                                        vp2 = class_lookup_method_i(ty, v.class, NAMES.missing);
+                                        if (UNLIKELY(vp2 == NULL)) {
+                                                zP(
+                                                        "class %s%s%s needs a getter for %s%s%s!",
+                                                        TERM(33),
+                                                        class_name(ty, v.class),
+                                                        TERM(0),
+                                                        TERM(34),
+                                                        M_NAME(z),
+                                                        TERM(0)
+                                                );
+                                        }
+                                        pushtarget((Value *)(uintptr_t)v.class, v.object);
+                                        pushtarget((Value *)(((uintptr_t)z << 3) | 3), NULL);
                                         break;
                                 }
                                 vp = itable_lookup(ty, v.object, z);
@@ -4794,9 +4848,7 @@ Yield:
                         break;
                 CASE(TRY_GET_MEMBER)
                 CASE(GET_MEMBER)
-                        b = IP[-1] == INSTR_TRY_GET_MEMBER;
-
-                        z = GetDynamicMemberId(ty, !b);
+                        z = GetDynamicMemberId(ty, IP[-1] != INSTR_TRY_GET_MEMBER);
 
                         if (z >= 0) {
                                 goto MemberAccess;
@@ -4820,14 +4872,15 @@ MemberAccess:
                         value = peek();
                         v = GetMember(ty, value, z, true);
 
-                        if (v.type != VALUE_NONE) {
+                        switch (v.type) {
+                        case VALUE_BREAK:
+                                continue;
+                        case VALUE_NONE:
+                                if (!b) { break; }
+                                v = NIL;
+                        default:
                                 *top() = v;
-                                break;
-                        }
-
-                        if (b) {
-                                *top() = NIL;
-                                break;
+                                continue;
                         }
 
 BadMemberAccess:
@@ -5491,24 +5544,26 @@ vm_init(Ty *ty, int ac, char **av)
         build_array_method_table();
         build_blob_method_table();
 
-        NAMES.call      = M_ID("__call__");
-        NAMES.contains  = M_ID("contains?");
-        NAMES.count     = M_ID("__count__");
-        NAMES._drop_    = M_ID("__drop__");
-        NAMES.fmt       = M_ID("__fmt__");
-        NAMES.init      = M_ID("init");
-        NAMES._iter_    = M_ID("__iter__");
-        NAMES.json      = M_ID("__json__");
-        NAMES._len_     = M_ID("__len__");
-        NAMES.len       = M_ID("len");
-        NAMES.match     = M_ID("__match__");
-        NAMES.missing   = M_ID("__missing__");
-        NAMES._next_    = M_ID("__next__");
-        NAMES.ptr       = M_ID("__ptr__");
-        NAMES.question  = M_ID("__question__");
-        NAMES.slice     = M_ID("__slice__");
-        NAMES.str       = M_ID("__str__");
-        NAMES.subscript = M_ID("__subscript__");
+        NAMES.call             = M_ID("__call__");
+        NAMES.contains         = M_ID("contains?");
+        NAMES.count            = M_ID("__count__");
+        NAMES._drop_           = M_ID("__drop__");
+        NAMES.fmt              = M_ID("__fmt__");
+        NAMES.init             = M_ID("init");
+        NAMES._iter_           = M_ID("__iter__");
+        NAMES.json             = M_ID("__json__");
+        NAMES._len_            = M_ID("__len__");
+        NAMES.len              = M_ID("len");
+        NAMES.match            = M_ID("__match__");
+        NAMES.missing          = M_ID("__missing__");
+        NAMES.method_missing   = M_ID("__method_missing__");
+        NAMES._name_           = M_ID("__name__");
+        NAMES._next_           = M_ID("__next__");
+        NAMES.ptr              = M_ID("__ptr__");
+        NAMES.question         = M_ID("__question__");
+        NAMES.slice            = M_ID("__slice__");
+        NAMES.str              = M_ID("__str__");
+        NAMES.subscript        = M_ID("__subscript__");
 
         GC_STOP();
 

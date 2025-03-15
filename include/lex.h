@@ -9,11 +9,12 @@
 typedef struct token Token;
 
 typedef enum LexContext {
-        LEX_PREFIX  = 1,
-        LEX_INFIX   = 2,
-        LEX_FMT     = 3,
-        LEX_FAKE    = 4,
-        LEX_HIDDEN  = 5,
+        LEX_PREFIX = 1,
+        LEX_INFIX,
+        LEX_FMT,
+        LEX_XFMT,
+        LEX_FAKE,
+        LEX_HIDDEN
 } LexContext;
 
 typedef struct LexState {

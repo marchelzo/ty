@@ -9,7 +9,7 @@
 #define funlockfile(f) _unlock_file(f)
 #endif
 
-extern _Bool EnableLogging;
+extern unsigned EnableLogging;
 
 #define XLOG(...) if (EnableLogging) do {                    \
                         GC_STOP();                           \

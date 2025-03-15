@@ -312,6 +312,7 @@ struct expression {
                         struct symbol const *match_symbol;
                 };
                 struct {
+                        struct expression *lang;
                         StringVector strings;
                         expression_vector fmts;
                         expression_vector fmtfs;

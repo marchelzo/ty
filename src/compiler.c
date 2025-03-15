@@ -991,21 +991,23 @@ any_variadic(Expr * const *args, Expr * const *conds, int n)
 static bool
 is_variadic(Expr const *e)
 {
-        if (e->type == EXPRESSION_FUNCTION_CALL) {
+        switch (e->type) {
+        case EXPRESSION_FUNCTION_CALL:
                 return any_variadic(
                         e->args.items,
                         e->fconds.items,
                         e->args.count
                 );
-        } else if (e->type == EXPRESSION_METHOD_CALL) {
+        case EXPRESSION_METHOD_CALL:
+        case EXPRESSION_DYN_METHOD_CALL:
                 return any_variadic(
                         e->method_args.items,
                         e->mconds.items,
                         e->method_args.count
                 );
+        default:
+                return false;
         }
-
-        return false;
 }
 
 inline static Symbol *
@@ -1647,11 +1649,18 @@ mkmulti(Ty *ty, char *name, bool setters)
         Expr *multi = NewExpr(ty, EXPRESSION_MULTI_FUNCTION);
 
         multi->name = name;
-        multi->rest = setters ? -1 : 0;
-        multi->ikwargs = -1;
         multi->class = -1;
 
+        if (setters) {
+                multi->rest = -1;
+                multi->ikwargs = -1;
+        } else {
+                multi->rest = 0;
+                multi->ikwargs = 1;
+        }
+
         avP(multi->params, "@");
+        avP(multi->params, "%");
         avP(multi->constraints, NULL);
         avP(multi->dflts, NULL);
 
@@ -2003,8 +2012,9 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 }
                 break;
         case EXPRESSION_ARRAY:
-                for (size_t i = 0; i < target->elements.count; ++i)
+                for (size_t i = 0; i < target->elements.count; ++i) {
                         symbolize_lvalue_(ty, scope, target->elements.items[i], decl, pub);
+                }
                 target->atmp = tmpsymbol(ty, scope);
                 break;
         case EXPRESSION_DICT:
@@ -2347,7 +2357,7 @@ invoke_fun_macro(Ty *ty, Scope *scope, Expr *e)
         GC_RESUME();
 }
 
-static Scope *
+Scope *
 GetNamespace(Ty *ty, Namespace *ns)
 {
         if (ns == NULL)
@@ -2360,7 +2370,7 @@ GetNamespace(Ty *ty, Namespace *ns)
                 sym = scope_new_namespace(ty, ns->id, scope);
                 sym->public = ns->pub;
 #ifdef TY_DEBUG_NAMES
-                LOG("new ns %s (scope=%s) added to %s\n", ns->id, scope_name(ty, sym->scope), scope_name(ty, scope));
+                printf("new ns %s (scope=%s) added to %s\n", ns->id, scope_name(ty, sym->scope), scope_name(ty, scope));
 #endif
         } else if (!sym->namespace) {
                 return state.global;
@@ -2557,6 +2567,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 comptime(ty, scope, e);
                 break;
         case EXPRESSION_SPECIAL_STRING:
+                symbolize_expression(ty, scope, e->lang);
                 for (int i = 0; i < e->expressions.count; ++i) {
                         symbolize_expression(ty, scope, e->expressions.items[i]);
                         symbolize_expression(ty, scope, *v_(e->fmts, i));
@@ -4005,18 +4016,19 @@ emit_function(Ty *ty, Expr const *e)
                         Expr *f = *v_(e->functions, i);
                         if (!is_method(e)) {
                                 emit_instr(ty, INSTR_SAVE_STACK_POS);
-                                emit_load_instr(ty, "@", INSTR_LOAD_LOCAL, 0);
+                                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
                                 emit_spread(ty, NULL, false);
-                                t;
+                                emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
                                 emit_load_instr(ty, "", INSTR_LOAD_GLOBAL, ((Stmt *)f)->target->symbol->i);
                                 CHECK_INIT();
                                 emit_instr(ty, INSTR_CALL);
                                 emit_int(ty, -1);
-                                emit_int(ty, 0);
+                                emit_int(ty, 1);
+                                emit_string(ty, "*");
                                 emit_instr(ty, INSTR_RETURN_IF_NOT_NONE);
                                 emit_instr(ty, INSTR_POP);
                         } else if (e->mtype == MT_SET) {
-                                emit_load_instr(ty, "@", INSTR_LOAD_LOCAL, 0);
+                                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
                                 emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
                                 emit_instr(ty, INSTR_TARGET_MEMBER);
                                 emit_int(ty, M_ID(f->name));
@@ -4025,13 +4037,15 @@ emit_function(Ty *ty, Expr const *e)
                                 emit_instr(ty, INSTR_POP);
                         } else {
                                 emit_instr(ty, INSTR_SAVE_STACK_POS);
-                                emit_load_instr(ty, "@", INSTR_LOAD_LOCAL, 0);
+                                emit_load_instr(ty, "[@]", INSTR_LOAD_LOCAL, 0);
                                 emit_spread(ty, NULL, false);
-                                emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 1);
+                                emit_load_instr(ty, "[%]", INSTR_LOAD_LOCAL, 1);
+                                emit_load_instr(ty, "self", INSTR_LOAD_LOCAL, 2);
                                 emit_instr(ty, INSTR_CALL_METHOD);
                                 emit_int(ty, -1);
                                 emit_int(ty, M_ID(f->name));
-                                emit_int(ty, 0);
+                                emit_int(ty, 1);
+                                emit_string(ty, "*");
                                 emit_instr(ty, INSTR_RETURN_IF_NOT_NONE);
                                 emit_instr(ty, INSTR_POP);
                         }
@@ -4157,6 +4171,49 @@ emit_coalesce(Ty *ty, Expr const *left, Expr const *right)
 }
 
 static void
+emit_lang_string(Ty *ty, Expr const *e)
+{
+        emit_instr(ty, INSTR_SAVE_STACK_POS);
+
+        if (e->strings.items[0][0] != '\0') {
+                emit_instr(ty, INSTR_STRING);
+                emit_string(ty, e->strings.items[0]);
+        }
+
+        for (int i = 0; i < e->expressions.count; ++i) {
+                Expr const  *fmt = *v_(e->fmts, i);
+                Expr const   *ex = *v_(e->expressions, i);
+                int        width = *v_(e->widths, i);
+
+                emit_expression(ty, ex);
+                if (fmt == NULL) {
+                        emit_instr(ty, INSTR_NIL);
+                } else {
+                        emit_expression(ty, fmt);
+                }
+                emit_instr(ty, INSTR_INTEGER);
+                emit_integer(ty, width);
+                emit_instr(ty, INSTR_TUPLE);
+                emit_int(ty, 3);
+                emit_int(ty, -1);
+                emit_int(ty, -1);
+                emit_int(ty, -1);
+                
+                if (e->strings.items[i + 1][0] != '\0') {
+                        emit_instr(ty, INSTR_STRING);
+                        emit_string(ty, e->strings.items[i + 1]);
+                }
+        }
+
+        emit_instr(ty, INSTR_ARRAY);
+
+        emit_expression(ty, e->lang);
+        emit_instr(ty, INSTR_CALL);
+        emit_int(ty, 1);
+        emit_int(ty, 0);
+}
+
+static void
 emit_special_string(Ty *ty, Expr const *e)
 {
         int n = e->expressions.count;
@@ -4179,8 +4236,6 @@ emit_special_string(Ty *ty, Expr const *e)
                 Expr const   *ex = *v_(e->expressions, i);
                 int        width = *v_(e->widths, i);
 
-                int argc = 2;
-
                 if (fmt == NULL) {
                         emit_expression(ty, ex);
                         emit_instr(ty, INSTR_TO_STRING);
@@ -4190,16 +4245,18 @@ emit_special_string(Ty *ty, Expr const *e)
                         emit_instr(ty, INSTR_INTEGER);
                         emit_integer(ty, width);
 
-                        if (arg != NULL) {
-                                emit_expression(ty, arg);
-                                argc += 1;
-                        }
-
                         emit_expression(ty, ex);
 
                         emit_instr(ty, INSTR_CALL_METHOD);
-                        emit_int(ty, argc);
+                        emit_int(ty, 2);
                         emit_int(ty, NAMES.fmt);
+                        emit_int(ty, 0);
+                }
+
+                if (arg != NULL) {
+                        emit_expression(ty, arg);
+                        emit_instr(ty, INSTR_CALL);
+                        emit_int(ty, 1);
                         emit_int(ty, 0);
                 }
 
@@ -5694,11 +5751,12 @@ emit_assignment2(Ty *ty, Expr *target, bool maybe, bool def)
                                         after = true;
                                 }
                                 emit_target(ty, target->elements.items[i], def);
-                                FAIL_MATCH_IF(ARRAY_REST);
+                                PLACEHOLDER_JUMP(INSTR_ARRAY_REST, bad);
                                 emit_int(ty, i);
                                 emit_int(ty, target->elements.count - i - 1);
                                 emit_instr(ty, INSTR_JUMP);
                                 emit_int(ty, 1);
+                                PATCH_JUMP(bad);
                                 emit_instr(ty, INSTR_BAD_MATCH);
                         } else {
                                 emit_instr(ty, INSTR_PUSH_ARRAY_ELEM);
@@ -5951,7 +6009,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_string(ty, e->string);
                 break;
         case EXPRESSION_SPECIAL_STRING:
-                emit_special_string(ty, e);
+                if (e->lang != NULL) {
+                        emit_lang_string(ty, e);
+                } else {
+                        emit_special_string(ty, e);
+                }
                 break;
         case EXPRESSION_EVAL:
                 emit_expression(ty, e->operand);
@@ -6080,7 +6142,6 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                         } else {
                                 emit_expression(ty, e->fkwconds.items[i]);
                                 PLACEHOLDER_JUMP(INSTR_NONE_IF_NOT, skip);
-
                                 emit_expression(ty, e->kwargs.items[i]);
                                 PATCH_JUMP(skip);
                         }
@@ -7161,10 +7222,9 @@ import_module(Ty *ty, Stmt const *s)
                         fail(ty, "module '%s' exports conflcting name '%s'", name, id);
         } else for (int i = 0; i < n; ++i) {
                 Symbol *s = scope_lookup(ty, module_scope, identifiers[i]);
-                if (s == NULL || !s->public)
+                if (s == NULL || !s->public) {
                         fail(ty, "module '%s' does not export '%s'", name, identifiers[i]);
-                if (scope_lookup(ty, state.global, aliases[i]) != NULL)
-                        fail(ty, "module '%s' exports conflicting name '%s'", name, identifiers[i]);
+                }
                 scope_insert_as(ty, state.global, s, aliases[i])->public = pub;
         }
 
@@ -7788,7 +7848,7 @@ tyexpr(Ty *ty, Expr const *e)
                      ? state.global
                      : state.macro_scope;
 
-        fixup_access(ty, scope, (Expr *)e, true);
+        fixup_access(ty, scope, (Expr *)e, false);
         expedite_fun(ty, (Expr *)e, scope);
 
         switch (e->type) {
@@ -9392,17 +9452,23 @@ cexpr(Ty *ty, Value *v)
                 break;
         }
         case TyMethodCall:
+        case TyDynMethodCall:
         {
-                e->type = EXPRESSION_METHOD_CALL;
+                Value *method = tuple_get(v, "method");
+
+                if (tag == TyMethodCall) {
+                        e->type = EXPRESSION_METHOD_CALL;
+                        e->method_name = mkcstr(ty, method);
+                } else {
+                        e->type = EXPRESSION_DYN_METHOD_CALL;
+                        e->method = cexpr(ty, method);
+                }
 
                 Value *maybe = tuple_get(v, "maybe");
                 e->maybe = maybe != NULL && value_truthy(ty, maybe);
 
                 Value *object = tuple_get(v, "object");
                 e->object = cexpr(ty, object);
-
-                Value *method = tuple_get(v, "method");
-                e->method_name = mkcstr(ty, method);
 
                 Value *args = tuple_get(v, "args");
 
@@ -9515,6 +9581,11 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->object = cexpr(ty, &v->items[0]);
                 e->member_name = mkcstr(ty, &v->items[1]);
+                break;
+        case TyDynMemberAccess:
+                e->type = EXPRESSION_DYN_MEMBER_ACCESS;
+                e->object = cexpr(ty, &v->items[0]);
+                e->member = cexpr(ty, &v->items[1]);
                 break;
         case TySubscript:
                 e->type = EXPRESSION_SUBSCRIPT;
@@ -9906,7 +9977,7 @@ cexpr(Ty *ty, Value *v)
                      ? state.global
                      : state.macro_scope;
 
-        fixup_access(ty, scope, e, true);
+        fixup_access(ty, scope, e, false);
         e->origin = state.origin;
 
         return e;
@@ -9918,6 +9989,7 @@ CToTyExpr(Ty *ty, Expr *e)
         SAVE_JB;
 
         if (setjmp(jb) != 0) {
+                printf("ERROR: %s\n", TyError(ty));
                 RESTORE_JB;
                 return NONE;
         }
