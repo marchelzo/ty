@@ -7,6 +7,8 @@ import chalk
 import thread
 import io
 
+let chalk = chalk.Chalk2()
+
 enum! {
     CRITICAL,
     ERROR,
@@ -23,29 +25,14 @@ let levels = %{
     DEBUG: 'debug'
 }
 
-let pens = %{
-    CRITICAL: chalk.pen(chalk.bold, chalk.underline, chalk.brightRed),
-    ERROR: chalk.brightRed,
-    WARN: chalk.brightYellow,
-    INFO: chalk.fg('#4989eb'),
-    DEBUG: chalk.fg('#ff45be')
-}
+chalk.critical = 'bright red bold underline'
+chalk.error = 'bright red'
+chalk.warn = 'bright yellow'
+chalk.info = '#4989eb'
+chalk.debug = '#ff45be'
 
-let timePen = chalk.fg('#10ccb9')
-let namePen = chalk.fg('#92e83c')
-
-function threadPen() {
-    let pens = static!(%{})
-    let mtx = static!(Mutex())
-
-    with mtx.lock() {
-        if let $p = pens[thread.id()] {
-            return p
-        } else {
-            return pens[thread.id()] = chalk.fg_random()
-        }
-    }
-}
+chalk.time = '#10ccb9'
+chalk.name = '#92e83c'
 
 class Logger {
     init(name) {
@@ -57,12 +44,11 @@ class Logger {
             let t = time.utime()
             let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000:03}"
             let threadName = (Thread.getName() || 'main') + "({thread.id()})"
+            let levelName = "{"[{levels[level]}]":10}"
             if color {
-                let levelName = chalk.padLeft(pens[level]("[{levels[level]}]"), 10)
-                let threadString = chalk.padLeft(threadPen()("[{threadName}]"), 10)
-                "{timePen(tString)} {levelName} {threadString}"
+                //let threadString = chalk.padLeft(threadPen()("[{threadName}]"), 10)
+                chalk"[time]{tString}[/] [{levels[level]}]{levelName}[/] [thread{thread.id()}?]\\[{threadName}][/]"
             } else {
-                let levelName = "[{levels[level]}]".padLeft(10)
                 let threadString = "[{threadName}]".padLeft(10)
                 "{tString} {levelName} {threadString}"
             }
@@ -95,7 +81,13 @@ class Logger {
             } else {
                 "{@name}[{@stack.join('.')}]"
             }
-            @file.write((@prefix)(level, @color) + " {@color ? namePen(name) : name}: {msg}\n")
+            let out = if @color {
+                chalk"{(@prefix)(level, true)} [name]{name}[/]: {msg}\n"
+            } else {
+                "{(@prefix)(level, false)} {name}: {msg}\n"
+            }
+            @file.write("{out}")
+            @file.flush()
         }
     }
 
