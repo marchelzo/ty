@@ -59,8 +59,11 @@ tags_new(Ty *ty, char const *tag)
         vec_nogc_push(names, tag);
 
         struct itable table;
+
         itable_init(ty, &table);
         xvP(tables, table);
+
+        itable_init(ty, &table);
         xvP(statics, table);
 
         mklist(tagcount, lists.items[0]);

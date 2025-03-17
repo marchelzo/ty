@@ -401,6 +401,7 @@ typedef struct {
         int count;
         int _drop_;
         int fmt;
+        int _free_;
         int init;
         int _iter_;
         int json;
@@ -663,6 +664,10 @@ extern bool ColorProfile;
         X(OPERATOR),              \
         X(PATCH_ENV),             \
         X(GET_TAG),               \
+        X(BIND_INSTANCE),         \
+        X(BIND_GETTER),           \
+        X(BIND_SETTER),           \
+        X(BIND_STATIC),           \
         X(NAMESPACE)
 
 

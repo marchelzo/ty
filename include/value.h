@@ -107,6 +107,7 @@ struct value;
         X(Dict)                 \
         X(String)               \
         X(SpecialString)        \
+        X(LangString)           \
         X(Int)                  \
         X(Bool)                 \
         X(Float)                \
@@ -161,6 +162,7 @@ struct value;
         X(Throw)                \
         X(Range)                \
         X(IncRange)             \
+        X(Super)                \
         X(Stop)
 
 #define X(x) Ty ## x,
@@ -545,9 +547,9 @@ tget_tagged(Value const *tuple, uintptr_t k)
         return NONE;
 }
 
-#define tget_or(t, i, v) ((tget_or)((t), (uintptr_t)(i), (v)))
-#define tget_nn(t, i   ) ((tget_nn)((t), (uintptr_t)(i)     ))
-#define  tget_t(t, i, v) ((tget_t) ((t), (uintptr_t)(i), (v)))
+#define tget_or(t, i, v)  ((tget_or)((t), (uintptr_t)(i),  (v)))
+#define tget_nn(t, i   )  ((tget_nn)((t), (uintptr_t)(i)      ))
+#define  tget_t(t, i, t0) ((tget_t) ((t), (uintptr_t)(i), (t0)))
 
 int
 tuple_get_completions(Ty *ty, Value const *v, char const *prefix, char **out, int max);

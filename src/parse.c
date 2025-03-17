@@ -2210,6 +2210,17 @@ make_with(Ty *ty, Expr *e, statement_vector defs, Stmt *body)
 }
 
 static Expr *
+prefix_super(Ty *ty)
+{
+        Expr *super = mkexpr(ty);
+        super->type = EXPRESSION_SUPER;
+
+        next();
+
+        return super;
+}
+
+static Expr *
 prefix_do(Ty *ty)
 {
         next();
@@ -4367,6 +4378,7 @@ Keyword:
         case KEYWORD_THROW:     return prefix_throw;
         case KEYWORD_WITH:      return prefix_with;
         case KEYWORD_DO:        return prefix_do;
+        case KEYWORD_SUPER:     return prefix_super;
 
         case KEYWORD_IF:
         case KEYWORD_FOR:
@@ -5580,10 +5592,6 @@ mktagdef(Ty *ty, char *name)
         s->tag.pub = false;
         s->tag.name = name;
         vec_init(s->tag.methods);
-        vec_init(s->tag.getters);
-        vec_init(s->tag.setters);
-        vec_init(s->tag.statics);
-        vec_init(s->tag.fields);
         return s;
 }
 
@@ -5620,13 +5628,16 @@ parse_class_definition(Ty *ty)
         Location start = tok()->start;
 
         bool tag = K0 == KEYWORD_TAG;
-        consume_keyword(tag ? KEYWORD_TAG : KEYWORD_CLASS);
+        bool trait = K0 == KEYWORD_TRAIT;
+        next();
 
         expect(TOKEN_IDENTIFIER);
 
-        Stmt *s = mktagdef(ty, tok()->identifier);
-        if (!tag)
-                s->type = STATEMENT_CLASS_DEFINITION;
+        Stmt *s = mkstmt(ty);
+        s->class.name = tok()->identifier;
+        s->type = tag ? STATEMENT_TAG_DEFINITION
+                      : STATEMENT_CLASS_DEFINITION;
+        s->class.is_trait = trait;
 
         s->start = start;
         s->class.loc = tok()->start;
@@ -5682,7 +5693,7 @@ parse_class_definition(Ty *ty)
                 avP(init_params, param);
         }
 
-        if (T0 == ':') {
+        if (T0 == '<') {
                 next();
 
                 int start_index = TokenIndex;
@@ -5702,6 +5713,14 @@ parse_class_definition(Ty *ty)
                 s->tag.super = parse_expr(ty, 0);
         } else {
                 s->tag.super = NULL;
+        }
+
+        if (T0 == ':') {
+                next();
+                do {
+                        expect(TOKEN_IDENTIFIER);
+                        avP(s->tag.traits, parse_expr(ty, 0));
+                } while (T0 == ',' && (next(), true));
         }
 
         /* Hack to allow comma-separated tag declarations */
@@ -6114,6 +6133,7 @@ parse_statement(Ty *ty, int prec)
                         return parse_function_definition(ty);
                 else
                         goto Expression;
+
         case '{':            return parse_block(ty);
         case ';':            return parse_null_statement(ty);
         case TOKEN_KEYWORD:  goto Keyword;
@@ -6125,6 +6145,7 @@ Keyword:
         switch (K0) {
         case KEYWORD_CLASS:    return parse_class_definition(ty);
         case KEYWORD_TAG:      return parse_class_definition(ty);
+        case KEYWORD_TRAIT:    return parse_class_definition(ty);
         case KEYWORD_FOR:      return parse_for_loop(ty);
         case KEYWORD_WHILE:    return parse_while(ty);
         case KEYWORD_IF:       return parse_if(ty);

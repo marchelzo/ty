@@ -139,6 +139,7 @@ typedef struct compiler_state {
         statement_vector class_ops;
 
         Expr *func;
+        Expr *meth;
         int class;
 
         int function_depth;

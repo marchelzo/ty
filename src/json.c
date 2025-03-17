@@ -423,17 +423,15 @@ encode(Ty *ty, Value const *v, str *out)
                         }
                 } else {
                         xvP(*out, '{');
-                        for (int i = 0; i < ITABLE_SIZE; ++i) {
-                                for (int j = 0; j < v->object->buckets[i].ids.count; ++j) {
-                                        char const *name = M_NAME(v->object->buckets[i].ids.items[j]);
-                                        xvP(*out, '"');
-                                        xvPn(*out, name, strlen(name));
-                                        xvP(*out, '"');
-                                        xvP(*out, ':');
-                                        if (!encode(ty, &v->object->buckets[i].values.items[j], out))
-                                                return false;
-                                        xvP(*out, ',');
-                                }
+                        for (int i = 0; i < vN(v->object->ids); ++i) {
+                                char const *name = M_NAME(v__(v->object->ids, i));
+                                xvP(*out, '"');
+                                xvPn(*out, name, strlen(name));
+                                xvP(*out, '"');
+                                xvP(*out, ':');
+                                if (!encode(ty, v_(v->object->values, i), out))
+                                        return false;
+                                xvP(*out, ',');
                         }
                         vvX(Visiting);
                         if (*vvL(*out) == ',')

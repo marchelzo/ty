@@ -1,6 +1,8 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <string.h>
+
 #include "value.h"
 #include "alloc.h"
 #include "log.h"
@@ -9,108 +11,167 @@
 #include "itable.h"
 #include "class.h"
 
-static int class = 0;
-static vec(char const *) names;
-static vec(char const *) docs;
-static vec(int) supers;
-static vec(Value) finalizers;
-static vec(struct itable) mtables;
-static vec(struct itable) gtables;
-static vec(struct itable) stables;
-static vec(struct itable) ctables;
+static vec(Class *) classes;
+static vec(Class *) traits;
+
+inline static Class *
+C(int i)
+{
+        return v__(classes, i);
+}
+
+inline static Class *
+T(int i)
+{
+        return v__(traits, i);
+}
 
 int
 class_new(Ty *ty, char const *name, char const *doc)
 {
-        xvP(names, name);
-        xvP(docs, doc);
-        xvP(supers, -1);
-        xvP(finalizers, NONE);
+        Class *c = alloc0(sizeof *c);
 
-        struct itable t;
-        itable_init(ty, &t);
+        c->name = name;
+        c->doc = doc;
+        c->finalizer = NONE;
+        c->i = vN(classes);
+        c->super = (c->i == 0) ? NULL : C(0);
 
-        xvP(mtables, t);
-        xvP(gtables, t);
-        xvP(stables, t);
-        xvP(ctables, t);
+        xvP(classes, c);
 
-        return class++;
+        return c->i;
+}
+
+int
+trait_new(Ty *ty, char const *name, char const *doc)
+{
+        int class = class_new(ty, name, doc);
+
+        Class *c = C(class);
+        c->is_trait = true;
+        c->ti = vN(traits);
+
+        xvP(traits, c);
+
+        return class;
+}
+
+int
+class_get_super(Ty *ty, int class)
+{
+        Class *c = C(class);
+        return (c->super == NULL) ? -1 : c->super->i;
 }
 
 void
 class_set_super(Ty *ty, int class, int super)
 {
-        /*
-         * When a class is defined, its superclass defaults to 0 (Object)
-         * if unspecified, but we don't want this behaviour when Object
-         * itself is defined, otherwise we'd have a cyclic inheritance graph.
-         */
-        if (class != 0)
-                supers.items[class] = super;
+        C(class)->super = C(super);
 }
 
-int
-class_lookup(Ty *ty, char const *name)
+void
+class_add_field(Ty *ty, int class, char const *name)
 {
-     for (int i = 0; i < names.count; ++i)
-          if (strcmp(names.items[i], name) == 0)
-               return i;
+        itable_put(ty, &C(class)->fields, name, NIL);
+}
 
-     return -1;
+static void
+finalize(Ty *ty, Class *c)
+{
+        Value *f = itable_lookup(ty, &c->methods, NAMES._free_);
+        if (f != NULL) {
+                c->finalizer = *f;
+        }
+
+        for (int i = 0; i < vN(c->traits); ++i) {
+                Class *t = v__(c->traits, i);
+                itable_copy_weak(ty, &c->methods, &t->methods);
+                itable_copy_weak(ty, &c->getters, &t->getters);
+        }
+
+        c->final = true;
+}
+
+void
+class_init_object(Ty *ty, int class, struct itable *o)
+{
+        Class *c = C(class);
+        o->class = class;
+        uvPn(o->ids, c->fields.ids.items, vN(c->fields.ids));
+        uvPn(o->values, c->fields.values.items, vN(c->fields.values));
+        if (!c->final) {
+                finalize(ty, c);
+        }
 }
 
 char const *
 class_name(Ty *ty, int class)
 {
-        return (class == CLASS_TOP) ? "(top)" : names.items[class];
+        return (class == CLASS_TOP) ? "(top)" : C(class)->name;
 }
 
 void
 class_add_static(Ty *ty, int class, char const *name, Value f)
 {
-        itable_put(ty, &ctables.items[class], name, f);
+        itable_put(ty, &C(class)->statics, name, f);
 }
 
 void
 class_add_method(Ty *ty, int class, char const *name, Value f)
 {
-        itable_put(ty, &mtables.items[class], name, f);
-
-        if (strcmp(name, "__free__") == 0) {
-                finalizers.items[class] = f;
-        }
+        itable_put(ty, &C(class)->methods, name, f);
 }
 
 void
 class_add_getter(Ty *ty, int class, char const *name, Value f)
 {
-        itable_put(ty, &gtables.items[class], name, f);
+        itable_put(ty, &C(class)->getters, name, f);
 }
 
 void
 class_add_setter(Ty *ty, int class, char const *name, Value f)
 {
-        itable_put(ty, &stables.items[class], name, f);
+        itable_put(ty, &C(class)->setters, name, f);
 }
 
 void
 class_copy_methods(Ty *ty, int dst, int src)
 {
-        itable_copy(ty, &mtables.items[dst], &mtables.items[src]);
-        itable_copy(ty, &gtables.items[dst], &gtables.items[src]);
-        itable_copy(ty, &stables.items[dst], &stables.items[src]);
+        itable_copy(ty, &C(dst)->methods, &C(src)->methods);
+        itable_copy(ty, &C(dst)->getters, &C(src)->getters);
+        itable_copy(ty, &C(dst)->setters, &C(src)->setters);
+        itable_copy(ty, &C(dst)->fields, &C(src)->fields);
+        C(dst)->finalizer = C(src)->finalizer;
+}
+
+Value *
+class_lookup_field_i(Ty *ty, int class, int id)
+{
+        Class *c = C(class);
+        Value *v;
+
+        do {
+                if ((v = itable_lookup(ty, &c->fields, id)) != NULL) {
+                        return v;
+                }
+                c = c->super;
+        } while (c != NULL);
+
+        return NULL;
 }
 
 Value *
 class_lookup_getter_i(Ty *ty, int class, int id)
 {
+        Class *c = C(class);
+        Value *v;
+
         do {
-                struct itable const *t = &gtables.items[class];
-                Value *v = itable_lookup(ty, t, id);
-                if (v != NULL) return v;
-                class = supers.items[class];
-        } while (class != -1);
+                if ((v = itable_lookup(ty, &c->getters, id)) != NULL) {
+                        return v;
+                }
+                c = c->super;
+        } while (c != NULL);
 
         return NULL;
 }
@@ -125,12 +186,15 @@ class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h)
 Value *
 class_lookup_setter_i(Ty *ty, int class, int id)
 {
+        Class *c = C(class);
+        Value *v;
+
         do {
-                struct itable const *t = &stables.items[class];
-                Value *v = itable_lookup(ty, t, id);
-                if (v != NULL) return v;
-                class = supers.items[class];
-        } while (class != -1);
+                if ((v = itable_lookup(ty, &c->setters, id)) != NULL) {
+                        return v;
+                }
+                c = c->super;
+        } while (c != NULL);
 
         return NULL;
 }
@@ -145,12 +209,15 @@ class_lookup_setter(Ty *ty, int class, char const *name, unsigned long h)
 Value *
 class_lookup_method_i(Ty *ty, int class, int id)
 {
+        Class *c = C(class);
+        Value *v;
+
         do {
-                struct itable const *t = &mtables.items[class];
-                Value *v = itable_lookup(ty, t, id);
-                if (v != NULL) return v;
-                class = supers.items[class];
-        } while (class != -1);
+                if ((v = itable_lookup(ty, &c->methods, id)) != NULL) {
+                        return v;
+                }
+                c = c->super;
+        } while (c != NULL);
 
         return NULL;
 }
@@ -165,12 +232,15 @@ class_lookup_method(Ty *ty, int class, char const *name, unsigned long h)
 Value *
 class_lookup_static_i(Ty *ty, int class, int id)
 {
+        Class *c = C(class);
+        Value *v;
+
         do {
-                struct itable const *t = &ctables.items[class];
-                Value *v = itable_lookup(ty, t, id);
-                if (v != NULL) return v;
-                class = supers.items[class];
-        } while (class != -1);
+                if ((v = itable_lookup(ty, &c->statics, id)) != NULL) {
+                        return v;
+                }
+                c = c->super;
+        } while (c != NULL);
 
         return NULL;
 }
@@ -185,8 +255,7 @@ class_lookup_static(Ty *ty, int class, char const *name, unsigned long h)
 Value *
 class_lookup_immediate_i(Ty *ty, int class, int id)
 {
-        struct itable const *t = &mtables.items[class];
-        return itable_lookup(ty, t, id);
+        return itable_lookup(ty, &C(class)->methods, id);
 }
 
 Value *
@@ -199,26 +268,54 @@ class_lookup_immediate(Ty *ty, int class, char const *name, unsigned long h)
 Value
 class_get_finalizer(Ty *ty, int class)
 {
-        while (class != -1) {
-                if (finalizers.items[class].type != VALUE_NONE) {
-                        return finalizers.items[class];
-                }
-                class = supers.items[class];
+      return C(class)->finalizer;
+}
+
+bool
+class_is_trait(Ty *ty, int class)
+{
+        return C(class)->is_trait;
+}
+
+void
+class_implement_trait(Ty *ty, int class, int trait)
+{
+        Class * restrict c = C(class);
+        Class * restrict t = C(trait);
+
+        xvP(c->traits, t);
+
+        while (vN(c->impls) <= t->ti) {
+                xvP(c->impls, false);
         }
 
-        return NONE;
+        *v_(c->impls, t->ti) = true;
 }
 
 bool
 class_is_subclass(Ty *ty, int sub, int super)
 {
-        for (;;) {
-                if (sub == super)
-                        return true;
-                if (sub == CLASS_TOP)
-                        return false;
-                sub = supers.items[sub];
+        if (sub == super || super == CLASS_TOP)
+                return true;
+
+        if (sub == CLASS_TOP)
+                return false;
+
+        Class *c = C(sub);
+        Class *cc = C(super);
+
+        if (cc->is_trait) {
+                return vN(c->impls) > cc->ti && v__(c->impls, cc->ti);
         }
+
+        do {
+                if (c->super == cc) {
+                        return true;
+                }
+                c = c->super;
+        } while (c != NULL);
+
+        return false;
 }
 
 int
@@ -227,38 +324,74 @@ class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max
         if (class == -1)
                 return 0;
 
-        int n = itable_get_completions(ty, &mtables.items[class], prefix, out, max);
-        return n + class_get_completions(ty, supers.items[class], prefix, out + n, max - n);
+        int n, N = 0;
+
+        n = itable_get_completions(ty, &C(class)->methods, prefix, out, max);
+        max -= n;
+        out += n;
+        N += n;
+
+        n = itable_get_completions(ty, &C(class)->getters, prefix, out, max);
+        max -= n;
+        out += n;
+        N += n;
+
+        n = itable_get_completions(ty, &C(class)->setters, prefix, out, max);
+        max -= n;
+        out += n;
+        N += n;
+
+        n = itable_get_completions(ty, &C(class)->statics, prefix, out, max);
+        max -= n;
+        out += n;
+        N += n;
+
+        if (C(class)->super != NULL) {
+                N += class_get_completions(ty, C(class)->super->i, prefix, out, max);
+        }
+
+        return N;
 }
 
 struct itable *
 class_methods(Ty *ty, int class)
 {
-        return &mtables.items[class];
+        return &C(class)->methods;
 }
 
 struct itable *
 class_static_methods(Ty *ty, int class)
 {
-        return &ctables.items[class];
+        return &C(class)->statics;
 }
 
 struct itable *
 class_getters(Ty *ty, int class)
 {
-        return &gtables.items[class];
+        return &C(class)->getters;
 }
 
 struct itable *
 class_setters(Ty *ty, int class)
 {
-        return &stables.items[class];
+        return &C(class)->setters;
 }
 
 char const *
 class_doc(Ty *ty, int class)
 {
-        return docs.items[class];
+        return C(class)->doc;
+}
+
+void
+class_finalize_all(Ty *ty)
+{
+        for (int i = 0; i < vN(classes); ++i) {
+                Class *c = C(i);
+                if (!c->final) {
+                        finalize(ty, c);
+                }
+        }
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

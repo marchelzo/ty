@@ -45,10 +45,12 @@ struct ns {
 struct class_definition {
         int symbol;
         bool pub;
+        bool is_trait;
         char *name;
         char const *doc;
         Location loc;
         struct expression *super;
+        expression_vector traits;
         expression_vector methods;
         expression_vector getters;
         expression_vector setters;
@@ -126,6 +128,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(PREFIX_BANG),                                                               \
         X(NIL),                                                                       \
         X(SELF),                                                                      \
+        X(SUPER),                                                                     \
         X(LIST),                                                                      \
         X(OR_LIST),                                                                   \
         X(CHOICE_PATTERN),                                                            \
@@ -376,7 +379,7 @@ struct expression {
                         vec(Symbol *) param_symbols;
                         vec(Symbol *) bound_symbols;
                         Stmt *body;
-                        bool is_overload;
+                        Expr *overload;
                         bool has_defer;
                         int class;
                         int ikwargs;

@@ -70,6 +70,8 @@ else ifndef LOG
         CFLAGS += -O1
         CFLAGS += -ggdb3
         CFLAGS += -DTY_RELEASE
+else
+        CFLAGS += -O1
 endif
 
 ifdef TY_PROFILER
