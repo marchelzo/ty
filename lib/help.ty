@@ -2,7 +2,7 @@ import ty
 import ty.lex as lex
 import ty.parse as parse
 import ty.token as tok
-import chalk
+import chalk (..)
 import json
 import ffi as c (C!)
 
@@ -215,21 +215,22 @@ class TooWideError {}
 class TooMuchError {}
 
 let defaultColors = {
-    dict:  ['#e78a4e', true],
-    array: ['#e78a4e', true],
-    str:   ['#a9b665', false],
-    quote: ['#a9b665', true],
-    int:   ['#d3869b', nil],
-    float: ['#d3869b', nil],
-    null:  ['#89b482', nil],
-    t:     ['#d8a657', nil],
-    field: ['#7daea3', nil],
-    bool:  ['#d3869b', nil],
-    more:  ['#928374', nil]
+    dict:  chalk['#e78a4e bold'],
+    array: chalk['#e78a4e bold'],
+    str:   chalk['#a9b665'],
+    quote: chalk['#a9b665 bold'],
+    int:   chalk['#d3869b'],
+    float: chalk['#d3869b'],
+    null:  chalk['#89b482'],
+    t:     chalk['#d8a657'],
+    c:     chalk['#d8a657'],
+    field: chalk['#7daea3'],
+    bool:  chalk['#d3869b'],
+    more:  chalk['#928374']
 }
 
 pub function escapeString(s) {
-    s.sub(/[\x00-\x1F\x7F-\xFF"\\]/, m -> match m {
+    s.sub(/[\x00-\x1F\x7F-\xFF"\\]/, match {
         '"'  => '\\"',
         '\\' => '\\\\',
         '\b' => '\\b',
@@ -237,7 +238,7 @@ pub function escapeString(s) {
         '\n' => '\\n',
         '\r' => '\\r',
         '\t' => '\\t',
-        _    => "\\x{m.byte(0):02x}"
+        c    => "\\x{c.byte(0):02x}"
     })
 }
 
@@ -248,7 +249,7 @@ class Printer {
         @out = Blob()
         @col = 0
         @depth = 0
-        @colors = tuple(**members(colors).map([fg, b] -> chalk.fg(fg) |> (b ? chalk.bold : id)))
+        @colors = colors
         @color = color
         @visiting = []
     }
@@ -268,7 +269,7 @@ class Printer {
     write(s, pen=id, force) {
         @col += #s
         if !force && @col > @width { throw TooWideError() }
-        @out.push(@color ? pen(s) : s)
+        @out.push(str(@color ? pen(s) : s))
     }
 
     nl(n=0) {
@@ -310,21 +311,19 @@ class Printer {
             }
         }
 
-        function printMap(m, dict?) {
-            let write-key = dict?
-                          ? self.go
-                          : self.write@($1, @colors.field, $3)
+        function printMap(m, open, close, eq, field-style=@colors.field, delim-style=@colors.dict) {
+            let write-key = match open {
+                '%{'  => self.go,
+                _     => self.write@($1, field-style, $3),
 
-            let open = dict?
-                     ? '%{'
-                     : '{'
+            }
 
             try {
-                self.write(open, @colors.dict, force)
+                self.write(open, delim-style, force)
                 for match m.intersperse(', ') {
                     (k, v) => {
                         write-key(k, false, false)
-                        self.write(': ', @colors.dict, false)
+                        self.write(eq, delim-style, false)
                         self.go(v, false, false)
                     },
 
@@ -332,19 +331,19 @@ class Printer {
                         self.write(s, id, false)
                     }
                 }
-                self.write('}', @colors.dict, false)
+                self.write(close, delim-style, false)
             } catch e: TooWideError & canPush {
                 self.restore(state)
-                self.write(open, @colors.dict, force)
+                self.write(open, delim-style, force)
                 self.nl(1)
                 for (k, v), i in m {
                     if i > 0 { self.write(',', id, force); self.nl() }
                     write-key(k, true, force)
-                    self.write(': ', @colors.dict, force)
+                    self.write(eq, delim-style, force)
                     self.go(v, true, force)
                 }
                 self.nl(-1)
-                self.write('}', @colors.dict, force)
+                self.write(close, delim-style, force)
             }
         }
 
@@ -354,7 +353,7 @@ class Printer {
             },
 
             d :: Dict => {
-                printMap(d.list(), true)
+                printMap(d.list(), '%{', '}', ': ')
             },
 
             %t(x) => {
@@ -369,7 +368,7 @@ class Printer {
                 if items.map(&0) :: Array[Int] {
                     printList(items.map(&1), '(', ')', @colors.array)
                 } else {
-                    printMap(items, false)
+                    printMap(items, '{', '}', ': ')
                 }
             },
 
@@ -394,6 +393,10 @@ class Printer {
 
             _ :: Float => {
                 self.write("{x}", @colors.float, force)
+            },
+
+            members@(_, list=true) ~> $ms => {
+                printMap(ms, "{type(x).__name__}(", ')', '=', delim-style=@colors.c)
             },
 
             _ => {
