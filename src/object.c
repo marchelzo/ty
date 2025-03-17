@@ -8,14 +8,18 @@
 #include "value.h"
 #include "object.h"
 #include "itable.h"
+#include "class.h"
 #include "gc.h"
 
 struct itable *
 object_new(Ty *ty, int class)
 {
-        struct itable *t =  mAo(sizeof *t, GC_OBJECT);
-        itable_init(ty, t);
-        t->class = class;
+        struct itable *t =  mAo0(sizeof *t, GC_OBJECT);
+
+        NOGC(t);
+        class_init_object(ty, class, t);
+        OKGC(t);
+
         return t;
 }
 
@@ -26,14 +30,9 @@ object_mark(Ty *ty, struct itable *o)
 
         MARK(o);
 
-        for (int i = 0; i < ITABLE_SIZE; ++i)
-                for (int v = 0; v < o->buckets[i].values.count; ++v)
-                        value_mark(ty, &o->buckets[i].values.items[v]);
-
-        // FIXME: hmm?
-        return;
-
-        value_mark(ty, &o->finalizer);
+        for (int i = 0; i < vN(o->values); ++i) {
+                value_mark(ty, v_(o->values, i));
+        }
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

@@ -79,7 +79,7 @@ fit2(vec_z cap, vec_z min)
 )
 
 #define vec_push_n_(v, elements, n, rsz) (                              \
-          ((v).count + (n) >= (v).capacity)                             \
+          ((v).count + (n) > (v).capacity)                              \
         ? (                                                             \
                 rsz(                                                    \
                         (v).items,                                      \
@@ -151,6 +151,7 @@ fit2(vec_z cap, vec_z min)
 #define vec_insert_n(v, xs, n, i) vec_insert_n_((v), (xs), (n), (i), vec_resize)
 
 #define vec_resize_unchecked(p, n, m) resize_unchecked((p), (n))
+#define vec_reserve_unchecked(v, n) vec_reserve_((v), (n), vec_resize_unchecked)
 #define vec_push_unchecked(v, x) vec_push_((v), (x), vec_resize_unchecked)
 #define vec_push_n_unchecked(v, xs, n) vec_push_n_((v), (xs), (n), vec_resize_unchecked)
 #define vec_insert_unchecked(v, x, i) vec_insert_((v), (x), (i), vec_resize_unchecked)

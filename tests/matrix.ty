@@ -28,12 +28,12 @@ pub class Matrix : Iterable {
     }
 }
 
-class Vec : Matrix {
+class Vec < Matrix {
     __subscript__(i) { @v[i] }
     __iter__() { @v.__iter__() }
 }
 
-class RowVec(v) : Vec {
+class RowVec(v) < Vec {
     rows {   1 }
     cols { #@v }
 
@@ -45,7 +45,7 @@ class RowVec(v) : Vec {
     }
 }
 
-class ColVec(v) : Vec {
+class ColVec(v) < Vec {
     cols { 1   }
     rows { #@v }
 

@@ -5,12 +5,33 @@
 
 #include "value.h"
 #include "util.h"
+#include "itable.h"
+
+typedef struct class Class;
+
+struct class {
+        int i;
+        int ti;
+        bool is_trait;
+        bool final;
+        Class *super;
+        struct itable methods;
+        struct itable setters;
+        struct itable getters;
+        struct itable statics;
+        struct itable fields;
+        vec(bool) impls;
+        vec(Class *) traits;
+        Value finalizer;
+        char const *name;
+        char const *doc;
+};
 
 int
 class_new(Ty *ty, char const *name, char const *doc);
 
 int
-class_lookup(Ty *ty, char const *name);
+trait_new(Ty *ty, char const *name, char const *doc);
 
 char const *
 class_name(Ty *ty, int class);
@@ -35,6 +56,9 @@ class_copy_methods(Ty *ty, int dst, int src);
 
 struct value *
 class_lookup_method(Ty *ty, int class, char const *name, unsigned long h);
+
+struct value *
+class_lookup_field_i(Ty *ty, int class, int id);
 
 struct value *
 class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h);
@@ -69,6 +93,12 @@ class_method(Ty *ty, int class, char const *name)
         return class_lookup_method(ty, class, name, 0);
 }
 
+void
+class_add_field(Ty *ty, int class, char const *name);
+
+void
+class_init_object(Ty *ty, int class, struct itable *o);
+
 char const *
 class_method_name(Ty *ty, int class, char const *name);
 
@@ -78,8 +108,17 @@ class_doc(Ty *ty, int class);
 void
 class_set_super(Ty *ty, int class, int super);
 
+int
+class_get_super(Ty *ty, int class);
+
 bool
 class_is_subclass(Ty *ty, int sub, int super);
+
+bool
+class_is_trait(Ty *ty, int class);
+
+void
+class_implement_trait(Ty *ty, int class, int trait);
 
 int
 class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max);
@@ -95,5 +134,8 @@ class_getters(Ty *ty, int class);
 
 struct itable *
 class_setters(Ty *ty, int class);
+
+void
+class_finalize_all(Ty *ty);
 
 #endif

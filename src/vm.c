@@ -935,6 +935,14 @@ SpecialTarget(Ty *ty)
         return (((uintptr_t)TARGETS.items[TARGETS.count - 1].t) & PMASK3) != 0;
 }
 
+inline static Value
+BindMethod(Value *f, Value *v, int id)
+{
+        Value *this = mAo(sizeof *this, GC_VALUE);
+        *this = *v;
+        return METHOD(id, f, this);
+}
+
 static bool
 co_yield_value(Ty *ty);
 
@@ -2249,20 +2257,17 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
 
                 break;
         case VALUE_CLASS:
-                vp = class_lookup_method_i(ty, v.class, NAMES.init);
-
-                if (vp->type == VALUE_PTR) {
-                        zP("what??");
-                }
-
                 if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
+                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
+
                         if (LIKELY(vp != NULL)) {
                                 call(ty, vp, NULL, n, nkw, true);
                         } else {
-                                zP("primitive class has no init method. Was prelude loaded?");
+                                zP("built-in class has no init method. Was prelude loaded?");
                         }
                 } else {
                         value = OBJECT(object_new(ty, v.class), v.class);
+                        vp = class_lookup_method_i(ty, v.class, NAMES.init);
                         if (vp != NULL) {
                                 gP(&value);
                                 call(ty, vp, &value, n, nkw, true);
@@ -3818,12 +3823,7 @@ AssignGlobal:
                                         pushtarget((Value *)(((uintptr_t)z << 3) | 3), NULL);
                                         break;
                                 }
-                                vp = itable_lookup(ty, v.object, z);
-                                if (vp != NULL) {
-                                        pushtarget(vp, v.object);
-                                } else {
-                                        pushtarget(itable_add(ty, v.object, z, NIL), v.object);
-                                }
+                                pushtarget(itable_get(ty, v.object, z), v.object);
                         } else if (v.type == VALUE_TUPLE) {
                                 vp = tuple_get_i(&v, z);
                                 if (vp == NULL) {
@@ -5392,6 +5392,30 @@ BadTupleMember:
                         READVALUE(s);
                         push(NAMESPACE((Expr *)s));
                         break;
+                CASE(BIND_INSTANCE)
+                        READVALUE(n);
+                        READVALUE(z);
+                        vp = class_lookup_method_i(ty, n, z);
+                        *top() = BindMethod(vp, top(), z);
+                        break;
+                CASE(BIND_GETTER)
+                        READVALUE(n);
+                        READVALUE(z);
+                        vp = class_lookup_getter_i(ty, n, z);
+                        *top() = BindMethod(vp, top(), z);
+                        break;
+                CASE(BIND_SETTER)
+                        READVALUE(n);
+                        READVALUE(z);
+                        vp = class_lookup_setter_i(ty, n, z);
+                        *top() = BindMethod(vp, top(), z);
+                        break;
+                CASE(BIND_STATIC)
+                        READVALUE(n);
+                        READVALUE(z);
+                        vp = class_lookup_static_i(ty, n, z);
+                        push(*vp);
+                        break;
                 CASE(OPERATOR)
                         READVALUE(i);
                         READVALUE(j);
@@ -5549,6 +5573,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.count            = M_ID("__count__");
         NAMES._drop_           = M_ID("__drop__");
         NAMES.fmt              = M_ID("__fmt__");
+        NAMES._free_           = M_ID("__free__");
         NAMES.init             = M_ID("init");
         NAMES._iter_           = M_ID("__iter__");
         NAMES.json             = M_ID("__json__");
@@ -6509,16 +6534,6 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
         for (int i = 0; i < storage->frames->count; ++i) {
                 value_mark(ty, &storage->frames->items[i].f);
         }
-
-        // FIXME: should finalizers be allowed to keep things alive?
-        return;
-
-        GCLOG("Marking finalizers");
-        for (int i = 0; i < storage->allocs->count; ++i) {
-                if (storage->allocs->items[i]->type == GC_OBJECT) {
-                        value_mark(ty, &((struct itable *)storage->allocs->items[i]->data)->finalizer);
-                }
-        }
 }
 
 char const *
@@ -6991,6 +7006,13 @@ StepInstruction(char const *ip)
 
                 break;
         }
+        CASE(BIND_INSTANCE)
+        CASE(BIND_GETTER)
+        CASE(BIND_SETTER)
+        CASE(BIND_STATIC)
+                SKIPVALUE(i);
+                SKIPVALUE(j);
+                break;
         CASE(PATCH_ENV)
                 SKIPVALUE(n);
                 break;

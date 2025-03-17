@@ -326,6 +326,9 @@ complete(char const *s, int start, int end)
                 case VALUE_NAMESPACE:
                         n += compiler_get_namespace_completions(ty, v->namespace, s, completions, MAX_COMPLETIONS);
                         break;
+                case VALUE_CLASS:
+                        n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
+                        break;
                 case VALUE_OBJECT:
                         n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
                         n += itable_get_completions(ty, v->object, s, completions + n, MAX_COMPLETIONS - n);

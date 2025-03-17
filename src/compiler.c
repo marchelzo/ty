@@ -209,6 +209,9 @@ compile(Ty *ty, char const *source);
 inline static void
 emit_int(Ty *ty, int k);
 
+static bool
+try_make_implicit_self(Ty *ty, Expr *e, int class);
+
 #define X(t) #t
 static char const *ExpressionTypeNames[] = {
         TY_EXPRESSION_TYPES
@@ -1621,26 +1624,16 @@ apply_decorator_macros(Ty *ty, Scope *scope, Expr **ms, int n)
         }
 }
 
-typedef void method_adder(Ty *, int, char const *, Value);
-
 static void
-declare_methods(Ty *ty, int class, expression_vector *ms, method_adder *add)
+symbolize_methods(Ty *ty, Scope *scope, int class, expression_vector *ms, int mtype)
 {
         for (int i = 0; i < vN(*ms); ++i) {
-                //add(ty, class, v__(*ms, i)->name, INTEGER(class));
-        }
-}
-
-static void
-symbolize_methods(Ty *ty, Scope *scope, int class, expression_vector *ms)
-{
-        for (int i = 0; i < vN(*ms); ++i) {
-                v__(*ms, i)->class = class;
+                Expr *meth = state.meth = v__(*ms, i);
+                meth->mtype = mtype;
+                symbolize_expression(ty, scope, meth);
         }
 
-        for (int i = 0; i < vN(*ms); ++i) {
-                symbolize_expression(ty, scope, v__(*ms, i));
-        }
+        state.meth = NULL;
 }
 
 static Expr *
@@ -1668,7 +1661,7 @@ mkmulti(Ty *ty, char *name, bool setters)
 }
 
 static void
-aggregate_overloads(Ty *ty, expression_vector *ms, bool setters)
+aggregate_overloads(Ty *ty, int class, expression_vector *ms, bool setters)
 {
         int n = ms->count;
 
@@ -1684,12 +1677,14 @@ aggregate_overloads(Ty *ty, expression_vector *ms, bool setters)
 
                 int m = 0;
                 do {
-                        ms->items[i + m]->is_overload = true;
+                        ms->items[i + m]->overload = multi;
                         snprintf(buffer, sizeof buffer, "%s#%d", ms->items[i + m]->name, m + 1);
                         ms->items[i + m]->name = sclonea(ty, buffer);
                         avP(multi->functions, ms->items[i + m]);
                         m += 1;
                 } while (i + m < n && strcmp(ms->items[i + m]->name, multi->name) == 0);
+
+                multi->class = class;
 
                 avP(*ms, multi);
         }
@@ -1962,6 +1957,28 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                                 target->symbol->public = true;
                         }
                 } else {
+                        if (state.class != -1 && target->module == NULL) {
+                                Symbol *sym = scope_lookup(ty, scope, target->identifier);
+                                if (sym == NULL || sym->scope == state.global || sym->scope == global) {
+                                        dont_printf(
+                                                "%s.%s: checking %s for self. conversion\n",
+                                                class_name(ty, state.class),
+                                                state.func->name,
+                                                e->identifier
+                                        );
+                                        if (try_make_implicit_self(ty, target, state.class)) {
+                                                dont_printf(
+                                                        "%16s: convert %14s to self.%-14s %7d\n",
+                                                        class_name(ty, state.class),
+                                                        e->member_name,
+                                                        e->member_name,
+                                                        e->start.line + 1
+                                                );
+                                                symbolize_lvalue_(ty, scope, target->object, false, false);
+                                                break;
+                                        }
+                                }
+                        }
                         if (target->constraint != NULL) {
                                 fail(
                                         ty,
@@ -2404,9 +2421,10 @@ try_make_implicit_self(Ty *ty, Expr *e, int class)
         int64_t m = M_ID(e->identifier);
 
         if (
-                origin_class(class_lookup_immediate_i(ty, class, m)) == class
-             || origin_class(class_lookup_getter_i(ty, class, m))    == class
-             || origin_class(class_lookup_setter_i(ty, class, m))    == class
+                origin_class(class_lookup_method_i(ty, class, m)) == class
+             || origin_class(class_lookup_getter_i(ty, class, m)) == class
+             || origin_class(class_lookup_setter_i(ty, class, m)) == class
+             || class_lookup_field_i(ty, class, m)                != NULL
         ) {
                 id = e->identifier;
                 e->type = EXPRESSION_SELF_ACCESS;
@@ -2924,6 +2942,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_MACRO_INVOCATION:
                 invoke_macro(ty, e, scope);
                 break;
+        case EXPRESSION_SUPER:
+                if (state.class == -1) {
+                        fail(ty, "%ssuper%s referenced outside of class context", TERM(95;1), TERM(0));
+                }
+                if (state.meth->mtype != MT_STATIC) {
+                        e->symbol = getsymbol(ty, scope, "self", NULL);
+                }
+                break;
         case EXPRESSION_MATCH_REST:
                 fail(ty, "*<identifier> 'match-rest' pattern used outside of pattern context");
         }
@@ -3044,8 +3070,22 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                         }
                                 }
                         }
-                } else {
-                        class_set_super(ty, cd->symbol, 0);
+                }
+
+                for (int i = 0; i < vN(cd->traits); ++i) {
+                        Expr *trait = v__(cd->traits, i);
+
+                        symbolize_expression(ty, scope, trait);
+
+                        if (
+                                trait->type != EXPRESSION_IDENTIFIER
+                            ||  trait->symbol->class == -1
+                            || !class_is_trait(ty, trait->symbol->class)
+                        ) {
+                                fail(ty, "sorry, but I won't allow it: %s", edbg(trait));
+                        }
+
+                        class_implement_trait(ty, cd->symbol, trait->symbol->class);
                 }
 
                 subscope = scope_new(ty, cd->name, scope, false);
@@ -3108,19 +3148,14 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 {
                         int c = cd->symbol;
 
-                        aggregate_overloads(ty, &cd->methods, false);
-                        aggregate_overloads(ty, &cd->setters, true);
-                        aggregate_overloads(ty, &cd->statics, false);
+                        aggregate_overloads(ty, c, &cd->methods, false);
+                        aggregate_overloads(ty, c, &cd->setters, true);
+                        aggregate_overloads(ty, c, &cd->statics, false);
 
-                        declare_methods(ty, c, &cd->methods, class_add_method);
-                        declare_methods(ty, c, &cd->getters, class_add_getter);
-                        declare_methods(ty, c, &cd->setters, class_add_setter);
-                        declare_methods(ty, c, &cd->statics, class_add_static);
-
-                        symbolize_methods(ty, subscope, c, &cd->methods);
-                        symbolize_methods(ty, subscope, c, &cd->getters);
-                        symbolize_methods(ty, subscope, c, &cd->setters);
-                        symbolize_methods(ty, subscope, c, &cd->statics);
+                        symbolize_methods(ty, subscope, c, &cd->methods, MT_INSTANCE);
+                        symbolize_methods(ty, subscope, c, &cd->getters, MT_GET);
+                        symbolize_methods(ty, subscope, c, &cd->setters, MT_SET);
+                        symbolize_methods(ty, subscope, c, &cd->statics, MT_STATIC);
 
                         for (int i = 0; i < cd->fields.count; ++i) {
                                 Expr *field = cd->fields.items[i];
@@ -3157,8 +3192,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
 
                 subscope = scope_new(ty, s->tag.name, scope, false);
-                symbolize_methods(ty, subscope, CLASS_TAG, &s->tag.methods);
-                symbolize_methods(ty, subscope, CLASS_TAG, &s->tag.statics);
+                symbolize_methods(ty, subscope, CLASS_TAG, &s->tag.methods, MT_INSTANCE);
+                symbolize_methods(ty, subscope, CLASS_TAG, &s->tag.statics, MT_STATIC);
 
                 break;
         case STATEMENT_BLOCK:
@@ -3952,7 +3987,7 @@ emit_function(Ty *ty, Expr const *e)
                         v__(e->constraints, i) == NULL
                      || (
                                 !CheckConstraints
-                             && !e->is_overload
+                             && e->overload == NULL
                         )
                 ) {
                         continue;
@@ -3966,7 +4001,7 @@ emit_function(Ty *ty, Expr const *e)
                 emit_constraint(ty, e->constraints.items[i]);
                 PLACEHOLDER_JUMP(INSTR_JUMP_IF, good);
 
-                if (e->is_overload) {
+                if (e->overload != NULL) {
                         emit_instr(ty, INSTR_POP);
                         emit_instr(ty, INSTR_NONE);
                         emit_instr(ty, INSTR_RETURN);
@@ -3997,7 +4032,7 @@ emit_function(Ty *ty, Expr const *e)
                 Stmt  *cleanup = NewStmt(ty, STATEMENT_CLEANUP);
                 cleanup->start = body->start;
                 cleanup->end   = body->end;
-                        
+
                 try->try.finally = cleanup;
 
                 body = try;
@@ -4198,7 +4233,7 @@ emit_lang_string(Ty *ty, Expr const *e)
                 emit_int(ty, -1);
                 emit_int(ty, -1);
                 emit_int(ty, -1);
-                
+
                 if (e->strings.items[i + 1][0] != '\0') {
                         emit_instr(ty, INSTR_STRING);
                         emit_string(ty, e->strings.items[i + 1]);
@@ -4386,6 +4421,40 @@ emit_return(Ty *ty, Stmt const *s)
         }
 
         return true;
+}
+
+static bool
+emit_super(Ty *ty, Expr const *e)
+{
+        char const *func_name = state.func->overload != NULL
+                              ? state.func->overload->name
+                              : state.func->name;
+
+        int c = class_get_super(ty, state.class);
+        if (c == -1) {
+                fail(
+                        ty,
+                        "%ssuper%s used in %sObject%s?",
+                        TERM(95;1), TERM(0),
+                        TERM(95;1), TERM(0)
+                );
+        }
+
+        if (e->symbol != NULL) {
+                emit_load(ty, e->symbol, state.fscope);
+        }
+
+        switch (state.meth->mtype) {
+        case MT_INSTANCE: emit_instr(ty, INSTR_BIND_INSTANCE); break;
+        case MT_GET:      emit_instr(ty, INSTR_BIND_GETTER);   break;
+        case MT_SET:      emit_instr(ty, INSTR_BIND_SETTER);   break;
+        case MT_STATIC:   emit_instr(ty, INSTR_BIND_STATIC);   break;
+        }
+
+        emit_int(ty, c);
+        emit_int(ty, M_ID(func_name));
+
+        return false;
 }
 
 static bool
@@ -5954,6 +6023,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_instr(ty, INSTR_VALUE);
                 emit_symbol((uintptr_t)e->v);
                 break;
+        case EXPRESSION_SUPER:
+                emit_super(ty, e);
+                break;
         case EXPRESSION_MATCH:
                 emit_match_expression(ty, e);
                 break;
@@ -6615,22 +6687,26 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
                 break;
         case STATEMENT_CLASS_DEFINITION:
+                state.class = s->class.symbol;
+
                 for (int i = 0; i < s->class.setters.count; ++i) {
-                        s->class.setters.items[i]->mtype = MT_SET;
+                        state.meth = s->class.setters.items[i];
                         emit_expression(ty, s->class.setters.items[i]);
                 }
                 for (int i = 0; i < s->class.getters.count; ++i) {
-                        s->class.getters.items[i]->mtype = MT_GET;
+                        state.meth = s->class.getters.items[i];
                         emit_expression(ty, s->class.getters.items[i]);
                 }
                 for (int i = 0; i < s->class.methods.count; ++i) {
-                        s->class.methods.items[i]->mtype = MT_INSTANCE;
+                        state.meth = s->class.methods.items[i];
                         emit_expression(ty, s->class.methods.items[i]);
                 }
                 for (int i = 0; i < s->class.statics.count; ++i) {
-                        s->class.statics.items[i]->mtype = MT_STATIC;
+                        state.meth = s->class.statics.items[i];
                         emit_expression(ty, s->class.statics.items[i]);
                 }
+
+                state.meth = NULL;
 
                 emit_instr(ty, INSTR_DEFINE_CLASS);
                 emit_int(ty, s->class.symbol);
@@ -6650,6 +6726,8 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
 
                 for (int i = s->class.setters.count; i > 0; --i)
                         emit_string(ty, s->class.setters.items[i - 1]->name);
+
+                state.class = -1;
 
                 break;
         case STATEMENT_CLEANUP:
@@ -6999,7 +7077,7 @@ compile(Ty *ty, char const *source)
                         do {
                                 avP(expanded, p[i + m]);
                                 p[i + m]->pub = false;
-                                p[i + m]->value->is_overload = true;
+                                p[i + m]->value->overload = multi;
                                 snprintf(buffer, sizeof buffer, "%s#%d", multi->name, m + 1);
                                 p[i + m]->target->identifier = p[i + m]->value->name = sclonea(ty, buffer);
                                 avP(multi->functions, (Expr *)p[i + m]);
@@ -7149,6 +7227,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
         //emit_instr(ty, INSTR_EXEC_CODE);
         //emit_symbol((uintptr_t) m.code);
         vm_exec(ty, code);
+        class_finalize_all(ty);
 
         return module_scope;
 }
@@ -8376,8 +8455,18 @@ tyexpr(Ty *ty, Expr const *e)
 
                 gX();
 
-                v.type |= VALUE_TAGGED;
-                v.tags = tags_push(ty, 0, TySpecialString);
+                if (e->lang == NULL) {
+                        v.type |= VALUE_TAGGED;
+                        v.tags = tags_push(ty, 0, TySpecialString);
+                } else {
+                        v = tagged(
+                                ty,
+                                TyLangString,
+                                tyexpr(ty, e->lang),
+                                v,
+                                NONE
+                        );
+                }
 
                 break;
         case EXPRESSION_USER_OP:
@@ -9332,6 +9421,9 @@ cexpr(Ty *ty, Value *v)
                 e->type = EXPRESSION_STRING;
                 e->string = mkcstr(ty, v);
                 break;
+        case TyLangString:
+                e->lang = cexpr(ty, tget_nn(v, 0));
+                v = tget_nn(v, 1);
         case TySpecialString:
         {
                 e->type = EXPRESSION_SPECIAL_STRING;
@@ -10181,7 +10273,7 @@ define_tag(Ty *ty, Stmt *s)
 {
         Scope *scope = GetNamespace(ty, s->ns);
 
-        if (scope_locally_defined(ty, scope, s->class.name)) {
+        if (scope_locally_defined(ty, scope, s->tag.name)) {
                 fail(ty, "redeclaration of tag: %s", s->tag.name);
         }
 
@@ -10191,6 +10283,16 @@ define_tag(Ty *ty, Stmt *s)
         sym->tag = tags_new(ty, s->tag.name);
         sym->doc = s->tag.doc;
         s->tag.symbol = sym->tag;
+
+        for (int i = 0; i < vN(s->tag.methods); ++i) {
+                // :^)
+                v__(s->tag.methods, i)->class = -3;
+        }
+
+        for (int i = 0; i < vN(s->tag.statics); ++i) {
+                // :^)
+                v__(s->tag.statics, i)->class = -3;
+        }
 }
 
 void
@@ -10211,7 +10313,9 @@ define_class(Ty *ty, Stmt *s)
         }
 
         Symbol *sym = addsymbol(ty, scope, s->class.name);
-        sym->class = class_new(ty, s->class.name, s->class.doc);
+        sym->class = s->class.is_trait
+                   ? trait_new(ty, s->class.name, s->class.doc)
+                   : class_new(ty, s->class.name, s->class.doc);
         sym->doc = s->class.doc;
         sym->loc = s->class.loc;
         sym->cnst = true;
@@ -10223,8 +10327,48 @@ define_class(Ty *ty, Stmt *s)
 
                 // FIXME: we're doing the same check again in the CLASS_DEFINITION case of
                 // symbolize_statement... we should probably just handle everything right here
-                if (!contains(OperatorCharset, *m->name) || m->params.count == 0) {
-                        class_add_method(ty, sym->class, m->name, PTR(m));
+                if (contains(OperatorCharset, *m->name) && m->params.count > 0) {
+                        continue;
+                }
+
+                m->class = sym->class;
+
+                class_add_method(ty, sym->class, m->name, PTR(m));
+        }
+
+        for (int i = 0; i < s->class.statics.count; ++i) {
+                Expr *m = s->class.statics.items[i];
+                m->class = sym->class;
+                class_add_static(ty, sym->class, m->name, PTR(m));
+        }
+
+        for (int i = 0; i < s->class.getters.count; ++i) {
+                Expr *m = s->class.getters.items[i];
+                m->class = sym->class;
+                class_add_getter(ty, sym->class, m->name, PTR(m));
+        }
+
+        for (int i = 0; i < s->class.setters.count; ++i) {
+                Expr *m = s->class.setters.items[i];
+                m->class = sym->class;
+                class_add_setter(ty, sym->class, m->name, PTR(m));
+        }
+
+        for (int i = 0; i < s->class.fields.count; ++i) {
+                Expr *m = s->class.fields.items[i];
+                switch (m->type) {
+                case EXPRESSION_IDENTIFIER:
+                        class_add_field(ty, sym->class, m->identifier);
+                        break;
+                case EXPRESSION_EQ:
+                        class_add_field(ty, sym->class, m->target->identifier);
+                        break;
+                default:
+                        fail(
+                                ty,
+                                "unexpected expression used as field declaration: %s",
+                                ExpressionTypeName(m)
+                        );
                 }
         }
 }
@@ -11430,6 +11574,13 @@ DumpProgram(
 
                         break;
                 }
+                CASE(BIND_INSTANCE)
+                CASE(BIND_GETTER)
+                CASE(BIND_SETTER)
+                CASE(BIND_STATIC)
+                        READVALUE(n);
+                        READVALUE(n);
+                        break;
                 CASE(NAMESPACE)
                         READVALUE(s);
                         break;

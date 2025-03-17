@@ -8,7 +8,7 @@ class A {
     }
 }
 
-class B : A {
+class B < A {
     foo(x: Int) {
         str(x)
     }

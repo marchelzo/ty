@@ -6443,18 +6443,16 @@ BUILTIN_FUNCTION(members_list)
 
         switch (o.type) {
         case VALUE_OBJECT:
-                for (int i = 0; i < ITABLE_SIZE; ++i) {
-                        for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
-                                char const *key = intern_entry(&xD.members, o.object->buckets[i].ids.items[v])->name;
-                                Value member = vT(2);
-                                NOGC(member.items);
-                                member.items[0] = vSs(key, strlen(key));
-                                member.items[1] = o.object->buckets[i].values.items[v];
-                                NOGC(member.items[0].string);
-                                vAp(a, member);
-                                OKGC(member.items[0].string);
-                                OKGC(member.items);
-                        }
+                for (int i = 0; i < vN(o.object->ids); ++i) {
+                        char const *key = intern_entry(&xD.members, v__(o.object->ids, i))->name;
+                        Value member = vT(2);
+                        NOGC(member.items);
+                        member.items[0] = vSs(key, strlen(key));
+                        member.items[1] = v__(o.object->values, i);
+                        NOGC(member.items[0].string);
+                        vAp(a, member);
+                        OKGC(member.items[0].string);
+                        OKGC(member.items);
                 }
 
                 break;
@@ -6504,11 +6502,9 @@ BUILTIN_FUNCTION(members)
 
         switch (o.type) {
         case VALUE_OBJECT:
-                for (int i = 0; i < ITABLE_SIZE; ++i) {
-                        for (int v = 0; v < o.object->buckets[i].values.count; ++v) {
-                                char const *key = intern_entry(&xD.members, o.object->buckets[i].ids.items[v])->name;
-                                dict_put_member(ty, members, key, o.object->buckets[i].values.items[v]);
-                        }
+                for (int i = 0; i < vN(o.object->ids); ++i) {
+                        char const *key = intern_entry(&xD.members, v__(o.object->ids, i))->name;
+                        dict_put_member(ty, members, key, v__(o.object->values, i));
                 }
 
                 break;
@@ -6575,18 +6571,6 @@ BUILTIN_FUNCTION(member)
 
 BUILTIN_FUNCTION(finalizer)
 {
-        ASSERT_ARGC("setFinalizer()", 2);
-
-        if (ARG(0).type != VALUE_OBJECT) {
-                zP("the first argument to setFinalizer() must be an object");
-        }
-
-        if (!CALLABLE(ARG(1))) {
-                zP("the second argument to setFinalizer() must be callable");
-        }
-
-        ARG(0).object->finalizer = ARG(1);
-
         return NIL;
 }
 
@@ -6625,10 +6609,8 @@ fdoc(Ty *ty, struct value const *f)
 static void
 mdocs(Ty *ty, struct itable const *t, struct array *a)
 {
-        for (int i = 0; i < TABLE_SIZE; ++i) {
-                for (int j = 0; j < t->buckets[i].values.count; ++j) {
-                        vAp(a, fdoc(ty, &t->buckets[i].values.items[j]));
-                }
+        for (int i = 0; i < vN(t->values); ++i) {
+                vAp(a, fdoc(ty, v_(t->values, i)));
         }
 }
 

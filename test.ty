@@ -12,10 +12,10 @@ let passed = Sync(0)
 let failed = Sync(0)
 let timedOut = Sync(0)
 
-let g = pen(bold, green)
-let r = pen(bold, red)
-let m = pen(bold, brightMagenta)
-let b = pen(bold, blue)
+let g = chalk['bold green']
+let r = chalk['bold red']
+let m = chalk['bold bright magenta']
+let b = chalk['bold blue']
 
 let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
@@ -49,22 +49,23 @@ function doTest(name: String) {
                 _ => "({elapsedMs:d}ms)",
             }
 
-            "{g('PASS')} {yellow(elapsed)}"
+            chalk"[bright green bold]PASS[/] [bright yellow]{elapsed}[/]"
         },
 
         _ => do {
             failed += 1
             [
+
                 r('FAIL'),
                 m("  (exit status: {result.status})") if result.status != 0,
                 b("  ({c.as_str(strsignal(result.signal))})") if result.signal != nil,
-                "\n================ {m('STDOUT')} ====================================\n",
+                chalk"\n[magenta]================ [bold blue]STDOUT[/] ====================================[/]\n",
                 result.stdout,
                 r('~~~~~'),
-                "\n================ {m('STDERR')} ====================================\n",
+                chalk"\n[magenta]================ [bold blue]STDERR[/] ====================================[/]\n",
                 result.stderr,
                 r('~~~~~'),
-                '\n============================================================\n',
+                chalk"\n[magenta]============================================================[/]\n",
             ].str()
         }
     }

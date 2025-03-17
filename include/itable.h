@@ -6,18 +6,12 @@
 #include "intern.h"
 #include "ty.h"
 
-enum { ITABLE_SIZE = 32 };
-
 typedef struct value Value;
 
-struct ibucket {
-        vec(int64_t) ids;
-        vec(struct value) values;
-};
-
 struct itable {
-        struct ibucket buckets[ITABLE_SIZE];
-        Value finalizer;
+        vec(int) ids;
+        vec(struct value) values;
+        Value *vals;
         int class;
 };
 
@@ -37,8 +31,14 @@ itable_put(Ty *ty, struct itable *t, char const *name, Value v)
 void
 itable_copy(Ty *ty, struct itable *dst, struct itable const *src);
 
+void
+itable_copy_weak(Ty *ty, struct itable *dst, struct itable const *src);
+
 struct value *
 itable_lookup(Ty *ty, struct itable const *t, int64_t id);
+
+struct value *
+itable_get(Ty *ty, struct itable *t, int64_t id);
 
 inline static struct value *
 itable_look(Ty *ty, struct itable const *t, char const *name)
