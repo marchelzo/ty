@@ -265,7 +265,7 @@ function fun() {
     if public { next() }
 
     let (lib, prefix) = match (peek().type, peek(1)) {
-        ('function', _) => (ty.Nil, ''),
+        ('fn', _) => (ty.Nil, ''),
 
         ('id', {str, *}) => (expr(99), next().str),
 
@@ -728,7 +728,7 @@ function clos() {
 }
 
 pub macro C! {
-    if 'function' in [peek(it) for ..8].map(&.type) {
+    if 'fn' in [peek(it) for ..8].map(&.type) {
         fun()
     } else if peek().?id == 'struct' {
         strct()

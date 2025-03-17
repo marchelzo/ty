@@ -1,21 +1,19 @@
 import os (..)
 import termios (..)
+import ioctls (TIOCGWINSZ)
 import help (pretty-print as pp, pretty)
 import unibilium as unibi
 import errno
+import ffi as c (C!)
+import atomic
 
 #|if getenv('TY_LOG') != nil
-  /.*(/
   import log (..)
 #|else
   macro warn!(msg) = do {}
 #|]
 
 let ppp = pretty@(*, color=false)
-
-pub fn foo() {
-    
-}
 
 pub ns mod {
     pub SHIFT = 1 << 0
@@ -25,13 +23,24 @@ pub ns mod {
 }
 
 pub namespace event {
-    tag Text;
-    tag Mouse;
-    tag Key {
+    pub tag Text;
+    pub tag MouseDown;
+    pub tag MouseUp;
+    pub tag MouseMove;
+    pub tag ScrollDown;
+    pub tag ScrollUp;
+    pub tag ScrollLeft;
+    pub tag ScrollRight;
+    pub tag Cursor;
+    pub tag Key {
         nice-name() {
             nice-key-name(self)
         }
     }
+}
+
+pub ns error {
+    pub tag EOF;
 }
 
 pub namespace keys {
@@ -297,7 +306,8 @@ function nice-key-name(ev) {
 namespace ctlseq {
     namespace pattern {
         pub m-ev-sgr   = /^\x1b\[<(\d+);(\d+);(\d+)([mM])/
-        pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?(.)/
+        pub k-ev-based = /^\x1b\[([0-9:]*)(?:;([0-9:]*))?(?:;([0-9:]+))?([ABCDEFHPQSu~])/
+        pub cpr        = /^\x1b\[(\d+);(\d+)R/
     }
 
     namespace handler {
@@ -307,12 +317,21 @@ namespace ctlseq {
             let y  = int($3)
             let t  = ($4 == 'm') ? 0 : 1
 
-            let motion? = st & 0b00100000
+            let motion? = (st & 0b00100000) != 0
             let button  = st & 0b11000011
             let mods    = st & 0b00011100
 
-            yield event.Mouse({
-                motion?,
+            let ev = match (motion?, button, t) {
+                (true,  _,  _) => event.MouseMove,
+                (_,     64, _) => event.ScrollUp,
+                (_,     65, _) => event.ScrollDown,
+                (_,     66, _) => event.ScrollLeft,
+                (_,     67, _) => event.ScrollRight,
+                (_,     _,  1) => event.MouseDown,
+                (_,     _,  0) => event.MouseUp
+            }
+
+            yield ev({
                 button,
                 mods,
                 x, y
@@ -340,6 +359,12 @@ namespace ctlseq {
             if #text != 0 {
                 yield event.Text(text.map(chr).str())
             }
+        }
+
+        pub fn cpr($1, $2) {
+            let row = int($1)
+            let col = int($2)
+            yield event.Cursor(row, col)
         }
     }
 }
@@ -377,10 +402,27 @@ function yield-basic(ch, extra-mods=0) {
 
 }
 
+ns _size {
+    C! struct WinSize {
+        c.short lines;
+        c.short cols;
+        c.short xpix;
+        c.short ypix;
+    }
+
+    let size = WinSize()
+
+    fn get(fd) {
+        ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
+        (size.lines, size.cols)
+    }
+}
+
 class TermIO {
     init(fd=0) {
         @fd = fd
         @event-stream = self._read-events()
+
         @ti-keys = %{}
         let $unibi-term = unibi.Term()
         for i in unibi.strs {
@@ -390,6 +432,18 @@ class TermIO {
                 @ti-keys[str] = i
             }
         }
+
+        @events_ = SharedQueue()
+
+        @cursor_ = {
+            lock: Mutex(),
+            cond: CondVar(),
+            t: 0,
+            y: nil,
+            x: nil
+        }
+
+        @reader = Thread(self.run-reader)
     }
 
     start(a) {
@@ -401,7 +455,7 @@ class TermIO {
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
         copy.iflag |= IGNBRK
-        tcsetattr(@fd, TCSANOW, copy)
+        tcsetattr(@fd, TCSAFLUSH, copy)
         write(
             @fd,
             "\x1b[>{1|2|4|8|16}u" // kitty progressive enchancement for keyboard input
@@ -417,7 +471,11 @@ class TermIO {
             "\x1b[?1003l"  // turn off all the private modes we turned on
             "\x1b[?1006l"
         )
-        tcsetattr(@fd, TCSANOW, @saved-termios)
+        tcsetattr(@fd, TCSAFLUSH, @saved-termios)
+    }
+
+    size() {
+        _size.get(@fd)
     }
 
     _read-events*() {
@@ -454,6 +512,7 @@ class TermIO {
             let ctlseqs = [
                 (ctlseq.pattern.m-ev-sgr,   ctlseq.handler.m-ev-sgr),
                 (ctlseq.pattern.k-ev-based, ctlseq.handler.k-ev-based),
+                (ctlseq.pattern.cpr,        ctlseq.handler.cpr),
             ]
 
             // Let's see if we have a terminfo entry that matches
@@ -493,9 +552,63 @@ class TermIO {
     }
 
     next-event() {
-        let ev = (@event-stream)()
+        return @events_.take()
+
+        let ev = if #@event-buffer > 0 {
+            Some(@event-buffer.pop(0))
+        } else {
+            (@event-stream)()
+        }
         warn!("Returning event: {ppp(ev)}")
         return ev
+    }
+
+    __cursor() {
+        write(@fd, "\x1b[6n")
+        while match (@event-stream)() {
+            Some(event.Cursor(y, x)) => { return (y, x)          },
+            Some(ev)                 => { @event-buffer.push(ev) },
+            _                        => { throw error.EOF        }
+        }
+    }
+
+    cursor() {
+        let ^lock = @cursor_.lock.lock()
+
+        let t = @cursor_.t
+        write(@fd, "\x1b[6n")
+
+        for (;;) {
+            @cursor_.cond.wait(@cursor_.lock)
+            break if @cursor_.t != t
+        }
+
+        return (@cursor_.y, @cursor_.x)
+    }
+
+    run-reader() {
+        while match (@event-stream)() {
+            Some(event.Cursor(y, x)) => {
+                with @cursor_.lock {
+                    @cursor_.y = y
+                    @cursor_.x = x
+                    @cursor_.t += 1
+                }
+                @cursor_.cond.broadcast()
+            },
+
+            Some(ev) => {
+                @events_.put(ev)
+            },
+
+            None => sleep(0.5)
+        }
+    }
+
+    events*() {
+        while let Some(ev) = @events_.try-take(0) {
+            yield ev
+        }
     }
 }
 
@@ -518,7 +631,7 @@ pub function __test() {
                 }
             },
 
-            event.Mouse(mev) => {
+            event.MouseDown(mev) => {
                 pp(mev)
             }
         }

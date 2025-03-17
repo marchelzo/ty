@@ -182,6 +182,14 @@ class Function : Iter {
             g(*, **)
         }
     }
+
+    static name(f) {
+        doc(f).0
+    }
+
+    static disassemble(f) {
+        ty.disassemble(f)
+    }
 }
 
 class Array : Iterable {
@@ -445,6 +453,8 @@ class String : Iterable {
         return ::str(x)
     }
 
+    int { ::int(self) }
+
     int(base: Int = 10) {
         return ::int(self, base)
     }
@@ -586,12 +596,12 @@ class String : Iterable {
         }
     }
 
-    __fmt__(spec, w, n) {
-        if spec.match?(/[%[:alpha:]]/) {
-            fmt("%{spec}", (n ?? w) if '*' in spec, self)
-        } else {
-            fmt("%{spec}s", (n ?? w) if '*' in spec, self)
-        }
+    __fmt__(spec, w, fun=id) {
+        fun(
+            spec.match?(/[%[:alpha:]]/)
+          ? fmt("%{spec}", w if '*' in spec, self)
+          : fmt("%{spec}s", w if '*' in spec, self)
+        )
     }
 }
 
@@ -622,7 +632,7 @@ class Int {
         self % 2 == 1
     }
 
-    sgn() {
+    sgn {
         self <=> 0
     }
 
@@ -690,7 +700,7 @@ class Int {
         self / int(n)
     }
 
-    mod(n) {
+    `mod`(n) {
         self % int(n)
     }
 
@@ -863,7 +873,7 @@ class Bool {
     __not__() { return !self }
 }
 
-class Regex : Function {
+class Regex < Function {
     init(x) { regex(x) }
 
     ~=(s) { s.match!(self) }
@@ -976,36 +986,49 @@ class Tuple {
 class RegexMatch {
     init(s, groups) {
         let [(start, size), *captures] = groups
+        @start_ = start
+        @size = size
         @s_ = s
         @s = s.bslice(start, size)
-        @start = #s.bslice(0, start)
-        @size = #@s
-        @captures = captures
+        @captures_ = captures
+    }
+
+    start {
+        #@pre
+    }
+
+    end {
+        @start + #@s
     }
 
     pre {
-        @s_.bslice(0, @start)
+        @s_.bslice(0, @start_)
     }
 
     post {
-        @s_.bslice(@start + @size)
+        @s_.bslice(@start_ + @size)
+    }
+
+    captures {
+        [if i != -1 { @s_.bslice(i, n) } for (i, n) in @captures_]
     }
 
     __subscript__(i) {
         if i == 0 {
             @s
         } else {
-            let (off, n) = @captures[i - 1]
-            @s_.bslice(off, n)
+            if let (i, n) = @captures_[i - 1] and i != -1 {
+                @s_.bslice(i, n)
+            }
         }
     }
 
     __len__() {
-        @size
+        #@s
     }
 }
 
-class Iterable {
+trait Iterable {
     map(f) {
         @__iter__().map(f)
     }
@@ -1209,7 +1232,7 @@ class Iterable {
     __iter__() -> Iter;
 }
 
-class Iter : Iterable {
+trait Iter < Iterable {
     map*(f) {
         for x in self {
             yield f(x)
@@ -1805,28 +1828,31 @@ class Queue : Iterable {
 }
 
 class Range : Iterable {
+    a: Int
+    b: Int
+
     init(a, b) {
         @a = a
         @b = b
     }
 
     low() {
-        return min(@a, @b)
+        min(a, b)
     }
 
     high() {
-        return max(@a, @b) - 1
+        max(a, b) - 1
     }
 
     __len__() {
-        return @high() - @low() + 1
+        high() - low() + 1
     }
 
     __str__() {
-        return "({@a} .. {@b})"
+        "({a} .. {b})"
     }
 
-    contains?(r: Range | InclusiveRange) {
+    contains?(r: Range) {
         (r.low() :: self) && (r.high() :: self)
     }
 
@@ -1836,13 +1862,13 @@ class Range : Iterable {
 
     clamp(a, b) {
         return Range(
-            max(a ?? self.low(), self.low()),
-            min(b ?? self.high(), self.high())
+            max(a ?? low(), low()),
+            min(b ?? high(), high())
         )
     }
 
     __match__(x) {
-        (x :: (Int | Float)) && (x >= @low() && x <= @high())
+        (x :: (Int | Float)) && (x >= low() && x <= high())
     }
 
     slice { [self.low(), #self] }
@@ -1865,14 +1891,12 @@ class Range : Iterable {
     }
 }
 
-class InclusiveRange : Range {
+class InclusiveRange < Range {
     __str__() {
         return "({@a} ... {@b})"
     }
 
     __iter__() {
-        let a, b = @a, @b
-
         if a < b {
             a.upto(b)
         } else {
@@ -2048,11 +2072,15 @@ class Sync {
     static lock(x) {
         x.mtx.lock()
     }
+    
+    __missing__(name) {
+        with @mtx.lock() { @x.{name} }
 
-    __missing__(name, *args) {
+    }
+
+    __method_missing__(name, *args) {
         with @mtx.lock() {
-            let f = member(@x, name)
-            f(*args)
+            @x.{name}(*args)
         }
     }
 
@@ -2626,7 +2654,7 @@ class SharedQueue : Iterable {
     }
 
     take() {
-        let Some(x) = self.tryTake()
+        let Some(x) = self.tryTake(-1)
         return x
     }
 
@@ -2744,7 +2772,7 @@ macro __walk! {
 
             ty.Class(c) => ty.Class(
                 name: c.name,
-                super: walk(c.super, f),
+                `super`: walk(c.`super`, f),
                 methods: [walk(m, f) for m in c.methods],
                 getters: [walk(g, f) for g in c.getters],
                 setters: [walk(s, f) for s in c.setters],
@@ -3079,6 +3107,15 @@ macro guard(cleanup-func) $$[
     let ^_ = ScopeGuard($$cleanup-func)
 $$]
 
+macro __d! {
+    let stmt = parse.stmt(99)
+    ty.Multi([
+        $$[ __debug(1) $$],
+        stmt,
+        $$[ __debug(-1) $$]
+    ])
+}
+
 operator **   10 right
 operator <<   7  left
 operator >>   7  left
@@ -3086,3 +3123,4 @@ operator ^    5  left
 operator :>   5  left
 operator !::  3  left
 operator *>   2  left
+operator .    2  left

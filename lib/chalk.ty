@@ -1,40 +1,418 @@
+import ty
+import ty.parse
+import ty.token
+
+//fn dbg(x) { x }
+
+tag ChalkError;
+
+class Text {
+    init(other: Text, style=Chalk(), fmt=nil) {
+        dbg(other, "{style}")
+        @parts = other.parts
+        @style = other.style <> style
+        @fmt = fmt ?? other.fmt
+    }
+
+    init(text: String, style=Chalk(), fmt=nil) {
+        @parts = [text]
+        @style = style
+        @fmt = fmt
+    }
+
+    init(parts, style=Chalk(), fmt=nil) {
+        dbg(parts, "{style}", fmt)
+        @parts = parts
+        @style = style
+        @fmt = fmt
+    }
+
+    static parse(text, style=Chalk()) {
+        if text :: Text {
+            return Text(text, style)
+        }
+
+        let chalk = Chalk()
+        let parts = []
+
+        for match text.matches(/\x1b\[([^m]*)m|[^\x1b]+/) {
+            [_, attrs] => {
+                let props = {}
+
+                for match attrs.split(';').map(int) {
+                    0 => { chalk = Chalk(); props = {} },
+
+                    1 => props = {*props, bold: true },
+                    3 => props = {*props, italic: true },
+                    4 => props = {*props, underline: true },
+
+                    fg :: 31...39 => props = {*props, fg: [fg]},
+                    fg :: 91...99 => props = {*props, bright: true, fg: [fg - 60]},
+
+                    bg ::  41...49  => props = {*props, bg: [bg]},
+                    bg :: 101...109 => props = {*props, bg-bright: true, bg: [bg - 60]}
+                }
+
+                chalk = Chalk(chalk, **props)
+            },
+
+            text => parts.push(Text(text, chalk))
+        }
+
+        dbg(parts, "{style}")
+
+        Text(parts, style)
+    }
+
+    plain {
+        let str = @parts.map(match {
+            text: Text => text.plain,
+            str        => str
+        }).str() ?? ''
+        @fmt ? fmt("%{@fmt}s", str) : str
+    }
+
+    render(style=Chalk()) {
+        let style = style <> @style
+        let start = style.sgr
+        let stop = (#start > 0) ? "\x1b[0m" : ""
+        let str = @parts.map(match {
+            text: Text => "{start}{text.render(style)}{stop}",
+            text       => "{start}{text}{stop}"
+        }).str() ?? ''
+        @fmt ? fmt("%{@fmt}s", str) : str
+    }
+
+    __str__() {
+        render()
+    }
+
+    __fmt__(spec, width) {
+        fmt("%{@fmt}s", __str__()).__fmt__(spec, width)
+    }
+
+    +(other: Text) {
+        Text(@parts + other.parts)
+    }
+
+    __missing__(style) {
+        Text(self, style=@style.{style})
+    }
+}
+
+pub fn escape(text) {
+    text.sub('\\', '\\\\').sub('[', '\\[')
+}
+
+let styles = %{
+    'b':          {bold: true},
+    'bold':       {bold: true},
+    'i':          {italic: true},
+    'italic':     {italic: true},
+    'u':          {underline: true},
+    'underline':  {underline: true},
+    'dim':        {dim: true},
+    'reverse':    {reverse: true},
+
+    'black':   {fg: [30]},
+    'red':     {fg: [31]},
+    'green':   {fg: [32]},
+    'yellow':  {fg: [33]},
+    'blue':    {fg: [34]},
+    'magenta': {fg: [35]},
+    'cyan':    {fg: [36]},
+    'white':   {fg: [37]},
+
+    'bg-black':   {bg: [40]},
+    'bg-red':     {bg: [41]},
+    'bg-green':   {bg: [42]},
+    'bg-yellow':  {bg: [44]},
+    'bg-blue':    {bg: [44]},
+    'bg-magenta': {bg: [45]},
+    'bg-cyan':    {bg: [46]},
+    'bg-white':   {bg: [47]},
+
+    'bright':    {bright: true},
+    'bg-bright': {bg-bright: true}
+}
+
+class Text2 {
+    init(text, chalk, fmt=nil) {
+        @text = text
+        @chalk = chalk
+        @fmt = fmt
+    }
+
+    __str__() {
+        @chalk.render(@text)
+    }
+
+    __fmt__(spec) {
+        "[%{spec}]{@text}[/]"
+    }
+}
+
+pub fn rand-hsl(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
+    let sample = match {
+        (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
+    }
+    
+    (sample(h), sample(s), sample(l))
+}
+
+fn parse-style(style: String, chalk: Chalk2) {
+    match style {
+        /.*\?$/ => do {
+            let (h, s, l) = rand-hsl()
+            let (r, g, b) = hsl-to-rgb(h, s, l)
+            return {fg: [38, 2, r, g, b]}
+        },
+
+        /^#[[:xdigit:]]+$/ => do {
+            let group = [/./, /../][#style / 3 - 1]
+            let rgb = style[1;].matches(group).map(int@("{$1}{$1}"[;2], 16))
+            return {fg: [38, 2, *rgb]}
+        },
+
+        /^bg-(.*)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({bg: [k + 10, *ks]})
+        },
+
+        _ => nil
+    }
+}
+
+class Chalk2 {
+    init() {
+        member(self, 'styles', %{**styles, *: parse-style(it, self)})
+    }
+
+    render(text, plain=false) {
+        let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
+
+        let stack = [[{}]]
+        let style = {}
+        let out = Blob()
+        let ostack = []
+
+        fn update() {
+            let new-style = stack.flat().fold(\{*_, *_})
+            if new-style != style {
+                out.push("\x1b[0m{Chalk(**new-style).sgr}")
+            }
+            style = new-style
+        }
+
+        fn get-style(name) {
+            match @styles[name] {
+                $style => style,
+                _      => throw ChalkError("unknown style: {name}")
+            }
+        }
+
+        for match parts {
+            m: RegexMatch => {
+                continue if plain
+                match m.captures {
+                    [nil, &words ~> styles] => {
+                        stack.push(styles.map(get-style))
+                        update()
+                    },
+
+                    ['%', fmt] => {
+                        ostack.push(out)
+                        out = Blob()
+                        stack.push({fmt})
+                    },
+
+                    [_, &words ~> []] => {
+                        match stack.pop() {
+                            {fmt} => {
+                                ostack[-1].push("{out.str!():{fmt}}")
+                                out = ostack.pop()
+                            },
+                            _ => {
+                                update()
+                            }
+                        }
+                    },
+
+                    [_, &words ~> styles] => {
+                        for style in styles {
+                            for i in #stack..0 {
+                                if let $ii = stack[i].searchr(@styles[style]) {
+                                    stack[i].pop(ii)
+                                }
+                            }
+                        }
+                        stack.filter!(\#_ > 0)
+                        update()
+                    }
+                }
+            },
+
+            s => out.push(s)
+        }
+
+        if !plain { out.push("\x1b[0m") }
+
+        out.str!().sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[])
+    }
+
+    print(*xs, %kwargs) {
+        ::print(
+            *xs.map(match { x: Text2 => self.render(x.text), x => x }),
+            **kwargs
+        )
+    }
+
+    __missing__=(name, style) {
+        @styles[name] = style.words().map(@styles[]).fold(\{*_, *_})
+    }
+
+    __missing__(name) {
+        @styles[name]
+    }
+
+    __call__(parts) {
+        Text2(
+            parts.map(match {
+                s: String   => s,
+                (x, fmt, w) => (
+                      x :: Text2 ? x.__fmt__(fmt, w)
+                    : escape(fmt ? x.__fmt__(fmt, w) : x.__str__())
+                )
+            }).str(),
+            self
+        )
+    }
+
+    __subscript__(style) {
+        return text -> self"[{style}]{text}[/]"
+    }
+
+    plain(text) {
+        render(text :: Text2 ? text.text : text, plain=true)
+    }
+}
+
+class ChalkFormatter {
+    __fmt__(text) {
+        let [_, &words ~> styles, text] = text.match!(/^([^|]*)(?:\|(.*))?$/)
+        let (styles, fmts) = styles.partition(/^\pL\w+(-\w+)?$/)
+        let chalk = styles.map(&sub(/-./, &upper . &1))
+                          .fold(Chalk(), (chalk, attr) -> chalk.{attr})
+        "{Text.parse(text, chalk):{fmts.unwords()}}"
+    }
+
+    __call__(parts) {
+    }
+}
+
+class Chalk {
+    init(other, %props) {
+        @props = {
+            *(other.?props ?? {}),
+            *tuple(**props)
+        }
+    }
+
+    <>(other: Chalk) {
+        Chalk(self, **other.props)
+    }
+
+    __str__() { "Chalk{tuple(**members(self))}" }
+
+    __fmt__(text) {
+        "{Text.parse(text, self)}"
+    }
+
+    sgr {
+        let fg = match @props.?fg {
+            [fg] and @props.?bright => [fg + 60],
+            fg => fg
+        }
+
+        let bg = match @props.?bg {
+            [bg] and @props.?bg-bright => [bg + 60],
+            bg => bg
+        }
+
+        let props = [
+            1 if @props.?bold,
+            3 if @props.?italic,
+            4 if @props.?underline,
+            7 if @props.?reverse,
+            *fg if fg != nil,
+            *bg if bg != nil
+        ]
+
+        props ? "\x1b[{props.join(';')}m" : ''
+    }
+
+    __call__(text) { Text([text], self) }
+
+    black       { Chalk(self, fg=[30]) }
+    red         { Chalk(self, fg=[31]) }
+    green       { Chalk(self, fg=[32]) }
+    yellow      { Chalk(self, fg=[33]) }
+    blue        { Chalk(self, fg=[34]) }
+    magenta     { Chalk(self, fg=[35]) }
+    cyan        { Chalk(self, fg=[36]) }
+    white       { Chalk(self, fg=[37]) }
+
+    bg-black    { Chalk(self, bg=[40]) }
+    bg-red      { Chalk(self, bg=[41]) }
+    bg-green    { Chalk(self, bg=[42]) }
+    bg-yellow   { Chalk(self, bg=[44]) }
+    bg-blue     { Chalk(self, bg=[44]) }
+    bg-magenta  { Chalk(self, bg=[45]) }
+    bg-cyan     { Chalk(self, bg=[46]) }
+    bg-white    { Chalk(self, bg=[47]) }
+
+    bright    { Chalk(self, bright=true)     }
+    bg-bright { Chalk(self, bg-bright=false) }
+
+    bold      { Chalk(self, bold=true)      }
+    italic    { Chalk(self, italic=true)    }
+    underline { Chalk(self, underline=true) }
+
+    __slice__(r, g, b) {
+        Chalk(self, fg=[38, 2, r ?? 0, g ?? 0, b ?? 0])
+    }
+
+    ~() {
+        "\x1b[0m"
+    }
+}
+
+pub black   = Chalk(fg=[30])
+pub red     = Chalk(fg=[31])
+pub green   = Chalk(fg=[32])
+pub yellow  = Chalk(fg=[33])
+pub blue    = Chalk(fg=[34])
+pub magenta = Chalk(fg=[35])
+pub cyan    = Chalk(fg=[36])
+pub white   = Chalk(fg=[37])
+
+pub bgBlack   = Chalk(bg=[40])
+pub bgRed     = Chalk(bg=[41])
+pub bgGreen   = Chalk(bg=[42])
+pub bgYellow  = Chalk(bg=[43])
+pub bgBlue    = Chalk(bg=[44])
+pub bgMagenta = Chalk(bg=[45])
+pub bgCyan    = Chalk(bg=[46])
+pub bgWhite   = Chalk(bg=[47])
+
+pub bright    = Chalk(bright=true)
+pub bg-bright = Chalk(bg-bright=true)
+
+pub bold      = Chalk(bold=true)
+pub italic    = Chalk(italic=true)
+pub underline = Chalk(underline=true)
+
 pub function wrap(s, *props) {
   "\x1b[{props.join(';')}m{s}\x1b[0m"
-}
-
-pub function black(s)   { wrap(s, 30) }
-pub function red(s)     { wrap(s, 31) }
-pub function green(s)   { wrap(s, 32) }
-pub function yellow(s)  { wrap(s, 33) }
-pub function blue(s)    { wrap(s, 34) }
-pub function magenta(s) { wrap(s, 35) }
-pub function cyan(s)    { wrap(s, 36) }
-pub function white(s)   { wrap(s, 37) }
-
-pub function bgBlack(s)   { wrap(s, 40) }
-pub function bgRed(s)     { wrap(s, 41) }
-pub function bgGreen(s)   { wrap(s, 42) }
-pub function bgYellow(s)  { wrap(s, 43) }
-pub function bgBlue(s)    { wrap(s, 44) }
-pub function bgMagenta(s) { wrap(s, 45) }
-pub function bgCyan(s)    { wrap(s, 46) }
-pub function bgWhite(s)   { wrap(s, 47) }
-
-pub function brightBlack(s)   { wrap(s, 90) }
-pub function brightRed(s)     { wrap(s, 91) }
-pub function brightGreen(s)   { wrap(s, 92) }
-pub function brightYellow(s)  { wrap(s, 93) }
-pub function brightBlue(s)    { wrap(s, 94) }
-pub function brightMagenta(s) { wrap(s, 95) }
-pub function brightCyan(s)    { wrap(s, 96) }
-pub function brightWhite(s)   { wrap(s, 97) }
-
-pub function bold(s) {
-  wrap(s, 1)
-}
-
-pub function underline(s) {
-  wrap(s, 4)
 }
 
 pub function fg(c) {
@@ -134,3 +512,5 @@ pub function fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
         sample(l)
     )
 }
+
+pub chalk = Chalk2()
