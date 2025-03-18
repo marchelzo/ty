@@ -575,7 +575,7 @@ value_array_new_sized(Ty *ty, size_t n)
 
         a->items = mA(n * sizeof (Value));
         a->capacity = n;
-        a->count = n;
+        a->count = 0;
 
         OKGC(a);
 
@@ -905,6 +905,7 @@ ArrayClone(Ty *ty, Array const *a)
         Array *new = vAn(a->count);
 
         memcpy(new->items, a->items, a->count * sizeof (Value));
+        new->count = a->count;
 
         return new;
 }

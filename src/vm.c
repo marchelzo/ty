@@ -1123,11 +1123,11 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
          * create an array and add any extra arguments to it.
          */
         if (irest != -1) {
-                int nExtra = argc - irest;
-
-                Array *extra = vAn(nExtra * (nExtra > 0));
+                int nExtra = max(argc - irest, 0);
+                Array *extra = vAn(nExtra);
 
                 memcpy(v_(*extra, 0), v_(STACK, fp + irest), nExtra * sizeof (Value));
+                extra->count = nExtra;
 
                 STACK.items[fp + irest] = ARRAY(extra);
 
@@ -4369,10 +4369,10 @@ AssignGlobal:
                 CASE(ARRAY)
                         n = STACK.count - *vvX(SP_STACK);
 
-                        v = ARRAY(n > 0 ? vAn(n) : vA());
+                        v = ARRAY(vAn(n));
                         v.array->count = n;
 
-                        if (n > 0) memcpy(
+                        memcpy(
                                 v.array->items,
                                 topN(n),
                                 n * sizeof (Value)

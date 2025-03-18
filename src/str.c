@@ -100,11 +100,11 @@ mkmatch(Ty *ty, Value *s, size_t *ovec, int n, bool detailed)
 
                 gP(&groups);
 
-                for (int i = 0, j = 0; i < n; ++i, j += 2) {
+                for (int i = 0; i < n; ++i) {
                         Value group = vT(2);
-                        group.items[0] = INTEGER(ovec[j]);
-                        group.items[1] = INTEGER(ovec[j + 1] - ovec[j]);
-                        *v_(*groups.array, i) = group;
+                        group.items[0] = INTEGER(ovec[2*i]);
+                        group.items[1] = INTEGER(ovec[2*i + 1] - ovec[2*i]);
+                        vPx(*groups.array, group);
                 }
 
                 vmP(s);
