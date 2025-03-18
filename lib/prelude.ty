@@ -624,11 +624,11 @@ class Int {
         }
     }
 
-    even?() {
+    even? {
         self % 2 == 0
     }
 
-    odd?() {
+    odd? {
         self % 2 == 1
     }
 
@@ -700,7 +700,7 @@ class Int {
         self / int(n)
     }
 
-    `mod`(n) {
+    mod(n) {
         self % int(n)
     }
 
@@ -2072,7 +2072,7 @@ class Sync {
     static lock(x) {
         x.mtx.lock()
     }
-    
+
     __missing__(name) {
         with @mtx.lock() { @x.{name} }
 

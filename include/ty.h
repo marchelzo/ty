@@ -761,6 +761,7 @@ enum {
 #define v_(v, i)  (&(v).items[(i)])
 #define v__(v, i) ((v).items[(i)])
 #define vZ(v)     ((v).items + (v).count)
+#define vPx(v, x) ((v).items[(v).count++] = (x))
 
 #define avP(a, b)        VPush(a, b)
 #define avPn(a, b, c)    VPushN(a, b, c)

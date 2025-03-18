@@ -1765,8 +1765,9 @@ array_fold_left(Ty *ty, Value *array, int argc, Value *kwargs)
         gP(&v);
 
         int n = array->array->count;
-        for (int i = start; i < n; ++i)
+        for (int i = start; i < n; ++i) {
                 v = vm_eval_function(ty, &f, &v, &array->array->items[i], NULL);
+        }
 
         gX();
 

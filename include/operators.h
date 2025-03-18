@@ -76,6 +76,7 @@ op_builtin_add(Ty *ty)
                 n = left->array->count + right->array->count;
 
                 v = ARRAY(vAn(n));
+                v.array->count = n;
 
                 memcpy(
                         v.array->items,
@@ -131,14 +132,13 @@ op_builtin_mul(Ty *ty)
 
         case PAIR_OF(VALUE_ARRAY):
                 v = ARRAY(vAn(left->array->count * right->array->count));
-                v.array->count = 0;
 
                 gP(&v);
 
                 for (int i = 0; i < left->array->count; ++i) {
                         for (int j = 0; j < right->array->count; ++j) {
-                                vAp(
-                                        v.array,
+                                vPx(
+                                        *v.array,
                                         PAIR(
                                                 left->array->items[i],
                                                 right->array->items[j]
