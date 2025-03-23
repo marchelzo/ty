@@ -292,6 +292,7 @@ struct try {
         int ds;
         int ctxs;
         int nsp;
+        int exec_depth;
         char *catch;
         char *finally;
         char *end;
@@ -358,6 +359,7 @@ typedef struct ty {
         ValueStack stack;
 
         co_state st;
+        cothread_t co_top;
 
         int GC_OFF_COUNT;
         int rc;
