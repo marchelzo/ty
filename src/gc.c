@@ -56,7 +56,9 @@ collect(Ty *ty, struct alloc *a)
 
                 GCLOG("collect(): free generator   co=%p   ip=%p\n", (void *)gen->co, (void *)gen->ip);
 
-                co_delete(gen->co);
+                if (gen->co != ty->co_top) {
+                        co_delete(gen->co);
+                }
 
                 break;
         case GC_THREAD:

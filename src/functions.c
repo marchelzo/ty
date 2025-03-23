@@ -129,8 +129,8 @@ static _Atomic(uint64_t) tid = 1;
                 zP(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
 
-#define EVAL_PROLOGUE "(do {"
-#define EVAL_EPILOGUE "})"
+#define EVAL_PROLOGUE "(fn () {"
+#define EVAL_EPILOGUE "})()"
 
 
 inline static void

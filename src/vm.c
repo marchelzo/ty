@@ -387,6 +387,8 @@ InitializeTy(Ty *ty)
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
 
+        ty->co_top = co_active();
+
         uint64_t seed = random();
         ty->prng[0] = splitmix64(&seed);
         ty->prng[1] = splitmix64(&seed);
@@ -1684,6 +1686,7 @@ DoThrow(Ty *ty)
                                 TARGETS.count = t->ts;
                                 CALLS.count = t->cs;
                                 IP = t->catch;
+                                EXEC_DEPTH = t->exec_depth;
 
                                 //printf("truncate: %zu -> %zu\n", GCRoots(ty)->count, (size_t)t->gc);
                                 gc_truncate_root_set(ty, t->gc);
@@ -4155,6 +4158,7 @@ AssignGlobal:
                         t->nsp = SP_STACK.count;
                         t->executing = false;
                         t->state = TRY_TRY;
+                        t->exec_depth = EXEC_DEPTH;
 
                         break;
                 }
