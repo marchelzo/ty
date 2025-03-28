@@ -41,6 +41,7 @@ typedef vec(size_t)         SPStack;
 typedef vec(Frame)          FrameStack;
 typedef vec(Target)         TargetStack;
 typedef vec(struct alloc *) AllocList;
+typedef vec(Symbol *)       symbol_vector;
 
 typedef struct array {
         Value *items;
@@ -332,6 +333,16 @@ typedef struct {
         Expr *cond;
 } DebugBreakpoint;
 
+typedef struct param Param;
+typedef struct type Type;
+
+struct param {
+        Symbol *var;
+        Type *type;
+};
+
+typedef vec(Param) ParamVector;
+
 typedef struct {
         enum {
                 TDB_STATE_OFF,
@@ -392,6 +403,8 @@ typedef struct ty {
         char *code;
         jmp_buf jb;
         byte_vector err;
+
+        Scope *tscope;
 
         TY *ty;
         TDB *tdb;
@@ -760,21 +773,26 @@ enum {
 #define vvXi vec_pop_ith
 
 #define vN(v)     ((v).count)
+#define v0(v)     ((v).count = 0)
 #define v_(v, i)  (&(v).items[(i)])
 #define v__(v, i) ((v).items[(i)])
 #define vZ(v)     ((v).items + (v).count)
 #define vPx(v, x) ((v).items[(v).count++] = (x))
+
+#define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)
 
 #define avP(a, b)        VPush(a, b)
 #define avPn(a, b, c)    VPushN(a, b, c)
 #define avI(v, x, i)     VInsert(v, x, i)
 #define avIn(a, b, c, d) VInsertN(a, b, c, d)
 #define avPv(a, b)       VPushN((a), ((b).items), ((b).count))
+#define avPvn(a, b, n)   VPushN((a), ((b).items), (n))
 
 #define uvP(v, x)         vec_push_unchecked((v), (x))
 #define uvPn(v, xs, n)    vec_push_n_unchecked((v), (xs), (n))
 #define uvI(v, x, i)      vec_insert_unchecked((v), (x), (i))
 #define uvIn(v, xs, n, i) vec_insert_n_unchecked((v), (xs), (n), (i))
+#define uvR(v, n)         vec_reserve_unchecked((v), (n))
 
 #define xvP(a, b)        vec_nogc_push((a), (b))
 #define xvPn(a, b, c)    vec_nogc_push_n((a), (b), (c))

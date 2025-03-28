@@ -12,6 +12,8 @@ enum {
         SYMBOL_TABLE_SIZE = 16
 };
 
+typedef struct type Type;
+
 typedef struct symbol {
         char const *identifier;
         char const *doc;
@@ -23,14 +25,16 @@ typedef struct symbol {
         bool macro;
         bool fun_macro;
         bool captured;
-        bool init;
         bool global;
         bool namespace;
+        bool type_var;
         int i;
         int ci;
 
         Location loc;
         char const *file;
+
+        Type *type;
 
         struct scope *scope;
 
@@ -75,6 +79,9 @@ Symbol *
 scope_add(Ty *ty, Scope *s, char const *id);
 
 Symbol *
+scope_add_type_var(Ty *ty, Scope *s, char const *id);
+
+Symbol *
 scope_add_i(Ty *ty, Scope *s, char const *id, int i);
 
 Symbol *
@@ -88,6 +95,9 @@ scope_capture(Ty *ty, struct scope *s, struct symbol *sym, int parent_index);
 
 bool
 scope_locally_defined(Ty *ty, struct scope const *s, char const *id);
+
+Symbol *
+scope_find_symbol(Scope const *s, Symbol const *needle);
 
 struct symbol *
 scope_lookup(Ty *ty, struct scope const *s, char const *id);

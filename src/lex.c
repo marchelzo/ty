@@ -272,6 +272,7 @@ nextchar(Ty *ty)
                 state.loc.line += 1;
                 state.loc.col = 0;
                 state.blank_line = true;
+                break;
 
         default:
                 state.blank_line = false;
@@ -608,7 +609,6 @@ skiptoken(Ty *ty)
                 nextchar(ty);
         } else {
                 Token t = dotoken(ty, LEX_PREFIX);
-                printf("%*sSkipped: %s\n", d * 4, "", token_show(ty, &t));
         }
 
         d -= 1;

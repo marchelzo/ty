@@ -5,6 +5,7 @@
 #include "alloc.h"
 #include "log.h"
 #include "util.h"
+#include "types.h"
 
 static int SYMBOL;
 
@@ -59,6 +60,24 @@ local_lookup(Scope const *s, char const *id)
                         return sym;
 
         return NULL;
+}
+
+Symbol *
+scope_find_symbol(Scope const *s, Symbol const *needle)
+{
+        if (s == NULL) {
+                return NULL;
+        }
+
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+                        if (sym->symbol == needle->symbol) {
+                                return sym;
+                        }
+                }
+        }
+
+        return scope_find_symbol(s->parent, needle);
 }
 
 Symbol *
@@ -178,8 +197,8 @@ scope_local_lookup(Ty *ty, Scope const *s, char const *id)
         return local_lookup(s, id);
 }
 
-Symbol *
-scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
+static Symbol *
+xadd(Ty *ty, Scope *s, char const *id)
 {
         uint64_t h = strhash(id);
         int i = h % SYMBOL_TABLE_SIZE;
@@ -187,12 +206,34 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
         Symbol *sym = amA(sizeof *sym);
 
         initsym(sym);
+        sym->symbol = SYMBOL++;
         sym->identifier = id;
-        sym->namespace = true;
-        sym->scope = ns;
         sym->hash = h;
         sym->next = s->table[i];
         s->table[i] = sym;
+
+        return sym;
+}
+
+Symbol *
+scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
+{
+        Symbol *sym = xadd(ty, s, id);
+
+        sym->namespace = true;
+        sym->scope = ns;
+
+        return sym;
+}
+
+Symbol *
+scope_add_type_var(Ty *ty, Scope *s, char const *id)
+{
+        Symbol *sym = xadd(ty, s, id);
+
+        sym->scope = s;
+        sym->type_var = true;
+        sym->type = type_variable(ty, sym);
 
         return sym;
 }

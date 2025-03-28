@@ -10,6 +10,7 @@
 #include "vec.h"
 #include "itable.h"
 #include "class.h"
+#include "types.h"
 
 static vec(Class *) classes;
 static vec(Class *) traits;
@@ -26,16 +27,59 @@ T(int i)
         return v__(traits, i);
 }
 
-int
-class_new(Ty *ty, char const *name, char const *doc)
-{
-        Class *c = alloc0(sizeof *c);
+static char const *BuiltinClassNames[] = {
+        [CLASS_ARRAY]     = "Array",
+        [CLASS_BOOL]      = "Bool",
+        [CLASS_CLASS]     = "Class",
+        [CLASS_DICT]      = "Dict",
+        [CLASS_FLOAT]     = "Float",
+        [CLASS_FUNCTION]  = "Function",
+        [CLASS_GENERATOR] = "Generator",
+        [CLASS_INT]       = "Int",
+        [CLASS_OBJECT]    = "Object",
+        [CLASS_REGEX]     = "Regex",
+        [CLASS_STRING]    = "String",
+        [CLASS_TAG]       = "Tag",
+        [CLASS_TUPLE]     = "Tuple"
+};
 
-        c->name = name;
-        c->doc = doc;
+void
+class_init(Ty *ty)
+{
+        for (int i = CLASS_OBJECT; i < CLASS_PRIMITIVE; ++i) {
+                Class *c = alloc0(sizeof *c);
+                c->i = i;
+                c->name = BuiltinClassNames[i];
+                c->super = (i == CLASS_OBJECT) ? NULL : C(CLASS_OBJECT);
+                c->type = type_class(ty, c);
+                c->object_type = type_object(ty, c);
+                xvP(classes, c);
+        }
+
+        classes.count = 0;
+}
+
+Class *
+class_get_class(Ty *ty, int class)
+{
+        return C(class);
+}
+
+int
+class_new(Ty *ty, Stmt *def)
+{
+        Class *c = (vN(classes) < CLASS_PRIMITIVE)
+                 ? *vZ(classes)
+                 : alloc0(sizeof *c);
+
+        c->name = def->class.name;
+        c->doc = def->class.doc;
+        c->def = def;
         c->finalizer = NONE;
         c->i = vN(classes);
-        c->super = (c->i == 0) ? NULL : C(0);
+        c->super = (c->i == CLASS_OBJECT) ? NULL : C(CLASS_OBJECT);
+        c->type = type_class(ty, c);
+        c->object_type = type_object(ty, c);
 
         xvP(classes, c);
 
@@ -43,9 +87,9 @@ class_new(Ty *ty, char const *name, char const *doc)
 }
 
 int
-trait_new(Ty *ty, char const *name, char const *doc)
+trait_new(Ty *ty, Stmt *def)
 {
-        int class = class_new(ty, name, doc);
+        int class = class_new(ty, def);
 
         Class *c = C(class);
         c->is_trait = true;
@@ -70,9 +114,14 @@ class_set_super(Ty *ty, int class, int super)
 }
 
 void
-class_add_field(Ty *ty, int class, char const *name)
+class_add_field(Ty *ty, int class, char const *name, Expr *t, Expr *dflt)
 {
-        itable_put(ty, &C(class)->fields, name, NIL);
+        itable_put(
+                ty,
+                &C(class)->fields,
+                name,
+                TPTR(t, dflt)
+        );
 }
 
 static void
@@ -97,8 +146,13 @@ class_init_object(Ty *ty, int class, struct itable *o)
 {
         Class *c = C(class);
         o->class = class;
+
         uvPn(o->ids, c->fields.ids.items, vN(c->fields.ids));
-        uvPn(o->values, c->fields.values.items, vN(c->fields.values));
+        uvR(o->values, vN(o->values) + vN(c->fields.values));
+        for (int i = 0; i < vN(c->fields.values); ++i) {
+                vPx(o->values, NIL);
+        }
+
         if (!c->final) {
                 finalize(ty, c);
         }
@@ -107,7 +161,7 @@ class_init_object(Ty *ty, int class, struct itable *o)
 char const *
 class_name(Ty *ty, int class)
 {
-        return (class == CLASS_TOP) ? "(top)" : C(class)->name;
+        return (class == CLASS_TOP) ? "<top>" : C(class)->name;
 }
 
 void

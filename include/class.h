@@ -8,6 +8,7 @@
 #include "itable.h"
 
 typedef struct class Class;
+typedef struct type Type;
 
 struct class {
         int i;
@@ -25,13 +26,19 @@ struct class {
         Value finalizer;
         char const *name;
         char const *doc;
+        Stmt *def;
+        Type *type;
+        Type *object_type;
 };
 
-int
-class_new(Ty *ty, char const *name, char const *doc);
+void
+class_init(Ty *ty);
 
 int
-trait_new(Ty *ty, char const *name, char const *doc);
+class_new(Ty *ty, Stmt *s);
+
+int
+trait_new(Ty *ty, Stmt *s);
 
 char const *
 class_name(Ty *ty, int class);
@@ -59,6 +66,9 @@ class_lookup_method(Ty *ty, int class, char const *name, unsigned long h);
 
 struct value *
 class_lookup_field_i(Ty *ty, int class, int id);
+
+Class *
+class_get_class(Ty *ty, int class);
 
 struct value *
 class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h);
@@ -94,7 +104,7 @@ class_method(Ty *ty, int class, char const *name)
 }
 
 void
-class_add_field(Ty *ty, int class, char const *name);
+class_add_field(Ty *ty, int class, char const *name, Expr *t, Expr *dflt);
 
 void
 class_init_object(Ty *ty, int class, struct itable *o);

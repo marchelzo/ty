@@ -7022,7 +7022,7 @@ BUILTIN_FUNCTION(eval)
 
                 if (prog == NULL) {
                         char const *msg = TyError(ty);
-                        Value e = Err(ty, vSs(msg, strlen(msg)));
+                        Value e = Err(ty, vSsz(msg));
                         ReleaseArena(ty, old);
                         vmE(&e);
                 }
@@ -7033,7 +7033,7 @@ BUILTIN_FUNCTION(eval)
 E1:
                 {
                         char const *msg = TyError(ty);
-                        Value e = Err(ty, vSs(msg, strlen(msg)));
+                        Value e = Err(ty, vSsz(msg));
                         ReleaseArena(ty, old);
                         vmE(&e);
                 }
@@ -7049,12 +7049,12 @@ E1:
                 return v;
         } else {
                 compiler_clear_location(ty);
-                struct expression *e = TyToCExpr(ty, &ARG(0));
+                Expr *e = TyToCExpr(ty, &ARG(0));
                 if (e == NULL || !compiler_symbolize_expression(ty, e, scope))
 E2:
                 {
                         char const *msg = TyError(ty);
-                        struct value e = Err(ty, vSs(msg, strlen(msg)));
+                        Value e = Err(ty, vSsz(msg));
                         vmE(&e);
                 }
 

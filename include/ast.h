@@ -7,12 +7,12 @@
 #include "location.h"
 #include "vec.h"
 #include "scope.h"
-#include "types.h"
 
 typedef vec(struct expression *) expression_vector;
 
 typedef struct scope Scope;
 typedef struct symbol Symbol;
+typedef struct type Type;
 
 struct expression;
 struct value;
@@ -56,6 +56,8 @@ struct class_definition {
         expression_vector setters;
         expression_vector statics;
         expression_vector fields;
+        expression_vector type_params;
+        Scope *scope;
 };
 
 struct condpart {
@@ -142,6 +144,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(IDENTIFIER),                                                                \
         X(RESOURCE_BINDING),                                                          \
         X(DEFINED),                                                                   \
+        X(TYPE),                                                                      \
         X(WITH),                                                                      \
         X(YIELD),                                                                     \
         X(THROW),                                                                     \
@@ -255,10 +258,9 @@ struct expression {
         char const *file;
         Expr *xfunc;
         Scope *xscope;
+        Type *_type;
 
         bool has_resources;
-
-        Type *_type;
 
         union {
                 intmax_t integer;
@@ -367,6 +369,7 @@ struct expression {
                         char const *proto;
                         Symbol *function_symbol;
                         Scope *scope;
+                        expression_vector type_params;
                         StringVector params;
                         expression_vector dflts;
                         expression_vector constraints;
@@ -453,7 +456,9 @@ struct statement {
         char const *file;
         Expr *xfunc;
         Scope *xscope;
+        Type *_type;
 
+        bool will_return;
         Namespace *ns;
 
         union {

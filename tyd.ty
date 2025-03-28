@@ -3,6 +3,7 @@
 import io (stdin)
 import json
 import sh (sh)
+import os (..)
 
 let log = io.open('tyd.log', 'w+')
 let i = 0
@@ -12,15 +13,18 @@ while let &words ~> &[-1] ~> int ~> $n = stdin.nextLine() {
     stdin.nextLine()
 
     let msg = json.parse(stdin.next(n).str())
+    let id = msg['id']
 
     log.print(msg)
     log.flush()
 
     let s = json.encode({
-        id: 1,
+        id,
         result: {
             capabilities: {
-                definitionProvider: true
+                definitionProvider: true,
+                declarationProvider: true,
+                hoverProvider: true
             },
 
             serverInfo: {
@@ -40,14 +44,14 @@ while let &words ~> &[-1] ~> int ~> $n = stdin.nextLine() {
             let path = msg['params']['textDocument']['uri'].slice(7)
             log.print("path = {path}")
             log.flush()
-            let out, status = sh("./ty -c '{path}'", combineOutput: true)
+            let out, { status, * } = sh("ty -c '{path}'", combineOutput: true)
             log.print("out = {out}")
             log.print("status = {status}")
             log.flush()
             let diagnostics = if status != 0 and let [_, text, int ~> line, int ~> char] = out.match!(/^([^\n]+)(?:.|\n)*at[^:]+:(\d+):(\d+)/) {[{
                 range: {
                     start: { line: line - 1, character: char - 1 },
-                    end: { line: line - 1, character: char - 1 }
+                    end: { line: line - 1, character: char - 1 + (out.match!(/^\s*\^+$/m).?trim().?len() ?? 3) }
                 },
                 message: text,
                 severity: 1
@@ -56,6 +60,7 @@ while let &words ~> &[-1] ~> int ~> $n = stdin.nextLine() {
             }
 
             let s = json.encode({
+                id,
                 method: 'textDocument/publishDiagnostics',
                 params: {
                     uri: "file://{path}",
@@ -67,6 +72,106 @@ while let &words ~> &[-1] ~> int ~> $n = stdin.nextLine() {
             io.stdout.flush()
         },
 
+        ('textDocument/definition' or 'textDocument/declaration') as method => {
+            let %{
+                'textDocument': %{
+                    'uri': &slice(7) ~> $path,
+                },
+
+                'position': %{
+                    'line': int ~> line,
+                    'character': int ~> col
+                }
+            } = msg['params']
+
+            log.print("path = {path}")
+            log.flush()
+            let out, { status, * } = sh("ty -t{line + 1}:{col + 1} '{path}'", combineOutput: true)
+
+            log.print("out = {out}")
+            log.print("status = {status}")
+            log.flush()
+
+            let result = match (status, out) {
+                (0, json.parse ~> %{file, line, col}) => {
+                    uri: "file://{realpath(file)}",
+                    range: {
+                        start: { line: line - 1, character: col - 1 },
+                        end:   { line: line - 1, character: col + 1 }
+                    }
+                },
+
+                _ => nil
+            }
+
+            let response = json.encode({id, result})
+
+            log.print(response)
+            log.flush()
+
+            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
+            io.stdout.flush()
+        },
+
+        'textDocument/hover' as method => {
+            let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                },
+
+                'position': %{
+                    'line': int ~> line,
+                    'character': int ~> col
+                }
+            } = msg['params']
+
+            log.print("path = {path}")
+            log.flush()
+            let out, { status, * } = sh("ty -t{line + 1}:{col + 1} '{path}'", combineOutput: true)
+
+            log.print("out = {out}")
+            log.print("status = {status}")
+            log.flush()
+
+            fn nice(doc) {
+                if doc == nil { return '' }
+                let lines = doc.comb(/^\n+|\n+$/).lines()
+                let pre = lines.map(/^\s*/).map(`#`).min() ?? 0
+                lines.map(&[pre;]).unlines().strip()
+            }
+
+            let result = match (status, out) {
+                (0, json.parse ~> $info) => {
+                    contents: {
+                        kind: 'plaintext',
+                        value: "
+                      \>{info['name']} : {info['type']}
+                      \>
+                      \>Defined at {info['file']}:{info['line']}.
+                      \>
+                      \>{nice(info['doc'])}
+                      \>"
+                    },
+                    range: {
+                        start: { line: line - 6, character: col - 1 },
+                        end:   { line: line - 3, character: col + 24 }
+                    }
+                },
+
+                _ => nil
+            }
+
+            let response = json.encode({id, result})
+
+            log.print(response)
+            log.flush()
+
+            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
+            io.stdout.flush()
+        },
+
         _ => { }
     }
 }
+
+/* vim: set sts=4 sw=4 expandtab: */

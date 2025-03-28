@@ -6,6 +6,7 @@
 #include <setjmp.h>
 #include <errno.h>
 
+#include "include/parse.h"
 #include "polyfill_unistd.h"
 #include <fcntl.h>
 
@@ -26,6 +27,7 @@
 #include "dict.h"
 #include "array.h"
 #include "ty.h"
+#include "types.h"
 #include "polyfill_time.h"
 
 #ifdef TY_HAVE_VERSION_INFO
@@ -288,6 +290,55 @@ completion_generator(char const *text, int state)
         return completions[state] ? strclone(completions[state]) : NULL;
 }
 
+static int
+AddCompletions(Ty *ty, Value const *v, char const *s)
+{
+        int n = 0;
+
+        switch (v->type) {
+        case VALUE_NAMESPACE:
+                n += compiler_get_namespace_completions(ty, v->namespace, s, completions, MAX_COMPLETIONS);
+                break;
+        case VALUE_CLASS:
+                n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
+                break;
+        case VALUE_OBJECT:
+                n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
+                n += itable_get_completions(ty, v->object, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_ARRAY:
+                n += array_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                n += class_get_completions(ty, CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_DICT:
+                n += dict_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                n += class_get_completions(ty, CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_STRING:
+                n += string_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                n += class_get_completions(ty, CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_BLOB:
+                n += blob_get_completions(ty, s, completions, MAX_COMPLETIONS);
+                n += class_get_completions(ty, CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_INTEGER:
+                n += class_get_completions(ty, CLASS_INT, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_REAL:
+                n += class_get_completions(ty, CLASS_FLOAT, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_GENERATOR:
+                n += class_get_completions(ty, CLASS_ITERABLE, s, completions + n, MAX_COMPLETIONS - n);
+                break;
+        case VALUE_TUPLE:
+                n += tuple_get_completions(ty, v, s, completions, MAX_COMPLETIONS);
+                break;
+        }
+
+        return n;
+}
+
 static char **
 complete(char const *s, int start, int end)
 {
@@ -304,12 +355,21 @@ complete(char const *s, int start, int end)
         }
 
         int before_len = start - 1;
+        char before[2048] = {0};
 
-        char before[500] = {0};
+        if (before_len + 2 > sizeof before) {
+                return NULL;
+        }
+
         memcpy(before + 1, rl_line_buffer, before_len);
         before[1 + before_len] = 0;
 
         int n = 0;
+
+        Expr *expr;
+        Type *t0;
+        Value v;
+        struct itable o = {0};
 
         /*
          * First check if it's a module name, otherwise treat it as an expression that
@@ -317,42 +377,26 @@ complete(char const *s, int start, int end)
          */
         if (compiler_has_module(ty, before + 1)) {
                 n = compiler_get_completions(ty, before + 1, s, completions, MAX_COMPLETIONS);
-        } else {
+        } else if (repl_exec(ty, before + 1)) {
+                n = AddCompletions(ty, vm_get(ty, -1), s);
+        } else if (strstr(TyError(ty), "ParseError") != NULL) {
+                strcat(before + 1, " [");
                 repl_exec(ty, before + 1);
-
-                struct value *v = vm_get(ty, -1);
-
-                switch (v->type) {
-                case VALUE_NAMESPACE:
-                        n += compiler_get_namespace_completions(ty, v->namespace, s, completions, MAX_COMPLETIONS);
-                        break;
-                case VALUE_CLASS:
-                        n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
-                        break;
-                case VALUE_OBJECT:
-                        n += class_get_completions(ty, v->class, s, completions, MAX_COMPLETIONS);
-                        n += itable_get_completions(ty, v->object, s, completions + n, MAX_COMPLETIONS - n);
-                        break;
-                case VALUE_ARRAY:
-                        n += array_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(ty, CLASS_ARRAY, s, completions + n, MAX_COMPLETIONS - n);
-                        break;
-                case VALUE_DICT:
-                        n += dict_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(ty, CLASS_DICT, s, completions + n, MAX_COMPLETIONS - n);
-                        break;
-                case VALUE_STRING:
-                        n += string_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(ty, CLASS_STRING, s, completions + n, MAX_COMPLETIONS - n);
-                        break;
-                case VALUE_BLOB:
-                        n += blob_get_completions(ty, s, completions, MAX_COMPLETIONS);
-                        n += class_get_completions(ty, CLASS_BLOB, s, completions + n, MAX_COMPLETIONS - n);
-                        break;
-                case VALUE_TUPLE:
-                        n += tuple_get_completions(ty, v, s, completions, MAX_COMPLETIONS);
-                        break;
+                expr = LastParsedExpr;
+                v = tyeval(ty, expr);
+                if (v.type == VALUE_NONE) {
+                        compiler_symbolize_expression(ty, expr, NULL);
+                        t0 = expr->_type;
+                        switch (t0 == NULL ? -1 : t0->type) {
+                        case TYPE_OBJECT:
+                                v = OBJECT(&o, t0->class->i);
+                                break;
+                        case TYPE_INTEGER:
+                                v = INTEGER(t0->z);
+                                break;
+                        }
                 }
+                n = AddCompletions(ty, &v, s);
         }
 
         if (n == 0) {
@@ -652,9 +696,11 @@ main(int argc, char **argv)
                 }
 
                 Value result = vTn(
+                        "name", xSz(QueryResult->identifier),
                         "line", INTEGER(QueryResult->loc.line + 1),
                         "col",  INTEGER(QueryResult->loc.col + 1),
                         "file", xSz(QueryResult->file),
+                        "type", xSz(type_show(ty, QueryResult->type)),
                         "doc",  (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc)
                 );
 

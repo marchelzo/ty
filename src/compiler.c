@@ -136,16 +136,6 @@ struct context_entry {
 
 static ContextEntry *ContextList;
 
-static Type const TYPE_INT    = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_INT     };
-static Type const TYPE_FLOAT  = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_FLOAT   };
-static Type const TYPE_BOOL   = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_BOOL    };
-static Type const TYPE_STRING = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_STRING  };
-static Type const TYPE_ARRAY  = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_ARRAY   };
-static Type const TYPE_BLOB   = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_BLOB    };
-static Type const TYPE_DICT   = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_DICT    };
-static Type const TYPE_NIL    = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_NIL     };
-static Type const TYPE_ANY    = { .type = TYPE_CLASS, .fixed = true, .class = CLASS_TOP     };
-
 static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s);
 
@@ -686,6 +676,79 @@ dump_source_of(Expr const *e, byte_vector *out)
 
 }
 
+static void
+ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, char const *m)
+{
+        if (
+                start.line == QueryLine
+             && start.col  <= QueryCol
+             && end.col    >= QueryCol
+             && strcmp(state.module_path, QueryFile) == 0
+        ) {
+                static Symbol sym;
+                Expr const *member = type_find_member(ty, o->_type, m);
+                Type *t0 = type_member_access_t(ty, o->_type, m);
+                char const *name;
+                char const *doc;
+                if (member != NULL) {
+                        if (member->type == EXPRESSION_FUNCTION) {
+                                name = member->name;
+                                doc = member->doc;
+                        } else if (member->symbol != NULL) {
+                                name = member->symbol->identifier;
+                                doc = member->symbol->doc;
+                        } else {
+                                name = NULL;
+                                doc = NULL;
+                        }
+                        sym = (Symbol) {
+                                .identifier = name,
+                                .loc = member->start,
+                                .file = member->file,
+                                .doc = doc,
+                                .type = t0
+                        };
+                        QueryResult = &sym;
+                        fail(ty, "");
+                }
+        }
+}
+
+static bool
+WillReturn(Expr const *e)
+{
+        if (e == NULL) {
+                return false;
+        }
+
+        if (e->type > EXPRESSION_MAX_TYPE) {
+                return ((Stmt const *)e)->will_return;
+        }
+
+        bool ret;
+
+        switch (e->type) {
+        case EXPRESSION_STATEMENT:
+                return e->statement->will_return;
+
+        case EXPRESSION_CONDITIONAL:
+                return WillReturn(e->then)
+                    && WillReturn(e->otherwise);
+
+        case EXPRESSION_WITH:
+                return e->with.block->will_return;
+
+        case EXPRESSION_MATCH:
+                ret = vN(e->thens) > 0;
+                for (int i = 0; ret && i < vN(e->thens); ++i) {
+                        ret &= WillReturn(v__(e->thens, i));
+                }
+                return ret;
+        }
+
+        return false;
+}
+
 inline static void
 emit_instr(Ty *ty, int c)
 {
@@ -754,6 +817,9 @@ method_cmp(void const *a_, void const *b_)
         Expr const *b = *(Expr const **)b_;
 
         int o = (a->name == NULL || b->name == NULL) ? 0 : strcmp(a->name, b->name);
+
+        if (o != 0 && strcmp(a->name, "init") == 0) { return -1; }
+        if (o != 0 && strcmp(b->name, "init") == 0) { return +1; }
 
         return (o != 0) ? o : (a->t - b->t);
 }
@@ -1956,6 +2022,9 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                         if (pub) {
                                 target->symbol->public = true;
                         }
+                        if (target->constraint != NULL) {
+                                type_assign(ty, target, type_resolve(ty, target->constraint));
+                        }
                 } else {
                         if (state.class != -1 && target->module == NULL) {
                                 Symbol *sym = scope_lookup(ty, scope, target->identifier);
@@ -2166,7 +2235,13 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                 } else if (e->type == EXPRESSION_ALIAS_PATTERN) {
                         symbolize_pattern_(ty, scope, e->aliased, reuse, def);
                 }
+
                 e->local = true;
+
+                if (e->constraint != NULL) {
+                        type_assign(ty, e, type_resolve(ty, e->constraint));
+                }
+
                 break;
         case EXPRESSION_REF_PATTERN:
                 symbolize_lvalue(ty, scope, e->target, false, false);
@@ -2548,7 +2623,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                                                 e->member_name,
                                                 e->start.line + 1
                                         );
-                                        symbolize_expression(ty, scope, e->object);
+                                        symbolize_expression(ty, scope, e);
                                         break;
                                 }
                         }
@@ -2576,6 +2651,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         );
                 }
 
+                if (e->symbol->type_var) {
+                        e->_type = type_type(ty, e->symbol->type);
+                } else {
+                        e->_type = e->symbol->type;
+                }
+
                 break;
         case EXPRESSION_OPERATOR:
                 e->op.u = intern(&xD.members, e->op.id)->id;
@@ -2591,6 +2672,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, *v_(e->fmts, i));
                         symbolize_expression(ty, scope, *v_(e->fmtfs, i));
                 }
+                e->_type = TYPE_STRING;
                 break;
         case EXPRESSION_TAG:
                 e->symbol = getsymbol(
@@ -2620,13 +2702,24 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                                         subscope = scope_new(ty, "(match-branch)", scope, false);
                                         symbolize_pattern(ty, subscope, e->patterns.items[i]->es.items[j], shared, true);
                                         scope_copy(ty, shared, subscope);
+                                        type_assign(
+                                                ty,
+                                                v__(v__(e->patterns, i)->es, j),
+                                                e->subject->_type
+                                        );
                                 }
                                 subscope = shared;
                         } else {
                                 subscope = scope_new(ty, "(match-branch)", scope, false);
                                 symbolize_pattern(ty, subscope, e->patterns.items[i], NULL, true);
+                                type_assign(
+                                        ty,
+                                        v__(e->patterns, i),
+                                        e->subject->_type
+                                );
                         }
                         symbolize_expression(ty, subscope, e->thens.items[i]);
+                        unify(ty, &e->_type, v__(e->thens, i)->_type);
                 }
                 break;
         case EXPRESSION_UNARY_OP:
@@ -2718,9 +2811,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->cond);
                 symbolize_expression(ty, scope, e->then);
                 symbolize_expression(ty, scope, e->otherwise);
+                unify(ty, &e->_type, e->then->_type);
+                unify(ty, &e->_type, e->otherwise->_type);
                 break;
         case EXPRESSION_STATEMENT:
                 symbolize_statement(ty, scope, e->statement);
+                e->_type = e->statement->_type;
                 break;
         case EXPRESSION_TEMPLATE:
                 for (size_t i = 0; i < e->template.exprs.count; ++i) {
@@ -2763,10 +2859,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (size_t i = 0; i < e->fkwconds.count; ++i)
                         symbolize_expression(ty, scope, e->fkwconds.items[i]);
 
+                e->_type = type_call(ty, e);
+
                 break;
         case EXPRESSION_SUBSCRIPT:
                 symbolize_expression(ty, scope, e->container);
                 symbolize_expression(ty, scope, e->subscript);
+                e->_type = type_subscript(ty, e);
                 break;
         case EXPRESSION_SLICE:
                 symbolize_expression(ty, scope, e->slice.e);
@@ -2777,7 +2876,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_DYN_MEMBER_ACCESS:
                 symbolize_expression(ty, scope, e->member);
         case EXPRESSION_MEMBER_ACCESS:
+        case EXPRESSION_SELF_ACCESS:
                 symbolize_expression(ty, scope, e->object);
+                e->_type = type_member_access(ty, e);
+                //===================={ <LSP> }=========================================
+                if (FindDefinition && e->type == EXPRESSION_METHOD_CALL) {
+                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->member_name);
+                }
+                //===================={ </LSP> }========================================
                 break;
         case EXPRESSION_DYN_METHOD_CALL:
                 symbolize_expression(ty, scope, e->method);
@@ -2789,9 +2895,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, e->mconds.items[i]);
                 for (size_t i = 0; i < e->method_kwargs.count; ++i)
                         symbolize_expression(ty, scope, e->method_kwargs.items[i]);
+                e->_type = type_method_call(ty, e);
+                //===================={ <LSP> }=========================================
+                if (FindDefinition && e->type == EXPRESSION_METHOD_CALL) {
+                        ProposeMemberDefinition(ty, e->start, e->end, e->object, e->method_name);
+                }
+                //===================={ </LSP> }========================================
                 break;
-        case EXPRESSION_EQ:
-        case EXPRESSION_MAYBE_EQ:
         case EXPRESSION_PLUS_EQ:
         case EXPRESSION_STAR_EQ:
         case EXPRESSION_DIV_EQ:
@@ -2804,6 +2914,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_SHR_EQ:
                 symbolize_expression(ty, scope, e->value);
                 symbolize_lvalue(ty, scope, e->target, false, false);
+                break;
+        case EXPRESSION_MAYBE_EQ:
+        case EXPRESSION_EQ:
+                symbolize_expression(ty, scope, e->value);
+                symbolize_lvalue(ty, scope, e->target, false, false);
+                type_assign(ty, e->target, e->value->_type);
                 break;
         case EXPRESSION_IMPLICIT_FUNCTION:
         case EXPRESSION_GENERATOR:
@@ -2842,10 +2958,20 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         Symbol *s = scope_add_i(ty, subscope, "self", e->params.count);
                         s->file = state.module_path;
                         s->loc = state.start;
+                        // FIXME
+                        if (state.class != -1) {
+                                s->type = class_get_class(ty, state.class)->object_type;
+                        }
                 }
 
                 // TODO
                 bool required = true;
+
+                for (size_t i = 0; i < vN(e->type_params); ++i) {
+                        Expr *t0 = v__(e->type_params, i);
+                        t0->symbol = scope_add_type_var(ty, scope, t0->identifier);
+                        symbolize_expression(ty, scope, t0->constraint);
+                }
 
                 for (size_t i = 0; i < e->params.count; ++i) {
                         symbolize_expression(ty, subscope, e->dflts.items[i]);
@@ -2856,15 +2982,40 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, subscope, e->constraints.items[i]);
                 }
 
+                for (size_t i = 0; i < e->params.count; ++i) {
+                        Symbol *sym = v__(e->param_symbols, i);
+                        Expr *constraint = v__(e->constraints, i);
+                        Expr *dflt = v__(e->dflts, i);
+                        if (constraint != NULL) {
+                                sym->type = type_resolve(ty, constraint);
+                        }
+                        if (dflt != NULL) {
+                                unify(ty, &sym->type, dflt->_type);
+                        }
+                }
+
                 symbolize_expression(ty, subscope, e->return_type);
 
+                e->_type = type_function(ty, e);
+
                 symbolize_statement(ty, subscope, e->body);
+
+                if (e->body == NULL) {
+                        e->_type->rt = NIL_TYPE;
+                } else if (!e->body->will_return) {
+                        unify(ty, &e->_type->rt, e->body->_type);
+                }
+
+                if (state.class == -1) {
+                        dont_printf("%s() -> %s\n", e->name, type_show(ty, e->_type->rt));
+                } else {
+                        dont_printf("%s.%s() -> %s\n", class_name(ty, state.class), e->name, type_show(ty, e->_type->rt));
+                }
 
                 e->scope = subscope;
                 e->bound_symbols.items = subscope->owned.items;
                 e->bound_symbols.count = subscope->owned.count;
 
-                // TODO: Why set this here?
                 state.func = func;
 
                 state.implicit_fscope = implicit_fscope;
@@ -2896,6 +3047,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, e->elements.items[i]);
                         symbolize_expression(ty, scope, e->aconds.items[i]);
                 }
+                e->_type = type_array(ty, e);
                 break;
         case EXPRESSION_ARRAY_COMPR:
                 symbolize_expression(ty, scope, e->compr.iter);
@@ -2913,6 +3065,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, e->keys.items[i]);
                         symbolize_expression(ty, scope, e->values.items[i]);
                 }
+                e->_type = type_dict(ty, e);
                 break;
         case EXPRESSION_DICT_COMPR:
                 symbolize_expression(ty, scope, e->dcompr.iter);
@@ -2934,6 +3087,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         symbolize_expression(ty, scope, e->es.items[i]);
                         symbolize_expression(ty, scope, e->tconds.items[i]);
                 }
+                e->_type = type_tuple(ty, e);
                 break;
         case EXPRESSION_SPREAD:
         case EXPRESSION_SPLAT:
@@ -2949,6 +3103,21 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 if (state.meth->mtype != MT_STATIC) {
                         e->symbol = getsymbol(ty, scope, "self", NULL);
                 }
+                break;
+        case EXPRESSION_INTEGER:
+                e->_type = type_integer(ty, e->integer);
+                break;
+        case EXPRESSION_REAL:
+                e->_type = TYPE_FLOAT;
+                break;
+        case EXPRESSION_BOOLEAN:
+                e->_type = TYPE_BOOL;
+                break;
+        case EXPRESSION_STRING:
+                e->_type = TYPE_STRING;
+                break;
+        case EXPRESSION_NIL:
+                e->_type = NIL_TYPE;
                 break;
         case EXPRESSION_MATCH_REST:
                 fail(ty, "*<identifier> 'match-rest' pattern used outside of pattern context");
@@ -3042,6 +3211,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
                 state.func->has_defer = true;
         case STATEMENT_EXPRESSION:
+                symbolize_expression(ty, scope, s->expression);
+                s->_type = s->expression->_type;
+                s->will_return = WillReturn(s->expression);
+                break;
         case STATEMENT_BREAK:
         case STATEMENT_NEXT:
                 symbolize_expression(ty, scope, s->expression);
@@ -3053,8 +3226,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         define_class(ty, s);
                 }
 
+                subscope = cd->scope;
+
                 if (cd->super != NULL) {
-                        symbolize_expression(ty, scope, cd->super);
+                        symbolize_expression(ty, subscope, cd->super);
 
                         if (cd->super->symbol->class == -1)
                                 fail(ty, "attempt to extend non-class");
@@ -3075,7 +3250,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 for (int i = 0; i < vN(cd->traits); ++i) {
                         Expr *trait = v__(cd->traits, i);
 
-                        symbolize_expression(ty, scope, trait);
+                        symbolize_expression(ty, subscope, trait);
 
                         if (
                                 trait->type != EXPRESSION_IDENTIFIER
@@ -3088,7 +3263,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         class_implement_trait(ty, cd->symbol, trait->symbol->class);
                 }
 
-                subscope = scope_new(ty, cd->name, scope, false);
                 state.class = cd->symbol;
 
                 apply_decorator_macros(ty, subscope, cd->methods.items, cd->methods.count);
@@ -3169,10 +3343,11 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                                 goto BadField;
                                         }
                                         symbolize_expression(ty, subscope, field->target->constraint);
+                                        symbolize_expression(ty, subscope, field->value);
                                         break;
                                 default:
                                 BadField:
-                                        fail(ty, "invalid expression in field definition: %s", ExpressionTypeName(field));
+                                        fail(ty, "illegal expression in field definition: %s", ExpressionTypeName(field));
                                 }
                         }
                 }
@@ -3216,6 +3391,10 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                         symbolize_statement(ty, scope, s->statements.items[i]);
                 }
+                if (vN(s->statements) > 0) {
+                        s->will_return = vvL(s->statements)[0]->will_return;
+                        unify(ty, &s->_type, (*vvL(s->statements))->_type);
+                }
                 break;
         case STATEMENT_TRY:
         {
@@ -3232,8 +3411,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
 
         }
-        case STATEMENT_WHILE_MATCH:
         case STATEMENT_MATCH:
+                s->will_return = vN(s->match.statements) > 0;
+        case STATEMENT_WHILE_MATCH:
                 symbolize_expression(ty, scope, s->match.e);
                 for (int i = 0; i < s->match.patterns.count; ++i) {
                         if (s->match.patterns.items[i]->type == EXPRESSION_LIST) {
@@ -3242,13 +3422,25 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                         subscope = scope_new(ty, "(match-branch)", scope, false);
                                         symbolize_pattern(ty, subscope, s->match.patterns.items[i]->es.items[j], shared, true);
                                         scope_copy(ty, shared, subscope);
+                                        type_assign(
+                                                ty,
+                                                v__(v__(s->match.patterns, i)->es, j),
+                                                s->match.e->_type
+                                        );
                                 }
                                 subscope = shared;
                         } else {
                                 subscope = scope_new(ty, "(match-branch)", scope, false);
                                 symbolize_pattern(ty, subscope, s->match.patterns.items[i], NULL, true);
+                                type_assign(
+                                        ty,
+                                        v__(s->match.patterns, i),
+                                        s->match.e->_type
+                                );
                         }
-                        symbolize_statement(ty, subscope, s->match.statements.items[i]);
+                        symbolize_statement(ty, subscope, v__(s->match.statements, i));
+                        unify(ty, &s->_type, v__(s->match.statements, i)->_type);
+                        s->will_return &= v__(s->match.statements, i)->will_return;
                 }
                 break;
         case STATEMENT_WHILE:
@@ -3284,6 +3476,15 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         }
                         symbolize_statement(ty, subscope, s->iff.then);
                 }
+                if (s->iff.then != NULL) {
+                        unify(ty, &s->_type, s->iff.then->_type);
+                        s->will_return = s->iff.then->will_return;
+                }
+                if (s->iff.otherwise != NULL) {
+                        unify(ty, &s->_type, s->iff.otherwise->_type);
+                }
+                s->will_return = (s->iff.then != NULL && s->iff.then->will_return)
+                              && (s->iff.otherwise != NULL && s->iff.otherwise->will_return);
                 break;
         case STATEMENT_FOR_LOOP:
                 scope = scope_new(ty, "(for)", scope, false);
@@ -3307,11 +3508,24 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                 for (int i = 0; i < s->returns.count; ++i) {
                         symbolize_expression(ty, scope, s->returns.items[i]);
+                        dont_printf("  return: %s\n", type_show(ty, v__(s->returns, i)->_type));
                 }
 
                 if (state.func->type == EXPRESSION_GENERATOR) {
                         s->type = STATEMENT_GENERATOR_RETURN;
+                } else {
+                        unify(
+                                ty,
+                                &state.func->_type->rt,
+                                (vN(s->returns) >= 1) ? v__(s->returns, 0)->_type : NIL_TYPE
+                        );
+                        if (state.func->_type->rt == NULL) {
+                                state.func->_type->rt = TYPE_ANY;
+                        }
+                        dont_printf("  after unify: %s\n", type_show(ty, state.func->_type->rt));
                 }
+
+                s->will_return = true;
 
                 break;
         case STATEMENT_DEFINITION:
@@ -3323,6 +3537,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                         symbolize_expression(ty, scope, s->value);
                 }
                 symbolize_lvalue(ty, scope, s->target, true, s->pub);
+                type_assign(ty, s->target, s->value->_type);
                 break;
         case STATEMENT_OPERATOR_DEFINITION:
                 symbolize_op_def(ty, scope, s);
@@ -3332,6 +3547,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         case STATEMENT_FUN_MACRO_DEFINITION:
                 symbolize_lvalue(ty, scope, s->target, true, s->pub);
                 symbolize_expression(ty, scope, s->value);
+                type_assign(ty, s->target, s->value->_type);
                 break;
         }
 
@@ -3522,13 +3738,14 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 
         bool local = !s->global && (s->scope->function == scope->function);
 
-        if (s->global) {
+        if (s->type_var) {
+                emit_instr(ty, INSTR_NIL);
+        } else if (s->global) {
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_GLOBAL, s->i);
                 CHECK_INIT();
         } else if (local && !s->captured) {
                 emit_load_instr(ty, s->identifier, INSTR_LOAD_LOCAL, s->i);
         } else if (!local && s->captured) {
-                LOG("It is captured and not owned by us");
                 int i = 0;
                 while (scope->function->captured.items[i] != s) {
                         i += 1;
@@ -3558,8 +3775,6 @@ emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
                 emit_instr(ty, INSTR_TARGET_REF);
                 emit_int(ty, s->i);
         }
-
-        s->init = true;
 }
 
 static void
@@ -5507,7 +5722,7 @@ emit_dict_compr2(Ty *ty, Expr const *e)
         PATCH_JUMP(match);
         emit_instr(ty, INSTR_POP_STACK_POS);
 
-        for (int i = e->elements.count - 1; i >= 0; --i) {
+        for (int i = e->keys.count - 1; i >= 0; --i) {
                 emit_expression(ty, e->keys.items[i]);
                 if (e->values.items[i] != NULL)
                         emit_expression(ty, e->values.items[i]);
@@ -5516,7 +5731,7 @@ emit_dict_compr2(Ty *ty, Expr const *e)
         }
 
         emit_instr(ty, INSTR_DICT_COMPR);
-        emit_int(ty, (int)e->elements.count);
+        emit_int(ty, (int)e->keys.count);
         JUMP(start);
         PATCH_JUMP(done);
         emit_instr(ty, INSTR_POP_STACK_POS);
@@ -6058,12 +6273,8 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_assignment(ty, e->target, e->value, true, false);
                 break;
         case EXPRESSION_INTEGER:
-                if (e->integer == 0xCAFEBABE) {
-                        emit_instr(ty, INSTR_TRAP);
-                } else {
-                        emit_instr(ty, INSTR_INTEGER);
-                        emit_integer(ty, e->integer);
-                }
+                emit_instr(ty, INSTR_INTEGER);
+                emit_integer(ty, e->integer);
                 break;
         case EXPRESSION_BOOLEAN:
                 emit_instr(ty, INSTR_BOOLEAN);
@@ -6931,7 +7142,7 @@ declare_classes(Ty *ty, Stmt *s, Scope *scope)
                         );
                 }
                 Symbol *sym = addsymbol(ty, ns, s->class.name);
-                sym->class = class_new(ty, s->class.name, s->class.doc);
+                sym->class = class_new(ty, s);
                 sym->cnst = true;
                 s->class.symbol = sym->class;
         }
@@ -7317,9 +7528,26 @@ void
 compiler_init(Ty *ty)
 {
         tags_init(ty);
+        class_init(ty);
 
         state = freshstate(ty);
         global = state.global;
+
+        static Type  NIL_TYPE_ = { .type = TYPE_NIL };
+
+        static Class ANY_CLASS = { .i = CLASS_TOP, .name = "Any" };
+        static Type  ANY_TYPE  = { .type = TYPE_OBJECT, .class = &ANY_CLASS };
+
+        TYPE_INT    = class_get_class(ty, CLASS_INT)->object_type;
+        TYPE_STRING = class_get_class(ty, CLASS_STRING)->object_type;
+        TYPE_FLOAT  = class_get_class(ty, CLASS_FLOAT)->object_type;
+        TYPE_BOOL   = class_get_class(ty, CLASS_BOOL)->object_type;
+        TYPE_BLOB   = class_get_class(ty, CLASS_BLOB)->object_type;
+        TYPE_ARRAY  = class_get_class(ty, CLASS_ARRAY)->object_type;
+        TYPE_DICT   = class_get_class(ty, CLASS_DICT)->object_type;
+        TYPE_ANY    = &ANY_TYPE;
+        TYPE_CLASS_ = class_get_class(ty, CLASS_CLASS)->object_type;
+        NIL_TYPE    = &NIL_TYPE_;
 }
 
 void
@@ -7428,7 +7656,6 @@ compiler_introduce_symbol(Ty *ty, char const *module, char const *name)
 
         Symbol *sym = addsymbol(ty, s, name);
         sym->public = true;
-        sym->init = true;
         LOG("%s got index %d", name, sym->i);
 
         BuiltinCount += 1;
@@ -7457,7 +7684,6 @@ compiler_introduce_tag(Ty *ty, char const *module, char const *name)
         Symbol *sym = addsymbol(ty, s, name);
         sym->public = true;
         sym->cnst = true;
-        sym->init = true;
         sym->tag = tags_new(ty, name);
         LOG("tag %s got index %d", name, sym->i);
 
@@ -7502,6 +7728,14 @@ compiler_compile_source(Ty *ty, char const *source, char const *file)
         char *code = state.code.items;
 
         vec_init(state.code);
+
+        for (int i = 0; i < 16; ++i) {
+                Symbol *sym = state.global->table[i];
+                while (sym != NULL) {
+                        dont_printf("%10s : %s\n", sym->identifier, type_show(ty, sym->type));
+                        sym = sym->next;
+                }
+        }
 
         return code;
 }
@@ -10138,7 +10372,15 @@ tyeval(Ty *ty, Expr *e)
         }
 
         if (e->xscope == NULL) {
-                symbolize_expression(ty, state.macro_scope, e);
+                symbolize_expression(
+                        ty,
+                        (
+                                state.macro_scope != NULL
+                              ? state.macro_scope
+                              : state.global
+                        ),
+                        e
+                );
         }
 
         byte_vector code_save = state.code;
@@ -10279,7 +10521,6 @@ define_tag(Ty *ty, Stmt *s)
 
         Symbol *sym = addsymbol(ty, scope, s->tag.name);
         sym->cnst = true;
-        sym->init = true;
         sym->tag = tags_new(ty, s->tag.name);
         sym->doc = s->tag.doc;
         s->tag.symbol = sym->tag;
@@ -10312,15 +10553,25 @@ define_class(Ty *ty, Stmt *s)
                 );
         }
 
+        s->class.scope = scope_new(ty, s->class.name, scope, false);
+
+        for (int i = 0; i < vN(s->class.type_params); ++i) {
+                Expr *t0 = v__(s->class.type_params, i);
+                t0->symbol = scope_add_type_var(ty, s->class.scope, t0->identifier);
+                symbolize_expression(ty, s->class.scope, t0->constraint);
+        }
+
+
         Symbol *sym = addsymbol(ty, scope, s->class.name);
         sym->class = s->class.is_trait
-                   ? trait_new(ty, s->class.name, s->class.doc)
-                   : class_new(ty, s->class.name, s->class.doc);
+                   ? trait_new(ty, s)
+                   : class_new(ty, s);
         sym->doc = s->class.doc;
         sym->loc = s->class.loc;
         sym->cnst = true;
-        sym->init = true;
         s->class.symbol = sym->class;
+
+        sym->type = class_get_class(ty, sym->class)->type;
 
         for (int i = 0; i < s->class.methods.count; ++i) {
                 Expr *m = s->class.methods.items[i];
@@ -10356,12 +10607,30 @@ define_class(Ty *ty, Stmt *s)
 
         for (int i = 0; i < s->class.fields.count; ++i) {
                 Expr *m = s->class.fields.items[i];
+                Expr *id = (m->type == EXPRESSION_EQ)
+                         ? m->target
+                         : m;
+                symbolize_expression(ty, s->class.scope, id->constraint);
+                Type *t0 = type_resolve(ty, id->constraint);
+                id->_type = t0;
                 switch (m->type) {
                 case EXPRESSION_IDENTIFIER:
-                        class_add_field(ty, sym->class, m->identifier);
+                        class_add_field(
+                                ty,
+                                sym->class,
+                                m->identifier,
+                                m->constraint,
+                                NULL
+                        );
                         break;
                 case EXPRESSION_EQ:
-                        class_add_field(ty, sym->class, m->target->identifier);
+                        class_add_field(
+                                ty,
+                                sym->class,
+                                m->target->identifier,
+                                m->target->constraint,
+                                m->value
+                        );
                         break;
                 default:
                         fail(
@@ -10389,7 +10658,6 @@ define_macro(Ty *ty, Stmt *s, bool fun)
         else
                 s->target->symbol->macro = true;
 
-        s->target->symbol->init = true;
         s->target->symbol->doc = s->doc;
 
         s->type = STATEMENT_FUNCTION_DEFINITION;
