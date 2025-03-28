@@ -61,7 +61,6 @@ struct module {
 };
 
 typedef vec(struct eloc) location_vector;
-typedef vec(Symbol *)    symbol_vector;
 
 typedef struct {
         intrusive_vec(size_t);
@@ -308,6 +307,9 @@ colorize_code(
 
 char const *
 show_expr_type(Ty *ty, Expr const *e);
+
+char *
+show_expr(Expr const *e);
 
 uint32_t
 source_register(Ty *ty, void const *src);

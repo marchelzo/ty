@@ -247,6 +247,8 @@ static Location EEnd;
 
 static Location End;
 
+Expr *LastParsedExpr;
+
 static int depth;
 static bool NoEquals = false;
 static bool NoIn = false;
@@ -1826,8 +1828,9 @@ prefix_function(Ty *ty)
 
         next();
 
-        if (e->type == EXPRESSION_GENERATOR)
+        if (e->type == EXPRESSION_GENERATOR) {
                 goto Body;
+        }
 
         if (T0 == TOKEN_IDENTIFIER) {
                 e->name = tok()->identifier;
@@ -1847,9 +1850,21 @@ prefix_function(Ty *ty)
 
         char const *proto_start = tok()->start.s;
 
-        consume('(');
-
         SAVE_NE(true);
+
+        if (T0 == '[') {
+                next();
+                while (T0 != ']') {
+                        expect(TOKEN_IDENTIFIER);
+                        avP(e->type_params, prefix_identifier(ty));
+                        if (T0 != ']') {
+                                consume(',');
+                        }
+                }
+                next();
+        }
+
+        consume('(');
 
         while (T0 != ')') {
                 setctx(ty, LEX_PREFIX);
@@ -5514,7 +5529,7 @@ parse_expr(Ty *ty, int prec)
                 );
         }
 
-        e = f(ty);
+        e = LastParsedExpr = f(ty);
 
         while (!should_split(ty) && prec < get_infix_prec(ty)) {
                 infix_parse_fn *f = get_infix_parser(ty);
@@ -5531,7 +5546,7 @@ parse_expr(Ty *ty, int prec)
                         // Special case for operator slices. Very based!
                         goto End;
                 }
-                e = f(ty, e);
+                e = LastParsedExpr = f(ty, e);
         }
 
         if (have_without_nl(ty, '"')) {
@@ -5554,7 +5569,7 @@ End:
 
         --depth;
 
-        return e;
+        return LastParsedExpr = e;
 }
 
 static Stmt *
@@ -5644,6 +5659,19 @@ parse_class_definition(Ty *ty)
 
         next();
 
+        if (T0 == '[') {
+                SAVE_NE(true);
+                next();
+                while (T0 != ']') {
+                        expect(TOKEN_IDENTIFIER);
+                        avP(s->class.type_params, prefix_identifier(ty));
+                        if (T0 != ']') {
+                                consume(',');
+                        }
+                }
+                next();
+                LOAD_NE();
+        }
 
         /*
          * Allow some optional parameters here that will implicitly become
@@ -5773,7 +5801,8 @@ parse_class_definition(Ty *ty)
                         if (!have_keyword(KEYWORD_STATIC)) {
                                 expect(TOKEN_IDENTIFIER);
                         }
-                        struct location start = tok()->start;
+
+                        Location start = tok()->start;
 
                         /*
                          * This is pretty ugly but we use whitespace to differentiate between a setter:

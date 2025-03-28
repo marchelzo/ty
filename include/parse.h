@@ -5,6 +5,8 @@
 #include "table.h"
 #include "ast.h"
 
+extern Expr *LastParsedExpr;
+
 typedef vec(struct token) TokenVector;
 
 struct statement **

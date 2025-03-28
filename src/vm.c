@@ -3450,28 +3450,28 @@ splat(Ty *ty, Dict *d, Value *v)
 }
 
 Value
-vm_try_exec(Ty *ty, char *code)
+vm_try_exec(Ty *_ty, char *code)
 {
+        Ty * volatile ty = _ty;
+
         SAVE_(jmp_buf, JB);
 
-        size_t nframes = FRAMES.count;
+        size_t volatile nframes = FRAMES.count;
 
         // FIXME: don't need to allocate a new stack
         TryStack ts = TRY_STACK;
         vec_init(TRY_STACK);
 
-        char *save = IP;
+        size_t volatile sp = vN(STACK);
+        char * volatile save = IP;
 
         if (setjmp(JB) != 0) {
                 RESTORE_(JB);
                 FRAMES.count = nframes;
                 TRY_STACK = ts;
+                STACK.count = sp;
                 IP = save;
-                push(vSsz(Error));
-                top()->tags = tags_push(ty, 0, TAG_ERR);
-                top()->type |= VALUE_TAGGED;
-                vm_exec(ty, &throw);
-                // unreachable
+                return NONE;
         }
 
         vm_exec(ty, code);
@@ -6092,8 +6092,10 @@ ProfilerSIGINT(int _)
 #endif
 
 bool
-vm_load_program(Ty *ty, char const *source, char const *file)
+vm_load_program(Ty *_ty, char const *source, char const *file)
 {
+        Ty * volatile ty = _ty;
+
         filename = file;
 
         GC_STOP();
@@ -6190,7 +6192,7 @@ vm_pop(Ty *ty)
 Value *
 vm_get(Ty *ty, int i)
 {
-        return top() - i;
+        return v_(STACK, vN(STACK) - (i + 1));
 }
 
 noreturn void

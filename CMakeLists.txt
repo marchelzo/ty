@@ -136,6 +136,7 @@ set(_src_files
   src/table.c
   src/tags.c
   src/token.c
+  src/types.c
   src/util.c
   src/value.c
   src/vm.c
