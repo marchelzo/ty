@@ -23,6 +23,7 @@ typedef struct {
         uint32_t t1;
         uint32_t t2;
         int      ref;
+        Expr    *expr;
 } OperatorSpec;
 
 typedef struct {
@@ -120,8 +121,33 @@ check_slow(DispatchList const *list, int t1, int t2)
         return (match != NULL) ? match->ref : OP_NO_IMPL;
 }
 
+inline static Expr *
+find_op_fun(DispatchList const *list, int t1, int t2)
+{
+        OperatorSpec const *match = NULL;
+
+        for (int i = 0; i < list->count; ++i) {
+                OperatorSpec const *op = &list->items[i];
+                if (t1 == op->t1 && t2 == op->t2) {
+                        return op->expr;
+                }
+                if (
+                        class_is_subclass(ty, t1, op->t1)
+                     && class_is_subclass(ty, t2, op->t2)
+                     && (
+                                match == NULL
+                             || are_ordered(op, match)
+                        )
+                ) {
+                        match = op;
+                }
+        }
+
+        return (match == NULL) ? NULL : match->expr;
+}
+
 void
-op_add(int op, int t1, int t2, int ref)
+op_add(int op, int t1, int t2, int ref, Expr *expr)
 {
         dont_printf(
                 "op_add(): %20s %4s   %-20s\n",
@@ -150,9 +176,10 @@ op_add(int op, int t1, int t2, int ref)
         xvP(
                 group->defs,
                 ((OperatorSpec) {
-                        .t1  = t1,
-                        .t2  = t2,
-                        .ref = ref
+                        .t1   = t1,
+                        .t2   = t2,
+                        .ref  = ref,
+                        .expr = expr
                 })
         );
 
@@ -192,6 +219,26 @@ op_dispatch(int op, int t1, int t2)
         }
 
         return ref;
+}
+
+Expr *
+op_fun_info(int op, int t1, int t2)
+{
+        TyRwLockRdLock(&_2.lock);
+
+        if (_2.ops.count <= op) {
+                TyRwLockRdUnlock(&_2.lock);
+                return NULL;
+        }
+
+        DispatchGroup *group = _2.ops.items[op];
+        TyRwLockRdUnlock(&_2.lock);
+
+        TyRwLockWrLock(&group->lock);
+        Expr *expr = find_op_fun(&group->defs, t1, t2);
+        TyRwLockWrUnlock(&group->lock);
+
+        return expr;
 }
 
 void

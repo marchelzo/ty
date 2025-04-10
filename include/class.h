@@ -37,6 +37,12 @@ class_init(Ty *ty);
 int
 class_new(Ty *ty, Stmt *s);
 
+Class *
+class_new_empty(Ty *ty);
+
+void
+class_builtin(Ty *ty, int class, Stmt *def);
+
 int
 trait_new(Ty *ty, Stmt *s);
 

@@ -19,6 +19,7 @@
 #include "ast.h"
 #include "intern.h"
 #include "compiler.h"
+#include "types.h"
 
 static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
@@ -442,6 +443,8 @@ value_showx(Ty *ty, Value const *v)
         case VALUE_NIL:
                 snprintf(buffer, 1024, "%s", "nil");
                 break;
+        case VALUE_TYPE:
+                return type_show(ty, v->ptr);
         case VALUE_NAMESPACE:
                 snprintf(
                         buffer,
@@ -818,7 +821,7 @@ BasicObject:
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
         default:
-                return sclone(ty, "< !!! >");
+                return value_showx(ty, v);
         }
 
         char *result = tags_wrap(ty, s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0, true);

@@ -9,6 +9,7 @@
 #include "vec.h"
 #include "itable.h"
 
+typedef struct class Class;
 struct tags;
 
 struct link {
@@ -28,6 +29,7 @@ static vec(struct tags *) lists;
 static vec(char const *) names;
 static vec(struct itable) tables;
 static vec(struct itable) statics;
+static vec(Class *) classes;
 
 static struct tags *
 mklist(int tag, struct tags *next)
@@ -52,6 +54,12 @@ tags_init(Ty *ty)
 }
 
 int
+tags_set_class(Ty *ty, int tag, Class *c)
+{
+        *v_(classes, tag) = c;
+}
+
+int
 tags_new(Ty *ty, char const *tag)
 {
         LOG("making new tag: %s -> %d", tag, tagcount);
@@ -65,6 +73,8 @@ tags_new(Ty *ty, char const *tag)
 
         itable_init(ty, &table);
         xvP(statics, table);
+
+        xvP(classes, NULL);
 
         mklist(tagcount, lists.items[0]);
         return tagcount++;

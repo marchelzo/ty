@@ -28,36 +28,50 @@ T(int i)
 }
 
 static char const *BuiltinClassNames[] = {
-        [CLASS_ARRAY]     = "Array",
-        [CLASS_BOOL]      = "Bool",
-        [CLASS_CLASS]     = "Class",
-        [CLASS_DICT]      = "Dict",
-        [CLASS_FLOAT]     = "Float",
-        [CLASS_FUNCTION]  = "Function",
-        [CLASS_GENERATOR] = "Generator",
-        [CLASS_INT]       = "Int",
-        [CLASS_OBJECT]    = "Object",
-        [CLASS_REGEX]     = "Regex",
-        [CLASS_STRING]    = "String",
-        [CLASS_TAG]       = "Tag",
-        [CLASS_TUPLE]     = "Tuple"
+        [CLASS_ARRAY]        = "Array",
+        [CLASS_BOOL]         = "Bool",
+        [CLASS_BLOB]         = "Blob",
+        [CLASS_CLASS]        = "Class",
+        [CLASS_DICT]         = "Dict",
+        [CLASS_FLOAT]        = "Float",
+        [CLASS_FUNCTION]     = "Function",
+        [CLASS_GENERATOR]    = "Generator",
+        [CLASS_INT]          = "Int",
+        [CLASS_INC_RANGE]    = "InclusiveRange",
+        [CLASS_ITER]         = "Iter",
+        [CLASS_ITERABLE]     = "Iterable",
+        [CLASS_OBJECT]       = "Object",
+        [CLASS_QUEUE]        = "Queue",
+        [CLASS_RANGE]        = "Range",
+        [CLASS_REGEX]        = "Regex",
+        [CLASS_RE_MATCH]     = "RegexMatch",
+        [CLASS_REV_ITER]     = "ReverseIter",
+        [CLASS_SHARED_QUEUE] = "SharedQueue",
+        [CLASS_STRING]       = "String",
+        [CLASS_TAG]          = "Tag",
+        [CLASS_TUPLE]        = "Tuple"
 };
 
-void
-class_init(Ty *ty)
+static void
+init(Ty *ty, Class *c, Stmt *def)
 {
-        for (int i = CLASS_OBJECT; i < CLASS_PRIMITIVE; ++i) {
-                Class *c = alloc0(sizeof *c);
-                c->i = i;
-                c->name = BuiltinClassNames[i];
-                c->super = (i == CLASS_OBJECT) ? NULL : C(CLASS_OBJECT);
-                c->type = type_class(ty, c);
-                c->object_type = type_object(ty, c);
-                xvP(classes, c);
-        }
-
-        classes.count = 0;
+        c->name = def->class.name;
+        c->doc = def->class.doc;
+        c->def = def;
+        c->finalizer = NONE;
+        c->super = (c->i == CLASS_OBJECT) ? NULL : C(CLASS_OBJECT);
+        c->type = type_class(ty, c);
+        c->object_type = type_object(ty, c);
 }
+
+inline static void
+MakeTrait(Ty *ty, Class *c)
+{
+        c->is_trait = true;
+        c->ti = vN(traits);
+        xvP(traits, c);
+}
+
 
 Class *
 class_get_class(Ty *ty, int class)
@@ -65,38 +79,53 @@ class_get_class(Ty *ty, int class)
         return C(class);
 }
 
-int
-class_new(Ty *ty, Stmt *def)
+Class *
+class_new_empty(Ty *ty)
 {
-        Class *c = (vN(classes) < CLASS_PRIMITIVE)
-                 ? *vZ(classes)
-                 : alloc0(sizeof *c);
-
-        c->name = def->class.name;
-        c->doc = def->class.doc;
-        c->def = def;
-        c->finalizer = NONE;
+        Class *c = alloc0(sizeof *c);
         c->i = vN(classes);
-        c->super = (c->i == CLASS_OBJECT) ? NULL : C(CLASS_OBJECT);
-        c->type = type_class(ty, c);
-        c->object_type = type_object(ty, c);
 
         xvP(classes, c);
 
+        if (c->i < CLASS_BUILTIN_END) {
+                c->name = BuiltinClassNames[c->i];
+        }
+
+        c->type = type_class(ty, c);
+        c->object_type = type_object(ty, c);
+
+        return c;
+}
+
+int
+class_new(Ty *ty, Stmt *def)
+{
+        Class *c = class_new_empty(ty);
+
+        init(ty, c, def);
+
         return c->i;
+}
+
+void
+class_builtin(Ty *ty, int class, Stmt *s)
+{
+        Class *c = C(class);
+
+        init(ty, c, s);
+
+        switch (class) {
+        case CLASS_ITERABLE:
+        case CLASS_ITER:
+                MakeTrait(ty, c);
+        }
 }
 
 int
 trait_new(Ty *ty, Stmt *def)
 {
         int class = class_new(ty, def);
-
-        Class *c = C(class);
-        c->is_trait = true;
-        c->ti = vN(traits);
-
-        xvP(traits, c);
-
+        MakeTrait(ty, C(class));
         return class;
 }
 
@@ -161,7 +190,7 @@ class_init_object(Ty *ty, int class, struct itable *o)
 char const *
 class_name(Ty *ty, int class)
 {
-        return (class == CLASS_TOP) ? "<top>" : C(class)->name;
+        return (class <= CLASS_TOP) ? "<top>" : C(class)->name;
 }
 
 void

@@ -87,6 +87,7 @@ enum {
         VALUE_ARRAY            ,
         VALUE_DICT             ,
         VALUE_OPERATOR         ,
+        VALUE_TYPE             ,
         VALUE_REGEX            , // CALLABLE here and above
         VALUE_INTEGER          ,
         VALUE_REAL             ,
@@ -135,7 +136,8 @@ enum {
         FUN_PROTO       = FUN_HIDDEN      + 1,
         FUN_DOC         = FUN_PROTO       + sizeof (uintptr_t),
         FUN_NAME        = FUN_DOC         + sizeof (uintptr_t),
-        FUN_PARAM_NAMES = FUN_NAME        + sizeof (uintptr_t)
+        FUN_EXPR        = FUN_NAME        + sizeof (uintptr_t),
+        FUN_PARAM_NAMES = FUN_EXPR        + sizeof (uintptr_t)
 };
 
 struct value {
@@ -662,6 +664,7 @@ extern bool ColorProfile;
         X(GEQ),                   \
         X(CMP),                   \
         X(CHECK_MATCH),           \
+        X(TYPE),                  \
         X(MUT_ADD),               \
         X(MUT_MUL),               \
         X(MUT_DIV),               \
@@ -711,6 +714,7 @@ enum {
 #define UNINITIALIZED(p)         ((Value){ .type = VALUE_UNINITIALIZED,  .ptr            = (p),                                  .tags = 0 })
 #define TAG(t)                   ((Value){ .type = VALUE_TAG,            .tag            = (t),                                  .tags = 0 })
 #define CLASS(c)                 ((Value){ .type = VALUE_CLASS,          .class          = (c),  .object = NULL,                 .tags = 0 })
+#define TYPE(t)                  ((Value){ .type = VALUE_TYPE,           .ptr            = (t),                                  .tags = 0 })
 #define OBJECT(o, c)             ((Value){ .type = VALUE_OBJECT,         .object         = (o),  .class  = (c),                  .tags = 0 })
 #define OPERATOR(u, b)           ((Value){ .type = VALUE_OPERATOR,       .uop            = (u),  .bop    = (b),                  .tags = 0 })
 #define NAMESPACE(ns)            ((Value){ .type = VALUE_NAMESPACE,      .namespace      = (ns),                                 .tags = 0 })
@@ -781,7 +785,7 @@ enum {
 
 #define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)
 
-#define avP(a, b)        VPush(a, b)
+#define avP(a, b)        VPush((a), (b))
 #define avPn(a, b, c)    VPushN(a, b, c)
 #define avI(v, x, i)     VInsert(v, x, i)
 #define avIn(a, b, c, d) VInsertN(a, b, c, d)

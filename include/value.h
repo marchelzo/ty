@@ -19,30 +19,34 @@ struct value;
 
 #define V_ALIGN (_Alignof (Value))
 
-#define CLASS_NIL      -2
-#define CLASS_TOP      -1
-#define CLASS_OBJECT    0
-#define CLASS_CLASS     1
-#define CLASS_FUNCTION  2
-#define CLASS_ARRAY     3
-#define CLASS_DICT      4
-#define CLASS_STRING    5
-#define CLASS_INT       6
-#define CLASS_FLOAT     7
-#define CLASS_BLOB      8
-#define CLASS_BOOL      9
-#define CLASS_REGEX     10
-#define CLASS_GENERATOR 11
-#define CLASS_TAG       12
-#define CLASS_TUPLE     13
-#define CLASS_PRIMITIVE 14
-#define CLASS_RE_MATCH  14
-#define CLASS_ITERABLE  15
-#define CLASS_ITER      16
-#define CLASS_REV_ITER  17
-#define CLASS_QUEUE     18
-#define CLASS_RANGE     19
-#define CLASS_INC_RANGE 20
+enum {
+        CLASS_NIL = -2,
+        CLASS_TOP,
+        CLASS_OBJECT,
+        CLASS_CLASS,
+        CLASS_FUNCTION,
+        CLASS_ARRAY,
+        CLASS_DICT,
+        CLASS_STRING,
+        CLASS_INT,
+        CLASS_FLOAT,
+        CLASS_BLOB,
+        CLASS_BOOL,
+        CLASS_REGEX,
+        CLASS_GENERATOR,
+        CLASS_TAG,
+        CLASS_TUPLE,
+        CLASS_PRIMITIVE,
+        CLASS_RE_MATCH = CLASS_PRIMITIVE,
+        CLASS_ITERABLE,
+        CLASS_ITER,
+        CLASS_REV_ITER,
+        CLASS_QUEUE,
+        CLASS_SHARED_QUEUE,
+        CLASS_RANGE,
+        CLASS_INC_RANGE,
+        CLASS_BUILTIN_END
+};
 
 #define TY_AST_NODES            \
         X(Expr)                 \
@@ -795,6 +799,20 @@ class_of(Value const *v)
         return v->info[FUN_INFO_CLASS];
 }
 
+inline static Expr *
+expr_of(Value const *f)
+{
+        uintptr_t p;
+        memcpy(&p, (char *)f->info + FUN_EXPR, sizeof p);
+        return (Expr *)p;
+}
+
+inline static Type *
+type_of(Value const *f)
+{
+        return expr_of(f)->_type;
+}
+
 inline static char const *
 proto_of(Value const *f)
 {
@@ -857,6 +875,7 @@ ClassOf(Value const *v)
         case VALUE_INTEGER:           return CLASS_INT;
         case VALUE_REAL:              return CLASS_FLOAT;
         case VALUE_STRING:            return CLASS_STRING;
+        case VALUE_BOOLEAN:           return CLASS_BOOL;
         case VALUE_BLOB:              return CLASS_BLOB;
         case VALUE_ARRAY:             return CLASS_ARRAY;
         case VALUE_DICT:              return CLASS_DICT;
@@ -908,6 +927,22 @@ ArrayClone(Ty *ty, Array const *a)
         new->count = a->count;
 
         return new;
+}
+
+inline static Value
+unwrap(Ty *ty, Value const *wrapped)
+{
+        Value v = *wrapped;
+
+        if (v.tags != 0) {
+                v.tags = tags_pop(ty, v.tags);
+        }
+
+        if (v.tags == 0) {
+                v.type &= ~VALUE_TAGGED;
+        }
+
+        return v;
 }
 
 inline static Value
