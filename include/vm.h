@@ -103,8 +103,14 @@ vm_try_exec(Ty *ty, char *ip);
 FrameStack *
 vm_get_frames(Ty *ty);
 
+Value *
+vm_local(Ty *ty, int i);
+
 Value
 GetMember(Ty *ty, Value v, int i, bool b);
+
+Value
+CompleteCurrentFunction(Ty *ty);
 
 extern _Thread_local TyMutex *MyLock;
 

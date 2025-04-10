@@ -78,6 +78,7 @@
 #include "object.h"
 #include "istat.h"
 #include "class.h"
+#include "types.h"
 #include "utf8.h"
 #include "functions.h"
 #include "html.h"
@@ -683,6 +684,10 @@ PopulateGlobals(Ty *ty)
 static void
 add_builtins(Ty *ty, int ac, char **av)
 {
+        for (int i = CLASS_OBJECT; i < CLASS_BUILTIN_END; ++i) {
+                xvP(Globals, CLASS(i));
+        }
+
         for (int i = 0; i < countof(builtins); ++i) {
                 compiler_introduce_symbol(ty, builtins[i].module, builtins[i].name);
                 if (builtins[i].value.type == VALUE_BUILTIN_FUNCTION) {
@@ -2029,9 +2034,9 @@ GetMember(Ty *ty, Value v, int member, bool b)
                 if ((vp = class_lookup_static_i(ty, v.class, member)) != NULL) {
                         return *vp;
                 }
-                if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
-                        return *vp;
-                }
+                //if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
+                //        return *vp;
+                //}
                 if (member == NAMES._name_) {
                         return xSz(class_name(ty, v.class));
                 }
@@ -2533,9 +2538,9 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 if (vp == NULL) {
                         vp = class_lookup_static_i(ty, value.class, i);
                 }
-                if (vp == NULL) {
-                        vp = class_lookup_method_i(ty, value.class, i);
-                }
+                //if (vp == NULL) {
+                //        vp = class_lookup_method_i(ty, value.class, i);
+                //}
                 if (vp == NULL) {
                         vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
                 }
@@ -2763,7 +2768,7 @@ DoUnaryOp(Ty *ty, int op, bool exec)
 
         if (vp == NULL) {
                 zP(
-                        "no matching implementation of %s%s%s for %s\n",
+                        "no matching implementation of %s%s%s for %s",
                         TERM(95;1), intern_entry(&xD.members, op)->name, TERM(0),
                         VSC(top())
                 );
@@ -3056,8 +3061,9 @@ DoMutAdd(Ty *ty)
                         break;
                 default:
                         x = pop();
+                        val = vm_try_2op(ty, OP_MUT_ADD, vp, &x);
 
-                        if ((val = vm_try_2op(ty, OP_MUT_ADD, vp, &x)).type != VALUE_NONE) {
+                        if (val.type != VALUE_NONE) {
                                 vp = &val;
                         } else {
                                 *vp = vm_2op(ty, OP_ADD, vp, &x);
@@ -4548,6 +4554,10 @@ Yield:
                         push(v);
 
                         goto Return;
+                CASE(TYPE)
+                        READVALUE(s);
+                        push(TYPE((Type *)s));
+                        break;
                 CASE(VALUE)
                         READVALUE(s);
                         push(*(Value *)s);
@@ -5087,7 +5097,8 @@ BadTupleMember:
                         DoNeq(ty);
                         break;
                 CASE(CHECK_MATCH)
-                        if (top()->type == VALUE_CLASS) {
+                        switch (top()->type) {
+                        case VALUE_CLASS:
                                 v = pop();
                                 switch (top()->type) {
                                 case VALUE_OBJECT:
@@ -5112,13 +5123,25 @@ BadTupleMember:
                                 case VALUE_REGEX:     *top() = BOOLEAN(class_is_subclass(ty, CLASS_REGEX, v.class));     break;
                                 default:              *top() = BOOLEAN(false);                                           break;
                                 }
-                        } else if (top()->type == VALUE_TAG) {
+                                break;
+
+                        case VALUE_TAG:
                                 v = pop();
                                 *top() = BOOLEAN(tags_first(ty, top()->tags) == v.tag);
-                        } else if (top()->type == VALUE_BOOLEAN) {
+                                break;
+
+                        case VALUE_BOOLEAN:
                                 v = pop();
                                 *top() = v;
-                        } else {
+                                break;
+
+                        case VALUE_TYPE:
+                                v = pop();
+                                value = pop();
+                                push(BOOLEAN(TypeCheck(ty, v.ptr, &value)));
+                                break;
+
+                        default:
                                 CallMethod(ty, NAMES.match, 1, 0, false);
                         }
                         break;
@@ -6481,6 +6504,11 @@ vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
         int i = op_dispatch(op, ClassOf(a), ClassOf(b));
 
         if (i == -1) {
+                dont_printf(
+                        "no matching implementation of %s%s%s for %s\n",
+                        TERM(95;1), intern_entry(&xD.members, op)->name, TERM(0),
+                        VSC(top())
+                );
                 return NONE;
         }
 
@@ -6824,6 +6852,9 @@ StepInstruction(char const *ip)
         CASE(YIELD_NONE)
                 break;
         CASE(MAKE_GENERATOR)
+                break;
+        CASE(TYPE)
+                SKIPVALUE(s);
                 break;
         CASE(VALUE)
                 SKIPVALUE(s);
@@ -7354,6 +7385,20 @@ tdb_go(Ty *ty)
                 tdb_list(ty);
                 break;
         }
+}
+
+Value
+CompleteCurrentFunction(Ty *ty)
+{
+        xvP(CALLS, &halt);
+        vm_exec(ty, IP);
+        return pop();
+}
+
+Value *
+vm_local(Ty *ty, int i)
+{
+        return local(ty, i);
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

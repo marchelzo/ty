@@ -198,19 +198,55 @@ scope_local_lookup(Ty *ty, Scope const *s, char const *id)
 }
 
 static Symbol *
-xadd(Ty *ty, Scope *s, char const *id)
+xnew(Ty *ty, char const *id)
 {
         uint64_t h = strhash(id);
-        int i = h % SYMBOL_TABLE_SIZE;
-
         Symbol *sym = amA(sizeof *sym);
 
         initsym(sym);
         sym->symbol = SYMBOL++;
         sym->identifier = id;
         sym->hash = h;
+
+        return sym;
+}
+
+static Symbol *
+xadd(Ty *ty, Scope *s, char const *id)
+{
+        Symbol *sym = xnew(ty, id);
+        int i = sym->hash % SYMBOL_TABLE_SIZE;
+
         sym->next = s->table[i];
         s->table[i] = sym;
+
+        return sym;
+}
+
+Symbol *
+NewSymbol(Ty *ty, char const *name)
+{
+        return xnew(ty, name);
+}
+
+Symbol *
+NewTypeVar(Ty *ty, char const *name)
+{
+        Symbol *sym = xnew(ty, name);
+
+        sym->type_var = true;
+        sym->type = type_variable(ty, sym);
+
+        return sym;
+}
+
+Symbol *
+NewScopedTypeVar(Ty *ty, Scope *s, char const *name)
+{
+        Symbol *sym = xadd(ty, s, name);
+
+        sym->type_var = true;
+        sym->type = type_variable(ty, sym);
 
         return sym;
 }

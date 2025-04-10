@@ -135,6 +135,15 @@ scope_symbol_name(Ty *ty, int s);
 void
 scope_capture_all(Ty *ty, struct scope *scope, struct scope const *stop);
 
+Symbol *
+NewSymbol(Ty *ty, char const *name);
+
+Symbol *
+NewTypeVar(Ty *ty, char const *name);
+
+Symbol *
+NewScopedTypeVar(Ty *ty, Scope *s, char const *name);
+
 int
 scope_get_completions(
         Ty *ty,

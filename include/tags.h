@@ -5,11 +5,16 @@
 
 #include "ty.h"
 
+typedef struct class Class;
+
 void
 tags_init(Ty *ty);
 
 int
 tags_new(Ty *ty, char const *);
+
+int
+tags_set_class(Ty *ty, int tag, Class *c);
 
 bool
 tags_same(Ty *ty, int t1, int t2);

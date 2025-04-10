@@ -248,6 +248,9 @@ void
 define_macro(Ty *ty, Stmt *, bool fun);
 
 void
+define_type(Ty *ty, Stmt *);
+
+void
 define_class(Ty *ty, Stmt *);
 
 void

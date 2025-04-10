@@ -319,10 +319,13 @@ op_builtin_shr(Ty *ty)
 }
 
 void
-op_add(int op, int t1, int t2, int ref);
+op_add(int op, int t1, int t2, int ref, Expr *fun);
 
 int
 op_dispatch(int op, int t1, int t2);
+
+Expr *
+op_fun_info(int op, int t1, int t2);
 
 void
 op_dump(int op);

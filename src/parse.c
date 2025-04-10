@@ -254,6 +254,7 @@ static bool NoEquals = false;
 static bool NoIn = false;
 static bool NoAndOr = false;
 static bool NoPipe = false;
+static bool TypeContext = false;
 
 static Expr WildCard = {
         .type = EXPRESSION_IDENTIFIER,
@@ -281,12 +282,14 @@ static enum {
 #define SAVE_NI(b) bool NISave = NoIn; NoIn = (b);
 #define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
 #define SAVE_NA(b) bool NASave = NoAndOr; NoAndOr = (b);
+#define SAVE_TC(b) bool TCSave = TypeContext; TypeContext = (b);
 
 #define LOAD_NE() NoEquals = NESave;
 #define LOAD_NC() NoConstraint = NCSave;
 #define LOAD_NI() NoIn = NISave;
 #define LOAD_NP() NoPipe = NPSave;
 #define LOAD_NA() NoAndOr = NASave;
+#define LOAD_TC() TypeContext = TCSave;
 
 static char const *filename;
 
@@ -386,10 +389,6 @@ mksym(Ty *ty, int s)
         return sclonea(ty, b);
 }
 
-/*
- * Get a unique identifier name.
- * This sucks.
- */
 char *
 gensym(Ty *ty)
 {
@@ -1252,6 +1251,17 @@ parse_decorators(Ty *ty)
         return decorators;
 }
 
+static Expr *
+parse_type(Ty *ty)
+{
+        Expr *t;
+
+        SAVE_TC(true);
+        t = parse_expr(ty, 0);
+        LOAD_TC();
+
+        return t;
+}
 
 /* * * * | prefix parsers | * * * */
 static Expr *
@@ -1729,6 +1739,17 @@ prefix_identifier(Ty *ty)
                 return typarse(ty, e, NULL, &e->start, &token(-1)->end);
         }
 
+        if (TypeContext && strcmp(e->identifier, "type") == 0 && T0 == '(') {
+                consume('(');
+                SAVE_TC(false);
+                e->type = EXPRESSION_TYPEOF;
+                e->operand = parse_expr(ty, 0);
+                e->end = End;
+                LOAD_TC();
+                consume(')');
+                return e;
+        }
+
         if (is_operator(e->identifier)) {
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = e->identifier;
@@ -1739,7 +1760,7 @@ prefix_identifier(Ty *ty)
         // TODO: maybe get rid of this
         if (NoEquals && T0 == ':') {
                 next();
-                e->constraint = parse_expr(ty, 0);
+                e->constraint = parse_type(ty);
         } else {
                 e->constraint = NULL;
         }
@@ -1887,7 +1908,7 @@ prefix_function(Ty *ty)
 
                 if (!special && T0 == ':') {
                         next();
-                        avP(e->constraints, parse_expr(ty, 0));
+                        avP(e->constraints, parse_type(ty));
                         (*vvL(e->constraints))->end = End;
                 } else {
                         avP(e->constraints, NULL);
@@ -1913,7 +1934,7 @@ prefix_function(Ty *ty)
         // Optional return value constraint
         if (T0 == TOKEN_ARROW) {
                 next();
-                e->return_type = parse_expr(ty, 0);
+                e->return_type = parse_type(ty);
         }
 
         e->proto = clone_slice_a(ty, proto_start, End.s);
@@ -1924,7 +1945,10 @@ prefix_function(Ty *ty)
         }
 
 Body:
-        if (T0 == TOKEN_EQ && type == KEYWORD_MACRO) {
+        if (T0 == ';') {
+                next();
+                e->body = NULL;
+        } else if (T0 == TOKEN_EQ && type == KEYWORD_MACRO) {
                 next();
                 e->body = to_stmt(parse_expr_template(ty));
         } else {
@@ -4060,10 +4084,21 @@ infix_squiggly_arrow(Ty *ty, Expr *left)
 static Expr *
 infix_arrow_function(Ty *ty, Expr *left)
 {
+        Expr *e;
 
         consume(TOKEN_ARROW);
 
-        Expr *e = mkfunc(ty);
+        if (TypeContext) {
+                e = mkexpr(ty);
+                e->type = EXPRESSION_FUNCTION_TYPE;
+                e->left = left;
+                e->right = parse_expr(ty, 0);
+                e->start = left->start;
+                e->end = End;
+                return e;
+        }
+
+        e = mkfunc(ty);
         e->start = left->start;
 
         e->proto = clone_slice_a(ty, left->start.s, left->end.s);
@@ -4667,7 +4702,7 @@ definition_lvalue(Ty *ty, Expr *e)
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
                                         EStart = e->keys.items[i]->start;
                                         EEnd = e->keys.items[i]->end;
-                                        error(ty, "short-hand target in dict lvalue must be an identifier");
+                                        error(ty, "shorthand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
                                 key->string = e->keys.items[i]->identifier;
@@ -5291,14 +5326,11 @@ parse_function_definition(Ty *ty)
 static Stmt *
 parse_operator_directive(Ty *ty)
 {
+        next();
+
         setctx(ty, LEX_INFIX);
 
-        if (T1 != TOKEN_USER_OP) {
-                consume_keyword(KEYWORD_OPERATOR);
-                expect(TOKEN_USER_OP);
-        }
-
-        next();
+        expect(TOKEN_USER_OP);
         char const *uop = tok()->identifier;
         next();
 
@@ -5325,7 +5357,7 @@ parse_operator_directive(Ty *ty)
 
         consume(TOKEN_NEWLINE);
 
-        return NULL;
+        return &NullStatement;
 }
 
 static Stmt *
@@ -5362,6 +5394,26 @@ parse_let_definition(Ty *ty)
         s->pub = false;
 
         consume_keyword(KEYWORD_LET);
+
+        if (T0 == TOKEN_IDENTIFIER && T1 == '[') {
+                s->type = STATEMENT_TYPE_DEFINITION;
+                s->class.name = tok()->identifier;
+                next();
+                next();
+                SAVE_NE(true);
+                while (T0 != ']') {
+                        avP(s->class.type_params, prefix_identifier(ty));
+                        if (T0 != ']') {
+                                consume(',');
+                        }
+                }
+                LOAD_NE();
+                next();
+                consume('=');
+                s->class.type = parse_type(ty);
+                s->end = End;
+                return s;
+        }
 
         s->target = parse_definition_lvalue(ty, LV_LET, NULL);
         if (s->target == NULL) {
@@ -5650,9 +5702,6 @@ parse_class_definition(Ty *ty)
 
         Stmt *s = mkstmt(ty);
         s->class.name = tok()->identifier;
-        s->type = tag ? STATEMENT_TAG_DEFINITION
-                      : STATEMENT_CLASS_DEFINITION;
-        s->class.is_trait = trait;
 
         s->start = start;
         s->class.loc = tok()->start;
@@ -5671,6 +5720,18 @@ parse_class_definition(Ty *ty)
                 }
                 next();
                 LOAD_NE();
+        }
+
+        if (T0 == '=') {
+                next();
+                s->type = STATEMENT_TYPE_DEFINITION;
+                s->class.type = parse_expr(ty, 0);
+                s->end = End;
+                return s;
+        } else {
+                s->type = tag ? STATEMENT_TAG_DEFINITION
+                              : STATEMENT_CLASS_DEFINITION;
+                s->class.is_trait = trait;
         }
 
         /*
@@ -5723,21 +5784,6 @@ parse_class_definition(Ty *ty)
 
         if (T0 == '<') {
                 next();
-
-                int start_index = TokenIndex;
-
-                while (T0 == TOKEN_IDENTIFIER && T1 == '.') {
-                        next();
-                        next();
-                }
-
-                expect(TOKEN_IDENTIFIER);
-                next();
-
-                expect('{');
-
-                TokenIndex = start_index;
-
                 s->tag.super = parse_expr(ty, 0);
         } else {
                 s->tag.super = NULL;
@@ -6250,6 +6296,10 @@ define_top(Ty *ty, Stmt *s, char const *doc)
         case STATEMENT_TAG_DEFINITION:
                 s->tag.doc = doc;
                 define_tag(ty, s);
+                break;
+        case STATEMENT_TYPE_DEFINITION:
+                s->class.doc = doc;
+                define_type(ty, s);
                 break;
         case STATEMENT_MULTI:
                 for (int i = 0; i < s->statements.count; ++i) {

@@ -51,13 +51,19 @@ struct class_definition {
         Location loc;
         struct expression *super;
         expression_vector traits;
-        expression_vector methods;
-        expression_vector getters;
-        expression_vector setters;
-        expression_vector statics;
-        expression_vector fields;
+        union {
+                struct {
+                        expression_vector methods;
+                        expression_vector getters;
+                        expression_vector setters;
+                        expression_vector statics;
+                        expression_vector fields;
+                };
+                Expr *type;
+        };
         expression_vector type_params;
         Scope *scope;
+        Symbol *var;
 };
 
 struct condpart {
@@ -83,6 +89,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(FUN_MACRO_DEFINITION),  \
         X(TAG_DEFINITION),        \
         X(CLASS_DEFINITION),      \
+        X(TYPE_DEFINITION),       \
         X(WHILE),                 \
         X(WHILE_MATCH),           \
         X(IF_LET),                \
@@ -109,6 +116,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
 
 #define TY_EXPRESSION_TYPES                                                           \
         X(FUNCTION),                                                                  \
+        X(FUNCTION_TYPE),                                                             \
         X(IMPLICIT_FUNCTION),                                                         \
         X(GENERATOR),                                                                 \
         X(INTEGER),                                                                   \
@@ -148,6 +156,7 @@ enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
         X(WITH),                                                                      \
         X(YIELD),                                                                     \
         X(THROW),                                                                     \
+        X(TYPEOF),                                                                    \
         X(TAG_APPLICATION),                                                           \
         X(TAG_PATTERN_CALL),                                                          \
         X(TAG_PATTERN),                                                               \
