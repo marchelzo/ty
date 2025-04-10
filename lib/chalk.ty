@@ -7,6 +7,9 @@ import ty.token
 tag ChalkError;
 
 class Text {
+    parts: Array[Text | String]
+    style: Chalk
+
     init(other: Text, style=Chalk(), fmt=nil) {
         dbg(other, "{style}")
         @parts = other.parts

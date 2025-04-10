@@ -9,48 +9,6 @@ import ty.parse as parse
 import ty.token as lex
 import os
 
-tag MatchError;
-tag IndexError;
-tag DispatchError;
-
-tag None {
-    map()      { None }
-    flat-map() { None }
-    or-else(x) { x    }
-
-    some?() { false }
-}
-
-tag Some {
-    map(f)      { Some(f(self)) }
-    flat-map(f) {      f(self)  }
-    or-else(x)  {        self   }
-
-    some?() { true }
-
-    static from(x) {
-        match x {
-            nil => None,
-            _   => Some(x)
-        }
-    }
-}
-
-tag Ok {
-     map(f) {
-          Ok(f(self))
-     }
-
-     flatMap(f) {
-          f(self)
-     }
-}
-
-tag Err {
-     map()     { self }
-     flatMap() { self }
-}
-
 class Object {
     init(%props) {
         for k, v in props {
@@ -192,7 +150,7 @@ class Function : Iter {
     }
 }
 
-class Array : Iterable {
+class Array[T] : Iterable {
     init(*xs) {
         xs
     }
@@ -203,6 +161,14 @@ class Array : Iterable {
             [k, *ks] => [Array.of(*ks, fill: fill) for _ in ..k]
         }
     }
+
+    map[U](fun: T -> U) -> Array[U];
+    filter(pred: T -> (Object | nil)) -> Array[T];
+    push(x: T) -> nil;
+    len() -> Int;
+    join(sep: String) -> String;
+    take(n: Int) -> Array[T];
+    drop(n: Int) -> Array[T];
 
     shape() {
         let s = []
@@ -364,7 +330,7 @@ class Array : Iterable {
         }
     }
 
-    __slice__(i=0, j, k=1) {
+    __slice__(i=0, j, k=1) -> Array[T] {
         let slice = []
 
         let wrap = match {
@@ -455,6 +421,8 @@ class String : Iterable {
 
     int { ::int(self) }
 
+    matches() -> Array[String | RegexMatch];
+
     int(base: Int = 10) {
         return ::int(self, base)
     }
@@ -488,7 +456,7 @@ class String : Iterable {
         self.bslice(i, j - i)
     }
 
-    __slice__(i=0, j=#self, k=1) {
+    __slice__(i=0, j=#self, k=1) -> String {
         if k != 1 {
             throw 'not implemented'
         }
@@ -624,11 +592,11 @@ class Int {
         }
     }
 
-    even? {
+    even?() {
         self % 2 == 0
     }
 
-    odd? {
+    odd?() {
         self % 2 == 1
     }
 
@@ -700,7 +668,7 @@ class Int {
         self / int(n)
     }
 
-    mod(n) {
+    `mod`(n) {
         self % int(n)
     }
 
@@ -983,6 +951,49 @@ class Tuple {
     }
 }
 
+tag MatchError;
+tag IndexError;
+tag DispatchError;
+
+tag None {
+    map()      { None }
+    flat-map() { None }
+    or-else(x) { x    }
+
+    some?() { false }
+}
+
+tag Some {
+    map(f)      { Some(f(self)) }
+    flat-map(f) {      f(self)  }
+    or-else(x)  {        self   }
+
+    some?() { true }
+
+    static from(x) {
+        match x {
+            nil => None,
+            _   => Some(x)
+        }
+    }
+}
+
+tag Ok {
+     map(f) {
+          Ok(f(self))
+     }
+
+     flatMap(f) {
+          f(self)
+     }
+}
+
+tag Err {
+     map()     { self }
+     flatMap() { self }
+}
+
+
 class RegexMatch {
     init(s, groups) {
         let [(start, size), *captures] = groups
@@ -1232,7 +1243,9 @@ trait Iterable {
     __iter__() -> Iter;
 }
 
-trait Iter < Iterable {
+trait Iter[T] < Iterable {
+    __next__() -> T;
+
     map*(f) {
         for x in self {
             yield f(x)
@@ -1253,20 +1266,26 @@ trait Iter < Iterable {
         }
     }
 
-    fold(x, f) {
-        if f == nil {
-            f = x
-            if not Some(x) = @__next__() {
-                return nil
-            }
-        }
-
-        while let Some(y) = @__next__() {
+    fold(x, f: f != nil) {
+        while let Some(y) = __next__() {
             x = f(x, y)
         }
 
         return x
     }
+
+    fold(f) {
+        if not let Some(x) = __next__() {
+            return nil
+        }
+
+        while let Some(y) = __next__() {
+            x = f(x, y)
+        }
+
+        return x
+    }
+
 
     __len__() {
         let n = 0
@@ -1381,7 +1400,30 @@ trait Iter < Iterable {
         }
     }
 
-    group(f = id) {
+    group*(f = id) {
+        if not let Some(x) = self.__next__() {
+            return None
+        }
+
+        let group = [x]
+
+        for (;;) {
+            if not let Some(x) = self.__next__() {
+                break
+            }
+
+            if f(x) == f(group[-1]) {
+                group.push(x)
+            } else {
+                yield group
+                group = [x]
+            }
+        }
+
+        yield group
+    }
+
+    groupsdf(f = id) {
         if not let Some(x) = @__next__() {
             return [].__iter__()
         }
@@ -2069,7 +2111,7 @@ class Sync {
         }
     }
 
-    static lock(x) {
+    static lock(x, y) {
         x.mtx.lock()
     }
 
@@ -3117,10 +3159,12 @@ macro __d! {
 }
 
 operator **   10 right
-operator <<   7  left
-operator >>   7  left
-operator ^    5  left
 operator :>   5  left
 operator !::  3  left
 operator *>   2  left
 operator .    2  left
+
+fn rand() -> Float;
+fn rand(n: Int) -> Int;
+fn print(*args, sep: String = ', ' end: String = '\n', flush: Bool = false) -> Int;
+fn int(x) -> Int;
