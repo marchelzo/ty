@@ -7251,8 +7251,10 @@ static void
 RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
 {
         int ipi = vN(f->params);
+        Expr *func = state.func;
 
         f->scope = scope_new(ty, f->name == NULL ? "(anon)" : f->name, scope, true);
+        state.func = f;
 
         if (vN(f->type_params) > 0) {
                 for (size_t i = 0; i < vN(f->type_params); ++i) {
@@ -7305,6 +7307,8 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         symbolize_expression(ty, f->scope, f->return_type);
 
         f->_type = type_function(ty, f);
+
+        state.func = func;
 }
 
 static void
