@@ -7401,4 +7401,43 @@ vm_local(Ty *ty, int i)
         return local(ty, i);
 }
 
+Value *
+vm_load(Ty *ty, Symbol const *var)
+{
+        Scope *scope = (vN(FRAMES) > 0)
+                     ? expr_of(&vvL(FRAMES)->f)->scope
+                     : TyCompilerState(ty)->global;
+
+        bool is_local = !var->global
+                     && !var->type_var
+                     && (var->scope->function == scope->function);
+
+        Value *v;
+
+        xprint_stack(ty, 8);
+
+        if (false && var->type_var) {
+                push(TYPE(var->type));
+                v = top();
+                pop();
+        } else if (var->global) {
+                v = v_(Globals, var->i);
+        } else if (is_local && !var->captured) {
+                v = local(ty, var->i);
+        } else if (!is_local && var->captured) {
+                int i = 0;
+                while (scope->function->captured.items[i] != var) {
+                        i += 1;
+                }
+                v = vvL(FRAMES)->f.env[i];
+        } else {
+                v = local(ty, var->i);
+                if (v->type == VALUE_REF) {
+                        v = (Value *)v->ptr;
+                }
+        }
+
+        return v;
+}
+
 /* vim: set sts=8 sw=8 expandtab: */

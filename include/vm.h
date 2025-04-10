@@ -106,6 +106,9 @@ vm_get_frames(Ty *ty);
 Value *
 vm_local(Ty *ty, int i);
 
+Value *
+vm_load(Ty *ty, Symbol const *var);
+
 Value
 GetMember(Ty *ty, Value v, int i, bool b);
 

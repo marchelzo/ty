@@ -7,6 +7,8 @@
 #include "operators.h"
 #include "value.h"
 
+enum { CHECK_BIND, CHECK_NOBIND, CHECK_RUNTIME };
+
 #undef NIL
 
 #define ANY TYPE_ANY
@@ -36,7 +38,7 @@ static Type *
 ResolveAlias(Ty *ty, Type *t0);
 
 bool
-type_check_x(Ty *ty, Type *t0, Type *t1, bool bind);
+type_check_x(Ty *ty, Type *t0, Type *t1, int mode);
 
 Value *
 vm_local(Ty *ty, int i);
@@ -103,7 +105,10 @@ AddParam(Ty *ty, Type *t0)
         Symbol *var;
 
         snprintf(b, sizeof b, "$%d", (int)vN(t0->params));
-        var = NewTypeVar(ty, sclonea(ty, b));
+        //var = NewTypeVar(ty, sclonea(ty, b));
+        var = scope_add(ty, TyCompilerState(ty)->func->scope, sclonea(ty, b));
+        var->type_var = true;
+        var->type = type_variable(ty, var);
 
         avP(t0->params, var);
 
@@ -117,7 +122,10 @@ AddScopedParam(Ty *ty, Type *t0)
         Symbol *var;
 
         snprintf(b, sizeof b, "$%d", (int)vN(t0->params));
-        var = NewScopedTypeVar(ty, FunTypeScope(ty), sclonea(ty, b));
+        var = scope_add(ty, TyCompilerState(ty)->func->scope, sclonea(ty, b));
+        var->type_var = true;
+        var->type = type_variable(ty, var);
+        //var = NewScopedTypeVar(ty, FunTypeScope(ty), sclonea(ty, b));
 
         avP(t0->params, var);
 
@@ -1090,7 +1098,7 @@ CheckCall(Ty *ty, expression_vector const *args, Type *t0)
                 for (int i = 0; i < vN(t0->fun_params); ++i) {
                         t1 = v_(t0->fun_params, i)->type;
                         t2 = (vN(*args) > i) ? v__(*args, i)->_type : NIL_TYPE;
-                        if (!type_check_x(ty, t1, t2, false)) {
+                        if (!type_check_x(ty, t1, t2, CHECK_NOBIND)) {
                                 return false;
                         }
                 }
@@ -1614,7 +1622,7 @@ type_subscript(Ty *ty, Expr const *e)
 }
 
 static bool
-check_entry(Ty *ty, Type *t0, int i, Type *t1, bool bind)
+check_entry(Ty *ty, Type *t0, int i, Type *t1, int mode)
 {
         if (NullOrAny(t0)) {
                 return false;
@@ -1623,7 +1631,7 @@ check_entry(Ty *ty, Type *t0, int i, Type *t1, bool bind)
         switch (t0->type) {
         case TYPE_UNION:
                 for (int ii = 0; ii < vN(t0->types); ++ii) {
-                        if (!check_entry(ty, v__(t0->types, ii), i, t1, bind)) {
+                        if (!check_entry(ty, v__(t0->types, ii), i, t1, mode)) {
                                 return false;
                         }
                 }
@@ -1631,14 +1639,14 @@ check_entry(Ty *ty, Type *t0, int i, Type *t1, bool bind)
 
         case TYPE_TUPLE:
                 return vN(t0->types) > i
-                    && type_check_x(ty, v__(t0->types, i), t1, bind);
+                    && type_check_x(ty, v__(t0->types, i), t1, mode);
         }
 
         return false;
 }
 
 static bool
-check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool bind)
+check_field(Ty *ty, Type *t0, char const *name, Type *t1, int mode)
 {
         if (NullOrAny(t0)) {
                 return false;
@@ -1649,7 +1657,7 @@ check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool bind)
         switch (t0->type) {
         case TYPE_UNION:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        if (!check_field(ty, v__(t0->types, i), name, t1, bind)) {
+                        if (!check_field(ty, v__(t0->types, i), name, t1, mode)) {
                                 return false;
                         }
                 }
@@ -1666,7 +1674,7 @@ check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool bind)
                                   && strcmp(e_name, name) == 0
                                 )
                         ) {
-                                return type_check_x(ty, v__(t0->types, i), t1, bind);
+                                return type_check_x(ty, v__(t0->types, i), t1, mode);
                         }
                 }
                 return false;
@@ -1682,7 +1690,7 @@ check_field(Ty *ty, Type *t0, char const *name, Type *t1, bool bind)
                                       : ((Expr *)field->ptr)->_type
                                 ),
                                 t1,
-                                bind
+                                mode
                         );
                 }
         }
@@ -1695,7 +1703,7 @@ static int d = 0;
 #define print(...) 0
 
 bool
-type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
+type_check_x_(Ty *ty, Type *t0, Type *t1, int mode)
 {
         if (NullOrAny(t0) || t0 == t1) {
                 return true;
@@ -1718,7 +1726,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
                 if (var != NULL) {
                         Type *t0_ = (var == NULL) ? NULL : var->type;
                         if (t0_ == NULL || t0_ == t0->var->type || t0_ == t0) {
-                                if (!bind) {
+                                if (mode == CHECK_NOBIND) {
                                         return true;
                                 }
                                 Symbol *var = scope_insert(ty, ty->tscope, t0->var);
@@ -1743,18 +1751,50 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
                                         return false;
                                 }
                         }
-                        return type_check_x(ty, t0_, t1, bind);
+                        return type_check_x(ty, t0_, t1, mode);
+                } else if (mode == CHECK_RUNTIME) {
+                        var = scope_insert(ty, ty->tscope, t0->var);
+                        var->type = t1;
+                        return true;
+                        //Value *var = vm_load(ty, t0->var);
+                        //printf("Load %s (%p): %s\n", t0->var->identifier, (void *)t0->var, VSC(var));
+                        //printf("  t0: %s\n", type_show(ty, t0));
+                        //printf("  t1: %s\n", type_show(ty, t1));
+                        //if (var->type == VALUE_NIL || (Type *)var->ptr == t0) {
+                        //        *var = TYPE(t1);
+                        //        dont_printf("After store: %s\n", VSC(var));
+                        //        return true;
+                        //} else {
+                        //        return type_check_x(ty, var->ptr, t1, CHECK_RUNTIME);
+                        //}
                 }
         }
 
         if (t1->type == TYPE_VARIABLE) {
                 Symbol *var = scope_find_symbol(ty->tscope, t1->var);
                 if (var == NULL) {
-                        return false;
+                        if (mode == CHECK_RUNTIME) {
+                                var = scope_insert(ty, ty->tscope, t1->var);
+                                var->type = t0;
+                                return true;
+                                //Value *var = vm_load(ty, t1->var);
+                                //printf("Load %s (%p): %s\n", t1->var->identifier, (void *)t1->var, VSC(var));
+                                //printf("  t0: %s\n", type_show(ty, t0));
+                                //printf("  t1: %s\n", type_show(ty, t1));
+                                //if (var->type == VALUE_NIL || (Type *)var->ptr == t1) {
+                                //        *var = TYPE(t0);
+                                //        dont_printf("After store: %s\n", VSC(var));
+                                //        return true;
+                                //} else {
+                                //        return type_check_x(ty, t0, var->ptr, CHECK_RUNTIME);
+                                //}
+                        } else {
+                                return false;
+                        }
                 }
                 Type *t1_ = (var == NULL) ? NULL : var->type;
                 if (t1_ == NULL || t1_ == t1->var->type || t1_ == t1) {
-                        if (!bind) {
+                        if (mode == CHECK_NOBIND) {
                                 return true;
                         }
                         Symbol *var = scope_insert(ty, ty->tscope, t1->var);
@@ -1779,12 +1819,12 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
                                 return false;
                         }
                 }
-                return type_check_x(ty, t1_, t0, bind);
+                return type_check_x(ty, t1_, t0, mode);
         }
 
         if (t0->type == TYPE_UNION && t1->type == TYPE_UNION) {
                 for (int i = 0; i < vN(t1->types); ++i) {
-                        if (!type_check_x(ty, t0, v__(t1->types, i), bind)) {
+                        if (!type_check_x(ty, t0, v__(t1->types, i), mode)) {
                                 return false;
                         }
                 }
@@ -1797,7 +1837,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
 
         if (t0->type == TYPE_UNION) {
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        if (type_check_x(ty, v__(t0->types, i), t1, bind)) {
+                        if (type_check_x(ty, v__(t0->types, i), t1, mode)) {
                                 return true;
                         }
                 }
@@ -1806,7 +1846,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
 
         if (t1->type == TYPE_UNION) {
                 for (int i = 0; i < vN(t1->types); ++i) {
-                        if (!type_check_x(ty, t0, v__(t1->types, i), bind)) {
+                        if (!type_check_x(ty, t0, v__(t1->types, i), mode)) {
                                 return false;
                         }
                 }
@@ -1833,7 +1873,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
                                         ty,
                                         v__(t0->args, i),
                                         TypeArg(t1, i),
-                                        bind
+                                        mode
                                 )
                         ) {
                                 return false;
@@ -1847,8 +1887,8 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
                         char const *name = v__(t1->names, i);
                         if (
                                 name == NULL
-                              ? !check_entry(ty, t0, i, v__(t1->types, i), bind)
-                              : !check_field(ty, t0, name, v__(t1->types, i), bind)
+                              ? !check_entry(ty, t0, i, v__(t1->types, i), mode)
+                              : !check_field(ty, t0, name, v__(t1->types, i), mode)
                         ) {
                                 return false;
                         }
@@ -1864,24 +1904,24 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, bool bind)
                         Type *a1 = (vN(t1->fun_params) > i)
                                  ? v_(t1->fun_params, i)->type
                                  : NIL_TYPE;
-                        if (!type_check_x(ty, a1, a0, bind)) {
+                        if (!type_check_x(ty, a1, a0, mode)) {
                                 return false;
                         }
                 }
-                return type_check_x(ty, t0->rt, t1->rt, bind);
+                return type_check_x(ty, t0->rt, t1->rt, mode);
         }
 
         return false;
 }
 
-bool type_check_x(Ty *ty, Type *t0, Type *t1, bool bind)
+bool type_check_x(Ty *ty, Type *t0, Type *t1, int mode)
 {
         static int d = 0;
         dont_printf("%*stype_check():\n", 4*d, "");
         dont_printf("%*s    %s\n", 4*d, "", type_show(ty, t0));
         dont_printf("%*s    %s\n", 4*d, "", type_show(ty, t1));
         d += 1;
-        bool b = type_check_x_(ty, t0, t1, bind);
+        bool b = type_check_x_(ty, t0, t1, mode);
         d -= 1;
         dont_printf("%*s => %s\n", 4*d, "", b ? "true" : "false");
         return b;
@@ -1893,7 +1933,7 @@ type_check(Ty *ty, Type *t0, Type *t1)
 {
         d += 1;
         //ty->tscope = scope_new(ty, "", ty->tscope, true);
-        bool b = type_check_x(ty, t0, t1, true);
+        bool b = type_check_x(ty, t0, t1, CHECK_BIND);
         //ty->tscope = ty->tscope->parent;
         d -= 1;
         return b;
@@ -2816,7 +2856,7 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
         }
 
         if (v->type == VALUE_NIL) {
-                return type_check_x(ty, t0, NIL_TYPE, false);
+                return type_check_x(ty, t0, NIL_TYPE, CHECK_NOBIND);
         }
 
         switch (t0->type) {
@@ -2855,6 +2895,12 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
                         }
                 }
                 return true;
+
+        case TYPE_FUNCTION:
+                if (v->type == VALUE_FUNCTION) {
+                        return type_check_x(ty, t0, type_of(v), CHECK_RUNTIME);
+                }
+                break;
 
         case TYPE_TUPLE:
                 if (v->type == VALUE_TUPLE) {
