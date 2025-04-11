@@ -3676,7 +3676,7 @@ BUILTIN_FUNCTION(thread_getname)
         NOT_ON_WINDOWS("thread.getName()");
 #else
         pthread_t thread;
-        if (argc == 1) {
+        if (argc == 1 && ARG(0).type != VALUE_NIL) {
                 thread = ARGx(0, VALUE_THREAD).thread->t;
         } else {
                 thread = pthread_self();
