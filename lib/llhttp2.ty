@@ -2,7 +2,11 @@ import ffi as c
 import cutil (wrap)
 import os
 
+#|if __apple__
+let libName = 'libllhttp.dylib'
+#|else
 let libName = 'libllhttp.so'
+#|]
 
 let TY_NO_DBG = true
 
