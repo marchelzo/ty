@@ -2267,8 +2267,12 @@ class Thread {
         @handle = thread.create(*args, **kwargs)
     }
 
+    static getName(t) {
+        thread.getName(t)
+    }
+
     getName() {
-        thread.getName()
+        thread.getName(@handle)
     }
 
     setName(s) {
@@ -2287,8 +2291,12 @@ class Thread {
         thread.detach(@handle)
     }
 
-    id(t) {
-        thread.id(t)
+    static id() {
+        thread.id()
+    }
+
+    id() {
+        thread.id(@handle)
     }
 }
 
