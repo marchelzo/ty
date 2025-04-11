@@ -1,8 +1,6 @@
 import gumbo
 
-export parse, HtmlText
-
-function parse(s) {
+pub fn parse(s) {
     if not let $d = gumbo::parse(s).root {
         return nil
     }
