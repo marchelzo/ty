@@ -3613,11 +3613,28 @@ BUILTIN_FUNCTION(thread_kill)
 
 BUILTIN_FUNCTION(thread_setname)
 {
-        ASSERT_ARGC("thread.setName()", 1);
+        char *_name__ = "thread.setName()";
+
+#if defined(__APPLE__)
+        CHECK_ARGC(1);
+#else
+        CHECK_ARGC(1, 2);
+#endif
+
 #ifdef _WIN32
         NOT_ON_WINDOWS("thread.setName()");
 #else
-        struct value name = ARG(0);
+        TyThread thread;
+        Value name;
+
+        if (argc == 1 || ARG(0).type == VALUE_NIL) {
+                thread = TyThreadSelf();
+                name = ARGx(0, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        } else {
+                thread = ARGx(0, VALUE_THREAD).thread->t;
+                name = ARGx(1, VALUE_STRING, VALUE_BLOB, VALUE_PTR);
+        }
+
         char const *pname;
         int n;
 
@@ -3644,7 +3661,7 @@ BUILTIN_FUNCTION(thread_setname)
 #ifdef __APPLE__
         pthread_setname_np(pname);
 #elif __linux__
-        pthread_setname_np(pthread_self(), pname);
+        pthread_setname_np(thread, pname);
 #endif
         return NIL;
 #endif
@@ -3652,11 +3669,19 @@ BUILTIN_FUNCTION(thread_setname)
 
 BUILTIN_FUNCTION(thread_getname)
 {
-        ASSERT_ARGC("thread.getName()", 0);
+        char *_name__ = "thread.getName()";
 
+        CHECK_ARGC(0, 1);
 #ifdef _WIN32
         NOT_ON_WINDOWS("thread.getName()");
 #else
+        pthread_t thread;
+        if (argc == 1) {
+                thread = ARGx(0, VALUE_THREAD).thread->t;
+        } else {
+                thread = pthread_self();
+        }
+
         int r = pthread_getname_np(pthread_self(), buffer, sizeof buffer);
         if (r != 0) {
                 return NIL;
@@ -3674,6 +3699,8 @@ BUILTIN_FUNCTION(thread_id)
                 return INTEGER(MyThreadId(ty));
         } else if (ARG(0).type == VALUE_PTR) {
                 return INTEGER(((Thread *)ARG(0).ptr)->i);
+        } else if (ARG(0).type == VALUE_THREAD) {
+                return INTEGER(ARG(0).thread->i);
         } else {
                 zP("thread.id(): expected thread pointer but got: %s", VSC(&ARG(0)));
         }
