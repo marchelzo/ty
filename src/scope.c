@@ -29,9 +29,11 @@ scope_name(Ty *ty, Scope const *s)
         for (int i = stack.count - 1; i >= 0; --i) {
                 s = stack.items[i];
                 int n = strlen(s->name) + (i != 0);
-                if (n > remaining)
+                if (n + 3 > remaining)
                         break;
+                if (s->function == s) { strcat(b, "#"); }
                 strcat(b, s->name);
+                if (s->function == s) { strcat(b, "#"); }
                 strcat(b, "." + (i == 0));
                 remaining -= n;
         }

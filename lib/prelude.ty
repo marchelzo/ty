@@ -419,6 +419,9 @@ class String : Iterable {
         return ::str(x)
     }
 
+    upper() -> String;
+    lower() -> String;
+
     int { ::int(self) }
 
     matches() -> Array[String | RegexMatch];
