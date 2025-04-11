@@ -3018,15 +3018,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 state.func = e;
                 type_scope_push(ty, true);
 
-                if (e->name != NULL) {
-                        scope = scope_new(ty, "(function name)", scope, false);
-                        e->function_symbol = is_method(e) ? NULL : addsymbol(ty, scope, e->name);
-                        LOG("== SYMBOLIZING %s ==", e->name);
-                } else {
-                        LOG("== SYMBOLIZING %s ==", "(anon)");
-                        e->function_symbol = NULL;
-                }
-
                 // TODO
                 bool required = true;
 
@@ -3837,8 +3828,6 @@ emit_load(Ty *ty, Symbol const *s, Scope const *scope)
 inline static void
 emit_tgt(Ty *ty, Symbol *s, Scope const *scope, bool def)
 {
-        LOG("emit_tgt(%s, def=%d)", s->identifier, def);
-
         bool local = !s->global && (s->scope->function == scope->function);
 
         if (s->global) {
@@ -7253,7 +7242,15 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         int ipi = vN(f->params);
         Expr *func = state.func;
 
+        if (f->name != NULL) {
+                scope = scope_new(ty, "(function name)", scope, false);
+                f->function_symbol = is_method(f)
+                                   ? NULL
+                                   : addsymbol(ty, scope, f->name);
+        }
+
         f->scope = scope_new(ty, f->name == NULL ? "(anon)" : f->name, scope, true);
+
         state.func = f;
 
         if (vN(f->type_params) > 0) {
@@ -7305,8 +7302,8 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         }
 
         symbolize_expression(ty, f->scope, f->return_type);
-
         f->_type = type_function(ty, f);
+        ResolveConstraint(ty, f->return_type);
 
         state.func = func;
 }
