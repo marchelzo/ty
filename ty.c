@@ -137,14 +137,13 @@ execln(Ty *ty, char *line)
                 add_history(line);
         }
 
-        if (line[0] == ':') {
-                if (line[1] == '!') {
-                        system(line + 2) || 0;
-                } else if (!vm_execute_file(ty, line + 1)) {
-                        fprintf(stderr, "%s\n", TyError(ty));
-                        good = false;
+        if (strncmp(line, ":!", 2) == 0) {
+                (void)system(line + 2);
+        } else if (strncmp(line, ":s ", 3) == 0) {
+                dump(&buffer, "%s", line + 3);
+                if (!vm_execute_file(ty, v_(buffer, 1))) {
+                        goto Bad;
                 }
-                goto End;
         } else if (strncmp(line, "help ", 5) == 0) {
                 dump(&buffer, "help(%s);", line + 5);
                 if (repl_exec(ty, v_(buffer, 1)))
@@ -166,6 +165,19 @@ execln(Ty *ty, char *line)
                 }
 
                 goto End;
+        } else if (strncmp(line, ":t ", 3) == 0) {
+                dump(&buffer, "%s", line + 3);
+                Stmt **prog = parse(ty, v_(buffer, 1), "(repl)");
+                if (prog == NULL || prog[0] == NULL) {
+                        goto Bad;
+                }
+                Expr expr = { .type = EXPRESSION_STATEMENT, .statement = prog[0] };
+                if (compiler_symbolize_expression(ty, &expr, NULL)) {
+                        printf("%s\n", type_show(ty, prog[0]->_type));
+                        goto End;
+                } else {
+                        goto Bad;
+                }
         } else if (strncmp(line, "b ", 2) == 0) {
                 dump(&buffer, "%s", line + 2);
 

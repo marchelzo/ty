@@ -45,7 +45,8 @@ enum {
         CLASS_SHARED_QUEUE,
         CLASS_RANGE,
         CLASS_INC_RANGE,
-        CLASS_BUILTIN_END
+        CLASS_BUILTIN_END,
+        CLASS_BOTTOM = INT_MAX
 };
 
 #define TY_AST_NODES            \

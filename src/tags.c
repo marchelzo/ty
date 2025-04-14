@@ -56,7 +56,13 @@ tags_init(Ty *ty)
 int
 tags_set_class(Ty *ty, int tag, Class *c)
 {
-        *v_(classes, tag) = c;
+        *v_(classes, tag - 1) = c;
+}
+
+Class *
+tags_get_class(Ty *ty, int tag)
+{
+        return v__(classes, tag - 1);
 }
 
 int
