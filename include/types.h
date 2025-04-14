@@ -4,17 +4,18 @@
 #include "ty.h"
 #include "value.h"
 #include "scope.h"
+#include "itable.h"
 
 typedef struct symbol     Symbol;
 typedef struct expression Expr;
 typedef struct class      Class;
 typedef struct type       Type;
 typedef struct constraint Constraint;
-typedef vec(Constraint)   ConstraintVector;
 
 struct constraint {
         enum {
-                TC_2OP
+                TC_2OP,
+                TC_EQ
         } type;
         union {
                 struct {
@@ -39,6 +40,8 @@ struct type {
                 TYPE_INTEGER,
                 TYPE_INTERSECT,
                 TYPE_NIL,
+                TYPE_NONE,
+                TYPE_BOTTOM,
                 TYPE_TYPE,
                 TYPE_ALIAS
         } type;
@@ -57,6 +60,9 @@ struct type {
                                 };
                                 Expr *aliased;
                                 struct {
+                                        int id;
+                                        int level;
+                                        Type *val;
                                         Symbol *var;
                                         bool mark;
                                 };
@@ -73,7 +79,16 @@ struct type {
         };
 };
 
-#define PARAM(v, t0) ((Param){ .var = (v), .type = (t0) })
+struct type_env {
+        TypeEnv *parent;
+        struct itable vars;
+        int level;
+};
+
+
+#define PARAM(v, t0, req) ((Param){ .var = (v), .type = (t0), .required = (req) })
+#define PARAMx(...) ((Param){ __VA_ARGS__ })
+
 
 extern Type *TYPE_INT;
 extern Type *TYPE_FLOAT;
@@ -83,6 +98,8 @@ extern Type *TYPE_BLOB;
 extern Type *TYPE_ARRAY;
 extern Type *TYPE_DICT;
 extern Type *NIL_TYPE;
+extern Type *NONE_TYPE;
+extern Type *BOTTOM_TYPE;
 extern Type *TYPE_ANY;
 extern Type *TYPE_CLASS_;
 
@@ -144,16 +161,31 @@ void
 unify(Ty *ty, Type **t0, Type *t1);
 
 void
+unify2(Ty *ty, Type **t0, Type *t1);
+
+void
 type_intersect(Ty *ty, Type **t0, Type *t1);
+
+void
+type_subtract(Ty *ty, Type **t0, Type *t1);
 
 Type *
 type_resolve(Ty *ty, Expr const *e);
 
 void
-type_assign(Ty *ty, Expr *e, Type *t0);
+type_assign(Ty *ty, Expr *e, Type *t0, bool fixed);
 
 Type *
 type_fixed(Ty *ty, Type *t0);
+
+Type *
+type_unfixed(Ty *ty, Type *t0);
+
+Type *
+type_tagged(Ty *ty, int tag, Type *t0);
+
+Type *
+type_generator(Ty *ty, Expr const *e);
 
 char *
 type_show(Ty *ty, Type *t0);
@@ -181,6 +213,9 @@ type_function_fixup(Ty *ty, Type *t0);
 
 bool
 TypeCheck(Ty *ty, Type *t0, Value const *v);
+
+void
+types_init(Ty *ty);
 
 #endif
 

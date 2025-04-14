@@ -2267,7 +2267,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
         case VALUE_CLASS:
                 if (v.class < CLASS_PRIMITIVE && v.class != CLASS_OBJECT) {
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
-
                         if (LIKELY(vp != NULL)) {
                                 call(ty, vp, NULL, n, nkw, true);
                         } else {
@@ -2275,6 +2274,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                         }
                 } else {
                         value = OBJECT(object_new(ty, v.class), v.class);
+                        value.t0 = alloc0(sizeof (Type *) * vN(class_get_class(ty, v.class)->type->params));
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
                         if (vp != NULL) {
                                 gP(&value);
@@ -4557,6 +4557,12 @@ Yield:
                 CASE(TYPE)
                         READVALUE(s);
                         push(TYPE((Type *)s));
+                        break;
+                CASE(ASSIGN_TYPE)
+                        READVALUE(s);
+                        if (top()->type == VALUE_OBJECT) {
+                                top()->t0 = (Type *)s;
+                        }
                         break;
                 CASE(VALUE)
                         READVALUE(s);
@@ -6854,6 +6860,7 @@ StepInstruction(char const *ip)
         CASE(MAKE_GENERATOR)
                 break;
         CASE(TYPE)
+        CASE(ASSIGN_TYPE)
                 SKIPVALUE(s);
                 break;
         CASE(VALUE)
@@ -7398,6 +7405,7 @@ CompleteCurrentFunction(Ty *ty)
 Value *
 vm_local(Ty *ty, int i)
 {
+        xprint_stack(ty, 10);
         return local(ty, i);
 }
 

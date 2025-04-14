@@ -28,6 +28,7 @@ typedef struct symbol {
         bool global;
         bool namespace;
         bool type_var;
+        bool fixed;
         int i;
         int ci;
 

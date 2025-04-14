@@ -1744,9 +1744,9 @@ prefix_identifier(Ty *ty)
                 SAVE_TC(false);
                 e->type = EXPRESSION_TYPEOF;
                 e->operand = parse_expr(ty, 0);
-                e->end = End;
                 LOAD_TC();
                 consume(')');
+                e->end = End;
                 return e;
         }
 
@@ -3910,7 +3910,7 @@ infix_subscript(Ty *ty, Expr *left)
         if (T0 == ';') {
                 i = NULL;
         } else {
-                i = parse_expr(ty, 0);
+                i = parse_expr(ty, -1);
         }
 
         if (T0 == ']' && i != NULL) {

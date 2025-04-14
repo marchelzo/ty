@@ -26,6 +26,12 @@ typedef struct symbol     Symbol;
 typedef struct scope      Scope;
 typedef struct frame      Frame;
 typedef struct target     Target;
+typedef struct type       Type;
+typedef struct constraint Constraint;
+typedef struct type_env   TypeEnv;
+
+typedef uint64_t u64;
+typedef uint32_t u32;
 
 typedef vec(int)            int_vector;
 typedef vec(char)           byte_vector;
@@ -42,6 +48,9 @@ typedef vec(Frame)          FrameStack;
 typedef vec(Target)         TargetStack;
 typedef vec(struct alloc *) AllocList;
 typedef vec(Symbol *)       symbol_vector;
+typedef vec(Type *)         TypeVector;
+typedef vec(Constraint)     ConstraintVector;
+typedef vec(u32)            U32Vector;
 
 typedef struct array {
         Value *items;
@@ -165,6 +174,7 @@ struct value {
                 struct {
                         int class;
                         struct itable *object;
+                        Type **t0;
                 };
                 struct {
                         int uop;
@@ -341,6 +351,9 @@ typedef struct type Type;
 struct param {
         Symbol *var;
         Type *type;
+        bool required;
+        bool rest;
+        bool kws;
 };
 
 typedef vec(Param) ParamVector;
@@ -407,6 +420,8 @@ typedef struct ty {
         byte_vector err;
 
         Scope *tscope;
+        TypeEnv *tenv;
+        vec(ConstraintVector) tcons;
 
         TY *ty;
         TDB *tdb;
@@ -665,6 +680,7 @@ extern bool ColorProfile;
         X(CMP),                   \
         X(CHECK_MATCH),           \
         X(TYPE),                  \
+        X(ASSIGN_TYPE),           \
         X(MUT_ADD),               \
         X(MUT_MUL),               \
         X(MUT_DIV),               \

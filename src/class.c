@@ -378,7 +378,7 @@ class_implement_trait(Ty *ty, int class, int trait)
 bool
 class_is_subclass(Ty *ty, int sub, int super)
 {
-        if (sub == super || super == CLASS_TOP)
+        if (sub == super || super == CLASS_TOP || sub == CLASS_BOTTOM)
                 return true;
 
         if (sub == CLASS_TOP)

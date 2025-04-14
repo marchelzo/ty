@@ -369,4 +369,7 @@ DumpProgram(
         bool incl_sub_fns
 );
 
+noreturn void
+CompileError(Ty *ty, char const *fmt, ...);
+
 #endif

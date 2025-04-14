@@ -14,7 +14,13 @@ int
 tags_new(Ty *ty, char const *);
 
 int
+tags_new(Ty *ty, char const *);
+
+int
 tags_set_class(Ty *ty, int tag, Class *c);
+
+Class *
+tags_get_class(Ty *ty, int tag);
 
 bool
 tags_same(Ty *ty, int t1, int t2);
