@@ -101,6 +101,7 @@ extern Type *TYPE_DICT;
 extern Type *NIL_TYPE;
 extern Type *NONE_TYPE;
 extern Type *BOTTOM_TYPE;
+extern Type *UNKNOWN_TYPE;
 extern Type *TYPE_ANY;
 extern Type *TYPE_CLASS_;
 
@@ -182,6 +183,9 @@ type_resolve(Ty *ty, Expr const *e);
 Type *
 type_inst(Ty *ty, Type const *t0);
 
+Type *
+type_drill(Ty *ty, Type const *t0);
+
 void
 type_assign(Ty *ty, Expr *e, Type *t0, bool fixed);
 
@@ -190,6 +194,9 @@ type_fixed(Ty *ty, Type *t0);
 
 Type *
 type_unfixed(Ty *ty, Type *t0);
+
+Type *
+type_really_unfixed(Ty *ty, Type *t0);
 
 Type *
 type_tagged(Ty *ty, int tag, Type *t0);

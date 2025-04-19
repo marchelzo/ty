@@ -7,6 +7,6 @@ f(10, 'foo')
 try {
     __eval__('f(10, 20)')
     print('FAIL')
-} catch Err(msg) :: 'constraint on s violated in call to f: s = 20' in msg {
+} catch Err(msg) :: 'where String is expected' in msg {
     print('PASS')
 }

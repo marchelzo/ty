@@ -21,12 +21,14 @@ typedef struct expression Expr;
 typedef struct statement Stmt;
 
 typedef Expr *ExprTransform(Expr *, Scope *, void *);
+typedef Expr *TypeTransform(Expr *, Scope *, void *);
 typedef Expr *PatternTransform(Expr *, Scope *, void *);
 typedef Expr *LValueTransform(Expr *, bool, Scope *, void *);
 typedef Stmt *StmtTransform(Stmt *, Scope *, void *);
 
 typedef struct {
         ExprTransform    *e_pre, *e_post;
+        TypeTransform    *t_pre, *t_post;
         PatternTransform *p_pre, *p_post;
         LValueTransform  *l_pre, *l_post;
         StmtTransform    *s_pre, *s_post;
@@ -557,6 +559,9 @@ visit_lvalue(Ty *ty, Expr *e, Scope *, VisitorSet const *, bool);
 
 Expr *
 visit_expression(Ty *ty, Expr *e, Scope *, VisitorSet const *);
+
+Expr *
+visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks);
 
 VisitorSet
 visit_identitiy(Ty *ty);

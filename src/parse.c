@@ -1750,6 +1750,12 @@ prefix_identifier(Ty *ty)
                 return e;
         }
 
+        if (TypeContext && strcmp(e->identifier, "_") == 0) {
+                e->type = EXPRESSION_MATCH_ANY;
+                e->end = End;
+                return e;
+        }
+
         if (is_operator(e->identifier)) {
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = e->identifier;
