@@ -144,7 +144,9 @@ execln(Ty *ty, char *line)
                 (void)system(line + 2);
         } else if (strncmp(line, ":s ", 3) == 0) {
                 dump(&buffer, "%s", line + 3);
-                if (!vm_execute_file(ty, v_(buffer, 1))) {
+                if (vm_execute_file(ty, v_(buffer, 1))) {
+                        goto End;
+                } else {
                         goto Bad;
                 }
         } else if (strncmp(line, "help ", 5) == 0) {
