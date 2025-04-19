@@ -1,10 +1,11 @@
 import ffi as c
-import cutil
 
-let lib = c.dlopen('libsodium.so') ?? c.dlopen('libsodium.dylib')
+if not let $lib = c.dlopen('libsodium.so') ?? c.dlopen('libsodium.dylib') {
+    throw "failed to load libsodium"
+}
 
 function wrap(*args) {
-  cutil.wrap(lib, *args)
+  c.wrap(lib, *args)
 }
 
 let sodium_init = wrap('sodium_init', c.int)

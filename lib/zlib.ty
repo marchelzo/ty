@@ -1,5 +1,4 @@
-import ffi as c (C!)
-import cutil (..)
+import ffi as c (C!, struct!, wrap)
 
 let Z_OK            = 0
 let Z_STREAM_END    = 1
@@ -31,35 +30,35 @@ if not let $lib = for name in libraryNames {
   throw "Failed to load {libraryNames}"
 }
 
-struct! ZStream {
-    next_in: c.ptr,     /* next input byte */
-    avail_in: c.uint,  /* number of bytes available at next_in */
-    total_in: c.ulong,  /* total number of input bytes read so far */
+C! struct ZStream {
+    c.ptr next_in;     /* next input byte */
+    c.uint avail_in;  /* number of bytes available at next_in */
+    c.ulong total_in;  /* total number of input bytes read so far */
 
-    next_out: c.ptr, /* next output byte will go here */
-    avail_out: c.uint, /* remaining free space at next_out */
-    total_out: c.ulong, /* total number of bytes output so far */
+    c.ptr next_out; /* next output byte will go here */
+    c.uint avail_out; /* remaining free space at next_out */
+    c.ulong total_out; /* total number of bytes output so far */
 
-    msg: c.ptr,  /* last error message, NULL if no error */
-    state: c.ptr,
+    c.ptr msg;  /* last error message, NULL if no error */
+    c.ptr state;
 
-    zalloc: c.ptr, /* used to allocate the internal state */
-    zfree: c.ptr,  /* used to free the internal state */
-    opaque: c.ptr, /* private data object passed to zalloc and zfree */
+    c.ptr zalloc; /* used to allocate the internal state */
+    c.ptr zfree;  /* used to free the internal state */
+    c.ptr opaque; /* private data object passed to zalloc and zfree */
 
-    data_type: c.int,  /* best guess about the data type: binary or text
+    c.int data_type;  /* best guess about the data type: binary or text
                            for deflate, or the decoding state for inflate */
-    adler: c.ulong,      /* Adler-32 or CRC-32 value of the uncompressed data */
-    reserved: c.ulong,   /* reserved for future use */
+    c.ulong adler;      /* Adler-32 or CRC-32 value of the uncompressed data */
+    c.ulong reserved;   /* reserved for future use */
 }
 
 let cCompressBound = wrap(lib, 'compressBound', c.ulong, c.ulong)
 let cCompress = wrap(lib, 'compress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
 let cUncompress = wrap(lib, 'uncompress', c.int, c.ptr, c.ptr, c.ptr, c.ulong)
 
-cfun! lib c.int inflateInit2_(c.ptr, c.int, c.ptr, c.int)
-cfun! lib c.int inflate(c.ptr, c.int)
-cfun! lib c.int inflateEnd(c.ptr)
+C! lib fn inflateInit2_(c.ptr, c.int, c.ptr, c.int) -> c.int
+C! lib fn inflate(c.ptr, c.int) -> c.int
+C! lib fn inflateEnd(c.ptr) -> c.int
 
 C! lib function crc32(c.u32, c.ptr, c.u64) -> c.u32
 
@@ -80,7 +79,7 @@ pub function compress(s: String | Blob) {
   return compressed
 }
 
-pub function uncompress(s: String | Blob, maxSize) {
+pub function uncompress(s: String | Blob, maxSize = nil) {
   let size = 4096
   let $pSize = c.new(c.ulong, size)
   let $buffer = c.alloc(size)
@@ -118,8 +117,8 @@ pub function uncompress2(s: String | Blob, maxSize) {
 
   let zs = ZStream()
   inflateInit2_(zs.get(), MAX_WBITS + 32, "1.2.11", c.size(ZStream_C))
-  zs.next_in(s)
-  zs.avail_in(s.size())
+  zs.next_in = s
+  zs.avail_in = s.size()
 
   let blob = Blob()
   let obuf = c.alloc(CHUNK)
@@ -132,8 +131,8 @@ pub function uncompress2(s: String | Blob, maxSize) {
   let have = nil
 
   while have == nil || have == CHUNK {
-    zs.avail_out(CHUNK)
-    zs.next_out(obuf)
+    zs.avail_out = CHUNK
+    zs.next_out = obuf
 
     let r = inflate(zs.get(), Z_NO_FLUSH)
 
@@ -143,7 +142,7 @@ pub function uncompress2(s: String | Blob, maxSize) {
       },
 
       _ => {
-        have = CHUNK - zs.avail_out()
+        have = CHUNK - zs.avail_out
         blob.push(obuf, have)
       }
     }
@@ -153,7 +152,7 @@ pub function uncompress2(s: String | Blob, maxSize) {
 }
 
 pub crc32 = function (s: String | Blob) {
-    crc32(0, s, s.size())
+    crc32(0, s, s.size)
 }
 
 function test() {
@@ -162,5 +161,5 @@ function test() {
   let compressed = compress(data)
   let uncompressed = uncompress(compressed)
 
-  print(data.size(), compressed.size(), uncompressed.size())
+  print(data.size, compressed.size, uncompressed.size)
 }

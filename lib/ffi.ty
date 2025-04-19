@@ -18,7 +18,7 @@ function next!(t) {
     next()
 }
 
-pub function getCif(rt, *aTypes, nFixed) {
+pub function getCif(rt, *aTypes, nFixed=nil) {
     let signature = (rt, aTypes, nFixed)
 
     sync!(cifs) {
@@ -30,7 +30,7 @@ pub function getCif(rt, *aTypes, nFixed) {
     }
 }
 
-pub function wrap(lib, name, rType, *aTypes) {
+pub function wrap(lib, name, rType = nil, *aTypes) {
     if not let $fp = c.dlsym(name, lib) {
         throw Err("Failed to load symbol '{name}'")
     }
@@ -275,7 +275,7 @@ function fun() {
     // function
     next()
 
-    function mkfdef(name, rt, ps, proto-string, doc-string) {
+    function mkfdef(name, rt, ps, proto-string=nil, doc-string=nil) {
         let args = [
             ty.Arg(arg: lib),
             ty.Arg(arg: ty.String(prefix + name)),
@@ -407,7 +407,7 @@ function strct() {
 
         if peek().?id == 'union' {
             let types = []
-            let decls = []
+            let decls: [_] = []
             next() // union
             next!('{')
             while peek().type != '}' {
@@ -475,7 +475,7 @@ function strct() {
 
     let init = ty.Func(
         name: 'init',
-        params: [ty.Param(name: '<p>'), ty.Kwargs('kws')],
+        params: [ty.Param(name: '<p>', default: ty.Nil), ty.Kwargs('kws')],
         body: ty.Multi([
             $$[self.`<p>` = `<p>` ?? c.new($$ctype) $$],
             *[
@@ -517,7 +517,7 @@ function strct() {
     let getters = []
     let setters = []
 
-    function add-member(i, name, t, count, off=0) {
+    function add-member(i: ?Int, name, t, count, off=0) {
         if i == nil {
             i = #structArgs
 
@@ -773,7 +773,7 @@ pub macro struct! {
 
     let init = ty.Func(
         name: 'init',
-        params: [ty.Param(name: '<p>')],
+        params: [ty.Param(name: '<p>', default: ty.Nil)],
         body: ty.Assign(
             ty.MemberAccess(ty.Id(name: 'self'), '<p>'),
             ty.Wtf(

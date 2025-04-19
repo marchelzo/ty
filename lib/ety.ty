@@ -54,7 +54,7 @@ pub function eval(s, env) {
     let b = Blob()
     let _ety_push = b.push
 
-    __eval__("{preamble};{s}")
+    __eval__("do \{{preamble};{s}\}")
 
     b.str()
 }

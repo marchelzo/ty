@@ -9,6 +9,13 @@ import ty.parse as parse
 import ty.token as lex
 import os
 
+fn rand() -> Float;
+fn rand(n: Int) -> Int;
+fn print(*args, sep: String = ', ', end: String = '\n', flush: Bool = false) -> Int;
+fn int(x) -> Int;
+fn min[a](x: a, y: a) -> a;
+fn max[a](x: a, y: a) -> a;
+
 class Object {
     init(%props) {
         for k, v in props {
@@ -150,7 +157,7 @@ class Function : Iter {
     }
 }
 
-class Array[T] : Iterable {
+class Array[T] : Iterable[T] {
     init(*xs) {
         xs
     }
@@ -172,7 +179,7 @@ class Array[T] : Iterable {
 
     shape() {
         let s = []
-        let x = self
+        let x: Array = self
         while x :: Array {
             s.push(#x)
             x = x[0]
@@ -322,15 +329,15 @@ class Array[T] : Iterable {
         for x in self { yield x }
     }
 
-    __subscript__(T) {
-        if self == Array {
-            return xs -> (xs :: Array) && xs.all?(x -> x :: T)
-        } else {
-            return self[T]
-        }
+    __it__() {
+        self
     }
 
-    __slice__(i=0, j, k=1) -> Array[T] {
+    static __subscript__(T) {
+        return xs -> (xs :: Array) && xs.all?(x -> x :: T)
+    }
+
+    __slice__(i: Int = 0, j: Int | nil = nil, k: Int = 1) -> Array[T] {
         let slice = []
 
         let wrap = match {
@@ -347,7 +354,7 @@ class Array[T] : Iterable {
                 }
             }
         } else {
-            let start = max(wrap(i), 0)
+            let start = ::max(wrap(i), 0)
             let stop = min(wrap(j ?? #self), #self)
             for let ix = start; ix < stop; ix += k {
                 if let Some(x) = self.get(ix) {
@@ -359,13 +366,13 @@ class Array[T] : Iterable {
         return slice
     }
 
-    get(i) {
+    get(i: Int) {
         let n = #self
         (i in -n..n) ? Some(self[i]) : None
     }
 }
 
-class Dict : Iterable {
+class Dict[K, V] : Iterable[K] {
     init(ks, vs) {
         if ks && vs {
             return %{ k: v for (k, v) in ks.zip(vs) }
@@ -414,7 +421,7 @@ class Dict : Iterable {
     }
 }
 
-class String : Iterable {
+class String : Iterable[String] {
     init(x) {
         return ::str(x)
     }
@@ -422,9 +429,13 @@ class String : Iterable {
     upper() -> String;
     lower() -> String;
 
+    comb(pattern: String | Regex) -> String;
+
     int { ::int(self) }
 
     matches() -> Array[String | RegexMatch];
+
+    repeat(n: Int) -> String;
 
     int(base: Int = 10) {
         return ::int(self, base)
@@ -459,7 +470,7 @@ class String : Iterable {
         self.bslice(i, j - i)
     }
 
-    __slice__(i=0, j=#self, k=1) -> String {
+    __slice__(i=0, j=#self, k: Int = 1) -> String {
         if k != 1 {
             throw 'not implemented'
         }
@@ -800,7 +811,7 @@ class Float {
     }
 }
 
-class Blob : Iterable {
+class Blob : Iterable[Int] {
     init(*args) {
         let b = blob()
 
@@ -828,6 +839,9 @@ class Blob : Iterable {
     base64() {
         base64.encode(self)
     }
+
+    //str(i: ?Int = 0, n: ?Int = #self) -> String;
+    str(i: Int, n: ?Int = #self) -> String;
 
     __iter__*() {
         for x in self {
@@ -858,7 +872,7 @@ class Regex < Function {
     }
 }
 
-class Generator : Iter {
+class Generator[T] : Iter[T] {
     init*(f) {
         while let Some(x) = f() {
             yield x
@@ -1042,9 +1056,9 @@ class RegexMatch {
     }
 }
 
-trait Iterable {
-    map(f) {
-        @__iter__().map(f)
+trait Iterable[T] {
+    map[U](f: T -> U) -> Generator[T] {
+        __iter__().map(f)
     }
 
     filter(f) {
@@ -1107,15 +1121,15 @@ trait Iterable {
         @__iter__().each(f)
     }
 
-    min(k) {
+    min(k=id) {
         @__iter__().min(k)
     }
 
-    max(k) {
+    max(k=id) {
         @__iter__().max(k)
     }
 
-    minmax(k) {
+    minmax(k=id) {
         @__iter__().minmax(k)
     }
 
@@ -1143,11 +1157,11 @@ trait Iterable {
         @__iter__().pad(n, x)
     }
 
-    zip(*its, longest) {
+    zip(*its, longest=false) {
         @__iter__().zip(*its, longest: longest)
     }
 
-    zipWith(f, *its, longest) {
+    zipWith(f, *its, longest=false) {
         @__iter__().zipWith(f, *its, longest: longest)
     }
 
@@ -1219,7 +1233,7 @@ trait Iterable {
         @__iter__().all?(pred)
     }
 
-    interleave(xs) {
+    interleave[U](xs: Iterable[U]) -> Iterable[T | U] {
         @__iter__().interleave(xs)
     }
 
@@ -1243,11 +1257,11 @@ trait Iterable {
         @__iter__().__subscript__(i)
     }
 
-    __iter__() -> Iter;
+    __iter__() -> Iter[T];
 }
 
-trait Iter[T] < Iterable {
-    __next__() -> T;
+trait Iter[T] < Iterable[T] {
+    __next__() -> Some[T] | None { None }
 
     map*(f) {
         for x in self {
@@ -1359,7 +1373,7 @@ trait Iter[T] < Iterable {
         unzipWith(*args, **kwargs, f=id, n=4)
     }
 
-    zipWith*(f, *its, longest) {
+    zipWith*(f, *its, longest=false) {
         its.map!(&__iter__)
         its.insert(0, self)
 
@@ -1381,7 +1395,7 @@ trait Iter[T] < Iterable {
         }
     }
 
-    zip(*its, longest = false) {
+    zip(*its, longest=false) {
         @zipWith(tuple, *its, longest: longest)
     }
 
@@ -1424,34 +1438,6 @@ trait Iter[T] < Iterable {
         }
 
         yield group
-    }
-
-    groupsdf(f = id) {
-        if not let Some(x) = @__next__() {
-            return [].__iter__()
-        }
-
-        let g = [x]
-
-        return Generator(function () {
-            while let Some(x) = @__next__() {
-                if f(x) == f(g[-1]) {
-                    g.push(x)
-                } else {
-                    let group = g
-                    g = [x]
-                    return Some(group)
-                }
-            }
-
-            if g {
-                let g_ = g
-                g = nil
-                return Some(g_)
-            } else {
-                None
-            }
-        })
     }
 
     classify(f = id) {
@@ -1520,8 +1506,8 @@ trait Iter[T] < Iterable {
         return n
     }
 
-    interleave*(ys, long=true) {
-        ys = ys.__iter__()
+    interleave*[U](ys: Iterable[U], long: Bool = true) -> Iterable[T | U] {
+        let ys = ys.__iter__()
         for x in self {
             yield x
             if let Some(y) = ys.__next__() {
@@ -1670,8 +1656,9 @@ trait Iter[T] < Iterable {
         return (min, max)
     }
 
-    intersperse*(sep) {
-        let first = true;
+    intersperse*[U](sep: U) -> Generator[T | U] {
+        let first = true
+
         for x in self {
             if !first {
                 yield sep
@@ -1787,8 +1774,6 @@ trait Iter[T] < Iterable {
         }
     }
 
-    __next__() { None }
-
     __iter__() { self }
 }
 
@@ -1872,7 +1857,7 @@ class Queue : Iterable {
     }
 }
 
-class Range : Iterable {
+class Range : Iterable[Int] {
     a: Int
     b: Int
 
@@ -3129,11 +3114,11 @@ function .(f: Function, g: Function) {
 }
 
 function sink(file) match file {
-    nil => print@(*, **, :flush),
+    nil => print@(*, **, :flush)
 
     fd: Int => {
-        let file = stdio.fdopen(fd, 'a+b')
-        return print@(*, **, file=file, :flush)
+        let file = stdio::fdopen(fd, 'a+b')
+        print@(*, **, file=file, :flush)
     },
 
     file: String => {
@@ -3146,7 +3131,7 @@ function sink(file) match file {
 
         let file = stdio.fdopen(fd, 'w+b')
 
-        return print@(*, **, file=file, :flush)
+        print@(*, **, file=file, :flush)
     }
 }
 
@@ -3174,8 +3159,3 @@ operator :>   5  left
 operator !::  3  left
 operator *>   2  left
 operator .    2  left
-
-fn rand() -> Float;
-fn rand(n: Int) -> Int;
-fn print(*args, sep: String = ', ' end: String = '\n', flush: Bool = false) -> Int;
-fn int(x) -> Int;
