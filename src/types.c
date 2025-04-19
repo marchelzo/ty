@@ -925,7 +925,7 @@ IsCallable(Type *t0)
 {
         if (t0 == NULL) {
                 return true;
-        } 
+        }
 
         if (IsAny(t0)) {
                 return false;
@@ -1114,6 +1114,35 @@ Uniq(Ty *ty, Type *t0)
         return t1;
 }
 
+static Type *
+Either(Ty *ty, Type const *t0, Type const *t1)
+{
+        t0 = type_unfixed(ty, Resolve(ty, t0));
+        t1 = type_unfixed(ty, Resolve(ty, t1));
+
+        if (t0 == NULL) {
+                return (Type *)t1;
+        }
+
+        if (t1 == NULL) {
+                return (Type *)t0;
+        }
+
+        if (type_check(ty, (Type *)t0, (Type *)t1)) {
+                return (Type *)t0;
+        }
+
+        if (type_check(ty, (Type *)t1, (Type *)t0)) {
+                return (Type *)t1;
+        }
+
+        Type *t2 = NewType(ty, TYPE_UNION);
+        avP(t2->types, (Type *)t0);
+        avP(t2->types, (Type *)t1);
+
+        return t2;
+}
+
 static bool
 CollapseInts(Ty *ty, Type **t0)
 {
@@ -1219,7 +1248,7 @@ type_tag(Ty *ty, Class *class)
 {
         Type *t = NewType(ty, TYPE_TAG);
         t->class = class;
-        
+
         Type *t0 = NewVar(ty);
         t0->val = TVAR;
         avP(t->params3, t0->id);
@@ -1277,20 +1306,21 @@ type_function(Ty *ty, Expr const *e)
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
                 Symbol *psym = v__(e->param_symbols, i);
+                Type *p0;
                 if (psym->type == NULL) {
-                        if (i == e->rest) {
-                                psym->type = ArrayOf(ty, NULL);
-                        } else if (i == e->ikwargs) {
-                                psym->type = DictOf(ty, TYPE_STRING, NULL);
-                        } else {
-                                psym->type = AddScopedParam(ty, t);
-                        }
+                        psym->type = AddScopedParam(ty, t);
+                }
+                p0 = psym->type;
+                if (i == e->rest) {
+                        psym->type = ArrayOf(ty, p0);
+                } else if (i == e->ikwargs) {
+                        psym->type = DictOf(ty, TYPE_STRING, p0);
                 }
                 avP(
                         t->fun_params,
                         PARAMx(
                                 .var  = psym,
-                                .type = psym->type,
+                                .type = p0,
                                 .rest = (i == e->rest),
                                 .kws  = (i == e->ikwargs),
                                 .required = (
@@ -2239,10 +2269,85 @@ CheckCall(Ty *ty, expression_vector const *args, Type *t0)
         return true;
 }
 
+Type *
+PossibleArgTypes(Ty *ty, expression_vector const *args, int argi)
+{
+        Type *t0 = NULL;
+
+        for (int i = 0; i <= argi && i < vN(*args); ++i) {
+                Expr const *arg = v__(*args, i);
+                if (arg->type == EXPRESSION_SPREAD || i == argi) {
+                        t0 = Either(ty, t0, arg->_type);
+                }
+        }
+
+        return t0;
+}
+
 static Type *
-InferCall(Ty *ty, expression_vector const *args, Type *t0)
+FindArg(
+        int i,
+        char const *name,
+        expression_vector const *args,
+        expression_vector const *kwargs,
+        StringVector const *kws
+) {
+        if (name != NULL) {
+                for (int i = 0; i < vN(*kws); ++i) {
+                        if (strcmp(v__(*kws, i), name) == 0) {
+                                return v__(*kwargs, i)->_type;
+                        }
+                }
+        }
+
+        if (i != -1) {
+                return PossibleArgTypes(ty, args, i);
+        }
+
+        return NONE_TYPE;
+}
+
+static Param const *
+FindParam(
+        int argi,
+        char const *name,
+        ParamVector const *ps
+) {
+        if (name != NULL) {
+                for (int i = 0; i < vN(*ps); ++i) {
+                        Param const *p = v_(*ps, i);
+                        if (p->var != NULL && strcmp(p->var->identifier, name) == 0) {
+                                return p;
+                        }
+                }
+        }
+
+        for (int i = 0; i < vN(*ps); ++i) {
+                Param const *p = v_(*ps, i);
+                if (p->kws) {
+                        if (name != NULL) {
+                                return p;
+                        }
+                } else if (p->rest || i == argi) {
+                        return p;
+                }
+        }
+
+        return NULL;
+}
+
+static Type *
+InferCall(
+        Ty *ty,
+        expression_vector const *args,
+        expression_vector const *kwargs,
+        StringVector const *kws,
+        Type *t0
+)
 {
         Type *t1;
+        Type *spread0 = NULL;
+        bool gather = false;
 
         dont_printf("InferCall(%s)\n", ShowType(t0));
         for (int i = 0; i < vN(*args); ++i) {
@@ -2255,28 +2360,24 @@ InferCall(Ty *ty, expression_vector const *args, Type *t0)
 
         switch (t0->type) {
         case TYPE_FUNCTION:
-                for (int i = 0; i < vN(*args) && i < vN(t0->fun_params); ++i) {
+                for (int i = 0; i < vN(t0->fun_params); ++i) {
                         Param const *p = v_(t0->fun_params, i);
+                        gather |= p->rest;
                         if (p->rest || p->kws) {
-                                break;
+                                continue;
                         }
-                        Type *p0 = v_(t0->fun_params, i)->type;
-                        //Type *a0 = Inst1(ty, v__(*args, i)->_type);
-                        Type *a0 = v__(*args, i)->_type;
-                        UnifyX(ty, p0, a0, true, false);
-                        ApplyConstraints(ty);
-                        UnifyX(ty, a0, p0, false, true);
-                }
-                for (int i = vN(*args); i < vN(t0->fun_params); ++i) {
-                        Param const *p = v_(t0->fun_params, i);
-                        if (p->rest || p->kws) {
-                                break;
-                        }
-                        if (p->required) {
-                                if (p->var != NULL) {
+                        char const *name = (p->var == NULL) ? NULL : p->var->identifier;
+                        Type *a0 = FindArg(gather ? -1 : i, name, args, kwargs, kws);
+                        if (a0 != NONE_TYPE) {
+                                Type *p0 = v_(t0->fun_params, i)->type;
+                                UnifyX(ty, p0, a0, true, false);
+                                ApplyConstraints(ty);
+                                UnifyX(ty, a0, p0, false, true);
+                        } else if (p->required) {
+                                if (name != NULL) {
                                         TypeError(
                                                 "missing required argument for parameter %s%s%s of type `%s`",
-                                                TERM(93), p->var->identifier, TERM(0),
+                                                TERM(93), name, TERM(0),
                                                 ShowType(v_(t0->fun_params, i)->type)
                                         );
                                 } else {
@@ -2287,6 +2388,41 @@ InferCall(Ty *ty, expression_vector const *args, Type *t0)
                                 }
                         }
                 }
+
+                for (int i = 0; i < vN(*args); ++i) {
+                        Param const *p = FindParam(i, NULL, &t0->fun_params);
+                        Type *a0 = v__(*args, i)->_type;
+                        if (p != NULL && p->type != NULL) {
+                                Type *p0 = p->type;
+                                UnifyX(ty, p0, a0, true, false);
+                                ApplyConstraints(ty);
+                                UnifyX(ty, a0, p0, false, true);
+                        } else {
+                                TypeError(
+                                        "argument %s%d%s of type %s%s%s has no matching parameter",
+                                        TERM(92), i, TERM(0),
+                                        TERM(93), ShowType(a0), TERM(0)
+                                );
+                        }
+                }
+
+                for (int i = 0; i < vN(*kws); ++i) {
+                        Param const *p = FindParam(i, v__(*kws, i), &t0->fun_params);
+                        Type *a0 = v__(*kwargs, i)->_type;
+                        if (p != NULL && p->type != NULL) {
+                                Type *p0 = p->type;
+                                UnifyX(ty, p0, a0, true, false);
+                                ApplyConstraints(ty);
+                                UnifyX(ty, a0, p0, false, true);
+                        } else {
+                                TypeError(
+                                        "keyword argument %s%s%s of type %s%s%s has no matching parameter",
+                                        TERM(92), v__(*kws, i), TERM(0),
+                                        TERM(93), ShowType(a0), TERM(0)
+                                );
+                        }
+                }
+
                 for (int i = 0; i < vN(t0->constraints); ++i) {
                         BindConstraint(ty, v_(t0->constraints, i), true);
                 }
@@ -2294,16 +2430,16 @@ InferCall(Ty *ty, expression_vector const *args, Type *t0)
                 return t0->rt;
 
         case TYPE_CLASS:
-                return InferCall(ty, args, ClassFunctionType(ty, t0));
+                return InferCall(ty, args, kwargs, kws, ClassFunctionType(ty, t0));
 
         case TYPE_TAG:
-                return InferCall(ty, args, TagFunctionType(ty, t0));
+                return InferCall(ty, args, kwargs, kws, TagFunctionType(ty, t0));
 
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
                         t1 = v__(t0->types, i);
                         if (CheckCall(ty, args, t1)) {
-                                return InferCall(ty, args, t1);
+                                return InferCall(ty, args, kwargs, kws, t1);
                         }
                 }
         }
@@ -2325,13 +2461,20 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
         Type *t;
         Type *t1;
         expression_vector const *args;
+        expression_vector const *kwargs;
+        StringVector const *kws;
+
 
         switch (e->type) {
         case EXPRESSION_FUNCTION_CALL:
                 args = &e->args;
+                kwargs = &e->kwargs;
+                kws = &e->kws;
                 break;
         case EXPRESSION_METHOD_CALL:
                 args = &e->method_args;
+                kwargs = &e->method_kwargs;
+                kws = &e->method_kws;
                 break;
         default:
                 args = &(expression_vector){0};
@@ -2341,7 +2484,7 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
         case TYPE_FUNCTION:
         case TYPE_CLASS:
         case TYPE_INTERSECT:
-                return InferCall(ty, args, Inst1(ty, t0));
+                return InferCall(ty, args, kwargs, kws, Inst1(ty, t0));
 
         case TYPE_TAG:
                 t = NewType(ty, TYPE_OBJECT);
@@ -2550,7 +2693,7 @@ Inst(Ty *ty, Type *t0, U32Vector const *params, TypeVector const *args)
         if (skip) {
                 return t0;
         }
-        
+
         TypeVector vars = {0};
 
         if (args == NULL) {
@@ -2722,7 +2865,7 @@ type_member_access_t_(Ty *ty, Type *t0, char const *name)
                         return *vvL(t1->types);
                 }
         }
-        
+
         return t1;
 }
 
@@ -2779,7 +2922,7 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
                 t = SolveMemberAccess(ty, t0, type_member_access_t(ty, t0, name));
                 t = SolveMemberAccess(ty, t0, type_call_t(ty, e, t));
                 return t;
-        
+
         case TYPE_CLASS:
                 c = t0->class;
                 f = FindStatic(c, name);
@@ -3144,7 +3287,7 @@ type_check_x_(Ty *ty, Type *t0, Type *t1, int mode)
                         return true;
                 }
         }
-        
+
         if (t0->type == TYPE_TUPLE) {
                 for (int i = 0; i < vN(t0->types); ++i) {
                         char const *name = v__(t0->names, i);
@@ -3651,16 +3794,7 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_BIT_OR:
                 t1 = type_unfixed(ty, type_resolve(ty, e->left));
                 t2 = type_unfixed(ty, type_resolve(ty, e->right));
-                if (type_check(ty, t1, t2)) {
-                        return t1;
-                }
-                if (type_check(ty, t2, t1)) {
-                        return t2;
-                }
-                t0 = NewType(ty, TYPE_UNION);
-                avP(t0->types, t1);
-                avP(t0->types, t2);
-                return t0;
+                return Either(ty, t1, t2);
 
         case EXPRESSION_BIT_AND:
                 t1 = type_unfixed(ty, type_resolve(ty, e->left));
@@ -4106,7 +4240,7 @@ type_show(Ty *ty, Type *t0)
                                         ShowType(p->type)
                                 );
                         }
-        
+
                 }
                 dump(&buf, ")");
                 dump(&buf, " -> %s", ShowType(t0->rt));
@@ -4486,7 +4620,14 @@ type_array_of(Ty *ty, Type *t0)
         Type *t1 = ArrayOf(ty, t0);
         ApplyConstraints(ty);
         return Generalize(ty, t1);
-        //return t0;
+}
+
+Type *
+type_dict_of(Ty *ty, Type *t0, Type *t1)
+{
+        Type *t2 = DictOf(ty, t0, t1);
+        ApplyConstraints(ty);
+        return Generalize(ty, t2);
 }
 
 Type *

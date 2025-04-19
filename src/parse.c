@@ -1912,7 +1912,7 @@ prefix_function(Ty *ty)
                 avP(e->params, tok()->identifier);
                 next();
 
-                if (!special && T0 == ':') {
+                if (T0 == ':') {
                         next();
                         avP(e->constraints, parse_type(ty));
                         (*vvL(e->constraints))->end = End;

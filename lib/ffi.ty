@@ -30,7 +30,7 @@ pub function getCif(rt, *aTypes, nFixed=nil) {
     }
 }
 
-pub function wrap(lib, name, rType = nil, *aTypes) {
+pub function wrap(lib, name, rType = nil, *aTypes) -> _ {
     if not let $fp = c.dlsym(name, lib) {
         throw Err("Failed to load symbol '{name}'")
     }
@@ -132,7 +132,7 @@ pub function cstr(s) {
     return p
 }
 
-function nexttype(array-to-ptr? = true) {
+function nexttype(array-to-ptr? = true, allow-name = true) {
     let parts = []
 
     let ignore = "
@@ -150,7 +150,7 @@ function nexttype(array-to-ptr? = true) {
             let e = expr(1)
 
             // Allow stuff like f(c.int error_code) by just ignoring the identifier
-            return e, if peek().type == 'id' { next().id }
+            return e, if allow-name && peek().type == 'id' { next().id }
         },
 
         ('const', _)   => { next()                  },
@@ -266,14 +266,13 @@ function fun() {
 
     let (lib, prefix) = match (peek().type, peek(1)) {
         ('fn', _) => (ty.Nil, ''),
-
+        ('id', 'fn') => (expr(99), ''),
         ('id', {str, *}) => (expr(99), next().str),
-
-        x => (expr(99), '')
+        _ => (expr(99), '')
     }
 
     // function
-    next()
+    next!('fn')
 
     function mkfdef(name, rt, ps, proto-string=nil, doc-string=nil) {
         let args = [
@@ -303,14 +302,14 @@ function fun() {
         let ps = nextproto()
 
         // ->
-        next()
+        next!('->')
 
         let rt = expr(0)
 
         return mkfdef(name, rt, ps)
     } else {
         // {
-        next()
+        next!('{')
 
         let funs = []
 
@@ -322,7 +321,7 @@ function fun() {
             }
 
             let st = lex.state()
-            let rt = nexttype()
+            let rt = nexttype(allow-name=false)
             let rt-string = lspan(st)
 
             let name = next().id

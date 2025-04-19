@@ -1,4 +1,4 @@
-import ffi as c
+import ffi as c (C!)
 
 if not let $lib = c.dlopen('libsodium.so') ?? c.dlopen('libsodium.dylib') {
     throw "failed to load libsodium"
@@ -8,55 +8,22 @@ function wrap(*args) {
   c.wrap(lib, *args)
 }
 
-let sodium_init = wrap('sodium_init', c.int)
-
-let crypto_pwhash_saltbytes = wrap('crypto_pwhash_saltbytes', c.u64)
-let crypto_pwhash_strbytes = wrap('crypto_pwhash_strbytes', c.u64)
-
-let crypto_pwhash_opslimit_min = wrap('crypto_pwhash_opslimit_min', c.u64)
-let crypto_pwhash_opslimit_max = wrap('crypto_pwhash_opslimit_max', c.u64)
-let crypto_pwhash_opslimit_interactive = wrap('crypto_pwhash_opslimit_interactive', c.u64)
-
-let crypto_pwhash_memlimit_min = wrap('crypto_pwhash_memlimit_min', c.u64)
-let crypto_pwhash_memlimit_max = wrap('crypto_pwhash_memlimit_max', c.u64)
-let crypto_pwhash_memlimit_interactive = wrap('crypto_pwhash_memlimit_interactive', c.u64)
-
-let crypto_pwhash_alg_default = wrap('crypto_pwhash_alg_default', c.int)
-
-let crypto_pwhash = wrap(
-  'crypto_pwhash',
-  c.int,
-  c.ptr, c.u64,
-  c.ptr, c.u64,
-  c.ptr,
-  c.u64,
-  c.u64,
-  c.int
-)
-
-let crypto_pwhash_str = wrap(
-  'crypto_pwhash_str',
-  c.int,
-  c.ptr,
-  c.ptr, c.u64,
-  c.u64,
-  c.u64
-)
-
-let crypto_pwhash_str_verify = wrap(
-  'crypto_pwhash_str_verify',
-  c.int,
-  c.ptr,
-  c.ptr, c.u64
-)
-
-let crypto_pwhash_str_needs_rehash = wrap(
-  'crypto_pwhash_str_needs_rehash',
-  c.int,
-  c.ptr,
-  c.u64,
-  c.u64
-)
+C! lib fn {
+    c.int sodium_init()
+    c.int crypto_pwhash_alg_default()
+    c.u64 crypto_pwhash_saltbytes()
+    c.u64 crypto_pwhash_strbytes()
+    c.u64 crypto_pwhash_opslimit_min()
+    c.u64 crypto_pwhash_opslimit_max()
+    c.u64 crypto_pwhash_opslimit_interactive()
+    c.u64 crypto_pwhash_memlimit_min()
+    c.u64 crypto_pwhash_memlimit_max()
+    c.u64 crypto_pwhash_memlimit_interactive()
+    c.int crypto_pwhash(c.ptr, c.u64, c.ptr, c.u64, c.ptr, c.u64, c.u64, c.int)
+    c.int crypto_pwhash_str(c.ptr, c.ptr, c.u64, c.u64, c.u64)
+    c.int crypto_pwhash_str_verify(c.ptr, c.ptr, c.u64)
+    c.int crypto_pwhash_str_needs_rehash(c.ptr, c.u64, c.u64)
+}
 
 sodium_init()
 
@@ -73,18 +40,24 @@ let interactive_mem = crypto_pwhash_memlimit_interactive()
 
 let default_alg = crypto_pwhash_alg_default()
 
-let buf = c.alloc(str_bytes)
-
-pub function hash(pass: String | Blob) {
-  match crypto_pwhash_str(
-    buf,
+pub function hash(pass: String | Blob, buf: ?Blob) -> String | nil {
+  let b = buf ?? c.alloc(str_bytes)
+ 
+  let h = match crypto_pwhash_str(
+    b,
     pass, pass.size(),
     interactive_ops,
     interactive_mem
   ) {
     -1 => nil,
-     0 => c.str(buf, str_bytes)
+     0 => c.str(b, str_bytes)
   }
+
+  if buf == nil {
+    c.free(b)
+  }
+
+  return h
 }
 
 pub function verify(hash: String, pass: String | Blob) {
