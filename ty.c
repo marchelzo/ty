@@ -567,7 +567,7 @@ ProcessArgs(char *argv[], bool first)
                                 {
                                         char const *fmt = (*opt == 'M') ? "import %s (..)\n"
                                                         : (*opt == 'm') ? "import %s\n"
-                                                        :                 ":%s";
+                                                        :                 ":s %s";
 
                                         char const *module;
 
