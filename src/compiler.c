@@ -731,7 +731,6 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
                                 .type = t0
                         };
                         QueryResult = &sym;
-                        fail("");
                 }
         }
 }
@@ -774,11 +773,15 @@ WillReturn(Expr const *e)
 static Type *
 ResolveConstraint(Ty *ty, Expr *constraint)
 {
+        if (constraint == NULL) {
+                return NULL;
+        }
+
         Type *t0 = type_fixed(ty, type_resolve(ty, constraint));
 
         if (t0 != NULL) {
-                //constraint->type = EXPRESSION_TYPE;
-                //constraint->_type = t0;
+                constraint->type = EXPRESSION_TYPE;
+                constraint->_type = type_drill(ty, t0);
         }
 
         return t0;
@@ -1224,7 +1227,6 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
              && strcmp(state.module_path, QueryFile) == 0
         ) {
                 QueryResult = s;
-                fail("");
         }
         //===================={ </LSP> }========================================
 
@@ -2316,13 +2318,15 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
                 e->local = true;
 
-                if (e->constraint != NULL) {
-                        Type *c0 = ResolveConstraint(ty, e->constraint);
-                        if (c0 != NULL) {
-                                e->_type = c0;
-                                e->symbol->type = c0;
-                                e->symbol->fixed = true;
-                        }
+                Type *c0 = ResolveConstraint(ty, e->constraint);
+                if (c0 == NULL) {
+                        c0 = type_var(ty);
+                        e->_type = c0;
+                        e->symbol->type = c0;
+                } else {
+                        e->_type = c0;
+                        e->symbol->type = c0;
+                        e->symbol->fixed = true;
                 }
 
                 //===================={ <LSP> }=========================================
@@ -3061,6 +3065,10 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         RedpillFun(ty, scope, e, NULL);
                 }
 
+                if (e->function_symbol != NULL) {
+                        e->function_symbol->type = e->_type;
+                }
+
                 if (e->class == -1) {
                         //fprintf(stderr, "============= %s ================\n", e->name == NULL ? "(anon)" : e->name);
                 } else {
@@ -3106,9 +3114,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                                         ? ((Stmt *)fun)->target->_type
                                         : fun->_type
                                 );
-                        }
-                        if (e->function_symbol != NULL) {
-                                e->function_symbol->type = e->_type;
                         }
                 }
 
@@ -3622,6 +3627,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 }
                 symbolize_lvalue(ty, scope, s->target, true, s->pub);
                 type_assign(ty, s->target, s->value->_type, false);
+                if (s->target->type == EXPRESSION_IDENTIFIER) {
+                       // printf("%s ::= %s\n", s->target->identifier, type_show(ty, s->target->symbol->type));
+                }
                 break;
         case STATEMENT_OPERATOR_DEFINITION:
                 symbolize_op_def(ty, scope, s);
@@ -7416,7 +7424,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 if (m->return_type == NULL) {
                                         Value *v = class_method(ty, super->i, m->name);
                                         if (v != NULL && v->type == VALUE_PTR) {
-                                                //m->return_type = ((Expr *)v->ptr)->return_type;
+                                                m->return_type = ((Expr *)v->ptr)->return_type;
                                         }
                                 }
                         }
@@ -7671,12 +7679,6 @@ compile(Ty *ty, char const *source)
                 symbolize_statement(ty, state.global, state.class_ops.items[i]);
         }
 
-        //===================={ <LSP> }=========================================
-        if (QueryResult != NULL) {
-                fail("");
-        }
-        //===================={ </LSP> }========================================
-
         emit_new_globals(ty);
 
         /*
@@ -7894,13 +7896,15 @@ compiler_init(Ty *ty)
         state = freshstate(ty);
         global = state.global;
 
-        static Type  NIL_TYPE_    = { .type = TYPE_NIL    };
-        static Type  NONE_TYPE_   = { .type = TYPE_NONE   };
-        static Type  BOTTOM_TYPE_ = { .type = TYPE_BOTTOM };
+        static Type  NIL_TYPE_     = { .type = TYPE_NIL   , .fixed = false };
+        static Type  NONE_TYPE_    = { .type = TYPE_NONE  , .fixed = false };
+        static Type  BOTTOM_TYPE_  = { .type = TYPE_BOTTOM, .fixed = false };
+        static Type  UNKNOWN_TYPE_ = { .type = TYPE_BOTTOM, .fixed = true  };
 
-        NIL_TYPE    = &NIL_TYPE_;
-        NONE_TYPE   = &NONE_TYPE_;
-        BOTTOM_TYPE = &BOTTOM_TYPE_;
+        NIL_TYPE     = &NIL_TYPE_;
+        NONE_TYPE    = &NONE_TYPE_;
+        BOTTOM_TYPE  = &BOTTOM_TYPE_;
+        UNKNOWN_TYPE = &UNKNOWN_TYPE_;
 
         for (int i = CLASS_OBJECT; i < CLASS_BUILTIN_END; ++i) {
                 Class *c = class_new_empty(ty);
@@ -11082,6 +11086,7 @@ define_const(Ty *ty, Stmt *s)
 {
         symbolize_statement(ty, GetNamespace(ty, s->ns), s);
         s->target->symbol->doc = s->doc;
+        s->target->symbol->cnst = true;
 }
 
 void

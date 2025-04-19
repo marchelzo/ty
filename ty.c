@@ -49,6 +49,9 @@ static char *completions[MAX_COMPLETIONS + 1];
 static char const *print_function = "print";
 static char SymbolLocation[512];
 
+static char const *SourceFile;
+static char SourceFilePath[4096];
+
 static bool KindOfEnableLogging = false;
 unsigned EnableLogging = 0;
 
@@ -625,6 +628,8 @@ NextOption:
                 argi += 1;
         }
 
+        SourceFile = argv[argi];
+
         return argi;
 }
 
@@ -640,6 +645,27 @@ main(int argc, char **argv)
         case TY_COLOR_ALWAYS: ColorStdout = true;      ColorStderr = true;      break;
         case TY_COLOR_NEVER:  ColorStdout = false;     ColorStderr = false;     break;
         }
+
+        if (*SymbolLocation != '\0') {
+                char *colon = strchr(SymbolLocation, ':');
+
+                if (colon == NULL) {
+                        return 14;
+                }
+
+                *colon = '\0';
+
+                if (realpath(SourceFile, SourceFilePath) == NULL) {
+                        return 5;
+                }
+
+                QueryFile = SourceFilePath;
+                FindDefinition = true;
+                QueryLine = atoi(SymbolLocation) - 1;
+                QueryCol  = atoi(colon + 1) - 1;
+                CompileOnly = true;
+        }
+
 
 #ifdef TY_ENABLE_PROFILING
         if (ProfileOut == NULL) {
@@ -660,49 +686,27 @@ main(int argc, char **argv)
 
         argv += ProcessArgs(argv, false);
 
+        FILE *file;
+        if (argv[0] == NULL || strcmp(argv[0], "-") == 0) {
+                file = stdin;
+                SourceFile = "<stdin>";
+        } else {
+                file = fopen(SourceFile, "r");
+        }
+
+        if (file == NULL) {
+                fprintf(stderr, "Failed to open source file '%s': %s\n", SourceFile, strerror(errno));
+                return 1;
+        }
+
         if (argv[0] == NULL && stdin_is_tty()) {
                 repl(ty);
         }
 
-        FILE *file;
-        char const *filename;
-        if (argv[0] == NULL || strcmp(argv[0], "-") == 0) {
-                file = stdin;
-                filename = "<stdin>";
-        } else {
-                file = fopen(argv[0], "r");
-                filename = argv[0];
-        }
-
-        if (file == NULL) {
-                fprintf(stderr, "Failed to open source file '%s': %s\n", argv[0], strerror(errno));
-                return 1;
-        }
-
         char *source = fslurp(ty, file);
 
-        if (*SymbolLocation != '\0') {
-                char *colon = strchr(SymbolLocation, ':');
-
-                if (colon == NULL) {
-                        return 14;
-                }
-
-                *colon = '\0';
-
-                char path[PATH_MAX + 1];
-
-                if (realpath(filename, path) == NULL) {
-                        return 5;
-                }
-
-                FindDefinition = true;
-                QueryFile = path;
-                QueryLine = atoi(SymbolLocation) - 1;
-                QueryCol  = atoi(colon + 1) - 1;
-                CompileOnly = true;
-
-                if (!vm_execute(ty, source, filename) && QueryResult == NULL) {
+        if (FindDefinition) {
+                if (QueryResult == NULL && !vm_execute(ty, source, SourceFile)) {
                         fprintf(stderr, "%s\n", TyError(ty));
                         return 1;
                 }
@@ -734,7 +738,7 @@ main(int argc, char **argv)
                 return 0;
         }
 
-        if (!vm_execute(ty, source, filename)) {
+        if (!vm_execute(ty, source, SourceFile)) {
                 fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }
