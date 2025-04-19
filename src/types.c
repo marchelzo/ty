@@ -32,7 +32,7 @@ enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 #define ShowType(t) type_show(ty, (t))
 
 
-// Walk the stack and return number of frames.
+#if 0
 static inline int get_stack_depth(void) {
     unw_context_t ctx;
     unw_cursor_t cursor;
@@ -40,15 +40,12 @@ static inline int get_stack_depth(void) {
 
     unw_getcontext(&ctx);
     unw_init_local(&cursor, &ctx);
-    // unw_step returns >0 while there are frames
     while (unw_step(&cursor) > 0) {
         depth++;
     }
     return depth;
 }
 
-
-#if 1
 #define TLOG(fmt, ...)                                                       \
     if (EnableLogging) {                                                     \
         int _d = get_stack_depth() - 6;                                      \
