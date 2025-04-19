@@ -535,6 +535,7 @@ struct statement {
                         struct expression *value;
                         char const *doc;
                         bool pub;
+                        bool cnst;
                 };
         };
 };

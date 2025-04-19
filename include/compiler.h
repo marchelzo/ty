@@ -184,7 +184,7 @@ compiler_get_namespace_completions(
 void
 compiler_load_builtin_modules(Ty *ty);
 
-void
+Symbol *
 compiler_introduce_symbol(Ty *ty, char const *, char const *);
 
 void
@@ -249,6 +249,9 @@ define_macro(Ty *ty, Stmt *, bool fun);
 
 void
 define_type(Ty *ty, Stmt *);
+
+void
+define_const(Ty *ty, Stmt *);
 
 void
 define_class(Ty *ty, Stmt *);

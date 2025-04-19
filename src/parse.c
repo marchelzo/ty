@@ -3459,7 +3459,7 @@ prefix_bit_or(Ty *ty)
 
         SAVE_NE(true);
         SAVE_NP(true);
-        for (int i = 0; T0 != '|'; ++i) {
+        while (T0 != '|') {
                 Expr *item = parse_expr(ty, 1);
                 e->only_identifiers &= (item->type == EXPRESSION_IDENTIFIER);
                 avP(e->es, item);
@@ -5393,26 +5393,11 @@ parse_let_definition(Ty *ty)
         s->type = STATEMENT_DEFINITION;
         s->pub = false;
 
-        consume_keyword(KEYWORD_LET);
-
-        if (T0 == TOKEN_IDENTIFIER && T1 == '[') {
-                s->type = STATEMENT_TYPE_DEFINITION;
-                s->class.name = tok()->identifier;
+        if (K0 == KEYWORD_CONST) {
                 next();
-                next();
-                SAVE_NE(true);
-                while (T0 != ']') {
-                        avP(s->class.type_params, prefix_identifier(ty));
-                        if (T0 != ']') {
-                                consume(',');
-                        }
-                }
-                LOAD_NE();
-                next();
-                consume('=');
-                s->class.type = parse_type(ty);
-                s->end = End;
-                return s;
+                s->cnst = true;
+        } else {
+                consume_keyword(KEYWORD_LET);
         }
 
         s->target = parse_definition_lvalue(ty, LV_LET, NULL);
@@ -6014,6 +5999,16 @@ next_name(Ty *ty, StringVector *names)
         next();
 }
 
+inline static bool
+have_typedef(Ty *ty)
+{
+        return T0 == TOKEN_IDENTIFIER
+            && (
+                        T1 == '='
+                     || T1 == '['
+               );
+}
+
 static Stmt *
 parse_use(Ty *ty)
 {
@@ -6021,6 +6016,28 @@ parse_use(Ty *ty)
         stmt->type = STATEMENT_USE;
 
         next();
+
+        if (have_typedef(ty)) {
+                stmt->type = STATEMENT_TYPE_DEFINITION;
+                stmt->class.name = tok()->identifier;
+                next();
+                if (T0 == '[') {
+                        next();
+                        SAVE_NE(true);
+                        while (T0 != ']') {
+                                avP(stmt->class.type_params, prefix_identifier(ty));
+                                if (T0 != ']') {
+                                        consume(',');
+                                }
+                        }
+                        LOAD_NE();
+                        next();
+                }
+                consume('=');
+                stmt->class.type = parse_type(ty);
+                stmt->end = End;
+                return stmt;
+        }
 
         do next_name(ty, &stmt->use.name);
         while (T0 == '.' && (next(), 1));
@@ -6231,16 +6248,20 @@ Keyword:
         case KEYWORD_RETURN:   return parse_return_statement(ty);
         case KEYWORD_DEFER:    return parse_defer_statement(ty);
         case KEYWORD_LET:      return parse_let_definition(ty);
+        case KEYWORD_CONST:    return parse_let_definition(ty);
         case KEYWORD_BREAK:    return parse_break_statement(ty);
         case KEYWORD_CONTINUE: return parse_continue_statement(ty);
         case KEYWORD_TRY:      return parse_try(ty);
 
         case KEYWORD_USE:
                 s = parse_use(ty);
-                CompilerDoUse(ty, s, NULL);
+                if (s->type == STATEMENT_USE) {
+                        CompilerDoUse(ty, s, NULL);
+                }
                 return s;
 
-        default:               goto Expression;
+        default:
+                goto Expression;
         }
 
 Expression:
@@ -6308,6 +6329,9 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 break;
         case STATEMENT_DEFINITION:
                 s->doc = doc;
+                if (s->cnst) {
+                        define_const(ty, s);
+                }
                 break;
         default:
                 break;
@@ -6519,6 +6543,8 @@ parse_ex(
                         if (!have_keyword(KEYWORD_FUNCTION) &&
                             !have_keyword(KEYWORD_MACRO) &&
                             !have_keyword(KEYWORD_CLASS) &&
+                            !have_keyword(KEYWORD_USE) &&
+                            !have_keyword(KEYWORD_CONST) &&
                             !have_keyword(KEYWORD_TAG)) {
 
                                 unconsume(TOKEN_KEYWORD);
@@ -6553,6 +6579,7 @@ parse_ex(
                         break;
                 case STATEMENT_TAG_DEFINITION:
                 case STATEMENT_CLASS_DEFINITION:
+                case STATEMENT_TYPE_DEFINITION:
                         s->class.pub = true;
                         break;
                 default:

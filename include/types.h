@@ -29,13 +29,13 @@ struct constraint {
 
 struct type {
         enum {
-                TYPE_CLASS,
-                TYPE_TAG,
-                TYPE_OBJECT,
-                TYPE_UNION,
+                TYPE_FUNCTION,
                 TYPE_TUPLE,
                 TYPE_RECORD,
-                TYPE_FUNCTION,
+                TYPE_TAG,
+                TYPE_CLASS,
+                TYPE_OBJECT,
+                TYPE_UNION,
                 TYPE_VARIABLE,
                 TYPE_INTEGER,
                 TYPE_INTERSECT,
@@ -49,7 +49,10 @@ struct type {
         union {
                 struct {
                         union {
-                                Class *class;
+                                struct {
+                                        Class *class;
+                                        Type *ft;
+                                };
                                 struct {
                                         Type *rt;
                                         ParamVector fun_params;
@@ -63,16 +66,14 @@ struct type {
                                         int id;
                                         int level;
                                         Type *val;
-                                        Symbol *var;
-                                        bool mark;
                                 };
                         };
-                        vec(Type *) args;
-                        symbol_vector params;
+                        TypeVector args;
+                        U32Vector params3;
                         ConstraintVector constraints;
                 };
                 struct {
-                        vec(Type *) types;
+                        TypeVector types;
                         StringVector names;
                 };
                 intmax_t z;
@@ -116,6 +117,9 @@ Type *
 type_variable(Ty *ty, Symbol *var);
 
 Type *
+type_var(Ty *ty);
+
+Type *
 type_class(Ty *ty, Class *class);
 
 Type *
@@ -135,6 +139,9 @@ type_array(Ty *ty, Expr const *e);
 
 Type *
 type_dict(Ty *ty, Expr const *e);
+
+Type *
+type_match(Ty *ty, Expr const *e);
 
 Type *
 type_call(Ty *ty, Expr const *e);
@@ -172,6 +179,9 @@ type_subtract(Ty *ty, Type **t0, Type *t1);
 Type *
 type_resolve(Ty *ty, Expr const *e);
 
+Type *
+type_inst(Ty *ty, Type const *t0);
+
 void
 type_assign(Ty *ty, Expr *e, Type *t0, bool fixed);
 
@@ -208,7 +218,7 @@ type_scope_push(Ty *ty, bool fun);
 void
 type_scope_pop(Ty *ty);
 
-void
+Type *
 type_function_fixup(Ty *ty, Type *t0);
 
 bool
