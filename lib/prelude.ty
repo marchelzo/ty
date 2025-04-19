@@ -12,9 +12,9 @@ import os
 fn rand() -> Float;
 fn rand(n: Int) -> Int;
 fn print(*args, sep: String = ', ', end: String = '\n', flush: Bool = false) -> Int;
-fn int(x) -> Int;
-fn min[a](x: a, y: a) -> a;
-fn max[a](x: a, y: a) -> a;
+fn int(x, base: ?Int) -> Int;
+fn min[a](*xs: a) -> a;
+fn max[a](*xs: a) -> a;
 
 class Object {
     init(%props) {
@@ -433,7 +433,7 @@ class String : Iterable[String] {
 
     int { ::int(self) }
 
-    matches() -> Array[String | RegexMatch];
+    matches(Regex) -> Array[String | RegexMatch];
 
     repeat(n: Int) -> String;
 
@@ -841,6 +841,7 @@ class Blob : Iterable[Int] {
     }
 
     str(i: ?Int = 0, n: ?Int = #self) -> String;
+    set(i: Int, byte: Int) -> nil;
 
     __iter__*() {
         for x in self {

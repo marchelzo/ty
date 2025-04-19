@@ -3207,8 +3207,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_tuple(ty, e);
                 break;
         case EXPRESSION_SPREAD:
+                symbolize_expression(ty, scope, e->value);
+                e->_type = type_iterable_type(ty, e->value->_type);
+                break;
         case EXPRESSION_SPLAT:
                 symbolize_expression(ty, scope, e->value);
+                e->_type = e->value->_type;
                 break;
         case EXPRESSION_MACRO_INVOCATION:
                 invoke_macro(ty, e, scope);
@@ -7343,7 +7347,8 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         }
 
         for (size_t i = 0; i < vN(f->params); ++i) {
-                symbolize_expression(ty, f->scope, f->constraints.items[i]);
+                Expr *constraint = v__(f->constraints, i);
+                symbolize_expression(ty, f->scope, constraint);
         }
 
         for (size_t i = 0; i < vN(f->params); ++i) {
@@ -7351,6 +7356,20 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 Expr *constraint = v__(f->constraints, i);
                 Expr *dflt = v__(f->dflts, i);
                 sym->type = ResolveConstraint(ty, constraint);
+                if (constraint != NULL && constraint->type == EXPRESSION_TYPE) {
+                        if (i == f->rest) {
+                                constraint->_type = type_array_of(
+                                        ty,
+                                        constraint->_type
+                                );
+                        } else if (i == f->ikwargs) {
+                                constraint->_type = type_dict_of(
+                                        ty,
+                                        TYPE_STRING,
+                                        constraint->_type
+                                );
+                        }
+                }
                 if (dflt != NULL) {
                         //unify(ty, &sym->type, dflt->_type);
                 }

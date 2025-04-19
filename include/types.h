@@ -217,6 +217,9 @@ Type *
 type_array_of(Ty *ty, Type *t0);
 
 Type *
+type_dict_of(Ty *ty, Type *t0, Type *t1);
+
+Type *
 type_iterable_type(Ty *ty, Type *t0);
 
 void
