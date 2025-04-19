@@ -840,8 +840,7 @@ class Blob : Iterable[Int] {
         base64.encode(self)
     }
 
-    //str(i: ?Int = 0, n: ?Int = #self) -> String;
-    str(i: Int, n: ?Int = #self) -> String;
+    str(i: ?Int = 0, n: ?Int = #self) -> String;
 
     __iter__*() {
         for x in self {
