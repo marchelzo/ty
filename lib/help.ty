@@ -266,7 +266,7 @@ class Printer {
         @visiting.take!(num-visiting)
     }
 
-    write(s, pen=id, force) {
+    write(s, pen=id, force=false) {
         @col += #s
         if !force && @col > @width { throw TooWideError() }
         @out.push(str(@color ? pen(s) : s))
@@ -279,7 +279,7 @@ class Printer {
         self.write(' '.repeat(@indent * @depth))
     }
 
-    go(x, canPush, force) {
+    go(x, canPush: ?Bool = false, force: ?Bool = false) {
         let id-of-x = ident(x)
 
         if id-of-x in @visiting {

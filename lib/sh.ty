@@ -14,7 +14,7 @@ let SHELL = ['cmd.exe', '/c']
 let SHELL = [os.getenv('SHELL'), '-c']
 #|]
 
-pub function sh(c, input, timeoutMs, signal=KILL_SIG, combineOutput=false, shareStderr=false, shell=SHELL) {
+pub function sh(c, input=nil, timeoutMs=nil, signal=KILL_SIG, combineOutput=false, shareStderr=false, shell=SHELL) {
     if not let $p = os.spawn(
         [*shell, c],
         detach: timeoutMs != nil,

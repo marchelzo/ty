@@ -625,6 +625,10 @@ pub from_mem = mem -> from_mem(mem, mem.size())
 
 tag InitError;
 
+pub fn ev(s) {
+    __eval__(s)
+}
+
 class Term {
     init(term, name, fd, path, mem) {
         @term = term
@@ -651,6 +655,14 @@ class Term {
         if cap :: strs {
             return get_str(@term, cap) ?> c.str
         }
+    }
+
+    __missing__(name) {
+        self[ev("string.{name}")]
+    }
+
+    __method_missing__(name) {
+        print(self[ev("string.{name}")])
     }
 }
 

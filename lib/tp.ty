@@ -1,13 +1,14 @@
 tag CanceledError;
 
 class ThreadPool {
-  init(n, f, setup) {
+  init(n, f, setup=nil) {
     @f = f
     @setup = setup
     @queue = []
     @mtx = Mutex()
     @cv = CondVar()
     @stop = false
+    @threads = nil
     @threads = [Thread(@runThread, @mtx, @cv, f, @setup) for _ in ..n]
   }
 
@@ -24,7 +25,7 @@ class ThreadPool {
     return future
   }
 
-  runThread(mtx, cv, f, setup) {
+  runThread(mtx, cv, f, setup=nil) {
     let state = if setup != nil {
         (setup)()
     }

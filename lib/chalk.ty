@@ -70,7 +70,7 @@ class Text {
     plain {
         let str = @parts.map(match {
             text: Text => text.plain,
-            str        => str
+            str: _     => str
         }).str() ?? ''
         @fmt ? fmt("%{@fmt}s", str) : str
     }
@@ -79,9 +79,13 @@ class Text {
         let style = style <> @style
         let start = style.sgr
         let stop = (#start > 0) ? "\x1b[0m" : ""
+        let fun = match {
+            text: Text => "{start}{text.render(style)}{stop}",
+            text: _    => "{start}{text}{stop}"
+        }
         let str = @parts.map(match {
             text: Text => "{start}{text.render(style)}{stop}",
-            text       => "{start}{text}{stop}"
+            text: _    => "{start}{text}{stop}"
         }).str() ?? ''
         @fmt ? fmt("%{@fmt}s", str) : str
     }
@@ -294,7 +298,7 @@ class Chalk2 {
         return text -> self"[{style}]{text}[/]"
     }
 
-    plain(text) {
+    plain(text: Text2 | String) {
         render(text :: Text2 ? text.text : text, plain=true)
     }
 }
@@ -313,7 +317,9 @@ class ChalkFormatter {
 }
 
 class Chalk {
-    init(other, %props) {
+    props: Tuple
+
+    init(other=nil, %props) {
         @props = {
             *(other.?props ?? {}),
             *tuple(**props)
@@ -451,9 +457,9 @@ pub function pen(*args) {
 
   for arg in args {
     p = p |> match type(arg) {
-      Function => arg,
-      Int      => s -> wrap(s, arg),
-      String   => fg(arg)
+      arg: Function => arg,
+      arg: Int      => s -> wrap(s, arg),
+      arg: String   => fg(arg)
     }
   }
 
