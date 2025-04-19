@@ -63,6 +63,7 @@ NewArena(Ty *ty, size_t cap)
 void *
 Allocate(Ty *ty, size_t n)
 {
+        return malloc(n);
         for (;;) {
                 ptrdiff_t avail = A.end - A.beg;
                 ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);

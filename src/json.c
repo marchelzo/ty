@@ -160,7 +160,7 @@ string(Ty *ty)
         vec(char) str = {0};
 
         char b[8] = {0};
-        unsigned hex;
+        int32_t cp;
         utf8proc_ssize_t n;
 
         while (peek() != '\0' && peek() != '"') {
@@ -177,10 +177,10 @@ string(Ty *ty)
                         b[0] = next();
                         b[1] = next();
                         b[2] = '\0';
-                        if (sscanf(b, "%X", &hex) != 1) {
+                        if (sscanf(b, "%X", &cp) != 1) {
                                 FAIL;
                         }
-                        xvP(str, (char)hex);
+                        xvP(str, (char)cp);
                         break;
                 case 'u':
                         b[0] = isxdigit(peek()) ? next() : '\0';
@@ -188,10 +188,28 @@ string(Ty *ty)
                         b[2] = isxdigit(peek()) ? next() : '\0';
                         b[3] = isxdigit(peek()) ? next() : '\0';
                         b[4] = '\0';
-                        if (sscanf(b, "%x", &hex) != 1) {
+                        if (sscanf(b, "%x", &cp) != 1) {
                                 FAIL;
                         }
-                        n = utf8proc_encode_char(hex, b);
+                        if ((cp & 0xD800) == 0xD800) {
+                                uint16_t hi  = cp;
+                                uint16_t lo;
+
+                                if (next() != '\\') { FAIL; }
+                                if (next() != 'u')  { FAIL; }
+
+                                b[0] = isxdigit(peek()) ? next() : '\0';
+                                b[1] = isxdigit(peek()) ? next() : '\0';
+                                b[2] = isxdigit(peek()) ? next() : '\0';
+                                b[3] = isxdigit(peek()) ? next() : '\0';
+                                b[4] = '\0';
+                                if (sscanf(b, "%x", &lo) != 1) {
+                                        FAIL;
+                                }
+                                
+                                cp = 0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00);
+                        }
+                        n = utf8proc_encode_char(cp, (uint8_t *)b);
                         xvPn(str, b, n);
                         break;
                 } else xvP(str, next());
@@ -336,6 +354,8 @@ encode(Ty *ty, Value const *v, str *out)
         case VALUE_STRING:
                 xvP(*out, '"');
                 for (int i = 0; i < v->bytes; ++i) {
+                        int n;
+                        int32_t cp;
                         switch (v->string[i]) {
                         case '\t':
                                 xvP(*out, '\\');
@@ -349,7 +369,26 @@ encode(Ty *ty, Value const *v, str *out)
                         case '"':
                                 xvP(*out, '\\');
                         default:
-                                xvP(*out, v->string[i]);
+                                if (((uint8_t)v->string[i]) > 127) {
+                                        n = utf8proc_iterate((uint8_t *)&v->string[i], v->bytes - i, &cp);
+                                        if (n <= 0) {
+                                                dump(out, "\\x%02hhx", v->string[i]);
+                                        } else {
+                                                if (cp <= 0xFFFF) {
+                                                        dump(out, "\\u%04x", cp);
+                                                } else {
+                                                        cp -= 0x10000;
+                                                        uint16_t hi = 0xD800 + (cp >> 10);
+                                                        uint16_t lo = 0xDC00 + (cp & 0x3FF);
+                                                        dump(out, "\\u%04x\\u%04x", hi, lo);
+                                                }
+                                        }
+                                        i += n - 1;
+                                } else if (iscntrl(v->string[i])) {
+                                        dump(out, "\\x%02hhx", v->string[i]);
+                                } else {
+                                        xvP(*out, v->string[i]);
+                                }
                                 break;
                         }
                 }

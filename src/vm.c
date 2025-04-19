@@ -689,12 +689,27 @@ add_builtins(Ty *ty, int ac, char **av)
         }
 
         for (int i = 0; i < countof(builtins); ++i) {
-                compiler_introduce_symbol(ty, builtins[i].module, builtins[i].name);
-                if (builtins[i].value.type == VALUE_BUILTIN_FUNCTION) {
-                        builtins[i].value.name = M_ID(builtins[i].name);
-                        builtins[i].value.module = builtins[i].module;
+                Symbol *sym = compiler_introduce_symbol(
+                        ty,
+                        builtins[i].module,
+                        builtins[i].name
+                );
+                Value *v = &builtins[i].value;
+                if (v->type == VALUE_BUILTIN_FUNCTION) {
+                        v->name = M_ID(builtins[i].name);
+                        v->module = builtins[i].module;
                 }
                 xvP(Globals, builtins[i].value);
+                switch (ClassOf(v)) {
+                case CLASS_INT:
+                        sym->type = type_integer(ty, v->integer);
+                        break;
+                case CLASS_STRING:
+                case CLASS_BOOL:
+                case CLASS_FLOAT:
+                        sym->type = class_get_class(ty, ClassOf(v))->object_type;
+                        break;
+                }
         }
 
         Array *args = vA();
@@ -2274,7 +2289,6 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                         }
                 } else {
                         value = OBJECT(object_new(ty, v.class), v.class);
-                        value.t0 = alloc0(sizeof (Type *) * vN(class_get_class(ty, v.class)->type->params));
                         vp = class_lookup_method_i(ty, v.class, NAMES.init);
                         if (vp != NULL) {
                                 gP(&value);
@@ -4985,6 +4999,11 @@ BadTupleMember:
                                 pop();
                                 pop();
                                 push((vp == NULL) ? NIL : *vp);
+                                break;
+                        case VALUE_BOOLEAN:
+                                pop();
+                                pop();
+                                push(container);
                                 break;
                         case VALUE_OBJECT:
                                 vp = class_lookup_method_i(ty, container.class, NAMES.subscript);

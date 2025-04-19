@@ -417,7 +417,6 @@ BUILTIN_FUNCTION(die)
 BUILTIN_FUNCTION(__debug)
 {
         char *_name__ = "__debug()";
-
         CHECK_ARGC(1);
         return INTEGER(EnableLogging += INT_ARG(0));
 }

@@ -30,6 +30,7 @@ typedef struct type       Type;
 typedef struct constraint Constraint;
 typedef struct type_env   TypeEnv;
 
+typedef size_t   usize;
 typedef uint64_t u64;
 typedef uint32_t u32;
 
@@ -794,6 +795,7 @@ enum {
 
 #define vN(v)     ((v).count)
 #define v0(v)     ((v).count = 0)
+#define v00(v)    (((v).count = 0), ((v).items = NULL), ((v).capacity = 0))
 #define v_(v, i)  (&(v).items[(i)])
 #define v__(v, i) ((v).items[(i)])
 #define vZ(v)     ((v).items + (v).count)
