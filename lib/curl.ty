@@ -5,7 +5,7 @@ import curl.url
 import ptr (null)
 
 pub class CURL {
-    init(url, params) {
+    init(url, params = nil) {
         self.handle = ::init()
         self.url = curl.url.new()
         self.headers = null
