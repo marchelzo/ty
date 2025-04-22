@@ -52,6 +52,7 @@ typedef vec(Symbol *)       symbol_vector;
 typedef vec(Type *)         TypeVector;
 typedef vec(Constraint)     ConstraintVector;
 typedef vec(u32)            U32Vector;
+typedef vec(jmp_buf *)      JmpBufVector;
 
 typedef struct array {
         Value *items;
@@ -469,6 +470,8 @@ extern bool ColorStdout;
 extern bool ColorStderr;
 extern bool ColorProfile;
 
+extern bool CompileOnly;
+
 #define dont_printf(...) do { } while (0)
 
 #if 0
@@ -800,6 +803,7 @@ enum {
 #define v__(v, i) ((v).items[(i)])
 #define vZ(v)     ((v).items + (v).count)
 #define vPx(v, x) ((v).items[(v).count++] = (x))
+#define vC(v)     ((v).capacity)
 
 #define vM(v, i, j, n) memmove((v).items + (i), (v).items + (j), (n) sizeof *(v).items)
 

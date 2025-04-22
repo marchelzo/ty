@@ -58,6 +58,8 @@ unsigned EnableLogging = 0;
 bool ColorStdout;
 bool ColorStderr;
 
+bool CompileOnly = false;
+
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
 

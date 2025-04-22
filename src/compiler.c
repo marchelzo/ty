@@ -3198,6 +3198,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (int i = 0; i < e->es.count; ++i) {
                         symbolize_expression(ty, scope, e->es.items[i]);
                 }
+                e->_type = type_list(ty, e);
                 break;
         case EXPRESSION_TUPLE:
                 for (int i = 0; i < e->es.count; ++i) {
@@ -6935,7 +6936,8 @@ static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result)
 {
         if (s == NULL) {
-                s = &(Stmt){ .type = STATEMENT_NULL };
+                static Stmt null = { .type = STATEMENT_NULL };
+                s = &null;
         }
 
         state.start = s->start;

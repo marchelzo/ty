@@ -13,7 +13,6 @@
 #include "tthread.h"
 #include "log.h"
 
-extern bool CompileOnly;
 extern bool PrintResult;
 extern _Thread_local int EvalDepth;
 
