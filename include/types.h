@@ -31,7 +31,7 @@ struct type {
         enum {
                 TYPE_FUNCTION,
                 TYPE_TUPLE,
-                TYPE_RECORD,
+                TYPE_LIST,
                 TYPE_TAG,
                 TYPE_CLASS,
                 TYPE_OBJECT,
@@ -55,6 +55,8 @@ struct type {
                                 };
                                 struct {
                                         Type *rt;
+                                        Type *yields;
+                                        Type *consumes;
                                         ParamVector fun_params;
                                 };
                                 struct {
@@ -74,7 +76,7 @@ struct type {
                 };
                 struct {
                         TypeVector types;
-                        StringVector names;
+                        ConstStringVector names;
                 };
                 intmax_t z;
         };
@@ -134,6 +136,9 @@ type_function(Ty *ty, Expr const *e);
 
 Type *
 type_tuple(Ty *ty, Expr const *e);
+
+Type *
+type_list(Ty *ty, Expr const *e);
 
 Type *
 type_array(Ty *ty, Expr const *e);

@@ -7,8 +7,14 @@
 #include "operators.h"
 #include "value.h"
 #include "itable.h"
+#include "str.h"
+#include "blob.h"
+#include "array.h"
+#include "dict.h"
 
 #include <libunwind.h>
+
+#define ENFORCE 0
 
 enum { CHECK_BIND, CHECK_NOBIND, CHECK_RUNTIME };
 enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
@@ -1296,12 +1302,12 @@ type_function(Ty *ty, Expr const *e)
                 t->rt = NewHole(ty);
         }
 
-        for (int i = 0; i < vN(e->type_params); ++i) {
-                avP(t->params3, v__(e->type_params, i)->symbol->type->id);
+        if (e->yield_type != NULL) {
+                t->yields = type_fixed(ty, type_resolve(ty, e->yield_type));
         }
 
-        if (e->class >= CLASS_OBJECT) {
-                //avPv(t->params3, class_get_class(ty, e->class)->type->params3);
+        for (int i = 0; i < vN(e->type_params); ++i) {
+                avP(t->params3, v__(e->type_params, i)->symbol->type->id);
         }
 
         for (int i = 0; i < vN(e->param_symbols); ++i) {
@@ -1339,7 +1345,7 @@ type_function(Ty *ty, Expr const *e)
                                 )
                         )
                 );
-                //psym->type = type_fixed(ty, psym->type);
+                psym->type = type_fixed(ty, psym->type);
         }
 
         if (e->function_symbol != NULL) {
@@ -2217,7 +2223,6 @@ CheckCall(Ty *ty, expression_vector const *args, Type *t0)
 {
         Type *t1;
         Type *t2;
-        Expr *init;
 
         dont_printf("CheckCall(%s)\n", ShowType(t0));
         for (int i = 0; i < vN(*args); ++i) {
@@ -2346,7 +2351,6 @@ InferCall(
 )
 {
         Type *t1;
-        Type *spread0 = NULL;
         bool gather = false;
 
         dont_printf("InferCall(%s)\n", ShowType(t0));
@@ -2460,9 +2464,9 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
 
         Type *t;
         Type *t1;
-        expression_vector const *args;
-        expression_vector const *kwargs;
-        StringVector const *kws;
+        expression_vector const *args = &(expression_vector){0};
+        expression_vector const *kwargs = &(expression_vector){0};
+        StringVector const *kws = &(StringVector){0};
 
 
         switch (e->type) {
@@ -2476,8 +2480,6 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
                 kwargs = &e->method_kwargs;
                 kws = &e->method_kws;
                 break;
-        default:
-                args = &(expression_vector){0};
         }
 
         switch (t0->type) {
@@ -2599,6 +2601,46 @@ FindMethod_(expression_vector const *ms, char const *name)
                 if (strcmp(name, v__(*ms, i)->name) == 0) {
                         return v__(*ms, i);
                 }
+        }
+
+        return NULL;
+}
+
+static Expr *
+FindGetter(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethod_(&c->def->class.getters, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindGetter(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+static Expr *
+FindSetter(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethod_(&c->def->class.setters, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindSetter(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
         }
 
         return NULL;
@@ -2834,6 +2876,11 @@ type_member_access_t_(Ty *ty, Type *t0, char const *name)
                                 break;
                         }
                 }
+#if ENFORCE
+                if (t1 == NULL) {
+                        TypeError("field `%s` does not exist on `%s`", name, ShowType(t0));
+                }
+#endif
                 return t1;
 
         case TYPE_OBJECT:
@@ -2845,13 +2892,55 @@ type_member_access_t_(Ty *ty, Type *t0, char const *name)
                         t1 = (field->extra != NULL)
                            ? type_resolve(ty, field->extra)
                            : ((Expr *)field->ptr)->_type;
-                } else {
+                }
+                if (t1 == NULL) {
                         c = class_get_class(ty, class);
                         f = FindMethod(c, name);
                         if (f != NULL) {
                                 t1 = f->_type;
                         }
                 }
+                if (t1 == NULL) {
+                        c = class_get_class(ty, class);
+                        f = FindGetter(c, name);
+                        if (f != NULL && TypeType(f->_type) == TYPE_FUNCTION) {
+                                t1 = f->_type->rt;
+                        }
+                }
+                if (t1 == NULL) {
+                        c = class_get_class(ty, class);
+                        f = FindSetter(c, name);
+                        if (f != NULL) {
+                                t1 = f->_type;
+                        }
+                }
+                if (t1 == NULL) switch (class) {
+                case CLASS_ARRAY:
+                        if (get_array_method(name) != NULL) {
+                                t1 = UNKNOWN;
+                        }
+                        break;
+                case CLASS_STRING:
+                        if (get_string_method(name) != NULL) {
+                                t1 = UNKNOWN;
+                        }
+                        break;
+                case CLASS_DICT:
+                        if (get_dict_method(name) != NULL) {
+                                t1 = UNKNOWN;
+                        }
+                        break;
+                case CLASS_BLOB:
+                        if (get_blob_method(name) != NULL) {
+                                t1 = UNKNOWN;
+                        }
+                        break;
+                }
+#if ENFORCE
+                if (t1 == NULL) {
+                        TypeError("field `%s` does not exist on `%s`", name, ShowType(t0));
+                }
+#endif
                 return SolveMemberAccess(ty, t0, t1);
 
         case TYPE_VARIABLE:
@@ -2890,7 +2979,7 @@ type_member_access(Ty *ty, Expr const *e)
 
         //LeaveScope();
 
-        //return Generalize(ty, t0);
+        return Generalize(ty, t0);
         return t0;
 }
 
@@ -3469,6 +3558,18 @@ type_tuple(Ty *ty, Expr const *e)
         return t0;
 }
 
+Type *
+type_list(Ty *ty, Expr const *e)
+{
+        Type *t0 = NewType(ty, TYPE_LIST);
+
+        for (int i = 0; i < vN(e->es); ++i) {
+                avP(t0->types, Relax(v__(e->es, i)->_type));
+        }
+
+        return t0;
+}
+
 static Type *
 DictOf(Ty *ty, Type *k0, Type *v0)
 {
@@ -3576,6 +3677,18 @@ type_array(Ty *ty, Expr const *e)
         return t0;
 }
 
+Type *
+Unlist(Ty *ty, Type const *t0)
+{
+        Type *t1 = Resolve(ty, t0);
+
+        if (TypeType(t1) == TYPE_LIST) {
+                return v__(t1->types, 0);
+        }
+
+        return t0;
+}
+
 void
 type_assign(Ty *ty, Expr *e, Type *t0, bool fixed)
 {
@@ -3590,6 +3703,10 @@ type_assign(Ty *ty, Expr *e, Type *t0, bool fixed)
         Type *t1;
 
         //t0 = Resolve(ty, t0);
+
+        if (e->type != EXPRESSION_LIST) {
+                t0 = Unlist(ty, t0);
+        }
 
         if (TypeType(t0) == TYPE_UNION) {
                 for (int i = 0; i < vN(t0->types); ++i) {
@@ -3696,7 +3813,19 @@ type_assign(Ty *ty, Expr *e, Type *t0, bool fixed)
                 }
                 break;
         case EXPRESSION_LIST:
-                type_assign(ty, v__(e->es, 0), t0, fixed);
+                t1 = Resolve(ty, t0);
+                if (TypeType(t1) == TYPE_LIST) {
+                        for (int i = 0; i < vN(e->es) && i < vN(t1->types); ++i) {
+                                type_assign(
+                                        ty,
+                                        v__(e->es, i),
+                                        v__(t1->types, i),
+                                        fixed
+                                );
+                        }
+                } else {
+                        type_assign(ty, v__(e->es, 0), t0, fixed);
+                }
                 break;
         }
 }
@@ -3762,6 +3891,13 @@ type_resolve(Ty *ty, Expr const *e)
                 dont_printf("resolve(): %s -> %s\n", e->identifier, ShowType(t0));
                 return t0;
 
+        case EXPRESSION_LIST:
+                t0 = NewType(ty, TYPE_LIST);
+                for (int i = 0; i < vN(e->es); ++i) {
+                        avP(t0->types, type_resolve(ty, v__(e->es, i)));
+                }
+                return t0;
+
         case EXPRESSION_MATCH_ANY:
                 return type_fixed(ty, UNKNOWN);
 
@@ -3774,8 +3910,13 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_SUBSCRIPT:
                 t0 = CloneType(ty, type_resolve(ty, e->container));
                 if (t0 != NULL) {
-                        CloneVec(t0->args);
-                        avP(t0->args, type_resolve(ty, e->subscript));
+                        t1 = type_resolve(ty, e->subscript);
+                        if (TypeType(t1) == TYPE_LIST) {
+                                t0->args = t1->types;
+                        } else {
+                                CloneVec(t0->args);
+                                avP(t0->args, t1);
+                        }
                         if (t0->type == TYPE_TAG) {
                                 t0->type = TYPE_OBJECT;
                         }
@@ -4653,6 +4794,31 @@ type_iterable_type(Ty *ty, Type *t0)
 
         switch (TypeType(t0)) {
         case TYPE_OBJECT:
+                switch (ClassOfType(ty, t0)) {
+                case CLASS_ARRAY:
+                        t1 = NewType(ty, TYPE_LIST);
+                        avP(t1->types, TypeArg(t0, 0));
+                        avP(t1->types, TYPE_INT);
+                        break;
+                case CLASS_STRING:
+                        t1 = NewType(ty, TYPE_LIST);
+                        avP(t1->types, TYPE_STRING);
+                        avP(t1->types, TYPE_INT);
+                        break;
+                case CLASS_DICT:
+                        t1 = NewType(ty, TYPE_LIST);
+                        avP(t1->types, TypeArg(t0, 0));
+                        avP(t1->types, TypeArg(t0, 1));
+                        avP(t1->types, TYPE_INT);
+                        break;
+                case CLASS_ITERABLE:
+                case CLASS_ITER:
+                        t1 = TypeArg(t0, 0);
+                        break;
+                }
+                if (t1 != NULL) {
+                        break;
+                }
                 c = t0->class;
                 def = (c->def == NULL) ? NULL : &c->def->class;
                 for (int i = 0; def != NULL && i < vN(def->traits); ++i) {
@@ -4668,19 +4834,6 @@ type_iterable_type(Ty *ty, Type *t0)
                         }
                         t1 = SolveMemberAccess(ty, t0, type_resolve(ty, t->subscript));
                         break;
-                }
-                if (t1 != NULL) {
-                        break;
-                }
-                switch (ClassOfType(ty, t0)) {
-                case CLASS_ARRAY:
-                case CLASS_DICT:
-                case CLASS_ITERABLE:
-                case CLASS_ITER:
-                        t1 = TypeArg(t0, 0);
-                        break;
-                default:
-                        t1 = BOTTOM;
                 }
                 break;
 

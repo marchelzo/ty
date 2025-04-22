@@ -387,7 +387,10 @@ struct expression {
                         expression_vector decorators;
                         expression_vector functions;
                         union {
-                                Expr *return_type;
+                                struct {
+                                        Expr *return_type;
+                                        Expr *yield_type;
+                                };
                                 Expr *parent;
                         };
                         vec(Symbol *) param_symbols;

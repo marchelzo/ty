@@ -292,7 +292,6 @@ typedef struct {
 static char const *filename;
 static char const *Error;
 
-bool CompileOnly = false;
 bool PrintResult = false;
 FILE *DisassemblyOut = NULL;
 

@@ -88,6 +88,15 @@
 #define K3 ((T3 == TOKEN_KEYWORD) ? token(3)->keyword : -1)
 #define KW(i) ((token(i)->type == TOKEN_KEYWORD) ? token(i)->keyword : -1)
 
+
+#define SAVE_JB                        \
+        jmp_buf jb_;                   \
+        memcpy(&jb_, &jb, sizeof jb);  \
+        SetJmpDepth += 1
+
+#define RESTORE_JB do { memcpy(&jb, &jb_, sizeof jb); SetJmpDepth -= 1; } while (0)
+
+
 #if 0
 #define PLOGX(fmt, ...) (                       \
         EnableLogging                           \
@@ -228,6 +237,9 @@ enum {
 };
 
 static jmp_buf jb;
+static int SetJmpDepth = 0;
+
+static JmpBufVector SavePoints;
 
 static struct table uops;
 static struct table uopcs;
@@ -263,6 +275,11 @@ static Expr WildCard = {
 
 static Stmt NullStatement = {
         .type = STATEMENT_NULL
+};
+
+static Expr NullExpr = {
+        .type = EXPRESSION_STATEMENT,
+        .statement = &NullStatement
 };
 
 // Maybe try to use this instead, might be cleaner.
@@ -807,6 +824,22 @@ logctx(Ty *ty)
 #endif
 }
 
+inline static jmp_buf *
+NewSavePoint(void)
+{
+        usize n = vN(SavePoints);
+
+        if (n == vC(SavePoints)) {
+                do xvP(SavePoints, mrealloc(NULL, sizeof (jmp_buf)));
+                while (vN(SavePoints) < vC(SavePoints));
+        }
+
+        vN(SavePoints) = n + 1;
+
+        return *vvL(SavePoints);
+}
+
+#define CatchError() (setjmp(*NewSavePoint()) != 0)
 
 /*
  * Push a token into the token stream, so that it will be returned by the next call
@@ -959,7 +992,11 @@ error(Ty *ty, char const *fmt, ...)
 
         LOG("Parse Error: %s", TyError(ty));
 End:
-        longjmp(jb, 1);
+        if (CompileOnly && SetJmpDepth == 0 && vN(SavePoints) > 0) {
+                longjmp(**vvX(SavePoints), 1);
+        } else {
+                longjmp(jb, 1);
+        }
 }
 
 #define die_at(e, fmt, ...)                     \
@@ -4962,8 +4999,7 @@ parse_for_loop(Ty *ty)
                 next();
         } else {
                 int save = TokenIndex;
-                jmp_buf jb_save;
-                memcpy(&jb_save, &jb, sizeof jb);
+                SAVE_JB;
                 SAVE_NI(true);
                 if (setjmp(jb) != 0) {
                         cloop = true;
@@ -4972,7 +5008,7 @@ parse_for_loop(Ty *ty)
                         cloop = T0 == ';';
                 }
                 LOAD_NI();
-                memcpy(&jb, &jb_save, sizeof jb);
+                RESTORE_JB;
                 seek(ty, save);
         }
 
@@ -5561,6 +5597,11 @@ parse_expr(Ty *ty, int prec)
         if (++depth > 256)
                 error(ty, "exceeded maximum recursion depth of 256");
 
+        if (CompileOnly && CatchError()) {
+                next();
+                return &NullExpr;
+        }
+
         prefix_parse_fn *f = get_prefix_parser(ty);
         if (f == NULL) {
                 error(
@@ -5609,6 +5650,10 @@ End:
                 End.s,
                 TERM(0)
         );
+
+        if (CompileOnly) {
+                vvX(SavePoints);
+        }
 
         --depth;
 
@@ -5853,16 +5898,16 @@ parse_class_definition(Ty *ty)
                          *      onClick = foo
                          */
                         if (
-                                T0 == TOKEN_IDENTIFIER &&
-                                (
+                                T0 == TOKEN_IDENTIFIER
+                             && (
                                         (
-                                                T1 == TOKEN_EQ &&
-                                                (
-                                                        token(1)->start.col > tok()->end.col ||
-                                                        token(1)->start.line != tok()->end.line
+                                                T1 == TOKEN_EQ
+                                             && (
+                                                        token(1)->start.col > tok()->end.col
+                                                     || token(1)->start.line != tok()->end.line
                                                 )
-                                        ) ||
-                                        T1 == ':'
+                                        )
+                                     || T1 == ':'
                                 )
                         ) {
                                 SAVE_NE(true);
@@ -5907,9 +5952,16 @@ parse_class_definition(Ty *ty)
                                                 decorators
                                         )
                                 );
-                        } else if (T1 == '{') {
+                        } else if (T1 == '{' || T1 == TOKEN_ARROW) {
+                                Expr *rt;
                                 struct token t = *tok();
                                 next();
+                                if (T0 == TOKEN_ARROW) {
+                                        next();
+                                        rt = parse_type(ty);
+                                } else {
+                                        rt = NULL;
+                                }
                                 unconsume(')');
                                 unconsume('(');
                                 putback(t);
@@ -5923,6 +5975,9 @@ parse_class_definition(Ty *ty)
                                                 decorators
                                         )
                                 );
+                                if (rt != NULL) {
+                                        vvL(s->tag.getters)[0]->return_type = rt;
+                                }
                         } else {
                                 avP(
                                         s->tag.methods,
@@ -6109,7 +6164,7 @@ parse_try(Ty *ty)
         }
 
         s->try.s = parse_statement(ty, -1);
-
+ 
         while (have_keyword(KEYWORD_CATCH)) {
                 next();
                 SAVE_NE(true);
@@ -6219,7 +6274,7 @@ parse_import(Ty *ty)
 }
 
 static Stmt *
-parse_statement(Ty *ty, int prec)
+_parse_statement(Ty *ty, int prec)
 {
         Stmt *s;
 
@@ -6286,6 +6341,23 @@ Expression:
         }
 
         return s;
+}
+
+static Stmt *
+parse_statement(Ty *ty, int prec)
+{
+        if (CompileOnly && CatchError()) {
+                next();
+                return &NullStatement;
+        }
+
+        Stmt *stmt = _parse_statement(ty, prec);
+
+        if (CompileOnly) {
+                vvX(SavePoints);
+        }
+
+        return stmt;
 }
 
 static void
@@ -6423,6 +6495,12 @@ parse_ex(
         Namespace *saved_namespace = CurrentNamespace;
         CurrentNamespace = NULL;
 
+        JmpBufVector saved_savepoints = SavePoints;
+        v00(SavePoints);
+
+        int saved_setjmp_depth = SetJmpDepth;
+        SetJmpDepth = 0;
+
         lex_save(ty, &CtxCheckpoint);
         setctx(ty, LEX_PREFIX);
 
@@ -6438,6 +6516,8 @@ parse_ex(
                 }
 
                 CurrentNamespace = saved_namespace;
+                SavePoints = saved_savepoints;
+                SetJmpDepth = saved_setjmp_depth;
 
                 return false;
         }
@@ -6619,6 +6699,8 @@ parse_ex(
         }
 
         CurrentNamespace = saved_namespace;
+        SavePoints = saved_savepoints;
+        SetJmpDepth = saved_setjmp_depth;
 
         return true;
 }
@@ -6673,8 +6755,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
 {
         int save = TokenIndex;
 
-        jmp_buf jb_save;
-        memcpy(&jb_save, &jb, sizeof jb);
+        SAVE_JB;
 
         SAVE_NI(false);
         SAVE_NE(false);
@@ -6702,7 +6783,7 @@ parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw)
         LOAD_NE();
         LOAD_NI();
 
-        memcpy(&jb, &jb_save, sizeof jb);
+        RESTORE_JB;
 
         lex_keep_comments(ty, keep_comments);
 
@@ -6721,8 +6802,7 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
 {
         int save = TokenIndex;
 
-        jmp_buf jb_save;
-        memcpy(&jb_save, &jb, sizeof jb);
+        SAVE_JB;
 
         SAVE_NI(false);
         SAVE_NE(false);
@@ -6748,7 +6828,7 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
         LOAD_NE();
         LOAD_NI();
 
-        memcpy(&jb, &jb_save, sizeof jb);
+        RESTORE_JB;
 
         lex_keep_comments(ty, keep_comments);
 
