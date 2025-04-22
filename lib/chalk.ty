@@ -30,7 +30,7 @@ class Text {
         @fmt = fmt
     }
 
-    static parse(text, style=Chalk()) {
+    static parse(text: Text | String, style: Chalk = Chalk()) {
         if text :: Text {
             return Text(text, style)
         }
@@ -67,34 +67,32 @@ class Text {
         Text(parts, style)
     }
 
-    plain {
-        let str = @parts.map(match {
+    plain -> String {
+        let to-plain: Text | String -> String = match {
             text: Text => text.plain,
-            str: _     => str
-        }).str() ?? ''
+            str        => str
+        }
+        let str = parts.map(to-plain).str() ?? ''
         @fmt ? fmt("%{@fmt}s", str) : str
     }
 
-    render(style=Chalk()) {
+    render(style=Chalk()) -> String {
         let style = style <> @style
         let start = style.sgr
         let stop = (#start > 0) ? "\x1b[0m" : ""
-        let fun = match {
+        let fun: Text | String -> String = match {
             text: Text => "{start}{text.render(style)}{stop}",
-            text: _    => "{start}{text}{stop}"
+            text       => "{start}{text}{stop}"
         }
-        let str = @parts.map(match {
-            text: Text => "{start}{text.render(style)}{stop}",
-            text: _    => "{start}{text}{stop}"
-        }).str() ?? ''
+        let str = parts.map(fun).str() ?? ''
         @fmt ? fmt("%{@fmt}s", str) : str
     }
 
-    __str__() {
+    __str__() -> String {
         render()
     }
 
-    __fmt__(spec, width) {
+    __fmt__(spec: String, width: Int) {
         fmt("%{@fmt}s", __str__()).__fmt__(spec, width)
     }
 
@@ -303,19 +301,6 @@ class Chalk2 {
     }
 }
 
-class ChalkFormatter {
-    __fmt__(text) {
-        let [_, &words ~> styles, text] = text.match!(/^([^|]*)(?:\|(.*))?$/)
-        let (styles, fmts) = styles.partition(/^\pL\w+(-\w+)?$/)
-        let chalk = styles.map(&sub(/-./, &upper . &1))
-                          .fold(Chalk(), (chalk, attr) -> chalk.{attr})
-        "{Text.parse(text, chalk):{fmts.unwords()}}"
-    }
-
-    __call__(parts) {
-    }
-}
-
 class Chalk {
     props: Tuple
 
@@ -324,16 +309,6 @@ class Chalk {
             *(other.?props ?? {}),
             *tuple(**props)
         }
-    }
-
-    <>(other: Chalk) {
-        Chalk(self, **other.props)
-    }
-
-    __str__() { "Chalk{tuple(**members(self))}" }
-
-    __fmt__(text) {
-        "{Text.parse(text, self)}"
     }
 
     sgr {
@@ -358,8 +333,6 @@ class Chalk {
 
         props ? "\x1b[{props.join(';')}m" : ''
     }
-
-    __call__(text) { Text([text], self) }
 
     black       { Chalk(self, fg=[30]) }
     red         { Chalk(self, fg=[31]) }
