@@ -1160,7 +1160,7 @@ addsymbolx(Ty *ty, Scope *scope, char const *name, bool check_ns_shadow)
 
         if (
                 s != NULL
-             && SymbolIsPublic(s)
+             && SymbolIsConst(s)
              && (scope == state.global || scope == global)
              && strcmp(name, "_") != 0
         ) {
