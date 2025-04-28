@@ -599,14 +599,14 @@ DoGC(Ty *ty)
         MarkStorage(ty, &MyStorage);
 
         if (MyGroup == &MainGroup) {
-                for (int i = 0; i < Globals.count; ++i) {
-                        value_mark(ty, &Globals.items[i]);
+                for (int i = 0; i < vN(Globals); ++i) {
+                        value_mark(ty, v_(Globals, i));
                 }
 
                 vec(Value const *) *immortal = GCImmortalSet(ty);
 
-                for (int i = 0; i < immortal->count; ++i) {
-                        value_mark(ty, immortal->items[i]);
+                for (int i = 0; i < vN(*immortal); ++i) {
+                        value_mark(ty, v__(*immortal, i));
                 }
         }
 
@@ -787,10 +787,10 @@ add_builtins(Ty *ty, int ac, char **av)
         compiler_introduce_symbol(ty, "ffi", "void");
         xvP(Globals, PTR(&ffi_type_void));
 
-#define X(name)                                          \
-        do {                                             \
-                compiler_introduce_tag(ty, "ty", #name); \
-                xvP(Globals, TAG(Ty ## name));           \
+#define X(name)                                               \
+        do {                                                  \
+                compiler_introduce_tag(ty, "ty", #name, -1);  \
+                xvP(Globals, TAG(Ty ## name));                \
         } while (0);
 
         TY_AST_NODES
@@ -2742,6 +2742,11 @@ TY_INSTR_INLINE static void
 DoCount(Ty *ty, bool exec)
 {
         Value v = pop();
+
+        if (v.type & VALUE_TAGGED) {
+                push(unwrap(ty, &v));
+                return;
+        }
 
         switch (v.type) {
         case VALUE_BLOB:   push(INTEGER(v.blob->count));  break;
@@ -5422,7 +5427,6 @@ BadTupleMember:
                                 } else {
                                         v.env[j] = p;
                                 }
-                                LOG("env[%d] = %s", j, VSC(v.env[j]));
                         }
 
                         push(v);
@@ -7435,18 +7439,14 @@ vm_load(Ty *ty, Symbol const *var)
                      : TyCompilerState(ty)->global;
 
         bool is_local = !var->global
-                     && !var->type_var
+                     && !SymbolIsTypeVar(var)
                      && (var->scope->function == scope->function);
 
         Value *v;
 
         xprint_stack(ty, 8);
 
-        if (false && var->type_var) {
-                push(TYPE(var->type));
-                v = top();
-                pop();
-        } else if (var->global) {
+        if (var->global) {
                 v = v_(Globals, var->i);
         } else if (is_local && !var->captured) {
                 v = local(ty, var->i);

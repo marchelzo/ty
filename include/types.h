@@ -52,6 +52,7 @@ struct type {
                                 struct {
                                         Class *class;
                                         Type *ft;
+                                        int tag;
                                 };
                                 struct {
                                         Type *rt;
@@ -126,10 +127,10 @@ Type *
 type_class(Ty *ty, Class *class);
 
 Type *
-type_tag(Ty *ty, Class *class);
+type_tag(Ty *ty, Class *class, int tag);
 
 Type *
-type_alias(Ty *ty, Stmt const *s);
+type_alias(Ty *ty, Symbol *var, Stmt const *s);
 
 Type *
 type_function(Ty *ty, Expr const *e);
@@ -165,10 +166,16 @@ Type *
 type_member_access(Ty *ty, Expr const *e);
 
 Type *
-type_member_access_t(Ty *ty, Type *t0, char const *name);
+type_member_access_t(Ty *ty, Type *t0, char const *name, bool strict);
 
 Type *
 type_binary_op(Ty *ty, Expr const *e);
+
+Type *
+type_unary_op(Ty *ty, Expr const *e);
+
+Type *
+type_unary_hash_t(Ty *ty, Type const *t0);
 
 void
 unify(Ty *ty, Type **t0, Type *t1);
@@ -210,7 +217,7 @@ Type *
 type_generator(Ty *ty, Expr const *e);
 
 char *
-type_show(Ty *ty, Type *t0);
+type_show(Ty *ty, Type const *t0);
 
 bool
 type_check(Ty *ty, Type *t0, Type *t1);
@@ -233,14 +240,23 @@ type_scope_push(Ty *ty, bool fun);
 void
 type_scope_pop(Ty *ty);
 
-Type *
+void
 type_function_fixup(Ty *ty, Type *t0);
+
+void
+type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out);
 
 bool
 TypeCheck(Ty *ty, Type *t0, Value const *v);
 
 void
 types_init(Ty *ty);
+
+bool
+type_find_method(Ty *ty, Type const *t0, char const *name, Type **t1, Expr **e);
+
+bool
+type_is_concrete(Ty *ty, Type const *t0);
 
 #endif
 

@@ -153,6 +153,36 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 VL(true, s->target);
                 V(s->value);
                 break;
+        case STATEMENT_CLASS_DEFINITION:
+                VT(s->class.super);
+                for (int i = 0; i < vN(s->class.traits); ++i) {
+                        VT(v__(s->class.traits, i));
+                }
+                for (int i = 0; i < vN(s->class.fields); ++i) {
+                        Expr *field = v__(s->class.fields, i);
+                        switch (field->type) {
+                        case EXPRESSION_IDENTIFIER:
+                                VT(field->constraint);
+                                break;
+                        case EXPRESSION_EQ:
+                                VT(field->target->constraint);
+                                V(field->value);
+                                break;
+                        }
+                }
+                for (int i = 0; i < vN(s->class.methods); ++i) {
+                        V(v__(s->class.methods, i));
+                }
+                for (int i = 0; i < vN(s->class.getters); ++i) {
+                        V(v__(s->class.getters, i));
+                }
+                for (int i = 0; i < vN(s->class.setters); ++i) {
+                        V(v__(s->class.setters, i));
+                }
+                for (int i = 0; i < vN(s->class.statics); ++i) {
+                        V(v__(s->class.statics, i));
+                }
+                break;
         }
 
         return S2(s);
@@ -186,9 +216,9 @@ visit_lvalue(Ty *ty, Expr *t, Scope *scope, VisitorSet const *hooks, bool decl)
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_RESOURCE_BINDING:
-                sym = scope_add(ty, scope, t->identifier);
-                sym->file = t->file;
-                sym->loc = t->start;
+                //sym = scope_add(ty, scope, t->identifier);
+                //sym->file = t->file;
+                //sym->loc = t->start;
                 VT(t->constraint);
                 break;
         case EXPRESSION_SPREAD:

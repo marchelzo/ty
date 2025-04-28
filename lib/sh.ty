@@ -47,8 +47,8 @@ pub function sh(c, input=nil, timeoutMs=nil, signal=KILL_SIG, combineOutput=fals
         }
 
         let pfds = [
-            (fd: p.stdout, events: os.POLLIN),
-            (fd: p.stderr, events: os.POLLIN) if p.stderr !=  p.stdout
+            {fd: p.stdout, events: os.POLLIN},
+            {fd: p.stderr, events: os.POLLIN} if p.stderr != p.stdout
         ]
 
         let n = os.poll(pfds, remainingMs)

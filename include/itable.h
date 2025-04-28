@@ -10,7 +10,7 @@ typedef struct value Value;
 
 struct itable {
         vec(int) ids;
-        vec(struct value) values;
+        ValueVector values;
         Value *vals;
         int class;
 };
@@ -49,6 +49,9 @@ itable_look(Ty *ty, struct itable const *t, char const *name)
 
 int
 itable_get_completions(Ty *ty, struct itable const *t, char const *prefix, char **out, int max);
+
+int
+itable_completions(Ty *ty, struct itable const *t, char const *prefix, ValueVector *out);
 
 void
 itable_release(Ty *ty, struct itable *t);

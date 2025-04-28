@@ -6,105 +6,6 @@ import ty.token
 
 tag ChalkError;
 
-class Text {
-    parts: Array[Text | String]
-    style: Chalk
-
-    init(other: Text, style=Chalk(), fmt=nil) {
-        dbg(other, "{style}")
-        @parts = other.parts
-        @style = other.style <> style
-        @fmt = fmt ?? other.fmt
-    }
-
-    init(text: String, style=Chalk(), fmt=nil) {
-        @parts = [text]
-        @style = style
-        @fmt = fmt
-    }
-
-    init(parts, style=Chalk(), fmt=nil) {
-        dbg(parts, "{style}", fmt)
-        @parts = parts
-        @style = style
-        @fmt = fmt
-    }
-
-    static parse(text: Text | String, style: Chalk = Chalk()) {
-        if text :: Text {
-            return Text(text, style)
-        }
-
-        let chalk = Chalk()
-        let parts = []
-
-        for match text.matches(/\x1b\[([^m]*)m|[^\x1b]+/) {
-            [_, attrs] => {
-                let props = {}
-
-                for match attrs.split(';').map(int) {
-                    0 => { chalk = Chalk(); props = {} },
-
-                    1 => props = {*props, bold: true },
-                    3 => props = {*props, italic: true },
-                    4 => props = {*props, underline: true },
-
-                    fg :: 31...39 => props = {*props, fg: [fg]},
-                    fg :: 91...99 => props = {*props, bright: true, fg: [fg - 60]},
-
-                    bg ::  41...49  => props = {*props, bg: [bg]},
-                    bg :: 101...109 => props = {*props, bg-bright: true, bg: [bg - 60]}
-                }
-
-                chalk = Chalk(chalk, **props)
-            },
-
-            text => parts.push(Text(text, chalk))
-        }
-
-        dbg(parts, "{style}")
-
-        Text(parts, style)
-    }
-
-    plain -> String {
-        let to-plain: Text | String -> String = match {
-            text: Text => text.plain,
-            str        => str
-        }
-        let str = parts.map(to-plain).str() ?? ''
-        @fmt ? fmt("%{@fmt}s", str) : str
-    }
-
-    render(style=Chalk()) -> String {
-        let style = style <> @style
-        let start = style.sgr
-        let stop = (#start > 0) ? "\x1b[0m" : ""
-        let fun: Text | String -> String = match {
-            text: Text => "{start}{text.render(style)}{stop}",
-            text       => "{start}{text}{stop}"
-        }
-        let str = parts.map(fun).str() ?? ''
-        @fmt ? fmt("%{@fmt}s", str) : str
-    }
-
-    __str__() -> String {
-        render()
-    }
-
-    __fmt__(spec: String, width: Int) {
-        fmt("%{@fmt}s", __str__()).__fmt__(spec, width)
-    }
-
-    +(other: Text) {
-        Text(@parts + other.parts)
-    }
-
-    __missing__(style) {
-        Text(self, style=@style.{style})
-    }
-}
-
 pub fn escape(text) {
     text.sub('\\', '\\\\').sub('[', '\\[')
 }
@@ -142,6 +43,10 @@ let styles = %{
 }
 
 class Text2 {
+    text: String
+    chalk: Chalk2
+    fmt: ?String
+
     init(text, chalk, fmt=nil) {
         @text = text
         @chalk = chalk
@@ -154,6 +59,10 @@ class Text2 {
 
     __fmt__(spec) {
         "[%{spec}]{@text}[/]"
+    }
+
+    +(other: Text2) {
+        self.chalk"{self}{other}"
     }
 }
 

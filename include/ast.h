@@ -78,9 +78,6 @@ typedef vec(struct condpart *) condpart_vector;
 typedef vec(struct statement *) statement_vector;
 typedef struct class_definition ClassDefinition;
 
-enum { FT_NONE, FT_FUNC, FT_GEN };
-enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
-
 #define TY_STATEMENT_TYPES        \
         X(FOR_LOOP),              \
         X(EACH_LOOP),             \

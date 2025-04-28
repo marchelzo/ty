@@ -5,11 +5,13 @@
 
 extern bool CheckConstraints;
 
+extern bool SuggestCompletions;
 extern bool FindDefinition;
 extern int QueryLine;
 extern int QueryCol;
 extern char const *QueryFile;
 extern Symbol const *QueryResult;
+extern Expr const *QueryExpr;
 
 
 typedef struct location Location;
@@ -137,6 +139,8 @@ typedef struct compiler_state {
 
         statement_vector class_ops;
 
+        Stmt *last_func;
+
         Expr *func;
         Expr *meth;
         int class;
@@ -187,8 +191,8 @@ compiler_load_builtin_modules(Ty *ty);
 Symbol *
 compiler_introduce_symbol(Ty *ty, char const *, char const *);
 
-void
-compiler_introduce_tag(Ty *ty, char const *module, char const *name);
+int
+compiler_introduce_tag(Ty *ty, char const *module, char const *name, int super);
 
 bool
 compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope);
