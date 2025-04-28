@@ -298,7 +298,7 @@ class Printer {
                     f(x)
                 }
                 self.write(close, color, false)
-            } catch e: TooWideError & canPush {
+            } catch (e: TooWideError) and canPush {
                 self.restore(state)
                 self.write(open, color, force)
                 self.nl(1)
@@ -332,7 +332,7 @@ class Printer {
                     }
                 }
                 self.write(close, delim-style, false)
-            } catch e: TooWideError & canPush {
+            } catch (e: TooWideError) and canPush {
                 self.restore(state)
                 self.write(open, delim-style, force)
                 self.nl(1)
@@ -445,7 +445,6 @@ pub function prettyPrint(x, %kwargs) {
 }
 
 pub function pretty(x, %kwargs) {
-
 #|if !__windows__
     if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {
         winSize.cols = 108

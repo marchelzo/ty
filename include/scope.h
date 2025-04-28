@@ -12,6 +12,14 @@ enum {
         SYMBOL_TABLE_SIZE = 16
 };
 
+enum {
+        SYM_PUBLIC    = 1 << 0,
+        SYM_MACRO     = 1 << 1,
+        SYM_FUN_MACRO = 1 << 2,
+        SYM_CONST     = 1 << 3,
+        SYM_TYPE_VAR  = 1 << 4
+};
+
 typedef struct type Type;
 
 typedef struct symbol {
@@ -20,14 +28,10 @@ typedef struct symbol {
         int symbol;
         int tag;
         int class;
-        bool public;
-        bool cnst;
-        bool macro;
-        bool fun_macro;
+        u32 flags;
         bool captured;
         bool global;
         bool namespace;
-        bool type_var;
         bool fixed;
         int i;
         int ci;
@@ -36,6 +40,7 @@ typedef struct symbol {
         char const *file;
 
         Type *type;
+        Expr *expr;
 
         struct scope *scope;
 
@@ -46,6 +51,7 @@ typedef struct symbol {
 typedef struct scope {
         bool external;
         bool namespace;
+        bool shared;
 
         struct symbol *table[SYMBOL_TABLE_SIZE];
 
@@ -60,6 +66,8 @@ typedef struct scope {
         char const *name;
 #endif
 } Scope;
+
+typedef void *SymbolTransform(Ty *ty, Symbol *);
 
 struct scope *
 _scope_new(Ty *ty,
@@ -124,6 +132,16 @@ scope_copy_public_except(Ty *ty, struct scope *dst, struct scope const *src, cha
 char const *
 scope_copy(Ty *ty, struct scope *dst, struct scope const *src);
 
+inline static void
+scope_apply(Ty *ty, Scope *scope, SymbolTransform *f)
+{
+        for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
+                for (Symbol *s = scope->table[i]; s != NULL; s = s->next) {
+                        f(ty, s);
+                }
+        }
+}
+
 int
 scope_get_symbol(Ty *ty);
 
@@ -144,6 +162,49 @@ NewTypeVar(Ty *ty, char const *name);
 
 Symbol *
 NewScopedTypeVar(Ty *ty, Scope *s, char const *name);
+
+inline static bool
+SymbolIsTypeVar(Symbol const *var)
+{
+        return var->flags & SYM_TYPE_VAR;
+}
+
+inline static bool
+SymbolIsPublic(Symbol const *var)
+{
+        return var->flags & SYM_PUBLIC;
+}
+
+inline static bool
+SymbolIsConst(Symbol const *var)
+{
+        return var->flags & SYM_CONST;
+}
+
+inline static bool
+SymbolIsMacro(Symbol const *var)
+{
+        return var->flags & SYM_MACRO;
+}
+
+inline static bool
+SymbolIsFunMacro(Symbol const *var)
+{
+        return var->flags & SYM_FUN_MACRO;
+}
+
+inline static bool
+ScopeIsShared(Scope const *scope)
+{
+        while (scope != NULL) {
+                if (scope->shared) {
+                        return true;
+                }
+                scope = scope->parent;
+        }
+
+        return false;
+}
 
 int
 scope_get_completions(

@@ -139,6 +139,9 @@ class_implement_trait(Ty *ty, int class, int trait);
 int
 class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max);
 
+int
+class_completions(Ty *ty, int class, char const *prefix, expression_vector *out);
+
 struct itable *
 class_methods(Ty *ty, int class);
 

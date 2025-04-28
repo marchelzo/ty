@@ -9,12 +9,79 @@ import ty.parse as parse
 import ty.token as lex
 import os
 
-fn rand() -> Float;
-fn rand(n: Int) -> Int;
-fn print(*args, sep: String = ', ', end: String = '\n', flush: Bool = false) -> Int;
-fn int(x, base: ?Int) -> Int;
-fn min[a](*xs: a) -> a;
-fn max[a](*xs: a) -> a;
+macro TyParam = ty.Param[{name: String, constraint: AST, default: AST}]
+
+macro TyFunc = {
+    name: String | nil,
+    params: [TyParam],
+    rt: AST,
+    decorators: [AST] | nil,
+    body: AST
+}
+
+macro TyDictItem = ty.DictItem[(AST, AST)]
+
+use AST = ty.Int[Int]
+        | ty.String[String]
+        | ty.Float[Float]
+        | ty.Bool[Bool]
+        | ty.Id[{name: String, module: String | nil, constraint: AST}]
+        | ty.Count[AST]
+        | ty.Subscript[(AST, AST)]
+        | ty.Slice[(AST, AST, AST, AST)]
+        | ty.Array[Array[ty.ArrayItem[{item: AST, cond: AST, optional: Bool}]]]
+        | ty.ArrayItem[{item: AST, cond: AST, optional: Bool}]
+        | ty.Dict[{items: [TyDictItem], default: AST}]
+        | TyDictItem
+        | ty.Call[{func: AST, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
+        | ty.MethodCall[{object: AST, method: String, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
+        | ty.Arg[{arg: AST, name: String | nil, cond: AST}]
+        | ty.Record[Array[ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]]]
+        | ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]
+        | ty.Func[TyFunc]
+        | ty.FuncDef[TyFunc]
+        | ty.ImplicitFunc[TyFunc]
+        | TyParam
+        | ty.Class[{
+              name: String,
+              `super`: AST,
+              fields: [AST],
+              methods: [AST],
+              getters: [AST],
+              setters: [AST],
+              statics: [AST]
+          }]
+        | ty.Break[{value: AST, depth: Int}]
+        | ty.Break
+        | ty.Any[AST]
+        | ty.Any
+        | ty.Each[{iter: AST, pattern: AST, expr: AST, cond: AST, stop: AST}]
+        | ty.SpecialString[Array[String | (AST, String | nil, Int | nil, AST)]]
+        | ty.Spread[AST]
+        | ty.Splat[AST]
+        | ty.Block[Array[AST]]
+        | ty.Multi[Array[AST]]
+        | ty.Match[(AST, Array[(AST, AST)])]
+        | ty.UserOp[(String, AST, AST)]
+        | ty.Add[(AST, AST)]
+        | ty.Sub[(AST, AST)]
+        | ty.Mul[(AST, AST)]
+        | ty.Div[(AST, AST)]
+        | ty.Mod[(AST, AST)]
+        | ty.GT[(AST, AST)]
+        | ty.LT[(AST, AST)]
+        | ty.GEQ[(AST, AST)]
+        | ty.LEQ[(AST, AST)]
+        | ty.Eq[(AST, AST)]
+        | ty.NotEq[(AST, AST)]
+        | ty.And[(AST, AST)]
+        | ty.Or[(AST, AST)]
+        | ty.BitAnd[(AST, AST)]
+        | ty.BitOr[(AST, AST)]
+        | ty.Xor[(AST, AST)]
+        | ty.Stop[AST]
+        | ty.Nil
+        | nil
 
 class Object {
     init(%props) {
@@ -176,6 +243,8 @@ class Array[T] : Iterable[T] {
     join(sep: String) -> String;
     take(n: Int) -> Array[T];
     drop(n: Int) -> Array[T];
+    remove!(x: _) -> Array[T];
+    remove(x: _) -> Array[T];
 
     shape() {
         let s = []
@@ -1012,6 +1081,13 @@ tag Err {
 
 
 class RegexMatch {
+    s: String
+    size: Int
+
+    s_: String
+    start_: Int
+    captures_: Array[(Int, Int)]
+
     init(s, groups) {
         let [(start, size), *captures] = groups
         @start_ = start
@@ -1526,7 +1602,11 @@ trait Iter[T] < Iterable[T] {
     }
 
     reverse() {
-        return ReverseIter(self)
+        let xs = [x for x in self]
+        xs.reverse!()
+        for x in xs {
+            yield x
+        }
     }
 
     take*(n) {
@@ -1777,25 +1857,12 @@ trait Iter[T] < Iterable[T] {
     __iter__() { self }
 }
 
-class ReverseIter : Iter {
-    init(I) {
-        @xs = []
-        while let Some(x) = I.__next__() {
-            @xs.push(x)
-        }
-    }
+class Queue[T] : Iterable[T] {
+    xs: Array[T]
+    i: Int
+    j: Int
 
-    __next__() {
-        if @xs {
-            Some(@xs.pop())
-        } else {
-            None
-        }
-    }
-}
-
-class Queue : Iterable {
-    init(xs=[]) {
+    init(xs: Iterable[T] = []) {
         @xs = []
         @i = 0
         @j = 0
@@ -1939,7 +2006,14 @@ class InclusiveRange < Range {
     }
 }
 
-function id(x) { x }
+fn rand() -> Float;
+fn rand(n: Int, m: ?Int) -> Int;
+fn print(*args, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
+fn int(x, base: ?Int) -> Int;
+fn min[a](*xs: a) -> a;
+fn max[a](*xs: a) -> a;
+
+function id[T](x: T) -> T { x }
 
 function len(xs) {
     #xs
@@ -2010,9 +2084,10 @@ function uuid7(pseudo = true) {
 }
 
 class Mutex {
+    mtx: _
+
     init() {
         @mtx = thread.mutex()
-        @waited = 0
     }
 
     inner() {
@@ -2022,7 +2097,6 @@ class Mutex {
     lock() {
         let start = time.utime()
         thread.lock(@mtx)
-        @waited += time.utime() - start
         return MutexLock(@mtx)
     }
 
@@ -2046,6 +2120,8 @@ class Mutex {
 }
 
 class MutexLock {
+    mtx: _
+
     init(mtx) {
         @mtx = mtx
     }
@@ -2056,6 +2132,8 @@ class MutexLock {
 }
 
 class Channel {
+    chan: _
+
     init() {
         @chan = thread.channel()
     }
@@ -2069,13 +2147,16 @@ class Channel {
     }
 }
 
-class Sync {
-    init(x, mutex = Mutex()) {
+class Sync[T] {
+    x: T
+    mtx: Mutex
+
+    init(x: T, mutex = Mutex()) {
         @x = x
         @mtx = mutex
     }
 
-    static swap(x, y) {
+    static swap(x: Sync[T], y: T) {
         with x.mtx.lock() {
             let old = x.x
             x.x = y
@@ -2083,7 +2164,7 @@ class Sync {
         }
     }
 
-    static read(x) {
+    static read(x: Sync[T]) -> T {
         with x.mtx.lock() {
             x.x
         }
@@ -2205,6 +2286,8 @@ class Sync {
 }
 
 class CondVar {
+    var: _
+
     init() {
         @var = thread.cond()
     }
@@ -2231,6 +2314,8 @@ class CondVar {
 }
 
 class Thread {
+    handle: _
+
     /*
      * Thread(func, *args, isolated=false, name=nil)
      *
@@ -2601,8 +2686,14 @@ macro ifdef {
     ty.CompileTime(ty.If([ty.Defined(name: v.id, module: v.module)], ty.Value(then), ty.Value(otherwise ?? ty.Nil)))
 }
 
-class SharedQueue : Iterable {
-    init(xs=[]) {
+class SharedQueue[T] : Iterable[T] {
+    xs: Array[T]
+    i: Int
+    j: Int
+    mutex: Mutex
+    cond: CondVar
+
+    init(xs: Iterable[T] = []) {
         @xs = []
         @i = 0
         @j = 0
@@ -2610,7 +2701,7 @@ class SharedQueue : Iterable {
         @cond = CondVar()
 
         for x in xs {
-            self.put(x)
+            put(x)
         }
     }
 
@@ -2638,7 +2729,7 @@ class SharedQueue : Iterable {
         }
     }
 
-    put(x) {
+    put(x: T) {
         let notify = false
 
         with @mutex.lock() {
@@ -2703,17 +2794,22 @@ class SharedQueue : Iterable {
     }
 }
 
-class EqualTo {
-    init(x)      { @x = x     }
+class EqualTo[T] {
+    x: T
+    init(x: T)   { @x = x     }
     __match__(x) { self == @x }
 }
 
 class AnyOf {
+    xs: Array[_]
     init(*xs)    { @xs = xs }
     __match__(x) { x in @xs }
 }
 
 class MemoizedFunction {
+    func: _
+    memo: _
+
     init(f) {
         @func = f
         self.reset()
@@ -2736,10 +2832,13 @@ class MemoizedFunction {
 let memoized = MemoizedFunction
 
 macro __walk! {
-    function walk(tree, f) {
-        if tree == nil { return nil }
+    fn copySource[T, U](a: T, b: U) -> T { ty.copySource(a, b) }
+    function walk(tree: AST, f: AST -> AST) -> AST {
+        if tree == nil {
+            return nil
+        }
 
-        let tree = ty.copySource(tree, match tree {
+        let tree = copySource(tree, match tree {
             ty.Stop(tree) => tree,
 
             ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
@@ -2792,15 +2891,31 @@ macro __walk! {
             ty.Range(a, b) => ty.Range(walk(a, f), walk(b, f)),
             ty.IncRange(a, b) => ty.IncRange(walk(a, f), walk(b, f)),
 
+            ty.FuncDef(func),
             ty.Func(func),
-            ty.ImplicitFunc(func),
-            ty.FuncDef(func) => type(tree)(
+            ty.ImplicitFunc(func) => type(func)(
                 name: func.name,
                 decorators: [walk(dec, f) for dec in func.decorators],
                 params: [walk(param, f) for param in func.params],
                 rt: walk(func.rt, f),
                 body: walk(func.body, f)
             ),
+
+            //ty.Func(func) => ty.Func(
+            //    name: func.name,
+            //    decorators: [walk(dec, f) for dec in func.decorators],
+            //    params: [walk(param, f) for param in func.params],
+            //    rt: walk(func.rt, f),
+            //    body: walk(func.body, f)
+            //),
+
+            //ty.ImplicitFunc(func) => ty.ImplicitFunc(
+            //    name: func.name,
+            //    decorators: [walk(dec, f) for dec in func.decorators],
+            //    params: [walk(param, f) for param in func.params],
+            //    rt: walk(func.rt, f),
+            //    body: walk(func.body, f)
+            //),
 
             ty.Param(param) => ty.Param(
                 name: param.name,
@@ -2971,7 +3086,8 @@ macro __walk! {
             ty.SpecialString(parts) => ty.SpecialString(
                 parts.map(match {
                     (e, fmt, w, x) => (walk(e, f), fmt, w, walk(x, f)),
-                    e              => walk(e, f)
+                    e: AST         => walk(e, f),
+                    str            => str
                 })
             ),
 
@@ -3001,7 +3117,7 @@ macro __walk! {
             _ => tree
         })
 
-        return ty.copySource(tree, f(tree))
+        return copySource(tree, f(tree))
     }
 
     ty.Value(walk)
@@ -3107,7 +3223,7 @@ function <<(f, x) { f(x) }
 
 function ?>(x, f) { (x == nil) ? x : f(x) }
 
-macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] = $$a.match!($$b)
+macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match!($$b)
 
 function .(f: Function, g: Function) {
     f@(g(*, **))
@@ -3136,6 +3252,7 @@ function sink(file) match file {
 }
 
 class ScopeGuard(cleanup-func) {
+    cleanup-func: _
     __drop__() {
         (@cleanup-func)()
     }

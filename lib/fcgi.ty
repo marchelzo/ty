@@ -54,7 +54,7 @@ class FCGIParser {
         (@parser)()
     }
 
-    next(n: ?Int) {
+    next(n) {
         while #@buffer < (n ?? 1) {
             @buffer.push(yield nil)
         }

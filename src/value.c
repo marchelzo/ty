@@ -1214,7 +1214,7 @@ mark_generator(Ty *ty, struct value const *v)
 inline static void
 mark_function(Ty *ty, struct value const *v)
 {
-        int n = v->info[2];
+        int n = v->info[FUN_INFO_CAPTURES];
 
         if (*from_eval(v))
                 MARK(v->info);

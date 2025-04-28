@@ -167,6 +167,7 @@ scope_lookup(Ty *ty, Scope const *s, char const *id)
                 sym->scope->function != s->function
              && !sym->global
              && !sym->namespace
+             && !SymbolIsTypeVar(sym)
         ) {
                 vec(Scope *) scopes = {0};
 
@@ -236,7 +237,7 @@ NewTypeVar(Ty *ty, char const *name)
 {
         Symbol *sym = xnew(ty, name);
 
-        sym->type_var = true;
+        sym->flags |= SYM_TYPE_VAR;
         sym->type = type_variable(ty, sym);
 
         return sym;
@@ -247,7 +248,7 @@ NewScopedTypeVar(Ty *ty, Scope *s, char const *name)
 {
         Symbol *sym = xadd(ty, s, name);
 
-        sym->type_var = true;
+        sym->flags |= SYM_TYPE_VAR;
         sym->type = type_variable(ty, sym);
 
         return sym;
@@ -270,7 +271,7 @@ scope_add_type_var(Ty *ty, Scope *s, char const *id)
         Symbol *sym = xadd(ty, s, id);
 
         sym->scope = s;
-        sym->type_var = true;
+        sym->flags |= SYM_TYPE_VAR;
         sym->type = type_variable(ty, sym);
 
         return sym;
@@ -342,7 +343,7 @@ scope_insert_as(Ty *ty, Scope *s, Symbol *sym, char const *id)
         new->identifier = id;
         new->hash = strhash(id);
         new->scope = s;
-        new->public = false;
+        new->flags &= ~SYM_PUBLIC;
 
         int i = new->hash % SYMBOL_TABLE_SIZE;
         new->next = s->table[i];
@@ -359,7 +360,7 @@ scope_insert(Ty *ty, Scope *s, Symbol *sym)
 
         if (!sym->namespace) {
                 new->scope = s;
-                new->public = false;
+                new->flags &= ~SYM_PUBLIC;
         }
 
         int i = sym->hash % SYMBOL_TABLE_SIZE;
@@ -375,8 +376,13 @@ scope_copy(Ty *ty, Scope *dst, Scope const *src)
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
-                        if (conflict != NULL && conflict->scope != src && conflict->public)
+                        if (
+                                conflict != NULL
+                             && conflict->scope != src
+                             && SymbolIsPublic(conflict)
+                        ) {
                                 return conflict->identifier;
+                        }
                 }
         }
 
@@ -410,7 +416,11 @@ scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip
                                 continue;
                         }
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
-                        if (conflict != NULL && conflict->scope != src && conflict->public) {
+                        if (
+                                conflict != NULL
+                             && conflict->scope != src
+                             && SymbolIsPublic(conflict)
+                        ) {
                                 return conflict->identifier;
                         }
                 }
@@ -421,8 +431,8 @@ scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip
                         if (should_skip(s->identifier, skip, n)) {
                                 continue;
                         }
-                        if (s->public) {
-                                scope_insert(ty, dst, s)->public |= reexport;
+                        if (SymbolIsPublic(s)) {
+                                scope_insert(ty, dst, s)->flags |= SYM_PUBLIC * reexport;
                         }
                 }
         }
@@ -436,7 +446,11 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
                         Symbol *conflict = scope_lookup(ty, dst, s->identifier);
-                        if (conflict != NULL && conflict->scope != src && conflict->public) {
+                        if (
+                                conflict != NULL
+                             && conflict->scope != src
+                             && SymbolIsPublic(conflict)
+                        ) {
                                 return conflict->identifier;
                         }
                 }
@@ -444,8 +458,8 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (Symbol *s = src->table[i]; s != NULL; s = s->next) {
-                        if (s->public) {
-                                scope_insert(ty, dst, s)->public |= reexport;
+                        if (SymbolIsPublic(s)) {
+                                scope_insert(ty, dst, s)->flags |= SYM_PUBLIC * reexport;
                         }
                 }
         }
@@ -535,7 +549,11 @@ scope_get_completions(
 
         for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                 for (Symbol *sym = scope->table[i]; sym != NULL; sym = sym->next) {
-                        if (n < max && sym->public && strncmp(sym->identifier, prefix, prefix_len) == 0) {
+                        if (
+                                n < max
+                             && SymbolIsPublic(sym)
+                             && strncmp(sym->identifier, prefix, prefix_len) == 0
+                        ) {
                                 out[n++] = sclone_malloc(sym->identifier);
                         }
                 }

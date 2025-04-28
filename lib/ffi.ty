@@ -249,7 +249,16 @@ function nextproto() {
         return ps
 }
 
-function lspan(s1, s2=lex.state()) {
+use LexState = {
+    source: String,
+    position: {
+        line: Int,
+        col: Int,
+        byte: Int
+    }
+}
+
+function lspan(s1: LexState, s2: LexState = lex.state()) {
     let b1 = s1.position.byte
     let b2 = s2.position.byte
     s1.source.bsplice(b1, b2)
@@ -512,9 +521,9 @@ function strct() {
     )
 
     let structArgs = []
-    let methods = []
-    let getters = []
-    let setters = []
+    let methods: Array[ty.Func[TyFunc]] = []
+    let getters: Array[ty.Func[TyFunc]] = []
+    let setters: Array[ty.Func[TyFunc]] = []
 
     function add-member(i: ?Int, name, t, count, off=0) {
         if i == nil {
@@ -581,14 +590,19 @@ function strct() {
                 ty.Func(
                     name: name,
                     params: [],
-                    body: getter-body
+                    body: getter-body,
+                    rt: nil,
+                    decorators: []
                 )
             )
+
             setters.push(
                 ty.Func(
                     name: name,
                     params: [ty.Param(name: '<member>')],
-                    body: setter-body
+                    body: setter-body,
+                    rt: nil,
+                    decorators: []
                 )
             )
         }
@@ -632,10 +646,10 @@ function strct() {
                 ty.Arg(
                     arg: ty.Record([
                         ty.RecordEntry(
-                            name: e.name,
+                            name: (#e).name,
                             item: ty.MemberAccess(
                                 ty.Id(name: 'self'),
-                                e.name
+                                (#e).name
                             )
                         )
                         for e in getters
@@ -715,7 +729,7 @@ function clos() {
     )
 
     ty.Let(
-        ty.Id(name: f.name),
+        ty.Id(name: name),
         ty.Call(
             func: ty.Value(c.closure),
             args: [

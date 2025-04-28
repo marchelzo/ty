@@ -87,6 +87,9 @@ typedef struct thread Thread;
 typedef struct channel Channel;
 typedef struct chanval ChanVal;
 
+enum { FT_NONE, FT_FUNC, FT_GEN };
+enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
+
 enum {
         VALUE_FUNCTION = 1     ,
         VALUE_METHOD           ,
@@ -471,6 +474,7 @@ extern bool ColorStderr;
 extern bool ColorProfile;
 
 extern bool CompileOnly;
+extern bool AllowErrors;
 
 #define dont_printf(...) do { } while (0)
 
@@ -886,6 +890,8 @@ enum {
         X(LT,        "<"),   \
         X(GEQ,      ">="),   \
         X(LEQ,      "<="),   \
+        X(IN,       "in"),   \
+        X(NOT_IN,  "!in"),   \
         X(BOP_MAX,  "zz")
 
 #define X(op, id) OP_ ## op

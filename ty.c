@@ -47,7 +47,7 @@ static bool basic = false;
 static char buffer[8192];
 static char *completions[MAX_COMPLETIONS + 1];
 static char const *print_function = "print";
-static char SymbolLocation[512];
+static char ToolQuery[512];
 
 static char const *SourceFile;
 static char SourceFilePath[4096];
@@ -59,6 +59,7 @@ bool ColorStdout;
 bool ColorStderr;
 
 bool CompileOnly = false;
+bool AllowErrors = false;
 
 extern bool ProduceAnnotation;
 extern FILE *DisassemblyOut;
@@ -295,18 +296,10 @@ repl(Ty *ty)
         }
 }
 
-static char *
-strclone(char const *s)
-{
-        char *new = malloc(strlen(s) + 1);
-        strcpy(new, s);
-        return new;
-}
-
 char *
 completion_generator(char const *text, int state)
 {
-        return completions[state] ? strclone(completions[state]) : NULL;
+        return completions[state] ? sclone_malloc(completions[state]) : NULL;
 }
 
 static int
@@ -541,14 +534,16 @@ ProcessArgs(char *argv[], bool first)
                                         PrintResult |= !first;
                                         break;
                                 case 't':
+                                        ColorStdout = false;
+                                        ColorStderr = false;
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
                                                         fprintf(stderr, "Missing argument for -t\n");
-                                                        return 1;
+                                                        exit(1);
                                                 }
-                                                snprintf(SymbolLocation, sizeof SymbolLocation - 1, "%s", argv[++argi]);
+                                                snprintf(ToolQuery, sizeof ToolQuery - 1, "%s", argv[++argi]);
                                         } else {
-                                                snprintf(SymbolLocation, sizeof SymbolLocation - 1, "%s", opt + 1);
+                                                snprintf(ToolQuery, sizeof ToolQuery - 1, "%s", opt + 1);
                                                 while (opt[1] != '\0') ++opt;
                                         }
                                         break;
@@ -557,7 +552,7 @@ ProcessArgs(char *argv[], bool first)
                                         if (opt[1] == '\0') {
                                                 if (argv[argi + 1] == NULL) {
                                                         fprintf(stderr, "Missing argument for -e\n");
-                                                        return 1;
+                                                        exit(1);
                                                 }
                                                 if ((++argi, !first)) exit((int)!execln(ty, argv[argi]));
                                         } else {
@@ -632,9 +627,54 @@ NextOption:
                 argi += 1;
         }
 
-        SourceFile = argv[argi];
+
+        if (first) {
+                SourceFile = argv[argi];
+                if (SourceFile == NULL || strcmp(SourceFile, "-") == 0) {
+                        SourceFile = "/dev/stdin";
+                }
+        }
 
         return argi;
+}
+
+enum {
+        TOOL_COMPLETE    = 1,
+        TOOL_SIGNATURE   = 2,
+        TOOL_DEFINITION  = 4
+};
+
+static int
+do_tool_opts(char *arg)
+{
+        int query = 0;
+
+        while (*arg < '0' || *arg > '9') {
+                switch (*arg++) {
+                case  'd': query |= TOOL_DEFINITION; break;
+                case  'c': query |= TOOL_COMPLETE;   break;
+                case  's': query |= TOOL_SIGNATURE;  break;
+                }
+        }
+
+        char *colon = strchr(arg, ':');
+        if (colon == NULL) {
+                return -1;
+        }
+
+        *colon = '\0';
+
+        if (realpath(SourceFile, SourceFilePath) == NULL) {
+                return -1;
+        }
+
+        QueryFile = SourceFilePath;
+        QueryLine = atoi(arg) - 1;
+        QueryCol  = atoi(colon + 1) - 1;
+        CompileOnly = true;
+        AllowErrors = true;
+
+        return query;
 }
 
 int
@@ -650,26 +690,24 @@ main(int argc, char **argv)
         case TY_COLOR_NEVER:  ColorStdout = false;     ColorStderr = false;     break;
         }
 
-        if (*SymbolLocation != '\0') {
-                char *colon = strchr(SymbolLocation, ':');
-
-                if (colon == NULL) {
-                        return 14;
+        int query;
+        if (*ToolQuery != '\0') {
+                query = do_tool_opts(ToolQuery);
+                if (query == -1) {
+                        return -1;
                 }
-
-                *colon = '\0';
-
-                if (realpath(SourceFile, SourceFilePath) == NULL) {
-                        return 5;
+                if (query & TOOL_DEFINITION) {
+                        FindDefinition = true;
                 }
-
-                QueryFile = SourceFilePath;
-                FindDefinition = true;
-                QueryLine = atoi(SymbolLocation) - 1;
-                QueryCol  = atoi(colon + 1) - 1;
-                CompileOnly = true;
+                if (query & TOOL_COMPLETE) {
+                        SuggestCompletions = true;
+                }
+                if (query & TOOL_SIGNATURE) {
+                        SuggestCompletions = true;
+                }
+        } else {
+                query = 0;
         }
-
 
 #ifdef TY_ENABLE_PROFILING
         if (ProfileOut == NULL) {
@@ -690,14 +728,7 @@ main(int argc, char **argv)
 
         argv += ProcessArgs(argv, false);
 
-        FILE *file;
-        if (argv[0] == NULL || strcmp(argv[0], "-") == 0) {
-                file = stdin;
-                SourceFile = "<stdin>";
-        } else {
-                file = fopen(SourceFile, "r");
-        }
-
+        FILE *file = fopen(SourceFile, "r");
         if (file == NULL) {
                 fprintf(stderr, "Failed to open source file '%s': %s\n", SourceFile, strerror(errno));
                 return 1;
@@ -709,23 +740,140 @@ main(int argc, char **argv)
 
         char *source = fslurp(ty, file);
 
-        if (FindDefinition) {
-                if (QueryResult == NULL && !vm_execute(ty, source, SourceFile)) {
-                        fprintf(stderr, "%s\n", TyError(ty));
-                        return 1;
-                }
+        if (query & TOOL_DEFINITION) {
+                bool ok = (QueryResult != NULL) || vm_execute(ty, source, SourceFile);
 
                 if (QueryResult == NULL || QueryResult->file == NULL) {
                         return 2;
                 }
 
                 Value result = vTn(
-                        "name", xSz(QueryResult->identifier),
-                        "line", INTEGER(QueryResult->loc.line + 1),
-                        "col",  INTEGER(QueryResult->loc.col + 1),
-                        "file", xSz(QueryResult->file),
-                        "type", xSz(type_show(ty, QueryResult->type)),
-                        "doc",  (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc)
+                        "name",  xSz(QueryResult->identifier),
+                        "line",  INTEGER(QueryResult->loc.line + 1),
+                        "col",   INTEGER(QueryResult->loc.col + 1),
+                        "file",  xSz(QueryResult->file),
+                        "type",  xSz(type_show(ty, QueryResult->type)),
+                        "doc",   (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc),
+                        "error", ok ? NIL : xSz(TyError(ty))
+                );
+
+                byte_vector out = {0};
+
+                if (!json_dump(ty, &result, &out)) {
+                        return 3;
+                }
+
+                xvP(out, '\n');
+                xvP(out, '\0');
+
+                fputs(out.items, stdout);
+
+                return 0;
+        }
+
+        if (query & TOOL_COMPLETE) {
+                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFile);
+
+                if (QueryExpr == NULL) {
+                        if (!ok) {
+                                fprintf(stderr, "%s\n", TyError(ty));
+                                return 4;
+                        } else {
+                                return 2;
+                        }
+                }
+
+                ValueVector completions = {0};
+
+                type_completions(ty, QueryExpr->_type, "", &completions);
+
+                Value result = vTn(
+                        "source",      xSs(QueryExpr->start.s, QueryExpr->end.s - QueryExpr->start.s),
+                        "type",        xSz(type_show(ty, QueryExpr->_type)),
+                        "completions", ARRAY((Array *)&completions),
+                        "error",       ok ? NIL : xSz(TyError(ty))
+                );
+
+                byte_vector out = {0};
+
+                if (!json_dump(ty, &result, &out)) {
+                        return 3;
+                }
+
+                xvP(out, '\n');
+                xvP(out, '\0');
+
+                fputs(out.items, stdout);
+
+                return 0;
+        }
+
+        if (query & TOOL_SIGNATURE) {
+                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFile);
+
+                if (QueryExpr == NULL) {
+                        if (!ok) {
+                                fprintf(stderr, "%s\n", TyError(ty));
+                                return 4;
+                        } else {
+                                return 2;
+                        }
+                }
+
+                Expr *fun = NULL;
+                Type *t0 = NULL;
+
+                switch (QueryExpr->type) {
+                case EXPRESSION_FUNCTION_CALL:
+                        t0 = QueryExpr->function->_type;
+                        if (QueryExpr->type == EXPRESSION_IDENTIFIER) {
+                                fun = QueryExpr->symbol->expr;
+                        }
+                        break;
+                case EXPRESSION_METHOD_CALL:
+                        type_find_method(ty, QueryExpr->object->_type, QueryExpr->method_name, &t0, &fun);
+                        break;
+                }
+
+                if (t0 == NULL || t0->type != TYPE_FUNCTION) {
+                        return 6;
+                }
+
+                ValueVector params = {0};
+
+                for (int i = 0; i < vN(t0->fun_params); ++i) {
+                        Param const *p = v_(t0->fun_params, i);
+                        xvP(
+                                params,
+                                vTn(
+                                        "name",     (p->var != NULL) ? xSz(p->var->identifier) : NIL,
+                                        "type",     type_show(ty, p->type),
+                                        "required", BOOLEAN(p->required),
+                                        "kwargs",   BOOLEAN(p->kws),
+                                        "variadic", BOOLEAN(p->rest)
+                                )
+                        );
+                }
+
+                Value doc = (fun != NULL && fun->doc != NULL) ? xSz(fun->doc) : NIL;
+                Value name = (fun != NULL && fun->name != NULL) ? xSz(fun->name) : NIL;
+                Value proto = (fun != NULL && fun->name != NULL) ? xSz(fun->proto) : NIL;
+
+                ValueVector sigs = {0};
+                xvP(
+                        sigs,
+                        vTn(
+                                "name",    name,
+                                "proto",   proto,
+                                "type",    xSz(type_show(ty, t0)),
+                                "doc",     doc,
+                                "params",  ARRAY((Array *)&completions)
+                        )
+                );
+
+                Value result = vTn(
+                        "signatures", ARRAY((Array *)&sigs),
+                        "error",      ok ? NIL : xSz(TyError(ty))
                 );
 
                 byte_vector out = {0};

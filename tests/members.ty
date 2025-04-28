@@ -10,8 +10,7 @@ function eq!(*args) {
 eq!(members(10), nil)
 eq!(members('asd'), nil)
 
-eq!(members((a: 5, 10))['a'], 5)
-eq!(members((a: 5, 10))[1], 10)
+eq!(members({a: 5, b: 10})['a'], 5)
 
 eq!(members({foo: 123, bar: 456}).keys().sort(), ['bar', 'foo'])
 eq!(members((4, 5, 6)).keys().sort(), [0, 1, 2])

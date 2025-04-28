@@ -436,6 +436,54 @@ class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max
         return N;
 }
 
+int
+class_completions(Ty *ty, int class, char const *prefix, expression_vector *out)
+{
+        if (class < 0) {
+                return 0;
+        }
+
+        Class *c = C(class);
+        int n = vN(*out);
+        int prefix_len = (prefix == NULL) ? 0 : strlen(prefix);
+
+        for (int i = 0; i < vN(c->def->class.methods); ++i) {
+                Expr *field = v__(c->def->class.methods, i);
+                if (strncmp(field->name, prefix, prefix_len) == 0) {
+                        xvP(*out, field);
+                }
+        }
+
+        for (int i = 0; i < vN(c->def->class.getters); ++i) {
+                Expr *field = v__(c->def->class.getters, i);
+                if (strncmp(field->name, prefix, prefix_len) == 0) {
+                        xvP(*out, field);
+                }
+        }
+
+        for (int i = 0; i < vN(c->def->class.fields); ++i) {
+                Expr *field = v__(c->def->class.fields, i);
+                if (
+                        (
+                                field->type == EXPRESSION_IDENTIFIER
+                             && strncmp(field->identifier, prefix, prefix_len) == 0
+                        )
+                     || (
+                                field->type == EXPRESSION_EQ
+                             && strncmp(field->target->identifier, prefix, prefix_len) == 0
+                        )
+                ) {
+                        xvP(*out, field);
+                }
+        }
+
+        if (c->super != NULL) {
+                class_completions(ty, c->super->i, prefix, out);
+        }
+
+        return (int)vN(*out) - n;
+}
+
 struct itable *
 class_methods(Ty *ty, int class)
 {

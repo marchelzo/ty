@@ -284,4 +284,20 @@ itable_get_completions(Ty *ty, struct itable const *t, char const *prefix, char 
         return n;
 }
 
+int
+itable_completions(Ty *ty, struct itable const *t, char const *prefix, ValueVector *out)
+{
+        int n = 0;
+        int prefix_len = (prefix == NULL) ? 0 : strlen(prefix);
+
+        for (int i = 0; i < vN(t->ids); ++i) {
+                char const *name = M_NAME(v__(t->ids, i));
+                if (strncmp(name, prefix, prefix_len) == 0) {
+                        xvP(*out, v__(t->values, i));
+                }
+        }
+
+        return n;
+}
+
 /* vim: set sts=8 sw=8 expandtab: */
