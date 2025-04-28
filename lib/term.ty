@@ -369,7 +369,7 @@ namespace ctlseq {
     }
 }
 
-function yield-basic(ch, extra-mods=0) {
+function yield-basic(ch: String, extra-mods=0) {
     let c = ord(ch)
 
     let (key, mods) = match c {
