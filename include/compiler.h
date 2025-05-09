@@ -252,7 +252,7 @@ void
 define_macro(Ty *ty, Stmt *, bool fun);
 
 void
-define_type(Ty *ty, Stmt *);
+define_type(Ty *ty, Stmt *, Scope *);
 
 void
 define_const(Ty *ty, Stmt *);

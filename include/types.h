@@ -32,11 +32,14 @@ struct type {
                 TYPE_FUNCTION,
                 TYPE_TUPLE,
                 TYPE_LIST,
+                TYPE_SEQUENCE,
                 TYPE_TAG,
                 TYPE_CLASS,
                 TYPE_OBJECT,
                 TYPE_UNION,
                 TYPE_VARIABLE,
+                TYPE_SUBSCRIPT,
+                TYPE_SLICE,
                 TYPE_INTEGER,
                 TYPE_INTERSECT,
                 TYPE_NIL,
@@ -46,6 +49,8 @@ struct type {
                 TYPE_ALIAS
         } type;
         bool fixed;
+        bool concrete;
+        bool variadic;
         union {
                 struct {
                         union {
@@ -64,10 +69,19 @@ struct type {
                                         Type *_type;
                                         char const *name;
                                 };
-                                Expr *aliased;
                                 struct {
-                                        int id;
-                                        int level;
+                                        union {
+                                                struct {
+                                                        int id;
+                                                        int level;
+                                                        bool bounded;
+                                                };
+                                                struct {
+                                                        int i;
+                                                        int j;
+                                                        int k;
+                                                };
+                                        };
                                         Type *val;
                                 };
                         };
@@ -98,6 +112,7 @@ extern Type *TYPE_INT;
 extern Type *TYPE_FLOAT;
 extern Type *TYPE_BOOL;
 extern Type *TYPE_STRING;
+extern Type *TYPE_REGEX;
 extern Type *TYPE_BLOB;
 extern Type *TYPE_ARRAY;
 extern Type *TYPE_DICT;
@@ -133,7 +148,7 @@ Type *
 type_alias(Ty *ty, Symbol *var, Stmt const *s);
 
 Type *
-type_function(Ty *ty, Expr const *e);
+type_function(Ty *ty, Expr const *e, bool tmp);
 
 Type *
 type_tuple(Ty *ty, Expr const *e);
@@ -151,6 +166,9 @@ Type *
 type_match(Ty *ty, Expr const *e);
 
 Type *
+type_match_stmt(Ty *ty, Stmt const *stmt);
+
+Type *
 type_call(Ty *ty, Expr const *e);
 
 Type *
@@ -166,13 +184,16 @@ Type *
 type_member_access(Ty *ty, Expr const *e);
 
 Type *
-type_member_access_t(Ty *ty, Type *t0, char const *name, bool strict);
+type_member_access_t(Ty *ty, Type const *t0, char const *name, bool strict);
 
 Type *
 type_binary_op(Ty *ty, Expr const *e);
 
 Type *
 type_unary_op(Ty *ty, Expr const *e);
+
+Type *
+type_wtf(Ty *ty, Expr const *e);
 
 Type *
 type_unary_hash_t(Ty *ty, Type const *t0);
@@ -234,6 +255,24 @@ type_dict_of(Ty *ty, Type *t0, Type *t1);
 Type *
 type_iterable_type(Ty *ty, Type *t0);
 
+Type *
+type_not_nil(Ty *ty, Type *t0);
+
+Type *
+type_either(Ty *ty, Type *t0, Type *t1);
+
+Type *
+type_both(Ty *ty, Type *t0, Type *t1);
+
+Type *
+type_instance_of(Ty *ty, Type *t0, int class);
+
+Type *
+type_list_from(Ty *ty, expression_vector const *es);
+
+Type *
+type_list_item(Ty *ty, Type const *t0, int i);
+
 void
 type_scope_push(Ty *ty, bool fun);
 
@@ -241,7 +280,7 @@ void
 type_scope_pop(Ty *ty);
 
 void
-type_function_fixup(Ty *ty, Type *t0);
+type_function_fixup(Ty *ty, Expr const *e);
 
 void
 type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out);

@@ -72,6 +72,12 @@ MakeTrait(Ty *ty, Class *c)
         xvP(traits, c);
 }
 
+inline static bool
+ClassImplementsTrait(Class const *c, int ti)
+{
+        return vN(c->impls) > ti
+            && v__(c->impls, ti);
+}
 
 Class *
 class_get_class(Ty *ty, int class)
@@ -139,7 +145,18 @@ class_get_super(Ty *ty, int class)
 void
 class_set_super(Ty *ty, int class, int super)
 {
-        C(class)->super = C(super);
+        Class *c0 = C(class);
+        Class *c1 = C(super);
+
+        c0->super = c1;
+
+        if (c0->is_trait && c1->is_trait) {
+                for (int i = 0; i < vN(classes); ++i) {
+                        if (ClassImplementsTrait(v__(classes, i), c0->ti)) {
+                                class_implement_trait(ty, v__(classes, i)->i, c1->i);
+                        }
+                }
+        }
 }
 
 void
@@ -373,22 +390,37 @@ class_implement_trait(Ty *ty, int class, int trait)
         }
 
         *v_(c->impls, t->ti) = true;
+
+        if (t->super != NULL && t->super->is_trait) {
+                class_implement_trait(ty, c->i, t->super->i);
+        }
 }
 
 bool
 class_is_subclass(Ty *ty, int sub, int super)
 {
-        if (sub == super || super == CLASS_TOP || sub == CLASS_BOTTOM)
+        if (
+                sub == super
+             || super == CLASS_TOP
+             || sub == CLASS_BOTTOM
+        ) {
                 return true;
+        }
 
-        if (sub == CLASS_TOP)
+        if (
+                sub == CLASS_TOP
+             || sub == CLASS_NIL
+             || super == CLASS_BOTTOM
+             || super == CLASS_NIL
+        ) {
                 return false;
+        }
 
         Class *c = C(sub);
         Class *cc = C(super);
 
         if (cc->is_trait) {
-                return vN(c->impls) > cc->ti && v__(c->impls, cc->ti);
+                return ClassImplementsTrait(c, cc->ti);
         }
 
         do {

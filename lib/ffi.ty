@@ -18,7 +18,7 @@ function next!(t) {
     next()
 }
 
-pub function getCif(rt, *aTypes, nFixed=nil) {
+pub function getCif(rt, *aTypes, nFixed: ?Int) {
     let signature = (rt, aTypes, nFixed)
 
     sync!(cifs) {
@@ -81,7 +81,7 @@ pub function wrapVar(lib, name, nFixed, rType, *aTypes) {
 
     let argStorage = [c.new(t) for t in aTypes]
 
-    return function (*args) {
+    return function (*args: _) {
         let aTypes = aTypes.clone()
         let argStorage = argStorage.clone()
 
@@ -283,12 +283,12 @@ function fun() {
     // function
     next!('fn')
 
-    function mkfdef(name, rt, ps, proto-string=nil, doc-string=nil) {
+    function mkfdef(name, rt: AST, ps: [AST], proto-string: ?String, doc-string: ?String) {
         let args = [
             ty.Arg(arg: lib),
             ty.Arg(arg: ty.String(prefix + name)),
             ty.Arg(arg: rt),
-            *(ty.Arg(arg: p) for p in ps)
+            *(ty.Arg(arg: p) for (p: AST) in ps)
         ]
         ty.Let((
             ty.Id(name: name),
@@ -313,7 +313,7 @@ function fun() {
         // ->
         next!('->')
 
-        let rt = expr(0)
+        let rt: AST = expr(0)
 
         return mkfdef(name, rt, ps)
     } else {
@@ -330,7 +330,7 @@ function fun() {
             }
 
             let st = lex.state()
-            let rt = nexttype(allow-name=false)
+            let rt: AST = nexttype(allow-name=false)
             let rt-string = lspan(st)
 
             let name = next().id
@@ -392,11 +392,13 @@ function strct() {
     let members = []
 
     while peek().type != '}' {
-        let get-count = -> if peek().type == '[' {
-            next()
-            let n = expr(0)
-            next!(']')
-            n
+        let get-count = fn () -> AST {
+            if peek().type == '[' {
+                next()
+                let n = expr(0)
+                next!(']')
+                n
+            }
         }
 
         let get-decl = -> do {
@@ -525,7 +527,7 @@ function strct() {
     let getters: Array[ty.Func[TyFunc]] = []
     let setters: Array[ty.Func[TyFunc]] = []
 
-    function add-member(i: ?Int, name, t, count, off=0) {
+    function add-member(i: ?Int, name, t, count, off: Int | AST = 0) {
         if i == nil {
             i = #structArgs
 

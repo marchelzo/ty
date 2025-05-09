@@ -18,6 +18,7 @@ static struct {
         { "SeLf",        KEYWORD_SELF      },
         { "__defined__", KEYWORD_DEFINED   },
         { "__eval__",    KEYWORD_EVAL      },
+        { "typeof",      KEYWORD_TYPEOF    },
         { "and",         KEYWORD_AND       },
         { "as",          KEYWORD_AS        },
         { "break",       KEYWORD_BREAK     },

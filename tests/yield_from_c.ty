@@ -2,7 +2,7 @@ let g = nil
 let s = ''
 
 g = generator {
-    'pass:fail'.chars().map(-> s += (yield it)(it))
+    'pass:fail'.chars().map(c -> s += (yield c)(c))
 }
 
 let f = -> g(&upper)

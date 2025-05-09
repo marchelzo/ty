@@ -6,12 +6,15 @@ pub const FBF = stdio._IOFBF
 pub const LBF = stdio._IOLBF
 pub const NBF = stdio._IONBF
 
-pub use BufferingMode = type(FBF) | type(LBF) | type(NBF)
+pub use BufferingMode = typeof FBF | typeof LBF | typeof NBF
 
 pub SEEK_SET = stdio.SEEK_SET
 pub SEEK_CUR = stdio.SEEK_CUR
 
 pub class Stream : Iter {
+    f: _
+    fd: Int
+
     init(fd, mode: ?String = 'a+', buffering: ?BufferingMode = nil, dup: Bool = false) {
         if fd :: Int {
             @fd = match dup { true => os.dup(fd), _ => fd }
@@ -46,7 +49,7 @@ pub class Stream : Iter {
         self.close()
     }
 
-    tell() {
+    tell() -> Int {
         stdio.ftell(@f)
     }
 
@@ -68,11 +71,12 @@ pub class Stream : Iter {
         }
     }
 
-    next(n: ?Int, b: ?Blob) {
-        match n {
-            $n  => stdio.fread(self.f, n, b),
-            _   => stdio.fgetc(self.f)
-        }
+    next(n: Int, buf: ?Blob) -> Blob {
+        stdio.fread(self.f, n, buf)
+    }
+
+    next() -> Int {
+        stdio.fgetc(self.f)
     }
 
     write(s) {
@@ -98,23 +102,23 @@ pub class Stream : Iter {
         stdio.writeDouble(@f, *args)
     }
 
-    putc(c) {
+    putc(c: Int) {
         stdio.fputc(@f, c)
     }
 
-    nextFloat() {
+    nextFloat() -> Float {
         stdio.readFloat(@f)
     }
 
-    nextDouble() {
+    nextDouble() -> Float {
         stdio.readDouble(@f)
     }
 
-    nextUnsigned(*args) {
+    nextUnsigned(*args) -> Int {
         stdio.readUnsigned(@f, *args)
     }
 
-    nextSigned(*args) {
+    nextSigned(*args) -> Int {
         stdio.readUnsigned(@f, *args)
     }
 
@@ -126,11 +130,11 @@ pub class Stream : Iter {
         }
     }
 
-    slurp() {
+    slurp() -> String {
         stdio.slurp(self.f)
     }
 
-    blob(bs=1024) {
+    blob(bs=1024) -> Blob {
         let b = ::blob()
 
         while stdio.fread(@f, bs, b) > 0 {

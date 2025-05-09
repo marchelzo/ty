@@ -14,9 +14,24 @@ let SHELL = ['cmd.exe', '/c']
 let SHELL = [os.getenv('SHELL'), '-c']
 #|]
 
-pub function sh(c, input=nil, timeoutMs=nil, signal=KILL_SIG, combineOutput=false, shareStderr=false, shell=SHELL) {
+pub use CmdResult = {
+    status: Int,
+    signal: Int | nil,
+    stdout: String,
+    stderr: String
+}
+
+pub function sh(
+    cmd: String,
+    input=nil,
+    timeoutMs=nil,
+    signal=KILL_SIG,
+    combineOutput=false,
+    shareStderr=false,
+    shell=SHELL
+) -> nil | |String, CmdResult| {
     if not let $p = os.spawn(
-        [*shell, c],
+        [*shell, cmd],
         detach: timeoutMs != nil,
         combineOutput: combineOutput,
         shareStderr: shareStderr

@@ -54,6 +54,7 @@ class Text2 {
     }
 
     __str__() {
+        'based'
         @chalk.render(@text)
     }
 
@@ -67,8 +68,8 @@ class Text2 {
 }
 
 pub fn rand-hsl(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
-    let sample = match {
-        (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
+    let sample: _ = match {
+          (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
     }
     
     (sample(h), sample(s), sample(l))
@@ -104,7 +105,7 @@ class Chalk2 {
     render(text, plain=false) {
         let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
 
-        let stack = [[{}]]
+        let stack: _ = [[{}]]
         let style = {}
         let out = Blob()
         let ostack = []
@@ -128,7 +129,7 @@ class Chalk2 {
             m: RegexMatch => {
                 continue if plain
                 match m.captures {
-                    [nil, &words ~> styles] => {
+                    [nil, &words $~> styles] => {
                         stack.push(styles.map(get-style))
                         update()
                     },
@@ -139,7 +140,7 @@ class Chalk2 {
                         stack.push({fmt})
                     },
 
-                    [_, &words ~> []] => {
+                    [_, &words $~> []] => {
                         match stack.pop() {
                             {fmt} => {
                                 ostack[-1].push("{out.str!():{fmt}}")
@@ -151,7 +152,7 @@ class Chalk2 {
                         }
                     },
 
-                    [_, &words ~> styles] => {
+                    [_, &words $~> styles] => {
                         for style in styles {
                             for i in #stack..0 {
                                 if let $ii = stack[i].searchr(@styles[style]) {
@@ -192,10 +193,14 @@ class Chalk2 {
         Text2(
             parts.map(match {
                 s: String   => s,
-                (x, fmt, w) => (
-                      x :: Text2 ? x.__fmt__(fmt, w)
-                    : escape(fmt ? x.__fmt__(fmt, w) : x.__str__())
-                )
+                (x, fmt, w) => match x {
+                    x: Text2  => x.__fmt__(fmt),
+                    x         => escape(fmt ? x.__fmt__(fmt, w) : x.__str__())
+                }
+                //(x, fmt, w) => (
+                //      x :: Text2 ? x.__fmt__(fmt, w)
+                //    : escape(fmt ? x.__fmt__(fmt, w) : x.__str__())
+                //)
             }).str(),
             self
         )
@@ -213,7 +218,7 @@ class Chalk2 {
 class Chalk {
     props: Tuple
 
-    init(other=nil, %props) {
+    init(other: ?Chalk, %props) {
         @props = {
             *(other.?props ?? {}),
             *tuple(**props)
@@ -371,7 +376,7 @@ pub function hueToRgb(p, q, t) {
   return p
 }
 
-pub function hslToRgb(h, s, l) {
+pub function hslToRgb(h: Float, s: Float, l: Float) {
   let r, g, b = nil, nil, nil
 
   if s == 0 {
@@ -393,7 +398,7 @@ pub function fg_hsl(h, s, l) {
 }
 
 pub function fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
-    let sample = match {
+    let sample: _ = match {
         (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
     }
 

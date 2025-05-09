@@ -446,7 +446,7 @@ class TermIO {
         @reader = Thread(self.run-reader)
     }
 
-    start(a) {
+    start() {
         if (@saved-termios = tcgetattr(@fd)) == nil {
             eprint("Error: {errno.str()}")
         }
@@ -524,8 +524,8 @@ class TermIO {
 
                         match k {
                             unibi.string.key_btab   => yield-basic('\t'),
-                            unibi.string.key_sleft  => ctlseq.handler.k-ev-based(1, '2:1', '', 'D'),
-                            unibi.string.key_sright => ctlseq.handler.k-ev-based(1, '2:1', '', 'C')
+                            unibi.string.key_sleft  => ctlseq.handler.k-ev-based('1', '2:1', '', 'D'),
+                            unibi.string.key_sright => ctlseq.handler.k-ev-based('1', '2:1', '', 'C')
                             _ => {}
                         }
 

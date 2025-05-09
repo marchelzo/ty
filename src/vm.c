@@ -2048,9 +2048,9 @@ GetMember(Ty *ty, Value v, int member, bool b)
                 if ((vp = class_lookup_static_i(ty, v.class, member)) != NULL) {
                         return *vp;
                 }
-                //if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
-                //        return *vp;
-                //}
+                if ((vp = class_lookup_method_i(ty, v.class, member)) != NULL) {
+                        return *vp;
+                }
                 if (member == NAMES._name_) {
                         return xSz(class_name(ty, v.class));
                 }

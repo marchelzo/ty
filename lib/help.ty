@@ -313,7 +313,7 @@ class Printer {
 
         function printMap(m, open, close, eq, field-style=@colors.field, delim-style=@colors.dict) {
             let write-key = match open {
-                '%{'  => self.go,
+                '%{'  => self.go@(*, **),
                 _     => self.write@($1, field-style, $3),
 
             }

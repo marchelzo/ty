@@ -8,6 +8,7 @@ import ty
 import ty.parse as parse
 import ty.token as lex
 import os
+import json
 
 macro TyParam = ty.Param[{name: String, constraint: AST, default: AST}]
 
@@ -19,6 +20,12 @@ macro TyFunc = {
     body: AST
 }
 
+macro TyArrayItem = ty.ArrayItem[{item: AST, cond: AST, optional: Bool | nil}]
+
+macro TyAnyFunc = ty.Func[TyFunc]
+                | ty.FuncDef[TyFunc]
+                | ty.ImplicitFunc[TyFunc]
+
 macro TyDictItem = ty.DictItem[(AST, AST)]
 
 use AST = ty.Int[Int]
@@ -28,10 +35,17 @@ use AST = ty.Int[Int]
         | ty.Id[{name: String, module: String | nil, constraint: AST}]
         | ty.MemberAccess[(AST, String)]
         | ty.Count[AST]
+        | ty.Question[AST]
+        | ty.Not[AST]
+        | ty.Neg[AST]
+        | ty.PreInc[AST]
+        | ty.PostInc[AST]
+        | ty.PreDec[AST]
+        | ty.PostDec[AST]
         | ty.Subscript[(AST, AST)]
         | ty.Slice[(AST, AST, AST, AST)]
-        | ty.Array[Array[ty.ArrayItem[{item: AST, cond: AST, optional: Bool}]]]
-        | ty.ArrayItem[{item: AST, cond: AST, optional: Bool}]
+        | ty.Array[Array[TyArrayItem]]
+        | TyArrayItem
         | ty.Dict[{items: [TyDictItem], default: AST}]
         | TyDictItem
         | ty.Call[{func: AST, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
@@ -52,17 +66,30 @@ use AST = ty.Int[Int]
               setters: [AST],
               statics: [AST]
           }]
+        | ty.Let[(AST, AST)]
+        | ty.Assign[(AST, AST)]
         | ty.Break[{value: AST, depth: Int}]
         | ty.Break
+        | ty.Return[Array[AST]]
+        | ty.Yield[Array[AST]]
+        | ty.Generator[AST]
         | ty.Any[AST]
         | ty.Any
+        | ty.ArrayCompr[{items: [TyArrayItem], pattern: AST, iter: AST, cond: AST}]
         | ty.Each[{iter: AST, pattern: AST, expr: AST, cond: AST, stop: AST}]
-        | ty.SpecialString[Array[String | (AST, String | nil, Int | nil, AST)]]
+        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
         | ty.Spread[AST]
         | ty.Splat[AST]
         | ty.Block[Array[AST]]
         | ty.Multi[Array[AST]]
         | ty.Match[(AST, Array[(AST, AST)])]
+        | ty.WhileMatch[(AST, Array[(AST, AST)])]
+        | ty.While[([AST], AST)]
+        | ty.Defer[AST]
+        | ty.Eval[AST]
+        | ty.Throw[AST]
+        | ty.Try[{body: AST, catches: Array[(AST, AST)], always: AST}]
+        | ty.For[(AST, AST, AST, AST)]
         | ty.UserOp[(String, AST, AST)]
         | ty.Add[(AST, AST)]
         | ty.Sub[(AST, AST)]
@@ -81,9 +108,62 @@ use AST = ty.Int[Int]
         | ty.BitOr[(AST, AST)]
         | ty.Xor[(AST, AST)]
         | ty.Wtf[(AST, AST)]
+        | ty.Cmp[(AST, AST)]
+        | ty.LT[(AST, AST)]
+        | ty.GT[(AST, AST)]
+        | ty.LEQ[(AST, AST)]
+        | ty.GEQ[(AST, AST)]
+        | ty.In[(AST, AST)]
+        | ty.NotIn[(AST, AST)]
+        | ty.Matches[(AST, AST)]
+        | ty.KwAnd[(AST, AST)]
+        | ty.Range[(AST, AST)]
+        | ty.IncRange[(AST, AST)]
+        | ty.Cond[(AST, AST, AST)]
+        | ty.If[(AST, AST, AST)]
+        | ty.IfNot[(AST, AST, AST)]
+        | ty.TagPattern[(String, AST)]
+        | ty.Tagged[_]
+        | ty.View[(AST, AST)]
+        | ty.NotNilView[(AST, AST)]
         | ty.Stop[AST]
         | ty.Nil
+        | ty.Value[_]
         | nil
+
+use TokenData = { id: String, module: String }
+              | { int: Int }
+              | { str: String }
+              | { comment: String }
+
+use TokenLocation = {
+    line: Int,
+    col: Int,
+    byte: Int
+}
+
+use Token = { type: String, start: TokenLocation, end: TokenLocation } & TokenData
+
+fn parse::expr(prec: ?Int, raw: Bool) -> (AST, _);
+fn parse::expr(prec: ?Int) -> AST;
+
+fn parse::stmt(prec: ?Int, raw: Bool) -> (AST, _);
+fn parse::stmt(prec: ?Int) -> AST;
+
+fn lex::next() -> Token;
+fn lex::peek(i: Int = 0) -> Token;
+
+fn rand() -> Float;
+fn rand(n: Int, m: ?Int) -> Int;
+fn print(*args, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
+fn int(x: _, base: ?Int) -> Int;
+fn float(x: _) -> Float;
+fn tuple(*xs: _, %kws: _) -> (_,);
+fn min[a](*xs: a) -> a;
+fn max[a](*xs: a) -> a;
+fn fmt(str: String, *args: Any);
+
+//fn time::utime() -> Int;
 
 class Object {
     init(%props) {
@@ -231,7 +311,7 @@ class Array[T] : Iterable[T] {
         xs
     }
 
-    of(*shape, fill) {
+    of(*shape, fill=nil) {
         match shape {
             [k]      => [fill for _ in ..k],
             [k, *ks] => [Array.of(*ks, fill: fill) for _ in ..k]
@@ -249,10 +329,13 @@ class Array[T] : Iterable[T] {
     remove(x: _) -> Array[T];
 
     shape() {
+        use NestedArray[U] = Array[U] | Array[NestedArray[U]]
         let s = []
-        let x: Array = self
+        let x: T | NestedArray[T] = self
         while x :: Array {
-            s.push(#x)
+            if x :: Array {
+                s.push(#x)
+            }
             x = x[0]
         }
         return s
@@ -271,6 +354,7 @@ class Array[T] : Iterable[T] {
     }
 
     T() {
+        let self: _ = self
         let t = [[nil for _ in self] for _ in self[0]]
 
         for i in ..#self {
@@ -501,10 +585,17 @@ class String : Iterable[String] {
     lower() -> String;
 
     comb(pattern: String | Regex) -> String;
+    split(pattern: String | Regex, n: ?Int) -> [String];
+
+    chars() -> [String];
+    words() -> [String];
+
+    len() -> Int;
+    size() -> Int;
 
     int { ::int(self) }
 
-    matches(Regex) -> Array[String | RegexMatch];
+    matches(Regex) -> [String | RegexMatch];
 
     repeat(n: Int) -> String;
 
@@ -643,8 +734,8 @@ class String : Iterable[String] {
         self.slice(0, -#end if end == self.slice(-#end))
     }
 
-    __iter__*() {
-        for c in @chars() {
+    __iter__*() -> Iterable[String] {
+        for c in self.chars() {
             yield c
         }
     }
@@ -801,7 +892,7 @@ class Int {
         (self + start)...(self + end)
     }
 
-    __fmt__(spec, w, n) {
+    __fmt__(spec: String, w: Int, n: ?Int) {
         if spec.match?(/[%[:alpha:]]/) {
             fmt("%{spec}", (n ?? w) if '*' in spec, self)
         } else {
@@ -899,15 +990,15 @@ class Blob : Iterable[Int] {
         return b
     }
 
-    searchr(s) {
-        for let off = @size() - 1; off >= 0; --off {
-            if let $i = @search(off, s) {
+    searchr(s: String) -> Int | nil {
+        for let off = size() - 1; off >= 0; --off {
+            if let $i = search(off, s) {
                 return i
             }
         }
     }
 
-    base64() {
+    base64() -> String {
         base64.encode(self)
     }
 
@@ -919,6 +1010,11 @@ class Blob : Iterable[Int] {
             yield x
         }
     }
+
+    size() -> Int;
+
+    search(needle: Int | String | Blob) -> Int | nil;
+    search(off: Int, needle: Int | String | Blob) -> Int | nil;
 }
 
 class Bool {
@@ -950,7 +1046,7 @@ class Generator[T] : Iter[T] {
         }
     }
 
-    __next__() {
+    __next__() -> Some[T] | None {
         self()
     }
 }
@@ -1135,7 +1231,7 @@ class RegexMatch {
 }
 
 trait Iterable[T] {
-    map[U](f: T -> U) -> Generator[T] {
+    map[U](f: T -> U) -> Generator[U] {
         __iter__().map(f)
     }
 
@@ -1155,8 +1251,8 @@ trait Iterable[T] {
         @__iter__().uniq(f)
     }
 
-    take(n) {
-        @__iter__().take(n)
+    take(n: Int) {
+        __iter__().take(n)
     }
 
     takeWhile(pred) {
@@ -1287,8 +1383,12 @@ trait Iterable[T] {
         @__iter__().sum()
     }
 
-    fold(a, b) {
-        @__iter__().fold(a, b)
+    fold(f: (T, T) -> T) -> T | nil {
+        __iter__().fold(f)
+    }
+
+    fold[U](x: U, f: (U, T) -> U) -> U {
+        __iter__().fold(x, f)
     }
 
     group(f) {
@@ -1307,12 +1407,12 @@ trait Iterable[T] {
         @__iter__().repeat(n)
     }
 
-    all?(pred=id) {
+    all?(pred: T -> _ = id) {
         @__iter__().all?(pred)
     }
 
-    interleave[U](xs: Iterable[U]) -> Iterable[T | U] {
-        @__iter__().interleave(xs)
+    interleave[U](xs: Iterable[U], long: Bool = false) -> Iterable[T | U] {
+        @__iter__().interleave(xs, long)
     }
 
     enumerate() {
@@ -1341,7 +1441,7 @@ trait Iterable[T] {
 trait Iter[T] < Iterable[T] {
     __next__() -> Some[T] | None { None }
 
-    map*(f) {
+    map*[U](f: T -> U) -> Generator[U] {
         for x in self {
             yield f(x)
         }
@@ -1361,7 +1461,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    fold(x, f: f != nil) {
+    fold[U](x: U, f: (U, T) -> U) -> U {
         while let Some(y) = __next__() {
             x = f(x, y)
         }
@@ -1369,7 +1469,7 @@ trait Iter[T] < Iterable[T] {
         return x
     }
 
-    fold(f) {
+    fold(f: (T, T) -> T) -> T | nil {
         if not let Some(x) = __next__() {
             return nil
         }
@@ -1611,7 +1711,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    take*(n) {
+    take*(n: Int) -> Generator[T] {
         for _ in ..n {
             if let Some(x) = @__next__() {
                 yield x
@@ -1631,7 +1731,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    drop(n) {
+    drop(n: Int) {
         for _ in ..n { @__next__() }
         return self
     }
@@ -1806,7 +1906,7 @@ trait Iter[T] < Iterable[T] {
         return @list().median()
     }
 
-    all?(pred=id) {
+    all?(pred: T -> _ = id) {
         for x in self {
             if x !:: pred { return false }
         }
@@ -1814,8 +1914,8 @@ trait Iter[T] < Iterable[T] {
         return true
     }
 
-    static tee(it, n = 2) {
-        let queues = [Queue() for _ in ..n]
+    static tee[T](it: Iterable[T], n: Int = 2) -> Iterable[Iterable[T]] {
+        let queues: [_] = [Queue() for _ in ..n]
         let it = it.__iter__()
 
         function get() {
@@ -1829,7 +1929,7 @@ trait Iter[T] < Iterable[T] {
             }
         }
 
-        let generators = queues.map(queue -> generator {
+        fn go3(queue: _) generator {
             while true {
                 if let Some(x) = queue.tryTake() {
                     yield x
@@ -1837,7 +1937,9 @@ trait Iter[T] < Iterable[T] {
                     return None
                 }
             }
-        })
+        }
+
+        let generators = queues.map(go3)
 
         return tuple(*generators)
     }
@@ -1886,7 +1988,7 @@ class Queue[T] : Iterable[T] {
         #self == 0
     }
 
-    put(x) {
+    put(x: T) {
         if !@xs {
             @xs = [x, nil]
             @j = 1
@@ -1903,7 +2005,7 @@ class Queue[T] : Iterable[T] {
         }
     }
 
-    tryTake() {
+    tryTake() -> Some[T] | None {
         if #self == 0 {
             return None
         }
@@ -1914,7 +2016,7 @@ class Queue[T] : Iterable[T] {
         return Some(x)
     }
 
-    take() {
+    take() -> T{
         let Some(x) = self.tryTake()
         return x
     }
@@ -1951,11 +2053,11 @@ class Range : Iterable[Int] {
         "({a} .. {b})"
     }
 
-    contains?(r: Range) {
+    contains?(r: Range) -> Bool {
         (r.low() :: self) && (r.high() :: self)
     }
 
-    contains?(k) {
+    contains?(k) -> Bool {
         k :: self
     }
 
@@ -2008,12 +2110,16 @@ class InclusiveRange < Range {
     }
 }
 
-fn rand() -> Float;
-fn rand(n: Int, m: ?Int) -> Int;
-fn print(*args, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
-fn int(x, base: ?Int) -> Int;
-fn min[a](*xs: a) -> a;
-fn max[a](*xs: a) -> a;
+use JSON = String
+         | Int
+         | Float
+         | Bool
+         | Array[JSON]
+         | Dict[String, JSON]
+         | nil
+
+fn json::parse(json: String) -> JSON;
+fn json::encode(value: Any) -> String;
 
 function id[T](x: T) -> T { x }
 
@@ -2315,7 +2421,7 @@ class CondVar {
     }
 }
 
-class Thread {
+class Thread[T] {
     handle: _
 
     /*
@@ -2335,11 +2441,11 @@ class Thread {
      *                objects alive. You must take care to avoid use-after-free bugs,
      *                and use Channel to transfer objects between thread groups.
      */
-    init(*args,  %kwargs) {
-        @handle = thread.create(*args, **kwargs)
+    init(func: (*args: _) -> T, *args,  %kwargs) {
+        @handle = thread.create(func, *args, **kwargs)
     }
 
-    static getName(t) {
+    static getName(t=nil) {
         thread.getName(t)
     }
 
@@ -2351,7 +2457,7 @@ class Thread {
         thread.setName(s)
     }
 
-    join(timeoutMs: ?Int) {
+    join(timeoutMs: ?Int) -> T | nil {
         thread.join(@handle, timeoutMs)
     }
 
@@ -2436,6 +2542,10 @@ macro dbg(*args) {
     ])
 }
 
+macro print!(x) {
+    ty.CompileTime($$[ do { print($$x); nil } $$])
+}
+
 macro time! {
     // (
     lex.next()
@@ -2500,11 +2610,22 @@ macro modify! {
         p
     }
 
-    function convert(d) {
+    use FieldMap = Dict[String, AST | FieldMap]
+
+    function convert(d: FieldMap) {
         let entries = []
 
         for k, v in d {
-            entries.push(ty.RecordEntry(item: (v :: Dict) ? convert(v) : v, name: k))
+            entries.push(
+                ty.RecordEntry(
+                    item: if v :: Dict {
+                        convert(v)
+                    } else {
+                        v
+                    },
+                    name: k
+                )
+            )
         }
 
         ty.Record(entries)
@@ -2758,7 +2879,7 @@ class SharedQueue[T] : Iterable[T] {
         @cond.signal()
     }
 
-    tryTake(timeoutMs: Int = 0) {
+    tryTake(timeoutMs: Int = 0) -> Some[T] | None {
         let stop = time.utime() + timeoutMs * 1000
 
         @mutex.lock()
@@ -2784,7 +2905,7 @@ class SharedQueue[T] : Iterable[T] {
         return Some(x)
     }
 
-    take() {
+    take() -> T{
         let Some(x) = self.tryTake(-1)
         return x
     }
@@ -2833,17 +2954,35 @@ class MemoizedFunction {
 
 let memoized = MemoizedFunction
 
+#|if __debug(-1) || true
 macro __walk! {
-    fn copySource[T, U](a: T, b: U) -> T { ty.copySource(a, b) }
-    function walk(tree: AST, f: AST -> AST) -> AST {
+    fn copySource(a: _, b: _) -> _ { ty.copySource(a, b) }
+    function walk(tree: _, f: _ -> _) -> _ {
         if tree == nil {
             return nil
+        }
+
+        let walk-item = match {
+            ty.ArrayItem(x) => ty.ArrayItem(
+                item: walk(x.item, f),
+                cond: walk(x.?cond, f),
+                optional: x.?optional
+            )
+        }
+
+        let walk-entry = match {
+            ty.RecordEntry(entry) => ty.RecordEntry(
+                item: walk(entry.item, f),
+                name: entry.?name,
+                cond: walk(entry.?cond, f),
+                optional: entry.?optional
+            )
         }
 
         let tree = copySource(tree, match tree {
             ty.Stop(tree) => tree,
 
-            ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
+            ty.Array(xs) => ty.Array([walk-item(x) for x in xs]),
 
             ty.ArrayItem(x) => ty.ArrayItem(
                 item: walk(x.item, f),
@@ -2868,7 +3007,7 @@ macro __walk! {
                 method: call.method
             ),
 
-            ty.Record(record) => ty.Record([walk(entry, f) for entry in record]),
+            ty.Record(record) => ty.Record([walk-entry(entry) for entry in record]),
 
             ty.RecordEntry(entry) => ty.RecordEntry(
                 item: walk(entry.item, f),
@@ -3049,7 +3188,7 @@ macro __walk! {
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
             ty.ArrayCompr({items, pattern, iter, cond}) => ty.ArrayCompr(
-                items: [walk(item, f) for item in items],
+                items: [walk-item(item) for item in items],
                 pattern: walk(pattern, f),
                 iter: walk(iter, f),
                 cond: walk(cond, f)
@@ -3124,9 +3263,10 @@ macro __walk! {
 
     ty.Value(walk)
 }
+#|]
 
 macro __desugar_partial__(call) {
-    let (args, mkcall) = match call {
+    let (args: [AST], mkcall) = match call {
         %t({args, ?func, *call}) => do {
             if func == ty.Nil {
                 func = ty.Value(x -> x)
@@ -3266,11 +3406,19 @@ $$]
 
 macro __d! {
     let stmt = parse.stmt(99)
-    ty.Multi([
-        $$[ __debug(1) $$],
-        stmt,
-        $$[ __debug(-1) $$]
-    ])
+    let result = ty.Id(name: ty.gensym())
+    return $$[
+        do {
+            __debug(1)
+            let $$result = $$stmt
+            __debug(-1)
+            $$result
+        }
+    $$]
+}
+
+macro __debug!(n) {
+    ty.CompileTime($$[ ty.Value(__debug($$n)) $$])
 }
 
 operator **   10 right
@@ -3278,3 +3426,6 @@ operator :>   5  left
 operator !::  3  left
 operator *>   2  left
 operator .    2  left
+
+#|if __debug(1) && false
+#|]

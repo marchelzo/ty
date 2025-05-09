@@ -409,6 +409,12 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->container);
                 V(e->subscript);
                 break;
+        case EXPRESSION_SLICE:
+                V(e->slice.e);
+                V(e->slice.i);
+                V(e->slice.j);
+                V(e->slice.k);
+                break;
         case EXPRESSION_MEMBER_ACCESS:
                 V(e->object);
                 break;
@@ -663,6 +669,12 @@ visit_type(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_SUBSCRIPT:
                 VT(e->container);
                 VT(e->subscript);
+                break;
+        case EXPRESSION_SLICE:
+                VT(e->slice.e);
+                VT(e->slice.i);
+                VT(e->slice.j);
+                VT(e->slice.k);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
                 VT(e->object);
