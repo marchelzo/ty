@@ -9,9 +9,9 @@
 #define funlockfile(f) _unlock_file(f)
 #endif
 
-extern unsigned EnableLogging;
+extern int EnableLogging;
 
-#define XLOG(...) if (EnableLogging) do {                    \
+#define XLOG(...) if (EnableLogging > 0) do {                \
                         GC_STOP();                           \
                         flockfile(stderr),                   \
                         fprintf(stderr, "(%d) ", getpid()),  \
@@ -22,7 +22,7 @@ extern unsigned EnableLogging;
                         GC_RESUME();                         \
                 } while (0)
 
-#define XLOGX(...) if (EnableLogging) do {                   \
+#define XLOGX(...) if (EnableLogging > 0) do {               \
                         GC_STOP();                           \
                         flockfile(stderr),                   \
                         fprintf(stderr, "(%d) ", getpid()),  \
@@ -32,7 +32,7 @@ extern unsigned EnableLogging;
                         GC_RESUME();                         \
                 } while (0)
 
-#define XXLOG(...) if (EnableLogging) do {                   \
+#define XXLOG(...) if (EnableLogging > 0) do {               \
                         Ty *ty = ty;                         \
                         GC_STOP();                           \
                         flockfile(stderr),                   \
@@ -45,7 +45,7 @@ extern unsigned EnableLogging;
                 } while (0)
 
 #if !defined(TY_NO_LOG)
-#define LOG(...) if (EnableLogging) do {                     \
+#define LOG(...) if (EnableLogging > 0) do {                 \
                         GC_STOP();                           \
                         flockfile(stderr),                   \
                         fprintf(stderr, "(%d) ", getpid()),  \
@@ -62,7 +62,7 @@ extern unsigned EnableLogging;
 #define TID (long long)MyThreadId(ty)
 
 #if 0
-#define GCLOG(...) if (EnableLogging) do {                   \
+#define GCLOG(...) if (EnableLogging > 0) do {               \
                         flockfile(stderr),                   \
                         fprintf(stderr, "(%4lld) ", TID),    \
                         fprintf(stderr, __VA_ARGS__),        \

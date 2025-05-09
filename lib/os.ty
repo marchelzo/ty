@@ -3,12 +3,31 @@ import ffi as c
 import cutil (cfun!)
 import errno (ENOTDIR)
 
+fn os::read(fd: Int, n: Int) -> Int;
+fn os::read(fd: Int, buf: Blob, n: Int) -> Int;
+
+use ProcessDescriptor = {
+    stdin: Int,
+    stdout: Int,
+    stderr: Int,
+    pid: Int
+}
+
+fn os::spawn(
+    cmd: Array[String],
+    detach: Bool = false,
+    combine-output: Bool = false,
+    share-stdin: Bool = false,
+    share-stdout: Bool = false,
+    share-stderr: Bool = false
+) -> ProcessDescriptor;
+
 #|if __defined__(os::DT_DIR)
 let os::walk = function walk*(path: String) -> Generator[(String, [String], [String])] {
     let d = opendir(path)
 
-    let fs = []
-    let ds = []
+    let fs: [String] = []
+    let ds: [String] = []
 
     while let $entry = readdir(d) {
         match (entry.d_type, entry.d_name) {
@@ -35,7 +54,8 @@ cfun! nil c.int isatty(c.int)
 cfun! nil c.ptr strsignal(c.int)
 let os::isatty = isatty
 let os::strsignal = strsignal |> c.str
-let os::ioctl = c.wrapVar(nil, 'ioctl', 2, c.int, c.int, c.ulong)
+let os::_ioctl = c.wrapVar(nil, 'ioctl', 2, c.int, c.int, c.ulong)
+fn os::ioctl(fd: Int, ioctl: Int, *args: _) { os::_ioctl(fd, ioctl, *args) }
 #|]
 
 let os::rm = function rm(path, quiet=false) {

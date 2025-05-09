@@ -151,11 +151,11 @@ typedef struct class_definition ClassDefinition;
         X(IDENTIFIER),                                                                \
         X(RESOURCE_BINDING),                                                          \
         X(DEFINED),                                                                   \
+        X(TYPEOF),                                                                    \
         X(TYPE),                                                                      \
         X(WITH),                                                                      \
         X(YIELD),                                                                     \
         X(THROW),                                                                     \
-        X(TYPEOF),                                                                    \
         X(TAG_APPLICATION),                                                           \
         X(TAG_PATTERN_CALL),                                                          \
         X(TAG_PATTERN),                                                               \

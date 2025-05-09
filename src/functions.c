@@ -6856,7 +6856,7 @@ make_token(Ty *ty, Token const *t)
                         "type",   T(int),
                         "start",  start,
                         "end",    end,
-                        "float",  INTEGER(t->real)
+                        "float",  REAL(t->real)
                 );
         case TOKEN_STRING:
                 return vTn(

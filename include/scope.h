@@ -17,7 +17,8 @@ enum {
         SYM_MACRO     = 1 << 1,
         SYM_FUN_MACRO = 1 << 2,
         SYM_CONST     = 1 << 3,
-        SYM_TYPE_VAR  = 1 << 4
+        SYM_TYPE_VAR  = 1 << 4,
+        SYM_VARIADIC  = 1 << 5
 };
 
 typedef struct type Type;
@@ -52,6 +53,7 @@ typedef struct scope {
         bool external;
         bool namespace;
         bool shared;
+        bool active;
 
         struct symbol *table[SYMBOL_TABLE_SIZE];
 
@@ -61,6 +63,8 @@ typedef struct scope {
 
         struct scope *parent;
         struct scope *function;
+
+        RefinementVector refinements;
 
 #ifndef TY_RELEASE
         char const *name;
@@ -89,6 +93,9 @@ scope_add(Ty *ty, Scope *s, char const *id);
 
 Symbol *
 scope_add_type_var(Ty *ty, Scope *s, char const *id);
+
+Symbol *
+scope_add_type(Ty *ty, Scope *s, char const *id);
 
 Symbol *
 scope_add_i(Ty *ty, Scope *s, char const *id, int i);
@@ -191,6 +198,12 @@ inline static bool
 SymbolIsFunMacro(Symbol const *var)
 {
         return var->flags & SYM_FUN_MACRO;
+}
+
+inline static bool
+SymbolIsVariadic(Symbol const *var)
+{
+        return var->flags & SYM_VARIADIC;
 }
 
 inline static bool

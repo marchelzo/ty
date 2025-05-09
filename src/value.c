@@ -444,7 +444,7 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "%s", "nil");
                 break;
         case VALUE_TYPE:
-                return type_show(ty, v->ptr);
+                return sclone(ty, type_show(ty, v->ptr));
         case VALUE_NAMESPACE:
                 snprintf(
                         buffer,

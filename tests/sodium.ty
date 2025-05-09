@@ -1,13 +1,13 @@
 import sodium
 import io
 
-let pass = with f = io.open('/dev/random', 'r') {
+let pass = with f = io::open('/dev/random', 'r') {
     f.next(64)
 }
 
-let $h = sodium.hash(pass)
+let $h = sodium::hash(pass)
 
-if sodium.verify(h, pass) {
+if sodium::verify(h, pass) {
     print('PASS')
 } else {
     print('FAIL')

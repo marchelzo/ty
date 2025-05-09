@@ -266,6 +266,17 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
 }
 
 Symbol *
+scope_add_type(Ty *ty, Scope *s, char const *id)
+{
+        Symbol *sym = xadd(ty, s, id);
+
+        sym->scope = s;
+        sym->flags |= SYM_TYPE_VAR;
+
+        return sym;
+}
+
+Symbol *
 scope_add_type_var(Ty *ty, Scope *s, char const *id)
 {
         Symbol *sym = xadd(ty, s, id);

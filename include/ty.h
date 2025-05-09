@@ -28,11 +28,13 @@ typedef struct frame      Frame;
 typedef struct target     Target;
 typedef struct type       Type;
 typedef struct constraint Constraint;
+typedef struct refinement Refinement;
 typedef struct type_env   TypeEnv;
 
 typedef size_t   usize;
 typedef uint64_t u64;
 typedef uint32_t u32;
+typedef intmax_t imax;
 
 typedef vec(int)            int_vector;
 typedef vec(char)           byte_vector;
@@ -50,6 +52,7 @@ typedef vec(Target)         TargetStack;
 typedef vec(struct alloc *) AllocList;
 typedef vec(Symbol *)       symbol_vector;
 typedef vec(Type *)         TypeVector;
+typedef vec(Refinement)     RefinementVector;
 typedef vec(Constraint)     ConstraintVector;
 typedef vec(u32)            U32Vector;
 typedef vec(jmp_buf *)      JmpBufVector;
@@ -79,6 +82,12 @@ typedef struct {
         char *proto;
         char *doc;
 } FunUserInfo;
+
+struct refinement {
+        Symbol *var;
+        Type *t0;
+        bool active;
+};
 
 typedef struct dict Dict;
 
@@ -476,7 +485,9 @@ extern bool ColorProfile;
 extern bool CompileOnly;
 extern bool AllowErrors;
 
-#define dont_printf(...) do { } while (0)
+extern u64 TypeCheckCounter;
+
+#define dont_printf(...) 0
 
 #if 0
 #define GC_STOP() do { GCLOG("GC_STOP(): " __FILE__ ":%d: %d", __LINE__, ty->GC_OFF_COUNT + 1); ty->GC_OFF_COUNT += 1; } while (0)

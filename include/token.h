@@ -140,6 +140,7 @@ typedef struct token {
                         KEYWORD_STATIC,
                         KEYWORD_SUPER,
                         KEYWORD_EVAL,
+                        KEYWORD_TYPEOF,
                         KEYWORD_DEFINED,
                         KEYWORD_NAMESPACE,
                 } keyword;

@@ -53,7 +53,8 @@ static char const *SourceFile;
 static char SourceFilePath[4096];
 
 static bool KindOfEnableLogging = false;
-unsigned EnableLogging = 0;
+int EnableLogging = 0;
+u64 TypeCheckCounter = 0;
 
 bool ColorStdout;
 bool ColorStderr;
@@ -111,8 +112,12 @@ usage(void)
 static char *
 readln(void)
 {
+        char prompt[64];
+
+        snprintf(prompt, sizeof prompt, "[%8"PRIu64"] >> ", TypeCheckCounter);
+
         if (use_readline) {
-                return readline("> ");
+                return readline(prompt);
         } else {
                 return fgets(buffer, sizeof buffer, stdin);
         }
@@ -291,6 +296,7 @@ repl(Ty *ty)
                         if (line == NULL) {
                                 exit(EXIT_SUCCESS);
                         }
+                        TypeCheckCounter = 0;
                         execln(ty, line);
                 }
         }

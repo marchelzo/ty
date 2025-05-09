@@ -1324,15 +1324,38 @@ parse_decorators(Ty *ty)
 }
 
 static Expr *
-parse_type(Ty *ty)
+parse_type(Ty *ty, int prec)
 {
         Expr *t;
 
         SAVE_TC(true);
-        t = parse_expr(ty, 0);
+        t = parse_expr(ty, prec);
         LOAD_TC();
 
         return t;
+}
+
+
+static void
+parse_type_params(Ty *ty, expression_vector *params)
+{
+        SAVE_NE(true);
+        consume('[');
+        while (T0 != ']') {
+                switch (T0) {
+                case TOKEN_STAR:
+                case TOKEN_IDENTIFIER:
+                        avP(*params, parse_expr(ty, 99));
+                        break;
+                default:
+                        expect(TOKEN_IDENTIFIER);
+                }
+                if (T0 != ']') {
+                        consume(',');
+                }
+        }
+        next();
+        LOAD_NE();
 }
 
 /* * * * | prefix parsers | * * * */
@@ -1811,17 +1834,6 @@ prefix_identifier(Ty *ty)
                 return typarse(ty, e, NULL, &e->start, &token(-1)->end);
         }
 
-        if (TypeContext && strcmp(e->identifier, "type") == 0 && T0 == '(') {
-                consume('(');
-                SAVE_TC(false);
-                e->type = EXPRESSION_TYPEOF;
-                e->operand = parse_expr(ty, 0);
-                LOAD_TC();
-                consume(')');
-                e->end = End;
-                return e;
-        }
-
         if (TypeContext && strcmp(e->identifier, "_") == 0) {
                 e->type = EXPRESSION_MATCH_ANY;
                 e->end = End;
@@ -1838,7 +1850,7 @@ prefix_identifier(Ty *ty)
         // TODO: maybe get rid of this
         if (NoEquals && T0 == ':') {
                 next();
-                e->constraint = parse_type(ty);
+                e->constraint = parse_type(ty, 0);
         } else {
                 e->constraint = NULL;
         }
@@ -1952,15 +1964,7 @@ prefix_function(Ty *ty)
         SAVE_NE(true);
 
         if (T0 == '[') {
-                next();
-                while (T0 != ']') {
-                        expect(TOKEN_IDENTIFIER);
-                        avP(e->type_params, prefix_identifier(ty));
-                        if (T0 != ']') {
-                                consume(',');
-                        }
-                }
-                next();
+                parse_type_params(ty, &e->type_params);
         }
 
         if (CatchError()) {
@@ -1990,7 +1994,7 @@ prefix_function(Ty *ty)
 
                 if (T0 == ':') {
                         next();
-                        avP(e->constraints, parse_type(ty));
+                        avP(e->constraints, parse_type(ty, 0));
                         (*vvL(e->constraints))->end = End;
                 } else {
                         avP(e->constraints, NULL);
@@ -2018,7 +2022,7 @@ prefix_function(Ty *ty)
 EndOfParams:
         if (T0 == TOKEN_ARROW) {
                 next();
-                e->return_type = parse_type(ty);
+                e->return_type = parse_type(ty, -1);
         }
 
         e->proto = clone_slice_a(ty, proto_start, End.s);
@@ -2151,20 +2155,27 @@ static Expr *
 prefix_star(Ty *ty)
 {
         Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_MATCH_REST;
-        e->module = NULL;
 
         consume(TOKEN_STAR);
 
-        if (T0 == TOKEN_IDENTIFIER) {
-                e->identifier = tok()->identifier;
-
-                if (tok()->module != NULL)
-                        error(ty, "unexpected module qualifier in lvalue");
-
-                next();
+        if (TypeContext) {
+                e->type = EXPRESSION_SPREAD;
+                e->value = parse_expr(ty, 0);
         } else {
-                e->identifier = "_";
+                e->type = EXPRESSION_MATCH_REST;
+                e->module = NULL;
+
+
+                if (T0 == TOKEN_IDENTIFIER) {
+                        e->identifier = tok()->identifier;
+
+                        if (tok()->module != NULL)
+                                error(ty, "unexpected module qualifier in lvalue");
+
+                        next();
+                } else {
+                        e->identifier = "_";
+                }
         }
 
         e->end = End;
@@ -2248,6 +2259,7 @@ Next:
                 } else {
                         avP(e->tconds, NULL);
                 }
+
                 if (T0 == ',') {
                         next();
                 }
@@ -2414,6 +2426,23 @@ prefix_throw(Ty *ty)
 
         if (T0 == ';')
                 next();
+
+        e->end = End;
+
+        return e;
+}
+
+static Expr *
+prefix_typeof(Ty *ty)
+{
+        Expr *e = mkexpr(ty);
+        e->type = EXPRESSION_TYPEOF;
+
+        consume_keyword(KEYWORD_TYPEOF);
+
+        SAVE_TC(false);
+        e->operand = parse_expr(ty, 0);
+        LOAD_TC();
 
         e->end = End;
 
@@ -2635,7 +2664,7 @@ next_arg(
                         arg->value = mkexpr(ty);
                         arg->value->type = EXPRESSION_IDENTIFIER;
                         arg->value->module = NULL;
-                        arg->value->identifier = "**" + (arg->type == EXPRESSION_SPREAD);
+                        arg->value->identifier = &"**"[arg->type == EXPRESSION_SPREAD];
                         arg->end = End;
                         arg->value->start = arg->start;
                         arg->value->end = arg->end;
@@ -2677,11 +2706,6 @@ next_arg(
 static void
 parse_method_args(Ty *ty, Expr *e)
 {
-        vec_init(e->method_args);
-        vec_init(e->mconds);
-        vec_init(e->method_kwargs);
-        vec_init(e->method_kws);
-
         consume('(');
 
         setctx(LEX_PREFIX);
@@ -2739,11 +2763,6 @@ End:
 static Expr *
 parse_method_call(Ty *ty, Expr *e)
 {
-        vec_init(e->method_args);
-        vec_init(e->mconds);
-        vec_init(e->method_kws);
-        vec_init(e->method_kwargs);
-
         switch (T0) {
         case '(':
                 parse_method_args(ty, e);
@@ -2857,7 +2876,15 @@ prefix_parenthesis(Ty *ty)
         if (CatchError()) {
                 e = &NullExpr;
         } else {
-                e = parse_expr(ty, 0);
+                if (TypeContext && T0 == TOKEN_STAR) {
+                        e = mkexpr(ty);
+                        next();
+                        e->type = EXPRESSION_SPREAD;
+                        e->value = parse_expr(ty, 0);
+                        e->end = End;
+                } else {
+                        e = parse_expr(ty, 0);
+                }
                 vvX(SavePoints);
         }
         LOAD_NA();
@@ -2876,11 +2903,6 @@ prefix_parenthesis(Ty *ty)
                 list->start = start;
                 list->only_identifiers = true;
 
-                /*
-                 * It _must_ be an identifier list.
-                 *
-                 * ^ idk what i meant by this
-                 */
                 if (
                         e->type != EXPRESSION_IDENTIFIER
                      && e->type != EXPRESSION_MATCH_REST
@@ -2894,10 +2916,13 @@ prefix_parenthesis(Ty *ty)
                 vec_init(list->required);
                 vec_init(list->tconds);
 
-                if (e->type == EXPRESSION_IDENTIFIER && T0 == ':') {
+                if (
+                        (e->type == EXPRESSION_IDENTIFIER && T0 == ':')
+                     || (e->type == EXPRESSION_MATCH_REST && T0 == ':')
+                ) {
                         next();
                         avP(list->names, e->identifier);
-                        e = parse_expr(ty, 0);
+                        e->constraint = parse_type(ty, 0);
                 } else {
                         avP(list->names, NULL);
                 }
@@ -2913,9 +2938,11 @@ prefix_parenthesis(Ty *ty)
                         avP(list->tconds, NULL);
                 }
 
-                while (T0 == ',') {
+                if (T0 == ',') {
                         next();
+                }
 
+                while (T0 != ')') {
                         if (T0 == ':' && T1 == TOKEN_IDENTIFIER) {
                                 unconsume(TOKEN_IDENTIFIER);
                                 tok()->identifier = token(2)->identifier;
@@ -2929,23 +2956,20 @@ prefix_parenthesis(Ty *ty)
                                 avP(list->required, true);
                         }
 
-                        if (T0 == TOKEN_IDENTIFIER && T1 == ':') {
-                                avP(list->names, tok()->identifier);
-                                next();
-                                next();
+                        if (
+                                (T0 == TOKEN_IDENTIFIER && T1 == ':')
+                             || (T0 == TOKEN_STAR && T1 == TOKEN_IDENTIFIER && T2 == ':')
+                        ) {
+                                e = parse_expr(ty, 0);
+                                consume(':');
+                                e->constraint = parse_type(ty, 0);
+                                avP(list->names, e->identifier);
+                                avP(list->es, e);
                         } else {
                                 avP(list->names, NULL);
-                        }
-
-                        Expr *e = parse_expr(ty, 0);
-                        e->end = tok()->end;
-                        if (e->type == EXPRESSION_MATCH_REST) {
-                                expect(')');
-                        } else if (e->type != EXPRESSION_IDENTIFIER) {
+                                avP(list->es, parse_expr(ty, 0));
                                 list->only_identifiers = false;
                         }
-
-                        avP(list->es, e);
 
                         if (have_keyword(KEYWORD_IF)) {
                                 next();
@@ -2953,6 +2977,11 @@ prefix_parenthesis(Ty *ty)
                         } else {
                                 avP(list->tconds, NULL);
                         }
+
+                        if (T0 != ')') {
+                                consume(',');
+                        }
+
                 }
 
                 consume(')');
@@ -2960,6 +2989,14 @@ prefix_parenthesis(Ty *ty)
                 list->end = End;
 
                 return list;
+        } else if (e->type == EXPRESSION_SPREAD) {
+                Expr *tuple = mkexpr(ty);
+                tuple->type = EXPRESSION_TUPLE;
+                avP(tuple->es, e);
+                avP(tuple->names, NULL);
+                avP(tuple->tconds, NULL);
+                consume(')');
+                return tuple;
         } else if (have_keyword(KEYWORD_FOR)) {
                 e = gencompr(ty, e);
 
@@ -4073,7 +4110,7 @@ infix_member_access(Ty *ty, Expr *left)
         e->type = EXPRESSION_MEMBER_ACCESS;
 
         e->start = left->start;
-        e->maybe = T0 == TOKEN_DOT_MAYBE;
+        e->maybe = (T0 == TOKEN_DOT_MAYBE);
 
         next();
 
@@ -4532,6 +4569,7 @@ Keyword:
         case KEYWORD_SELF:      return prefix_self;
         case KEYWORD_NIL:       return prefix_nil;
         case KEYWORD_YIELD:     return prefix_yield;
+        case KEYWORD_TYPEOF:    return prefix_typeof;
         case KEYWORD_THROW:     return prefix_throw;
         case KEYWORD_WITH:      return prefix_with;
         case KEYWORD_DO:        return prefix_do;
@@ -4966,6 +5004,7 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
         if (context == LV_LET && T0 == ',') {
                 Expr *l = mkexpr(ty);
                 l->type = EXPRESSION_LIST;
+                l->start = e->start;
                 vec_init(l->es);
                 avP(l->es, e);
                 while (T0 == ',') {
@@ -5292,13 +5331,8 @@ parse_if(Ty *ty)
 
         consume_keyword(KEYWORD_IF);
 
-        s->iff.neg = have_keyword(KEYWORD_NOT);
-        if (s->iff.neg) {
-                next();
-        }
-
+        s->iff.neg = try_consume(KEYWORD_NOT);
         s->iff.parts = parse_condparts(ty, s->iff.neg);
-
         s->iff.then = parse_statement(ty, -1);
 
         if (have_keyword(KEYWORD_ELSE)) {
@@ -5381,6 +5415,7 @@ parse_function_definition(Ty *ty)
 
         Location target_start = tok()->start;
         Location target_end = tok()->end;
+        char *module = NULL;
 
         // FIXME: Hack to skip decorators and find the function name
         for (int i = 0; i < 128 && s->type == STATEMENT_FUNCTION_DEFINITION; ++i) {
@@ -5389,8 +5424,11 @@ parse_function_definition(Ty *ty)
                                 s->type = STATEMENT_OPERATOR_DEFINITION;
                         }
 
-                        target_start = token(i + 1)->start;
-                        target_end = token(i + 1)->end;
+                        if (token(i + 1)->type == TOKEN_IDENTIFIER) {
+                                target_start = token(i + 1)->start;
+                                target_end = token(i + 1)->end;
+                                module = token(i + 1)->module;
+                        }
 
                         break;
                 }
@@ -5421,7 +5459,7 @@ parse_function_definition(Ty *ty)
         Expr *target = mkexpr(ty);
         target->type = EXPRESSION_IDENTIFIER;
         target->identifier = f->name;
-        target->module = NULL;
+        target->module = module;
         target->start = target_start;
         target->end = target_end;
 
@@ -5828,17 +5866,7 @@ parse_class_definition(Ty *ty)
         next();
 
         if (T0 == '[') {
-                SAVE_NE(true);
-                next();
-                while (T0 != ']') {
-                        expect(TOKEN_IDENTIFIER);
-                        avP(s->class.type_params, prefix_identifier(ty));
-                        if (T0 != ']') {
-                                consume(',');
-                        }
-                }
-                next();
-                LOAD_NE();
+                parse_type_params(ty, &s->class.type_params);
         }
 
         if (T0 == '=') {
@@ -6041,7 +6069,7 @@ parse_class_definition(Ty *ty)
                                 next();
                                 if (T0 == TOKEN_ARROW) {
                                         next();
-                                        rt = parse_type(ty);
+                                        rt = parse_type(ty, -1);
                                 } else {
                                         rt = NULL;
                                 }
@@ -6166,19 +6194,10 @@ parse_use(Ty *ty)
                 stmt->class.name = tok()->identifier;
                 next();
                 if (T0 == '[') {
-                        next();
-                        SAVE_NE(true);
-                        while (T0 != ']') {
-                                avP(stmt->class.type_params, prefix_identifier(ty));
-                                if (T0 != ']') {
-                                        consume(',');
-                                }
-                        }
-                        LOAD_NE();
-                        next();
+                        parse_type_params(ty, &stmt->class.type_params);
                 }
                 consume('=');
-                stmt->class.type = parse_type(ty);
+                stmt->class.type = parse_type(ty, -1);
                 stmt->end = End;
                 return stmt;
         }
@@ -6481,7 +6500,7 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 break;
         case STATEMENT_TYPE_DEFINITION:
                 s->class.doc = doc;
-                define_type(ty, s);
+                define_type(ty, s, NULL);
                 break;
         case STATEMENT_MULTI:
                 for (int i = 0; i < s->statements.count; ++i) {

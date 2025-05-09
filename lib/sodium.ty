@@ -60,6 +60,6 @@ pub function hash(pass: String | Blob, buf: ?Blob) -> String | nil {
   return h
 }
 
-pub function verify(hash: String, pass: String | Blob) {
+pub function verify(hash: String, pass: String | Blob) -> Bool {
   crypto_pwhash_str_verify(hash, pass, pass.size()) == 0
 }
