@@ -1,51 +1,60 @@
 import sqlite3c (..)
 
+fn sqlite3c::open(path: String, flags: ?Int) -> _;
+
 tag SQLiteError {
-    str() {
+    str() -> String {
         errorMessage(self)
     }
 }
 
-class SQLiteRowIter : Iter {
-    init(s, assoc=true) {
-        @s = s
-        @assoc = assoc
+class SQLiteRowIter[a] : Iter[a] {
+    __stmt: SQLiteStatement[a]
+    __assoc: Bool
+
+    init(stmt, assoc=true) {
+        __stmt = stmt
+        __assoc = assoc
     }
 
     __next__() {
-        Some.from(@s.nextRow(@assoc))
+        Some.from(
+            __stmt.nextRow(__assoc)
+        )
     }
 }
 
-class SQLiteStatement : Iterable {
-    init(p) {
-        self.p = p
+class SQLiteStatement[a] : Iterable[a] {
+    __p: _
+    __status: Int
+
+    init(p: _) {
+        __p = p
     }
 
-    exec() {
-        if self.p {
-            let r = ::step(self.p)
-            ::finalize(self.p)
-            self.p = nil
-            return r
+    exec() -> Int {
+        if __p {
+            __status = ::step(__p)
+            ::finalize(__p)
+            __p = nil
+            return __status
         } else {
             throw SQLiteError(SQLITE_MISUSE)
         }
     }
 
-    step() {
-        if self.p {
-            self.status = ::step(self.p)
-            return self.status
+    step() -> Int {
+        if __p {
+            return (__status = ::step(__p))
         } else {
             throw SQLiteError(SQLITE_MISUSE)
         }
     }
 
-    row(assoc=true) {
-        if self.p {
-            if self.status == SQLITE_ROW {
-                return assoc ? fetchAssoc(self.p) : fetch(self.p)
+    row(assoc=true) -> a | nil {
+        if __p {
+            if __status == SQLITE_ROW {
+                return assoc ? cast(fetchAssoc(__p)) : cast(fetch(__p))
             } else {
                 return nil
             }
@@ -54,83 +63,87 @@ class SQLiteStatement : Iterable {
         }
     }
 
-    nextRow(assoc=true) {
-        self.step()
-        let row = self.row(assoc)
-        if self.status == SQLITE_DONE {
-            self.finalize()
+    nextRow(assoc=true) -> a | nil {
+        step()
+        let row = row(assoc)
+        if __status == SQLITE_DONE {
+            finalize()
         }
-        return row
+        row
     }
 
-    finalize() {
-        if @p {
-            let r = ::finalize(@p)
-            @p = nil
-            if r != SQLITE_OK {
-                throw SQLiteError(r)
+    finalize() -> nil {
+        if __p {
+            __status = ::finalize(__p)
+            __p = nil
+            if __status != SQLITE_OK {
+                throw SQLiteError(__status)
             }
         }
     }
 
-    rows(assoc=true) {
-        if !self.p {
+    rows(assoc=true) -> SQLiteRowIter[a] {
+        if !__p {
             throw SQLiteError(SQLITE_MISUSE)
         }
-        ::reset(self.p)
+        ::reset(__p)
         return SQLiteRowIter(self, assoc)
     }
 
     __drop__() {
-        self.finalize()
+        finalize()
     }
 
     __iter__() {
-        self.rows()
+        rows()
     }
 }
 
 pub class SQLite {
-    init(path, fullMutex: Bool = false) {
-        let fullMutexFlags =  SQLITE_OPEN_FULLMUTEX
-                          | SQLITE_OPEN_READWRITE
-                          | SQLITE_OPEN_CREATE
+    __path: String | nil
+    __db: _
+
+    init(path: String, fullMutex: Bool = false) {
+        let fullMutexFlags = SQLITE_OPEN_FULLMUTEX
+                           | SQLITE_OPEN_READWRITE
+                           | SQLITE_OPEN_CREATE
 
         if let $db = open(path, fullMutexFlags if fullMutex) {
-            @db = db
+            __db = db
+            __path = path
         } else {
             throw SQLiteError(error())
         }
     }
 
     close() {
-        if self.db {
-            ::close(self.db)
-            self.db = nil
+        if __db {
+            ::close(__db)
+            __db = nil
         }
     }
 
-    fetchOne(*args, assoc=true) {
-        with q = self.query(*args) {
+    fetchOne[a](*args, assoc=true) -> a {
+        with q = query(*args) {
             if let $row = q.nextRow(assoc: assoc) {
                 row
             }
         }
     }
 
-    fetchAll(*args, assoc=true) {
+    fetchAll[a](*args, assoc=true) -> [a] {
         let xs = []
-        with q = self.query(*args) {
+        with q = query(*args) {
             while let $row = q.nextRow(assoc: assoc) {
-                xs.push(q)
+                xs.push(row)
             }
         }
         xs
     }
 
-    query(sql, *ps) {
-        if not let $s  = ::prepare(self.db, sql) {
-            throw SQLiteError(error(self.db))
+    query[a](sql, *ps) -> SQLiteStatement[a] {
+        if not let $s  = ::prepare(__db, sql) {
+            throw SQLiteError(error(__db))
         }
 
         for p, i in ps {
@@ -143,19 +156,19 @@ pub class SQLite {
         return SQLiteStatement(s)
     }
 
-    changes() {
-        ::changes(@db)
+    changes() -> Int {
+        ::changes(__db)
     }
 
-    totalChanges() {
-        ::totalChanges(@db)
+    totalChanges() -> Int {
+        ::totalChanges(__db)
     }
 
-    exec(sql, *ps) {
+    exec(sql, *ps) -> Int {
         self.query(sql, *ps).exec()
     }
 
-    errorMessage() {
-        ::errorMessage(@db)
+    errorMessage() -> String {
+        ::errorMessage(__db)
     }
 }

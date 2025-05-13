@@ -74,14 +74,14 @@ pub function array(type, xs) {
     return buffer
 }
 
-pub function wrapVar(lib, name, nFixed, rType, *aTypes) {
+pub function wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
     if not let $fp = c.dlsym(name, lib) {
         throw Err("Failed to load symbol '{name}'")
     }
 
     let argStorage = [c.new(t) for t in aTypes]
 
-    return function (*args: _) {
+    return fn (*args: _) -> _ {
         let aTypes = aTypes.clone()
         let argStorage = argStorage.clone()
 
@@ -120,8 +120,10 @@ pub strlen = wrap(nil, 'strlen', c.u64, c.ptr)
 pub memcmp = wrap(nil, 'memcmp', c.int, c.ptr, c.ptr, c.u64)
 pub strcmp = wrap(nil, 'strcmp', c.int, c.ptr, c.ptr)
 pub memset = wrap(nil, 'memset', c.void, c.ptr, c.int, c.u64)
-pub syscall = wrapVar(nil, 'syscall', 1, c.long, c.long)
 pub strcpy = wrap(nil, 'strcpy', c.ptr, c.ptr, c.ptr)
+
+fn _syscall(nr: Int, *args: Any) -> Int { -1 }
+pub syscall: (typeof _syscall) = wrapVar(nil, 'syscall', 1, c.long, c.long)
 
 pub function cstr(s) {
     let p = c.alloc(s.size() + 1)
@@ -523,9 +525,9 @@ function strct() {
     )
 
     let structArgs = []
-    let methods: Array[ty.Func[TyFunc]] = []
-    let getters: Array[ty.Func[TyFunc]] = []
-    let setters: Array[ty.Func[TyFunc]] = []
+    let methods: Array[ty.Func[_Func]] = []
+    let getters: Array[ty.Func[_Func]] = []
+    let setters: Array[ty.Func[_Func]] = []
 
     function add-member(i: ?Int, name, t, count, off: Int | AST = 0) {
         if i == nil {
@@ -537,7 +539,7 @@ function strct() {
                 structArgs.push(ty.Arg(arg: $$[ $${mkstruct}($$t, $$count) $$]))
             } else {
                 let t_ = ty.Cond(
-                    $$[ type($$t) == Class $$],
+                    $$[ $${type}($$t) == Class $$],
                     $$[ $$t.ctype() $$],
                     t
                 )
@@ -581,11 +583,11 @@ function strct() {
             $$]
 
             let getter-body = $$[
-                (type($$t) == Class) ? $$t($$pmem) : $$mem
+                ($${type}($$t) == Class) ? $$t($$pmem) : $$mem
             $$]
 
             let setter-body = $$[
-                (type($$t) == Class) ? die('not implemented') : $$store
+                ($${type}($$t) == Class) ? die('not implemented') : $$store
             $$]
 
             getters.push(
@@ -874,7 +876,7 @@ pub macro struct! {
                 )
             },
             _ => {
-                structArgs.push(ty.Arg(arg: $$[ do { let t = $$item; (type(t) == ptr.null) ? t : t.ctype() } $$]))
+                structArgs.push(ty.Arg(arg: $$[ do { let t = $$item; ($${type}(t) == ptr.null) ? t : t.ctype() } $$]))
                 methods.push(
                     ty.Func(
                         name: name,

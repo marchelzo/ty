@@ -208,12 +208,13 @@
 #define PLOGC(...) ((void)0)
 #endif
 
-#define           tok()                ((tok)(ty))
-#define        token(i)         ((token)(ty, (i)))
-#define         skip(n)          ((skip)(ty, (n)))
-#define  try_consume(t)   ((try_consume)(ty, (t)))
-#define have_keyword(k)  ((have_keyword)(ty, (k)))
-#define    unconsume(t)     ((unconsume)(ty, (t)))
+#define                 tok()                        ((tok)(ty))
+#define              token(i)                 ((token)(ty, (i)))
+#define               skip(n)                  ((skip)(ty, (n)))
+#define        try_consume(t)           ((try_consume)(ty, (t)))
+#define       have_keyword(k)          ((have_keyword)(ty, (k)))
+#define have_keywords(k0, k1)  ((have_keywords)(ty, (k0), (k1)))
+#define          unconsume(t)             ((unconsume)(ty, (t)))
 
 
 #define with_fun_subscope(...)                                          \
@@ -1056,7 +1057,7 @@ inline static bool
 }
 
 inline static bool
-have_keywords(Ty *ty, int kw1, int kw2)
+(have_keywords)(Ty *ty, int kw1, int kw2)
 {
         return T0 == TOKEN_KEYWORD && K0 == kw1 &&
                T1 == TOKEN_KEYWORD && K1 == kw2;
@@ -1329,7 +1330,9 @@ parse_type(Ty *ty, int prec)
         Expr *t;
 
         SAVE_TC(true);
+        SAVE_NE(true);
         t = parse_expr(ty, prec);
+        LOAD_NE();
         LOAD_TC();
 
         return t;
@@ -1541,7 +1544,9 @@ ss_inner(Ty *ty, bool top)
 
                 next();
 
+                SAVE_NE(false);
                 avP(e->expressions, parse_expr(ty, 0));
+                LOAD_NE();
 
                 if (T0 == ':') {
                         next();
@@ -1569,7 +1574,9 @@ ss_inner(Ty *ty, bool top)
 
                 if (T0 == '[') {
                         next();
+                        SAVE_NE(false);
                         avP(e->fmtfs, parse_expr(ty, 0));
+                        LOAD_NE();
                         consume(']');
                 } else {
                         avP(e->fmtfs, NULL);
@@ -2158,7 +2165,10 @@ prefix_star(Ty *ty)
 
         consume(TOKEN_STAR);
 
-        if (TypeContext) {
+        if (
+                TypeContext
+             || (NoEquals && T0 != ')')
+        ) {
                 e->type = EXPRESSION_SPREAD;
                 e->value = parse_expr(ty, 0);
         } else {
@@ -2894,11 +2904,14 @@ prefix_parenthesis(Ty *ty)
                 SAVE_NA(true);
                 e = infix_eq(ty, e);
                 LOAD_NA();
-                consume(')');
-                return e;
         }
 
-        if (T0 == ',' || T0 == ':') {
+        if (
+                (e->type == EXPRESSION_SPREAD)
+             || (T0 == ',')
+             || (T0 == ':')
+             || (K0 == KEYWORD_IF)
+        ) {
                 Expr *list = mkexpr(ty);
                 list->start = start;
                 list->only_identifiers = true;
@@ -2916,19 +2929,9 @@ prefix_parenthesis(Ty *ty)
                 vec_init(list->required);
                 vec_init(list->tconds);
 
-                if (
-                        (e->type == EXPRESSION_IDENTIFIER && T0 == ':')
-                     || (e->type == EXPRESSION_MATCH_REST && T0 == ':')
-                ) {
-                        next();
-                        avP(list->names, e->identifier);
-                        e->constraint = parse_type(ty, 0);
-                } else {
-                        avP(list->names, NULL);
-                }
-
                 e->end = End;
                 avP(list->es, e);
+                avP(list->names, NULL);
                 avP(list->required, true);
 
                 if (have_keyword(KEYWORD_IF)) {
@@ -2943,12 +2946,6 @@ prefix_parenthesis(Ty *ty)
                 }
 
                 while (T0 != ')') {
-                        if (T0 == ':' && T1 == TOKEN_IDENTIFIER) {
-                                unconsume(TOKEN_IDENTIFIER);
-                                tok()->identifier = token(2)->identifier;
-                                tok()->module = NULL;
-                        }
-
                         if (T0 == TOKEN_QUESTION) {
                                 next();
                                 avP(list->required, false);
@@ -2956,20 +2953,24 @@ prefix_parenthesis(Ty *ty)
                                 avP(list->required, true);
                         }
 
-                        if (
-                                (T0 == TOKEN_IDENTIFIER && T1 == ':')
-                             || (T0 == TOKEN_STAR && T1 == TOKEN_IDENTIFIER && T2 == ':')
-                        ) {
-                                e = parse_expr(ty, 0);
-                                consume(':');
-                                e->constraint = parse_type(ty, 0);
-                                avP(list->names, e->identifier);
-                                avP(list->es, e);
-                        } else {
-                                avP(list->names, NULL);
-                                avP(list->es, parse_expr(ty, 0));
-                                list->only_identifiers = false;
+                        SAVE_NE(true);
+                        SAVE_NA(false);
+                        e = parse_expr(ty, 0);
+                        LOAD_NA();
+                        LOAD_NE();
+
+                        if (T0 == TOKEN_EQ || T0 == TOKEN_MAYBE_EQ) {
+                                SAVE_NA(true);
+                                e = infix_eq(ty, e);
+                                LOAD_NA();
                         }
+
+
+                        avP(list->es, e);
+                        avP(
+                                list->names,
+                                (e->type == EXPRESSION_SPREAD) ? "*" : NULL
+                        );
 
                         if (have_keyword(KEYWORD_IF)) {
                                 next();
@@ -2981,22 +2982,17 @@ prefix_parenthesis(Ty *ty)
                         if (T0 != ')') {
                                 consume(',');
                         }
-
                 }
 
                 consume(')');
 
                 list->end = End;
 
+                if (T0 == TOKEN_ARROW) {
+                        list->type = EXPRESSION_LIST;
+                }
+
                 return list;
-        } else if (e->type == EXPRESSION_SPREAD) {
-                Expr *tuple = mkexpr(ty);
-                tuple->type = EXPRESSION_TUPLE;
-                avP(tuple->es, e);
-                avP(tuple->names, NULL);
-                avP(tuple->tconds, NULL);
-                consume(')');
-                return tuple;
         } else if (have_keyword(KEYWORD_FOR)) {
                 e = gencompr(ty, e);
 
@@ -3381,6 +3377,10 @@ prefix_template_expr(Ty *ty)
                 next();
                 avP(TemplateExprs, parse_expr(ty, 0));
                 consume('}');
+        } else if (T0 == ':') {
+                e->type = EXPRESSION_TEMPLATE_THOLE;
+                next();
+                avP(TemplateExprs, parse_expr(ty, 99));
         } else {
                 avP(TemplateExprs, parse_expr(ty, 99));
         }
@@ -3960,13 +3960,30 @@ infix_user_op(Ty *ty, Expr *left)
 }
 
 static Expr *
+infix_type_union(Ty *ty, Expr *left)
+{
+        Expr *e = mkexpr(ty);
+        e->start = left->start;
+        e->type = EXPRESSION_TYPE_UNION;
+        avP(e->es, left);
+
+        while (T0 == '|') {
+                next();
+                avP(e->es, parse_type(ty, 5));
+        }
+
+        e->end = End;
+
+        return e;
+}
+
+static Expr *
 infix_list(Ty *ty, Expr *left)
 {
 
         Expr *e = mkexpr(ty);
         e->start = left->start;
         e->type = EXPRESSION_LIST;
-        vec_init(e->es);
         avP(e->es, left);
 
         SAVE_NE(true);
@@ -4261,6 +4278,11 @@ infix_arrow_function(Ty *ty, Expr *left)
 
         for (int i = 0; i < left->es.count; ++i) {
                 Expr *p = left->es.items[i];
+                Expr *dflt = NULL;
+                if (p->type == EXPRESSION_EQ) {
+                        dflt = p->value;
+                        p = p->target;
+                }
                 if (p->type == EXPRESSION_IDENTIFIER) {
                         avP(e->params, p->identifier);
                         avP(e->constraints, p->constraint);
@@ -4274,7 +4296,7 @@ infix_arrow_function(Ty *ty, Expr *left)
                         avP(e->constraints, NULL);
                         avP(body->statements, mkdef(ty, definition_lvalue(ty, p), name));
                 }
-                avP(e->dflts, NULL);
+                avP(e->dflts, dflt);
         }
 
         Stmt *ret = mkret(ty, parse_expr(ty, 0));
@@ -4416,7 +4438,9 @@ infix_conditional(Ty *ty, Expr *left)
 
         consume(TOKEN_QUESTION);
 
+        SAVE_NE(false);
         e->then = parse_expr(ty, 2);
+        LOAD_NE();
 
         consume(':');
 
@@ -4630,7 +4654,7 @@ get_infix_parser(Ty *ty)
         case TOKEN_SHR:            return infix_shr;
         case '^':                  return infix_xor;
         case '&':                  return infix_bit_and;
-        case '|':                  return infix_bit_or;
+        case '|':                  return TypeContext ? infix_type_union : infix_bit_or;
 
         case TOKEN_STAR:           return infix_star;
         case TOKEN_DIV:            return infix_div;
@@ -5289,7 +5313,7 @@ parse_while(Ty *ty)
         /*
          * Maybe it's a while-match loop.
          */
-        if (have_keywords(ty, KEYWORD_WHILE, KEYWORD_MATCH)) {
+        if (have_keywords(KEYWORD_WHILE, KEYWORD_MATCH)) {
                 next();
                 Stmt *m = parse_match_statement(ty);
                 m->type = STATEMENT_WHILE_MATCH;
@@ -5909,9 +5933,13 @@ parse_class_definition(Ty *ty)
         vec(FuncParam) init_params = {0};
         if (!tag && try_consume('(')) while (!try_consume(')')) {
                 FuncParam param;
+                Location start;
+                Location end;
 
                 expect(TOKEN_IDENTIFIER);
                 param.name = tok()->identifier;
+                start = tok()->start;
+                end = tok()->end;
                 next();
 
                 param.constraint = try_consume(':')
@@ -5926,7 +5954,21 @@ parse_class_definition(Ty *ty)
                         consume(',');
                 }
 
+                Expr *field = mkid(param.name);
+                field->start = start;
+                field->end = end;
+                field->constraint = param.constraint;
+
+                if (param.dflt != NULL) {
+                        Expr *eql = mkexpr(ty);
+                        eql->type = EXPRESSION_EQ;
+                        eql->target = field;
+                        eql->value = param.dflt;
+                        field = eql;
+                }
+
                 avP(init_params, param);
+                avP(s->tag.fields, field);
         }
 
         if (T0 == '<') {
@@ -6246,7 +6288,7 @@ parse_try(Ty *ty)
 
                 Stmt *otherwise;
 
-                if (have_keywords(ty, KEYWORD_OR, KEYWORD_ELSE)) {
+                if (have_keywords(KEYWORD_OR, KEYWORD_ELSE)) {
                         skip(2);
                         otherwise = parse_statement(ty, -1);
                 } else {
@@ -6663,7 +6705,7 @@ parse_ex(
         }
 
         while (
-                have_keywords(ty, KEYWORD_PUB, KEYWORD_IMPORT)
+                have_keywords(KEYWORD_PUB, KEYWORD_IMPORT)
              || have_keyword(KEYWORD_IMPORT)
              || T0 == TOKEN_COMMENT
         ) {
@@ -6684,7 +6726,10 @@ parse_ex(
         while (T0 != TOKEN_END) {
                 char const *doc = NULL;
 
-                while (have_keyword(KEYWORD_NAMESPACE) || have_keywords(ty, KEYWORD_PUB, KEYWORD_NAMESPACE)) {
+                while (
+                        have_keyword(KEYWORD_NAMESPACE)
+                     || have_keywords(KEYWORD_PUB, KEYWORD_NAMESPACE)
+                ) {
                         lex_need_nl(ty, true);
 
                         bool pub = have_keyword(KEYWORD_PUB) && (next(), true);
@@ -6872,6 +6917,53 @@ void
 parse_next(Ty *ty)
 {
         next();
+}
+
+struct value
+parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw)
+{
+        int save = TokenIndex;
+
+        SAVE_JB;
+
+        SAVE_NI(false);
+        SAVE_NE(false);
+
+        bool keep_comments = lex_keep_comments(ty, false);
+
+        Value v;
+        Expr *e;
+
+        if (setjmp(jb) != 0) {
+                v = NIL;
+                seek(ty, save);
+        } else {
+                e = parse_type(ty, prec);
+                if (!resolve) {
+                        v = CToTyExpr(ty, e);
+                } else {
+                        compiler_symbolize_expression(ty, e, NULL);
+                        v = PTR(e);
+                        v.type |= VALUE_TAGGED;
+                        v.tags = tags_push(ty, 0, TyExpr);
+                }
+        }
+
+        LOAD_NE();
+        LOAD_NI();
+
+        RESTORE_JB;
+
+        lex_keep_comments(ty, keep_comments);
+
+        if (want_raw) {
+                Value pair = vT(2);
+                pair.items[0] = PTR(e);
+                pair.items[1] = v;
+                return pair;
+        } else {
+                return v;
+        }
 }
 
 struct value

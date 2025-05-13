@@ -787,13 +787,18 @@ add_builtins(Ty *ty, int ac, char **av)
         compiler_introduce_symbol(ty, "ffi", "void");
         xvP(Globals, PTR(&ffi_type_void));
 
-#define X(name)                                               \
-        do {                                                  \
-                compiler_introduce_tag(ty, "ty", #name, -1);  \
-                xvP(Globals, TAG(Ty ## name));                \
-        } while (0);
+#define X(name)                                       \
+        compiler_introduce_tag(ty, "ty", #name, -1);  \
+        xvP(Globals, TAG(Ty ## name));                \
 
         TY_AST_NODES
+#undef X
+
+#define X(name)                                             \
+        compiler_introduce_tag(ty, "ty/types", #name, -1);  \
+        xvP(Globals, TAG(Ty ## name ## T));                 \
+
+        TY_TYPE_TAGS
 #undef X
 }
 
@@ -3694,6 +3699,13 @@ vm_exec(Ty *ty, char *code)
                                 IP += n;
                         }
                         break;
+                CASE(JUMP_IF_TYPE)
+                        READJUMP(jump);
+                        READVALUE(z);
+                        if (top()->type == z) {
+                                DOJUMP(jump);
+                        }
+                        break;
                 CASE(JLE)
                         READVALUE(n);
                         DoLeq(ty);
@@ -4043,7 +4055,10 @@ AssignGlobal:
                 CASE(TRY_STEAL_TAG)
                         READVALUE(n);
                         vp = poptarget();
-                        if (top()->type & VALUE_TAGGED) {
+                        if (top()->tags > 22000) {
+                                printf("TAGGED: %s\n", VSC(top()));
+                        }
+                        if (top()->tags > 0) {
                                 *vp = TAG(tags_first(ty, top()->tags));
                                 if ((top()->tags = tags_pop(ty, top()->tags)) == 0) {
                                         top()->type &= ~VALUE_TAGGED;
@@ -4477,6 +4492,19 @@ AssignGlobal:
 
                         break;
                 }
+                CASE(GATHER_TUPLE)
+                        n = vN(STACK) - *vvX(SP_STACK);
+                        
+                        vp = mAo(n * sizeof (Value), GC_TUPLE);
+                        v = TUPLE(vp, NULL, n, false);
+
+                        memcpy(vp, topN(n), n * sizeof (Value));
+
+                        STACK.count -= n;
+
+                        push(v);
+
+                        break;
                 CASE(DICT)
                         v = DICT(dict_new(ty));
 
@@ -4579,7 +4607,6 @@ Yield:
                 CASE(ASSIGN_TYPE)
                         READVALUE(s);
                         if (top()->type == VALUE_OBJECT) {
-                                top()->t0 = (Type *)s;
                         }
                         break;
                 CASE(VALUE)
@@ -6676,6 +6703,10 @@ StepInstruction(char const *ip)
         CASE(JUMP_IF_NIL)
                 SKIPVALUE(n);
                 break;
+        CASE(JUMP_IF_TYPE)
+                SKIPVALUE(n);
+                SKIPVALUE(i);
+                break;
         CASE(JLT)
         CASE(JLE)
         CASE(JGT)
@@ -6859,6 +6890,8 @@ StepInstruction(char const *ip)
                 while (n --> 0) {
                         SKIPVALUE(i);
                 }
+                break;
+        CASE(GATHER_TUPLE)
                 break;
         CASE(DICT)
                 break;
@@ -7287,6 +7320,7 @@ tdb_step_over(Ty *ty)
         CASE(JUMP_IF_NOT)
         CASE(JUMP_IF_NIL)
         CASE(JUMP_IF_NONE)
+        CASE(JUMP_IF_TYPE)
         CASE(JUMP_IF_SENTINEL)
         CASE(ENSURE_LEN)
         CASE(ENSURE_LEN_TUPLE)

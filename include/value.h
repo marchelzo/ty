@@ -53,6 +53,7 @@ enum {
         X(Expr)                 \
         X(Stmt)                 \
         X(Value)                \
+        X(Type)                 \
         X(Each)                 \
         X(Match)                \
         X(For)                  \
@@ -76,6 +77,7 @@ enum {
         X(And)                  \
         X(BitAnd)               \
         X(BitOr)                \
+        X(Union)                \
         X(KwAnd)                \
         X(NotEq)                \
         X(Assign)               \
@@ -170,17 +172,46 @@ enum {
         X(Super)                \
         X(Stop)
 
-#define X(x) Ty ## x,
-enum {
-        TyZeroNode,
-        //TyOneNode,
-        TY_AST_NODES
-        TyMaxNode
-};
-#undef X
+#define TY_TYPE_TAGS   \
+        X(Error)       \
+        X(Object)      \
+        X(Tag)         \
+        X(Class)       \
+        X(Func)        \
+        X(Var)         \
+        X(Alias)       \
+        X(Union)       \
+        X(Intersect)   \
+        X(List)        \
+        X(Bottom)      \
+        X(Unknown)     \
+        X(Hole)        \
+        X(Any)         \
+        X(Nil)         \
+        X(Record)      \
+        X(String)      \
+        X(Int)         \
+        X(Float)       \
+        X(Bool)        \
+        X(Array)       \
+        X(Dict)        \
+        X(Ptr)         \
+        X(Regex)       \
+        X(Iter)
+
 
 enum {
-        TAG_MATCH_ERR = TyMaxNode,
+        TAG_ZERO,
+
+#define X(x) Ty ## x,
+        TY_AST_NODES
+#undef X
+
+#define X(x) Ty ## x ## T,
+        TY_TYPE_TAGS
+#undef X
+
+        TAG_MATCH_ERR,
         TAG_INDEX_ERR,
         TAG_DISPATCH_ERR,
         TAG_NONE,
@@ -188,6 +219,7 @@ enum {
         TAG_OK,
         TAG_ERR
 };
+
 
 inline static char const *
 TypeName(Ty const *ty, int t0)
@@ -498,6 +530,9 @@ value_blob_new(Ty *ty);
 struct value
 value_tuple(Ty *ty, int n);
 
+Value
+value_record(Ty *ty, int n);
+
 struct value
 value_named_tuple(Ty *ty, char const *first, ...);
 
@@ -631,6 +666,10 @@ STRING_CLONE(Ty *ty, char const *s, int n)
 inline static Value
 STRING_CLONE_C(Ty *ty, char const *s)
 {
+        if (s == NULL) {
+                return NIL;
+        }
+
         int n = strlen(s);
         char *clone = value_string_clone(ty, s, n);
 
@@ -646,6 +685,10 @@ STRING_CLONE_C(Ty *ty, char const *s)
 inline static Value
 STRING_C_CLONE_C(Ty *ty, char const *s)
 {
+        if (s == NULL) {
+                return NIL;
+        }
+
         int n = strlen(s);
         char *clone = value_string_clone_nul(ty, s, n);
 
@@ -864,6 +907,12 @@ inline static char *
 from_eval(Value const *f)
 {
         return (char *)f->info + FUN_FROM_EVAL;
+}
+
+inline static Type *
+as_type(Value const *v)
+{
+        return v->ptr;
 }
 
 #define PACK_TYPES(t1, t2) (((t1) << 8) | (t2))

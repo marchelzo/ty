@@ -153,6 +153,7 @@ typedef struct class_definition ClassDefinition;
         X(DEFINED),                                                                   \
         X(TYPEOF),                                                                    \
         X(TYPE),                                                                      \
+        X(TYPE_UNION),                                                                \
         X(WITH),                                                                      \
         X(YIELD),                                                                     \
         X(THROW),                                                                     \
@@ -163,6 +164,7 @@ typedef struct class_definition ClassDefinition;
         X(TEMPLATE),                                                                  \
         X(TEMPLATE_HOLE),                                                             \
         X(TEMPLATE_VHOLE),                                                            \
+        X(TEMPLATE_THOLE),                                                            \
         X(SPREAD),                                                                    \
         X(SPLAT),                                                                     \
         X(MUST_EQUAL),                                                                \

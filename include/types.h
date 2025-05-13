@@ -45,12 +45,15 @@ struct type {
                 TYPE_NIL,
                 TYPE_NONE,
                 TYPE_BOTTOM,
+                TYPE_COMPUTED,
                 TYPE_TYPE,
+                TYPE_ERROR,
                 TYPE_ALIAS
         } type;
         bool fixed;
         bool concrete;
         bool variadic;
+        bool forgive;
         union {
                 struct {
                         union {
@@ -63,7 +66,7 @@ struct type {
                                         Type *rt;
                                         Type *yields;
                                         Type *consumes;
-                                        ParamVector fun_params;
+                                        ParamVector params;
                                 };
                                 struct {
                                         Type *_type;
@@ -81,12 +84,16 @@ struct type {
                                                         int j;
                                                         int k;
                                                 };
+                                                struct {
+                                                        Value func;
+                                                        bool inst;
+                                                };
                                         };
                                         Type *val;
                                 };
                         };
                         TypeVector args;
-                        U32Vector params3;
+                        U32Vector bound;
                         ConstraintVector constraints;
                 };
                 struct {
@@ -95,6 +102,7 @@ struct type {
                 };
                 intmax_t z;
         };
+        Expr const *src;
 };
 
 struct type_env {
@@ -104,7 +112,7 @@ struct type_env {
 };
 
 
-#define PARAM(v, t0, req) ((Param){ .var = (v), .type = (t0), .required = (req) })
+#define PARAM(id, t0, req) ((Param){ .name = (id), .type = (t0), .required = (req) })
 #define PARAMx(...) ((Param){ __VA_ARGS__ })
 
 
@@ -122,6 +130,13 @@ extern Type *BOTTOM_TYPE;
 extern Type *UNKNOWN_TYPE;
 extern Type *TYPE_ANY;
 extern Type *TYPE_CLASS_;
+
+
+enum {
+        T_FLAG_STRICT = 1,
+        T_FLAG_UPDATE = 2
+};
+
 
 Type *
 type_integer(Ty *ty, intmax_t z);
@@ -181,6 +196,9 @@ Type *
 type_subscript(Ty *ty, Expr const *e);
 
 Type *
+type_slice(Ty *ty, Expr const *e);
+
+Type *
 type_member_access(Ty *ty, Expr const *e);
 
 Type *
@@ -217,10 +235,13 @@ Type *
 type_inst(Ty *ty, Type const *t0);
 
 Type *
+type_inst0(Ty *ty, Type const *t0, U32Vector const *params, TypeVector const *args);
+
+Type *
 type_drill(Ty *ty, Type const *t0);
 
 void
-type_assign(Ty *ty, Expr *e, Type *t0, bool fixed);
+type_assign(Ty *ty, Expr *e, Type *t0, int flags);
 
 Type *
 type_fixed(Ty *ty, Type *t0);
@@ -288,6 +309,12 @@ type_completions(Ty *ty, Type const *t0, char const *pre, ValueVector *out);
 bool
 TypeCheck(Ty *ty, Type *t0, Value const *v);
 
+Value
+type_to_ty(Ty *ty, Type *t0);
+
+Type *
+type_from_ty(Ty *ty, Value const *v);
+
 void
 types_init(Ty *ty);
 
@@ -296,6 +323,9 @@ type_find_method(Ty *ty, Type const *t0, char const *name, Type **t1, Expr **e);
 
 bool
 type_is_concrete(Ty *ty, Type const *t0);
+
+bool
+type_is_tvar(Type const *t0);
 
 #endif
 
