@@ -1,0 +1,265 @@
+import chalk (fg, chalk)
+import help (pretty-print)
+import readln (readln)
+import tdb
+import ty
+
+pub macro Source   = 1
+pub macro Bytecode = 2
+
+chalk.fg0    = '#e1c78f'
+chalk.fg1    = '#ddc7a1'
+chalk.red    = '#ea6962'
+chalk.aqua   = '#89b482'
+chalk.orange = '#e78a4e'
+chalk.yellow = '#d8a657'
+chalk.green  = '#a9b665'
+chalk.blue   = '#7daea3'
+chalk.purple = '#d3869b'
+chalk.aqua   = '#89b482'
+
+let groups = %{
+    'fg0': 'id',
+    'fg1': '[ ] { } ( ) . , ] ;',
+    'orange': '
+        =   ==  ++  --  +   -  *   /   %   ^   |  &
+        +=  -=  *=  /=  %=  @  #   &&  ||  <=> !  ~
+        ->  ~>  =>  $~> >   <  !=
+    ',
+    'purple': 'true false nil int float',
+    'red': '
+        for       while    if     let       and    function
+        do        try      catch  operator  or     in
+        match     else     with   import    break  pub
+        continue  return
+    ',
+    'yellow': 'class tag',
+    'green': 'fun string " f-string',
+    'blue': 'type',
+    'aqua': 'regex'
+}
+
+let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
+
+@[memoized]
+function color-and-break(prog) {
+#|if 1
+    // More expensive, but might give better syntax highlighting
+    let tokens = match ty.parse(prog, :tokens) {
+        Ok(_, {tokens, *}) => tokens,
+        _                  => do return prog
+    }
+#|else
+    let $tokens = ty.tokenize(prog)
+#|]
+
+    tokens.remove!(nil).map!(t -> match t {
+        {id, end, *} and prog[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
+        {id: /^[A-Z]\w*[a-z]\w*$/, *}          => do { let x: _ = t; ({*x, type: 'type'}) },
+        _ => t
+    })
+
+    let parts = [(it, id) for prog]
+
+    for {start, end, type, *} in tokens {
+        let i = start.byte
+        let j = end.byte
+
+        continue if not let $color = colors[type]
+
+        for i..j { parts[it] = (parts[it][0], color) }
+    }
+
+    let out = Blob()
+
+    for (char, fg) in parts {
+        out.push(chalk"[{fg}]{char}[/]")
+    }
+
+    out.str!().lines().enumerate()
+}
+
+function next-line(line) (
+    match ({start, *}) => start.line != line
+)
+
+function next-call(start-func, start-fp) (
+    match ({fp, *}) => (fp != start-fp)
+)
+
+function end-of-expr() (
+    match tdb.span() {
+        (lo, hi) => match ({ip, *}) => (ip < lo) || (ip >= hi),
+        _        => nil
+    }
+)
+
+let stop-cond = nil
+let step = nil
+let current-line = -1
+let current-range = (0...0)
+let current-mode = Source
+let depth = 0
+
+tdb.hook = function hook() {
+    eprint('SAD')
+    let state = tdb.state()
+
+    let { prog, file, expr
+        , func, ip, fp, sp } = dbg(state)
+
+    eprint('COPE')
+
+    depth += 1
+    defer depth -= 1
+
+    eprint('SEETHE')
+
+    function print-source() {
+        let lines = color-and-break(prog)
+
+        if !current-range.contains?(current-line.range(-3 , 3)) {
+            current-range = current-line.range(-10, 16).clamp(0, #lines)
+        }
+         
+        print("\x1b[2J\x1b[H", :flush)
+        print(chalk"[aqua]File: {file}[/]")
+
+        for (i, source-line) in lines[current-range] {
+            let highlight = text -> chalk"[bright yellow bold]{text}[/]"
+            let margin = (i == current-line)
+                       ? "     --> {i + 1:6} |" >> highlight
+                       : "         {i + 1:6} |"
+            if i == current-line {
+                source-line = chalk"[bg-#3c3836]XX{source-line:100}XX[/]"
+            }
+            print(chalk"{margin} {source-line}")
+        }
+    }
+
+    eprint("CHECK STEP: {expr}")
+
+    if (expr != nil) and let {start, end, *} = ty.src(expr) {
+        eprint("HERE LOL")
+        if stop-cond != nil && !stop-cond({*state, start, end}) {
+            step()
+            return
+        }
+
+        current-line = start.line
+        stop-cond = nil
+
+        match current-mode {
+            Source => {
+                print-source()
+            },
+
+            Bytecode => {
+                tdb.list()
+            }
+        }
+
+        print("Mode: {current-mode}")
+    }
+
+    eprint('START READING')
+
+    //while match readln("(tdb)[{depth}] ", !:erase) {
+    while match dbg(readLine()) {
+        /^p (.*)$/ => match tdb.eval($1) {
+            Err(msg) => print(msg),
+            Ok(val)  => pretty-print(val)
+        },
+
+        /^b (.*)$/ => match tdb.eval($1) {
+            Err(msg) => print(msg),
+            Ok(fun)  => tdb.breakpoint(fun)
+        },
+
+        /^x\/(\d+)/ => {
+            let n = int($1)
+            let stack = tdb.stack()
+
+            if #stack == 0 {
+                print('STACK IS EMPTY')
+                continue
+            }
+
+            print("Stack [{#stack}]: TOP")
+
+            for match (1...n).map(i -> stack(-i)) {
+                Some(x) => {
+                    print('        ', end='')
+                    print(x)
+                },
+
+                _ => break
+            }
+        },
+
+        'l' => {
+            print-source()
+            current-mode = Source
+        },
+
+        'd' => {
+            tdb.list()
+            current-mode = Bytecode
+        },
+
+        'bt' => {
+            tdb.backtrace()
+        },
+
+        'st' => {
+            pretty-print(state)
+        },
+
+        'lo' => {
+            pretty-print(tuple(**tdb.locals()))
+        },
+
+        'n' or ''  => match current-mode {
+            Source => {
+                stop-cond = next-line(current-line)
+                step = tdb.over
+                break
+            },
+
+            Bytecode => {
+                stop-cond = (-> true)
+                step = tdb.over
+                break
+            }
+        },
+
+        's' => {
+            stop-cond = next-call(func, fp)
+            step = (-> tdb.into() || tdb.over())
+            break
+        },
+
+        '1' => {
+            stop-cond = (-> true)
+            step = tdb.over
+            break
+        },
+
+        'fe' => {
+            stop-cond = end-of-expr()
+            step = tdb.over
+            break
+        },
+
+        'c' => {
+            stop-cond = nil
+            return
+        }
+
+        c => {
+            print("bro? {c}")
+        }
+    }
+
+    step()
+}
