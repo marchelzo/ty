@@ -7,129 +7,9 @@ import stdio
 import ty
 import ty.parse as parse
 import ty.token as lex
+import ty.types as types
 import os
 import json
-
-macro TyParam = ty.Param[{name: String, constraint: AST, default: AST}]
-
-macro TyFunc = {
-    name: String | nil,
-    params: [TyParam],
-    rt: AST,
-    decorators: [AST] | nil,
-    body: AST
-}
-
-macro TyArrayItem = ty.ArrayItem[{item: AST, cond: AST, optional: Bool | nil}]
-
-macro TyAnyFunc = ty.Func[TyFunc]
-                | ty.FuncDef[TyFunc]
-                | ty.ImplicitFunc[TyFunc]
-
-macro TyDictItem = ty.DictItem[(AST, AST)]
-
-use AST = ty.Int[Int]
-        | ty.String[String]
-        | ty.Float[Float]
-        | ty.Bool[Bool]
-        | ty.Id[{name: String, module: String | nil, constraint: AST}]
-        | ty.MemberAccess[(AST, String)]
-        | ty.Count[AST]
-        | ty.Question[AST]
-        | ty.Not[AST]
-        | ty.Neg[AST]
-        | ty.PreInc[AST]
-        | ty.PostInc[AST]
-        | ty.PreDec[AST]
-        | ty.PostDec[AST]
-        | ty.Subscript[(AST, AST)]
-        | ty.Slice[(AST, AST, AST, AST)]
-        | ty.Array[Array[TyArrayItem]]
-        | TyArrayItem
-        | ty.Dict[{items: [TyDictItem], default: AST}]
-        | TyDictItem
-        | ty.Call[{func: AST, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
-        | ty.MethodCall[{object: AST, method: String, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
-        | ty.Arg[{arg: AST, name: String | nil, cond: AST}]
-        | ty.Record[Array[ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]]]
-        | ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]
-        | ty.Func[TyFunc]
-        | ty.FuncDef[TyFunc]
-        | ty.ImplicitFunc[TyFunc]
-        | TyParam
-        | ty.Class[{
-              name: String,
-              `super`: AST,
-              fields: [AST],
-              methods: [AST],
-              getters: [AST],
-              setters: [AST],
-              statics: [AST]
-          }]
-        | ty.Let[(AST, AST)]
-        | ty.Assign[(AST, AST)]
-        | ty.Break[{value: AST, depth: Int}]
-        | ty.Break
-        | ty.Return[Array[AST]]
-        | ty.Yield[Array[AST]]
-        | ty.Generator[AST]
-        | ty.Any[AST]
-        | ty.Any
-        | ty.ArrayCompr[{items: [TyArrayItem], pattern: AST, iter: AST, cond: AST}]
-        | ty.Each[{iter: AST, pattern: AST, expr: AST, cond: AST, stop: AST}]
-        | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
-        | ty.Spread[AST]
-        | ty.Splat[AST]
-        | ty.Block[Array[AST]]
-        | ty.Multi[Array[AST]]
-        | ty.Match[(AST, Array[(AST, AST)])]
-        | ty.WhileMatch[(AST, Array[(AST, AST)])]
-        | ty.While[([AST], AST)]
-        | ty.Defer[AST]
-        | ty.Eval[AST]
-        | ty.Throw[AST]
-        | ty.Try[{body: AST, catches: Array[(AST, AST)], always: AST}]
-        | ty.For[(AST, AST, AST, AST)]
-        | ty.UserOp[(String, AST, AST)]
-        | ty.Add[(AST, AST)]
-        | ty.Sub[(AST, AST)]
-        | ty.Mul[(AST, AST)]
-        | ty.Div[(AST, AST)]
-        | ty.Mod[(AST, AST)]
-        | ty.GT[(AST, AST)]
-        | ty.LT[(AST, AST)]
-        | ty.GEQ[(AST, AST)]
-        | ty.LEQ[(AST, AST)]
-        | ty.Eq[(AST, AST)]
-        | ty.NotEq[(AST, AST)]
-        | ty.And[(AST, AST)]
-        | ty.Or[(AST, AST)]
-        | ty.BitAnd[(AST, AST)]
-        | ty.BitOr[(AST, AST)]
-        | ty.Xor[(AST, AST)]
-        | ty.Wtf[(AST, AST)]
-        | ty.Cmp[(AST, AST)]
-        | ty.LT[(AST, AST)]
-        | ty.GT[(AST, AST)]
-        | ty.LEQ[(AST, AST)]
-        | ty.GEQ[(AST, AST)]
-        | ty.In[(AST, AST)]
-        | ty.NotIn[(AST, AST)]
-        | ty.Matches[(AST, AST)]
-        | ty.KwAnd[(AST, AST)]
-        | ty.Range[(AST, AST)]
-        | ty.IncRange[(AST, AST)]
-        | ty.Cond[(AST, AST, AST)]
-        | ty.If[(AST, AST, AST)]
-        | ty.IfNot[(AST, AST, AST)]
-        | ty.TagPattern[(String, AST)]
-        | ty.Tagged[_]
-        | ty.View[(AST, AST)]
-        | ty.NotNilView[(AST, AST)]
-        | ty.Stop[AST]
-        | ty.Nil
-        | ty.Value[_]
-        | nil
 
 use TokenData = { id: String, module: String }
               | { int: Int }
@@ -144,6 +24,8 @@ use TokenLocation = {
 
 use Token = { type: String, start: TokenLocation, end: TokenLocation } & TokenData
 
+use Subscript[T, U] = { __subscript__: T -> U }
+
 fn parse::expr(prec: ?Int, raw: Bool) -> (AST, _);
 fn parse::expr(prec: ?Int) -> AST;
 
@@ -156,14 +38,14 @@ fn lex::peek(i: Int = 0) -> Token;
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
 fn print(*args, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
-fn int(x: _, base: ?Int) -> Int;
-fn float(x: _) -> Float;
-fn tuple(*xs: _, %kws: _) -> (_,);
+fn int[a](x: a, base: ?Int) -> Int;
+fn float[a](x: a) -> Float;
 fn min[a](*xs: a) -> a;
 fn max[a](*xs: a) -> a;
-fn fmt(str: String, *args: Any);
-
-//fn time::utime() -> Int;
+fn fmt(str: String, *args: _);
+fn cast[a](x: _) -> a { x }
+fn time::utime() -> Int;
+fn tuple(*xs: _, %kws: _) -> (_,);
 
 class Object {
     init(%props) {
@@ -177,7 +59,7 @@ class Object {
     }
 
     drill(path) {
-        let x = self
+        let x: _ = self
 
         for i in path {
             x = x[i]
@@ -330,15 +212,18 @@ class Array[T] : Iterable[T] {
 
     shape() {
         use NestedArray[U] = Array[U] | Array[NestedArray[U]]
-        let s = []
+
+        let shape = []
         let x: T | NestedArray[T] = self
-        while x :: Array {
-            if x :: Array {
-                s.push(#x)
+
+        while match x {
+            xs: Array => {
+                shape.push(#xs)
+                x = xs[0]
             }
-            x = x[0]
         }
-        return s
+
+        return shape
     }
 
     map?(f) {
@@ -492,6 +377,10 @@ class Array[T] : Iterable[T] {
         return xs -> (xs :: Array) && xs.all?(x -> x :: T)
     }
 
+    __subscript__(i: Int) -> T {
+        self[i]
+    }
+
     __slice__(i: Int = 0, j: Int | nil = nil, k: Int = 1) -> Array[T] {
         let slice = []
 
@@ -526,6 +415,141 @@ class Array[T] : Iterable[T] {
         (i in -n..n) ? Some(self[i]) : None
     }
 }
+
+macro _Param = ty.Param[{name: String, constraint: AST, default: AST}]
+
+macro _Func = {
+    name: String | nil,
+    params: [_Param],
+    rt: AST,
+    decorators: [AST] | nil,
+    body: AST
+}
+
+macro _ArrayItem = ty.ArrayItem[{item: AST, cond: AST, optional: Bool | nil}]
+
+macro _DictItem = ty.DictItem[(AST, AST)]
+
+macro __type! {
+    let t0: _ = parse::type(0)
+    ty.Value(t0)
+}
+
+macro __define_ast! {
+    let f = parse.expr(999)
+
+    let union: _ = __type!
+         ty.Int[Int]
+       | ty.String[String]
+       | ty.Float[Float]
+       | ty.Bool[Bool]
+       | ty.Id[{name: String, module: String | nil, constraint: AST}]
+       | ty.MemberAccess[(AST, String)]
+       | ty.Count[AST]
+       | ty.Question[AST]
+       | ty.Not[AST]
+       | ty.Neg[AST]
+       | ty.PreInc[AST]
+       | ty.PostInc[AST]
+       | ty.PreDec[AST]
+       | ty.PostDec[AST]
+       | ty.Subscript[(AST, AST)]
+       | ty.Slice[(AST, AST, AST, AST)]
+       | ty.Array[Array[_ArrayItem]]
+       | _ArrayItem
+       | ty.Dict[{items: [_DictItem], default: AST}]
+       | _DictItem
+       | ty.Call[{func: AST, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
+       | ty.MethodCall[{object: AST, method: String, args: [ty.Arg[{arg: AST, name: String | nil, cond: AST}]]}]
+       | ty.Arg[{arg: AST, name: String | nil, cond: AST}]
+       | ty.Record[Array[ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]]]
+       | ty.RecordEntry[{name: String | nil, item: AST, cond: AST, optional: Bool}]
+       | ty.Func[_Func]
+       | ty.FuncDef[_Func]
+       | ty.ImplicitFunc[_Func]
+       | _Param
+       | ty.Class[{
+             name: String,
+             `super`: AST,
+             fields: [AST],
+             methods: [AST],
+             getters: [AST],
+             setters: [AST],
+             statics: [AST]
+         }]
+       | ty.Let[(AST, AST)]
+       | ty.Assign[(AST, AST)]
+       | ty.Break[{value: AST, depth: Int}]
+       | ty.Break
+       | ty.Return[Array[AST]]
+       | ty.Yield[Array[AST]]
+       | ty.Generator[AST]
+       | ty.Union[Array[AST]]
+       | ty.Any[AST]
+       | ty.Any
+       | ty.ArrayCompr[{items: [_ArrayItem], pattern: AST, iter: AST, cond: AST}]
+       | ty.Each[{iter: AST, pattern: AST, expr: AST, cond: AST, stop: AST}]
+       | ty.SpecialString[Array[String | AST | (AST, String | nil, Int | nil, AST)]]
+       | ty.Spread[AST]
+       | ty.Splat[AST]
+       | ty.Block[Array[AST]]
+       | ty.Multi[Array[AST]]
+       | ty.Match[(AST, Array[(AST, AST)])]
+       | ty.WhileMatch[(AST, Array[(AST, AST)])]
+       | ty.While[([AST], AST)]
+       | ty.Defer[AST]
+       | ty.Eval[AST]
+       | ty.Throw[AST]
+       | ty.Try[{body: AST, catches: Array[(AST, AST)], always: AST}]
+       | ty.For[(AST, AST, AST, AST)]
+       | ty.UserOp[(String, AST, AST)]
+       | ty.Add[(AST, AST)]
+       | ty.Sub[(AST, AST)]
+       | ty.Mul[(AST, AST)]
+       | ty.Div[(AST, AST)]
+       | ty.Mod[(AST, AST)]
+       | ty.GT[(AST, AST)]
+       | ty.LT[(AST, AST)]
+       | ty.GEQ[(AST, AST)]
+       | ty.LEQ[(AST, AST)]
+       | ty.Eq[(AST, AST)]
+       | ty.NotEq[(AST, AST)]
+       | ty.And[(AST, AST)]
+       | ty.Or[(AST, AST)]
+       | ty.BitAnd[(AST, AST)]
+       | ty.BitOr[(AST, AST)]
+       | ty.Xor[(AST, AST)]
+       | ty.Wtf[(AST, AST)]
+       | ty.Cmp[(AST, AST)]
+       | ty.LT[(AST, AST)]
+       | ty.GT[(AST, AST)]
+       | ty.LEQ[(AST, AST)]
+       | ty.GEQ[(AST, AST)]
+       | ty.In[(AST, AST)]
+       | ty.NotIn[(AST, AST)]
+       | ty.Matches[(AST, AST)]
+       | ty.KwAnd[(AST, AST)]
+       | ty.Range[(AST, AST)]
+       | ty.IncRange[(AST, AST)]
+       | ty.Cond[(AST, AST, AST)]
+       | ty.If[(AST, AST, AST)]
+       | ty.IfNot[(AST, AST, AST)]
+       | ty.TagPattern[(String, AST)]
+       | ty.Tagged[_]
+       | ty.View[(AST, AST)]
+       | ty.NotNilView[(AST, AST)]
+       | ty.Stop[AST]
+       | ty.Nil
+       | ty.Value[_]
+       | ty.Expr[_]
+       | ty.Stmt[_]
+       | nil
+
+    return __eval__(f)(union)
+
+}
+
+use AST = __define_ast!(fn (t0) { t0 })
 
 class Dict[K, V] : Iterable[K] {
     init(ks, vs) {
@@ -573,6 +597,10 @@ class Dict[K, V] : Iterable[K] {
 
     __iter__() {
         return @keys().zip(@values()).__iter__()
+    }
+
+    __subscript__(key: K) -> V {
+        self[key]
     }
 }
 
@@ -695,7 +723,8 @@ class String : Iterable[String] {
     }
 
     editDistance(other) {
-        let a, b = self, other
+        let a = self
+        let b = other
 
         let D = [[0 for _ in ...#b] for _ in ...#a]
 
@@ -728,6 +757,10 @@ class String : Iterable[String] {
 
     __count__() {
         (ord(self)..).map(chr)
+    }
+
+    __subscript__(i: Int) -> String {
+        self[i]
     }
 
     -(end) {
@@ -1002,19 +1035,25 @@ class Blob : Iterable[Int] {
         base64.encode(self)
     }
 
-    str(i: ?Int = 0, n: ?Int = #self) -> String;
-    set(i: Int, byte: Int) -> nil;
-
     __iter__*() {
         for x in self {
             yield x
         }
     }
 
+    __subscript__(i: Int) -> Int {
+        self[i]
+    }
+
     size() -> Int;
+
+    pad(n: Int, c: Int = 0) -> nil;
 
     search(needle: Int | String | Blob) -> Int | nil;
     search(off: Int, needle: Int | String | Blob) -> Int | nil;
+
+    str(i: ?Int = 0, n: ?Int = #self) -> String;
+    set(i: Int, byte: Int) -> nil;
 }
 
 class Bool {
@@ -1051,7 +1090,7 @@ class Generator[T] : Iter[T] {
     }
 }
 
-class Tag {
+class __Tag {
 }
 
 class Tuple {
@@ -1107,6 +1146,10 @@ class Tuple {
 
     isTuple() {
         true
+    }
+
+    __subscript__(i: Int) -> _ {
+        self[i]
     }
 
     __drop__() {
@@ -1419,8 +1462,12 @@ trait Iterable[T] {
         @__iter__().enumerate()
     }
 
-    find(p) {
-        @__iter__().find(p)
+    find(pred) {
+        __iter__().find(pred)
+    }
+
+    first() {
+        __iter__().first()
     }
 
     >>*(f) {
@@ -1492,7 +1539,7 @@ trait Iter[T] < Iterable[T] {
         return n
     }
 
-    uniq*(f: Function = id) {
+    uniq*(f: _ = id) {
         let seen = %{}
         for x in self {
             let y = f(x)
@@ -1503,7 +1550,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    unzipWith(f, n=nil) {
+    unzipWith(f: _, n: _= nil) {
         let lists = match n {
             $n => [[] for ..n],
 
@@ -1586,6 +1633,12 @@ trait Iter[T] < Iterable[T] {
         while i < n {
             yield x
             i += 1
+        }
+    }
+
+    first() -> T {
+        for x in self {
+            return x
         }
     }
 
@@ -1713,7 +1766,7 @@ trait Iter[T] < Iterable[T] {
 
     take*(n: Int) -> Generator[T] {
         for _ in ..n {
-            if let Some(x) = @__next__() {
+            if let Some(x) = __next__() {
                 yield x
             } else {
                 break
@@ -1941,7 +1994,7 @@ trait Iter[T] < Iterable[T] {
 
         let generators = queues.map(go3)
 
-        return tuple(*generators)
+        return cast(tuple(*generators))
     }
 
     dict() {
@@ -2256,139 +2309,139 @@ class Channel {
 }
 
 class Sync[T] {
-    x: T
-    mtx: Mutex
+    __x: T
+    __mtx: Mutex
 
     init(x: T, mutex = Mutex()) {
-        @x = x
-        @mtx = mutex
+        __x = x
+        __mtx = mutex
     }
 
     static swap(x: Sync[T], y: T) {
-        with x.mtx.lock() {
-            let old = x.x
-            x.x = y
+        with x.__mtx.lock() {
+            let old = x.__x
+            x.__x = y
             old
         }
     }
 
     static read(x: Sync[T]) -> T {
-        with x.mtx.lock() {
-            x.x
+        with x.__mtx.lock() {
+            x.__x
         }
     }
 
     static get(x) {
-        x.x
+        x.__x
     }
 
     static set(x, y) {
-        with x.mtx.lock() {
-            x.x = y
+        with x.__mtx.lock() {
+            x.__x = y
         }
     }
 
     static lock(x, y) {
-        x.mtx.lock()
+        x.__mtx.lock()
     }
 
     __missing__(name) {
-        with @mtx.lock() { @x.{name} }
+        with __mtx.lock() { __x.{name} }
 
     }
 
     __method_missing__(name, *args) {
-        with @mtx.lock() {
-            @x.{name}(*args)
+        with __mtx.lock() {
+            __x.{name}(*args)
         }
     }
 
     ==(y) {
-        with @mtx.lock() {
-            @x == y
+        with __mtx.lock() {
+            __x == y
         }
     }
 
     <=>(y) {
-        with @mtx.lock() {
-            @x <=> y
+        with __mtx.lock() {
+            __x <=> y
         }
     }
 
     __len__() {
-        with @mtx.lock() {
-            #@x
+        with __mtx.lock() {
+            #__x
         }
     }
 
     __str__() {
-        "{@x}"
+        "{__x}"
     }
 
     __subscript__(i) {
-        with @mtx.lock() {
-            @x[i]
+        with __mtx.lock() {
+            cast(__x)[i]
         }
     }
 
     ++() {
-        with @mtx.lock() {
-            ++(@x)
+        with __mtx.lock() {
+            ++(__x)
         }
     }
 
 
     --() {
-        with @mtx.lock() {
-            --(@x)
+        with __mtx.lock() {
+            --(__x)
         }
     }
 
     +=(y) {
-        with @mtx.lock() {
-            @x += y
+        with __mtx.lock() {
+            __x += y
         }
     }
 
     +(y) {
-        with @mtx.lock() {
-            @x + y
+        with __mtx.lock() {
+            __x + y
         }
     }
 
     *=(y) {
-        with @mtx.lock() {
-            @x *= y
+        with __mtx.lock() {
+            __x *= y
         }
     }
 
     *(y) {
-        with @mtx.lock() {
-            @x * y
+        with __mtx.lock() {
+            __x * y
         }
     }
 
     -=(y) {
-        with @mtx.lock() {
-            @x -= y
+        with __mtx.lock() {
+            __x -= y
         }
     }
 
     -(y) {
-        with @mtx.lock() {
-            @x - y
+        with __mtx.lock() {
+            __x - y
         }
     }
 
     /=(y) {
-        with @mtx.lock() {
-            @x /= y
+        with __mtx.lock() {
+            __x /= y
         }
     }
 
     /(y) {
-        with @mtx.lock() {
-            @x / y
+        with __mtx.lock() {
+            __x / y
         }
     }
 }
@@ -2542,10 +2595,6 @@ macro dbg(*args) {
     ])
 }
 
-macro print!(x) {
-    ty.CompileTime($$[ do { print($$x); nil } $$])
-}
-
 macro time! {
     // (
     lex.next()
@@ -2610,19 +2659,13 @@ macro modify! {
         p
     }
 
-    use FieldMap = Dict[String, AST | FieldMap]
-
-    function convert(d: FieldMap) {
+    function convert(map: _) {
         let entries = []
 
-        for k, v in d {
+        for k, v in map {
             entries.push(
                 ty.RecordEntry(
-                    item: if v :: Dict {
-                        convert(v)
-                    } else {
-                        v
-                    },
+                    item: (v :: Dict) ? convert(v) : v,
                     name: k
                 )
             )
@@ -2632,13 +2675,13 @@ macro modify! {
     }
 
 
-    let record = %{}
+    let record: _ = %{}
 
     // {
     lex.next()
 
     while lex.peek().type != '}' {
-        let (p, [field]) = path().split(-1)
+        let [*ps, field] = path()
 
         // : or =
         lex.next()
@@ -2647,7 +2690,7 @@ macro modify! {
 
         let d = record
 
-        for part in p {
+        for part in ps {
             if part not in d {
                 d[part] = %{}
             }
@@ -2954,7 +2997,6 @@ class MemoizedFunction {
 
 let memoized = MemoizedFunction
 
-#|if __debug(-1) || true
 macro __walk! {
     fn copySource(a: _, b: _) -> _ { ty.copySource(a, b) }
     function walk(tree: _, f: _ -> _) -> _ {
@@ -2962,27 +3004,10 @@ macro __walk! {
             return nil
         }
 
-        let walk-item = match {
-            ty.ArrayItem(x) => ty.ArrayItem(
-                item: walk(x.item, f),
-                cond: walk(x.?cond, f),
-                optional: x.?optional
-            )
-        }
-
-        let walk-entry = match {
-            ty.RecordEntry(entry) => ty.RecordEntry(
-                item: walk(entry.item, f),
-                name: entry.?name,
-                cond: walk(entry.?cond, f),
-                optional: entry.?optional
-            )
-        }
-
         let tree = copySource(tree, match tree {
             ty.Stop(tree) => tree,
 
-            ty.Array(xs) => ty.Array([walk-item(x) for x in xs]),
+            ty.Array(xs) => ty.Array([walk(x, f) for x in xs]),
 
             ty.ArrayItem(x) => ty.ArrayItem(
                 item: walk(x.item, f),
@@ -3007,13 +3032,13 @@ macro __walk! {
                 method: call.method
             ),
 
-            ty.Record(record) => ty.Record([walk-entry(entry) for entry in record]),
+            ty.Record(record) => ty.Record([walk(entry, f) for entry in record]),
 
             ty.RecordEntry(entry) => ty.RecordEntry(
                 item: walk(entry.item, f),
                 name: entry.?name,
                 cond: walk(entry.?cond, f),
-                optional: entry.?optional
+                optional: cast(entry.?optional)
             ),
 
             ty.Add(a, b) => ty.Add(walk(a, f), walk(b, f)),
@@ -3034,7 +3059,7 @@ macro __walk! {
 
             ty.FuncDef(func),
             ty.Func(func),
-            ty.ImplicitFunc(func) => type(func)(
+            ty.ImplicitFunc(func) => type(tree)(
                 name: func.name,
                 decorators: [walk(dec, f) for dec in func.decorators],
                 params: [walk(param, f) for param in func.params],
@@ -3188,7 +3213,7 @@ macro __walk! {
             ty.Generator(gen) => ty.Generator(walk(gen, f)),
 
             ty.ArrayCompr({items, pattern, iter, cond}) => ty.ArrayCompr(
-                items: [walk-item(item) for item in items],
+                items: [walk(item, f) for item in items],
                 pattern: walk(pattern, f),
                 iter: walk(iter, f),
                 cond: walk(cond, f)
@@ -3226,9 +3251,8 @@ macro __walk! {
 
             ty.SpecialString(parts) => ty.SpecialString(
                 parts.map(match {
-                    (e, fmt, w, x) => (walk(e, f), fmt, w, walk(x, f)),
-                    e: AST         => walk(e, f),
-                    str            => str
+                    (e, fmt, w, x) => (walk(e, f), walk(fmt, f), w, walk(x, f)),
+                    e              => walk(e, f),
                 })
             ),
 
@@ -3252,6 +3276,8 @@ macro __walk! {
                 *(walk(x, f) for x in xs)
             ),
 
+            ty.Union(types) => ty.Union([walk(t0, f) for t0 in types]),
+
             ty.View(view, pattern) => ty.View(walk(view, f), walk(pattern, f)),
             ty.NotNilView(view, pattern) => ty.NotNilView(walk(view, f), walk(pattern, f)),
 
@@ -3263,7 +3289,6 @@ macro __walk! {
 
     ty.Value(walk)
 }
-#|]
 
 macro __desugar_partial__(call) {
     let (args: [AST], mkcall) = match call {
@@ -3367,7 +3392,7 @@ function ?>(x, f) { (x == nil) ? x : f(x) }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match!($$b)
 
-function .(f: Function, g: Function) {
+fn .(f: Function, g: Function) {
     f@(g(*, **))
 }
 
@@ -3427,5 +3452,9 @@ operator !::  3  left
 operator *>   2  left
 operator .    2  left
 
-#|if __debug(1) && false
-#|]
+macro print!(*xs) {
+    dbg([1, 2])
+    let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
+    ty.CompileTime($$[ do { print(*$$xs, sep=' '); nil } $$])
+}
+

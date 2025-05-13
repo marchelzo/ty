@@ -994,7 +994,7 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
         case VALUE_TAG:
                 return tags_first(ty, v->tags) == p->tag;
         case VALUE_CLASS:
-                return v->type == VALUE_OBJECT && v->class == p->class;
+                return (v->type == VALUE_OBJECT) && (v->class == p->class);
         default:
                 zP("invalid type of value used as a predicate: %s", value_showx(ty, v));
         }
@@ -1302,13 +1302,13 @@ _value_mark(Ty *ty, struct value const *v)
         case VALUE_FUNCTION:        mark_function(ty, v);                                             break;
         case VALUE_GENERATOR:       mark_generator(ty, v);                                            break;
         case VALUE_THREAD:          mark_thread(ty, v);                                               break;
-        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                         break;
+        case VALUE_STRING:          if (v->gcstr != NULL) MARK(v->gcstr);                             break;
         case VALUE_OBJECT:          object_mark(ty, v->object);                                       break;
         case VALUE_REF:             MARK(v->ptr); value_mark(ty, v->ptr);                             break;
-        case VALUE_BLOB:            MARK(v->blob);                                                break;
+        case VALUE_BLOB:            MARK(v->blob);                                                    break;
         case VALUE_PTR:             mark_pointer(ty, v);                                              break;
-        case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                             break;
-        default:                                                                                  break;
+        case VALUE_REGEX:           if (v->regex->gc) MARK(v->regex);                                 break;
+        default:                                                                                      break;
         }
 
 #ifndef TY_RELEASE
@@ -1334,6 +1334,23 @@ value_tuple(Ty *ty, int n)
         }
 
         return TUPLE(items, NULL, n, false);
+}
+
+Value
+value_record(Ty *ty, int n)
+{
+        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
+
+        NOGC(items);
+        int *ids = mAo(n * sizeof (int), GC_TUPLE);
+        OKGC(items);
+
+        for (int i = 0; i < n; ++i) {
+                items[i] = NIL;
+                ids[i] = -1;
+        }
+
+        return TUPLE(items, ids, n, false);
 }
 
 Value

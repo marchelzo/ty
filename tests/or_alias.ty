@@ -1,0 +1,18 @@
+macro Good(x) = Ok($$x) or Some($$x) or [{result: x}]
+
+let xs = [
+    Some([1, Some(Ok(3)), 'P']),
+    Ok([1, [{result: Ok(2)}], 1]),
+    Some([1, Some(Ok(2)), 2]),
+    Ok([1, Some(0), 1]),
+]
+
+fn go(y) {
+    match y {
+        Good([o, Good(Good(z)), o]) => 'A',
+        Good([o, Good(Good(o + 2)), c]) => c,
+        _ => 'S'
+    }
+}
+
+print(xs.map(go).str())

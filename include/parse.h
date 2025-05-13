@@ -25,10 +25,13 @@ parse_ex(
 Token
 parse_get_token(Ty *ty, int i);
 
-struct value
+Value
+parse_get_type(Ty *ty, int prec, bool resolve, bool want_raw);
+
+Value
 parse_get_expr(Ty *ty, int prec, bool resolve, bool want_raw);
 
-struct value
+Value
 parse_get_stmt(Ty *ty, int prec, bool want_raw);
 
 void

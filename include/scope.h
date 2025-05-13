@@ -6,6 +6,7 @@
 
 #include "vec.h"
 #include "location.h"
+#include "gc.h"
 #include "ty.h"
 
 enum {
@@ -217,6 +218,20 @@ ScopeIsShared(Scope const *scope)
         }
 
         return false;
+}
+
+inline static Refinement *
+ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
+{
+        Refinement ref = {
+                .var = var,
+                .t0 = t0,
+                .active = false
+        };
+
+        avP(scope->refinements, ref);
+
+        return vvL(scope->refinements);
 }
 
 int

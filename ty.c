@@ -50,7 +50,8 @@ static char const *print_function = "print";
 static char ToolQuery[512];
 
 static char const *SourceFile;
-static char SourceFilePath[4096];
+static char const *SourceFileName;
+static char SourceFilePath[PATH_MAX];
 
 static bool KindOfEnableLogging = false;
 int EnableLogging = 0;
@@ -248,17 +249,18 @@ pollute_with_bloat(void)
 {
         execln(
                 ty,
-                "import help (..)\n"
-                "import json     \n"
-                "import base64   \n"
-                "import math     \n"
-                "import ty       \n"
-                "import os       \n"
-                "import time     \n"
-                "import errno    \n"
-                "import locale   \n"
-                "import io       \n"
-                "import sh       \n"
+                "import help (..)          \n"
+                "import json               \n"
+                "import base64             \n"
+                "import math (..)          \n"
+                "import ty                 \n"
+                "import ty.types as types  \n"
+                "import os (..)            \n"
+                "import time (..)          \n"
+                "import errno              \n"
+                "import locale             \n"
+                "import io                 \n"
+                "import sh (sh)            \n"
         );
 
         print_function = "prettyPrint";
@@ -518,6 +520,9 @@ ProcessArgs(char *argv[], bool first)
 #endif
 
                 if (argv[argi][1] != '-') {
+                        if (argv[argi][1] == ':') {
+                                break;
+                        }
                         for (char const *opt = argv[argi] + 1; *opt != '\0'; ++opt) {
                                 switch (*opt) {
                                 case 'q':
@@ -633,11 +638,19 @@ NextOption:
                 argi += 1;
         }
 
-
         if (first) {
                 SourceFile = argv[argi];
-                if (SourceFile == NULL || strcmp(SourceFile, "-") == 0) {
+                if (SourceFile == NULL) {
+                        SourceFile = "-";
+                }
+                if (SourceFile[0] == '-' && SourceFile[1] == ':') {
+                        SourceFileName = realpath(&SourceFile[2], SourceFilePath);
+                }
+                if (SourceFile[0] == '-') {
                         SourceFile = "/dev/stdin";
+                }
+                if (SourceFileName == NULL) {
+                        SourceFileName = SourceFile;
                 }
         }
 
@@ -670,10 +683,14 @@ do_tool_opts(char *arg)
 
         *colon = '\0';
 
-        if (realpath(SourceFile, SourceFilePath) == NULL) {
+        if (
+                SourceFileName == NULL
+             && realpath(SourceFile, SourceFilePath) == NULL
+        ) {
                 return -1;
         }
 
+        SourceFileName = SourceFilePath;
         QueryFile = SourceFilePath;
         QueryLine = atoi(arg) - 1;
         QueryCol  = atoi(colon + 1) - 1;
@@ -747,7 +764,7 @@ main(int argc, char **argv)
         char *source = fslurp(ty, file);
 
         if (query & TOOL_DEFINITION) {
-                bool ok = (QueryResult != NULL) || vm_execute(ty, source, SourceFile);
+                bool ok = (QueryResult != NULL) || vm_execute(ty, source, SourceFileName);
 
                 if (QueryResult == NULL || QueryResult->file == NULL) {
                         return 2;
@@ -778,7 +795,7 @@ main(int argc, char **argv)
         }
 
         if (query & TOOL_COMPLETE) {
-                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFile);
+                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFileName);
 
                 if (QueryExpr == NULL) {
                         if (!ok) {
@@ -815,7 +832,7 @@ main(int argc, char **argv)
         }
 
         if (query & TOOL_SIGNATURE) {
-                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFile);
+                bool ok = (QueryExpr != NULL) || vm_execute(ty, source, SourceFileName);
 
                 if (QueryExpr == NULL) {
                         if (!ok) {
@@ -847,12 +864,12 @@ main(int argc, char **argv)
 
                 ValueVector params = {0};
 
-                for (int i = 0; i < vN(t0->fun_params); ++i) {
-                        Param const *p = v_(t0->fun_params, i);
+                for (int i = 0; i < vN(t0->params); ++i) {
+                        Param const *p = v_(t0->params, i);
                         xvP(
                                 params,
                                 vTn(
-                                        "name",     (p->var != NULL) ? xSz(p->var->identifier) : NIL,
+                                        "name",     (p->name != NULL) ? xSz(p->name) : NIL,
                                         "type",     type_show(ty, p->type),
                                         "required", BOOLEAN(p->required),
                                         "kwargs",   BOOLEAN(p->kws),
@@ -896,7 +913,7 @@ main(int argc, char **argv)
                 return 0;
         }
 
-        if (!vm_execute(ty, source, SourceFile)) {
+        if (!vm_execute(ty, source, SourceFileName)) {
                 fprintf(stderr, "%s\n", TyError(ty));
                 return -1;
         }

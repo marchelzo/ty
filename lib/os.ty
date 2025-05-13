@@ -5,6 +5,9 @@ import errno (ENOTDIR)
 
 fn os::read(fd: Int, n: Int) -> Int;
 fn os::read(fd: Int, buf: Blob, n: Int) -> Int;
+fn os::write(fd: Int, data: Any) -> Int;
+
+fn os::ncpu() -> Int;
 
 use ProcessDescriptor = {
     stdin: Int,

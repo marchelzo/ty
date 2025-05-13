@@ -279,7 +279,7 @@ class Printer {
         self.write(' '.repeat(@indent * @depth))
     }
 
-    go(x, canPush: ?Bool = false, force: ?Bool = false) {
+    go(x: _, canPush: ?Bool = false, force: ?Bool = false) {
         let id-of-x = ident(x)
 
         if id-of-x in @visiting {
@@ -407,7 +407,7 @@ class Printer {
         @visiting.pop()
     }
 
-    print(x) {
+    print(x: _) {
         self.restore((0, 0, 0, 0))
         self.go(x, true, true)
         return @out.str()
@@ -423,7 +423,7 @@ C! struct WinSize {
 
 let winSize = WinSize()
 
-pub function prettyPrint(x, %kwargs) {
+pub function prettyPrint(x, %kwargs: Any) {
 #|if !__windows__
     c.store(c.u64, winSize.get(), 0xFFFFFFFFFFFFFFFF)
     if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {

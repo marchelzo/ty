@@ -1,3 +1,5 @@
+#include "ast.h"
+#include "ty.h"
 #ifdef _WIN32
 #include <winsock2.h> // must be included before <windows.h>
 #include <ws2tcpip.h>
@@ -79,6 +81,7 @@ extern char **environ;
 #include "object.h"
 #include "class.h"
 #include "compiler.h"
+#include "types.h"
 
 #ifdef __APPLE__
 #define fputc_unlocked fputc
@@ -290,9 +293,6 @@ BUILTIN_FUNCTION(slurp)
 {
         ASSERT_ARGC_2("slurp()", 0, 1);
 
-#if defined(_WIN32) && !defined(PATH_MAX)
-#define PATH_MAX MAX_PATH
-#endif
         char p[PATH_MAX + 1];
         int fd;
         bool need_close = false;
@@ -7245,6 +7245,221 @@ BUILTIN_FUNCTION(ty_id)
         return INTEGER(ARG(0).src);
 }
 
+static Value
+MethodSummary(Ty *ty, Expr const *fun)
+{
+        return vTn(
+                "name", vSsz(fun->name),
+                "type", type_to_ty(ty, fun->_type)
+        );
+}
+
+BUILTIN_FUNCTION(ty_type_info)
+{
+        char const *_name__ = "ty.types.info()";
+
+        CHECK_ARGC(1);
+
+        Value type = ARGx(0, VALUE_CLASS, VALUE_TYPE);
+
+        Class *class;
+
+        if (type.type == VALUE_CLASS) {
+                class = class_get_class(ty, type.class);
+        } else if (
+                ((Type *)type.ptr)->type == TYPE_CLASS
+             || ((Type *)type.ptr)->type == TYPE_OBJECT
+        ) {
+                class = ((Type *)type.ptr)->class;
+        } else {
+                class = NULL;
+        }
+                     
+        if (class == NULL || class->def == NULL) {
+                return NIL;
+        }
+
+        GC_STOP();
+
+        ClassDefinition *def = &class->def->class;
+
+        Array *methods = vA();
+        Array *statics = vA();
+        Array *fields = vA();
+        Array *getters = vA();
+        Array *setters = vA();
+        Array *traits = vA();
+        Array *params = vA();
+
+        for (int i = 0; i < vN(def->methods); ++i) {
+                vAp(methods, MethodSummary(ty, v__(def->methods, i)));
+        }
+
+        for (int i = 0; i < vN(def->statics); ++i) {
+                vAp(statics, MethodSummary(ty, v__(def->statics, i)));
+        }
+
+        for (int i = 0; i < vN(def->getters); ++i) {
+                vAp(getters, MethodSummary(ty, v__(def->getters, i)));
+        }
+
+        for (int i = 0; i < vN(def->setters); ++i) {
+                vAp(setters, MethodSummary(ty, v__(def->setters, i)));
+        }
+
+        for (int i = 0; i < vN(def->fields); ++i) {
+                Expr const *field = v__(def->fields, i);
+                char const *name = (field->type == EXPRESSION_IDENTIFIER)
+                                 ? field->identifier
+                                 : field->target->identifier;
+                vAp(fields, vTn("name", vSsz(name), "type", type_to_ty(ty, field->_type)));
+        }
+
+        for (int i = 0; i < vN(def->traits); ++i) {
+                vAp(traits, type_to_ty(ty, type_resolve(ty, v__(def->traits, i))));
+        }
+
+        for (int i = 0; i < vN(def->type_params); ++i) {
+                vAp(params, type_to_ty(ty, v__(def->type_params, i)->symbol->type));
+        }
+
+        Value super = (def->super != NULL)
+                    ? type_to_ty(ty, type_resolve(ty, def->super))
+                    : NIL;
+
+        Value info = vTn(
+                "methods", ARRAY(methods),
+                "statics", ARRAY(statics),
+                "getters", ARRAY(getters),
+                "setters", ARRAY(setters),
+                "fields",  ARRAY(fields),
+                "traits",  ARRAY(traits),
+                "params",  ARRAY(params),
+                "super",   super
+        );
+
+        GC_RESUME();
+
+        return info;
+}
+
+BUILTIN_FUNCTION(ty_type_inst)
+{
+        char const *_name__ = "ty.types.inst()";
+
+        CHECK_ARGC(1, 2);
+
+        Value v0 = ARG(0);
+        Type *t0 = type_from_ty(ty, &v0);
+
+        if (argc == 1) {
+                return type_to_ty(ty, type_inst(ty, t0));
+        }
+
+        U32Vector params = {0};
+        TypeVector args = {0};
+
+        Value subs = ARGx(1, VALUE_ARRAY);
+
+        for (int i = 0; i < vN(*subs.array); ++i) {
+                Type *a0;
+                Value *sub = v_(*subs.array, i);
+                if (sub->type == VALUE_TUPLE && sub->count == 2) {
+                        a0 = type_from_ty(ty, &sub->items[1]);
+                        sub = &sub->items[0];
+                } else {
+                        a0 = type_var(ty);
+                }
+                switch (sub->type) {
+                case VALUE_INTEGER:
+                        xvP(params, sub->integer);
+                        break;
+                case VALUE_TYPE:
+                        if (!type_is_tvar(as_type(sub))) {
+                                zP(
+                                        "%s: invalid type used as parameter "
+                                        "in substitution list: %s",
+                                        _name__,
+                                        type_show(ty, as_type(sub))
+                                );
+                        }
+                        xvP(params, as_type(sub)->id);
+                        break;
+                default:
+                        if (
+                                (tags_first(ty, sub->tags) == TyVarT)
+                             && (unwrap(ty, sub).type == VALUE_INTEGER)
+                        ) {
+                                xvP(params, sub->integer);
+                        } else {
+                                zP(
+                                        "%s: invalid value used as parameter "
+                                        "in substitution list: %s",
+                                        _name__,
+                                        VSC(sub)
+                                );
+                        }
+                }
+                xvP(args, a0);
+        }
+
+        Value result = type_to_ty(ty, type_inst0(ty, t0, &params, &args));
+
+        xvF(params);
+        xvF(args);
+
+        return result;
+}
+
+BUILTIN_FUNCTION(ty_type_infer)
+{
+        char const *_name__ = "ty.types.infer()";
+
+        CHECK_ARGC(1);
+
+        Value ast = ARG(0);
+        Expr *expr = TyToCExpr(ty, &ast);
+
+        if (!compiler_symbolize_expression(ty, expr, NULL)) {
+                return NIL;
+        }
+
+        return type_to_ty(ty, expr->_type);
+}
+
+BUILTIN_FUNCTION(ty_type_check)
+{
+        char const *_name__ = "ty.types.check()";
+
+        CHECK_ARGC(2);
+
+        Value t0 = ARG(0);
+        Value t1 = ARG(1);
+
+        return BOOLEAN(
+                type_check(
+                        ty,
+                        type_from_ty(ty, &t0),
+                        type_from_ty(ty, &t1)
+                )
+        );
+}
+
+BUILTIN_FUNCTION(ty_definition)
+{
+        char const *_name__ = "ty.definition()";
+
+        CHECK_ARGC(1);
+
+        return CToTyStmt(
+                ty,
+                class_get_class(
+                        ty,
+                        ARGx(0, VALUE_CLASS).class
+                )->def
+        );
+}
+
 BUILTIN_FUNCTION(ty_copy_source)
 {
         ASSERT_ARGC("ty.copySource()", 2);
@@ -7434,6 +7649,32 @@ BUILTIN_FUNCTION(parse_expr)
         Value *raw = NAMED("raw");
 
         return parse_get_expr(ty, prec, resolve != NULL && value_truthy(ty, resolve), raw != NULL && value_truthy(ty, raw));
+}
+
+BUILTIN_FUNCTION(parse_type)
+{
+        ASSERT_ARGC_2("ty.parse.type()", 0, 1);
+
+        int prec;
+
+        if (argc == 1) {
+                if (ARG(0).type != VALUE_INTEGER) {
+                        zP("ty.parse.type(): expected integer but got: %s", VSC(&ARG(0)));
+                }
+                prec = ARG(0).integer;
+        } else {
+                prec = 0;
+        }
+
+        Value *resolve = NAMED("resolve");
+        Value *raw = NAMED("raw");
+
+        return parse_get_type(
+                ty,
+                prec,
+                (resolve != NULL) && value_truthy(ty, resolve),
+                (raw != NULL) && value_truthy(ty, raw)
+        );
 }
 
 BUILTIN_FUNCTION(parse_stmt)

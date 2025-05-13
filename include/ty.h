@@ -87,6 +87,7 @@ struct refinement {
         Symbol *var;
         Type *t0;
         bool active;
+        bool mut;
 };
 
 typedef struct dict Dict;
@@ -363,7 +364,7 @@ typedef struct param Param;
 typedef struct type Type;
 
 struct param {
-        Symbol *var;
+        char const *name;
         Type *type;
         bool required;
         bool rest;
@@ -549,6 +550,7 @@ extern u64 TypeCheckCounter;
         X(ARRAY),                 \
         X(DICT),                  \
         X(TUPLE),                 \
+        X(GATHER_TUPLE),          \
         X(DICT_DEFAULT),          \
         X(NIL),                   \
         X(SELF),                  \
@@ -592,6 +594,7 @@ extern u64 TypeCheckCounter;
         X(JUMP_IF_NIL),           \
         X(JUMP_IF_NOT),           \
         X(JUMP_IF_NONE),          \
+        X(JUMP_IF_TYPE),          \
         X(JLE),                   \
         X(JLT),                   \
         X(JGE),                   \
@@ -840,6 +843,7 @@ enum {
 #define xvI(a, b, c)     vec_nogc_insert((a), (b), (c))
 #define xvIn(a, b, c, d) vec_nogc_insert_n(a, (b), (c), (d))
 #define xvR(a, b)        vec_nogc_reserve((a), (b))
+#define xvF(v)           free((v).items)
 
 #define svPn(a, b, c)    vec_push_n_scratch((a), (b), (c))
 #define svP(a, b)        vec_push_scratch((a), (b))

@@ -59,7 +59,7 @@ function color-and-break(prog) {
         _ => t
     })
 
-    let parts = [(it, id) for prog]
+    let parts = [(it, '') for prog]
 
     for {start, end, type, *} in tokens {
         let i = start.byte
@@ -73,7 +73,7 @@ function color-and-break(prog) {
     let out = Blob()
 
     for (char, fg) in parts {
-        out.push(chalk"[{fg}]{char}[/]")
+        out.push(str(chalk"[{fg}]{char}[/]"))
     }
 
     out.str!().lines().enumerate()
@@ -102,18 +102,13 @@ let current-mode = Source
 let depth = 0
 
 tdb.hook = function hook() {
-    eprint('SAD')
     let state = tdb.state()
 
     let { prog, file, expr
         , func, ip, fp, sp } = dbg(state)
 
-    eprint('COPE')
-
     depth += 1
     defer depth -= 1
-
-    eprint('SEETHE')
 
     function print-source() {
         let lines = color-and-break(prog)
@@ -137,10 +132,7 @@ tdb.hook = function hook() {
         }
     }
 
-    eprint("CHECK STEP: {expr}")
-
     if (expr != nil) and let {start, end, *} = ty.src(expr) {
-        eprint("HERE LOL")
         if stop-cond != nil && !stop-cond({*state, start, end}) {
             step()
             return
@@ -162,9 +154,6 @@ tdb.hook = function hook() {
         print("Mode: {current-mode}")
     }
 
-    eprint('START READING')
-
-    //while match readln("(tdb)[{depth}] ", !:erase) {
     while match dbg(readLine()) {
         /^p (.*)$/ => match tdb.eval($1) {
             Err(msg) => print(msg),

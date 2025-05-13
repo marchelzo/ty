@@ -128,6 +128,8 @@ typedef struct compiler_state {
 
         int label;
 
+        int ctx;
+
         Scope *fscope;
         Scope *implicit_fscope;
 
@@ -155,7 +157,7 @@ typedef struct compiler_state {
         StringVector ns;
 
         Scope *global;
-
+        Scope *active;
         Scope *pscope;
 
         char const *module_name;

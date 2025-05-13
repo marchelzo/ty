@@ -1,6 +1,10 @@
 #ifndef POLYFILL_UNISTD_H_INCLUDED
 #define POLYFILL_UNISTD_H_INCLUDED 11
 
+#if defined(_WIN32) && !defined(PATH_MAX)
+#define PATH_MAX MAX_PATH
+#endif
+
 #if defined(WIN32) || defined(_WIN32)
 
 /* This is intended as a drop-in replacement for unistd.h on Windows.

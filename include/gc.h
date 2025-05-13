@@ -137,8 +137,9 @@ gc_alloc(Ty *ty, size_t n)
 inline static void *
 gc_alloc_object(Ty *ty, size_t n, char type)
 {
-        if (n == 0)
+        if (n == 0) {
                 return NULL;
+        }
 
         MemoryUsed += n;
         CheckUsed(ty);

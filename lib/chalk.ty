@@ -54,7 +54,6 @@ class Text2 {
     }
 
     __str__() {
-        'based'
         @chalk.render(@text)
     }
 

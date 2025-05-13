@@ -311,7 +311,7 @@ namespace ctlseq {
     }
 
     namespace handler {
-        function m-ev-sgr($1, $2, $3, $4) {
+        pub fn m-ev-sgr($1, $2, $3, $4) {
             let st = int($1)
             let x  = int($2)
             let y  = int($3)
@@ -338,7 +338,7 @@ namespace ctlseq {
             })
         }
 
-        function k-ev-based($1, $2, $3, $4) {
+        pub fn k-ev-based($1, $2, $3, $4) {
             let (key, _key, base) = match keys.function-keys("{$1 || 1}{$4}") {
                 Some(sp) => (sp, nil, nil),
                 None     => match $1.split(':').map(int) ?? [] {
