@@ -68,7 +68,7 @@ class Text2 {
 
 pub fn rand-hsl(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
     let sample: _ = match {
-          (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
+          (lo as hi) or (lo, hi) => lo + (hi - lo)*rand()
     }
     
     (sample(h), sample(s), sample(l))
@@ -398,7 +398,7 @@ pub function fg_hsl(h, s, l) {
 
 pub function fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
     let sample: _ = match {
-        (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
+        (lo as hi) or (lo, hi) => lo + (hi - lo)*rand()
     }
 
     return fg_hsl(
