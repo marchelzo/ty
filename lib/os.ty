@@ -26,7 +26,7 @@ fn os::spawn(
 ) -> ProcessDescriptor;
 
 #|if __defined__(os::DT_DIR)
-let os::walk = function walk*(path: String) -> Generator[(String, [String], [String])] {
+let os::walk = function walk*(path: String, skip: _ = nil) -> Generator[(String, [String], [String])] {
     let d = opendir(path)
 
     let fs: [String] = []
@@ -43,8 +43,11 @@ let os::walk = function walk*(path: String) -> Generator[(String, [String], [Str
     yield (path, ds, fs)
 
     for d in ds {
-        for t in walk("{path}/{d}") {
-            yield t
+        let path = "{path}/{d}"
+        if !skip || !skip(path) {
+            for t in walk(path) {
+                yield t
+            }
         }
     }
 
