@@ -1287,6 +1287,14 @@ trait Iterable[T] {
         @__iter__().reverse()
     }
 
+    any?(p) -> Bool {
+        __iter__().any?(p)
+    }
+
+    all?(p) -> Bool {
+        __iter__().all?(p)
+    }
+
     list() {
         @__iter__().list()
     }
@@ -1529,6 +1537,23 @@ trait Iter[T] < Iterable[T] {
         return x
     }
 
+    any?(p: _) -> Bool {
+        for x in self {
+            if p(x) {
+                return true
+            }
+        }
+        return false
+    }
+
+    all?(p: _) -> Bool {
+        for x in self {
+            if !p(x) {
+                return false
+            }
+        }
+        return true
+    }
 
     __len__() {
         let n = 0
@@ -3293,7 +3318,7 @@ macro __walk! {
 }
 
 macro __desugar_partial__(call) {
-    let (args: [AST], mkcall) = match call {
+    let (args: _, mkcall) = match call {
         %t({args, ?func, *call}) => do {
             if func == ty.Nil {
                 func = ty.Value(x -> x)
