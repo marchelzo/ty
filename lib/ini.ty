@@ -1,20 +1,176 @@
 tag INISyntaxError;
+tag INIReadError;
 
-pub function parse(s) {
-    let d = %{*: %{}}
+use Setting = {
+    name: String,
+    value: String,
+    comments: Array[String]
+}
+
+use Section = {
+    name: String,
+    settings: Array[Setting]
+}
+
+use INIDict = Dict[String, Dict[String, String]]
+
+class INIFile {
+    __sections: Array[Section]
+    __update?: Bool
+
+    init(path: ?String) {
+        __sections = []
+        __update? = false
+        if path != nil {
+            load(path)
+        }
+    }
+
+    is-update? { __update? }
+    is-update?=(b) { __update? = b }
+
+    dict() -> INIDict {
+        let dict = %{*: %{}}
+
+        for {name: header, settings} in __sections {
+            for {name: key, value, *} in settings {
+                dict[header][key] = value
+            }
+        }
+
+        return dict
+    }
+
+    set(header: String, key: String, value: String) {
+        let section = match __sections.find(match ({name, *}) => name == header) {
+            $section => section,
+            _ => do {
+                __sections.push({name: header, settings: []})
+                __sections[-1]
+            }
+        }
+
+        match section.settings.find(match ({name, *}) => name == key) {
+            $setting => { setting.value = value },
+            _ => section.settings.push({name: key, value, comments: []})
+        }
+    }
+
+    delete(header: String, key: String) {
+        if not let $section = __sections.find(match ({name, *}) => name == header) {
+            return
+        }
+
+        section.settings.filter!(match ({name, *}) => name != key)
+
+        __sections.filter!(match ({settings, *}) => #settings > 0)
+    }
+
+    update(from: INIDict) {
+        for header, group in from {
+            for key, value in group {
+                if value == nil {
+                    delete(header, key)
+                } else {
+                    set(header, key, value)
+                }
+            }
+        }
+    }
+
+    str() -> String {
+        let out = Blob()
+
+        if __update? {
+            out.push("#UPDATE-FILE\n")
+        }
+
+        for {name, settings}, i in __sections {
+            if i > 0 {
+                out.push('\n')
+            }
+            out.push("[{name}]\n")
+            for {name, value, comments} in settings {
+                for comment in comments {
+                    out.push("{comment}\n")
+                }
+                out.push("{name} = {value}\n")
+            }
+        }
+
+        out.str!()
+    }
+
+    write(path: String) {
+        sink(path) << str()
+    }
+
+    load(path: String) {
+        if let $source = slurp(path) {
+            read(source)
+        } else {
+            throw INIReadError(path)
+        }
+    }
+
+    read(str: String) {
+        __sections = []
+        __update? = false
+
+        let section = nil
+        let comments = []
+
+        for line in str.lines() {
+            match line {
+                /^\s*$/ => { },
+
+                /^\s*\[(.*)\]\S*$/ => {
+                    section = $1
+                    __sections.push({name: section, settings: []})
+                },
+
+                /^([^=]+)=(.*)$/ => {
+                    let key = $1.strip()
+                    let val = $2.strip()
+                    if #__sections == 0 {
+                        __sections.push({name: '', settings: []})
+                    }
+                    __sections[-1].settings.push({name: key, value: val, comments})
+                    comments = []
+                },
+
+                /^\s*#/ => {
+                    if line.strip() == '#UPDATE-FILE' {
+                        __update? = true
+                    } else {
+                        comments.push(line)
+                    }
+                },
+
+                _ => {
+                    throw INISyntaxError(line)
+                }
+            }
+        }
+    }
+}
+
+pub function parse(s: String) {
+    let dict = %{*: %{}}
 
     let section = nil
 
-    for line in s.lines() if !line.match?(/^#/) {
+    for line in s.lines() {
         match line {
-            /^\s*$/ => { },
+            /^\s*$/ or
+            /^\s*#/ => {},
 
             /^\s*\[(.*)\]\S*$/ => {
-                section = _1
+                section = $1
             },
 
             /^([^=]+)=(.*)$/ => {
-                d[section][_1.strip()] = _2.strip()
+                dict[section][$1.strip()] = $2.strip()
             },
 
             _ => {
@@ -23,11 +179,15 @@ pub function parse(s) {
         }
     }
 
-    return d
+    return dict
 }
 
-pub function read(path) {
-    parse(slurp(path))
+pub function read(path: String) -> INIDict {
+    if let $source = slurp(path) {
+        parse(source)
+    } else {
+        throw INIReadError(path)
+    }
 }
 
 pub function str(d) {
