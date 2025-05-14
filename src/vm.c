@@ -4055,9 +4055,6 @@ AssignGlobal:
                 CASE(TRY_STEAL_TAG)
                         READVALUE(n);
                         vp = poptarget();
-                        if (top()->tags > 22000) {
-                                printf("TAGGED: %s\n", VSC(top()));
-                        }
                         if (top()->tags > 0) {
                                 *vp = TAG(tags_first(ty, top()->tags));
                                 if ((top()->tags = tags_pop(ty, top()->tags)) == 0) {
@@ -5374,23 +5371,23 @@ BadTupleMember:
                         READVALUE(s);
                         while (c --> 0) {
                                 v = pop();
-                                class_add_static(ty, class, IP, v);
-                                SKIPSTR();
+                                READVALUE(i);
+                                class_add_static_i(ty, class, i, v);
                         }
                         while (n --> 0) {
                                 v = pop();
-                                class_add_method(ty, class, IP, v);
-                                SKIPSTR();
+                                READVALUE(i);
+                                class_add_method_i(ty, class, i, v);
                         }
                         while (g --> 0) {
                                 v = pop();
-                                class_add_getter(ty, class, IP, v);
-                                SKIPSTR();
+                                READVALUE(i);
+                                class_add_getter_i(ty, class, i, v);
                         }
                         while (s --> 0) {
                                 v = pop();
-                                class_add_setter(ty, class, IP, v);
-                                SKIPSTR();
+                                READVALUE(i);
+                                class_add_setter_i(ty, class, i, v);
                         }
                         break;
                 }
@@ -7066,16 +7063,16 @@ StepInstruction(char const *ip)
                 SKIPVALUE(g);
                 SKIPVALUE(s);
                 while (t --> 0) {
-                        SKIPSTR();
+                        SKIPVALUE(i);
                 }
                 while (n --> 0) {
-                        SKIPSTR();
+                        SKIPVALUE(i);
                 }
                 while (g --> 0) {
-                        SKIPSTR();
+                        SKIPVALUE(i);
                 }
                 while (s --> 0) {
-                        SKIPSTR();
+                        SKIPVALUE(i);
                 }
                 break;
         }

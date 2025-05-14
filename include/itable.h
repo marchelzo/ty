@@ -40,6 +40,9 @@ itable_lookup(Ty *ty, struct itable const *t, int64_t id);
 struct value *
 itable_get(Ty *ty, struct itable *t, int64_t id);
 
+void
+itable_dump(Ty *ty, struct itable *t);
+
 inline static struct value *
 itable_look(Ty *ty, struct itable const *t, char const *name)
 {

@@ -22,6 +22,8 @@ pub ns mod {
     pub SUPER = 1 << 3
 }
 
+pub use CursorAddress = (Int, Int)
+
 pub namespace event {
     pub tag Text;
     pub tag MouseDown;
@@ -37,7 +39,29 @@ pub namespace event {
             nice-key-name(self)
         }
     }
+
+    pub use KeyDetails = {
+        key: Int | String,
+        _key: ?Int,
+        base: ?Int,
+        mods: Int,
+        event: Int,
+        text: [Int]
+    }
 }
+
+pub use Event = (
+    event.Text[String]
+  | event.Key[event.KeyDetails]
+  | event.MouseDown[CursorAddress]
+  | event.MouseUp[CursorAddress]
+  | event.MouseMove[CursorAddress]
+  | event.ScrollDown[CursorAddress]
+  | event.ScrollUp[CursorAddress]
+  | event.ScrollLeft[CursorAddress]
+  | event.ScrollRight[CursorAddress]
+  | event.Cursor[CursorAddress]
+)
 
 pub ns error {
     pub tag EOF;
@@ -341,7 +365,7 @@ namespace ctlseq {
         pub fn k-ev-based($1, $2, $3, $4) {
             let (key, _key, base) = match keys.function-keys("{$1 || 1}{$4}") {
                 Some(sp) => (sp, nil, nil),
-                None     => match $1.split(':').map(int) ?? [] {
+                None     => match $1.split(':').map(int) {
                     [?key, ?_key, ?base] => (key, _key, base),
                 }
             }
@@ -390,7 +414,7 @@ function yield-basic(ch: String, extra-mods=0) {
     }
 
     if c < 256 {
-        yield event.Key({
+        let ev = event.Key({
             key:  key ?? c,
             _key: c,
             _base: nil,
@@ -399,7 +423,6 @@ function yield-basic(ch: String, extra-mods=0) {
             text: [c]
         })
     }
-
 }
 
 ns _size {
@@ -419,23 +442,37 @@ ns _size {
 }
 
 class TermIO {
-    init(fd=0) {
-        @fd = fd
-        @event-stream = self._read-events()
+    __fd: Int
+    __ti-keys: Dict[String, Int]
+    __saved-termios: _
+    __ev-stream: Generator[event.Event]
+    __ev-queue: SharedQueue[event.Event]
+    __reader: Thread
+    __cursor: {
+        lock: Mutex,
+        cond: CondVar,
+        t: Int,
+        y: ?Int,
+        x: ?Int
+    }
 
-        @ti-keys = %{}
+    init(fd=0) {
+        __fd = fd
+        __ev-stream = __read-events()
+
+        __ti-keys = %{}
         let $unibi-term = unibi.Term()
         for i in unibi.strs {
             if unibi.name(i).match?(/^key_/)
                and let $str = unibi-term[i]
                and str.size() > 0 {
-                @ti-keys[str] = i
+                __ti-keys[str] = i
             }
         }
 
-        @events_ = SharedQueue()
+        __ev-queue = SharedQueue()
 
-        @cursor_ = {
+        __cursor = {
             lock: Mutex(),
             cond: CondVar(),
             t: 0,
@@ -443,21 +480,21 @@ class TermIO {
             x: nil
         }
 
-        @reader = Thread(self.run-reader)
+        __reader = Thread(__run-reader)
     }
 
     start() {
-        if (@saved-termios = tcgetattr(@fd)) == nil {
+        if (__saved-termios = tcgetattr(__fd)) == nil {
             eprint("Error: {errno.str()}")
         }
-        let copy = {*@saved-termios}
+        let copy = {*__saved-termios}
         copy.lflag &= ~ICANON
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
         copy.iflag |= IGNBRK
-        tcsetattr(@fd, TCSAFLUSH, copy)
+        tcsetattr(__fd, TCSAFLUSH, copy)
         write(
-            @fd,
+            __fd,
             "\x1b[>{1|2|4|8|16}u" // kitty progressive enchancement for keyboard input
             "\x1b[?1003h"         // turn on mouse event reporting
             "\x1b[?1006h"         // ask for SGR-style mouse reporting instead of X10 compatibility mode
@@ -466,27 +503,28 @@ class TermIO {
 
     stop() {
         write(
-            @fd,
+            __fd,
             "\x1b[<1u"     // restore initial keyboard input mode
             "\x1b[?1003l"  // turn off all the private modes we turned on
             "\x1b[?1006l"
         )
-        tcsetattr(@fd, TCSAFLUSH, @saved-termios)
+        tcsetattr(__fd, TCSAFLUSH, __saved-termios)
     }
 
-    size() {
-        _size.get(@fd)
+    size() -> (Int, Int) {
+        _size.get(__fd)
     }
 
-    _read-events*() {
+    __read-events*() -> Generator[_] {
         let buf = Blob()
         let i = 0
+
 
         while 1 {
             if i == #buf {
                 i = 0
                 buf.clear()
-                read(@fd, buf, 8192)
+                read(__fd, buf, 8192)
                 warn!("Read: {ppp(buf.str!())}")
             }
 
@@ -517,7 +555,7 @@ class TermIO {
 
             // Let's see if we have a terminfo entry that matches
             while i < #buf && buf[i] == 0x1b {
-                for key-str, k in @ti-keys {
+                for key-str, k in __ti-keys {
                     let n = key-str.size()
                     if buf.str!(i, n) == key-str {
                         i += n
@@ -551,63 +589,46 @@ class TermIO {
         }
     }
 
-    next-event() {
-        return @events_.take()
-
-        let ev = if #@event-buffer > 0 {
-            Some(@event-buffer.pop(0))
-        } else {
-            (@event-stream)()
-        }
-        warn!("Returning event: {ppp(ev)}")
-        return ev
+    next-event() -> ?event.Event {
+        return __ev-queue.take()
     }
 
-    __cursor() {
-        write(@fd, "\x1b[6n")
-        while match (@event-stream)() {
-            Some(event.Cursor(y, x)) => { return (y, x)          },
-            Some(ev)                 => { @event-buffer.push(ev) },
-            _                        => { throw error.EOF        }
-        }
-    }
+    cursor() -> CursorAddress {
+        let ^lock = __cursor.lock.lock()
 
-    cursor() {
-        let ^lock = @cursor_.lock.lock()
-
-        let t = @cursor_.t
-        write(@fd, "\x1b[6n")
+        let t = __cursor.t
+        write(__fd, "\x1b[6n")
 
         for (;;) {
-            @cursor_.cond.wait(@cursor_.lock)
-            break if @cursor_.t != t
+            __cursor.cond.wait(__cursor.lock)
+            break if __cursor.t != t
         }
 
-        return (@cursor_.y, @cursor_.x)
+        return (__cursor.y, __cursor.x)
     }
 
-    run-reader() {
-        while match (@event-stream)() {
+    __run-reader() {
+        while match (__ev-stream)() {
             Some(event.Cursor(y, x)) => {
-                with @cursor_.lock {
-                    @cursor_.y = y
-                    @cursor_.x = x
-                    @cursor_.t += 1
+                with __cursor.lock {
+                    __cursor.y = y
+                    __cursor.x = x
+                    __cursor.t += 1
                 }
-                @cursor_.cond.broadcast()
+                __cursor.cond.broadcast()
             },
 
             Some(ev) => {
-                @events_.put(ev)
+                __ev-queue.put(ev)
             },
 
             None => sleep(0.5)
         }
     }
 
-    events*() {
-        while let Some(ev) = @events_.try-take(0) {
-            yield ev
+    events*() -> Generator[Event] {
+        while let Some(ev) = __ev-queue.try-take(0) {
+          yield ev
         }
     }
 }
@@ -618,7 +639,7 @@ pub function __test() {
     tio.start()
     on-exit(tio.stop)
 
-    while let Some(ev) = tio.next-event() {
+    while let $ev = tio.next-event() {
         match ev {
             event.Text(s) => {
                 if s == 'z' { break }
@@ -634,6 +655,8 @@ pub function __test() {
             event.MouseDown(mev) => {
                 pp(mev)
             }
+            
+            _ => ()
         }
     }
 }

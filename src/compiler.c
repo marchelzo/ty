@@ -420,17 +420,30 @@ IsPrivateMember(char const *name)
             ;
 }
 
+inline static char *
+GetPrivateName(char const *name, int class, char *scratch, usize n)
+{
+        if (IsPrivateMember(name) && class >= 0) {
+                snprintf(scratch, n, "%s$%d", &name[2], class);
+                return scratch;
+        } else {
+                return (char *)name;
+        }
+}
+
 static void
 emit_member(Ty *ty, char const *name)
 {
-        char buf[256];
+        char scratch[512];
 
-        if (IsPrivateMember(name) && state.class != -1) {
-                snprintf(buf, sizeof buf, "%s$%d", name + 2, state.class);
-                emit_int(ty, M_ID(buf));
-        } else {
-                emit_int(ty, M_ID(name));
-        }
+        char const *private = GetPrivateName(
+                name,
+                state.class,
+                scratch,
+                sizeof scratch
+        );
+
+        emit_int(ty, M_ID(private));
 }
 
 static bool
@@ -758,7 +771,7 @@ ProposeMemberDefinition(Ty *ty, Location start, Location end, Expr const *o, cha
         if (
                 start.line == QueryLine
              && start.col  <= QueryCol
-             && end.col    >= QueryCol
+             && end.col     > QueryCol
              && strcmp(state.module_path, QueryFile) == 0
         ) {
                 static Symbol sym;
@@ -2728,8 +2741,10 @@ origin_class(Value const *fun)
 static bool
 try_make_implicit_self(Ty *ty, Expr *e, int class)
 {
-        char const *id;
-        int64_t m = M_ID(e->identifier);
+        char scratch[512];
+
+        char const *id = e->identifier;
+        int64_t m = M_ID(GetPrivateName(id, class, scratch, sizeof scratch));
 
         if (
                 origin_class(class_lookup_method_i(ty, class, m)) == class
@@ -2737,26 +2752,24 @@ try_make_implicit_self(Ty *ty, Expr *e, int class)
              || origin_class(class_lookup_setter_i(ty, class, m)) == class
              || class_lookup_field_i(ty, class, m)                != NULL
         ) {
-                id = e->identifier;
                 e->type = EXPRESSION_SELF_ACCESS;
                 e->member_name = (char *)id;
                 e->maybe = false;
                 e->object = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 e->object->identifier = "self";
                 e->object->start = e->start;
-                e->object->end = e->end;
+                e->object->end = e->start;
                 return true;
         }
 
         if (origin_class(class_lookup_static_i(ty, class, m)) == class) {
-                id = e->identifier;
                 e->type = EXPRESSION_SELF_ACCESS;
                 e->member_name = (char *)id;
                 e->maybe = false;
                 e->object = NewExpr(ty, EXPRESSION_IDENTIFIER);
                 e->object->identifier = "self";
                 e->object->start = e->start;
-                e->object->end = e->end;
+                e->object->end = e->start;
                 return true;
         }
 
@@ -7460,16 +7473,16 @@ emit_statement(Ty *ty, Stmt const *s, bool want_result)
                 emit_int(ty, s->class.setters.count);
 
                 for (int i = s->class.statics.count; i > 0; --i)
-                        emit_string(ty, s->class.statics.items[i - 1]->name);
+                        emit_member(ty, s->class.statics.items[i - 1]->name);
 
                 for (int i = s->class.methods.count; i > 0; --i)
-                        emit_string(ty, s->class.methods.items[i - 1]->name);
+                        emit_member(ty, s->class.methods.items[i - 1]->name);
 
                 for (int i = s->class.getters.count; i > 0; --i)
-                        emit_string(ty, s->class.getters.items[i - 1]->name);
+                        emit_member(ty, s->class.getters.items[i - 1]->name);
 
                 for (int i = s->class.setters.count; i > 0; --i)
-                        emit_string(ty, s->class.setters.items[i - 1]->name);
+                        emit_member(ty, s->class.setters.items[i - 1]->name);
 
                 state.class = -1;
 
@@ -8100,7 +8113,15 @@ lowkey(Expr *e, Scope *scope, void *ctx)
                         break;
 
                 case EXPRESSION_MEMBER_ACCESS:
+                case EXPRESSION_SELF_ACCESS:
                         ProposeMemberDefinition(ty, e->start, e->end, e->object, e->member_name);
+                        break;
+
+                case EXPRESSION_FUNCTION:
+                        if (e->class >= 0) {
+                                Expr o = { ._type = class_get_class(ty, e->class)->object_type };
+                                ProposeMemberDefinition(ty, e->start, e->end, &o, e->name);
+                        }
                         break;
                 }
         }
@@ -11688,6 +11709,9 @@ define_class(Ty *ty, Stmt *s)
 
         sym->type = class_get_class(ty, sym->class)->type;
 
+        char scratch[512];
+        char const *name;
+
         for (int i = 0; i < s->class.methods.count; ++i) {
                 Expr *m = s->class.methods.items[i];
                 m->_type = UNKNOWN_TYPE;
@@ -11700,47 +11724,63 @@ define_class(Ty *ty, Stmt *s)
                         continue;
                 }
 
-                class_add_method(ty, sym->class, m->name, PTR(m));
+                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
+                class_add_method(ty, sym->class, name, PTR(m));
         }
 
         for (int i = 0; i < s->class.statics.count; ++i) {
                 Expr *m = s->class.statics.items[i];
                 m->_type = UNKNOWN_TYPE;
                 m->class = sym->class;
-                class_add_static(ty, sym->class, m->name, PTR(m));
+                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
+                class_add_static(ty, sym->class, name, PTR(m));
         }
 
         for (int i = 0; i < s->class.getters.count; ++i) {
                 Expr *m = s->class.getters.items[i];
                 m->_type = UNKNOWN_TYPE;
                 m->class = sym->class;
-                class_add_getter(ty, sym->class, m->name, PTR(m));
+                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
+                class_add_getter(ty, sym->class, name, PTR(m));
         }
 
         for (int i = 0; i < s->class.setters.count; ++i) {
                 Expr *m = s->class.setters.items[i];
                 m->_type = UNKNOWN_TYPE;
                 m->class = sym->class;
-                class_add_setter(ty, sym->class, m->name, PTR(m));
+                name = GetPrivateName(m->name, sym->class, scratch, sizeof scratch);
+                class_add_setter(ty, sym->class, name, PTR(m));
         }
 
         for (int i = 0; i < s->class.fields.count; ++i) {
                 Expr *m = s->class.fields.items[i];
                 switch (m->type) {
                 case EXPRESSION_IDENTIFIER:
+                        name = GetPrivateName(
+                                m->identifier,
+                                sym->class,
+                                scratch,
+                                sizeof scratch
+                        );
                         class_add_field(
                                 ty,
                                 sym->class,
-                                m->identifier,
+                                name,
                                 m->constraint,
                                 NULL
                         );
                         break;
                 case EXPRESSION_EQ:
+                        name = GetPrivateName(
+                                m->target->identifier,
+                                sym->class,
+                                scratch,
+                                sizeof scratch
+                        );
                         class_add_field(
                                 ty,
                                 sym->class,
-                                m->target->identifier,
+                                name,
                                 m->target->constraint,
                                 m->value
                         );
@@ -12932,16 +12972,16 @@ DumpProgram(
                         READVALUE(g);
                         READVALUE(s);
                         while (t --> 0) {
-                                SKIPSTR();
+                                READMEMBER(i);
                         }
                         while (n --> 0) {
-                                SKIPSTR();
+                                READMEMBER(i);
                         }
                         while (g --> 0) {
-                                SKIPSTR();
+                                READMEMBER(i);
                         }
                         while (s --> 0) {
-                                SKIPSTR();
+                                READMEMBER(i);
                         }
                         break;
                 }

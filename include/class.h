@@ -59,7 +59,19 @@ void
 class_add_static(Ty *ty, int class, char const *name, struct value f);
 
 void
+class_add_static_i(Ty *ty, int class, int id, struct value f);
+
+void
 class_add_getter(Ty *ty, int class, char const *name, struct value f);
+
+void
+class_add_getter_i(Ty *ty, int class, int id, struct value f);
+
+void
+class_add_method_i(Ty *ty, int class, int id, struct value f);
+
+void
+class_add_setter_i(Ty *ty, int class, int id, struct value f);
 
 void
 class_add_setter(Ty *ty, int class, char const *name, struct value f);

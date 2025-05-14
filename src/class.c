@@ -217,9 +217,21 @@ class_add_static(Ty *ty, int class, char const *name, Value f)
 }
 
 void
+class_add_static_i(Ty *ty, int class, int id, Value f)
+{
+        itable_add(ty, &C(class)->statics, id, f);
+}
+
+void
 class_add_method(Ty *ty, int class, char const *name, Value f)
 {
         itable_put(ty, &C(class)->methods, name, f);
+}
+
+void
+class_add_method_i(Ty *ty, int class, int id, Value f)
+{
+        itable_add(ty, &C(class)->methods, id, f);
 }
 
 void
@@ -229,9 +241,21 @@ class_add_getter(Ty *ty, int class, char const *name, Value f)
 }
 
 void
+class_add_getter_i(Ty *ty, int class, int id, Value f)
+{
+        itable_add(ty, &C(class)->getters, id, f);
+}
+
+void
 class_add_setter(Ty *ty, int class, char const *name, Value f)
 {
         itable_put(ty, &C(class)->setters, name, f);
+}
+
+void
+class_add_setter_i(Ty *ty, int class, int id, Value f)
+{
+        itable_add(ty, &C(class)->setters, id, f);
 }
 
 void

@@ -300,4 +300,20 @@ itable_completions(Ty *ty, struct itable const *t, char const *prefix, ValueVect
         return n;
 }
 
+void
+itable_dump(Ty *ty, struct itable *t)
+{
+        int w = 0;
+        for (int i = 0; i < vN(t->ids); ++i) {
+                char const *name = M_NAME(v__(t->ids, i));
+                w = max(w, strlen(name));
+        }
+
+        for (int i = 0; i < vN(t->ids); ++i) {
+                char const *name = M_NAME(v__(t->ids, i));
+                Value const *val = v_(t->values, i);
+                printf("%-*s : %s\n", w, name, VSC(val));
+        }
+}
+
 /* vim: set sts=8 sw=8 expandtab: */
