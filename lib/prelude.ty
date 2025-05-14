@@ -24,7 +24,7 @@ use TokenLocation = {
 
 use Token = { type: String, start: TokenLocation, end: TokenLocation } & TokenData
 
-use Subscript[T, U] = { __subscript__: T -> U }
+use Subscript[T, U] = { __subscript__: T -> U };
 
 fn parse::expr(prec: ?Int, raw: Bool) -> (AST, _);
 fn parse::expr(prec: ?Int) -> AST;
@@ -1220,6 +1220,7 @@ tag Err {
      flatMap() { self }
 }
 
+use Maybe[T] = Some[T] | None
 
 class RegexMatch {
     s: String
@@ -2948,9 +2949,10 @@ class SharedQueue[T] : Iterable[T] {
         return Some(x)
     }
 
-    take() -> T{
-        let Some(x) = self.tryTake(-1)
-        return x
+    take() -> T {
+        if let Some(x) = self.tryTake(-1) {
+            return x
+        }
     }
 
     __iter__*() {

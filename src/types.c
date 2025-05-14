@@ -6674,7 +6674,7 @@ type_show(Ty *ty, Type const *t0)
                 if (t0->variadic) {
                         dump(&buf, "*");
                 }
-                dump(&buf, "%s", VarName(ty, t0->id));
+                dump(&buf, "%s%s", CanBind(t0) ? "$" : "", VarName(ty, t0->id));
                 dump(&buf, "%s", TERM(0));
                 if (IsBoundVar(t0)) {
                         dump(

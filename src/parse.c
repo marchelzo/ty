@@ -2027,6 +2027,8 @@ prefix_function(Ty *ty)
         vvX(SavePoints);
 
 EndOfParams:
+        e->end = End;
+
         if (T0 == TOKEN_ARROW) {
                 next();
                 e->return_type = parse_type(ty, -1);
