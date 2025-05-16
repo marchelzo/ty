@@ -10,6 +10,7 @@
 
 #include <utf8proc.h>
 
+#include "ty.h"
 #include "value.h"
 #include "polyfill_unistd.h"
 
@@ -33,6 +34,9 @@
 #define RESTORE_(x) memcpy(&(x), &(x##_), sizeof (x))
 
 #define countof(x) (sizeof (x) / sizeof ((x)[0]))
+
+#define afmt(...) ((afmt)(ty, __VA_ARGS__))
+#define adump(...) ((adump)(ty, __VA_ARGS__))
 
 inline static size_t
 P_ALIGN(void const *p)
@@ -235,6 +239,85 @@ dump(byte_vector *b, char const *fmt, ...)
 
                 return need;
         }
+}
+
+static int
+avdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
+{
+        va_list ap_;
+
+        for (;;) {
+                int avail = vC(*str) - vN(*str);
+                int need;
+
+                va_copy(ap_, ap);
+                need = vsnprintf(vZ(*str), avail, fmt, ap_);
+                va_end(ap_);
+
+                if (1 + need >= avail) {
+                        avR(*str, max(vC(*str) * 2, 256));
+                        continue;
+                }
+
+                str->count += need;
+                *vZ(*str) = '\0';
+
+                return need;
+        }
+}
+
+static int
+(adump)(Ty *ty, byte_vector *str, char const *fmt, ...)
+{
+        int bytes;
+        va_list ap;
+
+        va_start(ap, fmt);
+        bytes = avdump(ty, str, fmt, ap);
+        va_end(ap);
+
+        return bytes;
+}
+
+static int
+scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
+{
+        va_list ap_;
+
+        for (;;) {
+                int avail = vC(*str) - vN(*str);
+                int need;
+
+                va_copy(ap_, ap);
+                need = vsnprintf(vZ(*str), avail, fmt, ap_);
+                va_end(ap_);
+
+                if (1 + need >= avail) {
+                        svR(*str, max(vC(*str) * 2, 256));
+                        continue;
+                }
+
+                str->count += need;
+                *vZ(*str) = '\0';
+
+                return need;
+        }
+}
+
+static char *
+(afmt)(Ty *ty, char const *fmt, ...)
+{
+        char *str;
+        byte_vector buf = {0};
+        va_list ap;
+
+        SCRATCH_SAVE();
+        va_start(ap, fmt);
+        scvdump(ty, &buf, fmt, ap);
+        str = sclonea(ty, v_(buf, 0));
+        SCRATCH_RESTORE();
+
+        return str;
 }
 
 static int

@@ -831,6 +831,7 @@ enum {
 #define avIn(a, b, c, d) VInsertN(a, b, c, d)
 #define avPv(a, b)       VPushN((a), ((b).items), ((b).count))
 #define avPvn(a, b, n)   VPushN((a), ((b).items), (n))
+#define avR(v, n)        VReserve((v), (n))
 
 #define uvP(v, x)         vec_push_unchecked((v), (x))
 #define uvPn(v, xs, n)    vec_push_n_unchecked((v), (xs), (n))
@@ -849,6 +850,7 @@ enum {
 #define svP(a, b)        vec_push_scratch((a), (b))
 #define svI(a, b, c)     vec_insert_scratch((a), (b), (c))
 #define svIn(a, b, c, d) vec_insert_n_scratch(a, (b), (c), (d))
+#define svR(v, n)        vec_reserve_scratch((v), (n))
 
 #define gP(x) gc_push(ty, x)
 #define gX()  gc_pop(ty)

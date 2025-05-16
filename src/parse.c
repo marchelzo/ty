@@ -208,13 +208,14 @@
 #define PLOGC(...) ((void)0)
 #endif
 
-#define                 tok()                        ((tok)(ty))
-#define              token(i)                 ((token)(ty, (i)))
-#define               skip(n)                  ((skip)(ty, (n)))
-#define        try_consume(t)           ((try_consume)(ty, (t)))
-#define       have_keyword(k)          ((have_keyword)(ty, (k)))
-#define have_keywords(k0, k1)  ((have_keywords)(ty, (k0), (k1)))
-#define          unconsume(t)             ((unconsume)(ty, (t)))
+#define                 tok()                            ((tok)(ty))
+#define              token(i)                     ((token)(ty, (i)))
+#define               skip(n)                      ((skip)(ty, (n)))
+#define        try_consume(t)               ((try_consume)(ty, (t)))
+#define       have_keyword(k)              ((have_keyword)(ty, (k)))
+#define have_keywords(k0, k1)      ((have_keywords)(ty, (k0), (k1)))
+#define          unconsume(t)                 ((unconsume)(ty, (t)))
+#define    expect_one_of(...) ((expect_one_of)(ty, __VA_ARGS__, -1))
 
 
 #define with_fun_subscope(...)                                          \
@@ -282,6 +283,7 @@ Expr *LastParsedExpr;
 
 static int depth;
 static bool NoEquals = false;
+static bool NoConstraint = true;
 static bool NoIn = false;
 static bool NoAndOr = false;
 static bool NoPipe = false;
@@ -1023,11 +1025,11 @@ End:
         }
 }
 
-#define die_at(e, fmt, ...)                     \
-        do {                                    \
-                EStart = (e)->start;            \
-                EEnd   = (e)->end;              \
-                (error)(ty, fmt, __VA_ARGS__);  \
+#define die_at(e, ...)                     \
+        do {                               \
+                EStart = (e)->start;       \
+                EEnd   = (e)->end;         \
+                (error)(ty, __VA_ARGS__);  \
         } while (0)
 
 inline static Namespace *
@@ -1122,6 +1124,50 @@ static bool
                 token_show(ty, tok()),
                 TERM(0)
         );
+}
+
+static bool
+(expect_one_of)(Ty *ty, ...)
+{
+        va_list ap;
+        int tt;
+        int n = 0;
+
+        va_start(ap, ty);
+        while ((tt = va_arg(ap, int)) != -1) {
+                if (T0 == tt || K0 == tt) {
+                        va_end(ap);
+                        return true;
+                }
+                n += 1;
+        }
+        va_end(ap);
+
+        byte_vector msg = {0};
+        int i = 0;
+
+        adump(&msg, "expected ");
+
+        va_start(ap, ty);
+        while ((tt = va_arg(ap, int)) != -1) {
+                if (++i == 1) {
+                        adump(&msg, "%s", token_show_type(ty, tt));
+                } else if (i == n) {
+                        adump(
+                                &msg,
+                                "%sor %s",
+                                (i == 2) ? " " : ", ",
+                                token_show_type(ty, tt)
+                        );
+                } else {
+                        adump(&msg, ", %s", token_show_type(ty, tt));
+                }
+        }
+        va_end(ap);
+
+        adump(&msg, " but found %s%s%s", TERM(34), token_show(ty, tok()), TERM(0));
+
+        error(ty, "%s", v_(msg, 0));
 }
 
 
@@ -1307,10 +1353,28 @@ parse_decorators(Ty *ty)
                                         call->type = EXPRESSION_FUNCTION_CALL;
                                         call->function = f;
                                 }
-                                vvI(decorators, call, i);
-                        } else {
-                                vvI(decorators, f, i);
+                                f = call;
                         }
+
+                        Expr *hole = mkexpr(ty);
+                        hole->type = EXPRESSION_PLACEHOLDER;
+
+                        switch (f->type) {
+                        case EXPRESSION_FUNCTION_CALL:
+                                avI(f->args, hole, 0);
+                                avI(f->fconds, NULL, 0);
+                                break;
+
+                        case EXPRESSION_METHOD_CALL:
+                                avI(f->method_args, hole, 0);
+                                avI(f->mconds, NULL, 0);
+                                break;
+
+                        default:
+                                UNREACHABLE();
+                        }
+
+                        vvI(decorators, f, i);
 
                         if (T0 == ',') {
                                 next();
@@ -1330,9 +1394,7 @@ parse_type(Ty *ty, int prec)
         Expr *t;
 
         SAVE_TC(true);
-        SAVE_NE(true);
         t = parse_expr(ty, prec);
-        LOAD_NE();
         LOAD_TC();
 
         return t;
@@ -1545,7 +1607,9 @@ ss_inner(Ty *ty, bool top)
                 next();
 
                 SAVE_NE(false);
+                SAVE_NC(true);
                 avP(e->expressions, parse_expr(ty, 0));
+                LOAD_NC();
                 LOAD_NE();
 
                 if (T0 == ':') {
@@ -1855,7 +1919,7 @@ prefix_identifier(Ty *ty)
         }
 
         // TODO: maybe get rid of this
-        if (NoEquals && T0 == ':') {
+        if (!NoConstraint && T0 == ':') {
                 next();
                 e->constraint = parse_type(ty, 0);
         } else {
@@ -2039,6 +2103,28 @@ EndOfParams:
         if (sugared_generator) {
                 unconsume(TOKEN_KEYWORD);
                 tok()->keyword = KEYWORD_GENERATOR;
+        }
+
+        if (try_consume(KEYWORD_WHERE)) {
+                for (;;) {
+                        Expr *sub;
+                        Expr *super;
+
+                        sub = prefix_identifier(ty);
+                        consume(':');
+                        super = parse_type(ty, 0);
+
+                        TypeBound bound = { .var = sub, .bound = super };
+
+                        avP(e->type_bounds,  bound);
+
+                        if (K0 != KEYWORD_AND && T0 != ',') {
+                                break;
+                        }
+
+                        next();
+
+                }
         }
 
 Body:
@@ -2247,22 +2333,32 @@ prefix_record(Ty *ty)
                         goto Next;
                 }
 
-                expect(TOKEN_IDENTIFIER);
-                avP(e->names, tok()->identifier);
+                SAVE_NC(true);
+                SAVE_NE(true);
+                Expr *name = parse_expr(ty, 999);
+                LOAD_NE();
+                LOAD_NC();
 
-                if (T1 == ':' || T1 == '=') {
+                if (T0 == ',' || T0 == '}' || K0 == KEYWORD_IF) {
+                        switch (name->type) {
+                        case EXPRESSION_IDENTIFIER:
+                        case EXPRESSION_MATCH_NOT_NIL:
+                        case EXPRESSION_RESOURCE_BINDING:
+                                avP(e->names, name->identifier);
+                                avP(e->es, name);
+                                break;
+                        default:
+                                 expect_one_of(',', '}', KEYWORD_IF);
+                                 UNREACHABLE();
+                        }
+                } else if (name->type != EXPRESSION_IDENTIFIER) {
+                        die_at(name, "unexpected expression used as field name in record literal");
+                } else {
+                        expect_one_of(':', '=');
                         next();
-                        next();
-                } else if (
-                        T1 != ',' && T1 != '}' &&
-                        (T1 != TOKEN_KEYWORD || token(1)->keyword != KEYWORD_IF)
-                ) {
-                        // Force a parse error
-                        next();
-                        expect(':');
+                        avP(e->names, name->identifier);
+                        avP(e->es, parse_expr(ty, 0));
                 }
-
-                avP(e->es, parse_expr(ty, 0));
 
 Next:
                 if (have_keyword(KEYWORD_IF)) {
@@ -2291,6 +2387,7 @@ static Expr *
 next_pattern(Ty *ty)
 {
         SAVE_NE(true);
+        SAVE_NC(false);
 
         Expr *p = parse_expr(ty, 0);
         p->end = End;
@@ -2301,6 +2398,7 @@ next_pattern(Ty *ty)
                 p->constraint->end = End;
         }
 
+        LOAD_NC();
         LOAD_NE();
 
         return patternize(ty, p);
@@ -2885,6 +2983,7 @@ prefix_parenthesis(Ty *ty)
 
         SAVE_NE(true);
         SAVE_NA(false);
+        SAVE_NC(false);
         if (CatchError()) {
                 e = &NullExpr;
         } else {
@@ -2899,6 +2998,7 @@ prefix_parenthesis(Ty *ty)
                 }
                 vvX(SavePoints);
         }
+        LOAD_NC();
         LOAD_NA();
         LOAD_NE();
 
@@ -2957,7 +3057,9 @@ prefix_parenthesis(Ty *ty)
 
                         SAVE_NE(true);
                         SAVE_NA(false);
+                        SAVE_NC(false);
                         e = parse_expr(ty, 0);
+                        LOAD_NC();
                         LOAD_NA();
                         LOAD_NE();
 
@@ -3286,12 +3388,14 @@ prefix_array(Ty *ty)
                                 e->compr.iter = parse_expr(ty, 0);
                         }
 
-                        if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_IF) {
-                                next();
-                                e->compr.cond = parse_expr(ty, 0);
-                        } else {
-                                e->compr.cond = NULL;
-                        }
+                        e->compr.cond = try_consume(KEYWORD_IF)
+                                      ? parse_expr(ty, 0)
+                                      : NULL;
+
+                        e->compr.where = (K0 == KEYWORD_WHERE)
+                                       ? parse_let_definition(ty)
+                                       : NULL;
+
                         expect(']');
                 } else if (T0 == ',') {
                         next();
@@ -3714,18 +3818,18 @@ prefix_percent(Ty *ty)
                         }
                 }
 
-                if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_FOR) {
+                if (K0 == KEYWORD_FOR) {
                         next();
                         e->type = EXPRESSION_DICT_COMPR;
                         e->dcompr.pattern = parse_target_list(ty);
                         consume_keyword(KEYWORD_IN);
                         e->dcompr.iter = parse_expr(ty, 0);
-                        if (T0 == TOKEN_KEYWORD && K0 == KEYWORD_IF) {
-                                next();
-                                e->dcompr.cond = parse_expr(ty, 0);
-                        } else {
-                                e->dcompr.cond = NULL;
-                        }
+                        e->dcompr.cond = try_consume(KEYWORD_IF)
+                                       ? parse_expr(ty, 0)
+                                       : NULL;
+                        e->dcompr.where = (K0 == KEYWORD_WHERE)
+                                        ? parse_let_definition(ty)
+                                        : NULL;
                         expect('}');
                 } else if (T0 == ',') {
                         next();
@@ -4440,9 +4544,9 @@ infix_conditional(Ty *ty, Expr *left)
 
         consume(TOKEN_QUESTION);
 
-        SAVE_NE(false);
+        SAVE_NC(true);
         e->then = parse_expr(ty, 2);
-        LOAD_NE();
+        LOAD_NC();
 
         consume(':');
 
@@ -5017,9 +5121,11 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
                 SAVE_NI(true);
                 SAVE_NE(true);
                 SAVE_NA(false);
+                SAVE_NC(false);
                 e = parse_expr(ty, 1);
                 EStart = e->start;
                 EEnd = e->end;
+                LOAD_NC();
                 LOAD_NA();
                 LOAD_NE();
                 LOAD_NI();
@@ -5074,9 +5180,11 @@ parse_target_list(Ty *ty)
 {
         SAVE_NI(true);
         SAVE_NE(true);
+        SAVE_NC(false);
 
         Expr *target = parse_expr(ty, 0);
 
+        LOAD_NC();
         LOAD_NE();
         LOAD_NI();
 
@@ -5570,7 +5678,8 @@ parse_let_definition(Ty *ty)
                 next();
                 s->cnst = true;
         } else {
-                consume_keyword(KEYWORD_LET);
+                expect_one_of(KEYWORD_LET, KEYWORD_WHERE);
+                next();
         }
 
         s->target = parse_definition_lvalue(ty, LV_LET, NULL);
@@ -5853,7 +5962,6 @@ parse_method(Ty *ty, Location start, Expr *decorator_macro, char const *doc, exp
 
         Expr *func = prefix_function(ty);
         func->start = start;
-        func->end = End;
         func->doc = doc;
         func->decorators = decorators;
 
@@ -5975,7 +6083,7 @@ parse_class_definition(Ty *ty)
 
         if (T0 == '<') {
                 next();
-                s->tag.super = parse_expr(ty, 0);
+                s->tag.super = parse_type(ty, 0);
         } else {
                 s->tag.super = NULL;
         }
@@ -5984,7 +6092,7 @@ parse_class_definition(Ty *ty)
                 next();
                 do {
                         expect(TOKEN_IDENTIFIER);
-                        avP(s->tag.traits, parse_expr(ty, 0));
+                        avP(s->tag.traits, parse_type(ty, 0));
                 } while (T0 == ',' && (next(), true));
         }
 
@@ -6066,7 +6174,9 @@ parse_class_definition(Ty *ty)
                                 )
                         ) {
                                 SAVE_NE(true);
+                                SAVE_NC(false);
                                 Expr *field = parse_expr(ty, 0);
+                                LOAD_NC();
                                 LOAD_NE();
 
                                 if (T0 == TOKEN_EQ) {

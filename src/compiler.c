@@ -236,6 +236,9 @@ InjectRedpill(Ty *ty, Stmt *s);
 static void
 DefineFunc(Ty *ty, Stmt *stmt);
 
+static void
+AddClassTraits(Ty *ty, ClassDefinition const *def);
+
 static bool
 expedite_fun(Ty *ty, Expr *e, void *ctx);
 
@@ -1165,6 +1168,13 @@ any_variadic(Expr * const *args, Expr * const *conds, int n)
         }
 
         return false;
+}
+
+static bool
+is_placeholder(Expr const *e)
+{
+        return (e == NULL)
+            || (e->type == EXPRESSION_PLACEHOLDER);
 }
 
 static bool
@@ -3234,10 +3244,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_GENERATOR:
         case EXPRESSION_MULTI_FUNCTION:
         case EXPRESSION_FUNCTION:
-                for (int i = 0; i < e->decorators.count; ++i) {
-                        symbolize_expression(ty, scope, e->decorators.items[i]);
-                }
-
                 state.func = e;
 
                 // TODO
@@ -3325,6 +3331,23 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         e->_type = type_generator(ty, e);
                 }
 
+                for (int i = 0; i < vN(e->decorators); ++i) {
+                        Expr *dec = v__(e->decorators, i);
+                        symbolize_expression(ty, scope, dec);
+                        switch (dec->type) {
+                        case EXPRESSION_FUNCTION_CALL:
+                                v__(dec->args, 0)->_type = e->_type;
+                                break;
+
+                        case EXPRESSION_METHOD_CALL:
+                                v__(dec->method_args, 0)->_type = e->_type;
+                                break;
+
+                        default:
+                                UNREACHABLE();
+                        }
+                }
+
                 break;
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
@@ -3362,7 +3385,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                                         v__(e->elements, i),
                                         type_iterable_type(
                                                 ty,
-                                                v__(e->elements, i)->value->_type
+                                                v__(e->elements, i)->value->_type,
+                                                1
                                         ),
                                         T_FLAG_STRICT
                                 );
@@ -3375,14 +3399,15 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->compr.iter);
                 subscope = scope_new(ty, "(array compr)", scope, false);
                 symbolize_lvalue(ty, subscope, e->compr.pattern, true, false);
-                type_assign(ty, e->compr.pattern, type_iterable_type(ty, e->compr.iter->_type), 0);
+                type_assign_iterable(ty, e->compr.pattern, e->compr.iter->_type, 0);
+                symbolize_statement(ty, subscope, e->compr.where);
                 symbolize_expression(ty, subscope, e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         symbolize_expression(ty, subscope, e->elements.items[i]);
                         symbolize_expression(ty, subscope, e->aconds.items[i]);
                         unify(ty, &e->_type, v__(e->elements, i)->_type);
                 }
-                e->_type = type_array_of(ty, e->_type);
+                e->_type = type_array(ty, e);
                 SET_TYPE_SRC(e);
                 break;
         case EXPRESSION_DICT:
@@ -3398,6 +3423,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->dcompr.iter);
                 subscope = scope_new(ty, "(dict compr)", scope, false);
                 symbolize_lvalue(ty, subscope, e->dcompr.pattern, true, false);
+                symbolize_statement(ty, subscope, e->dcompr.where);
                 symbolize_expression(ty, subscope, e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         symbolize_expression(ty, subscope, e->keys.items[i]);
@@ -3955,7 +3981,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 symbolize_expression(ty, scope, s->each.array);
                 subscope = scope_new(ty, "(for-each)", scope, false);
                 symbolize_lvalue(ty, subscope, s->each.target, true, false);
-                type_assign(ty, s->each.target, type_iterable_type(ty, s->each.array->_type), 0);
+                type_assign_iterable(ty, s->each.target, s->each.array->_type, 0);
                 symbolize_statement(ty, subscope, s->each.body);
                 symbolize_expression(ty, subscope, s->each.cond);
                 symbolize_expression(ty, subscope, s->each.stop);
@@ -4856,19 +4882,7 @@ emit_function(Ty *ty, Expr const *e)
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
                         Expr *dec = v__(e->decorators, i);
-
-                        if (dec->type == EXPRESSION_FUNCTION_CALL) {
-                                avI(dec->args, NULL, 0);
-                                avI(dec->fconds, NULL, 0);
-                        } else if (dec->type == EXPRESSION_METHOD_CALL) {
-                                avI(dec->method_args, NULL, 0);
-                                avI(dec->mconds, NULL, 0);
-                        } else {
-                                fail("bro?");
-                        }
-
                         emit_expression(ty, dec);
-
                         emit_instr(DECORATE);
                         emit_symbol(info);
                 }
@@ -6208,6 +6222,8 @@ emit_dict_compr2(Ty *ty, Expr const *e)
                 emit_instr(POP);
         }
 
+        emit_statement(ty, e->compr.where, false);
+
         JumpPlaceholder cond_fail;
         if (e->dcompr.cond != NULL) {
                 cond_fail = (PLACEHOLDER_JUMP_IF_NOT)(ty, e->dcompr.cond);
@@ -6273,16 +6289,7 @@ emit_array_compr2(Ty *ty, Expr const *e)
 
         LABEL(start);
         emit_instr(LOOP_ITER);
-        //emit_instr(SAVE_STACK_POS);
-        //emit_instr(SENTINEL);
-        //emit_instr(CLEAR_RC);
-        //emit_instr(GET_NEXT);
-        //emit_instr(READ_INDEX);
-
-        //PLACEHOLDER_JUMP(JUMP_IF_NONE, done);
         PLACEHOLDER_JUMP(LOOP_CHECK, done);
-
-        //emit_instr(FIX_TO);
         emit_int(ty, (int)e->compr.pattern->es.count);
 
         add_location(ty, e, start.off, state.code.count);
@@ -6293,6 +6300,8 @@ emit_array_compr2(Ty *ty, Expr const *e)
                 emit_instr(POP_STACK_POS);
                 emit_instr(POP);
         }
+
+        emit_statement(ty, e->compr.where, false);
 
         JumpPlaceholder cond_fail;
         if (e->compr.cond != NULL) {
@@ -6939,7 +6948,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
 
                 for (size_t i = 0; i < e->args.count; ++i) {
-                        if (e->args.items[i] == NULL) {
+                        if (is_placeholder(v__(e->args, i))) {
                                 continue;
                         } else if (e->fconds.items[i] != NULL) {
                                 PLACEHOLDER_JUMP_IF_NOT(e->fconds.items[i], skip);
@@ -7772,18 +7781,18 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                 sym->type = ResolveConstraint(ty, constraint);
                 if (constraint != NULL && constraint->type == EXPRESSION_TYPE) {
                         sym->fixed = true;
-                        if (i == f->rest) {
-                                constraint->_type = type_array_of(
-                                        ty,
-                                        constraint->_type
-                                );
-                        } else if (i == f->ikwargs) {
-                                constraint->_type = type_dict_of(
-                                        ty,
-                                        TYPE_STRING,
-                                        constraint->_type
-                                );
-                        }
+                        //if (i == f->rest) {
+                        //        constraint->_type = type_array_of(
+                        //                ty,
+                        //                constraint->_type
+                        //        );
+                        //} else if (i == f->ikwargs) {
+                        //        constraint->_type = type_dict_of(
+                        //                ty,
+                        //                TYPE_STRING,
+                        //                constraint->_type
+                        //        );
+                        //}
                 }
                 if (dflt != NULL) {
                         //unify(ty, &sym->type, dflt->_type);
@@ -7801,6 +7810,19 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
         } else {
                 WITH_CTX(TYPE) {
                         symbolize_expression(ty, f->scope, f->return_type);
+                        for (int i = 0; i < vN(f->type_bounds); ++i) {
+                                TypeBound const *bound = v_(f->type_bounds, i);
+                                symbolize_expression(ty, f->scope, bound->var);
+                                if (!SymbolIsTypeVar(bound->var->symbol)) {
+                                        fail(
+                                                "type bound applied to non-type parameter %s%s%s",
+                                                TERM(93),
+                                                bound->var->identifier,
+                                                TERM(0)
+                                        );
+                                }
+                                symbolize_expression(ty, f->scope, bound->bound);
+                        }
                 }
                 ResolveConstraint(ty, f->return_type);
                 //type_scope_push(ty, true);
@@ -7851,6 +7873,11 @@ InjectRedpill(Ty *ty, Stmt *s)
 
         case STATEMENT_CLASS_DEFINITION:
                 def = &s->class;
+                if (def->redpilled) {
+                        return;
+                } else {
+                        def->redpilled = true;
+                }
                 class = class_get_class(ty, s->class.symbol);
                 for (int i = 0; i < vN(def->traits); ++i) {
                         Expr *trait = v__(def->traits, i);
@@ -7896,20 +7923,7 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 }
                         }
                 }
-                for (int i = 0; i < vN(def->traits); ++i) {
-                        Expr const *trait = v__(def->traits, i);
-                        Type *trait0 = type_resolve(ty, trait);
-                        if (
-                                (trait0 == NULL)
-                            ||  (trait0->type != TYPE_OBJECT)
-                            || !class_is_trait(ty, trait0->class->i)
-                        ) {
-                                PushContext(ty, trait);
-                                fail("sorry, but I won't allow it!");
-                        }
-
-                        class_implement_trait(ty, def->symbol, trait0->class->i);
-                }
+                AddClassTraits(ty, def);
                 for (int i = 0; i < vN(def->fields); ++i) {
                         Expr *f = v__(def->fields, i);
                         Expr *id = (f->type == EXPRESSION_EQ)
@@ -7982,6 +7996,15 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 HasBody(s->value) ? NULL : s->target->symbol->type,
                                 s->value->_type
                         );
+                } else {
+                        for (int i = 0; i < vN(s->value->functions); ++i) {
+                                Stmt *sub = (Stmt *)v__(s->value->functions, i);
+                                s->target->symbol->type = type_both(
+                                        ty,
+                                        s->target->symbol->type,
+                                        sub->value->_type
+                                );
+                        }
                 }
                 break;
         }
@@ -8518,6 +8541,13 @@ compiler_init(Ty *ty)
                 Symbol *sym = addsymbol(ty, global, c->name);
                 sym->class = c->i;
         }
+
+        class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_ARRAY, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_DICT, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_STRING, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_BLOB, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_GENERATOR, CLASS_ITER);
 
         static Class ANY_CLASS = { .i = CLASS_TOP, .name = "Any" };
         static Type  ANY_TYPE  = { .type = TYPE_OBJECT, .class = &ANY_CLASS, .concrete = true };
@@ -9282,11 +9312,42 @@ tyexpr(Ty *ty, Expr const *e)
                         "items", ARRAY(avElems),
                         "pattern", tyexpr(ty, e->compr.pattern),
                         "iter", tyexpr(ty, e->compr.iter),
-                        "cond", e->compr.cond == NULL ? NIL : tyexpr(ty, e->compr.cond)
+                        "cond", tyexpr(ty, e->compr.cond),
+                        "where", tystmt(ty, e->compr.where)
                 );
 
                 v.type |= VALUE_TAGGED;
                 v.tags = tags_push(ty, v.tags, TyArrayCompr);
+
+                break;
+        }
+        case EXPRESSION_DICT_COMPR:
+        {
+                Array *avElems = vA();
+
+                for (int i = 0; i < vN(e->keys); ++i) {
+                        vAp(
+                                avElems,
+                                tagged(
+                                        ty,
+                                        TyDictItem,
+                                        tyexpr(ty, v__(e->keys, i)),
+                                        tyexpr(ty, v__(e->values, i)),
+                                        NONE
+                                )
+                        );
+                }
+
+                v = vTn(
+                        "items", ARRAY(avElems),
+                        "default", tyexpr(ty, e->dflt),
+                        "pattern", tyexpr(ty, e->dcompr.pattern),
+                        "iter", tyexpr(ty, e->dcompr.iter),
+                        "cond", tyexpr(ty, e->dcompr.cond),
+                        "where", tystmt(ty, e->dcompr.where)
+                );
+
+                v = tagged(ty, TyDictCompr, v, NONE);
 
                 break;
         }
@@ -9586,10 +9647,13 @@ tyexpr(Ty *ty, Expr const *e)
                 }
 
                 v.type |= VALUE_TAGGED;
+
                 v.tags = tags_push(
                         ty,
                         0,
-                        (e->type == EXPRESSION_METHOD_CALL) ? TyMethodCall : TyDynMethodCall
+                        (e->type == EXPRESSION_METHOD_CALL)
+                                ? (e->maybe ? TyTryMethodCall : TyMethodCall)
+                                : (e->maybe ? TyTryDynMethodCall : TyDynMethodCall)
                 );
 
                 break;
@@ -9598,7 +9662,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v.items[0] = tyexpr(ty, e->object);
                 v.items[1] = tyexpr(ty, e->member);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(ty, 0, TyDynMemberAccess);
+                v.tags = tags_push(ty, 0, e->maybe ? TyTryDynMemberAccess : TyDynMemberAccess);
                 break;
         case EXPRESSION_MEMBER_ACCESS:
         case EXPRESSION_SELF_ACCESS:
@@ -9606,7 +9670,7 @@ tyexpr(Ty *ty, Expr const *e)
                 v.items[0] = tyexpr(ty, e->object);
                 v.items[1] = vSsz(e->member_name);
                 v.type |= VALUE_TAGGED;
-                v.tags = tags_push(ty, 0, TyMemberAccess);
+                v.tags = tags_push(ty, 0, e->maybe ? TyTryMemberAccess : TyMemberAccess);
                 break;
         case EXPRESSION_SUBSCRIPT:
                 v = vT(2);
@@ -10811,20 +10875,28 @@ cexpr(Ty *ty, Value *v)
                 break;
         }
         case TyMethodCall:
+        case TyTryMethodCall:
         case TyDynMethodCall:
+        case TyTryDynMethodCall:
         {
                 Value *method = tuple_get(v, "method");
 
-                if (tag == TyMethodCall) {
+                switch (tag) {
+                case TyTryMethodCall:
+                        e->maybe = true;
+                case TyMethodCall:
                         e->type = EXPRESSION_METHOD_CALL;
                         e->method_name = mkcstr(ty, method);
-                } else {
+                        break;
+
+                case TyTryDynMethodCall:
+                        e->maybe = true;
+                case TyDynMethodCall:
                         e->type = EXPRESSION_DYN_METHOD_CALL;
                         e->method = cexpr(ty, method);
-                }
+                        break;
 
-                Value *maybe = tuple_get(v, "maybe");
-                e->maybe = maybe != NULL && value_truthy(ty, maybe);
+                }
 
                 Value *object = tuple_get(v, "object");
                 e->object = cexpr(ty, object);
@@ -10915,6 +10987,7 @@ cexpr(Ty *ty, Value *v)
                 Value *pattern = tuple_get(v, "pattern");
                 Value *iter = tuple_get(v, "iter");
                 Value *cond = tuple_get(v, "cond");
+                Value *where = tget_nn(v, "where");
                 Value *items = tuple_get(v, "items");
 
                 if (pattern == NULL || iter == NULL)
@@ -10924,6 +10997,7 @@ cexpr(Ty *ty, Value *v)
                 e->compr.pattern = cexpr(ty, pattern);
                 e->compr.iter = cexpr(ty, iter);
                 e->compr.cond = (cond == NULL || cond->type == VALUE_NIL) ? NULL : cexpr(ty, cond);
+                e->compr.where = (where == NULL) ? NULL : cstmt(ty, where);
 
                 for (int i = 0; i < items->array->count; ++i) {
                         Value *entry = &items->array->items[i];
@@ -10936,13 +11010,54 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+        case TyDictCompr:
+        {
+                Value *pattern = tuple_get(v, "pattern");
+                Value *iter = tuple_get(v, "iter");
+                Value *cond = tget_nn(v, "cond");
+                Value *where = tget_nn(v, "where");
+                Value *dflt = tget_nn(v, "default");
+                Value *items = tuple_get(v, "items");
+
+                if (pattern == NULL || iter == NULL)
+                        goto Bad;
+
+                e->type = EXPRESSION_DICT_COMPR;
+                e->dflt = cexpr(ty, dflt);
+                e->dcompr.pattern = cexpr(ty, pattern);
+                e->dcompr.iter = cexpr(ty, iter);
+                e->dcompr.cond = cexpr(ty, cond);
+                e->dcompr.where = cstmt(ty, where);
+
+                for (int i = 0; i < vN(*items->array); ++i) {
+                        Value entry = unwrap(ty, v_(*items->array, i));
+                        Value *key = tget_nn(&entry, 0);
+                        Value *value = tget_nn(&entry, 1);
+                        avP(e->keys, cexpr(ty, key));
+                        avP(e->values, cexpr(ty, value));
+                }
+
+                break;
+        }
         case TyMemberAccess:
                 e->type = EXPRESSION_MEMBER_ACCESS;
                 e->object = cexpr(ty, &v->items[0]);
                 e->member_name = mkcstr(ty, &v->items[1]);
                 break;
+        case TyTryMemberAccess:
+                e->type = EXPRESSION_MEMBER_ACCESS;
+                e->maybe = true;
+                e->object = cexpr(ty, &v->items[0]);
+                e->member_name = mkcstr(ty, &v->items[1]);
+                break;
         case TyDynMemberAccess:
                 e->type = EXPRESSION_DYN_MEMBER_ACCESS;
+                e->object = cexpr(ty, &v->items[0]);
+                e->member = cexpr(ty, &v->items[1]);
+                break;
+        case TyTryDynMemberAccess:
+                e->type = EXPRESSION_DYN_MEMBER_ACCESS;
+                e->maybe = true;
                 e->object = cexpr(ty, &v->items[0]);
                 e->member = cexpr(ty, &v->items[1]);
                 break;
@@ -11540,6 +11655,26 @@ typarse(
         RestoreContext(ty, ctx);
 
         return e_;
+}
+
+
+static void
+AddClassTraits(Ty *ty, ClassDefinition const *def)
+{
+        for (int i = 0; i < vN(def->traits); ++i) {
+                Expr const *trait = v__(def->traits, i);
+                Type *trait0 = type_resolve(ty, trait);
+                if (
+                        (trait0 == NULL)
+                    ||  (trait0->type != TYPE_OBJECT)
+                    || !class_is_trait(ty, trait0->class->i)
+                ) {
+                        PushContext(ty, trait);
+                        fail("sorry, but I won't allow it!");
+                }
+
+                class_implement_trait(ty, def->symbol, trait0->class->i);
+        }
 }
 
 void
@@ -13164,6 +13299,23 @@ void
 CompilerScopePop(Ty *ty)
 {
         state.pscope = state.pscope->parent;
+}
+
+void
+CompilerBlackpill(Ty *ty, Stmt *s)
+{
+        InjectRedpill(ty, s);
+}
+
+void
+CompilerResolveExpr(Ty *ty, Expr *e)
+{
+        if (state.class < 0) {
+                symbolize_expression(ty, state.global, e);
+        } else {
+                Scope *scope = class_get_class(ty, state.class)->def->class.scope;
+                symbolize_expression(ty, scope, e);
+        }
 }
 
 /* vim: set sw=8 sts=8 expandtab: */

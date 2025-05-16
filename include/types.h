@@ -6,16 +6,19 @@
 #include "scope.h"
 #include "itable.h"
 
-typedef struct symbol     Symbol;
-typedef struct expression Expr;
-typedef struct class      Class;
-typedef struct type       Type;
-typedef struct constraint Constraint;
+typedef struct symbol       Symbol;
+typedef struct expression   Expr;
+typedef struct class        Class;
+typedef struct type         Type;
+typedef struct type_bound   TypeBound;
+typedef struct constraint   Constraint;
+typedef struct param_bounds ParamBounds;
 
 struct constraint {
         enum {
                 TC_2OP,
-                TC_EQ
+                TC_EQ,
+                TC_BOUND
         } type;
         union {
                 struct {
@@ -24,7 +27,13 @@ struct constraint {
                         Type *t1;
                         Type *rt;
                 };
+                TypeBound *bound;
         };
+};
+
+struct param_bounds {
+        U32Vector ids;
+        TypeVector bounds;
 };
 
 struct type {
@@ -61,12 +70,16 @@ struct type {
                                         Class *class;
                                         Type *ft;
                                         int tag;
+                                        U32Vector _bound;
+                                        TypeVector _args;
                                 };
                                 struct {
                                         Type *rt;
                                         Type *yields;
                                         Type *consumes;
                                         ParamVector params;
+                                        ConstraintVector constraints;
+                                        ParamBounds bounds;
                                 };
                                 struct {
                                         Type *_type;
@@ -92,9 +105,8 @@ struct type {
                                         Type *val;
                                 };
                         };
-                        TypeVector args;
                         U32Vector bound;
-                        ConstraintVector constraints;
+                        TypeVector args;
                 };
                 struct {
                         TypeVector types;
@@ -114,6 +126,8 @@ struct type_env {
 
 #define PARAM(id, t0, req) ((Param){ .name = (id), .type = (t0), .required = (req) })
 #define PARAMx(...) ((Param){ __VA_ARGS__ })
+
+#define CONSTRAINT(...) ((Constraint){ __VA_ARGS__ })
 
 
 extern Type *TYPE_INT;
@@ -268,13 +282,7 @@ Expr *
 type_find_member(Ty *ty, Type *t0, char const *name);
 
 Type *
-type_array_of(Ty *ty, Type *t0);
-
-Type *
-type_dict_of(Ty *ty, Type *t0, Type *t1);
-
-Type *
-type_iterable_type(Ty *ty, Type *t0);
+type_iterable_type(Ty *ty, Type *t0, int n);
 
 Type *
 type_not_nil(Ty *ty, Type *t0);
@@ -326,6 +334,23 @@ type_is_concrete(Ty *ty, Type const *t0);
 
 bool
 type_is_tvar(Type const *t0);
+
+inline static Type *
+iterable_type_for(Ty *ty, Expr const *e, Type *t0)
+{
+        if (e != NULL && e->type == EXPRESSION_LIST) {
+                return type_iterable_type(ty, t0, vN(e->es));
+        } else {
+                return type_iterable_type(ty, t0, 1);
+        }
+}
+
+
+inline static void
+type_assign_iterable(Ty *ty, Expr *e, Type *t0, int flags)
+{
+        type_assign(ty, e, iterable_type_for(ty, e, t0), flags);
+}
 
 #endif
 

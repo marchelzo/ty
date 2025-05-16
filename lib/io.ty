@@ -6,7 +6,7 @@ pub const FBF = stdio._IOFBF
 pub const LBF = stdio._IOLBF
 pub const NBF = stdio._IONBF
 
-pub use BufferingMode = typeof FBF | typeof LBF | typeof NBF
+pub use BufferingMode = (typeof FBF) | (typeof LBF) | (typeof NBF)
 
 pub SEEK_SET = stdio.SEEK_SET
 pub SEEK_CUR = stdio.SEEK_CUR
@@ -57,9 +57,9 @@ pub class Stream : Iter {
         stdio.fseek(@f, *args)
     }
 
-    nextLine() {
+    nextLine() -> String | nil {
         if let $line = stdio.fgets(self.f) {
-            return line
+            line
         } else if stdio.fseek(self.f, 0, stdio.SEEK_SET) == -1 {
             stdio.clearerr(self.f)
         }

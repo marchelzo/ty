@@ -368,6 +368,12 @@ IsTopLevel(Symbol const *sym);
 Scope *
 GetNamespace(Ty *ty, Namespace *ns);
 
+void
+CompilerBlackpill(Ty *ty, Stmt *s);
+
+void
+CompilerResolveExpr(Ty *ty, Expr *e);
+
 char const *
 DumpProgram(
         Ty *ty,

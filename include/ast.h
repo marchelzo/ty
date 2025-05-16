@@ -8,17 +8,18 @@
 #include "vec.h"
 #include "scope.h"
 
-typedef vec(struct expression *) expression_vector;
-
 typedef struct scope Scope;
 typedef struct symbol Symbol;
 typedef struct type Type;
 
-struct expression;
-struct value;
-
 typedef struct expression Expr;
 typedef struct statement Stmt;
+typedef struct type_bound TypeBound;
+typedef struct type Type;
+
+typedef vec(Expr *) expression_vector;
+typedef vec(TypeBound) TypeBoundVector;
+
 
 typedef Expr *ExprTransform(Expr *, Scope *, void *);
 typedef Expr *TypeTransform(Expr *, Scope *, void *);
@@ -48,6 +49,7 @@ struct class_definition {
         int symbol;
         bool pub;
         bool is_trait;
+        bool redpilled;
         char *name;
         char const *doc;
         Location loc;
@@ -238,6 +240,7 @@ typedef struct class_definition ClassDefinition;
         X(MACRO_INVOCATION),                                                          \
         X(FUN_MACRO_INVOCATION),                                                      \
         X(CTX_INFO),                                                                  \
+        X(PLACEHOLDER),                                                               \
         X(VALUE),                                                                     \
         X(MAX_TYPE)
 
@@ -252,6 +255,11 @@ typedef struct class_definition ClassDefinition;
         ((char *)(src)) + offsetof(Expr, has_resources) + 1, \
         sizeof (Expr) - offsetof(Expr, has_resources) - 1    \
 )
+
+typedef struct type_bound {
+        Expr *var;
+        Expr *bound;
+} TypeBound;
 
 struct expression {
         void *arena;
@@ -296,9 +304,10 @@ struct expression {
                         expression_vector aconds;
                         vec(bool) optional;
                         struct {
-                                struct expression *pattern;
-                                struct expression *iter;
-                                struct expression *cond;
+                                Expr *pattern;
+                                Expr *iter;
+                                Expr *cond;
+                                Stmt *where;
                         } compr;
                 };
                 struct {
@@ -394,6 +403,7 @@ struct expression {
                         };
                         vec(Symbol *) param_symbols;
                         vec(Symbol *) bound_symbols;
+                        TypeBoundVector type_bounds;
                         Stmt *body;
                         Expr *overload;
                         bool has_defer;
@@ -413,15 +423,17 @@ struct expression {
                         StringVector kws;
                 };
                 struct {
-                        struct symbol *dtmp;
+                        Symbol *dtmp;
                         expression_vector keys;
                         expression_vector values;
+                        expression_vector dconds;
                         struct {
-                                struct expression *pattern;
-                                struct expression *iter;
-                                struct expression *cond;
+                                Expr *pattern;
+                                Expr *iter;
+                                Expr *cond;
+                                Stmt *where;
                         } dcompr;
-                        struct expression *dflt;
+                        Expr *dflt;
                 };
                 struct {
                         struct expression *container;

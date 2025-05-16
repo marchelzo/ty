@@ -203,7 +203,24 @@ token_show_type(Ty *ty, int type)
         case TOKEN_COMMENT:            return "comment";
         case TOKEN_REGEX:              return "regex";
         case TOKEN_ERROR:              return "ERROR";
-        default:                       snprintf(token_show_buffer, 512, "token '%c'", type); return sclone(ty, token_show_buffer);
+
+        default:
+                if (type > KEYWORD_TYPE_MIN) {
+                        snprintf(
+                                token_show_buffer,
+                                512,
+                                "keyword '%s'",
+                                keyword_show(type)
+                        );
+                } else {
+                        snprintf(
+                                token_show_buffer,
+                                512,
+                                "token '%c'",
+                                type
+                        );
+                }
+                return sclonea(ty, token_show_buffer);
         }
 }
 
