@@ -98,7 +98,8 @@ typedef struct token {
 
         union {
                 enum {
-                        KEYWORD_RETURN = INT_MAX - 512,
+                        KEYWORD_TYPE_MIN = INT_MAX - 512,
+                        KEYWORD_RETURN,
                         KEYWORD_BREAK,
                         KEYWORD_LET,
                         KEYWORD_CONTINUE,

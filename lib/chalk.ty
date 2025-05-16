@@ -2,8 +2,6 @@ import ty
 import ty.parse
 import ty.token
 
-//fn dbg(x) { x }
-
 tag ChalkError;
 
 pub fn escape(text) {
@@ -74,7 +72,7 @@ pub fn rand-hsl(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
     (sample(h), sample(s), sample(l))
 }
 
-fn parse-style(style: String, chalk: Chalk2) {
+pub fn parse-style(style: String, chalk: Chalk2) {
     match style {
         /.*\?$/ => do {
             let (h, s, l) = rand-hsl()
@@ -109,6 +107,7 @@ class Chalk2 {
         let out = Blob()
         let ostack = []
 
+#|if getenv('NO_COLOR') == nil
         fn update() {
             let new-style = stack.flat().fold(\{*_, *_})
             if new-style != style {
@@ -116,6 +115,9 @@ class Chalk2 {
             }
             style = new-style
         }
+#|else
+        fn update() {}
+#|]
 
         fn get-style(name) {
             match @styles[name] {
@@ -123,7 +125,7 @@ class Chalk2 {
                 _      => throw ChalkError("unknown style: {name}")
             }
         }
-
+    
         for match parts {
             m: RegexMatch => {
                 continue if plain
@@ -215,31 +217,39 @@ class Chalk2 {
 }
 
 class Chalk {
-    props: Tuple
+    __props: {
+        fg: ?[Int],
+        bg: ?[Int],
+        bright: ?Bool,
+        bold: ?Bool,
+        italic: ?Bool,
+        underline: ?Bool,
+        reverse: ?Bool
+    }
 
     init(other: ?Chalk, %props) {
-        @props = {
-            *(other.?props ?? {}),
+        __props = {
+            *(other.?__props ?? {}),
             *tuple(**props)
         }
     }
 
     sgr {
-        let fg = match @props.?fg {
-            [fg] and @props.?bright => [fg + 60],
+        let fg: _ = match __props.?fg {
+            [fg] and __props.?bright => [fg + 60],
             fg => fg
         }
 
-        let bg = match @props.?bg {
-            [bg] and @props.?bg-bright => [bg + 60],
+        let bg: _ = match __props.?bg {
+            [bg] and __props.?bg-bright => [bg + 60],
             bg => bg
         }
 
         let props = [
-            1 if @props.?bold,
-            3 if @props.?italic,
-            4 if @props.?underline,
-            7 if @props.?reverse,
+            1 if __props.?bold,
+            3 if __props.?italic,
+            4 if __props.?underline,
+            7 if __props.?reverse,
             *fg if fg != nil,
             *bg if bg != nil
         ]

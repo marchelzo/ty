@@ -37,7 +37,7 @@ fn lex::peek(i: Int = 0) -> Token;
 
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
-fn print(*args, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
+fn print(*args: _, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
 fn int[a](x: a, base: ?Int) -> Int;
 fn float[a](x: a) -> Float;
 fn min[a](*xs: a) -> a;
@@ -238,17 +238,9 @@ class Array[T] : Iterable[T] {
         return ys
     }
 
-    T() {
-        let self: _ = self
-        let t = [[nil for _ in self] for _ in self[0]]
-
-        for i in ..#self {
-            for j in ..#self[i] {
-                t[j][i] = self[i][j]
-            }
-        }
-
-        return t
+    transpose[U]() -> Array[T] where T: Array[U] {
+        let xs = [(x, i) for x, i in self[0]]
+        [[self[j][i] for i in ..#self] for j in ..#self[0]]
     }
 
     indices*() {
@@ -368,6 +360,8 @@ class Array[T] : Iterable[T] {
     __iter__*() {
         for x in self { yield x }
     }
+
+    __iter2__() -> Iter[|T, Int|];
 
     __it__() {
         self
@@ -551,7 +545,7 @@ macro __define_ast! {
 
 use AST = __define_ast!(fn (t0) { t0 })
 
-class Dict[K, V] : Iterable[K] {
+class Dict[K, V] : Iterable[K, V] {
     init(ks, vs) {
         if ks && vs {
             return %{ k: v for (k, v) in ks.zip(vs) }
@@ -598,6 +592,8 @@ class Dict[K, V] : Iterable[K] {
     __iter__() {
         return @keys().zip(@values()).__iter__()
     }
+
+    __iter2__() -> Iter[(K, V)];
 
     __subscript__(key: K) -> V {
         self[key]
@@ -767,7 +763,7 @@ class String : Iterable[String] {
         self.slice(0, -#end if end == self.slice(-#end))
     }
 
-    __iter__*() -> Iterable[String] {
+    __iter__*() -> Generator[String] {
         for c in self.chars() {
             yield c
         }
@@ -984,7 +980,7 @@ class Float {
             },
 
             [range] => {
-                @clamp(range.low(), range.high())
+                clamp(range.low(), range.high())
             }
         }
     }
@@ -1088,6 +1084,10 @@ class Generator[T] : Iter[T] {
     __next__() -> Some[T] | None {
         self()
     }
+
+    __call__() -> Some[T] | None {
+        self()
+    }
 }
 
 class __Tag {
@@ -1127,10 +1127,10 @@ class Tuple {
 
     %(fs) {
         if self.named? {
-            let myMembers = members(self)
-            let tMembers = members(fs)
+            let myMembers: Dict[String, _] = members(self)
+            let tMembers: Dict[String, _] = members(fs)
 
-            for k, v in tMembers {
+            for k, (v: _) in tMembers {
                 if let $c = myMembers[k] {
                     myMembers[k] = (c.?isTuple() && v.?isTuple()) ? (c % v) : v(c)
                 } else {
@@ -1176,6 +1176,8 @@ class Tuple {
 
         return true
     }
+
+    __iter__() -> Iter[_];
 }
 
 tag MatchError;
@@ -1371,8 +1373,8 @@ trait Iterable[T] {
         @__iter__().intersperse(x)
     }
 
-    groupsOf(n, keepShort) {
-        @__iter__().groupsOf(n, keepShort)
+    groupsOf(n, keepShort: Bool = true) {
+        @__iter__().groupsOf(n, keepShort=keepShort)
     }
 
     classify(f = id) {
@@ -1587,8 +1589,8 @@ trait Iter[T] < Iterable[T] {
             _  => throw IndexError(self, 0)
         }
 
-        for f ~> t in self {
-            for x, i in t {
+        for f ~> (t: _) in self {
+            for x, (i: _) in t {
                 lists[i].push(x)
             }
         }
@@ -1993,7 +1995,7 @@ trait Iter[T] < Iterable[T] {
         return true
     }
 
-    static tee[T](it: Iterable[T], n: Int = 2) -> Iterable[Iterable[T]] {
+    static tee[T, Ts](it: Iterable[T], n: Int = 2) -> (Iterable[T], *Ts) {
         let queues: [_] = [Queue() for _ in ..n]
         let it = it.__iter__()
 

@@ -127,17 +127,22 @@ enum {
         X(ArrayItem)            \
         X(Call)                 \
         X(MethodCall)           \
+        X(TryMethodCall)        \
         X(DynMethodCall)        \
+        X(TryDynMethodCall)     \
         X(TagPattern)           \
         X(Tagged)               \
         X(PatternAlias)         \
         X(ChoicePattern)        \
         X(MemberAccess)         \
+        X(TryMemberAccess)      \
         X(DynMemberAccess)      \
+        X(TryDynMemberAccess)   \
         X(Subscript)            \
         X(Slice)                \
         X(NotNil)               \
         X(ArrayCompr)           \
+        X(DictCompr)            \
         X(Try)                  \
         X(Eval)                 \
         X(Cond)                 \

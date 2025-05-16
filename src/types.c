@@ -1,3 +1,4 @@
+#include "scope.h"
 #include "ty.h"
 #include "types.h"
 #include "class.h"
@@ -42,7 +43,12 @@ enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 
 #define NewObject(c, ...) ((NewObject)(ty, c, __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewRecord(...) ((NewRecord)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewTuple(...) ((NewTuple)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
+#define NewList(...) ((NewList)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
 #define NewFunction(...) ((NewFunction)(ty, __VA_ARGS__ __VA_OPT__(,) NULL))
+
+#define NewDict(k, v) NewObject(CLASS_DICT, (k), (v))
+#define NewArray(t) NewObject(CLASS_ARRAY, (t))
 
 #if 0
 static inline int get_stack_depth(void) {
@@ -80,8 +86,8 @@ static inline int get_stack_depth(void) {
 
 #define XXTLOG(fmt, ...) (EnableLogging > 0 && printf("[%2d] " fmt "\n", CurrentLevel __VA_OPT__(,) __VA_ARGS__))
 #define XXXTLOG(fmt, ...) (printf("[%2d] " fmt "\n", CurrentLevel __VA_OPT__(,) __VA_ARGS__))
-#define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && printf("%*s" fmt "\n", 4*d, "" __VA_OPT__(,) __VA_ARGS__))
-#define XDPRINT(cond, fmt, ...) ((cond) && printf("%*s" fmt "\n", 4*d, "" __VA_OPT__(,) __VA_ARGS__))
+#define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && printf("%*s" fmt "\n", 4*ud, "" __VA_OPT__(,) __VA_ARGS__))
+#define XDPRINT(cond, fmt, ...) ((cond) && printf("%*s" fmt "\n", 4*ud, "" __VA_OPT__(,) __VA_ARGS__))
 
 static void *TVAR = (void *)&TVAR;
 static void *HOLE = (void *)&HOLE;
@@ -184,7 +190,16 @@ static Type *
 ClassFunctionType(Ty *ty, Type *t0);
 
 static Type *
+ToFunctionType(Ty *ty, Type *t0);
+
+static Type *
 TagFunctionType(Ty *ty, Type *t0);
+
+Type **
+FindRecordEntry(Type const *t0, int i, char const *name);
+
+static Type *
+TupleSubscriptType(Ty *ty, Type const *t0);
 
 static char *
 VarName(Ty *ty, u32 id);
@@ -224,6 +239,8 @@ static int VarLetter = 'a';
 static int VarNumber = 0;
 
 static U32Vector FixedTypeVars;
+
+static int ud = 0;
 
 inline static bool
 FuelCheck(void)
@@ -294,7 +311,9 @@ LookEnv(Ty *ty, TypeEnv *env, u32 id)
                 return NULL;
         } else {
                 Value const *v = itable_lookup(ty, &env->vars, id);
-                return (v == NULL || v->type == VALUE_NIL) ? NULL : v->ptr;
+                return (v == NULL) ? LookEnv(ty, env->parent, id)
+                     : (v->type == VALUE_NIL) ? NULL
+                     : v->ptr;
         }
 }
 
@@ -661,6 +680,45 @@ static Type *
         while ((name = va_arg(ap, char const *)) != NULL) {
                 t1 = va_arg(ap, Type *);
                 avP(t0->names, name);
+                avP(t0->types, t1);
+        }
+
+        va_end(ap);
+
+        return t0;
+}
+
+static Type *
+(NewTuple)(Ty *ty, ...)
+{
+        Type *t0 = NewType(ty, TYPE_TUPLE);
+
+        Type *t1;
+
+        va_list ap;
+        va_start(ap, ty);
+
+        while ((t1 = va_arg(ap, Type *)) != NULL) {
+                avP(t0->names, NULL);
+                avP(t0->types, t1);
+        }
+
+        va_end(ap);
+
+        return t0;
+}
+
+static Type *
+(NewList)(Ty *ty, ...)
+{
+        Type *t0 = NewType(ty, TYPE_LIST);
+
+        Type *t1;
+
+        va_list ap;
+        va_start(ap, ty);
+
+        while ((t1 = va_arg(ap, Type *)) != NULL) {
                 avP(t0->types, t1);
         }
 
@@ -2142,19 +2200,52 @@ type_function(Ty *ty, Expr const *e, bool tmp)
 
         //fprintf(stderr, "================== %s ======================\n", e->name);
 
+        U32Vector bounded = {0};
+        TypeVector bounds = {0};
+
+        if (vN(e->type_bounds) > 0 && !tmp) {
+                ty->tenv = NewEnv(ty, ty->tenv);
+                for (int i = 0; i < vN(e->type_bounds); ++i) {
+                        TypeBound const *bound = v_(e->type_bounds, i);
+                        Type *var0 = type_resolve(ty, bound->var);
+                        Type *b0 = type_fixed(ty, type_resolve(ty, bound->bound));
+                        avP(t->constraints, CONSTRAINT(.type = TC_EQ, .t0 = var0, .t1 = b0));
+                        PutEnv(ty, ty->tenv, var0->id, b0);
+                }
+        }
+
+        //Symbol *self = scope_local_lookup(ty, e->scope, "self");
+        //if (self != NULL) {
+        //        self->type = Inst(ty, self->type, &bounded, &bounds);
+        //}
+
         if (e->return_type != NULL) {
                 Type *rt = SeqToList(type_resolve(ty, e->return_type));
                 if (e->class > -1) {
                         Class *class = class_get_class(ty, e->class);
                         rt = SolveMemberAccess(ty, class->object_type, rt);
                 }
+                rt = Inst(ty, rt, &bounded, &bounds);
                 t->rt = MakeConcrete(ty, rt, NULL);
         } else {
                 t->rt = tmp ? AddParam(ty, t) : NewHole(ty);
         }
 
+        // Array[T=Array[Int]]
+        //
+        //   [U]() -> Array[Array[U]]  where Array[Array[Int]]: Array[U]
+        //
+
         if (e->yield_type != NULL) {
-                t->yields = type_fixed(ty, type_resolve(ty, e->yield_type));
+                t->yields = type_fixed(
+                        ty,
+                        Inst(
+                                ty,
+                                type_resolve(ty, e->yield_type),
+                                &bounded,
+                                &bounds
+                        )
+                );
         }
 
         for (int i = 0; i < vN(e->type_params); ++i) {
@@ -2169,13 +2260,15 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                 Type *p0 = psym->type;
                 if (p0 == NULL) {
                         p0 = tmp ? AddParam(ty, t) : NewVar(ty);
+                } else {
+                        p0 = type_fixed(ty, p0);
                 }
 
                 if (!tmp) {
                         if (i == e->rest) {
-                                psym->type = type_fixed(ty, ArrayOf(ty, p0));
+                                psym->type = type_fixed(ty, NewArray(p0));
                         } else if (i == e->ikwargs) {
-                                psym->type = type_fixed(ty, DictOf(ty, TYPE_STRING, p0));
+                                psym->type = type_fixed(ty, NewDict(TYPE_STRING, p0));
                         } else if (psym->type == NULL && v__(e->dflts, i) != NULL) {
                                 psym->type = p0;
                                 p0 = Either(ty, p0, NIL_TYPE);
@@ -2450,9 +2543,21 @@ PropagateX(Ty *ty, Type *t0, bool drill, int mode)
                                 CloneVec(t0->params);
                                 cloned = true;
                         }
-                        *v_(t0->params, i) = *p;
                         v_(t0->params, i)->type = t1;
                         t0->concrete &= IsConcrete(t1);
+                }
+                for (int i = 0; i < vN(t0->constraints); ++i) {
+                        Constraint const *c0 = v_(t0->constraints, i);
+                        t1 = PropagateX(ty, c0->t0, drill, mode);
+                        t2 = PropagateX(ty, c0->t1, drill, mode);
+                        if ((t1 != c0->t0 || t2 != c0->t1) && !cloned) {
+                                t0 = CloneType(ty, t0);
+                                CloneVec(t0->constraints);
+                                cloned = true;
+                        }
+                        v_(t0->constraints, i)->t0 = t1;
+                        v_(t0->constraints, i)->t1 = t2;
+                        t0->concrete = t0->concrete && IsConcrete(t1) && IsConcrete(t2);
                 }
                 t1 = PropagateX(ty, t0->rt, drill, mode);
                 if (t1 != t0->rt && !cloned) {
@@ -2868,11 +2973,19 @@ GetTrait(Ty *ty, Type *t0, int i)
 
         ClassDefinition *def = &t0->class->def->class;
 
+        if (!def->redpilled) {
+                CompilerBlackpill(ty, t0->class->def);
+        }
+
         if (vN(def->traits) <= i) {
                 return NULL;
         }
 
         Type *trait0 = type_resolve(ty, v__(def->traits, i));
+
+        if (trait0 == 0) {
+                TypeError("unable to resolve traits of %s", ShowType(t0));
+        }
 
         return SolveMemberAccess(ty, t0, trait0);
 }
@@ -2953,18 +3066,77 @@ GetField(Ty *ty, Type *t0, int i, Type **u0, char const **name)
         return false;
 }
 
+static Type *
+ResolveSuperInstance(Ty *ty, Type *t0, Class const *class)
+{
+        XXTLOG("ResolveSuperInstance():");
+        XXTLOG("  t0: %s", ShowType(t0));
+        XXTLOG("   c: %s", class->name);
+
+        while (t0->class != class) {
+                if (class_is_subclass(ty, t0->class->super->i, class->i)) {
+                        XXTLOG("  t0 <- super: %s", t0->class->super->name);
+                        t0 = GetSuper(ty, t0);
+                } else {
+                        if (t0->class->def == NULL) {
+                                CompileError(ty, "can't unify %s before we've seen its definition", ShowType(t0));
+                        }
+                        if (!t0->class->def->class.redpilled) {
+                                CompilerBlackpill(ty, t0->class->def);
+                        }
+                        for (int i = 0;; ++i) {
+                                XXTLOG("  check trait #%d", i + 1);
+                                Type *trait0 = GetTrait(ty, t0, i);
+                                XXTLOG("  trait: %s", trait0->class->name);
+                                if (class_is_subclass(ty, trait0->class->i, class->i)) {
+                                        t0 = trait0;
+                                        break;
+                                }
+                        }
+                }
+        }
+
+        return t0;
+}
+
 static bool
 TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
 {
-        if (!IsRecordLike(t0) || !IsRecordLike(t1)) {
-                return false;
+        if (
+                (TypeType(t0) == TYPE_FUNCTION)
+             || (TypeType(t0) == TYPE_FUNCTION)
+        ) {
+                t0 = ToFunctionType(ty, t0);
+                t1 = ToFunctionType(ty, t1);
+                return (t0 != NULL)
+                    && (t1 != NULL)
+                    && UnifyX(ty, t0, t1, super, false);
         }
 
         if (
                 TypeType(t0) == TYPE_OBJECT
              && TypeType(t1) == TYPE_OBJECT
-             && t0->class == t1->class
         ) {
+                if (t0->class->def == NULL || t1->class->def == NULL) {
+                        return true;
+                }
+
+                if (
+                        !class_is_subclass(
+                                ty,
+                                super ? t1->class->i : t0->class->i,
+                                super ? t0->class->i : t1->class->i
+                        )
+                ) {
+                        return false;
+                }
+
+                if (super) {
+                        t1 = ResolveSuperInstance(ty, t1, t0->class);
+                } else {
+                        t0 = ResolveSuperInstance(ty, t0, t1->class);
+                }
+
                 for (int i = 0; i < ArgCount(t0) && i < ArgCount(t1); ++i) {
                         Type *arg0 = v__(t0->args, i);
                         Type *arg1 = v__(t1->args, i);
@@ -2981,27 +3153,23 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                         }
                 }
 
-                return true;
-        }
+                if (t0->class->i == CLASS_ITERABLE) {
+                        if (vN(t0->args) < vN(t1->args)) {
+                                UnifyX(ty, TYPE_INT, v__(t1->args, vN(t0->args)), super, false);
+                        }
+                        if (vN(t1->args) < vN(t0->args)) {
+                                UnifyX(ty, v__(t0->args, vN(t1->args)), TYPE_INT, super, false);
+                        }
+                }
 
-        if (
-                TypeType(t0) == TYPE_OBJECT
-             && TypeType(t1) == TYPE_OBJECT
-             && !class_is_subclass(
-                     ty,
-                     super ? t1->class->i : t0->class->i,
-                     super ? t0->class->i : t1->class->i
-                )
-        ) {
-                return false;
+                return true;
         }
 
         if (
                 TypeType(t0) == TYPE_TUPLE
              && TypeType(t1) == TYPE_TUPLE
-             && false
         ) {
-                Type *t2;
+                Type **t2;
 
                 if (super) {
                         for (int i = 0; i < vN(t0->types); ++i) {
@@ -3011,15 +3179,38 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         break;
                                 }
                                 char const *name = v__(t0->names, i);
-                                t2 = (name != NULL)
-                                   ? RecordField(ty, t1, name)
-                                   : RecordElem(t1, i);
+                                t2 = FindRecordEntry(t1, i, name);
                                 if (t2 == NULL) {
-                                        return false;
+                                        if (
+                                                name != NULL
+                                             && strcmp(name, "__subscript__") == 0
+                                        ) {
+                                                if (
+                                                        !UnifyX(
+                                                                ty,
+                                                                v__(t0->types, i),
+                                                                TupleSubscriptType(ty, t1),
+                                                                super,
+                                                                false
+                                                        )
+                                                ) {
+                                                        return false;
+                                                }
+                                        } else if (t1->fixed) {
+                                                return false;
+                                        } else {
+                                                avP(t1->names, name);
+                                                avP(t1->types, v__(t0->types, i));
+                                        }
+                                } else if (!UnifyX(ty, v__(t0->types, i), *t2, super, false)) {
+                                        if (!t0->fixed) {
+                                                unify2(ty, v_(t0->types, i), *t2);
+                                        } else if (!t1->fixed) {
+                                                type_intersect(ty, t2, v__(t0->types, i));
+                                        } else {
+                                                return false;
+                                        }
                                 }
-                                //!UnifyX(ty, v__(t0->types, i), t2, super, false)) {
-                                        unify2(ty, v_(t0->types, i), t2);
-                                //}
                         }
                 } else {
                         for (int i = 0; i < vN(t1->types); ++i) {
@@ -3029,11 +3220,37 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                                         break;
                                 }
                                 char const *name = v__(t1->names, i);
-                                t2 = (name != NULL)
-                                   ? RecordField(ty, t0, name)
-                                   : RecordElem(t0, i);
-                                if (t2 != NULL && !UnifyX(ty, t2, v__(t1->types, i), super, false)) {
-                                        combine(ty, v_(t1->types, i), t2, !super);
+                                t2 = FindRecordEntry(t0, i, name);
+                                if (t2 == NULL) {
+                                        if (
+                                                name != NULL
+                                             && strcmp(name, "__subscript__") == 0
+                                        ) {
+                                                if (
+                                                        !UnifyX(
+                                                                ty,
+                                                                v__(t1->types, i),
+                                                                TupleSubscriptType(ty, t0),
+                                                                !super,
+                                                                false
+                                                        )
+                                                ) {
+                                                        return false;
+                                                }
+                                        } else if (t0->fixed) {
+                                                return false;
+                                        } else {
+                                                avP(t0->names, name);
+                                                avP(t0->types, v__(t1->types, i));
+                                        }
+                                } else if (!UnifyX(ty, *t2, v__(t1->types, i), super, false)) {
+                                        if (!t1->fixed) {
+                                                unify2(ty, v_(t1->types, i), *t2);
+                                        } else if (!t0->fixed) {
+                                                type_intersect(ty, t2, v__(t1->types, i));
+                                        } else {
+                                                return false;
+                                        }
                                 }
                         }
                 }
@@ -3041,19 +3258,8 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 return true;
         }
 
+
         if (super) {
-                for (int i = 0;; ++i) {
-                        Type *trait1 = GetTrait(ty, t1, i);
-
-                        if (trait1 == NULL) {
-                                break;
-                        }
-
-                        if (UnifyX(ty, t0, trait1, super, false)) {
-                                return true;
-                        }
-                }
-
                 for (int i = 0;; ++i) {
                         Type *u0;
                         char const *name;
@@ -3085,6 +3291,18 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 }
 
                 for (int i = 0;; ++i) {
+                        Type *trait1 = GetTrait(ty, t1, i);
+
+                        if (trait1 == NULL) {
+                                break;
+                        }
+
+                        if (UnifyX(ty, t0, trait1, super, false)) {
+                                return true;
+                        }
+                }
+
+                for (int i = 0;; ++i) {
                         Type *trait0 = GetTrait(ty, t0, i);
 
                         if (trait0 == NULL) {
@@ -3101,18 +3319,6 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
                 return (super0 == NULL)
                     || UnifyX(ty, super0, t1, super, false);
         } else {
-                for (int i = 0;; ++i) {
-                        Type *trait0 = GetTrait(ty, t0, i);
-
-                        if (trait0 == NULL) {
-                                break;;
-                        }
-
-                        if (UnifyX(ty, trait0, t1, super, false)) {
-                                return true;
-                        }
-                }
-
                 for (int i = 0;; ++i) {
                         Type *u1;
                         char const *name;
@@ -3133,6 +3339,18 @@ TryUnifyObjects(Ty *ty, Type *t0, Type *t1, bool super)
 
                         if (!UnifyX(ty, Inst1(ty, u0), Inst1(ty, u1), super, false)) {
                                 return false;
+                        }
+                }
+
+                for (int i = 0;; ++i) {
+                        Type *trait0 = GetTrait(ty, t0, i);
+
+                        if (trait0 == NULL) {
+                                break;;
+                        }
+
+                        if (UnifyX(ty, trait0, t1, super, false)) {
+                                return true;
                         }
                 }
 
@@ -3160,7 +3378,6 @@ static bool
 UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 {
 #define UnifyXD(ty, t0, t1, su, ch, so) ((UnifyXD)(ty, t0, t1, su, ch, so) || ((DPRINT(check, "[%d]: %s   !%s   %s", __LINE__, ShowType(t0), (super ? ">" : "<"), ShowType(t1)), false)))
-        static int d = 0;
         static TypePairVector visiting;
 
         TypeCheckCounter += 1;
@@ -3172,15 +3389,15 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         Type *_t0 = t0;
         Type *_t1 = t1;
 
-        d += 1;
+        ud += 1;
 
         char line[1024] = {0};
-        for (int i = 0; i < d; ++i) {
-                strcat(line, i + 1 == d ? "====" : "    ");
+        for (int i = 0; i < ud; ++i) {
+                strcat(line, i + 1 == ud ? "====" : "    ");
         }
 
         char const *color;
-        switch (d) {
+        switch (ud) {
         case 0: color = TERM(33); break;
         case 1: color = TERM(34); break;
         case 2: color = TERM(95); break;
@@ -3209,7 +3426,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 visit_pair(&visiting, t0, t1);
         }
 
-        if (d > 72) {
+        if (ud > 72) {
                 goto Fail;
         }
 
@@ -3319,6 +3536,24 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         ) {
                 goto Success;
         }
+
+        if (IsTVar(t0)) {
+                Type *bound0 = LookEnv(ty, ty->tenv, t0->id);
+                if (bound0 != NULL) {
+                        t0 = bound0;
+                }
+        }
+
+        if (IsTVar(t1)) {
+                Type *bound1 = LookEnv(ty, ty->tenv, t1->id);
+                if (bound1 != NULL) {
+                        t1 = bound1;
+                }
+        }
+
+        DPRINT(true, "After applying bounds:");
+        DPRINT(true, "    %s", ShowType(t0));
+        DPRINT(true, "    %s", ShowType(t1));
 
         if (IsBottom(t0) || (IsBottom(t1) && !IsFixed(t1))) {
                 goto Success;
@@ -3554,7 +3789,7 @@ Success:
                 }
         }
 
-        d -= 1;
+        ud -= 1;
         vvX(visiting);
 
         XXTLOG("%s%s%s%s%s", color, line, ok ? TERM(92) : TERM(91), ok ? "OK" : "FAILED", TERM(0));
@@ -3653,10 +3888,6 @@ BindConstraint(Ty *ty, Constraint const *c, bool check)
                 break;
 
         case TC_EQ:
-                //t0 = Propagate(ty, c->t0);
-                //t1 = Propagate(ty, c->t1);
-                //BindVars(ty, t1, t0, false);
-                //BindVars(ty, t0, t1, check);
                 XXTLOG("BindConstraint(=):");
                 XXTLOG("    %s", ShowType(c->t0));
                 XXTLOG("    %s", ShowType(c->t1));
@@ -3759,6 +3990,36 @@ ResolveAlias(Ty *ty, Type const *t0)
 }
 
 static Type *
+ToFunctionType(Ty *ty, Type *t0)
+{
+        Type *t1 = NULL;
+
+        switch (TypeType(t0)) {
+        case TYPE_OBJECT:
+                t1 = Inst1(ty, type_member_access_t(ty, t0, "__call__", false));
+                break;
+
+        case TYPE_TUPLE:
+                t1 = Inst1(ty, RecordField(ty, t0, "__call__"));
+                break;
+
+        case TYPE_CLASS:
+                t1 = ClassFunctionType(ty, t0);
+                break;
+
+        case TYPE_TAG:
+                t1 = TagFunctionType(ty, t0);
+                break;
+
+        case TYPE_FUNCTION:
+                t1 = t0;
+                break;
+        }
+
+        return t1;
+}
+
+static Type *
 TagFunctionType(Ty *ty, Type *t0)
 {
         if (t0->ft != NULL) {
@@ -3825,7 +4086,7 @@ PossibleArgTypes(Ty *ty, expression_vector const *args, int argi)
         for (int i = 0; i <= argi && i < vN(*args); ++i) {
                 Expr const *arg = v__(*args, i);
                 if (arg->type == EXPRESSION_SPREAD || i == argi) {
-                        Type *arg0 = (arg->_type == NULL) ? UNKNOWN : arg->_type;
+                        Type *arg0 = (arg->_type == NULL) ? UNKNOWN : Relax(arg->_type);
                         t0 = (t0 == NULL) ? arg0 : Either(ty, t0, arg0);
                 }
         }
@@ -3844,7 +4105,7 @@ FindArg(
         if (name != NULL) {
                 for (int i = 0; i < vN(*kws); ++i) {
                         if (strcmp(v__(*kws, i), name) == 0) {
-                                return v__(*kwargs, i)->_type;
+                                return Relax(v__(*kwargs, i)->_type);
                         }
                 }
         }
@@ -3920,7 +4181,7 @@ CheckArg(Ty *ty, int i, Param const *p, Type *a0, bool strict)
                 return true;
         }
 
-        ApplyConstraints(ty);
+        //ApplyConstraints(ty);
 
         if (UnifyX(ty, a0, p0, false, false)) {
                 return true;
@@ -3971,9 +4232,9 @@ InferCall0(
         expression_vector _args = {0};
         expression_vector _kwargs = {0};
 
-        dont_printf("InferCall(%s)\n", ShowType(t0));
+        XXTLOG("InferCall(%s)", ShowType(t0));
         for (int i = 0; i < vN(*args); ++i) {
-                dont_printf("    %s\n", ShowType(v__(*args, i)->_type));
+                XXTLOG("    %s\n", ShowType(v__(*args, i)->_type));
         }
 
         if (t0 == NULL) {
@@ -4000,7 +4261,7 @@ InferCall0(
 
                 for (int i = 0; i < vN(*args); ++i) {
                         Param const *p = FindParam(i, NULL, &t0->params);
-                        Type *a0 = v__(*args, i)->_type;
+                        Type *a0 = Relax(v__(*args, i)->_type);
                         if (p != NULL && p->type != NULL) {
                                 if (!CheckArg(ty, p - v_(t0->params, 0), p, a0, strict)) {
                                         return NULL;
@@ -4040,6 +4301,10 @@ InferCall0(
                 for (int i = 0; i < vN(t0->constraints); ++i) {
                         BindConstraint(ty, v_(t0->constraints, i), true);
                 }
+
+                XXTLOG("InferCall()");
+                XXTLOG("    %s", ShowType(t0));
+                XXTLOG(" -> %s", ShowType(t0->rt));
 
                 return Reduce(ty, t0->rt);
 
@@ -4260,15 +4525,11 @@ type_call_t(Ty *ty, Expr const *e, Type *t0)
 Type *
 type_call(Ty *ty, Expr const *e)
 {
-        //EnterScope();
         Type *t0 = type_call_t(ty, e, e->function->_type);
         dont_printf("type_call()\n");
         dont_printf("    >>> %s\n", show_expr(e));
         dont_printf("    %s\n", ShowType(t0));
-        //printf("SolveCall(%s, %s) = %s\n", show_expr(e), ShowType(t0), ShowType(t));
-        //LeaveScope();
-        ApplyConstraints(ty);
-        return Generalize(ty, t0);
+        return t0;
 }
 
 Type *
@@ -4544,7 +4805,9 @@ Inst0(Ty *ty, Type *t0, U32Vector const *params, TypeVector const *args, bool va
 
         if (args == NULL) {
                 for (int i = 0; i < vN(*params) - variadic; ++i) {
-                        avP(vars, NewHole(ty));
+                        Type *u0 = NewVar(ty);
+                        u0->fixed = true;
+                        avP(vars, u0);
                 }
                 if (variadic) {
                         Type *rest0 = NewHole(ty);
@@ -4591,10 +4854,11 @@ Inst1(Ty *ty, Type *t0)
 
         if (TypeType(t0) == TYPE_FUNCTION) {
                 t1 = Inst0(ty, t0, &t0->bound, NULL, t0->variadic);
-                if (t1 == t0) {
+                if (t1 == t0 && vN(t1->bound) > 0) {
                         t1 = CloneType(ty, t1);
                 }
                 v00(t1->bound);
+                //ApplyConstraintsX(ty, &t1->constraints);
         } else if (TypeType(t0) == TYPE_OBJECT && !IsAny(t0)) {
                 t1 = Inst0(ty, t0, &t0->class->type->bound, NULL, t0->variadic);
                 if (t1 == t0) {
@@ -4699,11 +4963,12 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
         Expr *f;
 
         Type *t1 = NULL;
+        Type *t2;
 
         switch (TypeType(t0)) {
         case TYPE_UNION:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        Type *t2 = type_member_access_t_(ty, v__(t0->types, i), name, false);
+                        t2 = type_member_access_t_(ty, v__(t0->types, i), name, false);
                         if (!IsBottom(t2)) {
                                 unify2(ty, &t1, t2);
                         }
@@ -4715,7 +4980,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
 
         case TYPE_INTERSECT:
                 for (int i = 0; i < vN(t0->types); ++i) {
-                        Type *t2 = type_member_access_t_(ty, v__(t0->types, i), name, false);
+                        t2 = type_member_access_t_(ty, v__(t0->types, i), name, false);
                         if (!IsBottom(t2)) {
                                 type_intersect(ty, &t1, t2);
                         }
@@ -4740,12 +5005,12 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                                 break;
                         }
                 }
-                if (t1 == NULL && strcmp(name, "__subscript__")) {
+                if (t1 == NULL && strcmp(name, "__subscript__") == 0) {
+                        return TupleSubscriptType(ty, t0);
                 }
                 if (ENFORCE && strict && t1 == NULL) {
                         goto NotFound;
                 }
-
                 return t1;
 
         case TYPE_CLASS:
@@ -5025,7 +5290,7 @@ type_subscript_t(Ty *ty, Type *t0, Type *t1)
         Type *t2 = NewVar(ty);
         Type *t3 = NewRecord("__subscript__", NewFunction(t1, t2));
 
-        UnifyX(ty, t0, t3, true, false)
+        UnifyX(ty, t0, t3, false, false)
      || UnifyX(ty, t3, t0, true, true);
 
         return t2;
@@ -5692,6 +5957,7 @@ Type *
 type_tuple(Ty *ty, Expr const *e)
 {
         Type *t0 = NewType(ty, TYPE_TUPLE);
+        t0->fixed = true;
 
         for (int i = 0; i < vN(e->es); ++i) {
                 Type *u0 = NewVar(ty);
@@ -5969,7 +6235,9 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         if (name != NULL && strcmp(name, "*") == 0) {
                                 continue;
                         }
-                        if (v__(e->required, i)) {
+                        if (IsFixed(v__(e->es, i)->_type)) {
+                                t2 = v__(e->es, i)->_type;
+                        } else if (v__(e->required, i)) {
                                 t2 = NewVar(ty);
                         } else {
                                 t2 = NewForgivingVar(ty);
@@ -6080,7 +6348,7 @@ type_resolve(Ty *ty, Expr const *e)
                 variadic = true;
         case EXPRESSION_IDENTIFIER:
                 if (e->symbol == NULL) {
-                        t0 = NULL;
+                        return NULL;
                 } else if (e->symbol->class != -1) {
                         t0 = NewType(ty, TYPE_OBJECT);
                         t0->class = class_get_class(ty, e->symbol->class);
@@ -6189,6 +6457,7 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_TUPLE:
                 t0 = NewType(ty, TYPE_TUPLE);
                 t0->concrete = true;
+                t0->fixed = true;
                 for (int i = 0; i < vN(e->es); ++i) {
                         avP(t0->names, v__(e->names, i));
                         avP(t0->types, type_resolve(ty, v__(e->es, i)));
@@ -6454,7 +6723,7 @@ type_show(Ty *ty, Type const *t0)
         static TypeVector visiting;
         byte_vector buf = {0};
 
-        t0 = ResolveVar(t0);
+        //t0 = ResolveVar(t0);
 
         if (t0 == NULL) {
                 return sclone_malloc("⭕️");
@@ -7326,22 +7595,6 @@ type_wtf(Ty *ty, Expr const *e)
 }
 
 Type *
-type_array_of(Ty *ty, Type *t0)
-{
-        Type *t1 = ArrayOf(ty, t0);
-        ApplyConstraints(ty);
-        return Generalize(ty, t1);
-}
-
-Type *
-type_dict_of(Ty *ty, Type *t0, Type *t1)
-{
-        Type *t2 = DictOf(ty, t0, t1);
-        ApplyConstraints(ty);
-        return Generalize(ty, t2);
-}
-
-Type *
 type_either(Ty *ty, Type *t0, Type *t1)
 {
         return (t0 == NULL) ? t1 : Either(ty, t0, t1);
@@ -7367,80 +7620,48 @@ type_both(Ty *ty, Type *t0, Type *t1)
 }
 
 Type *
-type_iterable_type(Ty *ty, Type *t0)
+type_iterable_type(Ty *ty, Type *t0, int n)
 {
-        Type *t1 = NULL;
+        Type *t1;
         Type *t2;
 
-        t0 = Resolve(ty, t0);
+        Type *u0;
+        Type *u1;
+        Type *u2;
 
-        if (IsUnboundVar(t0)) {
+        switch (n) {
+        case 0:
+                return UNKNOWN;
+
+        case 1:
                 t1 = NewVar(ty);
-                t2 = NewType(ty, TYPE_OBJECT);
-                t2->class = class_get_class(ty, CLASS_ITERABLE);
-                avP(t2->args, t1);
-                Unify(ty, t0, t2, true);
-                //return Generalize(ty, t1);
-                return t1;
-        }
-
-        Class *c;
-        ClassDefinition *def;
-
-        switch (TypeType(t0)) {
-        case TYPE_OBJECT:
-                switch (ClassOfType(ty, t0)) {
-                case CLASS_ARRAY:
-                        t1 = NewType(ty, TYPE_LIST);
-                        avP(t1->types, TypeArg(t0, 0));
-                        avP(t1->types, TYPE_INT);
-                        break;
-                case CLASS_STRING:
-                        t1 = NewType(ty, TYPE_LIST);
-                        avP(t1->types, TYPE_STRING);
-                        avP(t1->types, TYPE_INT);
-                        break;
-                case CLASS_DICT:
-                        t1 = NewType(ty, TYPE_LIST);
-                        avP(t1->types, TypeArg(t0, 0));
-                        avP(t1->types, TypeArg(t0, 1));
-                        avP(t1->types, TYPE_INT);
-                        break;
-                case CLASS_ITERABLE:
-                case CLASS_ITER:
-                        t1 = TypeArg(t0, 0);
-                        break;
-                }
-                if (t1 != NULL) {
-                        break;
-                }
-                c = t0->class;
-                def = (c->def == NULL) ? NULL : &c->def->class;
-                for (int i = 0; def != NULL && i < vN(def->traits); ++i) {
-                        Expr *t = v__(def->traits, i);
-                        if (t->type != EXPRESSION_SUBSCRIPT) {
-                                continue;
-                        }
-                        if (
-                                TypeType(t->container->_type) != TYPE_CLASS
-                             || t->container->_type->class->i != CLASS_ITERABLE
-                        ) {
-                                continue;
-                        }
-                        t1 = SolveMemberAccess(ty, t0, type_resolve(ty, t->subscript));
-                        break;
-                }
+                t2 = NewObject(CLASS_ITER, t1);
                 break;
 
-        case TYPE_UNION:
-                t1 = NULL;
-                for (int i = 0; i < vN(t0->types); ++i) {
-                        unify2(ty, &t1, type_iterable_type(ty, v__(t0->types, i)));
-                }
+        case 2:
+                u0 = NewVar(ty);
+                u1 = NewVar(ty);
+                t1 = NewList(u0, u1);
+                t2 = NewObject(CLASS_ITER, u0, u1);
+                break;
+
+        default:
+                u0 = NewVar(ty);
+                u1 = NewVar(ty);
+                u2 = NewVar(ty);
+                t1 = NewList(u0, u1, u2);
+                t2 = NewObject(CLASS_ITER, u0, u1, u2);
                 break;
         }
 
-        dont_printf("iterable_type(%s):   %s\n", ShowType(t0), ShowType(t1));
+        Unify(ty, NewRecord("__iter__", NewFunction(t2)), t0, true);
+
+        if (n > 1) {
+                avP(t1->types, TYPE_INT);
+                while (vN(t1->types) < n) {
+                        avP(t1->types, UNKNOWN);
+                }
+        }
 
         return t1;
 }
@@ -7569,7 +7790,7 @@ type_function_fixup(Ty *ty, Expr const *e)
                 return;
         }
 
-        ApplyConstraints(ty);
+        //ApplyConstraints(ty);
 
         for (int i = 0; i < vN(t0->params); ++i) {
                 Expr *dflt = v__(e->dflts, i);
@@ -7581,6 +7802,10 @@ type_function_fixup(Ty *ty, Expr const *e)
 
         fixup(ty, t0);
 
+        if (vN(e->type_bounds) > 0) {
+                ty->tenv = ty->tenv->parent;
+        }
+
         if (e->class > -1) {
                 XXTLOG("fixup(%s.%s)[%d]:", class_name(ty, e->class), e->name, CurrentLevel);
                 XXTLOG("    %s", ShowType(t0));
@@ -7588,6 +7813,37 @@ type_function_fixup(Ty *ty, Expr const *e)
                 XXTLOG("fixup()[%d]:", CurrentLevel);
                 XXTLOG("    %s", ShowType(t0));
         }
+}
+
+static Type *
+TupleSubscriptType(Ty *ty, Type const *t0)
+{
+        Type *t1 = NewType(ty, TYPE_INTERSECT);
+        Type *t2 = NewType(ty, TYPE_UNION);
+
+        t1->fixed = true;
+        t2->fixed = true;
+
+        for (int i = 0; i < vN(t0->types); ++i) {
+                avP(
+                        t1->types,
+                        NewFunction(
+                                type_integer(ty, i),
+                                v__(t0->types, i)
+                        )
+                );
+                avP(t2->types, v__(t0->types, i));
+        }
+
+        avP(
+                t1->types,
+                NewFunction(
+                        TYPE_INT,
+                        Reduce(ty, t2)
+                )
+        );
+
+        return t1;
 }
 
 Type **
@@ -7767,6 +8023,7 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
         case TYPE_SEQUENCE:
         case TYPE_LIST:
         case TYPE_COMPUTED:
+        case TYPE_ALIAS:
                 return true;
 
         case TYPE_UNION:

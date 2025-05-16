@@ -1,6 +1,5 @@
 import os (..)
-import ffi as c
-import cutil (cfun!)
+import ffi as c (C!)
 import errno (ENOTDIR)
 
 fn os::read(fd: Int, n: Int) -> Int;
@@ -56,8 +55,8 @@ let os::walk = function walk*(path: String, skip: _ = nil) -> Generator[(String,
 #|]
 
 #|if !__windows__
-cfun! nil c.int isatty(c.int)
-cfun! nil c.ptr strsignal(c.int)
+C! function isatty(c.int) -> c.int;
+C! function strsignal(c.int) -> c.ptr;
 let os::isatty = isatty
 let os::strsignal = strsignal |> c.str
 let os::_ioctl = c.wrapVar(nil, 'ioctl', 2, c.int, c.int, c.ulong)

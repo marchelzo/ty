@@ -596,15 +596,15 @@ class TermIO {
     cursor() -> CursorAddress {
         let ^lock = __cursor.lock.lock()
 
-        let t = __cursor.t
+        let t_0 = __cursor.t
         write(__fd, "\x1b[6n")
 
         for (;;) {
             __cursor.cond.wait(__cursor.lock)
-            break if __cursor.t != t
+            if let { $x, $y, (t: t != t_0) } = __cursor {
+                return (x, y)
+            }
         }
-
-        return (__cursor.y, __cursor.x)
     }
 
     __run-reader() {

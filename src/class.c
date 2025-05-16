@@ -443,7 +443,7 @@ class_is_subclass(Ty *ty, int sub, int super)
         Class *c = C(sub);
         Class *cc = C(super);
 
-        if (cc->is_trait) {
+        if (!c->is_trait && cc->is_trait) {
                 return ClassImplementsTrait(c, cc->ti);
         }
 

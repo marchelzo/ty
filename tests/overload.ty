@@ -16,20 +16,24 @@ class A {
     }
 }
 
-function bar(s: String) {
+fn bar(s: String) {
     1
 }
 
-function bar(a: Int, b: Int) {
+fn bar(a: Int, b: Int) {
     2
 }
 
-if [A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] != [1, 2, 3, 4] {
-    print('FAIL')
-}
+fn o() {}
 
-if (bar('x'), bar(4, 5)) != (1, 2) {
-    print('FAIL')
-}
+(fn () {
+    if [A.foo(4.0), A.foo([1, 2]), A.foo([1, 2.0]), A.foo(['a'])] != [1, 2, 3, 4] {
+        print('FAIL')
+    }
 
-print('PASS')
+    if (bar('x'), bar(4, 5)) != (1, 2) {
+        print('FAIL')
+    }
+
+    print('PASS')
+})()

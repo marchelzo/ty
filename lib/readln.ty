@@ -10,7 +10,7 @@ let ERASE_LINE = "\x1b[2K"
 let tio: ?TermIO = nil
 let defaultPrompt: ?String = nil
 let defaultComplete: _ = nil
-let termFd: ?Int = nil
+let termFd: Int = -1
 
 let history = []
 
@@ -58,7 +58,7 @@ pub fn init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
 }
 
 fn termDimensions() {
-    ioctl(termFd ?? 0, TIOCGWINSZ, (c.ptr, winSize.get()))
+    ioctl(termFd, TIOCGWINSZ, (c.ptr, winSize.get()))
     return (winSize.lines, winSize.cols)
 }
 
@@ -83,7 +83,7 @@ fn completeFile(before, after) {
 
 }
 
-fn fitItems(items, W) {
+fn fitItems(items: [String], W: Int) {
     fn widths(cols) {
         items.map(&len).groupsOf(#items / cols).map(&max)
     }
@@ -153,9 +153,9 @@ pub fn readln(prompt=nil, complete=nil, erase=true) {
         let before = line.slice(0, i).str() ?? ''
         let all = line.str() ?? ''
 
-        write(termFd ?? 0, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
+        write(termFd, "{ERASE_LINE}\r{prompt}{all}\r{prompt}{before}")
 
-        if not let Some(key) = tio.next-event() {
+        if not let $key = tio.next-event() {
             continue
         }
 

@@ -397,13 +397,18 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 break;
         case EXPRESSION_FUNCTION_CALL:
                 V(e->function);
-                for (size_t i = 0;  i < e->args.count; ++i)
-
-                        V(e->args.items[i]);
-                for (size_t i = 0;  i < e->args.count; ++i)
+                for (size_t i = 0;  i < vN(e->args); ++i) {
+                        V(v__(e->args, i));
+                }
+                for (size_t i = 0;  i < e->args.count; ++i) {
                         V(e->fconds.items[i]);
-                for (size_t i = 0; i < e->kwargs.count; ++i)
+                }
+                for (size_t i = 0; i < e->kwargs.count; ++i) {
                         V(e->kwargs.items[i]);
+                }
+                for (size_t i = 0; i < e->fkwconds.count; ++i) {
+                        V(e->fkwconds.items[i]);
+                }
                 break;
         case EXPRESSION_SUBSCRIPT:
                 V(e->container);
@@ -440,8 +445,8 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_GENERATOR:
         case EXPRESSION_MULTI_FUNCTION:
         case EXPRESSION_FUNCTION:
-                for (int i = 0; i < e->decorators.count; ++i) {
-                        V(e->decorators.items[i]);
+                for (int i = 0; i < vN(e->decorators); ++i) {
+                        V(v__(e->decorators, i));
                 }
 
                 for (size_t i = 0; i < e->params.count; ++i) {
@@ -478,6 +483,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_ARRAY_COMPR:
                 V(e->compr.iter);
                 VL(true, e->compr.pattern); /* true, false */
+                VS(e->compr.where);
                 V(e->compr.cond);
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         V(e->elements.items[i]);
@@ -494,6 +500,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_DICT_COMPR:
                 V(e->dcompr.iter);
                 VL(true, e->dcompr.pattern); /* true, false */
+                VS(e->compr.where);
                 V(e->dcompr.cond);
                 for (size_t i = 0; i < e->keys.count; ++i) {
                         V(e->keys.items[i]);
