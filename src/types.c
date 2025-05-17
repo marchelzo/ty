@@ -99,8 +99,10 @@ static Type ERROR = { .type = TYPE_ERROR, .fixed = true };
 
 static Value STATIC_NIL = NIL;
 
-enum { LOW_FUEL = 5, MAX_FUEL = 999999 };
+enum { LOW_FUEL = 5, MAX_FUEL = 9999999 };
 static int FUEL = MAX_FUEL;
+
+static int ConvertUnbound = 0;
 
 static bool
 IsSolved(Type const *t0);
@@ -3431,11 +3433,11 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
         }
 
         if (IsConcrete(t0) && IsConcrete(t1)) {
-                if (type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
-                        goto Success;
-                } else {
-                        goto Fail;
-                }
+                //if (type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
+                //        goto Success;
+                //} else {
+                //        goto Fail;
+                //}
         }
 
         for (;;) {
@@ -3457,7 +3459,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 
         if (IsUnboundVar(t0) && !IsTVar(t0) && (!soft || IsHole(t0) || IsUnknown(t1))) {
                 if (Occurs(ty, t1, t0->id, t0->level)) {
-                        //BindVar(t0, BOTTOM);
+                        BindVar(t0, BOTTOM);
                         goto Success;
                         //TypeError(
                         //        "can't unify:\n  %s\n  %s\n",
@@ -3482,7 +3484,7 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 }
         } else if (!soft && IsUnboundVar(t1) && !IsTVar(t1)) {
                 if (Occurs(ty, t0, t1->id, t1->level)) {
-                        //BindVar(t1, BOTTOM);
+                        BindVar(t1, BOTTOM);
                         goto Success;
                 } else {
                         t1->bounded |= super;
@@ -3774,12 +3776,15 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 }
         }
 
+        ConvertUnbound += 1;
         bool ok;
         if (!type_check(ty, super ? t0 : t1, super ? t1 : t0)) {
+                ConvertUnbound -= 1;
 Fail:
                 ok = false;
 
         } else {
+                ConvertUnbound -= 1;
 Success:
                 ok = true;
 
@@ -5524,6 +5529,15 @@ type_check_shallow(Ty *ty, Type *t0, Type *t1)
 bool
 type_check_x_(Ty *ty, Type *t0, Type *t1, bool need)
 {
+        if (ConvertUnbound) {
+                if (CanBind(t0)) {
+                        BindVar(t0, UNKNOWN);
+                }
+                if (CanBind(t1)) {
+                        BindVar(t1, UNKNOWN);
+                }
+        }
+
         if (
                 IsAny(t0)
              || SameType(t0, t1)
@@ -5940,11 +5954,11 @@ type_check(Ty *ty, Type *t0, Type *t1)
                 return ok;
         }
 
-        TLOG("type_check():");
-        TLOG("    %s", ShowType(t0));
-        TLOG("    %s", ShowType(t1));
-
         ok = !CheckConstraints || type_check_x(ty, t0, t1, false);
+
+        XXTLOG("%stype_check_x():%s", ok ? TERM(92) : TERM(91), TERM(0));
+        XXTLOG("    %s", ShowType(t0));
+        XXTLOG("    %s", ShowType(t1));
 
         if (false && checks > 8 && IsConcrete(t0) && IsConcrete(t1)) {
                 AddMemo(&memo, t0, t1, ok);
@@ -6157,6 +6171,8 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
         Type *t3;
         Type *t4;
 
+        bool strict = flags & T_FLAG_STRICT;
+
         //t0 = Resolve(ty, t0);
 
         if (t0 == NULL) {
@@ -6203,7 +6219,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         );
                 } else if (
                         !UnifyX(ty, t0, e->symbol->type, false, false)
-                     && (flags & T_FLAG_STRICT)
+                     && strict
                      && ENFORCE
                 ) {
                         TypeError(
@@ -6226,7 +6242,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         t1 = (t1 == NULL) ? t2 : Either(ty, t1, t2);
                         type_assign(ty, v__(e->elements, i), t2, flags);
                 }
-                UnifyX(ty, NewObject(CLASS_ARRAY, t1), t0, true, true);
+                UnifyX(ty, NewObject(CLASS_ARRAY, t1), t0, true, strict);
                 break;
         case EXPRESSION_TUPLE:
                 t1 = NewType(ty, TYPE_TUPLE);
@@ -6246,7 +6262,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         avP(t1->types, t2);
                         type_assign(ty, v__(e->es, i), t2, flags);
                 }
-                Unify(ty, t1, t0, true);
+                UnifyX(ty, t1, t0, true, strict);
                 break;
         case EXPRESSION_DICT:
                 t1 = NewVar(ty);
@@ -6260,7 +6276,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         unify2(ty, &t1, key->_type);
                         unify2(ty, &t2, t4);
                 }
-                UnifyX(ty, t0, t3, true, true);
+                UnifyX(ty, t0, t3, true, strict);
                 break;
 
         case EXPRESSION_CHOICE_PATTERN:
@@ -6270,7 +6286,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         type_assign(ty, v__(e->es, i), var, flags);
                         t1 = (t1 == NULL) ? var : Either(ty, t1, var);
                 }
-                UnifyX(ty, t0, t1, true, true);
+                UnifyX(ty, t0, t1, true, strict);
                 break;
         case EXPRESSION_LIST:
                 t0 = Resolve(ty, t0);
@@ -6291,7 +6307,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                 t3 = NewFunction(t1, t2);
                 type_assign(ty, e->right, t2, flags);
                 UnifyX(ty, t3, Inst1(ty, e->left->_type), true, true);
-                UnifyX(ty, t1, t0, true, true);
+                UnifyX(ty, t1, t0, true, strict);
                 break;
 
         case EXPRESSION_MEMBER_ACCESS:
