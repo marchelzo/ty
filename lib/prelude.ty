@@ -35,6 +35,8 @@ fn parse::stmt(prec: ?Int) -> AST;
 fn lex::next() -> Token;
 fn lex::peek(i: Int = 0) -> Token;
 
+fn ty::gensym() -> String;
+
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
 fn print(*args: _, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
@@ -201,6 +203,7 @@ class Array[T] : Iterable[T] {
     }
 
     map[U](fun: T -> U) -> Array[U];
+    map![U](fun: T -> U) -> Array[U];
     filter(pred: T -> (Object | nil)) -> Array[T];
     push(x: T) -> nil;
     len() -> Int;
@@ -411,6 +414,8 @@ class Array[T] : Iterable[T] {
 }
 
 macro _Param = ty.Param[{name: String, constraint: AST, default: AST}]
+             | ty.Gather[String]
+             | ty.Kwargs[String]
 
 macro _Func = {
     name: String | nil,
@@ -1281,12 +1286,12 @@ trait Iterable[T] {
         __iter__().map(f)
     }
 
-    filter(f) {
-        @__iter__().filter(f)
+    filter(f: T -> _) {
+        __iter__().filter(f)
     }
 
     reverse() {
-        @__iter__().reverse()
+        __iter__().reverse()
     }
 
     any?(p) -> Bool {
@@ -1298,11 +1303,11 @@ trait Iterable[T] {
     }
 
     list() {
-        @__iter__().list()
+        __iter__().list()
     }
 
     uniq(f) {
-        @__iter__().uniq(f)
+        __iter__().uniq(f)
     }
 
     take(n: Int) {
@@ -1310,131 +1315,131 @@ trait Iterable[T] {
     }
 
     takeWhile(pred) {
-        @__iter__().takeWhile(pred)
+        __iter__().takeWhile(pred)
     }
 
     drop(n) {
-        @__iter__().drop(n)
+        __iter__().drop(n)
     }
 
     dropWhile(pred) {
-        @__iter__().dropWhile(pred)
+        __iter__().dropWhile(pred)
     }
 
     set() {
-        @__iter__().set()
+        __iter__().set()
     }
 
     str() {
-        @__iter__().str()
+        __iter__().str()
     }
 
     join(s) {
-        @__iter__().join(s)
+        __iter__().join(s)
     }
 
     unlines() {
-        @__iter__().unlines()
+        __iter__().unlines()
     }
 
     unwords() {
-        @__iter__().unwords()
+        __iter__().unwords()
     }
 
     tally(f) {
-        @__iter__().tally(f)
+        __iter__().tally(f)
     }
 
     each(f) {
-        @__iter__().each(f)
+        __iter__().each(f)
     }
 
     min(k=id) {
-        @__iter__().min(k)
+        __iter__().min(k)
     }
 
     max(k=id) {
-        @__iter__().max(k)
+        __iter__().max(k)
     }
 
     minmax(k=id) {
-        @__iter__().minmax(k)
+        __iter__().minmax(k)
     }
 
     count(x) {
-        @__iter__().count(x)
+        __iter__().count(x)
     }
 
     count-by(pred) {
-        @__iter__().count-by(pred)
+        __iter__().count-by(pred)
     }
 
     intersperse(x) {
-        @__iter__().intersperse(x)
+        __iter__().intersperse(x)
     }
 
     groupsOf(n, keepShort: Bool = true) {
-        @__iter__().groupsOf(n, keepShort=keepShort)
+        __iter__().groupsOf(n, keepShort=keepShort)
     }
 
     classify(f = id) {
-        @__iter__().classify(f)
+        __iter__().classify(f)
     }
 
     pad(n, x) {
-        @__iter__().pad(n, x)
+        __iter__().pad(n, x)
     }
 
     zip(*its, longest=false) {
-        @__iter__().zip(*its, longest: longest)
+        __iter__().zip(*its, longest=longest)
     }
 
     zipWith(f, *its, longest=false) {
-        @__iter__().zipWith(f, *its, longest: longest)
+        __iter__().zipWith(f, *its, longest=longest)
     }
 
     unzip(*args, %kwargs) {
-        @__iter__().unzip(*args, **kwargs)
+        __iter__().unzip(*args, **kwargs)
     }
 
     unzip2(*args, %kwargs) {
-        @__iter__().unzip2(*args, **kwargs)
+        __iter__().unzip2(*args, **kwargs)
     }
 
     unzip3(*args, %kwargs) {
-        @__iter__().unzip3(*args, **kwargs)
+        __iter__().unzip3(*args, **kwargs)
     }
 
     unzip4(*args, %kwargs) {
-        @__iter__().unzip4(*args, **kwargs)
+        __iter__().unzip4(*args, **kwargs)
     }
 
     unzipWith(*args, %kwargs) {
-        @__iter__().unzipWith(*args, **kwargs)
+        __iter__().unzipWith(*args, **kwargs)
     }
 
     unzipWith2(*args, %kwargs) {
-        @__iter__().unzipWith2(*args, **kwargs)
+        __iter__().unzipWith2(*args, **kwargs)
     }
 
     unzipWith3(*args, %kwargs) {
-        @__iter__().unzipWith3(*args, **kwargs)
+        __iter__().unzipWith3(*args, **kwargs)
     }
 
     unzipWith4(*args, %kwargs) {
-        @__iter__().unzipWith4(*args, **kwargs)
+        __iter__().unzipWith4(*args, **kwargs)
     }
 
     mean() {
-        @__iter__().mean()
+        __iter__().mean()
     }
 
     median() {
-        @__iter__().median()
+        __iter__().median()
     }
 
     sum() {
-        @__iter__().sum()
+        __iter__().sum()
     }
 
     fold(f: (T, T) -> T) -> T | nil {
@@ -1446,7 +1451,7 @@ trait Iterable[T] {
     }
 
     group(f) {
-        @__iter__().group(f)
+        __iter__().group(f)
     }
 
     chain(A, B) {
@@ -1454,23 +1459,23 @@ trait Iterable[T] {
     }
 
     cycle() {
-        @list().cycle()
+        list().cycle()
     }
 
     repeat(n) {
-        @__iter__().repeat(n)
+        __iter__().repeat(n)
     }
 
     all?(pred: T -> _ = id) {
-        @__iter__().all?(pred)
+        __iter__().all?(pred)
     }
 
     interleave[U](xs: Iterable[U], long: Bool = false) -> Iterable[T | U] {
-        @__iter__().interleave(xs, long)
+        __iter__().interleave(xs, long)
     }
 
     enumerate() {
-        @__iter__().enumerate()
+        __iter__().enumerate()
     }
 
     find(pred) {
@@ -1486,11 +1491,11 @@ trait Iterable[T] {
     }
 
     __len__() {
-        @__iter__().__len__()
+        __iter__().__len__()
     }
 
-    __subscript__(i) {
-        @__iter__().__subscript__(i)
+    __subscript__(i: Int) -> T {
+        __iter__().__subscript__(i)
     }
 
     __iter__() -> Iter[T];
@@ -2029,12 +2034,12 @@ trait Iter[T] < Iterable[T] {
         %{ k: v for (k, v) in self }
     }
 
-    __subscript__(i) {
+    __subscript__(i: Int) -> T {
         for _ in ..(i - 1) {
-            if @__next__() == None { return nil }
+            if __next__() == None { throw IndexError(self, i) }
         }
 
-        if let Some(x) = @__next__() {
+        if let Some(x) = __next__() {
             return x
         }
     }
@@ -2043,14 +2048,14 @@ trait Iter[T] < Iterable[T] {
 }
 
 class Queue[T] : Iterable[T] {
-    xs: Array[T]
-    i: Int
-    j: Int
+    __xs: Array[T]
+    __i: Int
+    __j: Int
 
     init(xs: Iterable[T] = []) {
-        @xs = []
-        @i = 0
-        @j = 0
+        __xs = []
+        __i = 0
+        __j = 0
 
         for x in xs {
             self.put(x)
@@ -2058,8 +2063,8 @@ class Queue[T] : Iterable[T] {
     }
 
     __len__() {
-        if @xs {
-            (@j - @i + #@xs) % #@xs
+        if __xs {
+            (__j - __i + #__xs) % #__xs
         } else {
             0
         }
@@ -2070,19 +2075,19 @@ class Queue[T] : Iterable[T] {
     }
 
     put(x: T) {
-        if !@xs {
-            @xs = [x, nil]
-            @j = 1
-        } else if (@j + 1) % #@xs == @i {
+        if !__xs {
+            __xs = [x, nil]
+            __j = 1
+        } else if (__j + 1) % #__xs == __i {
             let n = #self
-            @xs.rotate!(@i)
-            @xs += @xs
-            @i = 0
-            @j = n + 1
-            @xs[n] = x
+            __xs.rotate!(__i)
+            __xs += __xs
+            __i = 0
+            __j = n + 1
+            __xs[n] = x
         } else {
-            @xs[@j] = x
-            @j = (@j + 1) % #@xs
+            __xs[__j] = x
+            __j = (__j + 1) % #__xs
         }
     }
 
@@ -2091,8 +2096,8 @@ class Queue[T] : Iterable[T] {
             return None
         }
 
-        let x = @xs[@i]
-        @i = (@i + 1) % #@xs
+        let x = __xs[__i]
+        __i = (__i + 1) % #__xs
 
         return Some(x)
     }
@@ -2103,8 +2108,8 @@ class Queue[T] : Iterable[T] {
     }
 
     __iter__*() {
-        for let i = @i; i != @j; i = (i + 1) % #@xs {
-            yield @xs[i]
+        for let i = __i; i != __j; i = (i + 1) % #__xs {
+            yield __xs[i]
         }
     }
 }
@@ -2406,9 +2411,9 @@ class Sync[T] {
         "{__x}"
     }
 
-    __subscript__(i) {
+    __subscript__[I, U](i: I) -> U where T: Subscript[I, U] {
         with __mtx.lock() {
-            cast(__x)[i]
+            __x[i]
         }
     }
 
@@ -2881,18 +2886,18 @@ macro ifdef {
 }
 
 class SharedQueue[T] : Iterable[T] {
-    xs: Array[T]
-    i: Int
-    j: Int
-    mutex: Mutex
-    cond: CondVar
+    __xs: Array[T]
+    __i: Int
+    __j: Int
+    __mutex: Mutex
+    __cond: CondVar
 
     init(xs: Iterable[T] = []) {
-        @xs = []
-        @i = 0
-        @j = 0
-        @mutex = Mutex()
-        @cond = CondVar()
+        __xs = []
+        __i = 0
+        __j = 0
+        __mutex = Mutex()
+        __cond = CondVar()
 
         for x in xs {
             put(x)
@@ -2900,9 +2905,9 @@ class SharedQueue[T] : Iterable[T] {
     }
 
     __len__() {
-        with @mutex.lock() {
-            if @xs {
-                (@j - @i + #@xs) % #@xs
+        with __mutex.lock() {
+            if __xs {
+                (__j - __i + #__xs) % #__xs
             } else {
                 0
             }
@@ -2910,15 +2915,15 @@ class SharedQueue[T] : Iterable[T] {
     }
 
     countUnlocked() {
-        if @xs {
-            (@j - @i + #@xs) % #@xs
+        if __xs {
+            (__j - __i + #__xs) % #__xs
         } else {
             0
         }
     }
 
     empty?() {
-        with @mutex.lock() {
+        with __mutex.lock() {
             #self == 0
         }
     }
@@ -2926,52 +2931,52 @@ class SharedQueue[T] : Iterable[T] {
     put(x: T) {
         let notify = false
 
-        with @mutex.lock() {
+        with __mutex.lock() {
             if self.countUnlocked() == 0 {
                 notify = true
             }
 
-            if !@xs {
-                @xs = [x, nil]
-                @j = 1
-            } else if (@j + 1) % #@xs == @i {
+            if !__xs {
+                __xs = [x, nil]
+                __j = 1
+            } else if (__j + 1) % #__xs == __i {
                 let n = self.countUnlocked()
-                @xs.rotate!(@i)
-                @xs += @xs
-                @i = 0
-                @j = n + 1
-                @xs[n] = x
+                __xs.rotate!(__i)
+                __xs += __xs
+                __i = 0
+                __j = n + 1
+                __xs[n] = x
             } else {
-                @xs[@j] = x
-                @j = (@j + 1) % #@xs
+                __xs[__j] = x
+                __j = (__j + 1) % #__xs
             }
         }
 
-        @cond.signal()
+        __cond.signal()
     }
 
     tryTake(timeoutMs: Int = 0) -> Some[T] | None {
         let stop = time.utime() + timeoutMs * 1000
 
-        @mutex.lock()
+        __mutex.lock()
 
         while self.countUnlocked() == 0 {
             let now = time.utime()
 
             if timeoutMs != -1 && now >= stop {
-                @mutex.unlock()
+                __mutex.unlock()
                 return None
             }
 
             let condTimeout = (timeoutMs == -1) ? -1 : (stop - now) / 1000
 
-            @cond.wait(@mutex, condTimeout)
+            __cond.wait(__mutex, condTimeout)
         }
 
-        let x = @xs[@i]
-        @i = (@i + 1) % #@xs
+        let x = __xs[__i]
+        __i = (__i + 1) % #__xs
 
-        @mutex.unlock()
+        __mutex.unlock()
 
         return Some(x)
     }
@@ -2983,8 +2988,8 @@ class SharedQueue[T] : Iterable[T] {
     }
 
     __iter__*() {
-        for let i = @i; i != @j; i = (i + 1) % #@xs {
-            yield @xs[i]
+        for let i = __i; i != __j; i = (i + 1) % #__xs {
+            yield __xs[i]
         }
     }
 }
@@ -3002,26 +3007,26 @@ class AnyOf {
 }
 
 class MemoizedFunction {
-    func: _
-    memo: _
+    __func: _
+    __memo: _
 
     init(f) {
-        @func = f
-        self.reset()
+        __func = f
+        reset()
     }
 
     reset() {
-        @memo = %{*: (@func)(*it.0, **%{k: v for (k, v) in it.1})}
+        __memo = %{*: (__func)(*it.0, **%{k: v for (k, v) in it.1})}
     }
 
     __call__(*args, %kwargs) {
-        @memo[(
+        __memo[(
             args,
             kwargs.list().sort!(by: &0)
         )]
     }
 
-    cache { @memo }
+    cache { __memo }
 }
 
 let memoized = MemoizedFunction
@@ -3095,22 +3100,6 @@ macro __walk! {
                 rt: walk(func.rt, f),
                 body: walk(func.body, f)
             ),
-
-            //ty.Func(func) => ty.Func(
-            //    name: func.name,
-            //    decorators: [walk(dec, f) for dec in func.decorators],
-            //    params: [walk(param, f) for param in func.params],
-            //    rt: walk(func.rt, f),
-            //    body: walk(func.body, f)
-            //),
-
-            //ty.ImplicitFunc(func) => ty.ImplicitFunc(
-            //    name: func.name,
-            //    decorators: [walk(dec, f) for dec in func.decorators],
-            //    params: [walk(param, f) for param in func.params],
-            //    rt: walk(func.rt, f),
-            //    body: walk(func.body, f)
-            //),
 
             ty.Param(param) => ty.Param(
                 name: param.name,
@@ -3369,46 +3358,45 @@ macro __desugar_partial__(call) {
         e => e
     }))
 
-    function go(args, mkcall, d) {
+    fn go(args: [AST], mkcall: [AST] -> AST, d: Int) -> AST {
         if d == 0 {
             return mkcall(args)
         }
 
-        let argvId = ty.gensym()
-        let kwargsId = ty.gensym()
+        let _argv = nil
+        let _kwargs = nil
 
-        let argv = ty.Id(name: argvId)
-        let kwargs = ty.Id(name: kwargsId)
+        fn gensym() -> String { ty.gensym() }
 
-        let sliceArgs = []
-        let add = arg -> do { sliceArgs.push(arg); arg }
+        fn argv()   { ty.Id({name: (_argv   ?? (_argv   = ty.gensym()))}) }
+        fn kwargs() { ty.Id({name: (_kwargs ?? (_kwargs = ty.gensym()))}) }
+
+        let params = []
+
+        fn param(i) {
+            while #params <= i {
+                params.push(gensym())
+            }
+            ty.Id({name: params[i], module: ''})
+        }
 
         let i = 0
         let reducedArgs = args.map(e -> __walk!(e, match {
-            ty.Id({name: '_', *})           => ty.Subscript(argv, ty.Int(i++)),
-            ty.Id({name: /^\$(\d+)$/, *})   => ty.Subscript(argv, ty.Int(int($1) - 1)),
+            ty.Id({name: '_', *})           => param(i++),
+            ty.Id({name: /^\$(\d+)$/, *})   => param(int($1) - 1),
             ty.Id({name: /^\$(_+\d*)$/, *}) => ty.Id({name: "${$1[1;]}"}),
             ty.Id({name: /^_(_+\d*)$/, *})  => ty.Id({name: $1}),
-            ty.Id({name: '**', *}) as e     => (d == 1) ? kwargs : ty.Add(kwargs, e),
-
-            ty.Id({name: '*', *}) as e => do {
-                let slice = ty.MethodCall({
-                    object: argv,
-                    method: 'slice',
-                    args: [ty.Arg(add({arg: ty.Int(0)}))]
-                })
-                (d == 1) ? slice : ty.Add(slice, e)
-            },
-
+            ty.Id({name: '**', *}) as e     => (d == 1) ? kwargs() : ty.Add(kwargs(), e),
+            ty.Id({name: '*',  *}) as e     => (d == 1) ? argv()   : ty.Add(argv(), e)
             e => e
         }))
 
-        for arg in sliceArgs { arg.arg = ty.Int(i) }
+        let params = params.map!(id -> ty.Param({name: id}))
 
-        return ty.Func({
-            params: [ty.Gather(argvId), ty.Kwargs(kwargsId)],
-            body: go(reducedArgs, mkcall, d - 1)
-        })
+        if _argv   != nil { params.push(ty.Gather(_argv)) }
+        if _kwargs != nil { params.push(ty.Kwargs(_kwargs)) }
+
+        return ty.Func({params, body: go(reducedArgs, mkcall, d - 1)})
     }
 
     return go(args, mkcall, max(depth, 1))

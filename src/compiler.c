@@ -170,6 +170,12 @@ symbolize_pattern(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def);
 static void
 symbolize_expression(Ty *ty, Scope *scope, Expr *e);
 
+static void
+UpdateRefinemenets(Ty *ty, Scope *scope);
+
+static void
+AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else);
+
 static bool
 emit_statement(Ty *ty, Stmt const *s, bool want_result);
 
@@ -2804,6 +2810,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         state.start = e->start;
         state.end = e->end;
 
+        UpdateRefinemenets(ty, scope);
+
         Symbol *var;
         Scope *subscope;
 
@@ -3253,7 +3261,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         RedpillFun(ty, scope, e, NULL);
                 }
 
-                type_scope_push(ty, true);
+                if (e->type != EXPRESSION_GENERATOR) {
+                        type_scope_push(ty, true);
+                }
 
                 if (e->type != EXPRESSION_MULTI_FUNCTION) {
                         e->_type = type_function(ty, e, false);
@@ -3324,11 +3334,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         dont_printf("=== %s.%s() === %s\n", class_name(ty, state.class), e->name, type_show(ty, e->_type));
                 }
 
-                type_scope_pop(ty);
-                type_function_fixup(ty, e);
-
                 if (e->type == EXPRESSION_GENERATOR) {
                         e->_type = type_generator(ty, e);
+                } else {
+                        type_function_fixup(ty, e);
+                        type_scope_pop(ty);
                 }
 
                 for (int i = 0; i < vN(e->decorators); ++i) {
@@ -3377,8 +3387,14 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_ARRAY:
                 for (size_t i = 0; i < e->elements.count; ++i) {
-                        symbolize_expression(ty, scope, e->elements.items[i]);
-                        symbolize_expression(ty, scope, e->aconds.items[i]);
+                        if (v__(e->aconds, i) != NULL) {
+                                subscope = scope_new(ty, "(array-cond)", scope, false);
+                                symbolize_expression(ty, subscope, e->aconds.items[i]);
+                                AddRefinements(ty, v__(e->aconds, i), subscope, NULL);
+                                symbolize_expression(ty, subscope, e->elements.items[i]);
+                        } else {
+                                symbolize_expression(ty, scope, e->elements.items[i]);
+                        }
                         if (v__(e->elements, i)->type == EXPRESSION_SPREAD) {
                                 type_assign(
                                         ty,
@@ -3616,6 +3632,74 @@ ClearActive(Scope *scope)
         }
 }
 
+
+static void
+AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
+{
+        if (
+                e->type == EXPRESSION_NOT_EQ
+             && e->left->type == EXPRESSION_IDENTIFIER
+             && e->right->type == EXPRESSION_NIL
+        ) {
+                dont_printf("=== NewRefinement(%s): %s\n", p->e->left->identifier, type_show(ty, p->e->left->symbol->type));
+                ScopeRefineVar(
+                        ty,
+                        _then,
+                        e->left->symbol,
+                        type_not_nil(ty, e->left->symbol->type)
+                );
+                if (_else != NULL) {
+                        ScopeRefineVar(
+                                ty,
+                                _else,
+                                e->left->symbol,
+                                NIL_TYPE
+                        );
+                }
+                Refinement *ref = vvL(_then->refinements);
+                dont_printf("AddRefinement(%s):\n", ref->var->identifier);
+                dont_printf("    %s\n", type_show(ty, ref->var->type));
+                dont_printf("--> %s\n", type_show(ty, ref->t0));
+        }
+
+        if (
+                e->type == EXPRESSION_CHECK_MATCH
+             && e->left->type == EXPRESSION_IDENTIFIER
+             && e->right->type == EXPRESSION_IDENTIFIER
+             && e->right->symbol->class != -1
+        ) {
+                dont_printf("=== NewRefinement(%s): %s\n", p->e->left->identifier, type_show(ty, p->e->left->symbol->type));
+                ScopeRefineVar(
+                        ty,
+                        _then,
+                        e->left->symbol,
+                        type_instance_of(
+                                ty,
+                                e->left->symbol->type,
+                                e->right->symbol->class
+                        )
+                );
+                Refinement *ref = vvL(_then->refinements);
+                dont_printf("AddRefinement(%s):\n", ref->var->identifier);
+                dont_printf("    %s\n", type_show(ty, ref->var->type));
+                dont_printf("--> %s\n", type_show(ty, ref->t0));
+        }
+}
+
+static void
+UpdateRefinemenets(Ty *ty, Scope *scope)
+{
+        if (scope != state.active) {
+                ClearActive(state.active);
+                SetActive(scope);
+                Scope *stop = DisableRefinements(ty, state.active);
+                EnableRefinements(ty, scope, stop);
+                state.active = scope;
+        } else {
+                EnableRefinements(ty, scope, scope->parent);
+        }
+}
+
 static void
 symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 {
@@ -3638,17 +3722,9 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         if (scope == state.global && s->ns != NULL)
                 scope = GetNamespace(ty, s->ns);
 
-        void *ctx = PushContext(ty, s);
+        UpdateRefinemenets(ty, scope);
 
-        if (scope != state.active) {
-                ClearActive(state.active);
-                SetActive(scope);
-                Scope *stop = DisableRefinements(ty, state.active);
-                EnableRefinements(ty, scope, stop);
-                state.active = scope;
-        } else {
-                EnableRefinements(ty, scope, scope->parent);
-        }
+        void *ctx = PushContext(ty, s);
 
         switch (s->type) {
         case STATEMENT_IMPORT:
@@ -3901,48 +3977,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                                 if (p->target != NULL && p->target->_type == NULL) {
                                         type_assign(ty, p->target, p->e->_type, 0);
                                 }
-                                if (
-                                        p->target == NULL
-                                     && p->e->type == EXPRESSION_NOT_EQ
-                                     && p->e->left->type == EXPRESSION_IDENTIFIER
-                                     && p->e->right->type == EXPRESSION_NIL
-                                ) {
-                                        dont_printf("=== NewRefinement(%s): %s\n", p->e->left->identifier, type_show(ty, p->e->left->symbol->type));
-                                        ScopeRefineVar(
-                                                ty,
-                                                subscope,
-                                                p->e->left->symbol,
-                                                type_not_nil(ty, p->e->left->symbol->type)
-                                        );
-                                        ScopeRefineVar(
-                                                ty,
-                                                subscope2,
-                                                p->e->left->symbol,
-                                                NIL_TYPE
-                                        );
-                                        Refinement *ref = vvL(subscope->refinements);
-                                        dont_printf("AddRefinement(%s):\n", ref->var->identifier);
-                                        dont_printf("    %s\n", type_show(ty, ref->var->type));
-                                        dont_printf("--> %s\n", type_show(ty, ref->t0));
-                                }
-                                if (
-                                        p->target == NULL
-                                     && p->e->type == EXPRESSION_CHECK_MATCH
-                                     && p->e->left->type == EXPRESSION_IDENTIFIER
-                                     && p->e->right->type == EXPRESSION_IDENTIFIER
-                                     && p->e->right->symbol->class != -1
-                                ) {
-                                        dont_printf("=== NewRefinement(%s): %s\n", p->e->left->identifier, type_show(ty, p->e->left->symbol->type));
-                                        ScopeRefineVar(
-                                                ty,
-                                                subscope,
-                                                p->e->left->symbol,
-                                                type_instance_of(ty, p->e->left->symbol->type, p->e->right->symbol->class)
-                                        );
-                                        Refinement *ref = vvL(subscope->refinements);
-                                        dont_printf("AddRefinement(%s):\n", ref->var->identifier);
-                                        dont_printf("    %s\n", type_show(ty, ref->var->type));
-                                        dont_printf("--> %s\n", type_show(ty, ref->t0));
+                                if (p->target == NULL) {
+                                        AddRefinements(ty, p->e, subscope, subscope2);
                                 }
                         }
                         symbolize_statement(ty, subscope2, s->iff.otherwise);

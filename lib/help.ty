@@ -266,7 +266,7 @@ class Printer {
         @visiting.take!(num-visiting)
     }
 
-    write(s, pen=id, force=false) {
+    write(s: String, pen=id, force=false) {
         @col += #s
         if !force && @col > @width { throw TooWideError() }
         @out.push(str(@color ? pen(s) : s))
@@ -311,11 +311,17 @@ class Printer {
             }
         }
 
-        function printMap(m, open, close, eq, field-style=@colors.field, delim-style=@colors.dict) {
+        function printMap(
+            m: Array[(_, _)],
+            open: String,
+            close: String,
+            eq: String,
+            field-style=@colors.field,
+            delim-style=@colors.dict
+        ) {
             let write-key = match open {
-                '%{'  => self.go@(*, **),
-                _     => self.write@($1, field-style, $3),
-
+                '%{' => self.go,
+                _    => self.write@($1, field-style, $3)
             }
 
             try {

@@ -47,31 +47,37 @@ let statusText = %{
 }
 
 class FCGIParser {
+    __buffer: Blob
+    __fd: Int
+    __parser: Generator[(String, Dict[String, String], Int)]
+
+
     init(fd) {
-        @fd = fd
-        @buffer = Blob()
-        @parser = self.start()
-        (@parser)()
+        __fd = fd
+        __buffer = Blob()
+        __parser = __start()
+        (__parser)()
     }
 
-    next(n) {
-        while #@buffer < (n ?? 1) {
-            @buffer.push(yield nil)
+    next(n: Int) -> Blob  {
+        let more: _ = () -> yield nil
+        while #__buffer < (n ?? 1) {
+            __buffer.push(more())
         }
-        return if n == nil {
-            @buffer.splice(0, 1)[0]
-        } else {
-            @buffer.splice(0, n)
-        }
+        __buffer.splice(0, n)
     }
 
-    start*() {
+    next() -> Int {
+        next(1)[0]
+    }
+
+   __start*() -> Generator[(String, Dict[String, String], Int)] {
         while true {
             let body = blob()
             let params = %{}
 
             while true {
-                let next = self.next
+                let next = next
 
                 let nextShort = function () {
                     let b = next(2)
@@ -114,23 +120,26 @@ class FCGIParser {
                 }
             }
 
-            yield FCGIRequest(nil, body.str!(), params, @fd)
+            yield (body.str!(), params, __fd)
         }
     }
 
-    push(data) {
-        if let Some($request) = (@parser)(data) {
+    push(data) -> nil | (String , Dict[String, String], Int) {
+        if let Some($request) = (__parser)(data) {
             request
         }
     }
 }
 
 class FCGIRecord {
+    __params: Dict[String, String]
+    __content: Blob
+
     beginRequest() {
     }
 
-    getParams() {
-        let b = @content
+    getParams() -> Dict[String, String] {
+        let b = __content
         let ps = %{}
 
         while b.size() != 0 {
@@ -141,11 +150,11 @@ class FCGIRecord {
             ps[name] = value
         }
 
-        return @params = ps
+        return __params = ps
     }
 }
 
-function getLength(b) {
+fn getLength(b: Blob) -> Int {
     if (b[0] >> 7) == 1 {
         let n = ((b[0] & 0x7F) << 24)
               + (b[1] << 16)
@@ -160,36 +169,63 @@ function getLength(b) {
     }
 }
 
-function decode(s) {
+fn decode(s) {
     s.sub('+', ' ')
      .sub(/%../, s -> chr(int(s.slice(1), 16)))
      .sub("\r\n", "\n")
      .sub("\r", "\n")
 }
 
-function urlDecode(s) {
+fn urlDecode(s: String) -> Dict[String, String] {
     let components = s.split('&');
     let pairs = [c.split('=').map(decode) for c in components];
     return %{k: v for [k, v] in pairs};
 }
 
 class FCGIRequest {
-    init(stream, body, ps, fd) {
-        @stream = stream
-        @fd = fd
-        self.body = body
-        self.params = ps
+    __app: FCGIApp
+    __fd: Int
+    __stream: io.Stream
+    __body: String
+    __params: Dict[String, String]
+
+    init(
+        app: FCGIApp,
+        fd: Int,
+        stream: io.Stream,
+        body: String,
+        ps: Dict[String, String]
+    ) {
+        __app = app
+        __fd = fd
+        __stream = stream
+        __body = body
+        __params = ps
     }
 
-    sendHTML(html, headers=[], status=200) {
-        self.sendResponse(status, html, [('Content-Type', 'text/html'), *headers])
+    sendHTML(html: String, headers: Array[(String, String)] = [], status: Int = 200) {
+        sendResponse(
+            status,
+            html,
+            [
+                ('Content-Type', 'text/html'),
+                *headers
+            ]
+        )
     }
 
-    sendJSON(x, headers=[], status=200) {
-        self.sendResponse(status, json.encode(x), [('Content-Type', 'application/json'), *headers])
+    sendJSON(x: _, headers: Array[(String, String)] = [], status: Int = 200) {
+        sendResponse(
+            status,
+            json.encode(x),
+            [
+                ('Content-Type', 'application/json'),
+                *headers
+            ]
+        )
     }
 
-    sendResponse(status, body='', headers=[]) {
+    sendResponse(status: Int, body: String | Blob = '', headers: Array[(String, String)] = []) {
         let buffer = blob()
         let push = buffer.push
         let exitStatus = 0
@@ -216,7 +252,7 @@ class FCGIRequest {
             push(0);
             push(0);
             push(output.slice(offset, 0xFFFF));
-            @stream.write(buffer)
+            __stream.write(buffer)
             buffer.clear();
 
             size -= 0xFFFF
@@ -234,7 +270,7 @@ class FCGIRequest {
             push(0);
             push(0);
             push(output.slice(offset));
-            @stream.write(buffer)
+            __stream.write(buffer)
             buffer.clear();
         }
 
@@ -246,7 +282,7 @@ class FCGIRequest {
         push(0);
         push(0);
         push(0);
-        @stream.write(buffer)
+        __stream.write(buffer)
         buffer.clear();
 
         push(FCGI_VERSION_1);
@@ -266,30 +302,29 @@ class FCGIRequest {
         push(0);
         push(0);
 
-        @stream.write(buffer)
+        __stream.write(buffer)
+        __stream.flush()
 
-        @stream.flush()
-
-        @app.death.push(@stream)
+        __app.report-dead(__stream)
     }
 
     queryParams() {
-        return urlDecode(self.params['QUERY_STRING']);
+        return urlDecode(__params['QUERY_STRING']);
     }
 
     formData() {
-        if self.params['CONTENT_TYPE'].match?(/^multipart\/form-data/) {
+        if __params['CONTENT_TYPE'].match?(/^multipart\/form-data/) {
             let form = %{}
-            let [_, delim] = self.body.match!(/^(.*)\r\n/)
+            let [_, delim] = __body.match!(/^(.*)\r\n/)
             let offset = 0
 
-            while let $i = self.body.bsearch(delim, offset) {
-                if not let $j = self.body.bsearch('\r\n\r\n', i) {
+            while let $i = __body.bsearch(delim, offset) {
+                if not let $j = __body.bsearch('\r\n\r\n', i) {
                     break
                 }
-                let headers = self.body.bsplice(i + #delim + 2, j).split(/\r\n/)
-                offset = self.body.bsearch(delim, j)
-                let content = self.body.bsplice(j + 4, offset - 2)
+                let headers = __body.bsplice(i + #delim + 2, j).split(/\r\n/)
+                offset = __body.bsearch(delim, j)
+                let content = __body.bsplice(j + 4, offset - 2)
                 let headers = %{k.lower(): v for [k, v] in headers.map(&split(': ', 1))}
                 let disposition = %{k: v for [_, k, v] in headers['content-disposition'].matches(/(\w+)="([^"]+)"/)}
                 let name = disposition['name']
@@ -311,33 +346,39 @@ class FCGIRequest {
             }
 
             return form
-        } else if self.params['CONTENT_TYPE'].match?(/^application\/x-www-form-urlencoded/) {
-            return urlDecode(self.body)
+        } else if __params['CONTENT_TYPE'].match?(/^application\/x-www-form-urlencoded/) {
+            return urlDecode(__body)
         } else {
-            return urlDecode(self.params['QUERY_STRING'])
+            return urlDecode(__params['QUERY_STRING'])
         }
     }
 }
 
 pub class FCGIApp {
+    __clients: Dict[Int, FCGIParser]
+    __death: Sync[Array[io.Stream]]
+    __socket: Int
+
     init(socket) {
-        self.socket = socket
-        @death = Sync([])
-        @clients = %{}
+        __socket = socket
+        __death = Sync([])
+        __clients = %{}
+    }
+
+    report-dead(stream: io.Stream) {
+        __death.push(stream)
     }
 
     run*() {
         while true {
-            while #@death > 0 {
-                @death.pop().close()
+            while #__death > 0 {
+                __death.pop().close()
             }
 
-            let pollFds = [
-                (fd: @socket, events: os.POLLIN)
-            ]
+            let pollFds = [{fd: __socket, events: os.POLLIN}]
 
-            for client in @clients {
-                pollFds.push((fd: client, events: os.POLLIN))
+            for client in __clients {
+                pollFds.push({fd: client, events: os.POLLIN})
             }
 
             let (t, n) = timed(os.poll(pollFds, 50))
@@ -347,22 +388,26 @@ pub class FCGIApp {
 
             if pollFds[0].revents & os.POLLIN {
                 let (conn, addr) = os.accept(@socket)
-                @clients[conn] = FCGIParser(conn)
+                __clients[conn] = FCGIParser(conn)
             }
 
             for {fd, events, revents} in pollFds.drop(1) {
                 if revents & os.POLLIN {
                     if let $data = os.read(fd, 4096) {
-                        if let $request = @clients[fd].push(data) {
-                            request.app = self
-                            request.stream = io.open(fd, 'w')
-                            yield request
+                        if let (body, params, fd) = __clients[fd].push(data) {
+                            yield FCGIRequest(
+                                self,
+                                fd,
+                                io.open(fd, 'w'),
+                                body,
+                                params
+                            )
                         }
                     } else {
-                        @clients.remove(fd)
+                        __clients.remove(fd)
                     }
                 } else if revents & (os.POLLNVAL | os.POLLERR) {
-                    @clients.remove(fd)
+                    __clients.remove(fd)
                 }
             }
         }

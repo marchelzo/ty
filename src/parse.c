@@ -2110,7 +2110,9 @@ EndOfParams:
                         Expr *sub;
                         Expr *super;
 
+                        SAVE_NC(true);
                         sub = prefix_identifier(ty);
+                        LOAD_NC();
                         consume(':');
                         super = parse_type(ty, 0);
 
