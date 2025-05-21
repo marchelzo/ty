@@ -2736,27 +2736,13 @@ macro time! {
     }$$]
 }
 
-macro timed(e) {
-    lex.next()
-
-    ty.Block([
-        ty.Let(
-            ty.Array([
-                ty.ArrayItem(item: ty.Id(name: 's')),
-                ty.ArrayItem(item: ty.Id(name: 'x')),
-                ty.ArrayItem(item: ty.Id(name: 'e'))
-            ]),
-            ty.Array([
-                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: [])),
-                ty.ArrayItem(item: e),
-                ty.ArrayItem(item: ty.Call(func: ty.Value(time.utime), args: []))
-            ])
-        ),
-        ty.Record([
-            ty.RecordEntry(item: ty.Div(ty.Sub(ty.Id(name: 'e'), ty.Id(name: 's')), ty.Value(1.0e6))),
-            ty.RecordEntry(item: ty.Id(name: 'x'))
-        ])
-    ])
+macro timed(expr) {
+    $$[
+        do {
+            let (s: Int, x: _, e: Int) = ($${time.utime}(), $$expr, $${time.utime}())
+            ((e - s) / 1.0e6, x)
+        }
+    $$]
 }
 
 macro modify! {
