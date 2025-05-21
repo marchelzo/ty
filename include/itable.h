@@ -11,7 +11,6 @@ typedef struct value Value;
 struct itable {
         vec(int) ids;
         ValueVector values;
-        Value *vals;
         int class;
 };
 
@@ -26,6 +25,13 @@ itable_put(Ty *ty, struct itable *t, char const *name, Value v)
 {
         InternEntry *e = intern(&xD.members, name);
         return itable_add(ty, t, e->id, v);
+}
+
+inline static void
+itable_clear(struct itable *t)
+{
+        v0(t->ids);
+        v0(t->values);
 }
 
 void

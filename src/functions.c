@@ -7120,6 +7120,17 @@ BUILTIN_FUNCTION(ty_tokenize)
         return make_tokens(ty, &tokens);
 }
 
+BUILTIN_FUNCTION(ty_scope)
+{
+        char const *_name__ = "ty.scope()";
+
+        CHECK_ARGC(0);
+
+        Scope *scope = TyCompilerState(ty)->macro_scope;
+
+        return (scope == NULL) ? NIL : PTR(scope);
+}
+
 BUILTIN_FUNCTION(ty_parse)
 {
         ASSERT_ARGC("ty.parse()", 1);

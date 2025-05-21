@@ -268,6 +268,9 @@ define_tag(Ty *ty, Stmt *s);
 void
 define_function(Ty *ty, Stmt *);
 
+void
+define_operator(Ty *ty, Scope *scope, Stmt *s);
+
 bool
 is_macro(Ty *ty, char const *module, char const *id);
 
@@ -306,6 +309,9 @@ cstmt(Ty *ty, Value *);
 
 void *
 compiler_swap_jb(Ty *ty, void *);
+
+void
+compiler_set_type_of(Ty *ty, Stmt *);
 
 void
 colorize_code(
@@ -373,6 +379,12 @@ CompilerBlackpill(Ty *ty, Stmt *s);
 
 void
 CompilerResolveExpr(Ty *ty, Expr *e);
+
+void *
+CompilerPushContext(Ty *ty, void const *ctx);
+
+int
+Expr2Op(Expr const *e);
 
 char const *
 DumpProgram(

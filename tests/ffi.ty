@@ -1,5 +1,4 @@
-import ffi as c
-import cutil (wrap)
+import ffi as c (wrap)
 import io
 
 let bytes = with f = io.open('/dev/urandom', 'r') { f.next(5000) }

@@ -113,7 +113,8 @@ typedef struct class_definition ClassDefinition;
         X(EXPRESSION),            \
         X(USE),                   \
         X(IMPORT),                \
-        X(EXPORT)
+        X(EXPORT),                \
+        X(SET_TYPE)
 
 #define TY_EXPRESSION_TYPES                                                           \
         X(FUNCTION),                                                                  \

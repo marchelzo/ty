@@ -18,6 +18,7 @@ struct constraint {
         enum {
                 TC_2OP,
                 TC_EQ,
+                TC_SUB,
                 TC_BOUND
         } type;
         union {
@@ -25,7 +26,8 @@ struct constraint {
                         int op;
                         Type *t0;
                         Type *t1;
-                        Type *rt;
+                        Type *t2;
+                        Expr const *src;
                 };
                 TypeBound *bound;
         };
@@ -40,6 +42,8 @@ struct type {
         enum {
                 TYPE_FUNCTION,
                 TYPE_TUPLE,
+                TYPE_2OP_L,
+                TYPE_2OP_R,
                 TYPE_LIST,
                 TYPE_SEQUENCE,
                 TYPE_TAG,
@@ -84,6 +88,11 @@ struct type {
                                 struct {
                                         Type *_type;
                                         char const *name;
+                                };
+                                struct {
+                                        Type *a;
+                                        Type *b;
+                                        int op;
                                 };
                                 struct {
                                         union {
@@ -146,10 +155,13 @@ extern Type *TYPE_ANY;
 extern Type *TYPE_CLASS_;
 
 
-enum {
-        T_FLAG_STRICT = 1,
-        T_FLAG_UPDATE = 2
-};
+#define TY_T_FLAGS   \
+        X(UPDATE, 0) \
+        X(STRICT, 1) \
+
+#define X(f, i) T_FLAG_ ## f = 1 << i,
+enum { TY_T_FLAGS };
+#undef X
 
 
 Type *
@@ -303,7 +315,7 @@ Type *
 type_list_item(Ty *ty, Type const *t0, int i);
 
 void
-type_scope_push(Ty *ty, bool fun);
+type_scope_push(Ty *ty, Expr *fun);
 
 void
 type_scope_pop(Ty *ty);
@@ -334,6 +346,9 @@ type_is_concrete(Ty *ty, Type const *t0);
 
 bool
 type_is_tvar(Type const *t0);
+
+bool
+type_iter(Ty *ty);
 
 inline static Type *
 iterable_type_for(Ty *ty, Expr const *e, Type *t0)

@@ -3357,6 +3357,177 @@ DoAssign(Ty *ty)
         }
 }
 
+static void
+DoTargetSubscript(Ty *ty)
+{
+        Value v;
+        Value subscript = top()[0];
+        Value container = top()[-1];
+
+        switch (container.type) {
+        case VALUE_ARRAY:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER))
+                        zP("non-integer array index used in subscript assignment");
+                if (subscript.integer < 0)
+                        subscript.integer += container.array->count;
+                if (UNLIKELY(subscript.integer < 0 || subscript.integer >= container.array->count)) {
+                        push(
+                                tagged(
+                                        ty,
+                                        TAG_INDEX_ERR,
+                                        container,
+                                        subscript,
+                                        NONE
+                                )
+                        );
+                        RaiseException(ty);
+                        return;
+                }
+                pushtarget(&container.array->items[subscript.integer], container.array);
+                break;
+
+        case VALUE_DICT:
+                pushtarget(dict_put_key_if_not_exists(ty, container.dict, subscript), container.dict);
+                break;
+
+        case VALUE_BLOB:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer blob index used in subscript assignment");
+                }
+                if (subscript.integer < 0) {
+                        subscript.integer += container.blob->count;
+                }
+                if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
+                        // TODO: Not sure which is the best behavior here
+                        push(TAG(gettag(ty, NULL, "IndexError")));
+                        RaiseException(ty);
+                        return;
+                        zP("blob index out of range in subscript expression");
+                }
+                pushtarget((Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
+                break;
+
+        case VALUE_PTR:
+                if (IP[0] != INSTR_ASSIGN) {
+                        goto BadContainer;
+                }
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
+                }
+                Value p = vm_2op(ty, OP_ADD, &container, &subscript);
+                pop();
+                pop();
+                v = pop();
+                push(p);
+                push(v);
+                v = cffi_store(ty, 2, NULL);
+                pop();
+                pop();
+                push(v);
+                IP += 1;
+                return;
+        default:
+        BadContainer:
+                zP(
+                        "attempt to perform subscript assignment on "
+                        "something other than an object or array: %s",
+                        VSC(&container)
+                );
+        }
+
+        pop();
+        pop();
+}
+
+static void
+DoAssignSubscript(Ty *ty)
+{
+        Value v;
+        Value subscript = top()[0];
+        Value container = top()[-1];
+        Value value = top()[-2];
+
+        switch (container.type) {
+        case VALUE_ARRAY:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER))
+                        zP("non-integer array index used in subscript assignment");
+                if (subscript.integer < 0)
+                        subscript.integer += container.array->count;
+                if (UNLIKELY(subscript.integer < 0 || subscript.integer >= container.array->count)) {
+                        push(
+                                tagged(
+                                        ty,
+                                        TAG_INDEX_ERR,
+                                        container,
+                                        subscript,
+                                        NONE
+                                )
+                        );
+                        RaiseException(ty);
+                        return;
+                }
+                *v_(*container.array, subscript.integer) = value;
+                break;
+
+        case VALUE_DICT:
+                *dict_put_key_if_not_exists(ty, container.dict, subscript) = value;
+                break;
+
+        case VALUE_BLOB:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer blob index used in subscript assignment");
+                }
+                if (subscript.integer < 0) {
+                        subscript.integer += container.blob->count;
+                }
+                if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
+                        // TODO: Not sure which is the best behavior here
+                        push(TAG(gettag(ty, NULL, "IndexError")));
+                        RaiseException(ty);
+                        return;
+                        zP("blob index out of range in subscript expression");
+                }
+                if (UNLIKELY(value.type != VALUE_INTEGER)) {
+                        zP("attempt to assign Blob element to non-integer value: %s", VSC(&value));
+                }
+                *v_(*container.blob, subscript.integer) = value.integer;
+                break;
+
+        case VALUE_PTR:
+                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
+                        zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
+                }
+                Value p = vm_2op(ty, OP_ADD, &container, &subscript);
+                pop();
+                pop();
+                pop();
+                push(p);
+                push(value);
+                v = cffi_store(ty, 2, NULL);
+                pop();
+                pop();
+                push(v);
+                return;
+
+        case VALUE_OBJECT:
+                swap();
+                pop();
+                swap();
+                push(container);
+                CallMethod(ty, NAMES._setitem_, 2, 0, false);
+                return;
+
+        default:
+                zP(
+                        "attempt to perform subscript assignment on "
+                        "something other than an object or array: %s",
+                        VSC(&container)
+                );
+        }
+
+        pop();
+        pop();
+}
 
 static void
 IterGetNext(Ty *ty)
@@ -3802,6 +3973,9 @@ AssignGlobal:
                         LOG("Targeting %d", n);
                         *local(ty, n) = pop();
                         break;
+                CASE(ASSIGN_SUBSCRIPT)
+                        DoAssignSubscript(ty);
+                        break;
                 CASE(TARGET_REF)
                         READVALUE(n);
                         vp = local(ty, n);
@@ -3875,72 +4049,7 @@ AssignGlobal:
                         }
                         break;
                 CASE(TARGET_SUBSCRIPT)
-                        subscript = top()[0];
-                        container = top()[-1];
-
-                        if (container.type == VALUE_ARRAY) {
-                                if (UNLIKELY(subscript.type != VALUE_INTEGER))
-                                        zP("non-integer array index used in subscript assignment");
-                                if (subscript.integer < 0)
-                                        subscript.integer += container.array->count;
-                                if (UNLIKELY(subscript.integer < 0 || subscript.integer >= container.array->count)) {
-                                        push(
-                                                tagged(
-                                                        ty,
-                                                        TAG_INDEX_ERR,
-                                                        container,
-                                                        subscript,
-                                                        NONE
-                                                )
-                                        );
-                                        RaiseException(ty);
-                                        break;
-                                }
-                                pushtarget(&container.array->items[subscript.integer], container.array);
-                        } else if (container.type == VALUE_DICT) {
-                                pushtarget(dict_put_key_if_not_exists(ty, container.dict, subscript), container.dict);
-                        } else if (container.type == VALUE_BLOB) {
-                                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
-                                        zP("non-integer blob index used in subscript assignment");
-                                }
-                                if (subscript.integer < 0) {
-                                        subscript.integer += container.blob->count;
-                                }
-                                if (subscript.integer < 0 || subscript.integer >= container.blob->count) {
-                                        // TODO: Not sure which is the best behavior here
-                                        push(TAG(gettag(ty, NULL, "IndexError")));
-                                        RaiseException(ty);
-                                        goto NextInstruction;
-                                        zP("blob index out of range in subscript expression");
-                                }
-                                pushtarget((Value *)((((uintptr_t)(subscript.integer)) << 3) | 1) , container.blob);
-                        } else if (container.type == VALUE_PTR && IP[0] == INSTR_ASSIGN) {
-                                if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
-                                        zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
-                                }
-                                Value p = vm_2op(ty, OP_ADD, &container, &subscript);
-                                pop();
-                                pop();
-                                v = pop();
-                                push(p);
-                                push(v);
-                                v = cffi_store(ty, 2, NULL);
-                                pop();
-                                pop();
-                                push(v);
-                                IP += 1;
-                                break;
-                        } else {
-                                zP(
-                                        "attempt to perform subscript assignment on "
-                                        "something other than an object or array: %s",
-                                        VSC(&container)
-                                );
-                        }
-
-                        pop();
-                        pop();
-
+                        DoTargetSubscript(ty);
                         break;
                 CASE(ASSIGN)
                         DoAssign(ty);
@@ -5033,6 +5142,16 @@ BadTupleMember:
                                 pop();
                                 push(container);
                                 break;
+                        case VALUE_GENERATOR:
+                                vp = class_lookup_method_i(ty, CLASS_GENERATOR, NAMES.subscript);
+                                if (vp != NULL) {
+                                        swap();
+                                        pop();
+                                        call(ty, vp, &container, 1, 0, false);
+                                } else {
+                                        goto BadContainer;
+                                }
+                                break;
                         case VALUE_OBJECT:
                                 vp = class_lookup_method_i(ty, container.class, NAMES.subscript);
                                 if (vp != NULL) {
@@ -5665,6 +5784,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
         NAMES.question         = M_ID("__question__");
+        NAMES._setitem_        = M_ID("__set_item__");
         NAMES.slice            = M_ID("__slice__");
         NAMES.str              = M_ID("__str__");
         NAMES.subscript        = M_ID("__subscript__");

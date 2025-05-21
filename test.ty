@@ -49,7 +49,7 @@ function doTest(name: String) {
                 _ => "({elapsedMs:d}ms)",
             }
 
-            chalk"[bright green bold]PASS[/] [bright yellow]{elapsed}[/]"
+           chalk"[bright green bold]PASS[/] [bright yellow]{elapsed}[/]"
         },
 
         _ => do {
