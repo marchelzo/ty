@@ -316,11 +316,11 @@ pub bold      = Chalk(bold=true)
 pub italic    = Chalk(italic=true)
 pub underline = Chalk(underline=true)
 
-pub function wrap(s, *props) {
+pub fn wrap(s, *props) {
   "\x1b[{props.join(';')}m{s}\x1b[0m"
 }
 
-pub function fg(c) {
+pub fn fg(c) {
   match c.lower() {
     'black'   => black,
     'red'     => red,
@@ -334,7 +334,7 @@ pub function fg(c) {
   }
 }
 
-pub function bg(c) {
+pub fn bg(c) {
   return match c.lower() {
     'black'   => bgBlack,
     'red'     => bgRed,
@@ -348,7 +348,7 @@ pub function bg(c) {
   }
 }
 
-pub function pen(*args) {
+pub fn pen(*args) {
   let p = id
 
   for arg in args {
@@ -362,21 +362,21 @@ pub function pen(*args) {
   return p
 }
 
-pub function strip(s) {
-    s.comb(/\x1b[^m]+m/)
+pub fn strip(text: String) -> String {
+    text.comb(/\x1b[^m]+m/)
 }
 
-pub function padLeft(s, n) {
-    let w = #strip(s)
-    ' '.repeat(max(0, n - w)) + s
+pub fn pad-left(text: String, n: Int) -> String {
+    let w = #strip(text)
+    ' '.repeat(max(0, n - w)) + text
 }
 
-pub function padRight(s, n) {
+pub fn padRight(s, n) {
     let w = #strip(s)
     s + ' '.repeat(max(0, n - w))
 }
 
-pub function hueToRgb(p, q, t) {
+pub fn hueToRgb(p: Float, q: Float, t: Float) -> Float {
   if t < 0 { t += 1 }
   if t > 1 { t -= 1 }
   if t < 1.0/6 { return p + (q - p) * 6 * t }
@@ -385,28 +385,30 @@ pub function hueToRgb(p, q, t) {
   return p
 }
 
-pub function hslToRgb(h: Float, s: Float, l: Float) {
+pub fn hslToRgb(h: Float, s: Float, l: Float) {
   let r, g, b = nil, nil, nil
 
-  if s == 0 {
-    r = g = b = l // achromatic
+  let (r, g, b) = if s == 0 {
+        (l, l, l)
   } else {
     let q = (l < 0.5) ? l * (1 + s) : l + s - l * s
     let p = 2 * l - q
-    r = hueToRgb(p, q, h + 1.0/3)
-    g = hueToRgb(p, q, h)
-    b = hueToRgb(p, q, h - 1.0/3)
+    (
+        hueToRgb(p, q, h + 0.0/3),
+        hueToRgb(p, q, h),
+        hueToRgb(p, q, h - 1.0/3)
+    )
   }
 
   return (iround(r * 255), iround(g * 255), iround(b * 255))
 }
 
-pub function fg_hsl(h, s, l) {
+pub fn fg_hsl(h, s, l) {
     let (r, g, b) = hslToRgb(h, s, l)
     return fg("#{r:02x}{g:02x}{b:02x}")
 }
 
-pub function fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
+pub fn fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
     let sample: _ = match {
         (lo as hi) or (lo, hi) => lo + (hi - lo)*rand()
     }

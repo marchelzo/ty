@@ -5,6 +5,28 @@ import ty.parse (expr, stmt, fail)
 import ty.lex as lex
 import ptr (typed)
 
+tag CType;
+tag Ptr;
+
+fn c::size(type: _) -> Int;
+
+fn c::load[T](type: CType[T], address: _) -> T;
+
+fn ptr::typed(ptr: _, type: CType[_]) -> _;
+
+__set_type__ c::i8      CType[Int];
+__set_type__ c::i16     CType[Int];
+__set_type__ c::i32     CType[Int];
+__set_type__ c::i64     CType[Int];
+__set_type__ c::int     CType[Int];
+__set_type__ c::u8      CType[Int];
+__set_type__ c::u16     CType[Int];
+__set_type__ c::u32     CType[Int];
+__set_type__ c::u64     CType[Int];
+__set_type__ c::uint    CType[Int];
+__set_type__ c::float   CType[Float];
+__set_type__ c::double  CType[Float];
+
 pub cifs = Sync(%{})
 
 tag Union;
@@ -30,7 +52,7 @@ pub function getCif(rt, *aTypes, nFixed: ?Int) {
     }
 }
 
-pub function wrap(lib, name, rType = nil, *aTypes) -> _ {
+pub function wrap(lib, name: String, rType: _ = nil, *aTypes: _) -> _ {
     if not let $fp = c.dlsym(name, lib) {
         throw Err("Failed to load symbol '{name}'")
     }
@@ -72,6 +94,18 @@ pub function array(type, xs) {
     }
 
     return buffer
+}
+
+pub fn ffi-type(t0: _) -> _ {
+    match t0 {
+        c::u8, c::u16, c::u32, c::u64,
+        c::i8, c::i16, c::i32, c::i64,
+        c::int, c::uint, c::long, c::ulong => $$[ Int $$],
+
+        c::float, c::double => $$[ Float $$],
+
+        _ => nil
+    }
 }
 
 pub function wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
@@ -134,7 +168,7 @@ pub function cstr(s) {
     return p
 }
 
-function nexttype(array-to-ptr? = true, allow-name = true) {
+function nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
     let parts = []
 
     let ignore = "
@@ -142,6 +176,9 @@ function nexttype(array-to-ptr? = true, allow-name = true) {
         const      struct  _Atomic   volatile
         signed     auto    noreturn  _Noreturn
     ".words()
+
+    let allow-name? = has-name? != false
+    let need-name? = has-name? == true
 
     while match (peek().type, peek(1).type) {
         (')', _),
@@ -152,7 +189,7 @@ function nexttype(array-to-ptr? = true, allow-name = true) {
             let e = expr(1)
 
             // Allow stuff like f(c.int error_code) by just ignoring the identifier
-            return e, if allow-name && peek().type == 'id' { next().id }
+            return e, if allow-name? && peek().type == 'id' { next().id }
         },
 
         ('const', _)   => { next()                  },
@@ -162,9 +199,13 @@ function nexttype(array-to-ptr? = true, allow-name = true) {
         ('**', _)      => { next(); parts.push('*') }
     }
 
-    parts.filter!((not in ignore))
+    let have-int? = 'int' in parts
 
-    let t = match parts.sort(:desc).unwords() {
+    parts.filter!(\_ not in ignore)
+
+    let type-name = (need-name? ? parts[;-1] : parts).sort(:desc).unwords()
+
+    let t = match type-name {
         /\benum\b/ => c.int,
 
         'void' => c.void,
@@ -206,11 +247,12 @@ function nexttype(array-to-ptr? = true, allow-name = true) {
 
         'bool' or '_Bool' => c.u8,
 
-        _ => ty.Id({name: parts[0]})
+        _ => have-int? ? c.int : ty.Id({name: parts[0]})
     }
 
-    if !matches?(t, ty.Id(_)) {
-        t = ty.Value(t)
+    let t = match t {
+        ty.Id(_) as t => t
+        _             => ty.Value(t)
     }
 
     if peek().type == '*' || peek().type == '**' {
@@ -292,7 +334,7 @@ function fun() {
             ty.Arg(arg: rt),
             *(ty.Arg(arg: p) for (p: AST) in ps)
         ]
-        ty.Let((
+        ty.Let(
             ty.Id(name: name),
             ty.Call(
                 func: ty.Value(set-doc),
@@ -304,7 +346,7 @@ function fun() {
                 ]
             ),
             public: public
-        ))
+        )
     }
 
     if peek().type == 'id' {
@@ -332,7 +374,7 @@ function fun() {
             }
 
             let st = lex.state()
-            let rt: AST = nexttype(allow-name=false)
+            let rt: AST = nexttype(has-name?=false)
             let rt-string = lspan(st)
 
             let name = next().id
@@ -362,7 +404,7 @@ function fun() {
  *
  * }
  */
-function strct() {
+fn strct() {
     let peek_ = peek
     let next_ = next
 
@@ -391,7 +433,7 @@ function strct() {
 
     next!('{')
 
-    let members = []
+    let members: [_] = []
 
     while peek().type != '}' {
         let get-count = fn () -> AST {
@@ -403,8 +445,8 @@ function strct() {
             }
         }
 
-        let get-decl = -> do {
-            let t, name = nexttype(array-to-ptr?=false)
+        fn get-decl() {
+            let t, name = nexttype(array-to-ptr?=false, has-name?=true)
             let names = [(name, get-count())]
 
             while peek().type == ',' {
@@ -595,7 +637,7 @@ function strct() {
                     name: name,
                     params: [],
                     body: getter-body,
-                    rt: nil,
+                    rt: try { ffi-type(ty.eval(t, ty.scope())) } catch _ { nil },
                     decorators: []
                 )
             )
@@ -786,7 +828,7 @@ pub macro cfun! {
 pub macro struct! {
     let structName = next().id
 
-    let ty.Record(struct) = expr(99)
+    try let ty.Record(struct) = expr(99)
 
     let init = ty.Func(
         name: 'init',
@@ -941,7 +983,9 @@ pub macro struct! {
 }
 
 pub macro closure! {
-    let ty.Func(f) = expr(0)
+    if not let ty.Func(f) = expr(0) {
+        fail('expected function expression')
+    }
 
     if not let $rt = f.?rt {
         fail('need return type')

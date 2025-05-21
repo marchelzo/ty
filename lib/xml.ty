@@ -1,10 +1,29 @@
-import ffi as c (wrap, cfun!, struct!, C!)
+import ffi as c (C!)
 import os (args)
 import ptr
+import help (pretty)
 
-if not let $lib = c.dlopen('libxml2.so') ?? c.dlopen('libxml2.dylib') ?? c.dlopen('libxml2-2.dll') {
+if not let $libxml = c.dlopen('libxml2.so') ?? c.dlopen('libxml2.dylib') ?? c.dlopen('libxml2-2.dll') {
     throw "Failed to load libxml2"
 }
+
+tag XMLError;
+
+let xmlError            = c.int
+let xmlParserErrors     = c.int
+let xmlParserInputState = c.int
+let xmlParserMode       = c.int
+
+let xmlValidityErrorFunc   = c.ptr
+let xmlValidityWarningFunc = c.ptr
+
+let xmlDictPtr           = c.ptr
+let xmlDocPtr            = c.ptr
+let xmlNodePtr           = c.ptr
+let xmlHashTablePtr      = c.ptr
+let xmlDictPtr           = c.ptr
+let xmlParserInputPtr    = c.ptr
+let xmlAttrPtr           = c.ptr
 
 let XML_MAX_TEXT_LENGTH = 10000000
 let XML_MAX_NAME_LENGTH = 50000
@@ -1295,46 +1314,49 @@ let XML_EXP_SEQ = 3
 let XML_EXP_OR = 4
 let XML_EXP_COUNT = 5
 
-struct! CXMLXPathObject {
-    type: c.ptr,
-    nodesetval: c.ptr,
-    boolval: c.int,
-    floatval: c.double,
-    stringval: c.ptr,
-    user: c.ptr,
-    index: c.int,
-    user2: c.ptr,
-    index2: c.int
+C! struct CXMLXPathObject {
+    c.int type;
+    void *nodesetval;
+    c.int boolval;
+    c.double floatval;
+    void *stringval;
+    void *user;
+    c.int index;
+    void *user2;
+    c.int index2;
 }
 
-struct! CXMLNodeSet {
-    nodeNr: c.int, /* number of nodes in the set */
-    nodeMax: c.int, /* size of the array as allocated */
-    nodeTab: c.ptr /* array of nodes in no particular order */
+C! struct CXMLNodeSet {
+    int nodeNr; /* number of nodes in the set */
+    int nodeMax; /* size of the array as allocated */
+    void *nodeTab; /* array of nodes in no particular order */
     /* @@ with_ns to check whether namespace nodes should be looked at @@ */
 }
 
-function XMLNodeSet(nodes) {
+function iter-node-set*(nodes: _) -> Generator[XMLNode] {
     let nodes = CXMLNodeSet(nodes)
-    [XMLNode(c.load(c.ptr, nodes.nodeTab() + i * c.size(c.ptr))) for i in ..nodes.nodeNr()]
+    let table = ptr.typed(nodes.nodeTab, c.ptr)
+    for i in ..nodes.nodeNr {
+        yield XMLNode(table[i])
+    }
 }
 
-struct! CXMLAttr {
-    private: c.ptr,    /* application data */
-    type: c.int,       /* XML_ATTRIBUTE_NODE, must be second ! */
-    name: c.ptr,       /* the name of the property */
-    children: c.ptr,   /* the value of the property */
-    last: c.ptr,       /* NULL */
-    parent: c.ptr,     /* child->parent link */
-    next: c.ptr,       /* next sibling link  */
-    prev: c.ptr,       /* previous sibling link  */
-    doc: c.ptr,        /* the containing document */
-    ns: c.ptr,         /* pointer to the associated namespace */
-    atype: c.int,      /* the attribute type if validating */
-    psvi: c.ptr        /* for type/PSVI informations */
+C! struct CXMLAttr {
+    void *private;    /* application data */
+    int type;       /* XML_ATTRIBUTE_NODE, must be second ! */
+    void *name;       /* the name of the property */
+    void *children;   /* the value of the property */
+    void *last;       /* NULL */
+    void *parent;     /* child->parent link */
+    void *next;       /* next sibling link  */
+    void *prev;       /* previous sibling link  */
+    void *doc;        /* the containing document */
+    void *`ns`;         /* pointer to the associated namespace */
+    int atype;      /* the attribute type if validating */
+    void *psvi;       /* for type/PSVI informations */
 }
 
-class XMLAttr : CXMLAttr {
+class XMLAttr < CXMLAttr {
     children() {
         if let $p = CXMLNode.children.apply(self) {
             XMLNode(p)
@@ -1366,89 +1388,367 @@ class XMLAttr : CXMLAttr {
     }
 }
 
-struct! XMLNs {
-    next: c.ptr,       /* next Ns link for this node  */
-    xmlNsType: c.int,  /* global or local */
-    href: c.ptr,       /* URL for the namespace */
-    prefix: c.ptr,     /* prefix for the namespace */
-    private: c.ptr,    /* application data */
-    contextx: c.ptr    /* normally an xmlDoc */
+C! struct CXMLValidCtxt {
+    void *userData;			/* user specific data block */
+    xmlValidityErrorFunc error;		/* the callback in case of errors */
+    xmlValidityWarningFunc warning;	/* the callback in case of warning */
+
+    /* Node analysis stack used when validating within entities */
+    xmlNodePtr         node;          /* Current parsed Node */
+    int                nodeNr;        /* Depth of the parsing stack */
+    int                nodeMax;       /* Max depth of the parsing stack */
+    xmlNodePtr        *nodeTab;       /* array of nodes */
+
+    unsigned int     finishDtd;       /* finished validating the Dtd ? */
+    xmlDocPtr              doc;       /* the document */
+    int                  valid;       /* temporary validity check result */
+
+    /* state state used for non-determinist content validation */
+    xmlValidState     *vstate;        /* current state */
+    int                vstateNr;      /* Depth of the validation stack */
+    int                vstateMax;     /* Max depth of the validation stack */
+    xmlValidState     *vstateTab;     /* array of validation states */
+
+    void                     *am;
+    void                  *state;
 };
 
-struct! CXMLNode {
-    private: c.ptr,    /* application data */
-    type: c.int,       /* type number, must be second ! */
-    name: c.ptr,       /* the name of the node, or the entity */
-    children: c.ptr,   /* parent->childs link */
-    last: c.ptr,       /* last child link */
-    parent: c.ptr,     /* child->parent link */
-    next: c.ptr,       /* next sibling link  */
-    prev: c.ptr,       /* previous sibling link  */
-    doc: c.ptr,        /* the containing document */
+C! struct CXMLParserNodeInfoSeq {
+  unsigned long maximum;
+  unsigned long length;
+  xmlParserNodeInfo* buffer;
+};
+
+C! struct CXMLParserCtxt {
+    struct _xmlSAXHandler *sax;       /* The SAX handler */
+    void            *userData;        /* For SAX interface only, used by DOM build */
+    xmlDocPtr           myDoc;        /* the document being built */
+    int            wellFormed;        /* is the document well formed */
+    int       replaceEntities;        /* shall we replace entities ? */
+    const xmlChar    *version;        /* the XML version string */
+    const xmlChar   *encoding;        /* the declared encoding, if any */
+    int            standalone;        /* standalone document */
+    int                  html;        /* an HTML(1)/Docbook(2) document
+                                       * 3 is HTML after <head>
+                                       * 10 is HTML after <body>
+                                       */
+
+    /* Input stream stack */
+    xmlParserInputPtr  input;         /* Current input stream */
+    int                inputNr;       /* Number of current input streams */
+    int                inputMax;      /* Max number of input streams */
+    xmlParserInputPtr *inputTab;      /* stack of inputs */
+
+    /* Node analysis stack only used for DOM building */
+    xmlNodePtr         node;          /* Current parsed Node */
+    int                nodeNr;        /* Depth of the parsing stack */
+    int                nodeMax;       /* Max depth of the parsing stack */
+    xmlNodePtr        *nodeTab;       /* array of nodes */
+
+    int record_info;                  /* Whether node info should be kept */
+    CXMLParserNodeInfoSeq_C node_seq;    /* info about each node parsed */
+
+    int errNo;                        /* error code */
+
+    int     hasExternalSubset;        /* reference and external subset */
+    int             hasPErefs;        /* the internal subset has PE refs */
+    int              external;        /* are we parsing an external entity */
+
+    int                 valid;        /* is the document valid */
+    int              validate;        /* shall we try to validate ? */
+    CXMLValidCtxt_C     vctxt;        /* The validity context */
+
+    xmlParserInputState instate;      /* current type of input */
+    int                 token;        /* next char look-ahead */
+
+    char           *directory;        /* the data directory */
+
+    /* Node name stack */
+    const xmlChar     *name;          /* Current parsed Node */
+    int                nameNr;        /* Depth of the parsing stack */
+    int                nameMax;       /* Max depth of the parsing stack */
+    const xmlChar *   *nameTab;       /* array of nodes */
+
+    long               nbChars;       /* unused */
+    long            checkIndex;       /* used by progressive parsing lookup */
+    int             keepBlanks;       /* ugly but ... */
+    int             disableSAX;       /* SAX callbacks are disabled */
+    int               inSubset;       /* Parsing is in int 1/ext 2 subset */
+    const xmlChar *    intSubName;    /* name of subset */
+    xmlChar *          extSubURI;     /* URI of external subset */
+    xmlChar *          extSubSystem;  /* SYSTEM ID of external subset */
+
+    /* xml:space values */
+    int *              space;         /* Should the parser preserve spaces */
+    int                spaceNr;       /* Depth of the parsing stack */
+    int                spaceMax;      /* Max depth of the parsing stack */
+    int *              spaceTab;      /* array of space infos */
+
+    int                depth;         /* to prevent entity substitution loops */
+    xmlParserInputPtr  entity;        /* used to check entities boundaries */
+    int                charset;       /* encoding of the in-memory content
+				         actually an xmlCharEncoding */
+    int                nodelen;       /* Those two fields are there to */
+    int                nodemem;       /* Speed up large node parsing */
+    int                pedantic;      /* signal pedantic warnings */
+    void              *_private;      /* For user data, libxml won't touch it */
+
+    int                loadsubset;    /* should the external subset be loaded */
+    int                linenumbers;   /* set line number in element content */
+    void              *catalogs;      /* document's own catalog */
+    int                recovery;      /* run in recovery mode */
+    int                progressive;   /* is this a progressive parsing */
+    xmlDictPtr         dict;          /* dictionary for the parser */
+    const xmlChar *   *atts;          /* array for the attributes callbacks */
+    int                maxatts;       /* the size of the array */
+    int                docdict;       /* use strings from dict to build tree */
+
+    /*
+     * pre-interned strings
+     */
+    const xmlChar *str_xml;
+    const xmlChar *str_xmlns;
+    const xmlChar *str_xml_ns;
+
+    /*
+     * Everything below is used only by the new SAX mode
+     */
+    int                sax2;          /* operating in the new SAX mode */
+    int                nsNr;          /* the number of inherited namespaces */
+    int                nsMax;         /* the size of the arrays */
+    const xmlChar *   *nsTab;         /* the array of prefix/namespace name */
+    int               *attallocs;     /* which attribute were allocated */
+    xmlStartTag       *pushTab;       /* array of data for push */
+    xmlHashTablePtr    attsDefault;   /* defaulted attributes if any */
+    xmlHashTablePtr    attsSpecial;   /* non-CDATA attributes if any */
+    int                nsWellFormed;  /* is the document XML Namespace okay */
+    int                options;       /* Extra options */
+
+    /*
+     * Those fields are needed only for streaming parsing so far
+     */
+    int               dictNames;    /* Use dictionary names for the tree */
+    int               freeElemsNr;  /* number of freed element nodes */
+    xmlNodePtr        freeElems;    /* List of freed element nodes */
+    int               freeAttrsNr;  /* number of freed attributes nodes */
+    xmlAttrPtr        freeAttrs;    /* List of freed attributes nodes */
+
+    /*
+     * the complete error information for the last error.
+     */
+    xmlError          lastError;
+    xmlParserMode     parseMode;    /* the parser mode */
+    unsigned long    nbentities;    /* number of entities references */
+    unsigned long  sizeentities;    /* size of parsed entities */
+
+    /* for use by HTML non-recursive parser */
+    xmlParserNodeInfo *nodeInfo;      /* Current NodeInfo */
+    int                nodeInfoNr;    /* Depth of the parsing stack */
+    int                nodeInfoMax;   /* Max depth of the parsing stack */
+    xmlParserNodeInfo *nodeInfoTab;   /* array of nodeInfos */
+
+    int                input_id;      /* we need to label inputs */
+    unsigned long      sizeentcopy;   /* volume of entity copy */
+};
+
+C! struct XMLNs {
+    void *next;       /* next Ns link for this node  */
+    int xmlNsType;  /* global or local */
+    void *href;       /* URL for the namespace */
+    void *prefix;     /* prefix for the namespace */
+    void *private;    /* application data */
+    void *contextx;   /* normally an xmlDoc */
+};
+
+C! struct CXMLNode {
+    void *private;    /* application data */
+    int type;       /* type number, must be second ! */
+    void *name;       /* the name of the node, or the entity */
+    void *children;   /* parent->childs link */
+    void *last;       /* last child link */
+    void *parent;     /* child->parent link */
+    void *next;       /* next sibling link  */
+    void *prev;       /* previous sibling link  */
+    void *doc;        /* the containing document */
 
     /* End of common part */
-    ns: c.ptr,         /* pointer to the associated namespace */
-    content: c.ptr,    /* the content */
-    properties: c.ptr, /* properties list */
-    nsDef: c.ptr,      /* namespace definitions on this node */
-    psvi: c.ptr,       /* for type/PSVI informations */
-    line: c.ushort,    /* line number */
-    extra: c.ushort    /* extra data for XPath/XSLT */
+    void *`ns`;         /* pointer to the associated namespace */
+    void *content;    /* the content */
+    void *properties; /* properties list */
+    void *nsDef;      /* namespace definitions on this node */
+    void *psvi;       /* for type/PSVI informations */
+    unsigned short line;    /* line number */
+    unsigned short extra;    /* extra data for XPath/XSLT */
 }
 
-class XMLNode {
-    init(p) {
-        @node = CXMLNode(p)
+C! struct CXMLDoc {
+    void           *_private;	/* application data */
+    int  type;       /* XML_DOCUMENT_NODE, must be second ! */
+    char           *name;	/* name/filename/URI of the document */
+    struct _xmlNode *children;	/* the document tree */
+    struct _xmlNode *last;	/* last child link */
+    struct _xmlNode *parent;	/* child->parent link */
+    struct _xmlNode *next;	/* next sibling link  */
+    struct _xmlNode *prev;	/* previous sibling link  */
+    struct _xmlDoc  *doc;	/* autoreference to itself */
+
+    /* End of common part */
+    int             compression;/* level of zlib compression */
+    int             standalone; /* standalone document (no external refs)
+				     1 if standalone="yes"
+				     0 if standalone="no"
+				    -1 if there is no XML declaration
+				    -2 if there is an XML declaration, but no
+					standalone attribute was specified */
+    struct _xmlDtd  *intSubset;	/* the document internal subset */
+    struct _xmlDtd  *extSubset;	/* the document external subset */
+    struct _xmlNs   *oldNs;	/* Global namespace, the old way */
+    const xmlChar  *version;	/* the XML version string */
+    const xmlChar  *encoding;   /* external initial encoding, if any */
+    void           *ids;        /* Hash table for ID attributes if any */
+    void           *refs;       /* Hash table for IDREFs attributes if any */
+    const xmlChar  *URL;	/* The URI for that document */
+    int             charset;    /* Internal flag for charset handling,
+				   actually an xmlCharEncoding */
+    struct _xmlDict *dict;      /* dict used to allocate names or NULL */
+    void           *psvi;	/* for type/PSVI information */
+    int             parseFlags;	/* set of xmlParserOption used to parse the
+				   document */
+    int             properties;	/* set of xmlDocProperties for this document
+				   set at the end of parsing */
+};
+
+C! pub libxml fn xmlParseFile(c.ptr) -> c.ptr;
+C! pub libxml fn xmlXPathNewContext(c.ptr) -> c.ptr;
+C! pub libxml fn xmlXPathEvalExpression(c.ptr, c.ptr) -> c.ptr;
+
+C! pub libxml fn {
+    xmlNode *xmlReplaceNode(
+        xmlNode *old,
+        xmlNode *cur
+    );
+
+    xmlDoc *xmlReadDoc(
+        char const *contents,
+        char const *url,
+        char const *encoding,
+        int options
+    );
+
+    xmlDoc *xmlParseDoc(
+        char const *contents
+    );
+
+    xmlSaveCtxt *xmlSaveToFd(
+        int fd,
+        char const *encoding,
+        int options
+    );
+
+    long xmlSaveDoc(
+        xmlSaveCtxt *ctx,
+        xmlDoc *doc
+    );
+
+    xmlBuffer *xmlBufferCreate();
+
+    c.void xmlBufferFree(xmlBuffer *buf);
+
+    char const *xmlBufferContent(xmlBuffer const *buf);
+
+    int xmlNodeDump(
+        xmlBuffer *buf,
+        xmlDoc *doc,
+        xmlNode *cur,
+        int level,
+        int format
+    );
+
+    c.void xmlDocDumpFormatMemoryEnc(
+        xmlDoc *doc,
+        char **mem,
+        int *size,
+        char const *encoding,
+        int format
+    );
+
+    c.void xmlFree(void *mem);
+
+    c.int xmlSaveClose(xmlSaveCtxt *ctxt);
+
+    xmlParserCtxt *xmlNewParserCtxt(void);
+    c.void xmlFreeParserCtxt(xmlParserCtxt *ctxt);
+    xmlNode *xmlParseBalancedChunkMemory(
+        xmlParserCtxt *ctxt,
+        xmlNode *node,
+        char *chunk,
+        int size
+    );
+    xmlDoc *xmlNewDoc(const xmlChar *version);
+    xmlNode *xmlNewNode(xmlNs *_ns, const xmlChar *name);
+    c.void xmlDocSetRootElement(xmlDoc *doc, xmlNode *root);
+    c.void xmlAddChild(xmlNode *parent, xmlNode *child);
+
+    char *xmlNodeGetContent(xmlNode *node);
+}
+
+
+
+class XMLNode : Iterable[XMLNode] {
+    __node: CXMLNode
+
+    init(node: _) {
+        __node = CXMLNode(node)
     }
 
-    children {
-        let children = []
-
-        for let child = @node.children(); child != nil; child = CXMLNode(child).next() {
-            children.push(XMLNode(child))
-        }
-
-        return children
+    ptr {
+        __node.__ptr__()
     }
 
-    content {
-        c.str(CXMLNode(@node.children()).content())
-    }
-
-    name {
-        c.str(@node.name())
-    }
-
-    parent() {
-        if let $p = CXMLNode.parent.apply(self) {
+    children -> ?XMLNode {
+        if let $p = __node.children {
             XMLNode(p)
         }
     }
 
-    next() {
-        if let $p = @node.next() {
+    content -> String {
+        c.str(CXMLNode(__node.children).content)
+    }
+
+    name -> String {
+        c.str(__node.name)
+    }
+
+    parent -> ?XMLNode {
+        if let $p = __node.parent {
             XMLNode(p)
         }
     }
 
-    prev() {
-        if let $p = CXMLNode.prev.apply(self) {
+    next -> ?XMLNode {
+        if let $p = __node.next {
             XMLNode(p)
         }
     }
 
-    last() {
-        if let $p = CXMLNode.last.apply(self) {
+    prev -> ?XMLNode {
+        if let $p = __node.prev {
             XMLNode(p)
         }
     }
 
-    properties {
-        if let $props = @node.properties() {
+    last -> ?XMLNode {
+        if let $p = __node.last {
+            XMLNode(p)
+        }
+    }
+
+    attrs -> Dict[String, String] {
+        if let $props = __node.properties {
             let propMap = %{}
 
-            for let child = XMLNode(props); child != nil; child = child.next() {
-                propMap[c.str(child.node.name())] = c.str(CXMLNode(child.node.children()).content())
+            for let child = XMLNode(props); child != nil; child = child.next {
+                propMap[c.str(child.__node.name)] = c.str(CXMLNode(child.__node.children).content)
             }
 
             return propMap
@@ -1456,36 +1756,142 @@ class XMLNode {
             return %{}
         }
     }
+
+    swap(other: XMLNode) -> XMLNode {
+        if let $old = xmlReplaceNode(__node, other.__node) {
+            __node = other.__node
+            XMLNode(old)
+        } else {
+            self
+        }
+    }
+
+    content {
+        let ptr = xmlNodeGetContent(__node)
+        defer xmlFree(ptr)
+        c.str(ptr)
+    }
+
+    innerXML -> String {
+        let buf = xmlBufferCreate()
+        defer xmlBufferFree(buf)
+        for child in self {
+            xmlNodeDump(buf, __node.doc, child.ptr, 0, 0)
+        }
+        return c.str(xmlBufferContent(buf))
+    }
+
+    outerXML -> String {
+        let buf = xmlBufferCreate()
+        defer xmlBufferFree(buf)
+        xmlNodeDump(buf, __node.doc, self.ptr, 0, 0)
+        return c.str(xmlBufferContent(buf))
+    }
+
+    __iter__*() -> Generator[XMLNode] {
+        for let node = self; node != nil; node = node.next {
+           yield node
+       }
+    }
+
+    __str__() -> String {
+        pretty({
+            addr: __node.__ptr__(),
+            name: name,
+            content: __node.content,
+            next: __node.next,
+            prev: __node.prev,
+            parent: __node.parent
+
+        })
+    }
 }
 
+class Document {
+    __doc: CXMLDoc
+    __xpath_ctx: _
 
-C! pub lib function xmlParseFile(c.ptr) -> c.ptr
-C! pub lib function xmlXPathNewContext(c.ptr) -> c.ptr
-C! pub lib function xmlXPathEvalExpression(c.ptr, c.ptr) -> c.ptr
-
-function test() {
-    let [_, file, expr] = args
-
-    let doc = xmlParseFile(file)
-    print({doc})
-
-    let xpathCtx = xmlXPathNewContext(doc)
-    print({xpathCtx})
-
-    let obj = CXMLXPathObject(xmlXPathEvalExpression(expr, xpathCtx))
-    let nodes = XMLNodeSet(obj.nodesetval())
-
-    for node, i in nodes {
-        print(i)
-        print(c.as_str(node.name()))
-        print(' Properties:')
-        for let child = node.properties(); child != nil; child = child.next() {
-            print("  {c.as_str(child.name())} = {c.as_str(child.children().content())}")
-        }
-        print(' Children:')
-        for let child = node.children(); child != nil; child = child.next() {
-            print('  ', c.as_str(child.name()), sep: '')
-        }
-
+    init(doc: _) {
+        __doc = CXMLDoc(doc)
+        __xpath_ctx = xmlXPathNewContext(doc)
     }
+
+    children -> XMLNode {
+        XMLNode(__doc.children)
+    }
+
+    __subscript__(expr: String) -> Generator[XMLNode] {
+        let xpath = CXMLXPathObject(xmlXPathEvalExpression(expr.cstr(), __xpath_ctx))
+        return iter-node-set(xpath.nodesetval)
+    }
+
+    dump(options: Int = 0) -> Int {
+        let ctx = xmlSaveToFd(1, nil, options)
+        xmlSaveDoc(ctx, __doc)
+        xmlSaveClose(ctx)
+    }
+}
+
+pub fn read(path: String) -> Document {
+    Document(xmlParseFile(path.cstr()))
+}
+
+pub fn parse(
+    doc: String | Blob,
+    url: ?String = nil,
+    encoding: ?String = nil,
+    options: Int = 0
+) -> Document {
+    Document(xmlReadDoc(doc, url, encoding, options))
+}
+
+pub fn xml(parts) {
+    let buf = Blob()
+    let holes = []
+
+    let name = "__hole-{uuid4().comb(/-/)}"
+
+    for match parts {
+        str: String => {
+            buf.push(str)
+        },
+
+        (node: XMLNode, *) => {
+            buf.push("<{name} i=\"{#holes}\" />")
+            holes.push(node)
+        },
+        
+        (x, *) => {
+            buf.push("{x}")
+        }
+    }
+
+    buf.push(0)
+
+    if not let $doc = xmlReadDoc(buf) {
+        throw XMLError(parts)
+    }
+
+    let doc = Document(doc)
+
+    fn go(node: XMLNode) -> XMLNode {
+        if node.name == name and let $i = int(node.attrs['i']) {
+            return holes[i]
+        }
+
+        for child in (node.children ?? []) {
+            child.swap(go(child))
+        }
+    }
+
+    for child in doc.children {
+        child.swap(go(child))
+    }
+
+    doc
+}
+
+pub fn test(node: XMLNode) {
+    let doc = xml"<test based=\"true\">Cope and seethe.{node}</test>"
+    doc.dump(XML_SAVE_FORMAT)
 }
