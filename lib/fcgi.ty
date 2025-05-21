@@ -132,14 +132,16 @@ class FCGIParser {
 }
 
 class FCGIRecord {
-    __params: Dict[String, String]
-    __content: Blob
+    version: Int
+    type: Int
+    requestID: Int
+    content: Blob
 
     beginRequest() {
     }
 
     getParams() -> Dict[String, String] {
-        let b = __content
+        let b = content
         let ps = %{}
 
         while b.size() != 0 {
@@ -150,7 +152,7 @@ class FCGIRecord {
             ps[name] = value
         }
 
-        return __params = ps
+        return ps
     }
 }
 
@@ -310,6 +312,10 @@ class FCGIRequest {
 
     queryParams() {
         return urlDecode(__params['QUERY_STRING']);
+    }
+
+    __subscript__(param: String) -> ?String {
+        __params[param]
     }
 
     formData() {
