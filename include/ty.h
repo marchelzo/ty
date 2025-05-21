@@ -461,6 +461,7 @@ typedef struct {
         int _next_;
         int ptr;
         int question;
+        int _setitem_;
         int slice;
         int str;
         int subscript;
@@ -539,6 +540,7 @@ extern u64 TypeCheckCounter;
         X(MAYBE_ASSIGN),          \
         X(ASSIGN_LOCAL),          \
         X(ASSIGN_GLOBAL),         \
+        X(ASSIGN_SUBSCRIPT),      \
         X(ARRAY_REST),            \
         X(TUPLE_REST),            \
         X(RECORD_REST),           \
@@ -782,6 +784,8 @@ enum {
 #define amX(n)  DestroyArena(ty, (n))
 #define amF(n)  ReleaseArena(ty, (n))
 
+#define aclone(x) memcpy(amA(sizeof *(x)), (x), sizeof *(x))
+
 #define smA(n) AllocateScratch(ty, (n))
 
 #define amN(c)  NewArena(ty, (c))
@@ -818,7 +822,9 @@ enum {
 #define v0(v)     ((v).count = 0)
 #define v00(v)    (((v).count = 0), ((v).items = NULL), ((v).capacity = 0))
 #define v_(v, i)  (&(v).items[(i)])
+#define v_L(v)    ((v).items[(v).count - 1])
 #define v__(v, i) ((v).items[(i)])
+#define vv(v)     ((v).items)
 #define vZ(v)     ((v).items + (v).count)
 #define vPx(v, x) ((v).items[(v).count++] = (x))
 #define vC(v)     ((v).capacity)
@@ -833,6 +839,14 @@ enum {
 #define avPvn(a, b, n)   VPushN((a), ((b).items), (n))
 #define avR(v, n)        VReserve((v), (n))
 
+#define avC(v) (                                       \
+        (v).items = memcpy(                            \
+                amA((v).capacity * sizeof *(v).items), \
+                (v).items,                             \
+                ((v).count * sizeof *(v).items)        \
+        )                                              \
+)
+
 #define uvP(v, x)         vec_push_unchecked((v), (x))
 #define uvPn(v, xs, n)    vec_push_n_unchecked((v), (xs), (n))
 #define uvI(v, x, i)      vec_insert_unchecked((v), (x), (i))
@@ -841,6 +855,7 @@ enum {
 
 #define xvP(a, b)        vec_nogc_push((a), (b))
 #define xvPn(a, b, c)    vec_nogc_push_n((a), (b), (c))
+#define xvPv(a, b)       vec_nogc_push_n((a), ((b).items), ((b).count))
 #define xvI(a, b, c)     vec_nogc_insert((a), (b), (c))
 #define xvIn(a, b, c, d) vec_nogc_insert_n(a, (b), (c), (d))
 #define xvR(a, b)        vec_nogc_reserve((a), (b))

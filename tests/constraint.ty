@@ -7,6 +7,6 @@ f(10, 'foo')
 try {
     __eval__('f(10, 20)')
     print('FAIL')
-} catch Err(msg) :: 'expected: String' in msg {
+} catch Err(msg) :: 'invalid argument type' in msg {
     print('PASS')
 }

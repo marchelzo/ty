@@ -5,6 +5,7 @@
 #include <ffi.h>
 
 #include "alloc.h"
+#include "ast.h"
 #include "class.h"
 #include "dict.h"
 #include "gc.h"
@@ -12,6 +13,7 @@
 #include "tthread.h"
 #include "value.h"
 #include "vec.h"
+#include "types.h"
 #include "vm.h"
 
 enum {
@@ -103,6 +105,9 @@ check_slow(DispatchList const *list, int t1, int t2)
 
         for (int i = 0; i < list->count; ++i) {
                 OperatorSpec const *op = &list->items[i];
+                if (op->ref == -1) {
+                        continue;
+                }
                 if (t1 == op->t1 && t2 == op->t2) {
                         return op->ref;
                 }
@@ -239,6 +244,123 @@ op_fun_info(int op, int t1, int t2)
         TyRwLockWrUnlock(&group->lock);
 
         return expr;
+}
+
+int
+op_defs_for(int op, int c, bool left, expression_vector *defs)
+{
+        TyRwLockRdLock(&_2.lock);
+
+        if (_2.ops.count <= op) {
+                TyRwLockRdUnlock(&_2.lock);
+                puts("none");
+                return 0;
+        }
+
+        int n = 0;
+
+        DispatchGroup *group = _2.ops.items[op];
+        TyRwLockRdUnlock(&_2.lock);
+
+        TyRwLockWrLock(&group->lock);
+        for (int i = 0; i < vN(group->defs); ++i) {
+                Expr *fun = v_(group->defs, i)->expr;
+                int t1 = v_(group->defs, i)->t1;
+                int t2 = v_(group->defs, i)->t2;
+                if (
+                        fun->_type != NULL
+                     && class_is_subclass(ty, c, (left ? t1 : t2))
+                ) {
+                        avP(*defs, fun);
+                        n += 1;
+                }
+        }
+        TyRwLockWrUnlock(&group->lock);
+
+        return n;
+}
+
+int
+op_defs_for_l(int op, int c, expression_vector *defs)
+{
+        return op_defs_for(op, c, true, defs);
+}
+
+int
+op_defs_for_r(int op, int c, expression_vector *defs)
+{
+        return op_defs_for(op, c, false, defs);
+}
+
+Type *
+op_member_type(int op, int c, bool left)
+{
+        TyRwLockRdLock(&_2.lock);
+
+        if (_2.ops.count <= op) {
+                TyRwLockRdUnlock(&_2.lock);
+                return NULL;
+        }
+
+        Type *t0 = NULL;
+
+        DispatchGroup *group = _2.ops.items[op];
+        TyRwLockRdUnlock(&_2.lock);
+
+        TyRwLockWrLock(&group->lock);
+        for (int i = 0; i < vN(group->defs); ++i) {
+                Expr const *fun = v_(group->defs, i)->expr;
+                int t1 = v_(group->defs, i)->t1;
+                int t2 = v_(group->defs, i)->t2;
+                if (
+                        fun->_type != NULL
+                     && (left ? t1 : t2) == c
+                ) {
+                        t0 = type_both(ty, t0, fun->_type);
+                }
+        }
+        TyRwLockWrUnlock(&group->lock);
+
+        return t0;
+}
+
+Type *
+op_member_type_l(int op, int c)
+{
+        return op_member_type(op, c, true);
+}
+
+Type *
+op_member_type_r(int op, int c)
+{
+        return op_member_type(op, c, false);
+}
+
+Type *
+op_type(int op)
+{
+        TyRwLockRdLock(&_2.lock);
+
+        if (_2.ops.count <= op) {
+                TyRwLockRdUnlock(&_2.lock);
+                return NULL;
+        }
+
+        Type *t0 = NULL;
+
+        DispatchGroup *group = _2.ops.items[op];
+        TyRwLockRdUnlock(&_2.lock);
+
+        TyRwLockWrLock(&group->lock);
+        for (int i = 0; i < vN(group->defs); ++i) {
+                Expr const *fun = v_(group->defs, i)->expr;
+                if (fun->_type != NULL) {
+                        t0 = type_both(ty, t0, fun->_type);
+                }
+        }
+        TyRwLockWrUnlock(&group->lock);
+
+        return t0;
 }
 
 void

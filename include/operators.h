@@ -330,4 +330,16 @@ op_fun_info(int op, int t1, int t2);
 void
 op_dump(int op);
 
+Type *
+op_type(int op);
+
+int
+op_defs_for(int op, int c, bool left, expression_vector *defs);
+
+int
+op_defs_for_l(int op, int c, expression_vector *defs);
+
+int
+op_defs_for_r(int op, int c, expression_vector *defs);
+
 #endif

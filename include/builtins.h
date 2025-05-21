@@ -702,6 +702,7 @@ static struct {
   { .module = "atomic",     .name = "store",                    .value = BUILTIN(cffi_store_atomic)              },
   { .module = "ty",         .name = "gensym",                   .value = BUILTIN(builtin_ty_gensym)              },
   { .module = "ty",         .name = "eval",                     .value = BUILTIN(builtin_eval)                   },
+  { .module = "ty",         .name = "scope",                    .value = BUILTIN(builtin_ty_scope)               },
   { .module = "ty",         .name = "parse",                    .value = BUILTIN(builtin_ty_parse)               },
   { .module = "ty",         .name = "tokenize",                 .value = BUILTIN(builtin_ty_tokenize)            },
   { .module = "ty",         .name = "disassemble",              .value = BUILTIN(builtin_ty_disassemble)         },

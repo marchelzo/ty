@@ -1,5 +1,5 @@
 import base64
-import cutil (memcmp)
+import ffi (memcmp)
 
 for _ in ..100 {
 	let len = rand(1, 1000)

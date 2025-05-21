@@ -1277,8 +1277,20 @@ op_fixup(Ty *ty, int i)
         case '#':               token(i)->identifier = "#";    break;
         case '.':               token(i)->identifier = ".";    break;
         case TOKEN_USER_OP:                                    break;
+
+        case TOKEN_KEYWORD:
+                switch (token(i)->keyword) {
+                case KEYWORD_IN:
+                        token(i)->identifier = "in";
+                        break;
+
+                default:
+                        return false;
+                }
+                break;
         }
 
+        token(i)->module = NULL;
         token(i)->type = TOKEN_IDENTIFIER;
 
         return true;
@@ -1911,7 +1923,7 @@ prefix_identifier(Ty *ty)
                 return e;
         }
 
-        if (is_operator(e->identifier)) {
+        if (!TypeContext && e->module == NULL && is_operator(e->identifier)) {
                 e->type = EXPRESSION_OPERATOR;
                 e->op.id = e->identifier;
                 e->end = End;
@@ -2111,7 +2123,13 @@ EndOfParams:
                         Expr *super;
 
                         SAVE_NC(true);
-                        sub = prefix_identifier(ty);
+                        if (T0 == '(') {
+                                next();
+                                sub = parse_type(ty, 0);
+                                next();
+                        } else {
+                                sub = prefix_identifier(ty);
+                        }
                         LOAD_NC();
                         consume(':');
                         super = parse_type(ty, 0);
@@ -6376,6 +6394,20 @@ parse_use(Ty *ty)
 }
 
 static Stmt *
+parse_set_type(Ty *ty)
+{
+        Stmt *s = mkstmt(ty);
+        s->type = STATEMENT_SET_TYPE;
+
+        consume_keyword(KEYWORD_SET_TYPE);
+
+        s->target = prefix_identifier(ty);
+        s->value = parse_type(ty, 0);
+
+        return s;
+}
+
+static Stmt *
 parse_try(Ty *ty)
 {
         Stmt *s = mkstmt(ty);
@@ -6571,6 +6603,7 @@ Keyword:
         case KEYWORD_BREAK:    return parse_break_statement(ty);
         case KEYWORD_CONTINUE: return parse_continue_statement(ty);
         case KEYWORD_TRY:      return parse_try(ty);
+        case KEYWORD_SET_TYPE: return parse_set_type(ty);
 
         case KEYWORD_USE:
                 s = parse_use(ty);
@@ -6646,6 +6679,11 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 s->value->doc = doc;
                 define_function(ty, s);
                 break;
+        case STATEMENT_OPERATOR_DEFINITION:
+                s->doc = doc;
+                s->value->doc = doc;
+                define_operator(ty, NULL, s);
+                break;
         case STATEMENT_CLASS_DEFINITION:
                 s->class.doc = doc;
                 define_class(ty, s);
@@ -6657,6 +6695,9 @@ define_top(Ty *ty, Stmt *s, char const *doc)
         case STATEMENT_TYPE_DEFINITION:
                 s->class.doc = doc;
                 define_type(ty, s, NULL);
+                break;
+        case STATEMENT_SET_TYPE:
+                compiler_set_type_of(ty, s);
                 break;
         case STATEMENT_MULTI:
                 for (int i = 0; i < s->statements.count; ++i) {

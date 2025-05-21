@@ -137,6 +137,12 @@ visit_statement(Ty *ty, Stmt *s, Scope *scope, VisitorSet const *hooks)
                 V(s->each.cond);
                 V(s->each.stop);
                 break;
+        case STATEMENT_FOR_LOOP:
+                VS(s->for_loop.init);
+                V(s->for_loop.cond);
+                V(s->for_loop.next);
+                VS(s->for_loop.body);
+                break;
         case STATEMENT_DEFINITION:
                 if (s->value->type == EXPRESSION_LIST) {
                         for (int i = 0; i < s->value->es.count; ++i) {

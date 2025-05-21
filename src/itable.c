@@ -84,12 +84,10 @@ bfind(struct itable const *t, int64_t id, int * restrict i)
 void
 itable_init(Ty *ty, struct itable *t)
 {
-        vec_init(t->ids);
-        vec_init(t->values);
-
-        vec_reserve_unchecked(t->ids, 2);
-        vec_reserve_unchecked(t->values, 2);
-
+        v00(t->ids);
+        v00(t->values);
+        uvR(t->ids, 2);
+        uvR(t->values, 2);
         t->class = -1;
 }
 
