@@ -1,15 +1,16 @@
-import bit
-import math
-import thread
 import base64
-import time
+import bit
+import json
+import math
+import os
+import ptr
 import stdio
+import thread
+import time
 import ty
 import ty.parse as parse
 import ty.token as lex
 import ty.types as types
-import os
-import json
 
 use TokenData = { id: String, module: String }
               | { int: Int }
@@ -37,9 +38,40 @@ fn lex::peek(i: Int = 0) -> Token;
 
 fn ty::gensym() -> String;
 
+fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
+
+fn !::(a, b) { !(a :: b) }
+
+fn -(a: Int, b: Int) -> Int;
+fn +(a: Int, b: Int) -> Int;
+fn *(a: Int, b: Int) -> Int;
+fn /(a: Int, b: Int) -> Int;
+fn %(a: Int, b: Int) -> Int;
+
+fn -(a: Float, b: Float) -> Float;
+fn +(a: Float, b: Float) -> Float;
+fn *(a: Float, b: Float) -> Float;
+fn /(a: Float, b: Float) -> Float;
+fn %(a: Float, b: Float) -> Float;
+
+fn -(a: Float, b: Int) -> Float;
+fn +(a: Float, b: Int) -> Float;
+fn *(a: Float, b: Int) -> Float;
+fn /(a: Float, b: Int) -> Float;
+fn %(a: Float, b: Int) -> Float;
+
+fn -(a: Int, b: Float) -> Float;
+fn +(a: Int, b: Float) -> Float;
+fn *(a: Int, b: Float) -> Float;
+fn /(a: Int, b: Float) -> Float;
+fn %(a: Int, b: Float) -> Float;
+
+fn +(a: String, b: String) -> String;
+
+fn slurp(file: String | Int | nil = nil) -> String | nil;
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
-fn print(*args: _, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
+fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
 fn int[a](x: a, base: ?Int) -> Int;
 fn float[a](x: a) -> Float;
 fn min[a](*xs: a) -> a;
@@ -48,6 +80,8 @@ fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
 fn time::utime() -> Int;
 fn tuple(*xs: _, %kws: _) -> (_,);
+fn abs(k: Int) -> Int;
+fn abs(x: Float) -> Float;
 
 class Object {
     init(%props) {
@@ -98,12 +132,12 @@ class Object {
         (*xs) -> self(other(*xs))
     }
 
-    |>(f) {
-        f@(self(*, **))
-    }
-
     *>(f) {
         f(self)
+    }
+
+    `in`(other) -> Bool {
+        self in other
     }
 
     __match__(other) {
@@ -212,6 +246,8 @@ class Array[T] : Iterable[T] {
     drop(n: Int) -> Array[T];
     remove!(x: _) -> Array[T];
     remove(x: _) -> Array[T];
+
+    +[U](ys: Array[U]) -> Array[T | U] { self + ys }
 
     shape() {
         use NestedArray[U] = Array[U] | Array[NestedArray[U]]
@@ -364,8 +400,6 @@ class Array[T] : Iterable[T] {
         for x in self { yield x }
     }
 
-    __iter2__() -> Iter[|T, Int|];
-
     __it__() {
         self
     }
@@ -386,6 +420,8 @@ class Array[T] : Iterable[T] {
             ix            => ix
         }
 
+        //__debug!(1)
+
         if k < 0 {
             let start = min(wrap(i - 1), #self)
             let stop = max(wrap(j ?? 0), 0)
@@ -405,6 +441,10 @@ class Array[T] : Iterable[T] {
         }
 
         return slice
+    }
+
+    *[U](ys: Array[U]) -> Array[(T, U)] {
+        self * ys
     }
 
     get(i: Int) {
@@ -443,6 +483,7 @@ macro __define_ast! {
        | ty.Float[Float]
        | ty.Bool[Bool]
        | ty.Id[{name: String, module: String | nil, constraint: AST}]
+       | ty.NotNil[{name: String, module: String | nil, constraint: AST}]
        | ty.MemberAccess[(AST, String)]
        | ty.Count[AST]
        | ty.Question[AST]
@@ -594,11 +635,9 @@ class Dict[K, V] : Iterable[K, V] {
         }
     }
 
-    __iter__() {
-        return @keys().zip(@values()).__iter__()
+    __iter__() -> Iter[K, V] {
+        return self.keys().zip(self.values()).__iter__()
     }
-
-    __iter2__() -> Iter[(K, V)];
 
     __subscript__(key: K) -> V {
         self[key]
@@ -621,6 +660,8 @@ class String : Iterable[String] {
 
     len() -> Int;
     size() -> Int;
+
+    bslice(i: Int, j: ?Int) -> String;
 
     int { ::int(self) }
 
@@ -657,7 +698,7 @@ class String : Iterable[String] {
         self.slice(i, j - i)
     }
 
-    bsplice(i, j) {
+    bsplice(i: Int, j: Int) -> String {
         self.bslice(i, j - i)
     }
 
@@ -764,8 +805,12 @@ class String : Iterable[String] {
         self[i]
     }
 
-    -(end) {
+    -(end: String) -> String {
         self.slice(0, -#end if end == self.slice(-#end))
+    }
+
+    +(other: String) -> String {
+        self + other
     }
 
     __iter__*() -> Generator[String] {
@@ -796,9 +841,15 @@ class Int {
         bit.complement(self)
     }
 
-    upto*(b: Int) {
+    upto*(b: Int) -> Generator[Int] {
         while self <= b {
             yield self++
+        }
+    }
+
+    downto*(b: Int) -> Generator[Int] {
+        while self >= b {
+            yield self--
         }
     }
 
@@ -834,12 +885,6 @@ class Int {
 
                 (self < 0) ? ('-' + s) : s
             }
-        }
-    }
-
-    downto*(b: Int) {
-        while self >= b {
-            yield self--
         }
     }
 
@@ -886,7 +931,7 @@ class Int {
         self in x
     }
 
-    abs {
+    abs -> Int {
         ::abs(self)
     }
 
@@ -933,6 +978,21 @@ class Int {
             fmt("%{spec}d", (n ?? w) if '*' in spec, self)
         }
     }
+
+//    +(k: Int) -> Int { self + k }
+//    +(x: Float) -> Float { self + x }
+//
+//    -(k: Int) -> Int { self - k }
+//    -(x: Float) -> Float { self - x }
+//
+//    *(k: Int) -> Int { self * k }
+//    *(x: Float) -> Float { self * x }
+//
+//    `/`(k: Int) -> Int { self / k }
+//    `/`(x: Float) -> Float { self / x }
+//
+//    %(k: Int) -> Int { self % k }
+//    %(x: Float) -> Float { self % x }
 }
 
 class Float {
@@ -1005,6 +1065,21 @@ class Float {
             "{self:.{prec}}"
         }
     }
+
+    +(k: Float) -> Float { self + k }
+    +(x: Int) -> Float { self + x }
+
+    -(k: Float) -> Float { self - k }
+    -(x: Int) -> Float { self - x }
+
+    *(k: Float) -> Float { self * k }
+    *(x: Int) -> Float { self * x }
+
+    `/`(k: Float) -> Float { self / k }
+    `/`(x: Int) -> Float { self / x }
+
+    %(k: Int) -> Float { self % k }
+    %(x: Float) -> Float { self % x }
 }
 
 class Blob : Iterable[Int] {
@@ -1107,8 +1182,8 @@ class Tuple {
         str(self)
     }
 
-    named? {
-        members(self).keys().any?(\_ !:: Int)
+    static named?(x) {
+        members(x).keys().any?(\_ !:: Int)
     }
 
     %.*(f) {
@@ -1131,7 +1206,7 @@ class Tuple {
     }
 
     %(fs) {
-        if self.named? {
+        if Tuple.named?(self) {
             let myMembers: Dict[String, _] = members(self)
             let tMembers: Dict[String, _] = members(fs)
 
@@ -1167,7 +1242,10 @@ class Tuple {
 
     __match__(t) {
         let myMembers = members(self)
-        let tMembers = members(t)
+
+        if not let $tMembers = members(t) {
+            return false
+        }
 
         if #myMembers.diff(tMembers) != 0 {
             return false
@@ -1722,7 +1800,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    join(sep: String) {
+    join(sep: String) ->  String {
         if not let Some(::str ~> $s) = @__next__() {
             return ''
         }
@@ -1738,12 +1816,12 @@ trait Iter[T] < Iterable[T] {
         return b.str()
     }
 
-    unlines() {
-        return @join("\n")
+    unlines() -> String {
+        join('\n')
     }
 
-    unwords() {
-        return @join(' ')
+    unwords() -> String {
+        join(' ')
     }
 
     count-by(pred) {
@@ -2035,7 +2113,7 @@ trait Iter[T] < Iterable[T] {
     }
 
     __subscript__(i: Int) -> T {
-        for _ in ..(i - 1) {
+        for _ in 0.upto(i - 1) {
             if __next__() == None { throw IndexError(self, i) }
         }
 
@@ -2044,7 +2122,7 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    __iter__() { self }
+    __iter__() -> Iter[T] { self }
 }
 
 class Queue[T] : Iterable[T] {
@@ -2102,8 +2180,8 @@ class Queue[T] : Iterable[T] {
         return Some(x)
     }
 
-    take() -> T{
-        let Some(x) = self.tryTake()
+    take() -> T {
+        try let Some(x) = self.tryTake()
         return x
     }
 
@@ -2119,8 +2197,8 @@ class Range : Iterable[Int] {
     b: Int
 
     init(a, b) {
-        @a = a
-        @b = b
+        self.a = a
+        self.b = b
     }
 
     low() {
@@ -2168,8 +2246,9 @@ class Range : Iterable[Int] {
         ks.all?(k -> k :: self)
     }
 
-    __iter__() {
-        let a, b = @a, @b
+    __iter__() -> Generator[Int] {
+        let a = a
+        let b = b
         return if a < b {
             a.upto(b - 1)
         } else {
@@ -2183,7 +2262,7 @@ class InclusiveRange < Range {
         return "({@a} ... {@b})"
     }
 
-    __iter__() {
+    __iter__() -> Generator[Int] {
         if a < b {
             a.upto(b)
         } else {
@@ -2436,7 +2515,7 @@ class Sync[T] {
         }
     }
 
-    +(y) {
+    +[A, B](y: A) -> B where T: { `+`: A -> B } {
         with __mtx.lock() {
             __x + y
         }
@@ -2448,7 +2527,7 @@ class Sync[T] {
         }
     }
 
-    *(y) {
+    *[A, B](y: A) -> B where T: { `*`: A -> B } {
         with __mtx.lock() {
             __x * y
         }
@@ -2460,7 +2539,7 @@ class Sync[T] {
         }
     }
 
-    -(y) {
+    -[A, B](y: A) -> B where (T - A): B {
         with __mtx.lock() {
             __x - y
         }
@@ -2472,7 +2551,7 @@ class Sync[T] {
         }
     }
 
-    /(y) {
+    `/`[A, B](y) where (T / A): B {
         with __mtx.lock() {
             __x / y
         }
@@ -2743,7 +2822,7 @@ macro modify! {
     convert(record)
 }
 
-function nextEnumValue(last) {
+function nextEnumValue(last: AST) -> (AST, AST) | nil {
     while lex.peek().type == 'comment' { lex.next() }
 
     if lex.peek().type != 'id' { return nil }
@@ -2754,8 +2833,9 @@ function nextEnumValue(last) {
         lex.next()
         (name, parse.expr(0))
     } else match last {
-        ty.Add(n, ty.Int(i)) => (name, ty.Add(n, ty.Int(i + 1))),
-        n                    => (name, ty.Add(n, ty.Int(1)))
+        ty.Add(n, ty.Int(i))
+            => (name, ty.Add(n, ty.Int(i + 1))),
+        n   => (name, ty.Add(n, ty.Int(1)))
     }
 }
 
@@ -3373,6 +3453,8 @@ macro __desugar_partial__(call) {
 
         let params = []
 
+        let i = 0
+
         fn param(i) {
             while #params <= i {
                 params.push(gensym())
@@ -3380,18 +3462,23 @@ macro __desugar_partial__(call) {
             ty.Id({name: params[i], module: ''})
         }
 
-        let i = 0
+        fn named(name) {
+            params.push(name)
+            ty.Id({name, module: ''}) 
+        }
+
         let reducedArgs = args.map(e -> __walk!(e, match {
             ty.Id({name: '_', *})           => param(i++),
             ty.Id({name: /^\$(\d+)$/, *})   => param(int($1) - 1),
             ty.Id({name: /^\$(_+\d*)$/, *}) => ty.Id({name: "${$1[1;]}"}),
             ty.Id({name: /^_(_+\d*)$/, *})  => ty.Id({name: $1}),
             ty.Id({name: '**', *}) as e     => (d == 1) ? kwargs() : ty.Add(kwargs(), e),
-            ty.Id({name: '*',  *}) as e     => (d == 1) ? argv()   : ty.Add(argv(), e)
+            ty.Id({name: '*',  *}) as e     => (d == 1) ? argv()   : ty.Add(argv(), e),
+            ty.NotNil({name, *})            => named(name),
             e => e
         }))
 
-        let params = params.map!(id -> ty.Param({name: id}))
+        let params: [_Param] = params.map!(id -> ty.Param({name: id}))
 
         if _argv   != nil { params.push(ty.Gather(_argv)) }
         if _kwargs != nil { params.push(ty.Kwargs(_kwargs)) }
@@ -3470,7 +3557,6 @@ operator *>   2  left
 operator .    2  left
 
 macro print!(*xs) {
-    dbg([1, 2])
     let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
     ty.CompileTime($$[ do { print(*$$xs, sep=' '); nil } $$])
 }
