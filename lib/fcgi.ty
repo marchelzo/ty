@@ -387,7 +387,7 @@ pub class FCGIApp {
             }
 
             if pollFds[0].revents & os.POLLIN {
-                let (conn, addr) = os.accept(@socket)
+                let (conn, addr) = os.accept(__socket)
                 __clients[conn] = FCGIParser(conn)
             }
 
