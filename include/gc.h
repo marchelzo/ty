@@ -20,36 +20,11 @@ DoGC(Ty *ty);
 uint64_t
 MyThreadId(Ty *ty);
 
-#define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
+#define GC_INITIAL_LIMIT (1ULL << 22)
 
 #define resize(ptr, n) ((ptr) = gc_resize(ty, (ptr), (n)))
 #define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked(ty, (ptr), (n)))
 #define resize_nogc(ptr, n) ((ptr) = mrealloc((ptr), (n)))
-
-//#define MARKED(v) ((ALLOC_OF(v))->mark & GC_MARK)
-//#define MARK(v)   ((ALLOC_OF(v))->mark |= GC_MARK)
-//#define UNMARK(v) ((ALLOC_OF(v))->mark &= ~GC_MARK)
-
-#define MARKED(v) atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed)
-#define MARK(v)   atomic_store_explicit(&(ALLOC_OF(v))->mark, true, memory_order_relaxed)
-
-#define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
-#define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
-
-#define GC_INITIAL_LIMIT (1ULL << 22)
-
-struct alloc {
-        union {
-                struct {
-                        char type;
-                        atomic_bool mark;
-                        atomic_uint_least16_t hard;
-                        uint32_t size;
-                };
-                void const * restrict padding;
-        };
-        char data[];
-};
 
 enum {
         GC_STRING,

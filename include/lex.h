@@ -62,6 +62,9 @@ void
 lex_save(Ty *ty, LexState *state);
 
 void
+lex_restore(Ty *ty, LexState *state);
+
+void
 lex_need_nl(Ty *ty, bool);
 
 bool

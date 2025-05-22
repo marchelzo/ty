@@ -370,6 +370,8 @@ InitializeTy(Ty *ty)
 {
         memset(ty, 0, sizeof *ty);
 
+        ty->ty = &xD;
+
         ExpandScratch(ty);
         ty->memory_limit = GC_INITIAL_LIMIT;
 
@@ -5748,6 +5750,8 @@ vm_init(Ty *ty, int ac, char **av)
         InitializeTY();
         InitializeTy(ty);
 
+        TY_IS_READY = false;
+
         MyTy = ty;
         MyId = 0;
 
@@ -5782,7 +5786,7 @@ vm_init(Ty *ty, int ac, char **av)
 
         InitThreadGroup(ty, MyGroup = &MainGroup);
 
-        amN(1ULL << 22);
+        NewArena(1ULL << 22);
 
         compiler_init(ty);
 
@@ -5816,6 +5820,8 @@ vm_init(Ty *ty, int ac, char **av)
         NOGC(FuncSamples);
         TyMutexInit(&ProfileMutex);
 #endif
+
+        TY_IS_READY = true;
 
         return true;
 }
@@ -6282,6 +6288,8 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
 
         filename = file;
 
+        TY_IS_READY = false;
+
         GC_STOP();
 
         gc_clear_root_set(ty);
@@ -6322,6 +6330,8 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
 bool
 vm_execute(Ty *ty, char const *source, char const *file)
 {
+        TY_IS_READY = false;
+
         if (source != NULL && !vm_load_program(ty, source, file)) {
                 return false;
         }
@@ -6346,6 +6356,7 @@ vm_execute(Ty *ty, char const *source, char const *file)
         void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
 #endif
 
+        TY_IS_READY = true;
         vm_exec(ty, ty->code);
 
 #ifdef TY_ENABLE_PROFILING

@@ -9,17 +9,11 @@ enum {
         RESERVED = sizeof (Arena)
 };
 
-inline static Arena *
-NextArena(Arena const *a)
-{
-        return ((Arena *)a->base);
-}
-
 inline static void
 ExpandArena(Ty *ty)
 {
         size_t size = 2 * (A.end - (A.base + RESERVED));
-        Arena old = A.gc ? NewArenaGC(ty, size) : NewArena(ty, size);
+        Arena old = A.gc ? NewArenaGC(ty, size) : NewArenaNoGC(ty, size);
         *NextArena(&A) = old;
 }
 
@@ -41,7 +35,7 @@ NewArenaGC(Ty *ty, size_t cap)
 }
 
 Arena
-NewArena(Ty *ty, size_t cap)
+NewArenaNoGC(Ty *ty, size_t cap)
 {
         Arena old = A;
 
@@ -63,7 +57,6 @@ NewArena(Ty *ty, size_t cap)
 void *
 Allocate(Ty *ty, size_t n)
 {
-        return malloc(n);
         for (;;) {
                 ptrdiff_t avail = A.end - A.beg;
                 ptrdiff_t padding = -(uintptr_t)A.beg & (align - 1);
@@ -78,32 +71,6 @@ Allocate(Ty *ty, size_t n)
 
                 return o;
         }
-}
-
-void *
-Allocate0(Ty *ty, size_t n)
-{
-        return memset(amA(n), 0, n);
-}
-
-void
-ReleaseArena(Ty *ty, Arena old)
-{
-        for (Arena *a = &A; a->base != NULL; a = NextArena(a)) {
-                OKGC(a->base);
-        }
-
-        A = old;
-}
-
-void
-DestroyArena(Ty *ty, Arena old)
-{
-        for (Arena *a = &A; a->base != NULL; a = NextArena(a)) {
-                free(a->base);
-        }
-
-        A = old;
 }
 
 void *
