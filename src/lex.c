@@ -1468,6 +1468,12 @@ lex_save(Ty *ty, LexState *s)
 }
 
 void
+lex_restore(Ty *ty, LexState *s)
+{
+        state = *s;
+}
+
+void
 lex_rewind(Ty *ty, Location const *where)
 {
         state.loc = *where;

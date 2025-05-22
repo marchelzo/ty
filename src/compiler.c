@@ -218,9 +218,6 @@ static Scope *
 get_module_scope(char const *name);
 
 static void
-invoke_macro(Ty *ty, Expr *e, Scope *scope);
-
-static void
 invoke_fun_macro(Ty *ty, Scope *, Expr *e);
 
 static void
@@ -3579,9 +3576,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->value);
                 e->_type = e->value->_type;
                 break;
-        case EXPRESSION_MACRO_INVOCATION:
-                invoke_macro(ty, e, scope);
-                break;
         case EXPRESSION_SUPER:
                 if (state.class == -1) {
                         fail("%ssuper%s referenced outside of class context", TERM(95;1), TERM(0));
@@ -4221,50 +4215,6 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         s->xscope = scope;
 
         RestoreContext(ty, ctx);
-}
-
-static void
-invoke_macro(Ty *ty, Expr *e, Scope *scope)
-{
-        Scope *macro_scope_save = state.macro_scope;
-        state.macro_scope = scope;
-
-        Arena old = amN(1 << 20);
-
-        symbolize_expression(ty, scope, e->macro.m);
-
-        add_location_info(ty);
-        vec_init(state.expression_locations);
-
-        byte_vector code_save = state.code;
-        vec_init(state.code);
-
-        emit_expression(ty, e->macro.m);
-        emit_instr(HALT);
-
-        vec_init(state.expression_locations);
-
-        vm_exec(ty, state.code.items);
-
-        Value m = *vm_get(ty, 0);
-        vmX();
-
-        state.code = code_save;
-
-        Value node = tyexpr(ty, e->macro.e);
-        vmP(&node);
-
-        node = vmC(&m, 1);
-
-        state.macro_scope = macro_scope_save;
-
-        Expr *result = cexpr(ty, &node);
-
-        amX(old);
-
-        symbolize_expression(ty, scope, result);
-
-        *e = *result;
 }
 
 inline static void

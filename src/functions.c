@@ -132,8 +132,8 @@ static _Atomic(uint64_t) tid = 1;
                 zP(func " expects " #ac1 ", " #ac2 ", or " #ac3 " argument(s) but got %d", argc); \
         }
 
-#define EVAL_PROLOGUE "(fn () {"
-#define EVAL_EPILOGUE "})()"
+#define EVAL_PROLOGUE "(fn () {\n"
+#define EVAL_EPILOGUE "\n})()"
 
 
 inline static void
@@ -7043,13 +7043,13 @@ BUILTIN_FUNCTION(eval)
                 vec_push_n_unchecked(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
                 vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
                 vec_push_n_unchecked(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
-                Arena old = amNg(1 << 26);
+                Arena old = NewArena(1 << 26);
                 Stmt **prog = parse(ty, B.items + 1, "(eval)");
 
                 if (prog == NULL) {
                         char const *msg = TyError(ty);
                         Value e = Err(ty, vSsz(msg));
-                        ReleaseArena(ty, old);
+                        ReleaseArena(old);
                         vmE(&e);
                 }
 
@@ -7060,7 +7060,7 @@ E1:
                 {
                         char const *msg = TyError(ty);
                         Value e = Err(ty, vSsz(msg));
-                        ReleaseArena(ty, old);
+                        ReleaseArena(old);
                         vmE(&e);
                 }
 
@@ -7070,7 +7070,7 @@ E1:
                         goto E1;
                 }
 
-                ReleaseArena(ty, old);
+                ReleaseArena(old);
 
                 return v;
         } else {
@@ -7107,15 +7107,15 @@ BUILTIN_FUNCTION(ty_tokenize)
         vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
         vec_push_unchecked(B, '\0');
 
-        Arena old = amNg(1 << 18);
+        Arena old = NewArena(1 << 18);
 
         TokenVector tokens;
         if (!tokenize(ty, B.items + 1, &tokens)) {
-                ReleaseArena(ty, old);
+                ReleaseArena(old);
                 return NIL;
         }
 
-        ReleaseArena(ty, old);
+        ReleaseArena(old);
 
         return make_tokens(ty, &tokens);
 }
@@ -7144,7 +7144,7 @@ BUILTIN_FUNCTION(ty_parse)
         vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
         vec_push_unchecked(B, '\0');
 
-        Arena old = amNg(1 << 22);
+        Arena old = NewArena(1 << 22);
 
         struct statement **prog;
         Location stop;
@@ -7240,7 +7240,7 @@ BUILTIN_FUNCTION(ty_parse)
         }
 
 Return:
-        ReleaseArena(ty, old);
+        ReleaseArena(old);
         GC_RESUME();
 
         PopCompilerState(ty, compiler_state);
@@ -7790,13 +7790,13 @@ BUILTIN_FUNCTION(tdb_eval)
         vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
         vec_push_n_unchecked(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
 
-        Arena old = amNg(1 << 20);
+        Arena old = NewArena(1 << 20);
 
         Stmt **prog = parse(ty, B.items + 1, "(eval)");
         if (prog == NULL) {
                 char const *msg = TyError(ty);
                 Value error = Err(ty, vSsz(msg));
-                ReleaseArena(ty, old);
+                ReleaseArena(old);
                 return error;
         }
 
@@ -7813,7 +7813,7 @@ BUILTIN_FUNCTION(tdb_eval)
                 compiler_symbolize_expression(ty, e, scope)
              && (v = tyeval(TDB->host, e)).type != VALUE_NONE
         ) {
-                ReleaseArena(ty, old);
+                ReleaseArena(old);
                 *TDB->host = save;
                 return Ok(ty, v);
         }
@@ -7824,7 +7824,7 @@ BUILTIN_FUNCTION(tdb_eval)
         char const *msg = TyError(ty);
         Value error = Err(ty, vSsz(msg));
 
-        ReleaseArena(ty, old);
+        ReleaseArena(old);
 
         return error;
 }

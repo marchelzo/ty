@@ -1,21 +1,22 @@
 #ifndef TY_H_INCLUDED
 #define TY_H_INCLUDED
 
-#include <stdlib.h>
-#include <stddef.h>
-#include <setjmp.h>
-#include <stdbool.h>
-#include <inttypes.h>
-#include <stdalign.h>
 #include <assert.h>
+#include <inttypes.h>
+#include <setjmp.h>
+#include <stdalign.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdlib.h>
 
 #include <pcre2.h>
 
-#include "libco.h"
-#include "vec.h"
 #include "intern.h"
+#include "libco.h"
 #include "panic.h"
+#include "polyfill_stdatomic.h"
 #include "tthread.h"
+#include "vec.h"
 
 typedef struct ty0        TY;
 typedef struct ty         Ty;
@@ -56,6 +57,19 @@ typedef vec(Refinement)     RefinementVector;
 typedef vec(Constraint)     ConstraintVector;
 typedef vec(u32)            U32Vector;
 typedef vec(jmp_buf *)      JmpBufVector;
+
+struct alloc {
+        union {
+                struct {
+                        char type;
+                        atomic_bool mark;
+                        atomic_uint_least16_t hard;
+                        uint32_t size;
+                };
+                void const * restrict padding;
+        };
+        char data[];
+};
 
 typedef struct array {
         Value *items;
@@ -336,6 +350,7 @@ typedef struct ty0 {
         InternSet u_ops;
         InternSet b_ops;
         InternSet members;
+        bool ready;
 } TY;
 
 typedef struct thread_group ThreadGroup;
@@ -474,6 +489,8 @@ typedef struct {
 
 #define MyGroup (ty->my_group)
 
+#define TY_IS_READY (ty->ty->ready)
+
 extern Ty *ty;
 extern TY xD;
 
@@ -499,6 +516,14 @@ extern u64 TypeCheckTime;
 #define GC_STOP()   (ty->GC_OFF_COUNT += 1)
 #define GC_RESUME() (ty->GC_OFF_COUNT -= 1)
 #endif
+
+#define ALLOC_OF(p) ((struct alloc *)(((char *)(p)) - offsetof(struct alloc, data)))
+
+#define MARKED(v) atomic_load_explicit(&(ALLOC_OF(v))->mark, memory_order_relaxed)
+#define MARK(v)   atomic_store_explicit(&(ALLOC_OF(v))->mark, true, memory_order_relaxed)
+
+#define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
+#define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 
 #define ErrorBuffer (ty->err)
 
@@ -772,6 +797,8 @@ enum {
 #define CALLABLE(v) ((v).type <= VALUE_REGEX)
 #define ARITY(f)    ((f).type == VALUE_FUNCTION ? (((int16_t *)((f).info + 5))[0] == -1 ? (f).info[4] : 100) : 1)
 
+#define m0(x) memset(&(x), 0, sizeof (x))
+
 #define zP(...)   vm_panic(ty, __VA_ARGS__)
 #define mRE(...)  resize(__VA_ARGS__)
 #define mREu(...) resize_unchecked(__VA_ARGS__)
@@ -788,9 +815,6 @@ enum {
 #define aclone(x) memcpy(amA(sizeof *(x)), (x), sizeof *(x))
 
 #define smA(n) AllocateScratch(ty, (n))
-
-#define amN(c)  NewArena(ty, (c))
-#define amNg(c) NewArenaGC(ty, (c))
 
 #define vSs(s, n)  STRING_CLONE(ty, (s), (n))
 #define vSzs(s, n) STRING_C_CLONE(ty, (s), (n))
