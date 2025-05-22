@@ -152,7 +152,13 @@ int
 class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max);
 
 int
-class_completions(Ty *ty, int class, char const *prefix, expression_vector *out);
+class_completions(
+        Ty *ty,
+        int class,
+        char const *prefix,
+        expression_vector *out,
+        int_vector *depths
+);
 
 struct itable *
 class_methods(Ty *ty, int class);

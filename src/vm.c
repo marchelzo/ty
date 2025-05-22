@@ -106,7 +106,7 @@
                 (expr ? expr->start.col : 0) + 1     \
         );
 #else
-  #define XCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); XLOG("%s:%d:%d: " #i, expr ? expr->file : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define XXCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); fprintf(stderr, "%s:%d:%d: " #i "\n", expr ? expr->file : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
@@ -176,20 +176,6 @@ static SigfnStack sigfns;
 #ifdef TY_ENABLE_PROFILING
 bool UseWallTime = false;
 FILE *ProfileOut = NULL;
-
-inline static uint64_t
-TyThreadCPUTime(void)
-{
-#ifdef _WIN32
-        ULONG64 cycles;
-        QueryThreadCycleTime(GetCurrentThread(), &cycles);
-        return cycles;
-#else
-        struct timespec t;
-        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
-        return 1000000000ULL * t.tv_sec + t.tv_nsec;
-#endif
-}
 
 inline static uint64_t TyThreadWallTime()
 {
@@ -3443,6 +3429,8 @@ static void
 DoAssignSubscript(Ty *ty)
 {
         Value v;
+        Value p;
+        Value *f;
         Value subscript = top()[0];
         Value container = top()[-1];
         Value value = top()[-2];
@@ -3497,7 +3485,7 @@ DoAssignSubscript(Ty *ty)
                 if (UNLIKELY(subscript.type != VALUE_INTEGER)) {
                         zP("non-integer pointer offset used in subscript assignment: %s", VSC(&subscript));
                 }
-                Value p = vm_2op(ty, OP_ADD, &container, &subscript);
+                p = vm_2op(ty, OP_ADD, &container, &subscript);
                 pop();
                 pop();
                 pop();
@@ -3513,8 +3501,10 @@ DoAssignSubscript(Ty *ty)
                 swap();
                 pop();
                 swap();
-                push(container);
-                CallMethod(ty, NAMES._setitem_, 2, 0, false);
+                f = class_lookup_setter_i(ty, container.class, NAMES.subscript);
+                if (f != NULL) {
+                        call(ty, f, &container, 2, 0, false);
+                }
                 return;
 
         default:
@@ -5784,7 +5774,6 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
         NAMES.question         = M_ID("__question__");
-        NAMES._setitem_        = M_ID("__set_item__");
         NAMES.slice            = M_ID("__slice__");
         NAMES.str              = M_ID("__str__");
         NAMES.subscript        = M_ID("__subscript__");

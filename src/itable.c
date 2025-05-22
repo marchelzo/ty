@@ -62,7 +62,7 @@ xfind(struct itable const *t, int64_t id)
 static bool
 bfind(struct itable const *t, int64_t id, int * restrict i)
 {
-        int const * restrict ids = t->ids.items;
+        int const * restrict ids = vv(t->ids);
         int n = vN(t->ids);
 
         int i_ = 0;
@@ -177,10 +177,11 @@ xsort(struct itable *t, int64_t i, int64_t n)
 inline static void
 xmerge(struct itable * restrict t, int n0, int * restrict ids, Value * restrict vals)
 {
+        int n;
         int i = 0;
         int j = n0;
 
-        for (int n = 0; n < vN(t->ids); ++n) {
+        for (n = 0; n < vN(t->ids); ++n) {
                 if (i == n0) {
                         ids[n] = v__(t->ids, j);
                         vals[n] = v__(t->values, j);
@@ -216,16 +217,15 @@ void
 itable_copy(Ty *ty, struct itable * restrict dst, struct itable const * restrict src)
 {
         size_t n0 = vN(dst->ids);
-        size_t n1 = vN(src->ids);
 
-        vvPn(dst->ids, src->ids.items, n1);
-        vvPn(dst->values, src->values.items, n1);
+        uvPv(dst->ids, src->ids);
+        uvPv(dst->values, src->values);
 
-        vec(int) ids = {0};
-        vec(Value) vals = {0};
+        int_vector ids = {0};
+        ValueVector vals = {0};
 
-        vec_reserve(ids, vN(dst->ids));
-        vec_reserve(vals, vN(dst->values));
+        uvR(ids, vN(dst->ids));
+        vvR(vals, vN(dst->values));
 #if 0
         if (n0 < 8) {
                 xsort(dst, 0, n0);
@@ -235,13 +235,13 @@ itable_copy(Ty *ty, struct itable * restrict dst, struct itable const * restrict
                 xsort(dst, n0, n1);
         }
 #endif
-        xmerge(dst, n0, ids.items, vals.items);
+        xmerge(dst, n0, vv(ids), vv(vals));
 
-        mF(dst->ids.items);
-        mF(dst->values.items);
+        vvF(dst->ids);
+        vvF(dst->values);
 
-        dst->ids.items = ids.items;
-        dst->values.items = vals.items;
+        dst->ids = ids;
+        dst->values = vals;
 }
 
 Value *
@@ -262,8 +262,8 @@ itable_lookup(Ty *ty, struct itable const *t, int64_t id)
 void
 itable_release(Ty *ty, struct itable *t)
 {
-        mF(t->ids.items);
-        mF(t->values.items);
+        vvF(t->ids);
+        vvF(t->values);
 }
 
 int

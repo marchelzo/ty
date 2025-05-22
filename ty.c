@@ -56,6 +56,8 @@ static char SourceFilePath[PATH_MAX];
 static bool KindOfEnableLogging = false;
 int EnableLogging = 0;
 u64 TypeCheckCounter = 0;
+u64 TypeAllocCounter = 0;
+u64 TypeCheckTime = 0;
 
 bool ColorStdout;
 bool ColorStderr;
@@ -115,7 +117,7 @@ readln(void)
 {
         char prompt[64];
 
-        snprintf(prompt, sizeof prompt, "[%8"PRIu64"] >> ", TypeCheckCounter);
+        snprintf(prompt, sizeof prompt, ">> ");
 
         if (use_readline) {
                 return readline(prompt);
@@ -151,6 +153,7 @@ execln(Ty *ty, char *line)
 
         if (strncmp(line, ":!", 2) == 0) {
                 (void)system(line + 2);
+                goto End;
         } else if (strncmp(line, ":s ", 3) == 0) {
                 dump(&buffer, "%s", line + 3);
                 if (vm_execute_file(ty, v_(buffer, 1))) {
@@ -279,6 +282,20 @@ sigint(int signal)
         longjmp(InterruptJB, 1);
 }
 
+#ifdef TY_PROFILE_TYPES
+static void
+xxx(void)
+{
+        void
+        DumpTypeTimingInfo(Ty *ty);
+
+        DumpTypeTimingInfo(ty);
+
+        printf("Allocated %"PRIu64" type objects.\n", TypeAllocCounter);
+        printf("Total type checking time: %.4fs\n", TypeCheckTime / 1.0e9);
+}
+#endif
+
 noreturn static void
 repl(Ty *ty)
 {
@@ -298,8 +315,8 @@ repl(Ty *ty)
                         if (line == NULL) {
                                 exit(EXIT_SUCCESS);
                         }
-                        TypeCheckCounter = 0;
                         execln(ty, line);
+                        type_reset_names(ty);
                 }
         }
 }
@@ -704,6 +721,10 @@ int
 main(int argc, char **argv)
 {
         ty = &vvv;
+
+#if defined(TY_PROFILE_TYPES) && 0
+        atexit(xxx);
+#endif
 
         int nopt = (argc == 0) ? 0 : ProcessArgs(argv, true);
 

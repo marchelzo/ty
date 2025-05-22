@@ -32,7 +32,7 @@ pub cifs = Sync(%{})
 tag Union;
 tag Struct;
 
-function next!(t) {
+fn next!(t) {
     while peek().type == 'comment' { next() }
     if peek().type != t {
         fail("expected `{t}` but found: {peek()}")
@@ -40,7 +40,7 @@ function next!(t) {
     next()
 }
 
-pub function getCif(rt, *aTypes, nFixed: ?Int) {
+pub fn getCif(rt, *aTypes, nFixed: ?Int) {
     let signature = (rt, aTypes, nFixed)
 
     sync!(cifs) {
@@ -52,9 +52,13 @@ pub function getCif(rt, *aTypes, nFixed: ?Int) {
     }
 }
 
-pub function wrap(lib, name: String, rType: _ = nil, *aTypes: _) -> _ {
+pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = false) -> _ {
     if not let $fp = c.dlsym(name, lib) {
         throw Err("Failed to load symbol '{name}'")
+    }
+
+    if func-ptr? {
+        fp = ptr::typed(fp, c.ptr)
     }
 
     aTypes.map!(t -> type(t) == ptr.null ? t : t.ctype())
@@ -63,10 +67,12 @@ pub function wrap(lib, name: String, rType: _ = nil, *aTypes: _) -> _ {
         let interface = getCif(rType.ctype(), *aTypes)
         let argStorage = [c.new(t) for t in aTypes]
 
-        return function func(*args, out = rType()) {
+        return fn func(*args, out = rType()) {
             for arg, i in args {
                 c.store(aTypes[i], argStorage[i], arg)
             }
+
+            let fp = func-ptr? ? c::load(c.ptr, fp) : fp
 
             c.call(interface, fp, *argStorage, out: out.get())
 
@@ -76,7 +82,7 @@ pub function wrap(lib, name: String, rType: _ = nil, *aTypes: _) -> _ {
         let interface = getCif(rType, *aTypes)
         let argStorage = [c.new(t) for t in aTypes]
 
-        return function func(*args) {
+        return fn func(*args) {
             for arg, i in args {
                 c.store(aTypes[i], argStorage[i], arg)
             }
@@ -382,7 +388,6 @@ function fun() {
             let st = lex.state()
             let ps = nextproto()
             let proto-string = lspan(st)
-
             if peek().type == ';' { next() }
 
             let proto-string = "({proto-string.strip().comb(/^\(|\)$/)})"
@@ -991,7 +996,7 @@ pub macro closure! {
         fail('need return type')
     }
 
-    let args = [rt]
+    let args: [AST] = [rt]
 
     for ty.Param(p), i in f.params {
         args.push(p.constraint)

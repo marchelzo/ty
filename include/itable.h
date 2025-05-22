@@ -9,7 +9,7 @@
 typedef struct value Value;
 
 struct itable {
-        vec(int) ids;
+        int_vector ids;
         ValueVector values;
         int class;
 };

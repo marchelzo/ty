@@ -40,7 +40,7 @@ fn ty::gensym() -> String;
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
-fn !::(a, b) { !(a :: b) }
+fn !::(a: Any, b: Any) { !(a :: b) }
 
 fn -(a: Int, b: Int) -> Int;
 fn +(a: Int, b: Int) -> Int;
@@ -82,6 +82,26 @@ fn time::utime() -> Int;
 fn tuple(*xs: _, %kws: _) -> (_,);
 fn abs(k: Int) -> Int;
 fn abs(x: Float) -> Float;
+fn floor(x: Int | Float) -> Int;
+fn ceil(x: Int | Float) -> Int;
+fn round(x: Int | Float) -> Float;
+fn iround(x: Int | Float) -> Int;
+fn ord(character: String) -> Int;
+fn chr(codepoint: Int) -> String;
+
+fn math::sqrt(x: Int | Float) -> Float;
+fn math::cos(x: Int | Float) -> Float;
+fn math::sin(x: Int | Float) -> Float;
+fn math::tan(x: Int | Float) -> Float;
+fn math::atan(x: Int | Float) -> Float;
+fn math::atan2(x: Int | Float, y: Int | Float) -> Float;
+fn math::asin(x: Int | Float) -> Float;
+fn math::acos(x: Int | Float) -> Float;
+fn math::cbrt(x: Int | Float) -> Float;
+fn math::exp(x: Int | Float) -> Float;
+fn math::log(x: Int | Float) -> Float;
+fn math::log2(x: Int | Float) -> Float;
+fn math::log10(x: Int | Float) -> Float;
 
 class Object {
     init(%props) {
@@ -238,14 +258,41 @@ class Array[T] : Iterable[T] {
 
     map[U](fun: T -> U) -> Array[U];
     map![U](fun: T -> U) -> Array[U];
-    filter(pred: T -> (Object | nil)) -> Array[T];
+    filter(pred: T -> Any) -> Array[T];
+    filter!(pred: T -> Any) -> Array[T];
     push(x: T) -> nil;
     len() -> Int;
     join(sep: String) -> String;
     take(n: Int) -> Array[T];
+    take!(n: Int) -> Array[T];
     drop(n: Int) -> Array[T];
+    drop!(n: Int) -> Array[T];
     remove!(x: _) -> Array[T];
     remove(x: _) -> Array[T];
+    shuffle() -> Array[T];
+    shuffle!() -> Array[T];
+    groups-of(n: Int) -> Array[Array[T]];
+    sort(desc: Bool = false) -> Array[T];
+    sort(by: T -> Any, desc: Bool = false) -> Array[T];
+    sort(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
+    sort!(desc: Bool = false) -> Array[T];
+    sort!(by: T -> Any, desc: Bool = false) -> Array[T];
+    sort!(cmp: (T, T) -> Any, desc: Bool = false) -> Array[T];
+    uniq() -> Array[T];
+    uniq!() -> Array[T];
+    reverse() -> Array[T];
+    reverse!() -> Array[T];
+    count(x: T) -> Int;
+    count-by(predicate: T -> Any) -> Int;
+    take-while(predicate: T -> Any) -> Array[T];
+    take-while!(predicate: T -> Any) -> Array[T];
+    drop-while(predicate: T -> Any) -> Array[T];
+    drop-while!(predicate: T -> Any) -> Array[T];
+    each(f: (T, ?Int) -> Any) -> Array[T];
+    each[U](x: U, f: (U, ?T, ?Int) -> Any) -> U;
+    sum() -> T;
+    tally() -> Dict[T, Int];
+    tally[U](key: T -> U) -> Dict[U, Int];
 
     +[U](ys: Array[U]) -> Array[T | U] { self + ys }
 
@@ -348,7 +395,7 @@ class Array[T] : Iterable[T] {
         self
     }
 
-    mean(f = id) {
+    mean(f: T -> Int | Float = id) -> ?Float {
         match self {
             [] => nil,
             _  => @map(f |> float).sum() / @len()
@@ -359,17 +406,17 @@ class Array[T] : Iterable[T] {
         match self {
             []                 => nil,
             xs :: xs.sorted?() => xs[#xs / 2],
-            xs                 => @sort()[#self / 2]
+            xs                 => self.sort()[#self / 2]
         }
     }
 
-    coalesce() {
+    coalesce() -> T | nil {
         for x in self if x != nil {
             return x
         }
     }
 
-    argmax(f = id) {
+    argmax(f: T -> Any = id) -> ?Int {
         if #self == 0 { return nil }
 
         let i, max = 0, f(self[0])
@@ -420,8 +467,6 @@ class Array[T] : Iterable[T] {
             ix            => ix
         }
 
-        //__debug!(1)
-
         if k < 0 {
             let start = min(wrap(i - 1), #self)
             let stop = max(wrap(j ?? 0), 0)
@@ -447,7 +492,7 @@ class Array[T] : Iterable[T] {
         self * ys
     }
 
-    get(i: Int) {
+    get(i: Int) -> Some[T] | None {
         let n = #self
         (i in -n..n) ? Some(self[i]) : None
     }
@@ -666,6 +711,8 @@ class String : Iterable[String] {
     int { ::int(self) }
 
     matches(Regex) -> [String | RegexMatch];
+
+    match!(Regex) -> String | [String] | RegexMatch;
 
     repeat(n: Int) -> String;
 
@@ -1083,7 +1130,7 @@ class Float {
 }
 
 class Blob : Iterable[Int] {
-    init(*args) {
+    init(*args: Any) {
         let b = blob()
 
         for arg in args {
@@ -1129,6 +1176,7 @@ class Blob : Iterable[Int] {
     search(off: Int, needle: Int | String | Blob) -> Int | nil;
 
     str(i: ?Int = 0, n: ?Int = #self) -> String;
+    str!(i: ?Int = 0, n: ?Int = #self) -> String;
     set(i: Int, byte: Int) -> nil;
 }
 
@@ -1165,7 +1213,7 @@ class Generator[T] : Iter[T] {
         self()
     }
 
-    __call__() -> Some[T] | None {
+    __call__(*args: Any) -> Some[T] | None {
         self()
     }
 }
@@ -1782,11 +1830,11 @@ trait Iter[T] < Iterable[T] {
         yield group
     }
 
-    classify(f = id) {
+    classify[U](key: (T -> U) = id) -> Dict[U, Array[T]] {
         let d = %{*: []}
 
         for x in self {
-            d[f(x)].push(x)
+            d[key(x)].push(x)
         }
 
         return d
@@ -2059,11 +2107,11 @@ trait Iter[T] < Iterable[T] {
     }
 
     sum() {
-        return @list().sum()
+        return [*self].sum()
     }
 
     mean() {
-        return @list().mean()
+        return [*self].mean()
     }
 
     median() {
@@ -2078,7 +2126,7 @@ trait Iter[T] < Iterable[T] {
         return true
     }
 
-    static tee[T, Ts](it: Iterable[T], n: Int = 2) -> (Iterable[T], *Ts) {
+    static tee(it: Iterable[T], n: Int = 2) -> _ {
         let queues: [_] = [Queue() for _ in ..n]
         let it = it.__iter__()
 
@@ -2808,31 +2856,31 @@ macro modify! {
     convert(record)
 }
 
-function nextEnumValue(last: AST) -> (AST, AST) | nil {
-    while lex.peek().type == 'comment' { lex.next() }
-
-    if lex.peek().type != 'id' { return nil }
-
-    let name = parse.expr(99)
-
-    if lex.peek().type == '=' {
-        lex.next()
-        (name, parse.expr(0))
-    } else match last {
-        ty.Add(n, ty.Int(i))
-            => (name, ty.Add(n, ty.Int(i + 1))),
-        n   => (name, ty.Add(n, ty.Int(1)))
-    }
-}
-
 macro enum! {
+    fn next-value(last: _) -> _ {
+        while lex.peek().type == 'comment' { lex.next() }
+
+        if lex.peek().type != 'id' { return nil }
+
+        let name = parse.expr(99)
+
+        if lex.peek().type == '=' {
+            lex.next()
+            (name, parse.expr(0))
+        } else match last {
+            ty.Add(n, ty.Int(i))
+                => (name, ty.Add(n, ty.Int(i + 1))),
+            n   => (name, ty.Add(n, ty.Int(1)))
+        }
+    }
+
     if lex.peek().type == '{' {
         lex.next()
 
         let vars = []
         let i = ty.Int(-1)
 
-        while lex.peek().type != '}' and let (name, val) = nextEnumValue(i) {
+        while lex.peek().type != '}' and let (name, val) = next-value(i) {
             vars.push(ty.Let(name, val, public: true))
             if lex.peek().type == ',' lex.next()
             i = val
@@ -2850,7 +2898,7 @@ macro enum! {
         let i = ty.Int(-1)
 
         while lex.peek().type != '}' {
-            let (e, val) = nextEnumValue(i)
+            let (e, val) = next-value(i)
             entries.push(ty.RecordEntry(item: val, name: e))
             if lex.peek().type == ',' lex.next()
             i = val
@@ -3099,7 +3147,7 @@ let memoized = MemoizedFunction
 
 macro __walk! {
     fn copySource(a: _, b: _) -> _ { ty.copySource(a, b) }
-    function walk(tree: _, f: _ -> _) -> _ {
+    function walk(tree: _, f: _) -> _ {
         if tree == nil {
             return nil
         }
@@ -3374,8 +3422,8 @@ macro __walk! {
     ty.Value(walk)
 }
 
-macro __desugar_partial__(call) {
-    let (args: _, mkcall) = match call {
+macro __desugar_partial__(call: _) {
+    let (args: _, mkcall: _) = match call {
         %t({args, ?func, *call}) => do {
             if func == ty.Nil {
                 func = ty.Value(x -> x)
@@ -3424,15 +3472,13 @@ macro __desugar_partial__(call) {
         e => e
     }))
 
-    fn go(args: [AST], mkcall: [AST] -> AST, d: Int) -> AST {
+    fn go(args: _, mkcall: _, d: _) -> _ {
         if d == 0 {
             return mkcall(args)
         }
 
         let _argv = nil
         let _kwargs = nil
-
-        fn gensym() -> String { ty.gensym() }
 
         fn argv()   { ty.Id({name: (_argv   ?? (_argv   = ty.gensym()))}) }
         fn kwargs() { ty.Id({name: (_kwargs ?? (_kwargs = ty.gensym()))}) }
@@ -3443,7 +3489,7 @@ macro __desugar_partial__(call) {
 
         fn param(i) {
             while #params <= i {
-                params.push(gensym())
+                params.push(ty.gensym())
             }
             ty.Id({name: params[i], module: ''})
         }

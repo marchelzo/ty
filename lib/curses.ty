@@ -1,5 +1,4 @@
-import ffi as c
-import cutil (wrap, cfun!)
+import ffi as c (wrap, C!)
 
 if not let $curses = c.dlopen('libncursesw.so.5') ?? c.dlopen('libncursesw.so.6') ?? c.dlopen('libncurses.dylib') {
 	throw 'Failed to load curses'
@@ -12,26 +11,28 @@ let KEY_RIGHT = KEY_LEFT + 1
 
 let KEY_BACKSPACE = 263
 
-cfun! pub curses c.int start_color()
-cfun! pub curses c.int use_default_colors()
-cfun! pub curses c.int init_pair(c.short, c.short, c.short)
-cfun! pub curses c.int init_color(c.short, c.short, c.short, c.short)
-cfun! pub curses c.int COLOR_PAIR(c.int)
-cfun! pub curses c.int wcolor_set(c.ptr, c.short, c.ptr)
-cfun! pub curses c.int color_set(c.short, c.ptr)
-cfun! pub curses c.ptr newwin(c.int, c.int, c.int, c.int)
-cfun! pub curses c.ptr subwin(c.ptr, c.int, c.int, c.int, c.int)
-cfun! pub curses c.int delwin(c.ptr)
-cfun! pub curses c.int mvwin(c.ptr, c.int, c.int)
-cfun! pub curses c.void wsyncup(c.ptr)
-cfun! pub curses c.void wsyncdown(c.ptr)
-cfun! pub curses c.ptr newpad(c.int, c.int)
-cfun! pub curses c.int prefresh(c.ptr, c.int, c.int, c.int, c.int, c.int, c.int)
-cfun! pub curses c.u32 mousemask(c.u32, c.ptr)
-cfun! pub curses c.int whline(c.ptr, c.int, c.int)
-cfun! pub curses c.void wbkgdset(c.ptr, c.int)
-cfun! pub curses c.int wresize(c.ptr, c.int, c.int)
-cfun! pub curses c.int box(c.ptr, c.int, c.int)
+C! pub curses fn {
+    int start_color()
+    int use_default_colors()
+    int init_pair(c.short, c.short, c.short)
+    int init_color(c.short, c.short, c.short, c.short)
+    int COLOR_PAIR(c.int)
+    int wcolor_set(c.ptr, c.short, c.ptr)
+    int color_set(c.short, c.ptr)
+    WINDOW *newwin(c.int, c.int, c.int, c.int)
+    WINDOW *subwin(c.ptr, c.int, c.int, c.int, c.int)
+    int delwin(c.ptr)
+    int mvwin(c.ptr, c.int, c.int)
+    void wsyncup(c.ptr)
+    void wsyncdown(c.ptr)
+    WINDOW *newpad(c.int, c.int)
+    int prefresh(c.ptr, c.int, c.int, c.int, c.int, c.int, c.int)
+    unsigned long mousemask(c.u32, c.ptr)
+    int whline(c.ptr, c.int, c.int)
+    void wbkgdset(c.ptr, c.int)
+    int wresize(c.ptr, c.int, c.int)
+    int box(c.ptr, c.int, c.int)
+}
 
 let initscr = wrap(curses, 'initscr', c.ptr)
 pub endwin = wrap(curses, 'endwin', c.int)

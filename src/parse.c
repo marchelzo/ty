@@ -479,6 +479,7 @@ inline static Stmt *
 mkstmt(Ty *ty)
 {
         Stmt *s = amA0(sizeof *s);
+        s->ns = CurrentNamespace;
         s->arena = GetArenaAlloc(ty);
         s->file = filename;
         s->start = tok()->start;
@@ -5692,7 +5693,6 @@ parse_let_definition(Ty *ty)
 {
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_DEFINITION;
-        s->pub = false;
 
         if (K0 == KEYWORD_CONST) {
                 next();
@@ -6656,12 +6656,15 @@ SetNamespace(Stmt *s, Namespace *ns)
 {
         s->ns = ns;
 
-        if (s->type != STATEMENT_MULTI) {
-                return;
-        }
-
-        for (int i = 0; i < vN(s->statements); ++i) {
-                SetNamespace(v__(s->statements, i), ns);
+        if (
+                s->type == STATEMENT_EXPRESSION
+             && s->expression->type == EXPRESSION_STATEMENT
+        ) {
+                SetNamespace(s->expression->statement, ns);
+        } else if (s->type == STATEMENT_MULTI) {
+                for (int i = 0; i < vN(s->statements); ++i) {
+                        SetNamespace(v__(s->statements, i), ns);
+                }
         }
 }
 
@@ -6710,7 +6713,10 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                         define_const(ty, s);
                 }
                 break;
-        default:
+        case STATEMENT_EXPRESSION:
+                if (s->expression->type == EXPRESSION_STATEMENT) {
+                        define_top(ty, s->expression->statement, doc);
+                }
                 break;
         }
 }

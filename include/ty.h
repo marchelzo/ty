@@ -461,7 +461,6 @@ typedef struct {
         int _next_;
         int ptr;
         int question;
-        int _setitem_;
         int slice;
         int str;
         int subscript;
@@ -488,6 +487,8 @@ extern bool CompileOnly;
 extern bool AllowErrors;
 
 extern u64 TypeCheckCounter;
+extern u64 TypeAllocCounter;
+extern u64 TypeCheckTime;
 
 #define dont_printf(...) 0
 
@@ -807,6 +808,7 @@ enum {
 #define vTn(...)  value_named_tuple(ty, __VA_ARGS__, NULL)
 
 #define vvPn(a, b, c)     vec_push_n((a), (b), (c))
+#define vvPv(v, u)        vec_push_n((v), (u).items, (u).count)
 #define vvP(a, b)         vec_push((a), (b))
 #define vvI(v, x, i)      vec_insert((v), (x), (i))
 #define vvIn(v, xs, n, i) vec_insert_n((v), (xs), (n), (i))
@@ -849,6 +851,7 @@ enum {
 
 #define uvP(v, x)         vec_push_unchecked((v), (x))
 #define uvPn(v, xs, n)    vec_push_n_unchecked((v), (xs), (n))
+#define uvPv(v, u)        vec_push_n_unchecked((v), ((u).items), ((u).count))
 #define uvI(v, x, i)      vec_insert_unchecked((v), (x), (i))
 #define uvIn(v, xs, n, i) vec_insert_n_unchecked((v), (xs), (n), (i))
 #define uvR(v, n)         vec_reserve_unchecked((v), (n))
@@ -1110,6 +1113,20 @@ TyError(Ty *ty)
 
 Ty *
 get_my_ty(void);
+
+inline static uint64_t
+TyThreadCPUTime(void)
+{
+#ifdef _WIN32
+        ULONG64 cycles;
+        QueryThreadCycleTime(GetCurrentThread(), &cycles);
+        return cycles;
+#else
+        struct timespec t;
+        clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+#endif
+}
 
 #endif
 
