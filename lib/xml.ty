@@ -9,21 +9,48 @@ if not let $libxml = c.dlopen('libxml2.so') ?? c.dlopen('libxml2.dylib') ?? c.dl
 
 tag XMLError;
 
-let xmlError            = c.int
-let xmlParserErrors     = c.int
-let xmlParserInputState = c.int
-let xmlParserMode       = c.int
+pub ns xpath {
+    pub tag String;
+    pub tag Int;
+    pub tag Bool;
+    pub tag NodeSet;
+}
 
-let xmlValidityErrorFunc   = c.ptr
-let xmlValidityWarningFunc = c.ptr
+pub ns defs {
+    pub const xmlError            = c.int
+    pub const xmlParserErrors     = c.int
+    pub const xmlParserInputState = c.int
+    pub const xmlParserMode       = c.int
 
-let xmlDictPtr           = c.ptr
-let xmlDocPtr            = c.ptr
-let xmlNodePtr           = c.ptr
-let xmlHashTablePtr      = c.ptr
-let xmlDictPtr           = c.ptr
-let xmlParserInputPtr    = c.ptr
-let xmlAttrPtr           = c.ptr
+    pub const xmlValidityErrorFunc       = c.ptr
+    pub const xmlValidityWarningFunc     = c.ptr
+    pub const xmlXPathVariableLookupFunc = c.ptr
+    pub const xmlXPathFuncLookupFunc     = c.ptr
+    pub const xmlStructuredErrorFunc     = c.ptr
+
+    pub const xmlDictPtr           = c.ptr
+    pub const xmlDocPtr            = c.ptr
+    pub const xmlNodePtr           = c.ptr
+    pub const xmlHashTablePtr      = c.ptr
+    pub const xmlDictPtr           = c.ptr
+    pub const xmlParserInputPtr    = c.ptr
+    pub const xmlAttrPtr           = c.ptr
+}
+
+use defs;
+
+enum! {
+    XPATH_UNDEFINED = 0,
+    XPATH_NODESET = 1,
+    XPATH_BOOLEAN = 2,
+    XPATH_NUMBER = 3,
+    XPATH_STRING = 4,
+    XPATH_POINT = 5,
+    XPATH_RANGE = 6,
+    XPATH_LOCATIONSET = 7,
+    XPATH_USERS = 8,
+    XPATH_XSLT_TREE = 9  /* An XSLT value tree, non modifiable */
+}
 
 let XML_MAX_TEXT_LENGTH = 10000000
 let XML_MAX_NAME_LENGTH = 50000
@@ -1315,15 +1342,15 @@ let XML_EXP_OR = 4
 let XML_EXP_COUNT = 5
 
 C! struct CXMLXPathObject {
-    c.int type;
-    void *nodesetval;
-    c.int boolval;
-    c.double floatval;
+    int type;
+    xmlNodeSet *nodesetval;
+    int boolval;
+    double floatval;
     void *stringval;
     void *user;
-    c.int index;
+    int index;
     void *user2;
-    c.int index2;
+    int index2;
 }
 
 C! struct CXMLNodeSet {
@@ -1618,9 +1645,106 @@ C! struct CXMLDoc {
 				   set at the end of parsing */
 };
 
-C! pub libxml fn xmlParseFile(c.ptr) -> c.ptr;
+C! struct CXMLXPathContext {
+    xmlDoc *doc;			/* The current document */
+    xmlNode *node;			/* The current node */
+
+    int nb_variables_unused;		/* unused (hash table) */
+    int max_variables_unused;		/* unused (hash table) */
+    xmlHashTable *varHash;		/* Hash table of defined variables */
+
+    int nb_types;			/* number of defined types */
+    int max_types;			/* max number of types */
+    xmlXPathType *types;		/* Array of defined types */
+
+    int nb_funcs_unused;		/* unused (hash table) */
+    int max_funcs_unused;		/* unused (hash table) */
+    xmlHashTable *funcHash;		/* Hash table of defined funcs */
+
+    int nb_axis;			/* number of defined axis */
+    int max_axis;			/* max number of axis */
+    xmlXPathAxis *axis;		/* Array of defined axis */
+
+    /* the namespace nodes of the context node */
+    xmlNs **namespaces;		/* Array of namespaces */
+    int nsNr;				/* number of namespace in scope */
+    void *user;				/* function to free */
+
+    /* extra variables */
+    int contextSize;			/* the context size */
+    int proximityPosition;		/* the proximity position */
+
+    /* extra stuff for XPointer */
+    int xptr;				/* is this an XPointer context? */
+    xmlNode *here;			/* for here() */
+    xmlNode *origin;			/* for origin() */
+
+    /* the set of namespace declarations in scope for the expression */
+    xmlHashTable *nsHash;		/* The namespaces hash table */
+    xmlXPathVariableLookupFunc varLookupFunc;/* variable lookup func */
+    void *varLookupData;		/* variable lookup data */
+
+    /* Possibility to link in an extra item */
+    void *extra;                        /* needed for XSLT */
+
+    /* The function name and URI when calling a function */
+    const xmlChar *func;
+    const xmlChar *functionURI;
+
+    /* function lookup function and data */
+    xmlXPathFuncLookupFunc funcLookupFunc;/* function lookup func */
+    void *funcLookupData;		/* function lookup data */
+
+    /* temporary namespace lists kept for walking the namespace axis */
+    xmlNs **tmpNsList;		/* Array of namespaces */
+    int tmpNsNr;			/* number of namespaces in scope */
+
+    /* error reporting mechanism */
+    void *userData;                     /* user specific data block */
+    xmlStructuredErrorFunc error;       /* the callback in case of errors */
+    xmlError lastError;			/* the last error */
+    xmlNode *debugNode;		/* the source node XSLT */
+
+    /* dictionary */
+    xmlDict *dict;			/* dictionary if any */
+
+    int flags;				/* flags to control compilation */
+
+    /* Cache for reusal of XPath objects */
+    void *cache;
+
+    /* Resource limits */
+    unsigned long opLimit;
+    unsigned long opCount;
+    int depth;
+};
+
+/**
+ * xmlXPathParserContext:
+ *
+ * An XPath parser context. It contains pure parsing information,
+ * an xmlXPathContext, and the stack of objects.
+ */
+C! struct CXMLXPathParserContext {
+    const xmlChar *cur;			/* the current char being parsed */
+    const xmlChar *base;			/* the full expression */
+
+    int error;				/* error code */
+
+    xmlXPathContext *context;	/* the evaluation context */
+    xmlXPathObject *value;	/* the current value */
+    int valueNr;	/* number of values stacked */
+    int valueMax;	/* max number of values stacked */
+    xmlXPathObject **valueTab;	/* stack of values */
+
+    xmlXPathCompExpr *comp;		/* the precompiled expression */
+    int xptr;				/* it this an XPointer expression */
+    xmlNode *        ancestor;	/* used for walking preceding axis */
+
+    int              valueFrame;        /* used to limit Pop on the stack */
+};
+
 C! pub libxml fn xmlXPathNewContext(c.ptr) -> c.ptr;
-C! pub libxml fn xmlXPathEvalExpression(c.ptr, c.ptr) -> c.ptr;
 
 C! pub libxml fn {
     xmlNode *xmlReplaceNode(
@@ -1628,8 +1752,18 @@ C! pub libxml fn {
         xmlNode *cur
     );
 
+    void xmlUnlinkNode(
+        xmlNode *node
+    );
+
     xmlDoc *xmlReadDoc(
         char const *contents,
+        char const *url,
+        char const *encoding,
+        int options
+    );
+
+    xmlDoc *xmlReadFile(
         char const *url,
         char const *encoding,
         int options
@@ -1672,7 +1806,7 @@ C! pub libxml fn {
         int format
     );
 
-    c.void xmlFree(void *mem);
+    c.void xmlMemFree(void *mem);
 
     c.int xmlSaveClose(xmlSaveCtxt *ctxt);
 
@@ -1689,10 +1823,80 @@ C! pub libxml fn {
     c.void xmlDocSetRootElement(xmlDoc *doc, xmlNode *root);
     c.void xmlAddChild(xmlNode *parent, xmlNode *child);
 
+    xmlChar *xmlGetProp(xmlNode *node, xmlChar const *key);
+    xmlAttr *xmlSetProp(xmlNode *node, xmlChar const *key, xmlChar const *value);
+    int xmlRemoveProp(xmlAttr *attr);
+
     char *xmlNodeGetContent(xmlNode *node);
+
+    c.void xmlInitParser();
+    c.void xmlInitMemory();
+
+    xmlXPathObject *xmlXPathEvalExpression(
+        const xmlChar *expr,
+        xmlXPathContext *ctx
+    );
+
+    int xmlXPathRegisterFunc(
+        xmlXPathContext *ctx,
+        const xmlChar *name,
+        xmlXPathFunction *f
+    );
+
+    xmlChar *xmlXPathPopString(xmlXPathParserContext *ctxt);
+
+    xmlChar *xmlXPathCastToString(xmlXPathObject *obj);
+
+    xmlXPathObject *xmlXPathNewBoolean(int val);
+    xmlXPathObject *xmlXPathNewFloat(double);
+    xmlXPathObject *xmlXPathNewString(xmlChar *val);
+
+    int valuePush(xmlXPathContext *ctxt, xmlXPathObject *obj);
+    xmlXPathObject *valuePop(xmlXPathContext *ctxt);
+
+    void xmlXPathFreeObject(xmlXPathObject *obj);
+
+    xmlNode *xmlDocGetRootElement(xmlDoc *doc);
 }
 
+pub xmlFree = c::wrap(libxml, 'xmlFree', c.void, c.ptr, func-ptr?=true)
 
+class XMLAttrSet {
+    __node: CXMLNode
+    
+    init(node: CXMLNode) {
+        __node = node
+    }
+
+    __subscript__(key: String) -> String {
+        if let $ptr = xmlGetProp(__node, key.cstr()) {
+            defer c::free(ptr)
+            c.str(ptr)
+        }
+    }
+
+    __subscript__=(key: String, val: String) {
+        xmlSetProp(__node, key.cstr(), val.cstr())
+    }
+
+    __missing__(name: String) {
+        self[name]
+    }
+
+    dict {
+        if let $props = __node.properties {
+            let propMap = %{}
+
+            for let child = XMLNode(props); child != nil; child = child.next {
+                propMap[child.name] = child.content
+            }
+
+            return propMap
+        } else {
+            return %{}
+        }
+    }
+}
 
 class XMLNode : Iterable[XMLNode] {
     __node: CXMLNode
@@ -1703,6 +1907,10 @@ class XMLNode : Iterable[XMLNode] {
 
     ptr {
         __node.__ptr__()
+    }
+
+    ==(other: XMLNode) {
+        self.ptr == other.ptr
     }
 
     children -> ?XMLNode {
@@ -1743,18 +1951,8 @@ class XMLNode : Iterable[XMLNode] {
         }
     }
 
-    attrs -> Dict[String, String] {
-        if let $props = __node.properties {
-            let propMap = %{}
-
-            for let child = XMLNode(props); child != nil; child = child.next {
-                propMap[c.str(child.__node.name)] = c.str(CXMLNode(child.__node.children).content)
-            }
-
-            return propMap
-        } else {
-            return %{}
-        }
+    props -> XMLAttrSet {
+        XMLAttrSet(__node)
     }
 
     swap(other: XMLNode) -> XMLNode {
@@ -1764,6 +1962,14 @@ class XMLNode : Iterable[XMLNode] {
         } else {
             self
         }
+    }
+
+    unlink() {
+        xmlUnlinkNode(__node)
+    }
+
+    addChild(other: XMLNode) {
+        xmlAddChild(__node, other.__node)
     }
 
     content {
@@ -1807,13 +2013,88 @@ class XMLNode : Iterable[XMLNode] {
     }
 }
 
+class XMLSelection : Iterable[XMLNode] {
+    __doc: Document
+    __nodes: Array[XMLNode]
+
+    init(__doc: Document, nodes: ?[XMLNode]) {
+       __nodes = nodes ?? []
+    }
+
+    __count__() -> Int {
+        #__nodes
+    }
+
+    unlink() {
+        for __nodes { it.unlink() }
+    }
+
+    __subscript__(expr: String) -> XMLSelection {
+        return XMLSelection(__doc, [*__doc[expr]].filter(\_ in __nodes))
+    }
+
+    __subscript__(p: XMLNode -> Any) -> XMLSelection {
+        return XMLSelection(__doc, __nodes.filter(p))
+    }
+
+    __iter__() -> Generator[XMLNode] {
+        __nodes.__iter__()
+    }
+}
+
 class Document {
     __doc: CXMLDoc
     __xpath_ctx: _
+    __closures: Dict[String, _]
 
     init(doc: _) {
         __doc = CXMLDoc(doc)
         __xpath_ctx = xmlXPathNewContext(doc)
+        __closures = %{}
+    }
+
+    ptr {
+        __doc.__ptr__()
+    }
+
+    root {
+        XMLNode(xmlDocGetRootElement(__doc))
+    }
+
+    register-func(name: String, func: _) {
+        C! closure c-func(ctx: c.ptr, argc: c.int) -> c.void {
+            let args = []
+
+            for ..argc {
+                let object = CXMLXPathObject(valuePop(ctx))
+                args.push(
+                    match object.type {
+                        ::XPATH_STRING  => c.str(xmlXPathCastToString(object)),
+                        ::XPATH_BOOLEAN => Bool(object.boolval),
+                        ::XPATH_NUMBER  => object.floatval,
+                        ::XPATH_NODESET => [*iter-node-set(object.nodesetval)]
+                    }
+                )
+            }
+
+            valuePush(ctx, match func(*args) {
+                x: Int | Float => xmlXPathNewFloat(x),
+                x: String      => xmlXPathNewString(x.cstr()),
+                x: Bool        => xmlXPathNewBoolean(int(x)),
+                _              => xmlXPathNewBoolean(0)
+            })
+
+        }
+
+        if xmlXPathRegisterFunc(__xpath_ctx, name.cstr(), c-func) != 0 {
+            throw XMLError("failed to register '{name}'")
+        }
+
+        __closures[name] = (c-func, func)
+    }
+
+    register-func(func: _) {
+        register-func(Function.name(func), func)
     }
 
     children -> XMLNode {
@@ -1821,8 +2102,17 @@ class Document {
     }
 
     __subscript__(expr: String) -> Generator[XMLNode] {
+        let expr = expr.cstr()
         let xpath = CXMLXPathObject(xmlXPathEvalExpression(expr.cstr(), __xpath_ctx))
         return iter-node-set(xpath.nodesetval)
+    }
+
+    select(expr: String) -> XMLSelection {
+        XMLSelection(self, [*self[expr]])
+    }
+
+    first(expr: String) -> ?XMLNode {
+        self[expr]().or-else(nil)
     }
 
     dump(options: Int = 0) -> Int {
@@ -1832,15 +2122,19 @@ class Document {
     }
 }
 
-pub fn read(path: String) -> Document {
-    Document(xmlParseFile(path.cstr()))
+pub fn read(
+    path: String,
+    encoding: ?String = nil,
+    options: Int = XML_PARSE_NOBLANKS
+) -> Document {
+    Document(xmlReadFile(path.cstr(), encoding, options))
 }
 
 pub fn parse(
     doc: String | Blob,
     url: ?String = nil,
     encoding: ?String = nil,
-    options: Int = 0
+    options: Int = XML_PARSE_NOBLANKS
 ) -> Document {
     Document(xmlReadDoc(doc, url, encoding, options))
 }
@@ -1859,6 +2153,7 @@ pub fn xml(parts) {
         (node: XMLNode, *) => {
             buf.push("<{name} i=\"{#holes}\" />")
             holes.push(node)
+            //node.unlink()
         },
         
         (x, *) => {
@@ -1875,13 +2170,15 @@ pub fn xml(parts) {
     let doc = Document(doc)
 
     fn go(node: XMLNode) -> XMLNode {
-        if node.name == name and let $i = int(node.attrs['i']) {
+        if node.name == name and let $i = int(node.props['i']) {
             return holes[i]
         }
 
         for child in (node.children ?? []) {
             child.swap(go(child))
         }
+
+        node
     }
 
     for child in doc.children {
@@ -1891,7 +2188,29 @@ pub fn xml(parts) {
     doc
 }
 
-pub fn test(node: XMLNode) {
-    let doc = xml"<test based=\"true\">Cope and seethe.{node}</test>"
-    doc.dump(XML_SAVE_FORMAT)
+//xmlInitMemory()
+
+pub fn test(node: XMLNode) -> Document {
+    cast(xml"<seethe><test based=\"true\">Fresh strawberries.{node}</test></seethe>")
 }
+
+fn test2() {
+    let doc = parse('''
+        <based>
+            Here is some text.
+            <keyed id="based">Raspberries</keyed>
+            <keyed id="cringe">Mangoes</keyed>
+        </based>
+    ''')
+
+    doc.register-func('lowkey', fn (x) {
+        dbg(x)
+        0
+    })
+
+    for node in doc['//keyed[lowkey(.)]'] {
+        print(node)
+    }
+}
+
+//test2()

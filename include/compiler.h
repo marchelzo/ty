@@ -350,6 +350,9 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e);
 int
 CompilationDepth(Ty *ty);
 
+Value
+CompilationTraceArray(Ty *ty);
+
 void
 CompilationTrace(Ty *ty, byte_vector *out);
 

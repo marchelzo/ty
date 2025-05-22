@@ -4,11 +4,23 @@ import ty.token
 
 tag ChalkError;
 
+use TermStyle = {
+    bold:      ?Bool,
+    italic:    ?Bool,
+    underline: ?Bool,
+    dim:       ?Bool,
+    reverse:   ?Bool,
+    fg:        ?[Int],
+    bg:        ?[Int],
+    fg-bright: ?Bool,
+    bg-bright: ?Bool
+}
+
 pub fn escape(text) {
     text.sub('\\', '\\\\').sub('[', '\\[')
 }
 
-let styles = %{
+let styles: Dict[String, TermStyle] = %{
     'b':          {bold: true},
     'bold':       {bold: true},
     'i':          {italic: true},
@@ -64,15 +76,25 @@ class Text2 {
     }
 }
 
-pub fn rand-hsl(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
-    let sample: _ = match {
-          (lo as hi) or (lo, hi) => lo + (hi - lo)*rand()
+use FloatRange = Float | (Float, Float)
+
+pub fn randf(lo: Float, hi: Float) -> Float {
+    lo + (hi - lo)*rand()
+}
+
+pub fn rand-hsl(
+    h: FloatRange = (0.0, 1.0),
+    s: FloatRange = (0.4, 1.0),
+    l: FloatRange = (0.6, 0.75)
+) -> (Float, Float, Float) {
+    let sample = match {
+          (lo, hi) => randf(lo, hi),
+          x        => x
     }
-    
     (sample(h), sample(s), sample(l))
 }
 
-pub fn parse-style(style: String, chalk: Chalk2) {
+pub fn parse-style(style: String, chalk: Chalk2) -> TermStyle {
     match style {
         /.*\?$/ => do {
             let (h, s, l) = rand-hsl()
@@ -99,7 +121,7 @@ class Chalk2 {
         member(self, 'styles', %{**styles, *: parse-style(it, self)})
     }
 
-    render(text, plain=false) {
+    render(text: String, plain: Bool = false) {
         let parts = text.split(/(?<=^|[^\\])\[([\/%])?([^]]*)\]/v)
 
         let stack: _ = [[{}]]
@@ -377,43 +399,45 @@ pub fn padRight(s, n) {
 }
 
 pub fn hueToRgb(p: Float, q: Float, t: Float) -> Float {
-  if t < 0 { t += 1 }
-  if t > 1 { t -= 1 }
+  if t < 0.0 { t += 1.0 }
+  if t > 1.0 { t -= 1.0 }
   if t < 1.0/6 { return p + (q - p) * 6 * t }
   if t < 1.0/2 { return q }
-  if t < 2.0/3 { return p + (q - p) * (2.0/3 - t) * 6 }
+  if t < 2.0/3 { return p + (q - p) * (2.0/3.0 - t) * 6.0 }
   return p
 }
 
-pub fn hslToRgb(h: Float, s: Float, l: Float) {
-  let r, g, b = nil, nil, nil
-
-  let (r, g, b) = if s == 0 {
+pub fn hslToRgb(h: Float, s: Float, l: Float) -> (Int, Int, Int) {
+  let (r, g, b) = if s < 0.0001 {
         (l, l, l)
   } else {
-    let q = (l < 0.5) ? l * (1 + s) : l + s - l * s
-    let p = 2 * l - q
+    let q = (l < 0.5) ? l * (1.0 + s) : l + s - l * s
+    let p = 2.0 * l - q
     (
-        hueToRgb(p, q, h + 0.0/3),
+        hueToRgb(p, q, h + 1.0/3.0),
         hueToRgb(p, q, h),
-        hueToRgb(p, q, h - 1.0/3)
+        hueToRgb(p, q, h - 1.0/3.0)
     )
   }
 
   return (iround(r * 255), iround(g * 255), iround(b * 255))
 }
 
-pub fn fg_hsl(h, s, l) {
+pub fn fg-hsl(h, s, l) {
     let (r, g, b) = hslToRgb(h, s, l)
     return fg("#{r:02x}{g:02x}{b:02x}")
 }
 
-pub fn fg_random(h = (0.0, 1.0), s = (0.4, 1.0), l = (0.6, 0.75)) {
+pub fn fg-random(
+    h: FloatRange = (0.0, 1.0),
+    s: FloatRange = (0.4, 1.0),
+    l: FloatRange = (0.6, 0.75)
+) {
     let sample: _ = match {
-        (lo as hi) or (lo, hi) => lo + (hi - lo)*rand()
+        (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
     }
 
-    return fg_hsl(
+    return fg-hsl(
         sample(h),
         sample(s),
         sample(l)

@@ -17,9 +17,7 @@ typedef struct param_bounds ParamBounds;
 struct constraint {
         enum {
                 TC_2OP,
-                TC_EQ,
-                TC_SUB,
-                TC_BOUND
+                TC_SUB
         } type;
         union {
                 struct {
@@ -28,8 +26,8 @@ struct constraint {
                         Type *t1;
                         Type *t2;
                         Expr const *src;
+                        u64 time;
                 };
-                TypeBound *bound;
         };
 };
 
@@ -300,6 +298,9 @@ Type *
 type_not_nil(Ty *ty, Type *t0);
 
 Type *
+type_without(Ty *ty, Type *t0, Type *t1);
+
+Type *
 type_either(Ty *ty, Type *t0, Type *t1);
 
 Type *
@@ -349,6 +350,12 @@ type_is_tvar(Type const *t0);
 
 bool
 type_iter(Ty *ty);
+
+void
+type_reset(Ty *ty);
+
+void
+type_reset_names(Ty *ty);
 
 inline static Type *
 iterable_type_for(Ty *ty, Expr const *e, Type *t0)

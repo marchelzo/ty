@@ -9,7 +9,7 @@
 
 static int SYMBOL;
 
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
 char const *
 scope_name(Ty *ty, Scope const *s)
 {
@@ -91,7 +91,7 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
         s->function = parent->function;
         s->namespace = true;
 
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         s->name = name;
 #endif
 
@@ -100,7 +100,7 @@ scope_new_namespace(Ty *ty, char const *name, Scope *parent)
 
 Scope *
 _scope_new(Ty *ty,
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         char const *name,
 #endif
         Scope *parent,
@@ -112,7 +112,7 @@ _scope_new(Ty *ty,
         s->parent = parent;
         s->function = (is_function || parent == NULL) ? s : parent->function;
 
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         s->name = name;
 #endif
 

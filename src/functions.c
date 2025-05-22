@@ -7744,6 +7744,10 @@ BUILTIN_FUNCTION(ptr_typed)
 {
         ASSERT_ARGC("ptr.typed()", 2);
 
+        if (ARG(0).type == VALUE_NIL) {
+                return NIL;
+        }
+
         if (ARG(0).type != VALUE_PTR) {
                 zP("ptr.typed(): expected pointer as first argument but got: %s", VSC(&ARG(0)));
         }
@@ -7759,7 +7763,11 @@ BUILTIN_FUNCTION(ptr_untyped)
 {
         ASSERT_ARGC("ptr.untyped()", 1);
 
-        struct value p = ARG(0);
+        Value p = ARG(0);
+
+        if (p.type == VALUE_NIL) {
+                return NIL;
+        }
 
         if (p.type != VALUE_PTR) {
                 zP("ptr.untyped(): expected pointer as first argument but got: %s", VSC(&p));

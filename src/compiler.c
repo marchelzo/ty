@@ -8,6 +8,7 @@
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdnoreturn.h>
+#include <unistd.h>
 
 #include "scope.h"
 #include "ty.h"
@@ -29,6 +30,7 @@
 #include "compiler.h"
 #include "istat.h"
 #include "types.h"
+#include "json.h"
 
 #define emit_instr(i) ((emit_instr)(ty, INSTR_ ## i))
 
@@ -691,7 +693,7 @@ PushInfo(Ty *ty, void const *ctx, char const *fmt, ...)
 }
 
 #define fail(...) CompileError(ty, __VA_ARGS__)
-#define fail_or(...) if (!AllowErrors) { CompileError(ty, __VA_ARGS__); } else
+#define fail_or(...) if (!AllowErrors || EvalDepth > 0) { CompileError(ty, __VA_ARGS__); } else
 noreturn void
 CompileError(Ty *ty, char const *fmt, ...)
 {
@@ -705,9 +707,18 @@ CompileError(Ty *ty, char const *fmt, ...)
 
         va_end(ap);
 
-        if (CompilationDepth(ty) > 0) {
-                dump(&ErrorBuffer, "\n");
-                CompilationTrace(ty, &ErrorBuffer);
+        if (!CompileOnly || isatty(2) || ujb != NULL) {
+                if (CompilationDepth(ty) > 0) {
+                        dump(&ErrorBuffer, "\n");
+                        CompilationTrace(ty, &ErrorBuffer);
+                }
+        } else {
+                Value msg = vSsz(vv(ErrorBuffer));
+                Value trace = (CompilationDepth(ty) > 0) ? CompilationTraceArray(ty) : ARRAY(vA());
+                Value record = vTn("message", msg, "trace", trace);
+                v0(ErrorBuffer);
+                json_dump(ty, &record, &ErrorBuffer);
+                xvP(ErrorBuffer, '\0');
         }
 
         //fputs(TyError(ty), stdout);
@@ -1600,7 +1611,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
 
         Symbol *sym = NULL;
 
-#ifdef TY_DEBUG_NAMES
+#if defined(TY_DEBUG_NAMES) && 0
         printf("resolve_access(): parts=[");
         for (int i = 0; i < n; ++i) {
                 if (i != 0) printf(", ");
@@ -1659,7 +1670,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
 
         char *id = parts[n - 1];
 
-#ifdef TY_DEBUG_NAMES
+#if defined(TY_DEBUG_NAMES) && 0
         static int d;
         printf("%*sbefore: left=%s, e=%s, part=%s\n", d*4, "", ExpressionTypeName(left), ExpressionTypeName(e), parts[n - 1]);
         d += 1;
@@ -1833,7 +1844,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
                 avI(parts, o->name, 0);
         }
 
-#ifdef TY_DEBUG_NAMES
+#if defined(TY_DEBUG_NAMES) && 0
         printf("parts: ");
         for (int i = 0; i < parts.count; ++i) {
                 if (i > 0) putchar('.');
@@ -1844,7 +1855,7 @@ fixup_access(Ty *ty, Scope const *scope, Expr *e, bool strict)
 
         resolve_access(ty, scope, parts.items, parts.count, (Expr *)e, strict);
 
-#ifdef TY_DEBUG_NAMES
+#if defined(TY_DEBUG_NAMES) && 0
         printf("resolved to: %s\n", ExpressionTypeName(e));
 #endif
 }
@@ -1981,6 +1992,18 @@ aggregate_overloads(Ty *ty, int class, expression_vector *ms, bool setters)
         qsort(ms->items, vN(*ms), sizeof *ms->items, method_cmp);
 }
 
+inline static Symbol *
+RegexCapture(Ty *ty, Scope *scope, int i)
+{
+        char id[16];
+        snprintf(id, sizeof id, "$%d", i);
+
+        Symbol *var = addsymbol(ty, scope, sclonea(ty, id));
+        var->type = TYPE_STRING;
+
+        return var;
+}
+
 static void
 add_captures(Ty *ty, Expr *pattern, Scope *scope)
 {
@@ -1996,7 +2019,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
         char const *names;
         pcre2_pattern_info(re->pcre2, PCRE2_INFO_NAMETABLE, &names);
 
-        pattern->match_symbol = addsymbol(ty, scope, "$0");
+        pattern->match_symbol = RegexCapture(ty, scope, 0);
 
         for (int i = 1; i <= n; ++i) {
                 char const *nt = names;
@@ -2008,7 +2031,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
                                 /*
                                  * Don't think clone is necessary here...
                                  */
-                                addsymbol(ty, scope, nt);
+                                addsymbol(ty, scope, nt)->type = TYPE_STRING;
                                 goto NextCapture;
                         }
                 }
@@ -2016,9 +2039,7 @@ add_captures(Ty *ty, Expr *pattern, Scope *scope)
                 /*
                  * This is not a named capture group
                  */
-                char id[16];
-                sprintf(id, "$%d", i);
-                addsymbol(ty, scope, sclonea(ty, id));
+                RegexCapture(ty, scope, i);
         NextCapture:
                 ;
         }
@@ -2125,7 +2146,7 @@ fixup_choice(Ty *ty, Expr *e, Scope *scope)
                      && choice->type == EXPRESSION_CHOICE_PATTERN
                 ) {
                         for (int i = 0; i < vN(choice->es); ++i) {
-                                avP(to_expand, v__(choice->es, i));
+                                avI(to_expand, v__(choice->es, i), 0);
                         }
                 } else {
                         avP(choices, choice);
@@ -3165,8 +3186,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->operand);
                 break;
         case EXPRESSION_CONDITIONAL:
+                subscope = scope_new(ty, "(?:then)", scope, false);
+                scope = scope_new(ty, "(?:else)", scope, false);
                 symbolize_expression(ty, scope, e->cond);
-                symbolize_expression(ty, scope, e->then);
+                AddRefinements(ty, e->cond, subscope, scope);
+                symbolize_expression(ty, subscope, e->then);
                 symbolize_expression(ty, scope, e->otherwise);
                 unify2(ty, &e->_type, e->then->_type);
                 unify2(ty, &e->_type, e->otherwise->_type);
@@ -3315,6 +3339,11 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 // TODO
                 bool required = true;
 
+#if defined(TY_PROFILE_TYPES)
+                u64 time_start = TyThreadCPUTime();
+                u64 allocs_start = TypeAllocCounter;
+#endif
+
                 if (e->scope == NULL) {
                         RedpillFun(ty, scope, e, NULL);
                 }
@@ -3417,6 +3446,35 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         }
                 }
 
+#if defined(TY_PROFILE_TYPES)
+                if (state.func == NULL) {
+                        u64 time_end = TyThreadCPUTime();
+                        u64 allocs_end = TypeAllocCounter;
+
+                        u64 elapsed = time_end - time_start;
+                        u64 allocated = allocs_end - allocs_start;
+
+                        if (e->class != -1) {
+                                printf(
+                                        "%"PRIu64" %"PRIu64" %s::%s.%s\n",
+                                        elapsed,
+                                        allocated,
+                                        state.module_name,
+                                        class_name(ty, e->class),
+                                        e->name
+                                );
+                        } else {
+                                printf(
+                                        "%"PRIu64" %"PRIu64" %s::%s\n",
+                                        elapsed,
+                                        allocated,
+                                        state.module_name,
+                                        e->name
+                                );
+                        }
+                }
+#endif
+
                 break;
         case EXPRESSION_WITH:
                 subscope = scope_new(ty, "(with)", scope, false);
@@ -3454,18 +3512,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         } else {
                                 symbolize_expression(ty, scope, e->elements.items[i]);
                         }
-                        if (v__(e->elements, i)->type == EXPRESSION_SPREAD) {
-                                type_assign(
-                                        ty,
-                                        v__(e->elements, i),
-                                        type_iterable_type(
-                                                ty,
-                                                v__(e->elements, i)->value->_type,
-                                                1
-                                        ),
-                                        T_FLAG_STRICT
-                                );
-                        }
                 }
                 e->_type = type_array(ty, e);
                 SET_TYPE_SRC(e);
@@ -3480,7 +3526,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 for (size_t i = 0; i < e->elements.count; ++i) {
                         symbolize_expression(ty, subscope, e->elements.items[i]);
                         symbolize_expression(ty, subscope, e->aconds.items[i]);
-                        unify(ty, &e->_type, v__(e->elements, i)->_type);
                 }
                 e->_type = type_array(ty, e);
                 SET_TYPE_SRC(e);
@@ -3528,6 +3573,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 break;
         case EXPRESSION_SPREAD:
                 symbolize_expression(ty, scope, e->value);
+                e->_type = e->value->_type;
                 break;
         case EXPRESSION_SPLAT:
                 symbolize_expression(ty, scope, e->value);
@@ -3742,6 +3788,18 @@ AddRefinements(Ty *ty, Expr const *e, Scope *_then, Scope *_else)
                                 e->right->symbol->class
                         )
                 );
+                if (_else != NULL) {
+                        ScopeRefineVar(
+                                ty,
+                                _else,
+                                e->left->symbol,
+                                type_without(
+                                        ty,
+                                        e->left->symbol->type,
+                                        class_get_class(ty, e->right->symbol->class)->object_type
+                                )
+                        );
+                }
                 Refinement *ref = vvL(_then->refinements);
                 dont_printf("AddRefinement(%s):\n", ref->var->identifier);
                 dont_printf("    %s\n", type_show(ty, ref->var->type));
@@ -3770,11 +3828,12 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
         Scope           *subscope2;
         ClassDefinition       *cd;
 
-        if (s == NULL || s->xscope != NULL)
+        if (s == NULL || s->xscope != NULL) {
                 return;
+        }
 
         if (s->file != NULL && s->start.s != NULL) {
-                //printf("%18s:%4d  |  %s\n", s->file, s->start.line + 1, show_expr((Expr *)s));
+                dont_printf("%18s:%4d  |  %s\n", s->file, s->start.line + 1, show_expr((Expr *)s));
         }
 
         state.start = s->start;
@@ -8149,6 +8208,10 @@ InjectRedpill(Ty *ty, Stmt *s)
                         }
                 }
                 break;
+
+        case STATEMENT_USE:
+                symbolize_statement(ty, scope, s);
+                break;
         }
 }
 
@@ -8434,6 +8497,7 @@ compile(Ty *ty, char const *source)
         for (size_t i = 0; p[i] != NULL; ++i) {
                 symbolize_statement(ty, state.global, p[i]);
                 type_iter(ty);
+                type_reset(ty);
         }
 
         for (int i = 0; i < state.class_ops.count; ++i) {
@@ -8441,6 +8505,8 @@ compile(Ty *ty, char const *source)
                 SWAP(int, state.class, def->value->class);
                 symbolize_statement(ty, state.global, def);
                 SWAP(int, state.class, def->value->class);
+                type_iter(ty);
+                type_reset(ty);
         }
 
         if (SuggestCompletions || FindDefinition) {
@@ -8574,6 +8640,7 @@ load_module(Ty *ty, char const *name, Scope *scope)
         // TODO: which makes more sense here?
         //emit_instr(EXEC_CODE);
         //emit_symbol((uintptr_t) m.code);
+
         vm_exec(ty, code);
         class_finalize_all(ty);
 
@@ -8904,18 +8971,20 @@ compiler_compile_source(Ty *ty, char const *source, char const *file)
 
         vec_init(state.code);
 
-#if 0
-        for (int i = 0; i < 16; ++i) {
-                Symbol *sym = state.global->table[i];
-                while (sym != NULL) {
-                        printf("%10s : %s\n", sym->identifier, type_show(ty, sym->type));
-                        sym = sym->next;
-                }
-        }
-#endif
-
         return code;
 }
+
+#if 0
+char *
+compiler_compile_source(Ty *ty, char const *source, char const *file)
+{
+        for (int i = 0; i < 18; ++i) {
+                xcompiler_compile_source(ty, source, file);
+                state = freshstate(tyk;
+        }
+        return xcompiler_compile_source(ty, source, file);
+}
+#endif
 
 int
 compiler_symbol_count(Ty *ty)
@@ -11746,10 +11815,10 @@ typarse(
         symbolize_expression(ty, state.global, e);
 
         byte_vector code_save = state.code;
-        vec_init(state.code);
+        v00(state.code);
 
         add_location_info(ty);
-        vec_init(state.expression_locations);
+        v00(state.expression_locations);
 
         ProgramAnnotation annotation = state.annotation;
         state.annotation = (ProgramAnnotation) {0};
@@ -11757,13 +11826,13 @@ typarse(
         emit_expression(ty, e);
         emit_instr(HALT);
 
-        vec_init(state.expression_locations);
+        v00(state.expression_locations);
 
         vm_exec(ty, state.code.items);
 
         state.code = code_save;
         state.annotation = annotation;
-        vec_init(state.expression_locations);
+        v00(state.expression_locations);
 
         Value m = *vm_get(ty, 0);
 
@@ -12234,7 +12303,10 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 {
         SAVE_JB;
 
+        EvalDepth += 1;
+
         if (setjmp(jb) != 0) {
+                EvalDepth -= 1;
                 RESTORE_JB;
                 return false;
         }
@@ -12248,6 +12320,7 @@ compiler_symbolize_expression(Ty *ty, Expr *e, Scope *scope)
 
         type_iter(ty);
 
+        EvalDepth -= 1;
         RESTORE_JB;
 
         return true;
@@ -12459,6 +12532,43 @@ WriteExpressionOrigin(Ty *ty, byte_vector *out, Expr const *e)
         );
 
         return n;
+}
+
+inline static Value
+TraceEntryFor(Ty *ty, Expr const *e)
+{
+        return vTn(
+                "file", (e->file == NULL) ? NIL : xSz(e->file),
+                "module", vSsz(GetExpressionModule(e)),
+                "start", vTn(
+                        "line", INTEGER(e->start.line + 1),
+                        "col", INTEGER(e->start.col + 1)
+                ),
+                "end", vTn(
+                        "line", INTEGER(e->end.line + 1),
+                        "col", INTEGER(e->end.col + 1)
+                ),
+                "type", xSz(ExpressionTypeName(e))
+        );
+}
+
+Value
+CompilationTraceArray(Ty *ty)
+{
+        Array *trace = vA();
+
+        for (ContextEntry *ctx = ContextList; ctx != NULL; ctx = ctx->next) {
+                if (
+                        ctx->e == NULL
+                     || ctx->e->type == EXPRESSION_STATEMENT
+                     || ctx->e->type == STATEMENT_EXPRESSION
+                ) {
+                        continue;
+                }
+                vAp(trace, TraceEntryFor(ty, ctx->e));
+        }
+
+        return ARRAY(trace);
 }
 
 void

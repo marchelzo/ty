@@ -11,6 +11,7 @@
 #include "itable.h"
 #include "class.h"
 #include "types.h"
+#include "ty.h"
 
 static vec(Class *) classes;
 static vec(Class *) traits;
@@ -492,8 +493,15 @@ class_get_completions(Ty *ty, int class, char const *prefix, char **out, int max
         return N;
 }
 
-int
-class_completions(Ty *ty, int class, char const *prefix, expression_vector *out)
+static int
+completions(
+        Ty *ty,
+        int class,
+        char const *prefix,
+        expression_vector *out,
+        int_vector *depths,
+        int depth
+)
 {
         if (class < 0) {
                 return 0;
@@ -507,6 +515,7 @@ class_completions(Ty *ty, int class, char const *prefix, expression_vector *out)
                 Expr *field = v__(c->def->class.methods, i);
                 if (strncmp(field->name, prefix, prefix_len) == 0) {
                         xvP(*out, field);
+                        xvP(*depths, depth);
                 }
         }
 
@@ -514,6 +523,7 @@ class_completions(Ty *ty, int class, char const *prefix, expression_vector *out)
                 Expr *field = v__(c->def->class.getters, i);
                 if (strncmp(field->name, prefix, prefix_len) == 0) {
                         xvP(*out, field);
+                        xvP(*depths, depth);
                 }
         }
 
@@ -530,14 +540,27 @@ class_completions(Ty *ty, int class, char const *prefix, expression_vector *out)
                         )
                 ) {
                         xvP(*out, field);
+                        xvP(*depths, depth);
                 }
         }
 
         if (c->super != NULL) {
-                class_completions(ty, c->super->i, prefix, out);
+                completions(ty, c->super->i, prefix, out, depths, depth + 1);
         }
 
         return (int)vN(*out) - n;
+}
+
+int
+class_completions(
+        Ty *ty,
+        int class,
+        char const *prefix,
+        expression_vector *out,
+        int_vector *depths
+)
+{
+        return completions(ty, class, prefix, out, depths, 0);
 }
 
 struct itable *

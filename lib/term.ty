@@ -362,7 +362,7 @@ namespace ctlseq {
             })
         }
 
-        pub fn k-ev-based($1, $2, $3, $4) {
+        pub fn k-ev-based($1: String, $2: String, $3: String, $4: String) {
             let (key, _key, base) = match keys.function-keys("{$1 || 1}{$4}") {
                 Some(sp) => (sp, nil, nil),
                 None     => match $1.split(':').map(int) {
@@ -573,7 +573,7 @@ class TermIO {
 
                 // No terminfo match, let's hope that means we have a mouse event,
                 // or a keyboard event in the kitty progressive-enhancement format
-                for (pattern, handler) in ctlseqs {
+                for (pattern, handler: _) in ctlseqs {
                     if let $captures = buf.str!(i).match!(pattern) {
                         handler(*captures[1;])
                         i += #captures[0]
@@ -601,7 +601,7 @@ class TermIO {
 
         for (;;) {
             __cursor.cond.wait(__cursor.lock)
-            if let { $x, $y, (t: t != t_0) } = __cursor {
+            if let { $x, $y, (t: t != t_0), * } = __cursor {
                 return (x, y)
             }
         }

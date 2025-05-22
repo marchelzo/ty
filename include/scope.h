@@ -67,7 +67,7 @@ typedef struct scope {
 
         RefinementVector refinements;
 
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         char const *name;
 #endif
 } Scope;
@@ -76,17 +76,17 @@ typedef void *SymbolTransform(Ty *ty, Symbol *);
 
 struct scope *
 _scope_new(Ty *ty,
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         char const *name,
 #endif
         struct scope *parent,
         bool function
 );
 
-#ifdef TY_RELEASE
-  #define scope_new(ty, n, p, f) _scope_new(ty, p, f)
-#else
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
   #define scope_new(ty, n, p, f) _scope_new(ty, n, p, f)
+#else
+  #define scope_new(ty, n, p, f) _scope_new(ty, p, f)
 #endif
 
 Symbol *
@@ -244,7 +244,7 @@ scope_get_completions(
         bool recursive
 );
 
-#ifndef TY_RELEASE
+#if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
 char const *
 scope_name(Ty *ty, struct scope const *s);
 #endif

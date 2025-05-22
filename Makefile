@@ -36,6 +36,10 @@ ifdef DEBUG_NAMES
         CFLAGS += -DTY_DEBUG_NAMES
 endif
 
+ifdef PROFILE_TYPES
+        CFLAGS += -DTY_PROFILE_TYPES
+endif
+
 TEST_FILTER ?= "."
 
 PROG := ty
