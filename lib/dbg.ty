@@ -1,11 +1,19 @@
-import chalk (fg, chalk)
-import help (pretty-print)
+import os
+import chalk (chalk)
+import help (pretty-print, pretty)
 import readln (readln)
 import tdb
+import term
 import ty
 
 pub macro Source   = 1
 pub macro Bytecode = 2
+
+class TDBError < RuntimeError {
+    init(msg: String) {
+        super(msg)
+    }
+}
 
 chalk.fg0    = '#e1c78f'
 chalk.fg1    = '#ddc7a1'
@@ -15,51 +23,53 @@ chalk.orange = '#e78a4e'
 chalk.yellow = '#d8a657'
 chalk.green  = '#a9b665'
 chalk.blue   = '#7daea3'
+chalk.blue2  = '#3193ce'
 chalk.purple = '#d3869b'
 chalk.aqua   = '#89b482'
+chalk.grey   = '#847a6d'
+chalk.pink   = '#d677be'
 
 let groups = %{
     'fg0': 'id',
     'fg1': '[ ] { } ( ) . , ] ;',
     'orange': '
-        =   ==  ++  --  +   -  *   /   %   ^   |  &
-        +=  -=  *=  /=  %=  @  #   &&  ||  <=> !  ~
-        ->  ~>  =>  $~> >   <  !=
+        =   ==  ++  --  +   -  *   /   %   ^    |    &
+        +=  -=  *=  /=  %=  @  #   &&  ||  <=>  !    ~  
+        ->  ~>  =>  $~> >   <  !=  ??  >>  <<   <<=  >>=  |>
+        *** &&& <$> <%> ?> <? <*>  *>  <*  ..%. .%.. .%
+        ::  ?=  |=  &=  ^=
     ',
     'purple': 'true false nil int float',
     'red': '
-        for       while    if     let       and    function
+        for       while    if     let       and    fn
         do        try      catch  operator  or     in
         match     else     with   import    break  pub
-        continue  return
+        continue  return   macro  where     not    throw
     ',
-    'yellow': 'class tag',
+    'yellow': 'class trait tag use',
     'green': 'fun string " f-string',
     'blue': 'type',
-    'aqua': 'regex'
+    'blue2': 'typeof',
+    'aqua': 'regex',
+    'grey': 'comment',
+    'pink': 'pp'
 }
 
 let colors = [ %{ t: c for t in g.words() } for c, g in groups ].sum()
 
 @[memoized]
-function color-and-break(prog) {
-#|if 1
-    // More expensive, but might give better syntax highlighting
-    let tokens = match ty.parse(prog, :tokens) {
-        Ok(_, {tokens, *}) => tokens,
-        _                  => do return prog
+function color-and-break(module: String) -> [(Int, String)] {
+    if not let ($source, $tokens) = (ty.text(module), ty.tokens(module)) {
+        throw TDBError("failed to fetch source information for {module}")
     }
-#|else
-    let $tokens = ty.tokenize(prog)
-#|]
 
-    tokens.remove!(nil).map!(t -> match t {
-        {id, end, *} and prog[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
+    let tokens = tokens.remove!(nil).map!(t -> match t {
+        {id, end, *} and source[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
         {id: /^[A-Z]\w*[a-z]\w*$/, *}          => do { let x: _ = t; ({*x, type: 'type'}) },
         _ => t
     })
 
-    let parts = [(it, '') for prog]
+    let parts = [(it, '') for source]
 
     for {start, end, type, *} in tokens {
         let i = start.byte
@@ -70,24 +80,26 @@ function color-and-break(prog) {
         for i..j { parts[it] = (parts[it][0], color) }
     }
 
+    parts.group-by!(&1).map!(group -> (group.map(&0).str(), group[0][1]))
+
     let out = Blob()
 
-    for (char, fg) in parts {
-        out.push(str(chalk"[{fg}]{char}[/]"))
+    for (text, fg) in parts {
+        out.push(fg ? "[{fg}]{chalk::escape(text)}[/]" : chalk::escape(text))
     }
 
-    out.str!().lines().enumerate()
+    out.str!().lines().enumerate!()
 }
 
-function next-line(line) (
+fn next-line(line: Int) -> (Token -> Bool) do (
     match ({start, *}) => start.line != line
 )
 
-function next-call(start-func, start-fp) (
+fn next-call(start-func, start-fp) do (
     match ({fp, *}) => (fp != start-fp)
 )
 
-function end-of-expr() (
+fn end-of-expr() (
     match tdb.span() {
         (lo, hi) => match ({ip, *}) => (ip < lo) || (ip >= hi),
         _        => nil
@@ -97,55 +109,62 @@ function end-of-expr() (
 let stop-cond = nil
 let step = nil
 let current-line = -1
-let current-range = (0...0)
 let current-mode = Source
+let expr-span = nil
 let depth = 0
 
-tdb.hook = function hook() {
-    eprint('SAD')
+tdb.hook = fn hook() {
     let state = tdb.state()
 
-    let { prog, file, expr
-        , func, ip, fp, sp } = dbg(state)
+    let (H, W) = term::size(1)
 
-    eprint('COPE')
+    let { mod, file, expr, prog
+        , insn, ip, fp, sp, func } = state
+
+    if prog == nil {
+        tdb.over()
+        return
+    }
 
     depth += 1
     defer depth -= 1
 
-    eprint('SEETHE')
+    fn print-source(range: ?Range = nil) {
+        let lines = color-and-break(mod)
 
-    function print-source() {
-        let lines = color-and-break(prog)
-
-        if !current-range.contains?(current-line.range(-3 , 3)) {
-            current-range = current-line.range(-10, 16).clamp(0, #lines)
-        }
+        let range = (range ?? current-line.range(-(H/3), H/2)).clamp(0, #lines)
          
         print("\x1b[2J\x1b[H", :flush)
-        print(chalk"[aqua]File: {file}[/]")
+        print(chalk"[yellow]File:[/] [blue]{file}[/]")
 
-        for (i, source-line) in lines[current-range] {
-            let highlight = text -> chalk"[bright yellow bold]{text}[/]"
-            let margin = (i == current-line)
-                       ? "     --> {i + 1:6} |" >> highlight
-                       : "         {i + 1:6} |"
-            if i == current-line {
-                source-line = chalk"[bg-#3c3836]XX{source-line:100}XX[/]"
+        try {
+            for (i, chalk::Text@(_, chalk) ~> source-line) in lines[range] {
+                let highlight = text -> chalk"[bright yellow bold]{text}[/]"
+                let margin = (i == current-line)
+                           ? "     --> {i + 1:6} |" >> highlight
+                           : "         {i + 1:6} |"
+                if i == current-line {
+                    if expr-span != nil {
+                        source-line = source-line.style-span(expr-span, 'b u.-#7ead85')
+                    }
+                    source-line = chalk"[bg-#3c3836]{source-line:-100}[/]"
+                }
+                print(chalk"{margin} {source-line}")
             }
-            print(chalk"{margin} {source-line}")
+
+            print(chalk"[yellow]Current instruction:[/] [blue]{insn}[/]")
+        } catch chalk::ChalkError(e) {
+            print(chalk"[bright red b]chalk error[/]: {pretty(e)}")
         }
     }
 
-    eprint("CHECK STEP: {expr}")
-
     if (expr != nil) and let {start, end, *} = ty.src(expr) {
-        eprint("HERE LOL")
         if stop-cond != nil && !stop-cond({*state, start, end}) {
             step()
             return
         }
 
+        expr-span = (start.line == end.line) ? (start.col, end.col) : nil
         current-line = start.line
         stop-cond = nil
 
@@ -158,14 +177,9 @@ tdb.hook = function hook() {
                 tdb.list()
             }
         }
-
-        print("Mode: {current-mode}")
     }
 
-    eprint('START READING')
-
-    //while match readln("(tdb)[{depth}] ", !:erase) {
-    while match dbg(readLine()) {
+    while match readln("(tdb)[{depth}] ", !:erase) {
         /^p (.*)$/ => match tdb.eval($1) {
             Err(msg) => print(msg),
             Ok(val)  => pretty-print(val)
@@ -176,12 +190,12 @@ tdb.hook = function hook() {
             Ok(fun)  => tdb.breakpoint(fun)
         },
 
-        /^x\/(\d+)/ => {
-            let n = int($1)
+        /^x(?:\/(\d+))?/ => {
             let stack = tdb.stack()
+            let n = int($1) ?? min(32, #stack)
 
             if #stack == 0 {
-                print('STACK IS EMPTY')
+                print(chalk"[blue](empty stack)[/]")
                 continue
             }
 
@@ -198,9 +212,20 @@ tdb.hook = function hook() {
         },
 
         'l' => {
-            print-source()
-            current-mode = Source
+            if prog != nil {
+                print-source()
+                current-mode = Source
+            }
         },
+
+        /l (\d+)(?:\s*-\s*(\d+))?/ => {
+            if prog != nil {
+                let lo = int($1) - 1
+                let hi = int($2 || (lo + 20)) - 1
+                print-source(lo...hi)
+                current-mode = Source
+            }
+        }
 
         'd' => {
             tdb.list()
@@ -216,10 +241,14 @@ tdb.hook = function hook() {
         },
 
         'lo' => {
-            pretty-print(tuple(**tdb.locals()))
+            if let $locals = tdb.locals() {
+                pretty-print(tuple(**tdb.locals()))
+            } else {
+                print(chalk"[bright red]No locals![/]")
+            }
         },
 
-        'n' or ''  => match current-mode {
+        'n' or '' => match current-mode {
             Source => {
                 stop-cond = next-line(current-line)
                 step = tdb.over
@@ -235,7 +264,7 @@ tdb.hook = function hook() {
 
         's' => {
             stop-cond = next-call(func, fp)
-            step = (-> tdb.into() || tdb.over())
+            step = () -> tdb.into() || tdb.over()
             break
         },
 
@@ -254,7 +283,11 @@ tdb.hook = function hook() {
         'c' => {
             stop-cond = nil
             return
-        }
+        },
+
+        'q' => {
+            os::exit(0)
+        },
 
         c => {
             print("bro? {c}")

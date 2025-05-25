@@ -9,8 +9,13 @@
 #define Resize(p, n, m) ((p) = memcpy(amA(n), (p), (m)))
 #define resize_scratch(p, n, m) ((p) = memcpy(smA(n), (p), (m)))
 
+#if 1
 #define NewArena(n)  NewArena(ty, (n))
 #define ReleaseArena(a) ReleaseArena(ty, (a))
+#else
+#define NewArena(n)  ((Arena){0})
+#define ReleaseArena(a) 0
+#endif
 
 Arena
 NewArenaNoGC(Ty *ty, size_t cap);
@@ -24,12 +29,30 @@ NextArena(Arena const *a)
         return ((Arena *)a->base);
 }
 
-inline static void
-FreeArena(Arena const *a)
+static void
+MarkArena(Arena *a)
 {
+        if (a == NULL || !a->gc) {
+                return;
+        }
+
+        MarkArena(NextArena(a));
+
+        MARK(a->base);
+}
+
+static void
+FreeArena(Arena *a)
+{
+        if (a == NULL) {
+                return;
+        }
+
+        FreeArena(NextArena(a));
+
         if (a->gc) {
                 OKGC(a->base);
-        } else if (NextArena(a)->base != NULL) {
+        } else {
                 free(a->base);
         }
 }
@@ -37,17 +60,17 @@ FreeArena(Arena const *a)
 inline static void
 (ReleaseArena)(Ty *ty, Arena old)
 {
-        for (Arena *a = &ty->arena; a->base != NULL; a = NextArena(a)) {
-                FreeArena(a);
-        }
-
+        FreeArena(&ty->arena);
         ty->arena = old;
 }
 
 inline static Arena
 (NewArena)(Ty *ty, size_t cap)
 {
-        return TY_IS_READY ? NewArenaGC(ty, cap) : NewArenaNoGC(ty, cap);
+        return NewArenaGC(ty, cap);
+        return TY_IS_READY
+             ? NewArenaGC(ty, cap)
+             : NewArenaNoGC(ty, cap);
 }
 
 void *

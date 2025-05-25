@@ -16,7 +16,7 @@ tags_new(Ty *ty, char const *);
 int
 tags_new(Ty *ty, char const *);
 
-int
+void
 tags_set_class(Ty *ty, int tag, Class *c);
 
 Class *

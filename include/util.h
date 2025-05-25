@@ -82,18 +82,6 @@ load_int(void const *p)
         return *(int const *)memcpy(&(int){0}, p, sizeof (int));
 }
 
-static inline uintmax_t
-umax(uintmax_t a, uintmax_t b)
-{
-        return (a > b) ? a : b;
-}
-
-static inline uintmax_t
-umin(uintmax_t a, uintmax_t b)
-{
-        return (a < b) ? a : b;
-}
-
 static inline intmax_t
 max(intmax_t a, intmax_t b)
 {
@@ -302,6 +290,38 @@ scvdump(Ty *ty, byte_vector *str, char const *fmt, va_list ap)
 
                 return need;
         }
+}
+
+static const char *
+ifmt(char const *fmt, ...)
+{
+        char const *str;
+        byte_vector buf = {0};
+        va_list ap;
+
+        SCRATCH_SAVE();
+        va_start(ap, fmt);
+        scvdump(ty, &buf, fmt, ap);
+        str = intern(&xD.members, vv(buf))->name;
+        SCRATCH_RESTORE();
+
+        return str;
+}
+
+static char *
+(xfmt)(Ty *ty, char const *fmt, ...)
+{
+        char *str;
+        byte_vector buf = {0};
+        va_list ap;
+
+        SCRATCH_SAVE();
+        va_start(ap, fmt);
+        scvdump(ty, &buf, fmt, ap);
+        str = sclone_malloc(vv(buf));
+        SCRATCH_RESTORE();
+
+        return str;
 }
 
 static char *

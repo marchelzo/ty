@@ -4,75 +4,282 @@ import ty.token
 
 tag ChalkError;
 
-use TermStyle = {
+use TermStyle = () | {
     bold:      ?Bool,
     italic:    ?Bool,
-    underline: ?Bool,
+    underline: ?[Int],
     dim:       ?Bool,
     reverse:   ?Bool,
     fg:        ?[Int],
     bg:        ?[Int],
+    uc:        ?[Int],
     fg-bright: ?Bool,
     bg-bright: ?Bool
 }
 
-pub fn escape(text) {
-    text.sub('\\', '\\\\').sub('[', '\\[')
+pub fn escape(text: String) -> String {
+    text.sub(/\[|\\/, %{'[': '\\[', '\\': '\\\\'}[])
+}
+
+#|if 0
+fn enables-of(trans: _) -> String {
+    trans.matches(/\[([^]\/]*)\]/).map(\_[1].words()).flat().unwords() ?? ''
+}
+
+fn disables-of(trans: _) -> String {
+    trans.matches(/\[\/([^]\/]*)\]/).map(\_[1].words()).flat().unwords() ?? ''
+}
+
+fn flip(trans: String) -> String {
+    let on = enables-of(trans)
+    let off = disables-of(trans)
+
+    let (on, off) = (off && "[{off}]", on && "[/{on}]")
+
+    "{on}{off}"
+}
+#|]
+
+fn split(text: String, i: Int, greedy?: Bool = true) -> (String, String) {
+    let off = 0
+    let width = 0
+    let matches = text.matches(/\x1b\[[^m]*m(*SKIP)(*FAIL)|[^\x1b]+/v)
+
+    let stop = greedy? ? (\width > i) : (\width >= i)
+
+    for _match in matches while !stop() {
+        off = min(_match.end, _match.start + (i - width))
+        width += #_match
+    }
+
+    text.split(off)
 }
 
 let styles: Dict[String, TermStyle] = %{
-    'b':          {bold: true},
-    'bold':       {bold: true},
-    'i':          {italic: true},
-    'italic':     {italic: true},
-    'u':          {underline: true},
-    'underline':  {underline: true},
-    'dim':        {dim: true},
-    'reverse':    {reverse: true},
+    'b':            {bold: true},
+    'no-b':         {bold: false},
+    'bold':         {bold: true},
+    'no-bold':      {bold: false},
 
-    'black':   {fg: [30]},
-    'red':     {fg: [31]},
-    'green':   {fg: [32]},
-    'yellow':  {fg: [33]},
-    'blue':    {fg: [34]},
-    'magenta': {fg: [35]},
-    'cyan':    {fg: [36]},
-    'white':   {fg: [37]},
+    'i':            {italic: true},
+    'no-i':         {italic: false},
+    'italic':       {italic: true},
+    'no-italic':    {italic: false},
 
-    'bg-black':   {bg: [40]},
-    'bg-red':     {bg: [41]},
-    'bg-green':   {bg: [42]},
-    'bg-yellow':  {bg: [44]},
-    'bg-blue':    {bg: [44]},
-    'bg-magenta': {bg: [45]},
-    'bg-cyan':    {bg: [46]},
-    'bg-white':   {bg: [47]},
+    'dim':          {dim: true},
+    'reverse':      {reverse: true},
 
-    'bright':    {bright: true},
-    'bg-bright': {bg-bright: true}
+    'no-uc':        {uc: [59]},
+
+    'u':            {underline: [4]},
+    'no-u':         {underline: [24]},
+
+    'underline':    {underline: [4]},
+    'no-underline': {underline: [24]},
+
+    'uu':           {underline: [4, 2]},
+    'u~':           {underline: [4, 3]},
+    'u.':           {underline: [4, 4]},
+    'u-':           {underline: [4, 5]},
+
+    'no-fg':        {fg: [39]},
+    'black':        {fg: [30]},
+    'red':          {fg: [31]},
+    'green':        {fg: [32]},
+    'yellow':       {fg: [33]},
+    'blue':         {fg: [34]},
+    'magenta':      {fg: [35]},
+    'cyan':         {fg: [36]},
+    'white':        {fg: [37]},
+
+    'no-bg':        {bg: [49]},
+    'bg-black':     {bg: [40]},
+    'bg-red':       {bg: [41]},
+    'bg-green':     {bg: [42]},
+    'bg-yellow':    {bg: [43]},
+    'bg-blue':      {bg: [44]},
+    'bg-magenta':   {bg: [45]},
+    'bg-cyan':      {bg: [46]},
+    'bg-white':     {bg: [47]},
+
+    'bright':       {bright: true},
+    'bg-bright':    {bg-bright: true}
 }
 
-class Text2 {
-    text: String
-    chalk: Chalk2
-    fmt: ?String
+pub fn record-of(attrs: String, start: _ = {}) -> _ {
+    let props = start
+
+    let name = match {
+        1 => 'red',
+        2 => 'green',
+        3 => 'yellow',
+        4 => 'blue',
+        5 => 'magenta',
+        6 => 'cyan',
+        7 => 'white',
+        _ => nil
+    }
+
+    let try-int = match (int ~> $n) => n else it
+
+    let pattern = /([345]8[:;]2(?:[:;]\d{1,3}){3})|(\d+:\d+(?::\d+)*)|;/
+
+    for match attrs.split(pattern).map(try-int) {
+        /38.2.(\d+).(\d+).(\d+)/ => {
+            props = {*props, fg: "#{int($1):02x}{int($2):02x}{int($3):02x}"}
+        },
+
+        /48.2.(\d+).(\d+).(\d+)/ => {
+            props = {*props, bg: "bg-#{int($1):02x}{int($2):02x}{int($3):02x}"}
+        },
+
+        /58.2.(\d+).(\d+).(\d+)/ => {
+            props = {*props, uc: "uc-#{int($1):02x}{int($2):02x}{int($3):02x}"}
+        },
+
+        /4:(\d)/ => {
+            props = {
+                *props,
+                underline: match int($1) {
+                    0 => false,
+                    1 => 'u',
+                    2 => 'uu',
+                    3 => 'u~',
+                    4 => 'u.',
+                    5 => 'u-'
+                }
+            }
+        },
+
+        0 => { props = {} },
+        1 => props = {*props, bold: 'b' },
+        3 => props = {*props, italic: 'i' },
+        4 => props = {*props, underline: 'u' },
+        7 => props = {*props, reverse: 'reverse' },
+
+        22 => props = {*props, bold: false },
+        23 => props = {*props, italic: false },
+        24 => props = {*props, underline: false },
+        27 => props = {*props, reverse: false },
+
+        39 => props = {*props, fg-bright: nil, fg: false },
+        49 => props = {*props, bg-bright: nil, bg: false },
+        59 => props = {*props, uc: false },
+
+        fg ::  31...39  => props = {*props, fg: name(fg - 30)},
+        fg ::  91...99  => props = {*props, bright: 'bright', fg: name(fg - 90)},
+
+        bg ::  41...49  => props = {*props, bg: "bg-{name(bg - 40)}"},
+        bg :: 101...109 => props = {*props, bg-bright: 'bg-bright', bg: "bg-{name(bg - 100)}"},
+
+        _ => ()
+    }
+
+    props
+}
+
+pub fn detrans(a: TermStyle, b: TermStyle) -> String {
+    let on = []
+    let off = []
+
+    let a: _ = %{**a}
+    let b: _ = %{**b}
+
+    bright-unfix(a)
+    bright-unfix(b)
+
+    a = %{key: val for key, val in a if val != nil}
+    b = %{key: val for key, val in b if val != nil}
+
+    for key, val in b if a[key] != val {
+        match val {
+            false => {
+                if key in a {
+                    off.push(key)
+                }
+            },
+            _ => on.push(val)
+        }
+    }
+
+    let trans = on ? "[{on.unwords()}]" : ''
+    let trans = off ? "[/{off.unwords()}]{trans}" : trans
+
+    trans
+}
+
+pub fn parse(text: String, start: _ = {}) -> String {
+    let out = Blob()
+    let props = start
+    let style = start
+
+    fn push(text, st) {
+        out.push(detrans(style, st))
+        out.push(escape(text))
+        style = st
+    }
+
+    for match text.split(/\x1b\[([^m]*)m/v) {
+        escape: RegexMatch => {
+            props = record-of(escape[1], start=props)
+        },
+        text => {
+            push(text, props)
+        }
+    }
+
+    push('', start)
+
+    out.str!()
+}
+
+class Text {
+    __text: String
+    __chalk: Chalk
+    __fmt: ?String
 
     init(text, chalk, fmt=nil) {
-        @text = text
-        @chalk = chalk
-        @fmt = fmt
+        __text = text
+        __chalk = chalk
+        __fmt = fmt
     }
 
-    __str__() {
-        @chalk.render(@text)
+    chalk { __chalk }
+
+    __str__() -> String {
+        __chalk.render(__text)
     }
 
-    __fmt__(spec) {
-        "[%{spec}]{@text}[/]"
+    __fmt__(spec: ?String) -> String {
+        let spec = spec ?? __fmt
+        spec ? "[%{spec}]{__text}[/]" : __text
     }
 
-    +(other: Text2) {
-        self.chalk"{self}{other}"
+    src -> String { __text }
+    
+    plain -> String {
+        __chalk.render(__text, plain=true)
+    }
+
+    +(other: Text) -> Text {
+        cast(__chalk"{self}{other}")
+    }
+
+    style-span(
+        span: (Int, Int),
+        style: String
+    ) -> Text {
+        let (i, j) = span
+
+        let full = __chalk.render(__text)
+
+        let (pre, rest) = split(full, i)
+        let (text, post) = split(rest, j - i)
+
+        let text = __chalk.render("[{style}]{parse(text)}[/{style}]")
+        let src = parse("{pre}{text}{post}")
+
+        Text(src, __chalk)
     }
 }
 
@@ -94,29 +301,118 @@ pub fn rand-hsl(
     (sample(h), sample(s), sample(l))
 }
 
-pub fn parse-style(style: String, chalk: Chalk2) -> TermStyle {
+pub fn parse-style(style: String, chalk: Chalk) -> ?TermStyle {
     match style {
         /.*\?$/ => do {
             let (h, s, l) = rand-hsl()
             let (r, g, b) = hsl-to-rgb(h, s, l)
-            return {fg: [38, 2, r, g, b]}
+            ({fg: [38, 2, r, g, b]})
         },
 
         /^#[[:xdigit:]]+$/ => do {
             let group = [/./, /../][#style / 3 - 1]
             let rgb = style[1;].matches(group).map(int@("{$1}{$1}"[;2], 16))
-            return {fg: [38, 2, *rgb]}
+            ({fg: [38, 2, *rgb]})
         },
 
         /^bg-(.*)$/ => match parse-style($1, chalk) {
-            {fg: [k, *ks], *} => ({bg: [k + 10, *ks]})
+            {fg: [k, *ks], *} => ({bg: [k + 10, *ks]}),
+            _                 => nil
+        },
+
+        /^uc-(.+)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({uc: [k + 20, *ks]}),
+            _                 => nil
+        },
+
+        /^u--(.*)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({uc: [k + 20, *ks], underline: [4, 5]}),
+            _                 => nil
+        },
+
+        /^u\.-(.*)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({uc: [k + 20, *ks], underline: [4, 4]}),
+            _                 => nil
+        },
+
+        /^u~(.*)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({uc: [k + 20, *ks], underline: [4, 3]}),
+            _                 => nil
+        },
+
+        /^uu-(.*)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({uc: [k + 20, *ks], underline: [4, 2]}),
+            _                 => nil
+        },
+
+        /^u-(.+)$/ => match parse-style($1, chalk) {
+            {fg: [k, *ks], *} => ({uc: [k + 20, *ks], underline: [4]}),
+            _                 => nil
         },
 
         _ => nil
     }
 }
 
-class Chalk2 {
+fn bright-fix(style) {
+    if let [int ~> fg] = style['fg'] and 'bright' in style {
+        style['fg'] = [fg + 60]
+    }
+    if let [int ~> bg] = style['bg'] and 'bg-bright' in style {
+        style['bg'] = [bg + 60]
+    }
+    style.remove('bright')
+    style.remove('bg-bright')
+}
+
+fn bright-unfix(style) {
+    style.remove('bright')
+    style.remove('bg-bright')
+    if let [int ~> fg] = style['fg'] and fg :: 90...99 {
+        style['fg'] = [fg - 60]
+        style['bright'] = true
+    }
+    if let [int ~> bg] = style['bg'] and bg :: 100...109 {
+        style['bg'] = [bg - 60]
+        style['bg-bright'] = true
+    }
+}
+
+pub fn trans(a: TermStyle, b: TermStyle) -> String {
+    let a: _ = %{**a}
+    let b: _ = %{**b}
+
+    bright-fix(a)
+    bright-fix(b)
+
+    let attrs: [Int | String] = []
+
+    for key, val in b if a[key] != val {
+        match key {
+            'fg' or 'bg' or 'uc'       => attrs.push(val.join(':')),
+            'underline' :: val != nil  => attrs.push(val.join(':')),
+            'bold'      :: val != nil  => attrs.push(1),
+            'italic'    :: val != nil  => attrs.push(3),
+            'reverse'   :: val != nil  => attrs.push(7),
+            _                    => ()
+        }
+    }
+
+    attrs += (a - b).keys().map?(match {
+        'fg'        => Some(39),
+        'bg'        => Some(49),
+        'uc'        => Some(59),
+        'bold'      => Some(22),
+        'italic'    => Some(23),
+        'underline' => Some(24),
+        'reverse'   => Some(27),
+        _           => None
+    })
+
+    attrs ? "\x1b[{attrs.join(';')}m" : ''
+}
+
+class Chalk {
     init() {
         member(self, 'styles', %{**styles, *: parse-style(it, self)})
     }
@@ -131,10 +427,8 @@ class Chalk2 {
 
 #|if getenv('NO_COLOR') == nil
         fn update() {
-            let new-style = stack.flat().fold(\{*_, *_})
-            if new-style != style {
-                out.push("\x1b[0m{Chalk(**new-style).sgr}")
-            }
+            let new-style = stack.flat().fold({}, \{*_, *_})
+            out.push(trans(style, new-style))
             style = new-style
         }
 #|else
@@ -144,7 +438,30 @@ class Chalk2 {
         fn get-style(name) {
             match @styles[name] {
                 $style => style,
-                _      => throw ChalkError("unknown style: {name}")
+                _      => throw ChalkError({
+                    msg: 'unknown style',
+                    src: text,
+                    style: name
+                })
+            }
+        }
+
+        fn finish-fmt(fmt: String) {
+            ostack[-1].push("{out.str!():{fmt}}")
+            out = ostack.pop()
+        }
+
+        fn stops(stop, style) {
+            match stop {
+                'fg' and style.matches?({fg, ?bright})
+                    => true,
+                'bg' and style.matches?({bg, ?bg-bright})
+                    => true,
+                'uc' and style.matches?({uc, ?underline})
+                    => true,
+                'underline' and style.matches?({underline, ?uc})
+                    => true,
+                _ => style == @styles[stop]
             }
         }
     
@@ -165,21 +482,16 @@ class Chalk2 {
 
                     [_, &words $~> []] => {
                         match stack.pop() {
-                            {fmt} => {
-                                ostack[-1].push("{out.str!():{fmt}}")
-                                out = ostack.pop()
-                            },
-                            _ => {
-                                update()
-                            }
+                            {fmt} => finish-fmt(fmt),
+                            _     => update()
                         }
                     },
 
                     [_, &words $~> styles] => {
                         for style in styles {
-                            for i in #stack..0 {
-                                if let $ii = stack[i].searchr(@styles[style]) {
-                                    stack[i].pop(ii)
+                            for entry in stack[;;-1] if entry :: Array {
+                                if let $ii = entry.searchr-by(\style `stops` _) {
+                                    entry.pop(ii)
                                 }
                             }
                         }
@@ -192,14 +504,23 @@ class Chalk2 {
             s => out.push(s)
         }
 
-        if !plain { out.push("\x1b[0m") }
+        for match stack {
+            {fmt} => finish-fmt(fmt),
+            _     => ()
+        }
+
+        stack.filter!(\!matches?(_, {fmt}))
+
+        if !plain {
+            update()
+        }
 
         out.str!().sub(/\\./, %{'\\\\': '\\', '\\[': '[', *: it[1]}[])
     }
 
     print(*xs, %kwargs) {
         ::print(
-            *xs.map(match { x: Text2 => self.render(x.text), x => x }),
+            *xs.map(match { x: Text => self.render(x.text), x => x }),
             **kwargs
         )
     }
@@ -213,17 +534,13 @@ class Chalk2 {
     }
 
     __call__(parts) {
-        Text2(
+        Text(
             parts.map(match {
                 s: String   => s,
-                (x, fmt, w) => match x {
-                    x: Text2  => x.__fmt__(fmt),
-                    x         => escape(fmt ? x.__fmt__(fmt, w) : x.__str__())
-                }
-                //(x, fmt, w) => (
-                //      x :: Text2 ? x.__fmt__(fmt, w)
-                //    : escape(fmt ? x.__fmt__(fmt, w) : x.__str__())
-                //)
+                (x, fmt, w) => (
+                      x :: Text ? x.__fmt__(fmt)
+                    : parse(fmt ? x.__fmt__(fmt, w) : x.__str__())
+                )
             }).str(),
             self
         )
@@ -233,169 +550,13 @@ class Chalk2 {
         return text -> self"[{style}]{text}[/]"
     }
 
-    plain(text: Text2 | String) {
-        render(text :: Text2 ? text.text : text, plain=true)
+    plain(text: Text | String) {
+        render(text :: Text ? text.text : text, plain=true)
     }
-}
-
-class Chalk {
-    __props: {
-        fg: ?[Int],
-        bg: ?[Int],
-        bright: ?Bool,
-        bold: ?Bool,
-        italic: ?Bool,
-        underline: ?Bool,
-        reverse: ?Bool
-    }
-
-    init(other: ?Chalk, %props) {
-        __props = {
-            *(other.?__props ?? {}),
-            *tuple(**props)
-        }
-    }
-
-    sgr {
-        let fg: _ = match __props.?fg {
-            [fg] and __props.?bright => [fg + 60],
-            fg => fg
-        }
-
-        let bg: _ = match __props.?bg {
-            [bg] and __props.?bg-bright => [bg + 60],
-            bg => bg
-        }
-
-        let props = [
-            1 if __props.?bold,
-            3 if __props.?italic,
-            4 if __props.?underline,
-            7 if __props.?reverse,
-            *fg if fg != nil,
-            *bg if bg != nil
-        ]
-
-        props ? "\x1b[{props.join(';')}m" : ''
-    }
-
-    black       { Chalk(self, fg=[30]) }
-    red         { Chalk(self, fg=[31]) }
-    green       { Chalk(self, fg=[32]) }
-    yellow      { Chalk(self, fg=[33]) }
-    blue        { Chalk(self, fg=[34]) }
-    magenta     { Chalk(self, fg=[35]) }
-    cyan        { Chalk(self, fg=[36]) }
-    white       { Chalk(self, fg=[37]) }
-
-    bg-black    { Chalk(self, bg=[40]) }
-    bg-red      { Chalk(self, bg=[41]) }
-    bg-green    { Chalk(self, bg=[42]) }
-    bg-yellow   { Chalk(self, bg=[44]) }
-    bg-blue     { Chalk(self, bg=[44]) }
-    bg-magenta  { Chalk(self, bg=[45]) }
-    bg-cyan     { Chalk(self, bg=[46]) }
-    bg-white    { Chalk(self, bg=[47]) }
-
-    bright    { Chalk(self, bright=true)     }
-    bg-bright { Chalk(self, bg-bright=false) }
-
-    bold      { Chalk(self, bold=true)      }
-    italic    { Chalk(self, italic=true)    }
-    underline { Chalk(self, underline=true) }
-
-    __slice__(r, g, b) {
-        Chalk(self, fg=[38, 2, r ?? 0, g ?? 0, b ?? 0])
-    }
-
-    ~() {
-        "\x1b[0m"
-    }
-}
-
-pub black   = Chalk(fg=[30])
-pub red     = Chalk(fg=[31])
-pub green   = Chalk(fg=[32])
-pub yellow  = Chalk(fg=[33])
-pub blue    = Chalk(fg=[34])
-pub magenta = Chalk(fg=[35])
-pub cyan    = Chalk(fg=[36])
-pub white   = Chalk(fg=[37])
-
-pub bgBlack   = Chalk(bg=[40])
-pub bgRed     = Chalk(bg=[41])
-pub bgGreen   = Chalk(bg=[42])
-pub bgYellow  = Chalk(bg=[43])
-pub bgBlue    = Chalk(bg=[44])
-pub bgMagenta = Chalk(bg=[45])
-pub bgCyan    = Chalk(bg=[46])
-pub bgWhite   = Chalk(bg=[47])
-
-pub bright    = Chalk(bright=true)
-pub bg-bright = Chalk(bg-bright=true)
-
-pub bold      = Chalk(bold=true)
-pub italic    = Chalk(italic=true)
-pub underline = Chalk(underline=true)
-
-pub fn wrap(s, *props) {
-  "\x1b[{props.join(';')}m{s}\x1b[0m"
-}
-
-pub fn fg(c) {
-  match c.lower() {
-    'black'   => black,
-    'red'     => red,
-    'green'   => green,
-    'yellow'  => yellow,
-    'blue'    => blue,
-    'magenta' => magenta,
-    'cyan'    => cyan,
-    'white'   => white,
-    _         => s -> wrap(s, 38, 2, *c.comb('#').matches(/../).map(s -> int(s, 16)))
-  }
-}
-
-pub fn bg(c) {
-  return match c.lower() {
-    'black'   => bgBlack,
-    'red'     => bgRed,
-    'green'   => bgGreen,
-    'yellow'  => bgYellow,
-    'blue'    => bgBlue,
-    'magenta' => bgMagenta,
-    'cyan'    => bgCyan,
-    'white'   => bgWhite,
-    _         => s -> wrap(s, 48, 2, *c.comb('#').matches(/../).map(s -> int(s, 16)))
-  }
-}
-
-pub fn pen(*args) {
-  let p = id
-
-  for arg in args {
-    p = p |> match type(arg) {
-      arg: Function => arg,
-      arg: Int      => s -> wrap(s, arg),
-      arg: String   => fg(arg)
-    }
-  }
-
-  return p
 }
 
 pub fn strip(text: String) -> String {
     text.comb(/\x1b[^m]+m/)
-}
-
-pub fn pad-left(text: String, n: Int) -> String {
-    let w = #strip(text)
-    ' '.repeat(max(0, n - w)) + text
-}
-
-pub fn padRight(s, n) {
-    let w = #strip(s)
-    s + ' '.repeat(max(0, n - w))
 }
 
 pub fn hueToRgb(p: Float, q: Float, t: Float) -> Float {
@@ -423,25 +584,17 @@ pub fn hslToRgb(h: Float, s: Float, l: Float) -> (Int, Int, Int) {
   return (iround(r * 255), iround(g * 255), iround(b * 255))
 }
 
-pub fn fg-hsl(h, s, l) {
+pub fn hsl-hex(h, s, l) {
     let (r, g, b) = hslToRgb(h, s, l)
-    return fg("#{r:02x}{g:02x}{b:02x}")
+    return "#{r:02x}{g:02x}{b:02x}"
 }
 
-pub fn fg-random(
+pub fn random(
     h: FloatRange = (0.0, 1.0),
     s: FloatRange = (0.4, 1.0),
     l: FloatRange = (0.6, 0.75)
 ) {
-    let sample: _ = match {
-        (lo, hi) or (lo as hi) => lo + (hi - lo)*rand()
-    }
-
-    return fg-hsl(
-        sample(h),
-        sample(s),
-        sample(l)
-    )
+    return hsl-hex(*rand-hsl(h, s, l))
 }
 
-pub chalk = Chalk2()
+pub chalk = Chalk()

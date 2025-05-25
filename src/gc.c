@@ -13,10 +13,7 @@
 #include "compiler.h"
 #include "itable.h"
 
-static _Thread_local GCRootSet RootSet;
 static GCRootSet ImmortalSet;
-
-_Thread_local int GC_OFF_COUNT = 0;
 
 #define A_LOAD(p)     atomic_load_explicit((p), memory_order_relaxed)
 #define A_STORE(p, x) atomic_store_explicit((p), (x), memory_order_relaxed)
@@ -33,7 +30,10 @@ collect(Ty *ty, struct alloc *a)
         Generator *gen;
 
         switch (a->type) {
-        case GC_ARRAY:     mF(((struct array *)p)->items); break;
+        case GC_ARRAY:
+                mF(((struct array *)p)->items);
+                break;
+
         case GC_BLOB:      mF(((struct blob *)p)->items);  break;
         case GC_DICT:      dict_free(ty, p);               break;
 
@@ -159,31 +159,18 @@ gc_register(Ty *ty, void *p)
 void
 _gc_push(Ty *ty, Value const *v)
 {
-        vec_nogc_push(RootSet, v);
 }
 
 void
 gc_immortalize(Ty *ty, Value const *v)
 {
-        vec_nogc_push(ImmortalSet, v);
+        vec_nogc_push(ImmortalSet, *v);
 }
 
 void
 _gc_pop(Ty *ty)
 {
         --RootSet.count;
-}
-
-void
-gc_remove(Ty *ty, struct value *v)
-{
-        for (int i = 0; i < RootSet.count; ++i) {
-                if (RootSet.items[i] == v) {
-                        int j = RootSet.count - 1;
-                        RootSet.items[i] = RootSet.items[j];
-                        --RootSet.count;
-                }
-        }
 }
 
 void

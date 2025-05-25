@@ -33,7 +33,6 @@ static jmp_buf jb;
 
 LexState *lxst;
 static LexState state;
-static vec(LexState) states;
 
 #define SRC state.loc.s
 #define END state.end
@@ -1336,25 +1335,6 @@ dotoken(Ty *ty, int ctx)
         } else if (C(0) == '?' && ctx == LEX_PREFIX) {
                 nextchar(ty);
                 return mktoken(ty, TOKEN_QUESTION);
-        } else if (false && C(0) == '$' && C(1) == '"') {
-                nextchar(ty);
-
-                Token t = dotoken(ty, ctx);
-
-                for (int i = 0; i < t.special->expressions.count; ++i) {
-                        char *dollar = strrchr(t.special->strings.items[i], '$');
-                        if (dollar != NULL && dollar[1] == '\0') {
-                                *dollar = '\0';
-                                avP(t.special->e_is_param, true);
-                        } else {
-                                avP(t.special->e_is_param, false);
-                        }
-                }
-
-                t.start = start;
-                t.type = TOKEN_FUN_SPECIAL_STRING;
-
-                return t;
         } else if (C(0) == '$' && ctx == LEX_PREFIX) {
                 nextchar(ty);
                 return mktoken(ty, '$');
@@ -1387,12 +1367,6 @@ dotoken(Ty *ty, int ctx)
         } else if (C(0) == '"') {
                 nextchar(ty);
                 return mktoken(ty, '"');
-        } else if (C(0) == '"') {
-                if (C(1) == '"' && C(2) == '"') {
-                        return lexspecialdocstring(ty);
-                } else {
-                        return lexspecialstr(ty);
-                }
         } else if (C(0) == '.' && C(1) == '.') {
                 nextchar(ty);
                 nextchar(ty);
@@ -1457,7 +1431,6 @@ lex_init(Ty *ty, char const *file, char const *src)
 void
 lex_start(Ty *ty, LexState const *st)
 {
-        avP(states, state);
         state = *st;
 }
 
@@ -1491,12 +1464,6 @@ lex_keep_comments(Ty *ty, bool keep)
 {
         SWAP(bool, keep, state.keep_comments);
         return keep;
-}
-
-void
-lex_end(Ty *ty)
-{
-        state = *vvX(states);
 }
 
 Location

@@ -19,6 +19,7 @@ LDFLAGS += -lreadline
 LDFLAGS += -lutf8proc
 LDFLAGS += -lsqlite3
 LDFLAGS += -ldl
+LDFLAGS += -lunwind
 LDFLAGS += $(shell pkg-config --libs openssl)
 LDFLAGS += -lffi
 LDFLAGS += libco/libco.o

@@ -19,15 +19,19 @@ let b = chalk['bold blue']
 
 let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
+let q = ('-q' in args) ? '-q' : ''
+
 function getTyCommand(test) {
 #|if __windows__
-        "{TY_PATH} tests\\{test}"
+        "{TY_PATH} {q} tests\\{test}"
 #|else
-        "{TY_PATH} tests/{test}"
+        "{TY_PATH} {q} tests/{test}"
 #|]
 }
 
 C! function strsignal(c.int) -> c.ptr;
+
+print(getTyCommand('based'))
 
 function doTest(name: String) {
     let testStart = time.utime()
@@ -76,7 +80,7 @@ function doTest(name: String) {
 let pool = ThreadPool(os.ncpu(), doTest)
 let fs = []
 
-for test in listdir('tests') {
+for test in listdir('tests') if test.match?(/\.ty$/) {
     fs.push(pool.submit(test))
 }
 

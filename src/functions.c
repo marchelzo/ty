@@ -92,7 +92,9 @@ extern char **environ;
 
 static _Thread_local char buffer[1024 * 1024 * 4];
 static _Thread_local vec(char) B;
-static _Atomic(uint64_t) tid = 1;
+static _Atomic(uint64_t) tid = 0;
+
+u64 NextThreadId() { return ++tid; }
 
 #define TDB_MUST_BE(x) if (1) {         \
         if (!TDB_IS(x)) zP(             \
@@ -675,7 +677,7 @@ BUILTIN_FUNCTION(float)
         case VALUE_STRING:;
                 char buf[128];
                 char *end;
-                unsigned n = umin(v.bytes, 127);
+                unsigned n = min(v.bytes, 127);
 
                 memcpy(buf, v.string, n);
                 buf[n] = '\0';
@@ -828,7 +830,7 @@ BUILTIN_FUNCTION(str)
 inline static void
 BufferCString(Value const *s)
 {
-        size_t n = umin(sizeof buffer - 1, s->bytes);
+        size_t n = min(sizeof buffer - 1, s->bytes);
         memcpy(buffer, s->string, n);
         buffer[n] = '\0';
 }
@@ -3469,7 +3471,7 @@ BUILTIN_FUNCTION(thread_create)
         Thread *t = mAo(sizeof *t, GC_THREAD);
 
         NOGC(t);
-        t->i = tid++;
+        t->i = NextThreadId();
         t->v = NONE;
 
         for (int i = 0; i < argc; ++i) {
@@ -3896,7 +3898,7 @@ BUILTIN_FUNCTION(os_getpeername)
         }
 
         struct blob *b = value_blob_new(ty);
-        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
+        uvPn(*b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
 }
@@ -3921,7 +3923,7 @@ BUILTIN_FUNCTION(os_getsockname)
         }
 
         struct blob *b = value_blob_new(ty);
-        vec_push_n_unchecked(*b, &addr, min(addr_size, sizeof addr));
+        uvPn(*b, &addr, min(addr_size, sizeof addr));
 
         return BLOB(b);
 }
@@ -6620,8 +6622,8 @@ fdoc(Ty *ty, struct value const *f)
         } else {
                 n = NIL;
         }
-        struct value p = (proto == NULL) ? NIL : vSs(proto, strlen(proto));
-        struct value doc = (s == NULL) ? NIL : vSs(s, strlen(s));
+        struct value p = (proto == NULL) ? NIL : vSsz(proto);
+        struct value doc = (s == NULL) ? NIL : vSsz(s);
         struct value v = vT(3);
         v.items[0] = n;
         v.items[1] = p;
@@ -6735,8 +6737,9 @@ BUILTIN_FUNCTION(doc)
                 s = compiler_lookup(ty, NULL, id);
         }
 
-        if (s == NULL || s->doc == NULL)
+        if (s == NULL || s->doc == NULL) {
                 return NIL;
+        }
 
         return vSsz(s->doc);
 }
@@ -6775,8 +6778,8 @@ BUILTIN_FUNCTION(ty_bt)
                 Value entry = vT(5);
 
                 entry.items[0] = *f;
-                entry.items[1] = STRING_NOGC(name, strlen(name));
-                entry.items[2] = (e == NULL) ? NIL : STRING_NOGC(e->file, strlen(e->file));
+                entry.items[1] = xSz(name);
+                entry.items[2] = (e == NULL || e->file == NULL) ? NIL : xSz(e->file);
                 entry.items[3] = (e == NULL) ? NIL : INTEGER(e->start.line);
                 entry.items[4] = (e == NULL) ? NIL : INTEGER(e->start.col);
 
@@ -6802,11 +6805,8 @@ BUILTIN_FUNCTION(ty_lock)
 
 BUILTIN_FUNCTION(ty_gensym)
 {
-        ASSERT_ARGC("ty.gensym(ty)", 0);
-
-        char const *s = gensym(ty);
-
-        return STRING_NOGC(s, strlen(s));
+        ASSERT_ARGC("ty.gensym()", 0);
+        return xSz(gensym());
 }
 
 inline static char const *
@@ -6829,7 +6829,7 @@ make_location(Ty *ty, Location const *loc)
 Value
 make_token(Ty *ty, Token const *t)
 {
-        char *type = NULL;
+        char const *type = NULL;
 
         Value start = make_location(ty, &t->start);
         Value end = make_location(ty, &t->end);
@@ -6841,8 +6841,8 @@ make_token(Ty *ty, Token const *t)
                         "type",   T(id),
                         "start",  start,
                         "end",    end,
-                        "id",     STRING_NOGC(t->identifier, strlen(t->identifier)),
-                        "module", t->module == NULL ? NIL : STRING_NOGC(t->module, strlen(t->module))
+                        "id",     vSsz(t->identifier),
+                        "module", t->module == NULL ? NIL : vSsz(t->module)
                 );
         case TOKEN_INTEGER:
                 return vTn(
@@ -6863,47 +6863,58 @@ make_token(Ty *ty, Token const *t)
                         "type",   T(string),
                         "start",  start,
                         "end",    end,
-                        "str",    STRING_NOGC(t->string, strlen(t->string))
+                        "str",    vSsz(t->string)
                 );
         case TOKEN_COMMENT:
                 return vTn(
                         "type",    T(comment),
                         "start",   start,
                         "end",     end,
-                        "comment", STRING_NOGC(t->comment, strlen(t->comment))
+                        "comment", vSsz(t->comment)
                 );
         case TOKEN_END:
                 return NIL;
+        case TOKEN_AND:             type = "&&";   break;
+        case TOKEN_AND_EQ:          type = "&=";   break;
+        case TOKEN_ARROW:           type = "->";   break;
+        case TOKEN_AT:              type = "@";    break;
+        case TOKEN_BANG:            type = "!";    break;
+        case TOKEN_CHECK_MATCH:     type = "::";   break;
+        case TOKEN_CMP:             type = "<=>";  break;
+        case TOKEN_DBL_EQ:          type = "==";   break;
+        case TOKEN_DEC:             type = "--";   break;
+        case TOKEN_DIV_EQ:          type = "/=";   break;
         case TOKEN_DOT_DOT:         type = "..";   break;
         case TOKEN_DOT_DOT_DOT:     type = "...";  break;
-        case TOKEN_AT:              type = "@";    break;
-        case TOKEN_INC:             type = "++";   break;
-        case TOKEN_BANG:            type = "!";    break;
+        case TOKEN_DOT_MAYBE:       type = ".?";   break;
         case TOKEN_EQ:              type = "=";    break;
-        case TOKEN_NOT_EQ:          type = "!=";   break;
-        case TOKEN_STAR:            type = "*";    break;
-        case TOKEN_PLUS:            type = "+";    break;
-        case TOKEN_LT:              type = "<";    break;
-        case TOKEN_GT:              type = ">";    break;
-        case TOKEN_LEQ:             type = "<=";   break;
-        case TOKEN_GEQ:             type = ">=";   break;
-        case TOKEN_CMP:             type = "<=>";  break;
-        case TOKEN_STAR_EQ:         type = "*=";   break;
-        case TOKEN_PLUS_EQ:         type = "+=";   break;
-        case TOKEN_MINUS_EQ:        type = "-=";   break;
-        case TOKEN_DIV_EQ:          type = "/=";   break;
-        case TOKEN_AND_EQ:          type = "&=";   break;
-        case TOKEN_OR_EQ:           type = "|=";   break;
-        case TOKEN_XOR_EQ:          type = "^=";   break;
-        case TOKEN_SHL_EQ:          type = "<<=";  break;
-        case TOKEN_SHR_EQ:          type = ">>=";  break;
-        case TOKEN_WTF:             type = "??";   break;
-        case TOKEN_ARROW:           type = "->";   break;
         case TOKEN_FAT_ARROW:       type = "=>";   break;
+        case TOKEN_GEQ:             type = ">=";   break;
+        case TOKEN_GT:              type = ">";    break;
+        case TOKEN_INC:             type = "++";   break;
+        case TOKEN_LEQ:             type = "<=";   break;
+        case TOKEN_LT:              type = "<";    break;
+        case TOKEN_MINUS_EQ:        type = "-=";   break;
+        case TOKEN_MOD_EQ:          type = "%=";   break;
+        case TOKEN_NOT_EQ:          type = "!=";   break;
+        case TOKEN_OR:              type = "||";   break;
+        case TOKEN_OR_EQ:           type = "|=";   break;
+        case TOKEN_PLUS_EQ:         type = "+=";   break;
+        case TOKEN_SHL:             type = "<<";   break;
+        case TOKEN_SHL_EQ:          type = "<<=";  break;
+        case TOKEN_SHR:             type = ">>";   break;
+        case TOKEN_SHR_EQ:          type = ">>=";  break;
         case TOKEN_SQUIGGLY_ARROW:  type = "~>";   break;
+        case TOKEN_STAR_EQ:         type = "*=";   break;
+        case TOKEN_WTF:             type = "??";   break;
+        case TOKEN_XOR_EQ:          type = "^=";   break;
+
+        case '$~>':
+                type = "$~>";
+                break;
 
         case TOKEN_KEYWORD:
-                type = (char *)keyword_show(t->keyword);
+                type = keyword_show(t->keyword);
                 break;
         case TOKEN_SPECIAL_STRING:
         case TOKEN_FUN_SPECIAL_STRING:
@@ -6912,11 +6923,14 @@ make_token(Ty *ty, Token const *t)
         case TOKEN_NEWLINE:
                 type = "\\n";
                 break;
+        case TOKEN_DIRECTIVE:
+                type = "pp";
+                break;
         case TOKEN_REGEX:
                 type = "regex";
                 break;
         case TOKEN_USER_OP:
-                type = t->operator;
+                type = intern(&xD.b_ops, t->operator)->name;
                 break;
         }
 
@@ -6936,7 +6950,7 @@ make_token(Ty *ty, Token const *t)
         }
 
         return vTn(
-                "type",   STRING_NOGC(type, tlen),
+                "type",   xSs(type, tlen),
                 "start",  start,
                 "end",    end
         );
@@ -6982,7 +6996,7 @@ BUILTIN_FUNCTION(ty_disassemble)
 
                 if (code == NULL) {
                         snprintf(buffer, sizeof buffer, "%s", TyError(ty));
-                        zP("disassemble(): %s\n=============================================================", buffer);
+                        zP("disassemble(): %s\n", buffer);
                 }
 
                 break;
@@ -7039,12 +7053,12 @@ BUILTIN_FUNCTION(eval)
 
         if (ARG(0).type == VALUE_STRING) {
                 B.count = 0;
-                vec_push_unchecked(B, '\0');
-                vec_push_n_unchecked(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
-                vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-                vec_push_n_unchecked(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
+                uvP(B, '\0');
+                uvPn(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
+                uvPn(B, ARG(0).string, ARG(0).bytes);
+                uvPn(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
                 Arena old = NewArena(1 << 26);
-                Stmt **prog = parse(ty, B.items + 1, "(eval)");
+                Stmt **prog = parse(ty, vv(B) + 1, "(eval)");
 
                 if (prog == NULL) {
                         char const *msg = TyError(ty);
@@ -7094,6 +7108,37 @@ E2:
         }
 }
 
+BUILTIN_FUNCTION(ty_text)
+{
+        char const *_name__ = "ty.text()";
+        CHECK_ARGC(1);
+
+        Value mod = ARGx(0, VALUE_STRING);
+
+        BufferCString(&mod);
+
+        char const *source = CompilerGetModuleSource(ty, buffer);
+
+        return (source != NULL) ? xSz(source) : NIL;
+}
+
+BUILTIN_FUNCTION(ty_tokens)
+{
+        char const *_name__ = "ty.tokens()";
+        CHECK_ARGC(1);
+
+        Value mod = ARGx(0, VALUE_STRING);
+
+        BufferCString(&mod);
+
+        TokenVector tokens;
+        if (!CompilerGetModuleTokens(ty, &tokens, buffer)) {
+                return NIL;
+        }
+
+        return make_tokens(ty, &tokens);
+}
+
 BUILTIN_FUNCTION(ty_tokenize)
 {
         ASSERT_ARGC("ty.tokenize()", 1);
@@ -7103,9 +7148,9 @@ BUILTIN_FUNCTION(ty_tokenize)
         }
 
         B.count = 0;
-        vec_push_unchecked(B, '\0');
-        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-        vec_push_unchecked(B, '\0');
+        uvP(B, '\0');
+        uvPn(B, ARG(0).string, ARG(0).bytes);
+        uvP(B, '\0');
 
         Arena old = NewArena(1 << 18);
 
@@ -7115,9 +7160,11 @@ BUILTIN_FUNCTION(ty_tokenize)
                 return NIL;
         }
 
+        Value vTokens = make_tokens(ty, &tokens);
+
         ReleaseArena(old);
 
-        return make_tokens(ty, &tokens);
+        return vTokens;
 }
 
 BUILTIN_FUNCTION(ty_scope)
@@ -7140,32 +7187,31 @@ BUILTIN_FUNCTION(ty_parse)
         }
 
         B.count = 0;
-        vec_push_unchecked(B, '\0');
-        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-        vec_push_unchecked(B, '\0');
+        uvP(B, '\0');
+        uvPn(B, ARG(0).string, ARG(0).bytes);
+        uvP(B, '\0');
 
         Arena old = NewArena(1 << 22);
 
-        struct statement **prog;
+        Stmt **prog;
         Location stop;
         Value extra = NIL;
         TokenVector tokens = {0};
 
         Value *want_tokens = NAMED("tokens");
 
-        char const *tokens_key = (want_tokens && value_truthy(ty, want_tokens)) ? "tokens" : NULL;
+        char const *tokens_key = (want_tokens && value_truthy(ty, want_tokens))
+                               ? "tokens"
+                               : NULL;
         Value vTokens = NIL;
 
         Value result;
 
-        GC_STOP();
-
-        jmp_buf cjb;
-        jmp_buf *cjb_save;
+/* = */ GC_STOP(); /* ====================================================== */
 
         CompileState compiler_state = PushCompilerState(ty, "(eval)");
 
-        if (setjmp(cjb) != 0) {
+        if (TY_CATCH_ERROR()) {
                 char const *msg = TyError(ty);
 
                 result = Err(
@@ -7177,8 +7223,6 @@ BUILTIN_FUNCTION(ty_parse)
 
                 goto Return;
         }
-
-        cjb_save = compiler_swap_jb(ty, &cjb);
 
         if (!parse_ex(ty, B.items + 1, "(eval)", &prog, &stop, &tokens)) {
                 char const *msg = TyError(ty);
@@ -7241,11 +7285,10 @@ BUILTIN_FUNCTION(ty_parse)
 
 Return:
         ReleaseArena(old);
-        GC_RESUME();
+        TY_CATCH_END();
+/* = */ GC_RESUME(); /* ==================================================== */
 
         PopCompilerState(ty, compiler_state);
-
-        compiler_swap_jb(ty, cjb_save);
 
         return result;
 }
@@ -7784,15 +7827,14 @@ BUILTIN_FUNCTION(tdb_eval)
 
         ty = TDB->ty;
 
-        B.count = 0;
-        vec_push_unchecked(B, '\0');
-        vec_push_n_unchecked(B, EVAL_PROLOGUE, countof(EVAL_PROLOGUE) - 1);
-        vec_push_n_unchecked(B, ARG(0).string, ARG(0).bytes);
-        vec_push_n_unchecked(B, EVAL_EPILOGUE, countof(EVAL_EPILOGUE));
+        v0(B);
+        uvP(B, '\0');
+        uvPn(B, ARG(0).string, ARG(0).bytes);
+        uvP(B, '\0');
 
         Arena old = NewArena(1 << 20);
 
-        Stmt **prog = parse(ty, B.items + 1, "(eval)");
+        Stmt **prog = parse(ty, vv(B) + 1, "(eval)");
         if (prog == NULL) {
                 char const *msg = TyError(ty);
                 Value error = Err(ty, vSsz(msg));
@@ -7814,7 +7856,6 @@ BUILTIN_FUNCTION(tdb_eval)
              && (v = tyeval(TDB->host, e)).type != VALUE_NONE
         ) {
                 ReleaseArena(old);
-                *TDB->host = save;
                 return Ok(ty, v);
         }
 
@@ -7832,7 +7873,7 @@ BUILTIN_FUNCTION(tdb_eval)
 BUILTIN_FUNCTION(tdb_list)
 {
         ASSERT_ARGC("tdb.list()", 0);
-        TDB_MUST_BE(STOPPED);
+        TDB_MUST_NOT_BE(STOPPED);
 
         tdb_list(TDB->host);
 
@@ -7845,7 +7886,6 @@ BUILTIN_FUNCTION(tdb_stack)
         *stack = *(Array *)&TDB->host->stack;
         return ARRAY(stack);
 }
-
 
 BUILTIN_FUNCTION(tdb_span)
 {
@@ -7871,28 +7911,28 @@ BUILTIN_FUNCTION(tdb_span)
 BUILTIN_FUNCTION(tdb_over)
 {
         ASSERT_ARGC("tdb.over()", 0);
-        TDB_MUST_BE(STOPPED);
+        TDB_MUST_NOT_BE(STOPPED);
         return BOOLEAN(tdb_step_over(TDB->host));
 }
 
 BUILTIN_FUNCTION(tdb_into)
 {
         ASSERT_ARGC("tdb.into()", 0);
-        TDB_MUST_BE(STOPPED);
+        TDB_MUST_NOT_BE(STOPPED);
         return BOOLEAN(tdb_step_into(TDB->host));
 }
 
 BUILTIN_FUNCTION(tdb_step)
 {
         ASSERT_ARGC("tdb.step()", 0);
-        TDB_MUST_BE(STOPPED);
+        TDB_MUST_NOT_BE(STOPPED);
         return BOOLEAN(tdb_step_line(TDB->host));
 }
 
 BUILTIN_FUNCTION(tdb_backtrace)
 {
         ASSERT_ARGC("tdb.backtrace()", 0);
-        TDB_MUST_BE(STOPPED);
+        TDB_MUST_NOT_BE(STOPPED);
 
         tdb_backtrace(TDB->host);
 
@@ -7968,6 +8008,21 @@ BUILTIN_FUNCTION(tdb_context)
         );
 }
 
+BUILTIN_FUNCTION(tdb_insn)
+{
+        char const *_name__ = "tdb.insn()";
+        CHECK_ARGC(1);
+        TDB_MUST_NOT_BE(OFF);
+
+        Value ip = ARGx(0, VALUE_PTR);
+        u8 insn = *(u8 *)ip.ptr;
+
+        return vTn(
+                "name", xSz(GetInstructionName(insn))
+        );
+        
+}
+
 BUILTIN_FUNCTION(tdb_state)
 {
         ASSERT_ARGC("tdb.state()", 0);
@@ -7987,6 +8042,8 @@ BUILTIN_FUNCTION(tdb_state)
                    : (context->file == NULL) ? NIL
                    : xSz(context->file);
 
+        Value mod = xSz(GetExpressionModule(ty, context));
+
         Value f = (TDB->host->st.frames.count > 0)
                 ? vvL(TDB->host->st.frames)->f
                 : NIL;
@@ -7997,8 +8054,10 @@ BUILTIN_FUNCTION(tdb_state)
 
         return vTn(
                 "ip",    ip,
+                "insn",  xSz(GetInstructionName(*(u8 *)ip.ptr)),
                 "prog",  prog,
                 "file",  file,
+                "mod",   mod,
                 "expr",  expr,
                 "func",  f,
                 "fp",    fp,

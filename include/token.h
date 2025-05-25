@@ -28,6 +28,11 @@ typedef struct token {
                 TOKEN_EQ = '=',
                 TOKEN_LT = '<',
                 TOKEN_GT = '>',
+                TOKEN_PLUS = '+',
+                TOKEN_MINUS = '-',
+                TOKEN_STAR = '*',
+                TOKEN_PERCENT = '%',
+                TOKEN_DIV = '/',
 
                 /*
                  * We start the enumeration constants slightly below INT_MAX so that they
@@ -44,11 +49,6 @@ typedef struct token {
                 TOKEN_INTEGER,
                 TOKEN_REAL,
                 TOKEN_END,
-                TOKEN_PLUS,
-                TOKEN_MINUS,
-                TOKEN_STAR,
-                TOKEN_DIV,
-                TOKEN_PERCENT,
                 TOKEN_SHL,
                 TOKEN_SHR,
                 TOKEN_NOT_EQ,

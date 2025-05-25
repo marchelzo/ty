@@ -2188,13 +2188,13 @@ pub fn xml(parts) {
     doc
 }
 
-//xmlInitMemory()
 
+#|if 0
 pub fn test(node: XMLNode) -> Document {
-    cast(xml"<seethe><test based=\"true\">Fresh strawberries.{node}</test></seethe>")
+    cast(xml"<main><test based=\"true\">Fresh strawberries.{node}</test></main>")
 }
 
-fn test2() {
+pub fn test2() {
     let doc = parse('''
         <based>
             Here is some text.
@@ -2212,5 +2212,4 @@ fn test2() {
         print(node)
     }
 }
-
-//test2()
+#|]

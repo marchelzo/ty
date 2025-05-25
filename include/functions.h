@@ -233,6 +233,8 @@ BUILTIN_FUNCTION(eval);
 BUILTIN_FUNCTION(ty_parse);
 BUILTIN_FUNCTION(ty_scope);
 BUILTIN_FUNCTION(ty_tokenize);
+BUILTIN_FUNCTION(ty_tokens);
+BUILTIN_FUNCTION(ty_text);
 BUILTIN_FUNCTION(ty_disassemble);
 BUILTIN_FUNCTION(ty_id);
 BUILTIN_FUNCTION(ty_copy_source);
@@ -273,6 +275,9 @@ BUILTIN_FUNCTION(tdb_breakpoint);
 BUILTIN_FUNCTION(tdb_context);
 BUILTIN_FUNCTION(tdb_locals);
 BUILTIN_FUNCTION(tdb_stack);
+BUILTIN_FUNCTION(tdb_insn);
 BUILTIN_FUNCTION(tdb_backtrace);
+
+u64 NextThreadId();
 
 #endif

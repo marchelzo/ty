@@ -4,6 +4,7 @@
 #include "scope.h"
 #include "alloc.h"
 #include "log.h"
+#include "ty.h"
 #include "util.h"
 #include "types.h"
 
@@ -26,8 +27,8 @@ scope_name(Ty *ty, Scope const *s)
 
         int remaining = sizeof b - 1;
 
-        for (int i = stack.count - 1; i >= 0; --i) {
-                s = stack.items[i];
+        for (int i = vN(stack) - 1; i >= 0; --i) {
+                s = v__(stack, i);
                 int n = strlen(s->name) + (i != 0);
                 if (n + 3 > remaining)
                         break;
@@ -110,6 +111,7 @@ _scope_new(Ty *ty,
         Scope *s = amA0(sizeof *s);
 
         s->parent = parent;
+        s->is_function = is_function;
         s->function = (is_function || parent == NULL) ? s : parent->function;
 
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
@@ -119,11 +121,23 @@ _scope_new(Ty *ty,
         return s;
 }
 
+inline static bool
+ScopeCapturesVar(Scope const *scope, Symbol const *var)
+{
+        for (int i = 0; i < vN(scope->captured); ++i) {
+                if (v__(scope->captured, i) == var) {
+                        return true;
+                }
+        }
+
+        return false;
+}
+
 int
 scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
 {
-                for (int i = 0; i < s->captured.count; ++i) {
-                        if (s->captured.items[i] == sym) {
+                for (int i = 0; i < vN(s->captured); ++i) {
+                        if (v__(s->captured, i) == sym) {
                                 return i;
                         }
                 }
@@ -141,7 +155,7 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
                         parent_index
                 );
 
-                return s->captured.count - 1;
+                return vN(s->captured) - 1;
 }
 
 Symbol *
@@ -169,20 +183,33 @@ scope_lookup(Ty *ty, Scope const *s, char const *id)
              && !sym->namespace
              && !SymbolIsTypeVar(sym)
         ) {
-                vec(Scope *) scopes = {0};
+                if (EVAL_DEPTH > 0 && !ScopeCapturesVar(s, sym)) {
+                        CompileError(
+                                ty,
+                                "attempted runtime access of non-captured variable `%s%s%s`",
+                                TERM(93;1),
+                                sym->identifier,
+                                TERM(0)
+                        );
+                }
+
+                SCRATCH_SAVE();
 
                 Scope *scope = s->function;
+                vec(Scope *) scopes = {0};
 
                 while (scope->parent->function != sym->scope->function) {
-                        avP(scopes, scope);
+                        svP(scopes, scope);
                         scope = scope->parent->function;
                 }
 
                 int parent_index = scope_capture(ty, scope, sym, -1);
 
-                for (int i = scopes.count - 1; i >= 0; --i) {
-                        parent_index = scope_capture(ty, scopes.items[i], sym, parent_index);
+                for (int i = vN(scopes) - 1; i >= 0; --i) {
+                        parent_index = scope_capture(ty, v__(scopes, i), sym, parent_index);
                 }
+
+                SCRATCH_RESTORE();
         }
 
         return sym;
@@ -301,10 +328,8 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
         sym->symbol = SYMBOL++;
         sym->scope = s;
 
-                      // s->function == global, or
-        sym->global = s->function->parent == NULL ||
-                      // s->function == state.global
-                      (s->function->parent->parent == NULL && s->function != s);
+        sym->global = s->function->parent == NULL
+                  || (s->function->parent->parent == NULL && s->function != s);
 
         sym->hash = h;
         sym->next = s->table[i];
@@ -316,24 +341,23 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
                 owner = owner->parent;
         }
 
-        while (owner->owned.count <= idx) {
+        while (vN(owner->owned) <= idx) {
                 avP(owner->owned, NULL);
         }
 
         LOG("Symbol %d (%s) is getting i = %d in scope %p", sym->symbol, id, sym->i, s);
 
-        while (idx < owner->owned.count && owner->owned.items[idx] != NULL) {
+        while (idx < vN(owner->owned) && v__(owner->owned, idx) != NULL) {
                 idx += 1;
         }
 
-        if (idx == owner->owned.count) {
+        if (idx == vN(owner->owned)) {
                 avP(owner->owned, sym);
         } else {
-                owner->owned.items[idx] = sym;
+                v__(owner->owned, idx) = sym;
         }
 
         sym->i = idx;
-
         s->table[i] = sym;
 
         return sym;
@@ -521,8 +545,8 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
 
                                 int parent_index = scope_capture(ty, fscope, sym, -1);
 
-                                for (int i = scopes.count - 1; i >= 0; --i) {
-                                        parent_index = scope_capture(ty, scopes.items[i], sym, parent_index);
+                                for (int i = vN(scopes) - 1; i >= 0; --i) {
+                                        parent_index = scope_capture(ty, v__(scopes, i), sym, parent_index);
                                 }
 
                                 LOG("scope_capture_all: done capturing %s", sym->identifier);

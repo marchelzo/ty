@@ -733,14 +733,13 @@ array_sum(Ty *ty, Value *array, int argc, Value *kwargs)
         Value sum, v;
         sum = array->array->items[0];
 
-        gP(&sum);
 
         for (int i = 1; i < array->array->count; ++i) {
+                gP(&sum);
                 v = array->array->items[i];
                 sum = vm_2op(ty, OP_ADD, &sum, &v);
+                gX();
         }
-
-        gX();
 
         return sum;
 }
@@ -749,33 +748,38 @@ static Value
 array_join(Ty *ty, Value *array, int argc, Value *kwargs)
 {
         if (argc != 1)
-                zP("array.join() expects 1 argument but got %d", argc);
+                zP("Array.join(): expected 1 argument but got %d", argc);
 
         if (array->array->count == 0)
                 return NIL;
 
         Value sep = ARG(0);
-        if (sep.type != VALUE_STRING)
-                zP("the argument to array.join() must be a string");
+        if (sep.type != VALUE_STRING) {
+                zP("Array.join(): expected String but got: %s", VSC(&sep));
+        }
 
         vmP(&array->array->items[0]);
         Value sum = builtin_str(ty, 1, NULL);
         vmX();
         Value v = NIL;
 
-        gP(&sum);
-        gP(&v);
-
         for (int i = 1; i < array->array->count; ++i) {
+                gP(&sum);
+                gP(&v);
                 vmP(&array->array->items[i]);
                 v = builtin_str(ty, 1, NULL);
                 vmX();
+                gX();
+                gP(&v);
                 sum = vm_2op(ty, OP_ADD, &sum, &sep);
+                gX();
+                gX();
+                gP(&v);
+                gP(&sum);
                 sum = vm_2op(ty, OP_ADD, &sum, &v);
+                gX();
+                gX();
         }
-
-        gX();
-        gX();
 
         return sum;
 }
@@ -796,17 +800,19 @@ array_consume_while(Ty *ty, Value *array, int argc, Value *kwargs)
                 zP("invalid predicate passed to array.consumeWhile()");
 
         Value v = NIL;
-        gP(&v);
 
         for (;;) {
                 v = vm_eval_function(ty, &f, NULL);
-                if (value_apply_predicate(ty, &p, &v))
+                gP(&v);
+                bool more = value_apply_predicate(ty, &p, &v);
+                if (more) {
                         vAp(array->array, v);
-                else
+                        gX();
+                } else {
+                        gX();
                         break;
+                }
         }
-
-        gX();
 
         return *array;
 }
@@ -872,29 +878,29 @@ array_group_by(Ty *ty, Value *array, int argc, Value *kwargs)
         Value v1, v2;
         v1 = v2 = NIL;
 
-        gP(&v1);
-        gP(&v2);
-
         int len = 0;
         for (int i = 0; i < array->array->count; ++i) {
                 Value group = ARRAY(vA());
                 NOGC(group.array);
                 Value e = array->array->items[i];
                 v1 = value_apply_callable(ty, &f, &e);
+                gP(&v1);
                 vAp(group.array, e);
                 while (i + 1 < array->array->count) {
                         v2 = value_apply_callable(ty, &f, &array->array->items[i + 1]);
-                        if (value_test_equality(ty, &v1, &v2))
+                        gP(&v2);
+                        if (value_test_equality(ty, &v1, &v2)) {
                                 vAp(group.array, array->array->items[++i]);
-                        else
+                                gX();
+                        } else {
+                                gX();
                                 break;
+                        }
                 }
+                gX();
                 OKGC(group.array);
                 array->array->items[len++] = group;
         }
-
-        gX();
-        gX();
 
         array->array->count = len;
         shrink(ty, array);
@@ -995,33 +1001,38 @@ array_min_by(Ty *ty, Value *array, int argc, Value *kwargs)
         Value min, v, k, r;
         min = array->array->items[0];
 
-        gP(&k);
-        gP(&r);
-
         r = k = NIL;
 
         if (f.type == VALUE_FUNCTION && f.info[2] > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function(ty, &f, &v, &min, NULL);
-                        if ((r.type != VALUE_INTEGER && !value_truthy(ty, &r)) || r.integer < 0)
+                        gP(&r);
+                        if (
+                                (r.type != VALUE_INTEGER && !value_truthy(ty, &r))
+                             || (r.integer < 0)
+                        ) {
                                 min = v;
-
+                        }
+                        gX();
                 }
         } else {
                 k = vm_eval_function(ty, &f, &min, NULL);
+                gP(&k);
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function(ty, &f, &v, NULL);
+                        gP(&r);
                         if (value_compare(ty, &r, &k) < 0) {
                                 min = v;
                                 k = r;
                         }
+                        gX();
+                        gX();
+                        gP(&k);
                 }
+                gX();
         }
-
-        gX();
-        gX();
 
         return min;
 }
@@ -1066,33 +1077,39 @@ array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
         Value max, v, k, r;
         max = array->array->items[0];
 
-        gP(&k);
-        gP(&r);
-
         k = r = NIL;
 
         if (f.type == VALUE_FUNCTION && f.info[2] > 1) {
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function(ty, &f, &v, &max, NULL);
-                        if ((r.type != VALUE_INTEGER && value_truthy(ty, &r)) || r.integer > 0)
+                        gP(&r);
+                        if (
+                                (r.type != VALUE_INTEGER && value_truthy(ty, &r))
+                             || (r.integer > 0)
+                        ) {
                                 max = v;
+                        }
+                        gX();
 
                 }
         } else {
                 k = vm_eval_function(ty, &f, &max, NULL);
+                        gP(&k);
                 for (int i = 1; i < array->array->count; ++i) {
                         v = array->array->items[i];
                         r = vm_eval_function(ty, &f, &v, NULL);
+                        gP(&r);
                         if (value_compare(ty, &r, &k) > 0) {
                                 max = v;
                                 k = r;
                         }
+                        gX();
+                        gX();
+                        gP(&k);
                 }
+                gX();
         }
-
-        gX();
-        gX();
 
         return max;
 }
@@ -1762,14 +1779,12 @@ array_fold_left(Ty *ty, Value *array, int argc, Value *kwargs)
         if (!CALLABLE(f))
                 zP("non-function passed to the foldLeft method on array");
 
-        gP(&v);
-
         int n = array->array->count;
         for (int i = start; i < n; ++i) {
+                gP(&v);
                 v = vm_eval_function(ty, &f, &v, &array->array->items[i], NULL);
+                gX();
         }
-
-        gX();
 
         return v;
 }
@@ -1778,8 +1793,9 @@ array_fold_left(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("the foldRight method on arrays expects 1 or 2 arguments but got %d", argc);
+        if (argc != 1 && argc != 2) {
+                zP("Array.foldRight(): expected 1 or 2 arguments but got %d", argc);
+        }
 
         int start;
         Value f, v;
@@ -1787,8 +1803,9 @@ array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
         if (argc == 1) {
                 start = array->array->count - 2;
                 f = ARG(0);
-                if (array->array->count == 0)
-                        zP("foldRight called on empty array with 1 argument");
+                if (array->array->count == 0) {
+                        zP("Array.foldRight(): empty array and no start value");
+                }
                 v = array->array->items[start + 1];
         } else {
                 start = array->array->count - 1;
@@ -1796,15 +1813,21 @@ array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
                 v = ARG(0);
         }
 
-        if (!CALLABLE(f))
-                zP("non-function passed to the foldRight method on array");
+        if (!CALLABLE(f)) {
+                zP("Array.foldRight(): expected callable but got: %s", VSC(&f));
+        }
 
-        gP(&v);
-
-        for (int i = start; i >= 0; --i)
-                v = vm_eval_function(ty, &f, &array->array->items[i], &v, NULL);
-
-        gX();
+        for (int i = start; i >= 0; --i) {
+                gP(&v);
+                v = vm_eval_function(
+                        ty,
+                        &f,
+                        &array->array->items[i],
+                        &v,
+                        NULL
+                );
+                gX();
+        }
 
         return v;
 }
@@ -1812,8 +1835,9 @@ array_fold_right(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("the scanLeft method on arrays expects 1 or 2 arguments but got %d", argc);
+        if (argc != 1 && argc != 2) {
+                zP("Array.scanLeft(): expected 1 or 2 arguments but got %d", argc);
+        }
 
         int start;
         Value f, v;
@@ -1821,8 +1845,9 @@ array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
         if (argc == 1) {
                 start = 1;
                 f = ARG(0);
-                if (array->array->count == 0)
-                        zP("scanLeft called on empty array with 1 argument");
+                if (array->array->count == 0) {
+                        zP("Array.scanLeft(): empty array and no start value");
+                }
                 v = array->array->items[0];
         } else {
                 start = 0;
@@ -1830,13 +1855,16 @@ array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
                 v = ARG(0);
         }
 
-        if (!CALLABLE(f))
-                zP("non-function passed to the scanLeft method on array");
+        if (!CALLABLE(f)) {
+                zP("Array.scanLeft(): expected callable but got: %s", VSC(&f));
+        }
 
         int n = array->array->count;
         for (int i = start; i < n; ++i) {
-                v = vm_eval_function(ty, &f, &v, &array->array->items[i], NULL);
-                array->array->items[i] = v;
+                gP(&v);
+                v = vm_eval_function(ty, &f, &v, v_(*array->array, i), NULL);
+                *v_(*array->array, i) = v;
+                gX();
         }
 
         return *array;
@@ -1845,8 +1873,9 @@ array_scan_left(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("the scanRight method on arrays expects 1 or 2 arguments but got %d", argc);
+        if (argc != 1 && argc != 2) {
+                zP("Array.scanRight(): expected 1 or 2 arguments but got %d", argc);
+        }
 
         int start;
         Value f, v;
@@ -1854,8 +1883,9 @@ array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
         if (argc == 1) {
                 start = array->array->count - 2;
                 f = ARG(0);
-                if (array->array->count == 0)
-                        zP("scanRight called on empty array with 1 argument");
+                if (array->array->count == 0) {
+                        zP("Array.scanRight(): empty array and no start value");
+                }
                 v = array->array->items[start + 1];
         } else {
                 start = array->array->count - 1;
@@ -1863,12 +1893,15 @@ array_scan_right(Ty *ty, Value *array, int argc, Value *kwargs)
                 v = ARG(0);
         }
 
-        if (!CALLABLE(f))
-                zP("non-function passed to the scanRight method on array");
+        if (!CALLABLE(f)) {
+                zP("Array.scanRight(): expected callable but got: %s", VSC(&f));
+        }
 
         for (int i = start; i >= 0; --i) {
-                v = vm_eval_function(ty, &f, &array->array->items[i], &v, NULL);
-                array->array->items[i] = v;
+                gP(&v);
+                v = vm_eval_function(ty, &f, v_(*array->array, i), &v, NULL);
+                *v_(*array->array, i) = v;
+                gX();
         }
 
         return *array;

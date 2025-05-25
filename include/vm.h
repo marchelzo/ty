@@ -14,7 +14,6 @@
 #include "log.h"
 
 extern bool PrintResult;
-extern _Thread_local int EvalDepth;
 
 bool
 vm_init(Ty *ty, int ac, char **av);

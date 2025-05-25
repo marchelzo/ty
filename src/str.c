@@ -223,13 +223,15 @@ string_size(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc == 0 || argc > 2)
-                zP("str.bslice() expects 1 or 2 arguments but got %d", argc);
+        if (argc == 0 || argc > 2) {
+                zP("String.bslice(): expected 1 or 2 arguments but got %d", argc);
+        }
 
         Value start = ARG(0);
 
-        if (start.type != VALUE_INTEGER)
-                zP("str.bslice(): expected integer but got: %s", value_show(ty, &start));
+        if (start.type != VALUE_INTEGER) {
+                zP("String.bslice(): expected Int but got: %s", VSC(&start));
+        }
 
         int i = start.integer;
         int n;
@@ -240,8 +242,9 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
 
         if (argc == 2) {
                 Value len = ARG(1);
-                if (len.type != VALUE_INTEGER)
-                        zP("str.bslice(): expected integer but got: %s", value_show(ty, &len));
+                if (len.type != VALUE_INTEGER) {
+                        zP("String.bslice(): expected Int but got: %s", VSC(&len));
+                }
                 n = len.integer;
         } else {
                 n = (int)string->bytes - i;
@@ -454,6 +457,7 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
                 n = ovec[0];
         } else {
                 ARGx(0, VALUE_STRING, VALUE_REGEX);
+                UNREACHABLE();
         }
 
         return INTEGER(offset + n);
@@ -674,20 +678,25 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 
         if (pattern.type == VALUE_INTEGER) {
                 int i = pattern.integer;
-                int n = utf8_charcount(s, len);
+                int n = codepoint_count(s, len);
+
                 if (i < 0)
                         i += n;
                 if (i < 0)
                         i = 0;
                 if (i > n)
                         i = n;
-                stringcount(s, len, i);
-                struct array *parts = vA();
-                NOGC(parts);
-                vAp(parts, STRING_VIEW(*string, 0, outpos.bytes));
-                vAp(parts, STRING_VIEW(*string, outpos.bytes, len - outpos.bytes));
-                OKGC(parts);
-                return ARRAY(parts);
+
+                int off = 0;
+                while (i --> 0) {
+                        i32 cp;
+                        int bytes = utf8proc_iterate((u8 const *)(s + off), len - off, &cp);
+                        off += min(bytes, 1);
+                }
+                Value left = STRING_VIEW(*string, 0, off);
+                Value right = STRING_VIEW(*string, off, len - off);
+
+                return PAIR(left, right);
         }
 
         if (argc == 2) {
@@ -865,7 +874,21 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 int start = 0;
                 size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
 
-                while (pcre2_match(re, (PCRE2_SPTR)s, len, start, 0, ty->pcre2.match, ty->pcre2.ctx) == 1) {
+                for (;;) {
+                        int n = pcre2_match(
+                                re,
+                                (PCRE2_SPTR)s,
+                                len,
+                                start,
+                                0,
+                                ty->pcre2.match,
+                                ty->pcre2.ctx
+                        );
+
+                        if (n <= 0) {
+                                break;
+                        }
+
                         vvPn(chars, s + start, ovec[0] - start);
                         start = ovec[1];
                 }
@@ -959,7 +982,19 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
                 int start = 0;
 
-                while (pcre2_match(re, (PCRE2_SPTR)s, len, start, 0, ty->pcre2.match, ty->pcre2.ctx) == 1) {
+                for (;;) {
+                        int n = pcre2_match(
+                                re,
+                                (PCRE2_SPTR)s,
+                                len,
+                                start,
+                                0,
+                                ty->pcre2.match,
+                                ty->pcre2.ctx
+                        );
+                        if (n <= 0) {
+                                break;
+                        }
                         if (ovec[1] == start) {
                                 vvPn(chars, replacement.string, replacement.bytes);
                                 vvP(chars, s[start]);
@@ -1170,11 +1205,11 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
         int cp;
         int64_t j = i;
         int64_t offset = 0;
-        int n = utf8proc_iterate(string->string, string->bytes, &cp);
+        int n = utf8proc_iterate((u8 const *)string->string, string->bytes, &cp);
 
         while (offset < string->bytes && n > 0 && j --> 0) {
                 offset += max(1, n);
-                n = utf8proc_iterate(string->string + offset, string->bytes, &cp);
+                n = utf8proc_iterate((u8 const *)string->string + offset, string->bytes, &cp);
         }
 
         if (offset == string->bytes)

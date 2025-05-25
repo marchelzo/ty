@@ -273,9 +273,6 @@ typedef struct ParserState {
         JmpBufVector SavePoints;
         int SetJmpDepth;
 
-        struct table uopcs;
-        struct table uops;
-
         Location EEnd;
         Location EStart;
         Location TEnd;
@@ -293,6 +290,9 @@ typedef struct ParserState {
 Expr *LastParsedExpr;
 
 static ParserState state;
+
+struct table uops;
+struct table uopcs;
 
 static Expr WildCard = {
         .type = EXPRESSION_IDENTIFIER,
@@ -328,8 +328,8 @@ static Expr NullExpr = {
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
 #define tokens            (state.tokens)
-#define uopcs             (state.uopcs)
-#define uops              (state.uops)
+#define uopcs             (uopcs)
+#define uops              (uops)
 
 // Maybe try to use this instead, might be cleaner.
 /*
@@ -448,19 +448,10 @@ static Expr *
 mkpartial(Ty *ty, Expr *sugared);
 
 char *
-mksym(Ty *ty, int s)
+gensym(void)
 {
-        char b[32];
-
-        snprintf(b, sizeof b, "<%d>", s);
-        return sclonea(ty, b);
-}
-
-char *
-gensym(Ty *ty)
-{
-        static int sym = 0;
-        return mksym(ty, sym++);
+        static u32 sym = 0;
+        return (char *)ifmt("#%u", sym++);
 }
 
 inline static Expr *
@@ -1723,131 +1714,6 @@ prefix_ss(Ty *ty)
 }
 
 static Expr *
-prefix_special_string(Ty *ty)
-{
-/*
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_SPECIAL_STRING;
-
-        SpecialString *ss = tok()->special;
-
-        vec(LexState) exprs = {
-                .items = ss->expressions.items,
-                .count = ss->expressions.count
-        };
-
-        e->strings = ss->strings;
-
-        next();
-
-        int ti = TokenIndex;
-        LexState cp = CtxCheckpoint;
-        TokenVector ts = tokens;
-
-        for (int i = 0; i < exprs.count;) {
-                TokenIndex = 0;
-                vec_init(tokens);
-
-                lex_start(ty, &exprs.items[i]);
-                lex_save(ty, &CtxCheckpoint);
-
-                if (T0 == TOKEN_END) {
-                        char *left = e->strings.items[i];
-                        char *right = e->strings.items[i + 1];
-
-                        char *merged = amA(strlen(left) + strlen(right) + 1);
-
-                        strcpy(merged, left);
-                        strcat(merged, right);
-
-                        e->strings.items[i] = merged;
-
-                        vvXi(exprs, i);
-                        vvXi(e->strings, i + 1);
-                } else {
-                        avP(e->expressions, parse_expr(ty, 0));
-                        (*vvL(e->expressions))->end= TEnd;
-
-                        avP(e->widths, exprs.items[i].end - exprs.items[i].loc.s + 2);
-
-                        setctx(LEX_FMT);
-                        if (T0 == TOKEN_STRING) {
-                                avP(e->fmts, tok()->string);
-                                next();
-                        } else {
-                                avP(e->fmts, NULL);
-                        }
-
-                        if (T0 != TOKEN_END) {
-                                avP(e->fmtfs, parse_expr(ty, 0));
-                        } else {
-                                avP(e->fmtfs, NULL);
-                        }
-
-                        i += 1;
-                }
-
-                avIn(ts, tokens.items, vN(tokens), ti);
-                ti += vN(tokens);
-
-                consume(TOKEN_END);
-
-                lex_end(ty);
-        }
-
-        TokenIndex = ti;
-        CtxCheckpoint = cp;
-        tokens = ts;
-
-        // Force lexer reset
-        setctx(LEX_PREFIX);
-        setctx(LEX_INFIX);
-
-        return extend_string(ty, e);
-*/
-
-        return NULL;
-}
-
-static Expr *
-prefix_fun_special_string(Ty *ty)
-{
-        SpecialString *ss = tok()->special;
-        Expr *s = prefix_special_string(ty);
-        Expr *f = mkfunc(ty);
-
-        for (int i = 0; i < s->expressions.count; ++i) {
-                Expr *p = s->expressions.items[i];
-
-                if (!ss->e_is_param.items[i]) {
-                        continue;
-                }
-
-                if (p->type != EXPRESSION_IDENTIFIER) {
-                        EStart = p->start;
-                        EEnd = p->end;
-                        error(ty, "invalid parameter in $\"\" string");
-                }
-
-                if (strcmp(p->identifier, "_") == 0) {
-                        p->identifier = gensym(ty);
-                }
-
-                if (!search_str(&f->params, p->identifier)) {
-                        avP(f->params, p->identifier);
-                        avP(f->dflts, NULL);
-                        avP(f->constraints, NULL);
-                }
-        }
-
-        f->body = mkstmt(ty);
-        f->body->type = STATEMENT_EXPRESSION;
-        f->body->expression = s;
-
-        return f;
-}
-
-static Expr *
 prefix_hash(Ty *ty)
 {
         Expr *e = mkexpr(ty);
@@ -2212,8 +2078,8 @@ opfunc(Ty *ty)
 
         consume(']');
 
-        char *a = gensym(ty);
-        char *b = gensym(ty);
+        char *a = gensym();
+        char *b = gensym();
 
         unconsume(')');
 
@@ -2549,7 +2415,7 @@ prefix_with(Ty *ty)
             } else {
                     Expr *t = mkexpr(ty);
                     t->type = EXPRESSION_IDENTIFIER;
-                    t->identifier = gensym(ty);
+                    t->identifier = gensym();
                     t->module = NULL;
                     def->target = t;
                     def->value = e;
@@ -2635,7 +2501,7 @@ prefix_match(Ty *ty)
                 Token kw = *tok();
                 next();
                 unconsume(TOKEN_IDENTIFIER);
-                tok()->identifier = id = gensym(ty);
+                tok()->identifier = id = gensym();
                 putback(kw);
         }
 
@@ -2654,7 +2520,7 @@ prefix_match(Ty *ty)
                 avP(e->patterns, patternize(ty, e->subject));
                 e->subject = mkexpr(ty);
                 e->subject->type = EXPRESSION_IDENTIFIER;
-                e->subject->identifier = id = gensym(ty);
+                e->subject->identifier = id = gensym();
                 avP(e->thens, parse_expr(ty, 0));
                 if (have_keyword(KEYWORD_ELSE)) {
                         next();
@@ -3003,7 +2869,7 @@ prefix_parenthesis(Ty *ty)
          */
         if (get_infix_parser(ty) != NULL && get_prefix_parser(ty) == NULL) {
                 e = mkfunc(ty);
-                avP(e->params, gensym(ty));
+                avP(e->params, gensym());
                 avP(e->dflts, NULL);
                 avP(e->constraints, NULL);
 
@@ -3284,7 +3150,7 @@ prefix_array(Ty *ty)
          * Why not?
          */
         if (K0 == KEYWORD_MATCH && T1 == ']') {
-                char *args = gensym(ty);
+                char *args = gensym();
 
                 f = mkfunc(ty);
                 avP(f->params, args);
@@ -3351,7 +3217,7 @@ prefix_array(Ty *ty)
                 e = parse_expr(ty, 0);
                 consume(']');
                 f = mkfunc(ty);
-                avP(f->params, gensym(ty));
+                avP(f->params, gensym());
                 avP(f->dflts, NULL);
                 avP(f->constraints, NULL);
                 f->body = mkstmt(ty);
@@ -3452,7 +3318,7 @@ prefix_array(Ty *ty)
                         (T1 == ']' || (have_not_in(ty) && token(2)->type == ']'))
                 ) {
                         f = mkfunc(ty);
-                        avP(f->params, gensym(ty));
+                        avP(f->params, gensym());
                         avP(f->dflts, NULL);
                         avP(f->constraints, NULL);
                         struct token t = *tok();
@@ -3639,7 +3505,7 @@ prefix_implicit_method(Ty *ty)
 
         Expr *o = mkexpr(ty);
         o->type = EXPRESSION_IDENTIFIER;
-        o->identifier = gensym(ty);
+        o->identifier = gensym();
         o->module = NULL;
 
         if (T0 == TOKEN_INTEGER) {
@@ -4177,8 +4043,8 @@ infix_subscript(Ty *ty, Expr *left)
         consume('[');
 
         if (T0 == ']') {
-                char *xs = gensym(ty);
-                char *i = gensym(ty);
+                char *xs = gensym();
+                char *i = gensym();
 
                 next();
 
@@ -4444,7 +4310,7 @@ infix_arrow_function(Ty *ty, Expr *left)
                         avP(e->constraints, p->constraint);
                         e->rest = i;
                 } else {
-                        char *name = gensym(ty);
+                        char *name = gensym();
                         avP(e->params, name);
                         avP(e->constraints, NULL);
                         avP(body->statements, mkdef(ty, definition_lvalue(ty, p), name));
@@ -4685,8 +4551,6 @@ get_prefix_parser(Ty *ty)
         case TOKEN_INTEGER:            return prefix_integer;
         case TOKEN_REAL:               return prefix_real;
         case TOKEN_STRING:             return prefix_string;
-        case TOKEN_SPECIAL_STRING:     return prefix_special_string;
-        case TOKEN_FUN_SPECIAL_STRING: return prefix_fun_special_string;
         case TOKEN_REGEX:              return prefix_regex;
 
         case '"':                      return prefix_ss;
@@ -5310,7 +5174,7 @@ parse_for_loop(Ty *ty)
                         tok()->keyword = KEYWORD_IN;
 
                         unconsume(TOKEN_IDENTIFIER);
-                        tok()->identifier = gensym(ty);
+                        tok()->identifier = gensym();
                         tok()->module = NULL;
                 }
 

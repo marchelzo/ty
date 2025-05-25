@@ -427,6 +427,8 @@ value_showx(Ty *ty, Value const *v)
         char buffer[1024];
         char *s = NULL;
 
+        Value val = *v;
+
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:
                 snprintf(buffer, 1024, "%"PRIiMAX, v->integer);
@@ -544,7 +546,13 @@ value_showx(Ty *ty, Value const *v)
                 return sclone(ty, "< !!! >");
         }
 
-        char *result = tags_wrap(ty, s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0, false);
+        char *result = tags_wrap(
+                ty,
+                (s == NULL) ? buffer : s,
+                (val.type & VALUE_TAGGED) ? val.tags : 0,
+                false
+        );
+
         mF(s);
 
         return result;
@@ -555,6 +563,8 @@ value_show_colorx(Ty *ty, struct value const *v)
 {
         char buffer[4096];
         char *s = NULL;
+
+        Value val = *v;
 
         static _Thread_local vec(void const *) visiting;
 
@@ -824,7 +834,13 @@ BasicObject:
                 return value_showx(ty, v);
         }
 
-        char *result = tags_wrap(ty, s == NULL ? buffer : s, v->type & VALUE_TAGGED ? v->tags : 0, true);
+        char *result = tags_wrap(
+                ty,
+                (s == NULL) ? buffer : s,
+                (val.type & VALUE_TAGGED) ? val.tags : 0,
+                true
+        );
+
         mF(s);
 
         return result;
@@ -1207,7 +1223,7 @@ mark_generator(Ty *ty, struct value const *v)
         }
 
         for (int i = 0; i < vN(v->gen->gc_roots); ++i) {
-                value_mark(ty, *v_(v->gen->gc_roots, i));
+                value_mark(ty, v_(v->gen->gc_roots, i));
         }
 }
 
