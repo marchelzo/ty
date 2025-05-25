@@ -7,12 +7,11 @@ import ioctls (..)
 
 let ERASE_LINE = "\x1b[2K"
 
-let tio: ?TermIO = nil
-let defaultPrompt: ?String = nil
-let defaultComplete: _ = nil
-let termFd: Int = -1
-
-let history = []
+let __tls::tio: ?TermIO = nil
+let __tls::defaultPrompt: ?String = nil
+let __tls::defaultComplete: _ = nil
+let __tls::termFd: Int = -1
+let __tls::history = []
 
 tag CycleCompletions, ListCompletions, ReplaceLine, Insert;
 
@@ -55,6 +54,7 @@ pub fn init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
     defaultPrompt = prompt
     defaultComplete = complete
     tio = TermIO(fd)
+    history = []
 }
 
 fn termDimensions() {
@@ -97,7 +97,7 @@ fn fitItems(items: [String], W: Int) {
         }
     ) ?? (#items, widths(#items))
 
-    let cols: [String] = items.groupsOf(#items / cols)
+    let cols: [[String]] = items.groupsOf(#items / cols)
     let rows: Int = cols.map(&len).max()
 
     let result = []
@@ -175,7 +175,7 @@ pub fn readln(prompt=nil, complete=nil, erase=true) {
         }
 
         match key {
-            '<Enter>' => {
+            '<Enter>', '\n' => {
                 let text = getText()
 
                 if text != '' && (history == [] || (line, i) != history[-1]) {

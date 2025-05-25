@@ -32,31 +32,43 @@ typedef struct constraint Constraint;
 typedef struct refinement Refinement;
 typedef struct type_env   TypeEnv;
 
-typedef size_t   usize;
-typedef uint64_t u64;
-typedef uint32_t u32;
+typedef uint8_t   u8;
+typedef uint16_t  u16;
+typedef uint32_t  u32;
+typedef uint64_t  u64;
+typedef size_t    usize;
+typedef uintmax_t umax;
+
+typedef int8_t   i8;
+typedef int16_t  i16;
+typedef int32_t  i32;
+typedef int64_t  i64;
+typedef ssize_t  isize;
 typedef intmax_t imax;
 
-typedef vec(int)            int_vector;
-typedef vec(char)           byte_vector;
-typedef vec(char *)         CallStack;
-typedef vec(Value)          ValueVector;
-typedef vec(Value const *)  GCRootSet;
-typedef ValueVector         ValueStack;
-typedef vec(char *)         StringVector;
-typedef vec(char const *)   ConstStringVector;
-typedef vec(struct try *)   TryStack;
-typedef vec(struct sigfn)   SigfnStack;
-typedef vec(size_t)         SPStack;
-typedef vec(Frame)          FrameStack;
-typedef vec(Target)         TargetStack;
 typedef vec(struct alloc *) AllocList;
-typedef vec(Symbol *)       symbol_vector;
-typedef vec(Type *)         TypeVector;
-typedef vec(Refinement)     RefinementVector;
+typedef vec(char *)         CallStack;
+typedef vec(cothread_t)     CoThreadVector;
+typedef vec(char const *)   ConstStringVector;
 typedef vec(Constraint)     ConstraintVector;
-typedef vec(u32)            U32Vector;
+typedef vec(Frame)          FrameStack;
+typedef vec(Value)          GCRootSet;
 typedef vec(jmp_buf *)      JmpBufVector;
+typedef vec(Refinement)     RefinementVector;
+typedef vec(size_t)         SPStack;
+typedef vec(struct sigfn)   SigfnStack;
+typedef vec(char *)         StringVector;
+typedef vec(Target)         TargetStack;
+typedef vec(struct token)   TokenVector;
+typedef vec(struct try *)   TryStack;
+typedef vec(Type *)         TypeVector;
+typedef vec(u32)            U32Vector;
+typedef vec(Value)          ValueVector;
+typedef ValueVector         ValueStack;
+typedef vec(char)           byte_vector;
+typedef vec(int)            int_vector;
+typedef vec(Symbol *)       symbol_vector;
+
 
 struct alloc {
         union {
@@ -70,6 +82,17 @@ struct alloc {
         };
         char data[];
 };
+
+typedef struct arena Arena;
+
+struct arena {
+        char *base;
+        char *beg;
+        char *end;
+        Arena *next;
+        bool gc;
+};
+
 
 typedef struct array {
         Value *items;
@@ -110,6 +133,8 @@ typedef struct generator Generator;
 typedef struct thread Thread;
 typedef struct channel Channel;
 typedef struct chanval ChanVal;
+
+typedef struct compiler_state CompileState;
 
 enum { FT_NONE, FT_FUNC, FT_GEN };
 enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
@@ -347,6 +372,8 @@ typedef struct ThrowCtx {
 } ThrowCtx;
 
 typedef struct ty0 {
+        Ty *ty;
+        CompileState *compiler;
         InternSet u_ops;
         InternSet b_ops;
         InternSet members;
@@ -354,15 +381,6 @@ typedef struct ty0 {
 } TY;
 
 typedef struct thread_group ThreadGroup;
-
-typedef struct arena Arena;
-struct arena {
-        char *base;
-        char *beg;
-        char *end;
-        Arena *next;
-        bool gc;
-};
 
 typedef struct {
         int i;
@@ -388,13 +406,28 @@ struct param {
 
 typedef vec(Param) ParamVector;
 
+#define TY_TDB_STATES   \
+        X(OFF)          \
+        X(STARTING)     \
+        X(ACTIVE)       \
+        X(STOPPED)      \
+        X(STEPPING)     \
+        X(DEAD)
+
+#define X(s) TDB_STATE_ ## s ,
+enum {
+        TY_TDB_STATES
+};
+#undef X
+
+#define X(s) #s ,
+static char const *TDB_STATE_NAMES[] = {
+        TY_TDB_STATES
+};
+#undef X
+
 typedef struct {
-        enum {
-                TDB_STATE_OFF,
-                TDB_STATE_ACTIVE,
-                TDB_STATE_STOPPED,
-                TDB_STATE_STEPPING
-        } state;
+        atomic_uint_least8_t state;
 
         Ty *ty;
         Ty *host;
@@ -407,7 +440,7 @@ typedef struct {
         vec(DebugBreakpoint) breaks;
 
         byte_vector context_buffer;
-} TDB;
+} TyTDB;
 
 typedef struct ty {
         char *ip;
@@ -417,18 +450,24 @@ typedef struct ty {
         co_state st;
         cothread_t co_top;
 
+        ValueVector tls;
+
         int GC_OFF_COUNT;
         int rc;
 
-        size_t memory_used;
-        size_t memory_limit;
+        GCRootSet gc_roots;
+
+        usize memory_used;
+        usize memory_limit;
 
         AllocList allocs;
         ThreadGroup *my_group;
 
-        TryStack try_stack;
-        ValueStack drop_stack;
+        CoThreadVector cothreads;
+
         vec(ThrowCtx) throw_stack;
+
+        int eval_depth;
 
         uint64_t prng[4];
 
@@ -446,15 +485,14 @@ typedef struct ty {
         } scratch;
 
         char *code;
-        jmp_buf jb;
+
+        JmpBufVector jbs;
         byte_vector err;
 
-        Scope *tscope;
         TypeEnv *tenv;
-        vec(ConstraintVector) tcons;
 
         TY *ty;
-        TDB *tdb;
+        TyTDB *tdb;
 } Ty;
 
 typedef struct {
@@ -491,6 +529,8 @@ typedef struct {
 
 #define TY_IS_READY (ty->ty->ready)
 
+#define EVAL_DEPTH (ty->eval_depth)
+
 extern Ty *ty;
 extern TY xD;
 
@@ -525,7 +565,14 @@ extern u64 TypeCheckTime;
 #define NOGC(v)   atomic_fetch_add_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 #define OKGC(v)   atomic_fetch_sub_explicit(&(ALLOC_OF(v))->hard, 1, memory_order_relaxed)
 
+#define POISON(v)   atomic_store_explicit(&(ALLOC_OF(v))->hard, 0xDEAD, memory_order_seq_cst)
+#define POISONED(v) (atomic_load_explicit(&(ALLOC_OF(v))->hard, memory_order_seq_cst) == 0xDEAD)
+
 #define ErrorBuffer (ty->err)
+
+#define TY_CATCH_ERROR()  (setjmp(*NewTySavePoint(ty)) != 0)
+#define TY_THROW_ERROR()  (longjmp(**vvX(ty->jbs), 1))
+#define TY_CATCH_END()    (vvX(ty->jbs))
 
 #ifdef _WIN32
 #  define UNLIKELY(x)  (x)
@@ -553,6 +600,7 @@ extern u64 TypeCheckTime;
         X(LOAD_REF),              \
         X(LOAD_CAPTURED),         \
         X(LOAD_GLOBAL),           \
+        X(LOAD_THREAD_LOCAL),     \
         X(CHECK_INIT),            \
         X(CAPTURE),               \
         X(DECORATE),              \
@@ -560,6 +608,7 @@ extern u64 TypeCheckTime;
         X(TARGET_REF),            \
         X(TARGET_CAPTURED),       \
         X(TARGET_GLOBAL),         \
+        X(TARGET_THREAD_LOCAL),   \
         X(TARGET_MEMBER),         \
         X(TARGET_SUBSCRIPT),      \
         X(ASSIGN),                \
@@ -894,8 +943,8 @@ enum {
 #define svIn(a, b, c, d) vec_insert_n_scratch(a, (b), (c), (d))
 #define svR(v, n)        vec_reserve_scratch((v), (n))
 
-#define gP(x) gc_push(ty, x)
-#define gX()  gc_pop(ty)
+#define gP(x) (xvP(RootSet, *(x)))
+#define gX()  (vvX(RootSet))
 
 #define lGv(b) ReleaseLock(ty, b)
 #define lTk()  TakeLock(ty)
@@ -1012,6 +1061,21 @@ alloc0(size_t n)
 
 #define mresize(ptr, n) ((ptr) = mrealloc((ptr), (n)))
 
+inline static jmp_buf *
+NewTySavePoint(Ty *ty)
+{
+        usize n = vN(ty->jbs);
+
+        if (n == vC(ty->jbs)) {
+                do xvP(ty->jbs, mrealloc(NULL, sizeof (jmp_buf)));
+                while (vN(ty->jbs) < vC(ty->jbs));
+        }
+
+        vN(ty->jbs) = n + 1;
+
+        return *vvL(ty->jbs);
+}
+
 inline static void
 ExpandScratch(Ty *ty)
 {
@@ -1081,15 +1145,56 @@ RestoreScratch(Ty *ty, ScratchSave save)
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
 #define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
 
-#define TDB           (ty->tdb)
-#define TDB_TY        ((Ty *)(ty->tdb)->ty)
-#define TDB_STATE     ((TDB == NULL) ? TDB_STATE_OFF : TDB->state)
+
+noreturn void
+CompileError(Ty *ty, char const *fmt, ...);
+
+
+#define I_AM_TDB       (ty == TDB_TY)
+#define TDB            (ty->tdb)
+#define TDB_TY         ((TDB == NULL) ? NULL : (Ty *)(TDB->ty))
+#define TDB_STATE      ((TDB == NULL) ? TDB_STATE_OFF : TDB->state)
+#define TDB_STATE_NAME (TDB_STATE_NAMES[TDB_STATE])
+#define TDB_MUTEX      (TDB->thread.thread->mutex)
+#define TDB_CONDVAR    (TDB->thread.thread->cond)
+#define DEBUGGING      (!TDB_IS(OFF))
+
+#if 0
+#define TDB_IS(x)     (                                   \
+        fprintf(                                          \
+                stderr,                                   \
+                "[%s] %16s:%-6d TDB_IS(%s) --> %d (state: %s)\n",   \
+                I_AM_TDB ? "TDB" : "Ty",                  \
+                __FILE__, \
+                __LINE__, \
+                #x,                                       \
+                TDB_STATE == (TDB_STATE_ ## x),           \
+                TDB_STATE_NAME                            \
+        ),                                                \
+        (TDB_STATE == (TDB_STATE_ ## x))                  \
+)
+
+#define TDB_IS_NOW(x) (                                   \
+        fprintf(                                          \
+                stderr,                                   \
+                "[%s] %16s:%-6d TDB_WAS(%s) --> TDB_IS_NOW(%s)\n",  \
+                I_AM_TDB ? "TDB" : "Ty",                  \
+                __FILE__, \
+                __LINE__, \
+                TDB_STATE_NAME,                           \
+                #x                                        \
+        ),                                                \
+        (TDB->state = TDB_STATE_ ## x)                    \
+)
+#else
 #define TDB_IS(x)     (TDB_STATE == (TDB_STATE_ ## x))
 #define TDB_IS_NOW(x) (TDB->state = TDB_STATE_ ## x)
-#define DEBUGGING     (!TDB_IS(OFF))
+#endif
 
 void
 tdb_start(Ty *ty);
+
+char const *GetInstructionName(unsigned char inst);
 
 inline static void
 tdb_set_trap(DebugBreakpoint *breakpoint, char *ip)

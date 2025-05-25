@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "polyfill_stdatomic.h"
+#include "ty.h"
 #include "vec.h"
 #include "log.h"
 #include "alloc.h"
@@ -25,6 +26,8 @@ MyThreadId(Ty *ty);
 #define resize(ptr, n) ((ptr) = gc_resize(ty, (ptr), (n)))
 #define resize_unchecked(ptr, n) ((ptr) = gc_resize_unchecked(ty, (ptr), (n)))
 #define resize_nogc(ptr, n) ((ptr) = mrealloc((ptr), (n)))
+
+#define RootSet (ty->gc_roots)
 
 enum {
         GC_STRING,
@@ -72,21 +75,20 @@ gc_resize_unchecked(Ty *ty, void *p, size_t n) {
         return a->data;
 }
 
-
 inline static void
 CheckUsed(Ty *ty)
 {
         if (UNLIKELY(
-                ty->GC_OFF_COUNT == 0
-                && MemoryUsed > MemoryLimit
+                (ty->GC_OFF_COUNT == 0)
+             && (MemoryUsed > MemoryLimit)
         )) {
                 GCLOG("Running GC. Used = %zu MB, Limit = %zu MB", MemoryUsed / 1000000, MemoryLimit / 1000000);
                 DoGC(ty);
                 GCLOG("DoGC(ty) returned: %zu MB still in use", MemoryUsed / 1000000);
                 while (MemoryUsed >= MemoryLimit) {
                         MemoryLimit <<= 1;
-                        GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
                 }
+                GCLOG("Increasing memory limit to %zu MB", MemoryLimit / 1000000);
         }
 }
 

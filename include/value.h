@@ -487,7 +487,7 @@ checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2,
 #define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
 
 #if 0
-  #define value_mark(ty, v) do { LOG("value_mark: %s:%d: %p", __FILE__, __LINE__, (v)); _value_mark(v); } while (0)
+  #define value_mark(ty, v) do { fprintf(stderr, "value_mark: %s:%d: %p\n", __FILE__, __LINE__, (v)); _value_mark(ty, v); } while (0)
 #else
   #define value_mark _value_mark
 #endif

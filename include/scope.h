@@ -14,12 +14,13 @@ enum {
 };
 
 enum {
-        SYM_PUBLIC    = 1 << 0,
-        SYM_MACRO     = 1 << 1,
-        SYM_FUN_MACRO = 1 << 2,
-        SYM_CONST     = 1 << 3,
-        SYM_TYPE_VAR  = 1 << 4,
-        SYM_VARIADIC  = 1 << 5
+        SYM_PUBLIC       = 1 << 0,
+        SYM_THREAD_LOCAL = 1 << 1,
+        SYM_MACRO        = 1 << 2,
+        SYM_FUN_MACRO    = 1 << 3,
+        SYM_CONST        = 1 << 4,
+        SYM_TYPE_VAR     = 1 << 5,
+        SYM_VARIADIC     = 1 << 6
 };
 
 typedef struct type Type;
@@ -55,6 +56,7 @@ typedef struct scope {
         bool namespace;
         bool shared;
         bool active;
+        bool is_function;
 
         struct symbol *table[SYMBOL_TABLE_SIZE];
 
@@ -178,6 +180,12 @@ SymbolIsTypeVar(Symbol const *var)
 }
 
 inline static bool
+SymbolIsThreadLocal(Symbol const *var)
+{
+        return var->flags & SYM_THREAD_LOCAL;
+}
+
+inline static bool
 SymbolIsPublic(Symbol const *var)
 {
         return var->flags & SYM_PUBLIC;
@@ -232,6 +240,19 @@ ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
         avP(scope->refinements, ref);
 
         return vvL(scope->refinements);
+}
+
+inline static bool
+ScopeIsTop(Ty *ty, Scope const *scope)
+{
+        while (scope != NULL) {
+                if (scope->is_function) {
+                        return false;
+                }
+                scope = scope->parent;
+        }
+
+        return true;
 }
 
 int

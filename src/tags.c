@@ -53,7 +53,7 @@ tags_init(Ty *ty)
         mklist(tagcount++, NULL);
 }
 
-int
+void
 tags_set_class(Ty *ty, int tag, Class *c)
 {
         *v_(classes, tag - 1) = c;

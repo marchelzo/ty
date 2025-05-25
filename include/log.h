@@ -62,12 +62,12 @@ extern int EnableLogging;
 #define TID (long long)MyThreadId(ty)
 
 #if 0
-#define GCLOG(...) if (EnableLogging > 0) do {               \
-                        flockfile(stderr),                   \
-                        fprintf(stderr, "(%4lld) ", TID),    \
-                        fprintf(stderr, __VA_ARGS__),        \
-                        fprintf(stderr, "\n"),               \
-                        funlockfile(stderr);                 \
+#define GCLOG(...) if (EnableLogging > 0) do {                           \
+                        flockfile(stderr),                               \
+                        fprintf(stderr, "[%d](%4lld) ", I_AM_TDB, TID),  \
+                        fprintf(stderr, __VA_ARGS__),                    \
+                        fprintf(stderr, "\n"),                           \
+                        funlockfile(stderr);                             \
                 } while (0)
 #else
 #define GCLOG LOG

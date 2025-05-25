@@ -433,12 +433,17 @@ ns _size {
         c.short ypix;
     }
 
-    let size = WinSize()
+    let __tls::size = nil
 
-    fn get(fd) {
+    fn get(fd: Int) -> (Int, Int) {
+        size = size ?? WinSize()
         ioctl(fd, TIOCGWINSZ, (c.ptr, size.get()))
         (size.lines, size.cols)
     }
+}
+
+pub fn size(fd: Int) -> (Int, Int) {
+    _size.get(fd)
 }
 
 class TermIO {
@@ -484,31 +489,35 @@ class TermIO {
     }
 
     start() {
+        warn!("Start: fd={__fd}")
         if (__saved-termios = tcgetattr(__fd)) == nil {
-            eprint("Error: {errno.str()}")
+            warn!("Error: {errno.str()}")
         }
         let copy = {*__saved-termios}
         copy.lflag &= ~ICANON
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
         copy.iflag |= IGNBRK
-        tcsetattr(__fd, TCSAFLUSH, copy)
-        write(
+        let ret = tcsetattr(__fd, TCSAFLUSH, copy)
+        let n = write(
             __fd,
             "\x1b[>{1|2|4|8|16}u" // kitty progressive enchancement for keyboard input
             "\x1b[?1003h"         // turn on mouse event reporting
             "\x1b[?1006h"         // ask for SGR-style mouse reporting instead of X10 compatibility mode
         )
+        warn!("Start: n={n} ret={ret}")
     }
 
     stop() {
-        write(
+        warn!("Stop: fd={__fd}")
+        let n = write(
             __fd,
             "\x1b[<1u"     // restore initial keyboard input mode
             "\x1b[?1003l"  // turn off all the private modes we turned on
             "\x1b[?1006l"
         )
-        tcsetattr(__fd, TCSAFLUSH, __saved-termios)
+        let ret = tcsetattr(__fd, TCSAFLUSH, __saved-termios)
+        warn!("Stop: n={n} ret={ret}")
     }
 
     size() -> (Int, Int) {
@@ -590,7 +599,9 @@ class TermIO {
     }
 
     next-event() -> ?event.Event {
-        return __ev-queue.take()
+        let ev = __ev-queue.take()
+        warn!("event: {ppp(ev)}")
+        return ev
     }
 
     cursor() -> CursorAddress {

@@ -22,7 +22,7 @@ typedef struct {
 } TypeMemo;
 
 #define ENFORCE (!AllowErrors)
-#define ENABLED (CheckConstraints)
+#define ENABLED (CheckConstraints && !TY_IS_READY)
 
 enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 
@@ -156,12 +156,6 @@ unify_(Ty *ty, Type **t0, Type *t1, bool fixed);
 
 static bool
 unify2_(Ty *ty, Type **t0, Type *t1, bool check);
-
-static Type *
-ArrayOf(Ty *ty, Type *t0);
-
-static Type *
-DictOf(Ty *ty, Type *k0, Type *v0);
 
 static Type *
 (NewObject)(Ty *ty, int class, ...);
@@ -460,6 +454,10 @@ DumpTypeTimingInfo(Ty *ty)
 static void
 AddConstraint(Ty *ty, Type *t0, Type *t1)
 {
+        if (!ENABLED) {
+                return;
+        }
+
         Expr const *fun = TyCompilerState(ty)->func;
 
         if (fun == NULL) {
@@ -922,7 +920,7 @@ NewVar(Ty *ty)
 {
         Type *t0;
 
-        if (CheckConstraints) {
+        if (ENABLED) {
                 t0 = NewType(ty, TYPE_VARIABLE);
                 t0->id = NextID++;
                 t0->level = CurrentLevel;
@@ -965,34 +963,6 @@ NewHole(Ty *ty)
         Type *t0 = NewVar(ty);
         t0->val = HOLE;
         return t0;
-}
-
-static Scope *
-FunTypeScope(Ty *ty)
-{
-        Scope *s = ty->tscope;
-
-        while (s->parent != NULL && s->function != s) {
-                s = s->parent;
-        }
-
-        return s;
-}
-
-static Scope *
-GlobalTypeScope(Ty *ty)
-{
-        Scope *s = ty->tscope;
-
-        if (s == NULL) {
-                return ty->tscope = scope_new(ty, "", NULL, true);
-        }
-
-        while (s->parent != NULL) {
-                s = s->parent;
-        }
-
-        return s;
 }
 
 static Type *
@@ -1279,24 +1249,6 @@ CoalescePatterns(Ty *ty, Type const *t0)
         XXTLOG("    %s", ShowType(t1));
 
         return (vN(t1->types) == 1) ? v__(t1->types, 0) : t1;
-}
-
-static Type *
-OperandRecord(Ty *ty, Type *a0, int op, Type *b0, Type *c0)
-{
-        byte_vector name;
-        char const *op_name = intern_entry(&xD.b_ops, op)->name;
-
-        bool L = (a0 == NULL);
-
-        adump(&name, "(%s)_%c", op_name, L ? 'L' : 'R');
-        avP(name, '\0');
-        avPn(name, (char *)&op, sizeof op);
-
-        Type *f0 = L ? NewFunction(b0, c0)
-                     : NewFunction(a0, c0);
-
-        return NewRecord(vv(name), f0);
 }
 
 inline static int
@@ -2404,7 +2356,7 @@ Uniq(Ty *ty, Type *t0)
         Type *t2;
         bool cloned = false;
 
-        if (!CheckConstraints) {
+        if (!ENABLED) {
                 return t0;
         }
 
@@ -2457,7 +2409,7 @@ Either(Ty *ty, Type const *t0, Type const *t1)
                 return (Type *)t0;
         }
 
-        if (CheckConstraints) {
+        if (ENABLED) {
                 if (type_check(ty, (Type *)t0, (Type *)t1)) {
                         return (Type *)t0;
                 }
@@ -2634,16 +2586,21 @@ type_tag(Ty *ty, Class *class, int tag)
         t->tag = tag;
         t->concrete = true;
 
-        Type *t0 = NewVar(ty);
-        t0->val = TVAR;
-        t0->concrete = true;
-        avP(t->bound, t0->id);
+        if (vN(class->type->bound) == 0) {
+                Type *t0 = NewVar(ty);
+                t0->val = TVAR;
+                t0->concrete = true;
+                avP(t->bound, t0->id);
+
+                class->object_type = NewType(ty, TYPE_OBJECT);
+                class->object_type->class = class;
+                class->object_type->concrete = true;
+                avP(class->object_type->args, t0);
+        } else {
+                avPv(t->bound, class->type->bound);
+        }
 
         class->type = t;
-        class->object_type = NewType(ty, TYPE_OBJECT);
-        class->object_type->class = class;
-        class->object_type->concrete = true;
-        avP(class->object_type->args, t0);
 
         return t;
 }
@@ -2698,16 +2655,8 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 a0 = type_resolve(ty, var->left);
                                 b0 = type_resolve(ty, var->right);
                                 c0 = type_resolve(ty, bound->bound);
-                                if (IsTVar(a0)) {
-                                        Type *l0 = OperandRecord(ty, NULL, op, b0, c0);
-                                        avP(t->constraints, CONSTRAINT(.type = TC_SUB, .t0 = a0, .t1 = l0));
-                                        PutEnv(ty, ty->tenv, a0->id, l0);
-                                }
-                                if (IsTVar(b0)) {
-                                        Type *r0 = OperandRecord(ty, a0, op, NULL, c0);
-                                        avP(t->constraints, CONSTRAINT(.type = TC_SUB, .t0 = b0, .t1 = r0));
-                                        PutEnv(ty, ty->tenv, a0->id, r0);
-                                }
+                                avP(t->constraints, CONSTRAINT(.type = TC_2OP, .t0 = a0, .t1 = c0, .t2 = c0, .op = op));
+                                //PutEnv(ty, ty->tenv, a0->id, l0);
                                 break;
                         }
                 }
@@ -4482,7 +4431,7 @@ UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
         int i = (ud == 0) ? GetTimingEntry(ty, super ? t0 : t1, super ? t1 : t0) : -1;
 
         u64 start = TyThreadCPUTime();
-        bool ok = !CheckConstraints || UnifyXD(ty, t0, t1, super, false, false);
+        bool ok = !ENABLED || UnifyXD(ty, t0, t1, super, false, false);
         u64 end = TyThreadCPUTime();
 
         if (ud == 0) {
@@ -4490,7 +4439,7 @@ UnifyX(Ty *ty, Type *t0, Type *t1, bool super, bool check)
                 TypeCheckTime += (end - start);
         }
 #else
-        bool ok = !CheckConstraints || UnifyXD(ty, t0, t1, super, false, false);
+        bool ok = !ENABLED || UnifyXD(ty, t0, t1, super, false, false);
 #endif
 
         if (!ok && check && ENFORCE) {
@@ -4518,6 +4467,10 @@ Unify(Ty *ty, Type *t0, Type *t1, bool super)
 static Type *
 TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
 {
+        if (!ENABLED) {
+                return UNKNOWN;
+        }
+
         t0 = Inst1(ty, ResolveVar(t0));
         t1 = Inst1(ty, ResolveVar(t1));
         t2 = Inst1(ty, ResolveVar(t2));
@@ -4531,6 +4484,17 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
         expression_vector args = { .items = argv, .count = 2 };
         expression_vector kwargs = {0};
         StringVector kws = {0};
+
+        if (
+                IsUnknown(t0)
+             || IsUnknown(t1)
+             || IsUnknown(t2)
+        ) {
+                UnifyX(ty, t0, UNKNOWN, true, true);
+                UnifyX(ty, t1, UNKNOWN, true, true);
+                UnifyX(ty, t2, UNKNOWN, true, true);
+                return UNKNOWN;
+        }
 
         for (int i = 0; i < UnionCount(t0); ++i) {
                 Type *t00 = UnionElem(t0, i);
@@ -5663,7 +5627,7 @@ SolveMemberAccess(Ty *ty, Type const *t0, Type const *t1)
 {
         t0 = Resolve(ty, t0);
 
-        if (TypeType(t0) != TYPE_OBJECT || IsTagged(t0)) {
+        if (TypeType(t0) != TYPE_OBJECT || IsAny(t0)) {
                 return (Type *)t1;
         }
 
@@ -5793,6 +5757,7 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                 return t1;
 
         case TYPE_CLASS:
+        case TYPE_TAG:
                 c = t0->class;
                 if (c->def == NULL) {
                         return UNKNOWN;
@@ -5811,56 +5776,16 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                 if (t1 != NULL) {
                         return SolveMemberAccess(ty, t0, t1);
                 }
-                t0 = class_get_class(ty, CLASS_CLASS)->object_type;
+
+                if (t0->type == TYPE_CLASS) {
+                        t0 = class_get_class(ty, CLASS_CLASS)->object_type;
+                } else {
+                        t0 = class_get_class(ty, CLASS_TAG)->object_type;
+                }
                 /* fallthrough */
 
         case TYPE_OBJECT:
-                if (IsTagged(t0)) {
-                        if (ENFORCE && strict) {
-                                goto NotFound;
-                        } else {
-                                return BOTTOM;
-                        }
-                }
                 c = t0->class;
-                if (*name == '(') {
-                        int i = strcspn(name, "LR");
-                        int n;
-                        int op;
-                        bool L;
-                        switch (name[i]) {
-                        case 'L':
-                                memcpy(&op, &name[i + 2], sizeof op);
-                                n = op_defs_for_l(op, c->i, &ops);
-                                L = true;
-                                break;
-
-                        case 'R':
-                                memcpy(&op, &name[i + 2], sizeof op);
-                                n = op_defs_for_r(op, c->i, &ops);
-                                L = false;
-                                break;
-
-                        default:
-                                return NULL;
-                        }
-                        if (n == 0) {
-                                return NULL;
-                        }
-                        for (int i = 0; i < n; ++i) {
-                                Type *f0 = v__(ops, i)->_type;
-                                Type *b0 = v_(f0->params, L ? 1 : 0)->type;
-                                Type *op0 = NewFunction(b0, f0->rt);
-                                for (int i = 0; i < vN(f0->bound); ++i) {
-                                        u32 id = v__(f0->bound, i);
-                                        if (RefersTo(op0, id)) {
-                                                avP(op0->bound, id);
-                                        }
-                                }
-                                t1 = type_both(ty, t1, op0);
-                        }
-                        break;
-                }
                 if (c->def == NULL) {
                         return UNKNOWN;
                 }
@@ -5996,8 +5921,6 @@ type_method_call_t(Ty *ty, Expr const *e, Type *t0, char const *name)
 
         switch (t0->type) {
         case TYPE_OBJECT:
-                t1 = type_member_access_t(ty, t0, name, false);
-                dont_printf("%s.%s() :: %s\n", t0->class->name, name, ShowType(t1));
         case TYPE_CLASS:
         case TYPE_TAG:
         case TYPE_VARIABLE:
@@ -6801,7 +6724,7 @@ type_check(Ty *ty, Type *t0, Type *t1)
                 return ok;
         }
 
-        ok = !CheckConstraints || type_check_x(ty, t0, t1, false);
+        ok = !ENABLED || type_check_x(ty, t0, t1, false);
 
         TLOG("%stype_check_x():%s", ok ? TERM(92) : TERM(91), TERM(0));
         TLOG("    %s", ShowType(t0));
@@ -6860,46 +6783,6 @@ type_list_item(Ty *ty, Type const *t0, int i)
         return ListItem(ty, t0, i, NIL_TYPE);
 }
 
-static Type *
-DictOf(Ty *ty, Type *k0, Type *v0)
-{
-        Type *t = CloneType(ty, TYPE_DICT);
-
-        v00(t->args);
-
-        Type *t1 = NewVar(ty);
-        Type *t2 = NewVar(ty);
-
-        if (!IsBottom(k0) && vN(ty->tcons) != 0) {
-                ConstraintVector *cons = vvL(ty->tcons);
-                avP(
-                        *cons,
-                        ((Constraint){
-                                .type = TC_SUB,
-                                .t0 = k0,
-                                .t1 = t1
-                        })
-                );
-        }
-
-        if (!IsBottom(v0) && vN(ty->tcons) != 0) {
-                ConstraintVector *cons = vvL(ty->tcons);
-                avP(
-                        *cons,
-                        ((Constraint){
-                                .type = TC_SUB,
-                                .t0 = v0,
-                                .t1 = t2
-                        })
-                );
-        }
-
-        avP(t->args, t1);
-        avP(t->args, t2);
-
-        return t;
-}
-
 Type *
 type_dict(Ty *ty, Expr const *e)
 {
@@ -6919,30 +6802,6 @@ type_dict(Ty *ty, Expr const *e)
         t->class = class_get_class(ty, CLASS_DICT);
         avP(t->args, Relax(t0));
         avP(t->args, Relax(t1));
-
-        return t;
-}
-
-static Type *
-ArrayOf(Ty *ty, Type *t0)
-{
-        Type *t1 = NewVar(ty);
-
-        if (t0 != NULL && vN(ty->tcons) != 0) {
-                ConstraintVector *cons = vvL(ty->tcons);
-                avP(
-                        *cons,
-                        ((Constraint){
-                                .type = TC_SUB,
-                                .t0 = t1,
-                                .t1 = t0
-                        })
-                );
-        }
-
-        Type *t = NewType(ty, TYPE_OBJECT);
-        t->class = class_get_class(ty, CLASS_ARRAY);
-        avP(t->args, t1);
 
         return t;
 }
@@ -7262,15 +7121,10 @@ type_resolve(Ty *ty, Expr const *e)
                         t0 = e->symbol->type;
                 } else if (!IsBottom(e->symbol->type) && !IsHole(e->symbol->type)) {
                         t0 = e->symbol->type;
+                } else if (SymbolIsTypeVar(e->symbol)) {
+                        return e->symbol->type;
                 } else {
-                        var = scope_find_symbol(ty->tscope, e->symbol);
-                        if (var != NULL) {
-                                t0 = var->type;
-                        } else if (SymbolIsTypeVar(e->symbol)) {
-                                return e->symbol->type;
-                        } else {
-                                t0 = BOTTOM;
-                        }
+                        t0 = BOTTOM;
                 }
                 if (t0 != NULL && t0->variadic != variadic) {
                         t0 = CloneType(ty, t0);
@@ -8927,7 +8781,6 @@ type_instance_of(Ty *ty, Type *t0, int class)
 void
 type_scope_push(Ty *ty, Expr *fun)
 {
-        //ty->tscope = scope_new(ty, "", ty->tscope, fun);
         xvP(FunStack, fun);
         EnterScope();
 }
@@ -9847,8 +9700,10 @@ type_iter(Ty *ty)
 {
         bool any = false;
 
-        while (TryProgress(ty)) {
-                any = true;
+        if (ENABLED) {
+                while (TryProgress(ty)) {
+                        any = true;
+                }
         }
 
         return any;

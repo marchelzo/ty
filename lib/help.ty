@@ -2,7 +2,7 @@ import ty
 import ty.lex as lex
 import ty.parse as parse
 import ty.token as tok
-import chalk (..)
+import chalk (chalk)
 import json
 import ffi as c (C!)
 

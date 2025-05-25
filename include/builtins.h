@@ -705,6 +705,8 @@ static struct {
   { .module = "ty",         .name = "scope",                    .value = BUILTIN(builtin_ty_scope)               },
   { .module = "ty",         .name = "parse",                    .value = BUILTIN(builtin_ty_parse)               },
   { .module = "ty",         .name = "tokenize",                 .value = BUILTIN(builtin_ty_tokenize)            },
+  { .module = "ty",         .name = "tokens",                   .value = BUILTIN(builtin_ty_tokens)              },
+  { .module = "ty",         .name = "text",                     .value = BUILTIN(builtin_ty_text)                },
   { .module = "ty",         .name = "disassemble",              .value = BUILTIN(builtin_ty_disassemble)         },
   { .module = "ty",         .name = "copySource",               .value = BUILTIN(builtin_ty_copy_source)         },
   { .module = "ty",         .name = "stripSource",              .value = BUILTIN(builtin_ty_strip_source)        },
@@ -744,6 +746,7 @@ static struct {
   { .module = "tdb",        .name = "context",                  .value = BUILTIN(builtin_tdb_context)            },
   { .module = "tdb",        .name = "locals",                   .value = BUILTIN(builtin_tdb_locals)             },
   { .module = "tdb",        .name = "ip",                       .value = BUILTIN(builtin_tdb_ip)                 },
+  { .module = "tdb",        .name = "insn",                     .value = BUILTIN(builtin_tdb_insn)               },
   { .module = "tdb",        .name = "breakpoint",               .value = BUILTIN(builtin_tdb_breakpoint)         },
   { .module = "tdb",        .name = "backtrace",                .value = BUILTIN(builtin_tdb_backtrace)          },
 

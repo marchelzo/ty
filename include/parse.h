@@ -7,8 +7,6 @@
 
 extern Expr *LastParsedExpr;
 
-typedef vec(struct token) TokenVector;
-
 struct statement **
 parse(Ty *ty, char const *source, char const *file);
 
@@ -47,7 +45,7 @@ void
 make_with(Ty *ty, struct expression *e, statement_vector defs, struct statement *body);
 
 char *
-gensym(Ty *ty);
+gensym();
 
 bool
 tokenize(Ty *ty, char const *source, TokenVector *tokens_out);

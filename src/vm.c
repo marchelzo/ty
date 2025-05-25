@@ -125,16 +125,15 @@ static char const *InstructionNames[] = {
 };
 #undef X
 
+/* ======/ RVL Section /============================/ TVSL Types /=========== */
 static char halt = INSTR_HALT;
-static char throw = INSTR_THROW;
 static char next_fix[] = { INSTR_NONE_IF_NIL, INSTR_RETURN_PRESERVE_CTX };
 static char iter_fix[] = { INSTR_SENTINEL, INSTR_GET_NEXT, INSTR_RETURN_PRESERVE_CTX };
 
 InternedNames NAMES;
 
-_Thread_local int EvalDepth = 0;
-
 static ValueVector Globals;
+/* ========================================================================== */
 
 struct sigfn {
         int sig;
@@ -147,19 +146,21 @@ static SigfnStack sigfns;
 
 #define TY_INSTR_INLINE
 
-#define STACK       (ty->stack)
-#define IP          (ty->ip)
-#define RC          (ty->rc)
-#define JB          (ty->jb)
-#define THROW_STACK (ty->throw_stack)
+#define IP            (ty->ip)
+#define CO_THREADS    (ty->cothreads)
+#define JB            (ty->jb)
+#define RC            (ty->rc)
+#define STACK         (ty->stack)
+#define THREAD_LOCALS (ty->tls)
+#define THROW_STACK   (ty->throw_stack)
 
-#define CALLS       (ty->st.calls)
-#define TARGETS     (ty->st.targets)
-#define FRAMES      (ty->st.frames)
-#define DROP_STACK  (ty->st.to_drop)
-#define SP_STACK    (ty->st.sps)
-#define TRY_STACK   (ty->st.try_stack)
-#define EXEC_DEPTH  (ty->st.exec_depth)
+#define CALLS         (ty->st.calls)
+#define DROP_STACK    (ty->st.to_drop)
+#define EXEC_DEPTH    (ty->st.exec_depth)
+#define FRAMES        (ty->st.frames)
+#define SP_STACK      (ty->st.sps)
+#define TARGETS       (ty->st.targets)
+#define TRY_STACK     (ty->st.try_stack)
 
 
 #define top()   ((top)(ty))
@@ -176,6 +177,8 @@ static SigfnStack sigfns;
 #ifdef TY_ENABLE_PROFILING
 bool UseWallTime = false;
 FILE *ProfileOut = NULL;
+
+static char throw = INSTR_THROW;
 
 inline static uint64_t TyThreadWallTime()
 {
@@ -266,11 +269,12 @@ static int64_t LastReportRequest;
 
 typedef struct {
         ValueStack *stack;
+        ValueVector *tls;
         FrameStack *frames;
         TargetStack *targets;
         ValueStack *drop_stack;
         TryStack *try_stack;
-        void *root_set;
+        GCRootSet *roots;
         AllocList *allocs;
         size_t *memory_used;
 } ThreadStorage;
@@ -319,7 +323,6 @@ static ThreadGroup MainGroup;
 static pthread_rwlock_t SigLock = PTHREAD_RWLOCK_INITIALIZER;
 #endif
 
-static _Thread_local vec(cothread_t) CoThreads;
 static _Thread_local Ty *co_ty;
 
 static _Thread_local Ty *MyTy;
@@ -340,7 +343,7 @@ inline static void
 DoUnaryOp(Ty *ty, int op, bool exec);
 
 static void
-InitializeTY(void)
+InitializeTY(Ty *ty)
 {
 #define X(op, id) intern(&xD.b_ops, id)
         TY_BINARY_OPERATORS;
@@ -351,6 +354,10 @@ InitializeTY(void)
 #undef X
 
         srandom(time(NULL));
+
+        xD.compiler = alloc0(sizeof *xD.compiler);
+
+        xD.ty = ty;
 }
 
 int
@@ -442,11 +449,11 @@ Forget(Ty *ty, Value *v, AllocList *allocs)
 static void
 InitThreadGroup(Ty *ty, ThreadGroup *g)
 {
-        vec_init(g->ThreadList);
-        vec_init(g->ThreadStates);
-        vec_init(g->ThreadStorages);
-        vec_init(g->ThreadLocks);
-        vec_init(g->DeadAllocs);
+        v00(g->ThreadList);
+        v00(g->ThreadStates);
+        v00(g->ThreadStorages);
+        v00(g->ThreadLocks);
+        v00(g->DeadAllocs);
         TyMutexInit(&g->Lock);
         TyMutexInit(&g->GCLock);
         TyMutexInit(&g->DLock);
@@ -530,6 +537,14 @@ DoGC(Ty *ty)
 
         TyMutexLock(&MyGroup->Lock);
 
+        dont_printf(
+                "[%.4f] [%s:%d] DoGC(): TDB_IS_%s\n",
+                TyThreadCPUTime() / 1.0e9,
+                I_AM_TDB ? "TDB" : "Ty",
+                (int)(TDB && TyThreadEqual(TyThreadSelf(), TDB->thread.thread->t)),
+                TDB_STATE_NAME
+        );
+
         GCLOG("Doing GC: MyGroup = %p, (%zu threads)", MyGroup, MyGroup->ThreadList.count);
 
         GCLOG("Took threads lock on thread %llu to do GC", TID);
@@ -591,10 +606,10 @@ DoGC(Ty *ty)
                         value_mark(ty, v_(Globals, i));
                 }
 
-                vec(Value const *) *immortal = GCImmortalSet(ty);
+                GCRootSet *immortal = GCImmortalSet(ty);
 
                 for (int i = 0; i < vN(*immortal); ++i) {
-                        value_mark(ty, v__(*immortal, i));
+                        value_mark(ty, v_(*immortal, i));
                 }
         }
 
@@ -870,6 +885,7 @@ xprint_stack(Ty *ty, int n)
 inline static void
 print_stack(Ty *ty, int n)
 {
+        return;
 #ifndef TY_NO_LOG
         LOG("STACK: (%zu)", STACK.count);
         for (int i = 0; i < n && i < STACK.count; ++i) {
@@ -889,7 +905,7 @@ inline static Value
 (pop)(Ty *ty)
 {
         Value v = *vvX(STACK);
-        LOG("POP: %s", VSC(&v));
+        //LOG("POP: %s", VSC(&v));
         print_stack(ty, 15);
         return v;
 }
@@ -904,7 +920,7 @@ inline static void
 (push)(Ty *ty, Value v)
 {
         xvP(STACK, v);
-        LOG("PUSH: %s", VSC(&v));
+        //LOG("PUSH: %s", VSC(&v));
         print_stack(ty, 10);
 }
 
@@ -925,7 +941,7 @@ inline static Value *
 {
         Target t = *vvX(TARGETS);
         if (t.gc != NULL) OKGC(t.gc);
-        LOG("Popping Target: %p", (void *)t.t);
+        //LOG("Popping Target: %p", (void *)t.t);
         return t.t;
 }
 
@@ -1017,12 +1033,12 @@ GetGeneratorForFrame(Ty *ty, int i)
 inline static cothread_t
 GetFreeCoThread(Ty *ty)
 {
-        if (vN(CoThreads) == 0) {
-                LOG("GetFreeCoThread(): new");
+        if (vN(CO_THREADS) == 0) {
+                GCLOG("GetFreeCoThread(): new");
                 return co_create(1u << 22, do_co);
         } else {
-                LOG("GetFreeCoThread(): recycled");
-                return co_derive(*vvX(CoThreads), 1u << 22, do_co);
+                GCLOG("GetFreeCoThread(): recycled");
+                return co_derive(*vvX(CO_THREADS), 1u << 22, do_co);
         }
 }
 
@@ -1042,7 +1058,7 @@ co_abort(Ty *ty)
         STACK.count = n - 1;
 
         SWAP(co_state, gen->st, ty->st);
-        SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
+        SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         vvX(FRAMES);
         IP = *vvX(CALLS);
@@ -1067,7 +1083,7 @@ co_yield_value(Ty *ty)
         gen->frame.count = 0;
 
         SWAP(co_state, gen->st, ty->st);
-        SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
+        SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         xvPn(gen->frame, STACK.items + n, STACK.count - n - 1);
 
@@ -1079,20 +1095,20 @@ co_yield_value(Ty *ty)
         IP = *vvX(CALLS);
 
         if (gen->st.exec_depth > 1) {
-                LOG("co_yield() [%p]: switch to [%p] with %s (RECURSED)", co_active(), gen->co, VSC(top()));
+                GCLOG("co_yield() [%p]: switch to [%p] with %s (RECURSED)", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = co_active();
                 co_switch(co);
         } else {
-                LOG("co_yield() [%p]: switch to [%p] with %s", co_active(), gen->co, VSC(top()));
+                GCLOG("co_yield() [%p]: switch to [%p] with %s", co_active(), gen->co, VSC(top()));
                 cothread_t co = gen->co;
                 gen->co = NULL;
                 gen->st.exec_depth = 0;
-                xvP(CoThreads, co_active());
+                xvP(CO_THREADS, co_active());
                 co_switch(co);
         }
 
-        LOG("co_yield() [%p]: resume", co_active());
+        GCLOG("co_yield() [%p]: resume", co_active());
 
         return true;
 }
@@ -1137,8 +1153,12 @@ call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
          * create an array and add any extra arguments to it.
          */
         if (irest != -1) {
+                gP(&self);
+
                 int nExtra = max(argc - irest, 0);
                 Array *extra = vAn(nExtra);
+
+                gX();
 
                 memcpy(v_(*extra, 0), v_(STACK, fp + irest), nExtra * sizeof (Value));
                 extra->count = nExtra;
@@ -1245,7 +1265,7 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         gen->fp = STACK.count;
 
         SWAP(co_state, gen->st, ty->st);
-        SWAP(GCRootSet, gen->gc_roots, *GCRoots(ty));
+        SWAP(GCRootSet, gen->gc_roots, RootSet);
 
         for (int i = 0; i < gen->frame.count; ++i) {
                 push(gen->frame.items[i]);
@@ -1257,18 +1277,18 @@ call_co_ex(Ty *ty, Value *v, int n, char *whence)
         if (gen->co != NULL) {
                 cothread_t co = gen->co;
                 gen->co = co_active();
-                LOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&gen->f), (void *)co);
+                GCLOG("co_call() [%p]: switch to %s on [%p]", co_active(), name_of(&gen->f), (void *)co);
                 co_switch(co);
         } else {
                 cothread_t co = GetFreeCoThread(ty);
                 gen->co = co_active();
-                LOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&gen->f), (void *)co);
+                GCLOG("co_call() [%p]: switch to %s on [%p] (NEW)", co_active(), name_of(&gen->f), (void *)co);
                 co_ty = ty;
                 co_switch(co);
 
         }
 
-        LOG("co_call() [%p]: back from %s with %s", co_active(), name_of(&v->gen->f), VSC(top()));
+        GCLOG("co_call() [%p]: back from %s with %s", co_active(), name_of(&v->gen->f), VSC(top()));
 }
 
 static void
@@ -1358,11 +1378,12 @@ AddThread(Ty *ty, TyThread self)
 
         MyStorage = (ThreadStorage) {
                 .stack = &STACK,
+                .tls = &THREAD_LOCALS,
                 .frames = &FRAMES,
                 .try_stack = &TRY_STACK,
                 .drop_stack = &DROP_STACK,
                 .targets = &TARGETS,
-                .root_set = GCRoots(ty),
+                .roots = &RootSet,
                 .allocs = &ty->allocs,
                 .memory_used = &MemoryUsed
         };
@@ -1395,7 +1416,7 @@ CleanupThread(void *ctx)
                 TyMutexLock(&MyGroup->DLock);
         }
 
-        vec_push_n_unchecked(MyGroup->DeadAllocs, ty->allocs.items, ty->allocs.count);
+        uvPv(MyGroup->DeadAllocs, ty->allocs);
         MyGroup->DeadUsed += MemoryUsed;
 
         ty->allocs.count = 0;
@@ -1406,14 +1427,14 @@ CleanupThread(void *ctx)
 
         TyMutexLock(&MyGroup->Lock);
 
-        GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %llu", TID, MyGroup->ThreadList.count);
+        GCLOG("Got threads lock on thread: %llu -- ready to clean up. Group size = %zu", TID, vN(MyGroup->ThreadList));
 
         for (int i = 0; i < MyGroup->ThreadList.count; ++i) {
                 if (MyLock == MyGroup->ThreadLocks.items[i]) {
-                        MyGroup->ThreadList.items[i] = *vvX(MyGroup->ThreadList);
-                        MyGroup->ThreadLocks.items[i] = *vvX(MyGroup->ThreadLocks);
-                        MyGroup->ThreadStorages.items[i] = *vvX(MyGroup->ThreadStorages);
-                        MyGroup->ThreadStates.items[i] = *vvX(MyGroup->ThreadStates);
+                        *v_(MyGroup->ThreadList, i) = *vvX(MyGroup->ThreadList);
+                        *v_(MyGroup->ThreadLocks, i) = *vvX(MyGroup->ThreadLocks);
+                        *v_(MyGroup->ThreadStorages, i) = *vvX(MyGroup->ThreadStorages);
+                        *v_(MyGroup->ThreadStates, i) = *vvX(MyGroup->ThreadStates);
                         break;
                 }
         }
@@ -1424,7 +1445,7 @@ CleanupThread(void *ctx)
 
         for (int i = 0; i < TRY_STACK.capacity; ++i) {
                 struct try *t = *v_(TRY_STACK, i);
-                vvF(t->defer);
+                xvF(t->defer);
                 free(t);
         }
 
@@ -1432,6 +1453,8 @@ CleanupThread(void *ctx)
         free(MyLock);
         free((void *)MyState);
         free(STACK.items);
+        free(THREAD_LOCALS.items);
+        free(RootSet.items);
         free(CALLS.items);
         free(FRAMES.items);
         free(SP_STACK.items);
@@ -1443,9 +1466,6 @@ CleanupThread(void *ctx)
         pcre2_match_data_free(ty->pcre2.match);
         pcre2_match_context_free(ty->pcre2.ctx);
         pcre2_jit_stack_free(ty->pcre2.stack);
-
-        vec(Value const *) *root_set = (void *)GCRoots(ty);
-        free(root_set->items);
 
         if (group_remaining == 0) {
                 GCLOG("Cleaning up group %p", (void*)MyGroup);
@@ -1503,13 +1523,14 @@ vm_run_thread(void *p)
 
         *ctx->created = true;
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
                 // TODO: do something useful here
                 fprintf(stderr, "Thread %lld dying with error: %s\n", TID, Error);
                 OKGC(t);
                 t->v = NIL;
         } else {
                 t->v = vmC(call, argc);
+                TY_CATCH_END();
         }
 
 #ifndef _WIN32
@@ -1531,6 +1552,90 @@ vm_run_thread(void *p)
         return TY_THREAD_OK;
 }
 
+static TyThreadReturnValue
+vm_run_tdb(void *ctx)
+{
+        Ty *ty = mrealloc(NULL, sizeof *ty);
+        InitializeTy(ty);
+
+        TDB = ctx;
+        Thread *t = TDB->thread.thread;
+
+        MyTy = TDB->ty = ty;
+        MyId = t->i;
+
+        MyGroup = TDB->host->my_group;
+
+        AddThread(ty, t->t);
+
+        if (TY_CATCH_ERROR()) {
+                fprintf(stderr, "TDB thread unrecoverable error: %s\n", TyError(ty));
+                goto TDB_HAS_BEEN_STOPPED;
+        }
+
+#ifndef _WIN32
+        pthread_cleanup_push(CleanupThread, ty);
+#endif
+
+        *((atomic_bool *)t->v.ptr) = true;
+
+        for (;;) {
+                if (TY_CATCH_ERROR()) {
+                        fprintf(stderr, "TDB thread error: %s\n", TyError(ty));
+                        goto KeepRunning;
+                }
+
+                lGv(true);
+
+                TyMutexLock(&TDB_MUTEX);
+                while (TDB_IS(STOPPED)) {
+                        TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
+                }
+
+                lTk();
+
+                DebugBreakpoint *breakpoint = tdb_get_break(ty, TDB->host->ip);
+
+                if (breakpoint   != NULL) *breakpoint->ip = breakpoint->op;
+                if (TDB->next.ip != NULL) *TDB->next.ip   = TDB->next.op;
+                if (TDB->alt.ip  != NULL) *TDB->alt.ip    = TDB->alt.op;
+
+                Value *hook;
+                if (
+                        (vN(Globals) > NAMES.tdb_hook)
+                     && (hook = v_(Globals, NAMES.tdb_hook))->type != VALUE_NIL
+                ) {
+                        TDB_IS_NOW(ACTIVE);
+                        vm_call(ty, hook, 0);
+                }
+
+                TY_CATCH_END();
+
+KeepRunning:
+                TDB_IS_NOW(STOPPED);
+
+                TyMutexUnlock(&TDB_MUTEX);
+                TyCondVarSignal(&TDB_CONDVAR);
+        }
+
+TDB_HAS_BEEN_STOPPED:
+
+        TDB_IS_NOW(DEAD);
+        TyMutexUnlock(&TDB_MUTEX);
+        TyCondVarSignal(&TDB_CONDVAR);
+
+#ifndef _WIN32
+        pthread_cleanup_pop(1);
+#else
+        CleanupThread(ty);
+#endif
+        TyMutexLock(&t->mutex);
+        t->alive = false;
+        TyMutexUnlock(&t->mutex);
+        TyCondVarSignal(&t->cond);
+
+        return TY_THREAD_OK;
+}
 
 void
 vm_del_sigfn(Ty *ty, int sig)
@@ -1700,8 +1805,7 @@ DoThrow(Ty *ty)
                                 IP = t->catch;
                                 EXEC_DEPTH = t->exec_depth;
 
-                                //printf("truncate: %zu -> %zu\n", GCRoots(ty)->count, (size_t)t->gc);
-                                gc_truncate_root_set(ty, t->gc);
+                                RootSet.count = min(vN(RootSet), t->gc);
 
                                 push(SENTINEL);
                                 push(ex);
@@ -3646,8 +3750,6 @@ vm_try_exec(Ty *_ty, char *code)
 {
         Ty * volatile ty = _ty;
 
-        SAVE_(jmp_buf, JB);
-
         size_t volatile nframes = FRAMES.count;
 
         // FIXME: don't need to allocate a new stack
@@ -3657,8 +3759,7 @@ vm_try_exec(Ty *_ty, char *code)
         size_t volatile sp = vN(STACK);
         char * volatile save = IP;
 
-        if (setjmp(JB) != 0) {
-                RESTORE_(JB);
+        if (TY_CATCH_ERROR()) {
                 FRAMES.count = nframes;
                 TRY_STACK = ts;
                 STACK.count = sp;
@@ -3668,10 +3769,11 @@ vm_try_exec(Ty *_ty, char *code)
 
         vm_exec(ty, code);
 
-        RESTORE_(JB);
         FRAMES.count = nframes;
         TRY_STACK = ts;
         IP = save;
+
+        TY_CATCH_END();
 
         return pop();
 }
@@ -3707,6 +3809,35 @@ vm_exec(Ty *ty, char *code)
         if (ty->GC_OFF_COUNT == 0 && MyGroup->WantGC) {
                 WaitGC(ty);
         }
+
+#if 0
+        static u64 iii = 0;
+        if ((iii & 0xFF) == 0) {
+                Expr const *e = compiler_find_expr(ty, IP);
+                if (e != NULL) {
+                        fprintf(
+                                stderr,
+                                "[Thr%-2d:%s:%s] %s: %s:%d\n",
+                                (int)MyId,
+                                (I_AM_TDB ? "TDB" : "Ty"),
+                                TDB_STATE_NAME,
+                                GetInstructionName(*IP),
+                                e->file,
+                                e->start.line + 1
+                        );
+                } else {
+                        fprintf(
+                                stderr,
+                                "[Thr%-2d:%s:%s] %s\n",
+                                (int)MyId,
+                                (I_AM_TDB ? "TDB" : "Ty"),
+                                TDB_STATE_NAME,
+                                GetInstructionName(*IP)
+                        );
+                }
+        }
+#endif
+
         for (int N = 0; N < 32; ++N) {
         NextInstruction:
 #ifdef TY_ENABLE_PROFILING
@@ -3763,7 +3894,7 @@ vm_exec(Ty *ty, char *code)
 
                 }
 #endif
-                switch ((unsigned char)*IP++) {
+                switch ((u8)*IP++) {
                 CASE(NOP)
                         continue;
                 CASE(LOAD_LOCAL)
@@ -3803,6 +3934,17 @@ vm_exec(Ty *ty, char *code)
                         SKIPSTR();
 #endif
                         push(Globals.items[n]);
+                        break;
+                CASE(LOAD_THREAD_LOCAL)
+                        READVALUE(n);
+#ifndef TY_NO_LOG
+                        LOG("Loading thread-local: %s (%d)", IP, n);
+                        SKIPSTR();
+#endif
+                        while (vN(THREAD_LOCALS) <= n) {
+                                xvP(THREAD_LOCALS, NIL);
+                        }
+                        push(v__(THREAD_LOCALS, n));
                         break;
                 CASE(CHECK_INIT)
                         if (top()->type == VALUE_UNINITIALIZED) {
@@ -3942,6 +4084,13 @@ TargetGlobal:
                         while (Globals.count <= n)
                                 xvP(Globals, NIL);
                         pushtarget(&Globals.items[n], NULL);
+                        break;
+                CASE(TARGET_THREAD_LOCAL)
+                        READVALUE(n);
+                        while (vN(THREAD_LOCALS) <= n) {
+                                xvP(THREAD_LOCALS, NIL);
+                        }
+                        pushtarget(v_(THREAD_LOCALS, n), NULL);
                         break;
                 CASE(TARGET_LOCAL)
                         if (FRAMES.count == 0)
@@ -4286,7 +4435,7 @@ AssignGlobal:
                         t->end = (n == -1) ? NULL : IP + n;
 
                         t->sp = STACK.count;
-                        t->gc = gc_root_set_count(ty);
+                        t->gc = vN(RootSet);
                         t->cs = CALLS.count;
                         t->ts = TARGETS.count;
                         t->ds = DROP_STACK.count;
@@ -4340,8 +4489,8 @@ AssignGlobal:
                         }
                         break;
                 CASE(ENSURE_EQUALS_VAR)
-                        v = pop();
                         READVALUE(n);
+                        v = pop();
                         if (!value_test_equality(ty, top(), &v)) {
                                 IP += n;
                         }
@@ -4731,9 +4880,10 @@ Yield:
 #endif
                         break;
                 CASE(TRAP_TY)
-                        TDB_IS_NOW(STOPPED);
-                        IP -= 1;
-                        tdb_go(ty);
+                        if (!I_AM_TDB) {
+                                IP -= 1;
+                                tdb_go(ty);
+                        }
                         break;
                 CASE(GET_NEXT)
                         IterGetNext(ty);
@@ -5725,11 +5875,12 @@ RunExitHooks(void)
         bool bReprintFirst = false;
 
         for (size_t i = 0; i < hooks->count; ++i) {
-                if (setjmp(JB) != 0) {
+                if (TY_CATCH_ERROR()) {
                         vvP(msgs, sclone_malloc(Error));
                 } else {
                         Value v = vmC(&hooks->items[i], 0);
                         bReprintFirst = bReprintFirst || value_truthy(ty, &v);
+                        TY_CATCH_END();
                 }
         }
 
@@ -5747,7 +5898,7 @@ vm_init(Ty *ty, int ac, char **av)
 {
         curl_global_init(CURL_GLOBAL_ALL);
 
-        InitializeTY();
+        InitializeTY(ty);
         InitializeTy(ty);
 
         TY_IS_READY = false;
@@ -5786,7 +5937,7 @@ vm_init(Ty *ty, int ac, char **av)
 
         InitThreadGroup(ty, MyGroup = &MainGroup);
 
-        NewArena(1ULL << 22);
+        NewArenaNoGC(ty, 1ULL << 22);
 
         compiler_init(ty);
 
@@ -5794,12 +5945,15 @@ vm_init(Ty *ty, int ac, char **av)
 
         AddThread(ty, TyThreadSelf());
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
+                GC_RESUME();
                 return false;
         }
 
         char *prelude = compiler_load_prelude(ty);
         if (prelude == NULL) {
+                TY_CATCH_END();
+                GC_RESUME();
                 return false;
         }
 
@@ -5812,6 +5966,7 @@ vm_init(Ty *ty, int ac, char **av)
         sqlite_load(ty);
 
         GC_RESUME();
+        TY_CATCH_END();
 
 #ifdef TY_ENABLE_PROFILING
         Samples = dict_new(ty);
@@ -5881,9 +6036,9 @@ Next:
 
         Error = ErrorBuffer.items;
 
-        LOG("VM Error: %s", Error);
+        XLOG("VM Error: %s", Error);
 
-        longjmp(JB, 1);
+        TY_THROW_ERROR();
 }
 
 void
@@ -6281,6 +6436,30 @@ ProfilerSIGINT(int _)
 }
 #endif
 
+#ifdef TY_CATCH_SIGSEGV
+static void
+cringe(int _)
+{
+        static u32 n;
+
+        if (++n > 1) { return; }
+
+        Ty *ty0 = ty;
+        Ty *ty = (ty0->tdb == NULL || ty0->tdb->state == TDB_STATE_STOPPED) ? ty0 : ty0->tdb->ty;
+
+#ifdef UNW_LOCAL_ONLY
+        print_stack_trace();
+#endif
+
+        zP(
+                "xdDDDDDD: TDB state: %s  Am I TDB? %d  Am I on the TDB thread? %d",
+                TDB_STATE_NAME,
+                (int)I_AM_TDB,
+                TDB && TyThreadEqual(TyThreadSelf(), TDB->thread.thread->t)
+        );
+}
+#endif
+
 bool
 vm_load_program(Ty *_ty, char const *source, char const *file)
 {
@@ -6292,15 +6471,15 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
 
         GC_STOP();
 
-        gc_clear_root_set(ty);
-        STACK.count = 0;
-        SP_STACK.count = 0;
-        TRY_STACK.count = 0;
-        TARGETS.count = 0;
+        v0(RootSet);
+        v0(STACK);
+        v0(SP_STACK);
+        v0(TRY_STACK);
+        v0(TARGETS);
 
         char * volatile code = NULL;
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
                 filename = NULL;
                 GC_RESUME();
                 return false;
@@ -6309,6 +6488,7 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
         code = compiler_compile_source(ty, source, filename);
         if (code == NULL) {
                 filename = NULL;
+                TY_CATCH_END();
                 GC_RESUME();
                 return false;
         }
@@ -6320,6 +6500,7 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
                 free(out.items);
         }
 
+        TY_CATCH_END();
         GC_RESUME();
 
         ty->code = code;
@@ -6341,19 +6522,22 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 return true;
         }
 
-        if (setjmp(JB) != 0) {
+        if (TY_CATCH_ERROR()) {
                 filename = NULL;
                 return false;
         }
 
-        if (DEBUGGING) {
+        if (DEBUGGING && !I_AM_TDB) {
                 IP = ty->code;
-                TDB_IS_NOW(STOPPED);
                 tdb_go(ty);
         }
 
 #ifdef TY_ENABLE_PROFILING
         void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
+#endif
+
+#ifdef TY_CATCH_SIGSEGV
+        signal(SIGSEGV, cringe);
 #endif
 
         TY_IS_READY = true;
@@ -6366,6 +6550,8 @@ vm_execute(Ty *ty, char const *source, char const *file)
         if (PrintResult && STACK.capacity > 0) {
                 printf("%s\n", VSC(top() + 1));
         }
+
+        TY_CATCH_END();
 
         filename = NULL;
 
@@ -6701,19 +6887,23 @@ vm_try_2op(Ty *ty, int op, Value const *a, Value const *b)
         return pop();
 }
 
+
 void
 MarkStorage(Ty *ty, ThreadStorage const *storage)
 {
-        vec(Value const *) *root_set = storage->root_set;
+        GCLOG("Marking root set (%zu items)", vN(*storage->roots));
+        for (int i = 0; i < vN(*storage->roots); ++i) {
+                value_mark(ty, v_(*storage->roots, i));
+        }
 
-        GCLOG("Marking root set (%zu items)", gc_root_set_count(ty));
-        for (int i = 0; i < root_set->count; ++i) {
-                value_mark(ty, root_set->items[i]);
+        GCLOG("Marking thread-local storage");
+        for (int i = 0; i < vN(*storage->tls); ++i) {
+                value_mark(ty, v_(*storage->tls, i));
         }
 
         GCLOG("Marking stack");
-        for (int i = 0; i < storage->stack->count; ++i) {
-                value_mark(ty, &storage->stack->items[i]);
+        for (int i = 0; i < vN(*storage->stack); ++i) {
+                value_mark(ty, v_(*storage->stack, i));
         }
 
         GCLOG("Marking try stack");
@@ -6725,20 +6915,21 @@ MarkStorage(Ty *ty, ThreadStorage const *storage)
         }
 
         GCLOG("Marking drop stack");
-        for (int i = 0; i < storage->drop_stack->count; ++i) {
-                value_mark(ty, &storage->drop_stack->items[i]);
+        for (int i = 0; i < vN(*storage->drop_stack); ++i) {
+                value_mark(ty, v_(*storage->drop_stack, i));
         }
 
         GCLOG("Marking targets");
-        for (int i = 0; i < storage->targets->count; ++i) {
-                if ((((uintptr_t)storage->targets->items[i].t) & 0x07) == 0) {
-                        value_mark(ty, storage->targets->items[i].t);
+        for (int i = 0; i < vN(*storage->targets); ++i) {
+                Target *target = v_(*storage->targets, i);
+                if ((((uintptr_t)target->t) & 0x07) == 0) {
+                        value_mark(ty, target->t);
                 }
         }
 
         GCLOG("Marking frame functions");
-        for (int i = 0; i < storage->frames->count; ++i) {
-                value_mark(ty, &storage->frames->items[i].f);
+        for (int i = 0; i < vN(*storage->frames); ++i) {
+                value_mark(ty, &v_(*storage->frames, i)->f);
         }
 }
 
@@ -6763,29 +6954,14 @@ StepInstruction(char const *ip)
         double x;
         int n, nkw = 0, i, j, tag;
 
-        switch ((unsigned char)*ip++) {
+        switch ((u8)*ip++) {
         CASE(NOP)
                 break;
         CASE(LOAD_LOCAL)
-                SKIPVALUE(n);
-#ifndef TY_NO_LOG
-                SKIPSTR();
-#endif
-                break;
         CASE(LOAD_REF)
-                SKIPVALUE(n);
-#ifndef TY_NO_LOG
-                SKIPSTR();
-#endif
-                break;
         CASE(LOAD_CAPTURED)
-                SKIPVALUE(n);
-#ifndef TY_NO_LOG
-                SKIPSTR();
-#endif
-
-                break;
         CASE(LOAD_GLOBAL)
+        CASE(LOAD_THREAD_LOCAL)
                 SKIPVALUE(n);
 #ifndef TY_NO_LOG
                 SKIPSTR();
@@ -7279,39 +7455,41 @@ tdb_start(Ty *ty)
                 return;
         }
 
-        TDB = alloc0(sizeof *ty->tdb);
+        atomic_bool created = false;
+
+        Thread *t = alloc0(sizeof *t);
+        t->i = NextThreadId();
+        t->v = PTR(&created);
+
+        TDB = alloc0(sizeof *TDB);
         TDB->hook = NONE;
-        TDB->thread = NONE;
+        TDB->thread = THREAD(t);
         TDB->host = ty;
 
-        TDB->ty = mrealloc(NULL, sizeof *ty);
-        InitializeTy(TDB->ty);
+        lGv(true);
 
-        TDB->ty->tdb = TDB;
-        TDB->ty->my_group = MyGroup;
+        TyMutexInit(&TDB_MUTEX);
+        TyCondVarInit(&TDB_CONDVAR);
+        t->alive = true;
 
-        TDB_IS_NOW(ACTIVE);
+        TyMutexLock(&TDB_MUTEX);
+        TDB_IS_NOW(STOPPED);
+
+        int r = TyThreadCreate(&t->t, vm_run_tdb, TDB);
+        if (r != 0) {
+                zP("TyThreadCreate(): %s", strerror(r));
+        }
+
+        while (!created) {
+                continue;
+        }
+
+        lTk();
 }
 
 void
 tdb_eval_hook(Ty *ty)
 {
-        Value *hook = v_(Globals, NAMES.tdb_hook);
-
-        if (hook->type == VALUE_NIL) {
-                return;
-        }
-
-        if (setjmp(TDB->ty->jb) != 0) {
-                fprintf(stderr, "Error while running tdb hook: %s\n", TyError(TDB->ty));
-                return;
-        }
-
-        LOG("tdb_eval_hook(): START");
-
-        vm_call(TDB->ty, hook, 0);
-
-        LOG("tdb_eval_hook(): END");
 }
 
 Value
@@ -7415,46 +7593,46 @@ tdb_step_line(Ty *ty)
 bool
 tdb_step_over(Ty *ty)
 {
-        ty = TDB->host;
-
-        switch (*IP) {
+        switch ((u8)*IP) {
         CASE(HALT)
                 return true;
         CASE(RETURN)
                 tdb_set_trap(&TDB->alt, *vvL(CALLS));
                 break;
-        CASE(JUMP)
-        CASE(JLT)
-        CASE(JLE)
-        CASE(JGT)
-        CASE(JGE)
-        CASE(JEQ)
-        CASE(JNE)
-        CASE(JUMP_OR)
-        CASE(JUMP_AND)
-        CASE(JUMP_WTF)
-        CASE(JUMP_IF)
-        CASE(JUMP_IF_NOT)
-        CASE(JUMP_IF_NIL)
-        CASE(JUMP_IF_NONE)
-        CASE(JUMP_IF_TYPE)
-        CASE(JUMP_IF_SENTINEL)
+        CASE(ARRAY_REST)
+        CASE(ENSURE_CONTAINS)
+        CASE(ENSURE_DICT)
+        CASE(ENSURE_EQUALS_VAR)
         CASE(ENSURE_LEN)
         CASE(ENSURE_LEN_TUPLE)
-        CASE(ENSURE_EQUALS_VAR)
-        CASE(TRY_ASSIGN_NON_NIL)
-        CASE(TRY_REGEX)
-        CASE(ENSURE_DICT)
-        CASE(ENSURE_CONTAINS)
         CASE(ENSURE_SAME_KEYS)
+        CASE(JEQ)
+        CASE(JGE)
+        CASE(JGT)
+        CASE(JLE)
+        CASE(JLT)
+        CASE(JNE)
+        CASE(JUMP)
+        CASE(JUMP_AND)
+        CASE(JUMP_IF)
+        CASE(JUMP_IF_NIL)
+        CASE(JUMP_IF_NONE)
+        CASE(JUMP_IF_NOT)
+        CASE(JUMP_IF_SENTINEL)
+        CASE(JUMP_IF_TYPE)
+        CASE(JUMP_OR)
+        CASE(JUMP_WTF)
+        CASE(LOOP_CHECK)
+        CASE(NONE_IF_NOT)
+        CASE(RECORD_REST)
+        CASE(TRY_ASSIGN_NON_NIL)
         CASE(TRY_INDEX)
         CASE(TRY_INDEX_TUPLE)
-        CASE(TRY_TUPLE_MEMBER)
-        CASE(TRY_TAG_POP)
-        CASE(ARRAY_REST)
-        CASE(TUPLE_REST)
-        CASE(RECORD_REST)
+        CASE(TRY_REGEX)
         CASE(TRY_STEAL_TAG)
+        CASE(TRY_TAG_POP)
+        CASE(TRY_TUPLE_MEMBER)
+        CASE(TUPLE_REST)
                 tdb_set_trap(&TDB->alt, IP + 1 + load_int(IP + 1) + sizeof (int));
         }
 
@@ -7472,7 +7650,7 @@ tdb_step_into(Ty *ty)
 
         ty = TDB->host;
 
-        switch (*IP) {
+        switch ((u8)*IP) {
         CASE(CALL)
                 v = peek();
                 break;
@@ -7509,6 +7687,24 @@ tdb_step_into(Ty *ty)
 
 void
 tdb_go(Ty *ty)
+{
+        TDB_IS_NOW(STARTING);
+
+        TyMutexUnlock(&TDB_MUTEX);
+        TyCondVarSignal(&TDB_CONDVAR);
+
+        lGv(true);
+
+        TyMutexLock(&TDB_MUTEX);
+        while (!TDB_IS(STEPPING) && !TDB_IS(STOPPED)) {
+                TyCondVarWait(&TDB_CONDVAR, &TDB_MUTEX);
+        }
+
+        lTk();
+}
+
+void
+tdb_go2(Ty *ty)
 {
         DebugBreakpoint *breakpoint = tdb_get_break(ty, IP);
 

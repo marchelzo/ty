@@ -12,9 +12,13 @@ enum {
 inline static void
 ExpandArena(Ty *ty)
 {
-        size_t size = 2 * (A.end - (A.base + RESERVED));
-        Arena old = A.gc ? NewArenaGC(ty, size) : NewArenaNoGC(ty, size);
-        *NextArena(&A) = old;
+        if (A.base == NULL) {
+                NewArenaGC(ty, 1 << 20);
+        } else {
+                size_t size = 2 * (A.end - (A.base + RESERVED));
+                Arena old = A.gc ? NewArenaGC(ty, size) : NewArenaNoGC(ty, size);
+                *NextArena(&A) = old;
+        }
 }
 
 Arena

@@ -13,7 +13,6 @@ extern char const *QueryFile;
 extern Symbol const *QueryResult;
 extern Expr const *QueryExpr;
 
-
 typedef struct location Location;
 typedef struct expression Expr;
 typedef struct symbol Symbol;
@@ -54,13 +53,16 @@ struct import {
 
 typedef vec(struct import) import_vector;
 
-struct module {
-        char const *name;
-        char const *path;
+typedef struct module {
         char *code;
         Scope *scope;
         import_vector imports;
-};
+        char const *name;
+        char const *path;
+        char const *source;
+        Stmt **prog;
+        TokenVector tokens;
+} Module;
 
 typedef vec(struct eloc) location_vector;
 
@@ -170,6 +172,7 @@ typedef struct compiler_state {
         Location mend;
 
         location_vector expression_locations;
+        TokenVector source_tokens;
 } CompileState;
 
 void
@@ -307,9 +310,6 @@ compiler_eval(Ty *ty, Expr *e);
 Stmt *
 cstmt(Ty *ty, Value *);
 
-void *
-compiler_swap_jb(Ty *ty, void *);
-
 void
 compiler_set_type_of(Ty *ty, Stmt *);
 
@@ -386,6 +386,15 @@ CompilerResolveExpr(Ty *ty, Expr *e);
 void *
 CompilerPushContext(Ty *ty, void const *ctx);
 
+char const *
+GetExpressionModule(Ty *ty, Expr const *e);
+
+bool
+CompilerGetModuleTokens(Ty *ty, TokenVector *out, char const *mod);
+
+char const *
+CompilerGetModuleSource(Ty *ty, char const *mod);
+
 int
 Expr2Op(Expr const *e);
 
@@ -398,8 +407,5 @@ DumpProgram(
         char const *end,
         bool incl_sub_fns
 );
-
-noreturn void
-CompileError(Ty *ty, char const *fmt, ...);
 
 #endif

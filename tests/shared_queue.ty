@@ -1,27 +1,41 @@
-import os (..)
+import os (sleep)
 
-let N = 5000
+let N = 1250
 
 let queue = SharedQueue()
+let threads = []
 
-Thread(function () {
-    sleep(0.1)
-    for i in ..N {
-        queue.put(i)
-    }
-})
+fn thread(f) { let t = Thread(f); threads.push(t); t }
 
-if let Some(i) = queue.tryTake() {
+if let Some(_) = queue.tryTake() {
     print('FAIL')
 }
 
-let out = []
-
-while #out < N and let Some(i) = queue.tryTake(-1) {
-    out.push(i)
+for _ in ..6 {
+    thread(fn () {
+        sleep(0.2)
+        for i in ..N {
+            queue.put(i)
+        }
+    })
 }
 
-if out != [*..N] {
+let out = Sync([])
+
+for id in ..3 {
+    thread(fn () {
+        for _ in ..2*N {
+            try let Some(i) = queue.tryTake(-1) or else {
+                throw 'FAIL'
+            }
+            out.push(i)
+        }
+    })
+}
+
+for threads { it.join()  }
+
+if out.sort() != [*(i for ..6) for i in ..N].sort() {
     print('FAIL')
 }
 
