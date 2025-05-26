@@ -285,6 +285,7 @@ typedef struct ParserState {
         bool NoAndOr;
         bool NoPipe;
         bool TypeContext;
+        //bool LValueContext;
 } ParserState;
 
 Expr *LastParsedExpr;
@@ -327,6 +328,7 @@ static Expr NullExpr = {
 #define TemplateExprs     (state.TemplateExprs)
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
+#define LValueContext     (state.LValueContext)
 #define tokens            (state.tokens)
 #define uopcs             (uopcs)
 #define uops              (uops)
@@ -349,6 +351,7 @@ static enum {
 #define SAVE_NP(b) bool NPSave = NoPipe; NoPipe = (b);
 #define SAVE_NA(b) bool NASave = NoAndOr; NoAndOr = (b);
 #define SAVE_TC(b) bool TCSave = TypeContext; TypeContext = (b);
+#define SAVE_LC(b) 0 // bool LCSave = LValueContext; LValueContext = (b);
 
 #define LOAD_NE() NoEquals = NESave;
 #define LOAD_NC() NoConstraint = NCSave;
@@ -356,6 +359,7 @@ static enum {
 #define LOAD_NP() NoPipe = NPSave;
 #define LOAD_NA() NoAndOr = NASave;
 #define LOAD_TC() TypeContext = TCSave;
+#define LOAD_LC() 0 // LValueContext = LCSave;
 
 noreturn static void
 error(Ty *ty, char const *fmt, ...);
@@ -2459,7 +2463,7 @@ static Expr *
 prefix_typeof(Ty *ty)
 {
         Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_TYPEOF;
+        e->type = EXPRESSION_TYPE_OF;
 
         consume_keyword(KEYWORD_TYPEOF);
 
@@ -4121,22 +4125,32 @@ End:
 }
 
 static Expr *
-infix_alias(Ty *ty, Expr *left)
+infix_as(Ty *ty, Expr *left)
 {
         consume_keyword(KEYWORD_AS);
 
-        Expr *alias = parse_expr(ty, 0);
+        if (NoEquals) {
+                Expr *alias = parse_expr(ty, 99);
 
-        if (alias->type != EXPRESSION_IDENTIFIER) {
-                EStart = alias->start;
-                EEnd = alias->end;
-                error(ty, "pattern alias must be an identifier");
+                if (alias->type != EXPRESSION_IDENTIFIER) {
+                        EStart = alias->start;
+                        EEnd = alias->end;
+                        error(ty, "pattern alias must be an identifier");
+                }
+
+                alias->type = EXPRESSION_ALIAS_PATTERN;
+                alias->aliased = left;
+
+                return alias;
+        } else {
+                Expr *cast = mkexpr(ty);
+                cast->type = EXPRESSION_CAST;
+                cast->left = left;
+                cast->right = parse_expr(ty, 1);
+                cast->start = left->start;
+                cast->end = TEnd;
+                return cast;
         }
-
-        alias->type = EXPRESSION_ALIAS_PATTERN;
-        alias->aliased = left;
-
-        return alias;
 }
 
 static Expr *
@@ -4706,7 +4720,7 @@ Keyword:
         case KEYWORD_OR:  return infix_kw_or;
         case KEYWORD_NOT:
         case KEYWORD_IN:  return infix_kw_in;
-        case KEYWORD_AS:  return infix_alias;
+        case KEYWORD_AS:  return infix_as;
         default:          return NULL;
         }
 }
@@ -5033,9 +5047,11 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
                 SAVE_NE(true);
                 SAVE_NA(false);
                 SAVE_NC(false);
+                SAVE_LC(true);
                 e = parse_expr(ty, 1);
                 EStart = e->start;
                 EEnd = e->end;
+                LOAD_LC();
                 LOAD_NC();
                 LOAD_NA();
                 LOAD_NE();
@@ -5592,10 +5608,12 @@ parse_let_definition(Ty *ty)
                 next();
         }
 
+        SAVE_LC(true);
         s->target = parse_definition_lvalue(ty, LV_LET, NULL);
         if (s->target == NULL) {
                 error(ty, "failed to parse lvalue in 'let' definition");
         }
+        LOAD_LC();
 
         consume(TOKEN_EQ);
 

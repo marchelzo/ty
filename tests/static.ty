@@ -1,4 +1,4 @@
-function eq!(*args) {
+fn eq!(*args) {
 	for [a, b] in args.window(2) {
 		if a != b {
 			print('FAIL')

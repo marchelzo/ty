@@ -21,8 +21,10 @@ typedef struct {
         vec(u64) times;
 } TypeMemo;
 
+u32 TYPES_OFF = 0;
+
 #define ENFORCE (!AllowErrors)
-#define ENABLED (CheckConstraints && !TY_IS_READY)
+#define ENABLED (CheckConstraints && !TY_IS_READY && TYPES_OFF == 0)
 
 enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 
@@ -53,7 +55,7 @@ enum { PROP_DEFAULT, PROP_FIX, PROP_UNFIX };
 #define NewDict(k, v) NewObject(CLASS_DICT, (k), (v))
 #define NewArray(t) NewObject(CLASS_ARRAY, (t))
 
-#if 0
+#if 1
 #define XXTLOG(fmt, ...) (EnableLogging > 0 && printf("[%2d] " fmt "\n", CurrentLevel __VA_OPT__(,) __VA_ARGS__))
 #define XXXTLOG(fmt, ...) (printf("[%2d] " fmt "\n", CurrentLevel __VA_OPT__(,) __VA_ARGS__))
 #define DPRINT(cond, fmt, ...) ((cond) && EnableLogging > 0 && printf("%*s" fmt "\n", 4*ud, "" __VA_OPT__(,) __VA_ARGS__))
@@ -6841,7 +6843,7 @@ type_array(Ty *ty, Expr const *e)
                                 t0,
                                 type_iterable_type(
                                         ty,
-                                        v__(e->elements, 0)->_type,
+                                        Relax(v__(e->elements, 0)->_type),
                                         1
                                 ),
                                 true
@@ -6852,7 +6854,7 @@ type_array(Ty *ty, Expr const *e)
         } else if (vN(e->elements) > 1) {
                 t1 = NewType(ty, TYPE_UNION);
                 for (int i = 0; i < vN(e->elements); ++i) {
-                        Type *u0 = v__(e->elements, i)->_type;
+                        Type *u0 = Relax(v__(e->elements, i)->_type);
                         if (v__(e->elements, i)->type == EXPRESSION_SPREAD) {
                                 u0 = type_iterable_type(ty, u0, 1);
                         }
@@ -7185,7 +7187,7 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_MATCH_ANY:
                 return type_fixed(ty, UNKNOWN);
 
-        case EXPRESSION_TYPEOF:
+        case EXPRESSION_TYPE_OF:
                 return e->operand->_type;
 
         case EXPRESSION_TYPE:

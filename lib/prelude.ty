@@ -72,6 +72,7 @@ fn %(a: Int, b: Float) -> Float;
 fn +(a: String, b: String) -> String;
 
 fn slurp(file: String | Int | nil = nil) -> String | nil;
+fn rand[a](items: Array[a]) -> a;
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
 fn print(*args: Any, sep: String = ', ', end: String = '\n', file: _, flush: Bool = false) -> Int;
@@ -2722,10 +2723,7 @@ class Thread[T] {
     }
 }
 
-macro static! {
-    let e = parse.expr(50)
-    ty.Value(ty.eval(e))
-}
+macro static!(e) = $${ty.eval(e)} as (typeof $$e)
 
 macro showCode {
     let e = parse.stmt(0)
