@@ -154,7 +154,8 @@ typedef struct class_definition ClassDefinition;
         X(IDENTIFIER),                                                                \
         X(RESOURCE_BINDING),                                                          \
         X(DEFINED),                                                                   \
-        X(TYPEOF),                                                                    \
+        X(TYPE_OF),                                                                   \
+        X(CAST),                                                                      \
         X(TYPE),                                                                      \
         X(TYPE_UNION),                                                                \
         X(WITH),                                                                      \

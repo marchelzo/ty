@@ -14,6 +14,15 @@ typedef struct type_bound   TypeBound;
 typedef struct constraint   Constraint;
 typedef struct param_bounds ParamBounds;
 
+#define WITH_TYPES_OFF                             \
+        for (                                      \
+                u32 _ctx_cond = (++TYPES_OFF, 1);  \
+                _ctx_cond;                         \
+                --_ctx_cond, --TYPES_OFF           \
+        )
+
+extern u32 TYPES_OFF;
+
 struct constraint {
         enum {
                 TC_2OP,

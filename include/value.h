@@ -175,6 +175,8 @@ enum {
         X(Range)                \
         X(IncRange)             \
         X(Super)                \
+        X(TypeOf)               \
+        X(Cast)                 \
         X(Stop)
 
 #define TY_TYPE_TAGS   \

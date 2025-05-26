@@ -3017,6 +3017,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         case EXPRESSION_COMPILE_TIME:
                 comptime(ty, scope, e);
                 break;
+        case EXPRESSION_CAST:
+                symbolize_expression(ty, scope, e->right);
+                WITH_TYPES_OFF {
+                        symbolize_expression(ty, scope, e->left);
+                }
+                e->_type = type_resolve(ty, e->right);
+                break;
         case EXPRESSION_SPECIAL_STRING:
                 symbolize_expression(ty, scope, e->lang);
                 for (int i = 0; i < vN(e->expressions); ++i) {
@@ -3186,7 +3193,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 symbolize_expression(ty, scope, e->operand);
                 e->_type = TYPE_BOOL;
                 break;
-        case EXPRESSION_TYPEOF:
+        case EXPRESSION_TYPE_OF:
                 symbolize_expression(ty, scope, e->operand);
                 break;
         case EXPRESSION_CONDITIONAL:
@@ -6952,7 +6959,7 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_instr(TAG_PUSH);
                 emit_int(ty, TAG_SOME);
                 break;
-        case EXPRESSION_TYPEOF:
+        case EXPRESSION_TYPE_OF:
                 emit_instr(TYPE);
                 emit_symbol((uintptr_t)e->operand->_type);
                 break;
@@ -7510,6 +7517,9 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
         case EXPRESSION_FUNCTION_TYPE:
                 emit_instr(BOOLEAN);
                 emit_boolean(ty, true);
+                break;
+        case EXPRESSION_CAST:
+                emit_expression(ty, e->left);
                 break;
         default:
                 fail("expression unexpected in this context: %s", ExpressionTypeName(e));
@@ -8670,8 +8680,6 @@ AddModule(
         };
 
         mod.imports = STATE.imports;
-        v00(STATE.imports);
-
         mod.tokens = STATE.source_tokens;
 
         Module *existing = GetModule(ty, name);
@@ -10215,6 +10223,12 @@ tyexpr(Ty *ty, Expr const *e)
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
                 v = tagged(ty, TyNotNilView, tyexpr(ty, e->left), tyexpr(ty, e->right), NONE);
                 break;
+        case EXPRESSION_CAST:
+                v = tagged(ty, TyCast, tyexpr(ty, e->left), tyexpr(ty, e->right), NONE);
+                break;
+        case EXPRESSION_TYPE_OF:
+                v = tagged(ty, TyTypeOf, tyexpr(ty, e->operand), NONE);
+                break;
         case EXPRESSION_PREFIX_HASH:
                 v = tyexpr(ty, e->operand);
                 v.type |= VALUE_TAGGED;
@@ -11424,6 +11438,11 @@ cexpr(Ty *ty, Value *v)
 
                 break;
         }
+        case TyCast:
+                e->type = EXPRESSION_CAST;
+                e->left = cexpr(ty, &v->items[0]);
+                e->right = cexpr(ty, &v->items[1]);
+                break;
         case TyCond:
                 e->type = EXPRESSION_CONDITIONAL;
                 e->cond = cexpr(ty, &v->items[0]);
@@ -11635,6 +11654,14 @@ cexpr(Ty *ty, Value *v)
                 e->left = cexpr(ty, &v->items[1]);
                 e->right = cexpr(ty, &v->items[2]);
                 break;
+        case TyTypeOf:
+        {
+                Value v_ = *v;
+                v_.tags = tags_pop(ty, v_.tags);
+                e->type = EXPRESSION_TYPE_OF;
+                e->operand = cexpr(ty, &v_);
+                break;
+        }
         case TyCount:
         {
                 Value v_ = *v;
