@@ -1580,6 +1580,8 @@ vm_run_tdb(void *ctx)
         *((atomic_bool *)t->v.ptr) = true;
 
         for (;;) {
+                u8 next = TDB_STATE_STOPPED;
+
                 if (TY_CATCH_ERROR()) {
                         fprintf(stderr, "TDB thread error: %s\n", TyError(ty));
                         goto KeepRunning;
@@ -1606,13 +1608,20 @@ vm_run_tdb(void *ctx)
                      && (hook = v_(Globals, NAMES.tdb_hook))->type != VALUE_NIL
                 ) {
                         TDB_IS_NOW(ACTIVE);
-                        vm_call(ty, hook, 0);
+                        Value state = vm_call(ty, hook, 0);
+                        if (
+                                (state.type == VALUE_INTEGER)
+                             && (state.integer >= 0)
+                             && (state.integer < TDB_MAX_STATE)
+                        ) {
+                                next = state.integer;
+                        }
                 }
 
                 TY_CATCH_END();
 
 KeepRunning:
-                TDB_IS_NOW(STOPPED);
+                TDB_SET_STATE(next);;
 
                 TyMutexUnlock(&TDB_MUTEX);
                 TyCondVarSignal(&TDB_CONDVAR);
@@ -6527,11 +6536,6 @@ vm_execute(Ty *ty, char const *source, char const *file)
                 return false;
         }
 
-        if (DEBUGGING && !I_AM_TDB) {
-                IP = ty->code;
-                tdb_go(ty);
-        }
-
 #ifdef TY_ENABLE_PROFILING
         void (*handler)(int) = signal(SIGINT, ProfilerSIGINT);
 #endif
@@ -6539,6 +6543,11 @@ vm_execute(Ty *ty, char const *source, char const *file)
 #ifdef TY_CATCH_SIGSEGV
         signal(SIGSEGV, cringe);
 #endif
+
+        if (DEBUGGING && !I_AM_TDB) {
+                ty->ip = ty->code;
+                tdb_go(ty);
+        }
 
         TY_IS_READY = true;
         vm_exec(ty, ty->code);
@@ -6621,6 +6630,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                         call(ty, f, NULL, argc, 0, true);
                 }
                 goto Collect;
+
         case VALUE_METHOD:
                 if (kwargs != NULL) {
                         push(*kwargs);
@@ -6629,19 +6639,23 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                         call(ty, f->method, f->this, argc, 0, true);
                 }
                 goto Collect;
+
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(ty, argc, kwargs);
                 STACK.count = n;
                 return r;
+
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
                 return r;
+
         case VALUE_TAG:
                 r = pop();
                 r.tags = tags_push(ty, r.tags, f->tag);
                 r.type |= VALUE_TAGGED;
                 return r;
+
         case VALUE_CLASS:
                 init = class_lookup_method_i(ty, f->class, NAMES.init);
                 if (f->class < CLASS_PRIMITIVE) {
@@ -6661,15 +6675,36 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                         }
                         return r;
                 }
+                UNREACHABLE();
+
         case VALUE_DICT:
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;
                 STACK.count -= argc;
                 return (vp == NULL) ? None : Some(*vp);
+
         case VALUE_ARRAY:
                 r = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
                 return r;
+
+        case VALUE_OBJECT:
+                vp = class_lookup_method_i(ty, f->class, NAMES.call);
+
+                if (vp == NULL) {
+                        goto NotCallable;
+                }
+
+                if (kwargs != NULL) {
+                        push(*kwargs);
+                        call(ty, vp, f, argc, 1, true);
+                } else {
+                        call(ty, vp, f, argc, 0, true);
+                }
+                goto Collect;
+
+
         default:
+        NotCallable:
                 zP("Non-callable value passed to vmC(): %s", VSC(f));
         }
 
@@ -6706,17 +6741,21 @@ vm_call(Ty *ty, Value const *f, int argc)
         case VALUE_FUNCTION:
                 call(ty, f, NULL, argc, 0, true);
                 return pop();
+
         case VALUE_METHOD:
                 call(ty, f->method, f->this, argc, 0, true);
                 return pop();
+
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(ty, argc, NULL);
                 STACK.count = n;
                 return r;
+
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
                 return r;
+
         case VALUE_OPERATOR:
                 switch (argc) {
                 case 1:
@@ -6729,11 +6768,13 @@ vm_call(Ty *ty, Value const *f, int argc)
                 default:
                         vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
                 }
+
         case VALUE_TAG:
                 r = pop();
                 r.tags = tags_push(ty, r.tags, f->tag);
                 r.type |= VALUE_TAGGED;
                 return r;
+
         case VALUE_CLASS:
                 vp = class_lookup_method_i(ty, f->class, NAMES.init);
                 if (f->class < CLASS_PRIMITIVE) {
@@ -6753,15 +6794,28 @@ vm_call(Ty *ty, Value const *f, int argc)
                         }
                         return r;
                 }
+                UNREACHABLE();
+
         case VALUE_DICT:
                 vp = (argc >= 1) ? dict_get_value(ty, f->dict, top() - (argc - 1)) : NULL;
                 STACK.count -= argc;
                 return (vp == NULL) ? None : Some(*vp);
+
         case VALUE_ARRAY:
                 r = (argc >= 1) ? ArraySubscript(ty, *f, top()[-(argc - 1)], false) : None;
                 STACK.count -= argc;
                 return r;
+
+        case VALUE_OBJECT:
+                vp = class_lookup_method_i(ty, f->class, NAMES.call);
+                if (vp == NULL) {
+                        goto NotCallable;
+                }
+                call(ty, vp, f, argc, 0, true);
+                return pop();
+
         default:
+        NotCallable:
                 zP("Non-callable value passed to vmC(): %s", VSC(f));
         }
 }
@@ -6791,17 +6845,31 @@ vm_eval_function(Ty *ty, Value const *f, ...)
         case VALUE_FUNCTION:
                 call(ty, f, NULL, argc, 0, true);
                 return pop();
+
         case VALUE_METHOD:
                 call(ty, f->method, f->this, argc, 0, true);
                 return pop();
+
         case VALUE_BUILTIN_FUNCTION:
                 r = f->builtin_function(ty, argc, NULL);
                 STACK.count = n;
                 return r;
+
         case VALUE_BUILTIN_METHOD:
                 r = f->builtin_method(ty, f->this, argc, NULL);
                 STACK.count = n;
                 return r;
+
+        case VALUE_OBJECT:
+                v = class_lookup_method_i(ty, f->class, NAMES.call);
+
+                if (v == NULL) {
+                        goto NotCallable;
+                }
+
+                call(ty, v, f, argc, 0, true);
+
+                break;
         case VALUE_OPERATOR:
                 switch (argc) {
                 case 1:
@@ -6814,10 +6882,16 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 default:
                         vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
                 }
+
         case VALUE_TAG:
                 DoTag(ty, f->tag, argc, NULL);
                 return pop();
+
+        case VALUE_CLASS:
+                return vm_call(ty, f, argc);
+
         default:
+        NotCallable:
                 zP("Non-callable value passed to vm_eval_function(): %s", VSC(f));
         }
 }

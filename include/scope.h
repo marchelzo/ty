@@ -20,7 +20,8 @@ enum {
         SYM_FUN_MACRO    = 1 << 3,
         SYM_CONST        = 1 << 4,
         SYM_TYPE_VAR     = 1 << 5,
-        SYM_VARIADIC     = 1 << 6
+        SYM_VARIADIC     = 1 << 6,
+        SYM_IMMORTAL     = 1 << 7
 };
 
 typedef struct type Type;
@@ -180,6 +181,12 @@ SymbolIsTypeVar(Symbol const *var)
 }
 
 inline static bool
+SymbolIsImmortal(Symbol const *var)
+{
+        return var->flags & SYM_IMMORTAL;
+}
+
+inline static bool
 SymbolIsThreadLocal(Symbol const *var)
 {
         return var->flags & SYM_THREAD_LOCAL;
@@ -229,17 +236,42 @@ ScopeIsShared(Scope const *scope)
 }
 
 inline static Refinement *
+ScopeFindRefinement(Scope *scope, Symbol *var)
+{
+        for (int i = 0; i < vN(scope->refinements); ++i) {
+                if (v_(scope->refinements, i)->var == var) {
+                        return v_(scope->refinements, i);
+                }
+        }
+
+        return NULL;
+}
+
+inline static Refinement *
 ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
 {
-        Refinement ref = {
-                .var = var,
-                .t0 = t0,
-                .active = false
-        };
+        Refinement *ref = ScopeFindRefinement(scope, var);
 
-        avP(scope->refinements, ref);
+        if (ref != NULL) {
+                Type *type_both(Ty *, Type *, Type *);
+                if (ref->mut) {
+                        ref->t0 = t0;
+                } else {
+                        ref->t0 = type_both(ty, ref->t0, t0);
+                }
+        } else {
+                avP(
+                        scope->refinements,
+                        ((Refinement){
+                                .var = var,
+                                .t0 = t0,
+                                .active = false
+                        })
+                );
+                ref = vvL(scope->refinements);
+        }
 
-        return vvL(scope->refinements);
+        return ref;
 }
 
 inline static bool

@@ -31,8 +31,6 @@ function getTyCommand(test) {
 
 C! function strsignal(c.int) -> c.ptr;
 
-print(getTyCommand('based'))
-
 function doTest(name: String) {
     let testStart = time.utime()
 

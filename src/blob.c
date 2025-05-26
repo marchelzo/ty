@@ -220,7 +220,7 @@ static Value
 blob_xor(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc == 1 && ARG(0).type == VALUE_BLOB) {
-                struct blob *b = ARG(0).blob;
+                Blob *b = ARG(0).blob;
                 if (b->count > 0) for (size_t i = 0; i < blob->blob->count; ++i) {
                         blob->blob->items[i] ^= b->items[i % b->count];
                 }
@@ -533,7 +533,7 @@ blob_slice(Ty *ty, Value *blob, int argc, Value *kwargs)
                 zP("count %d out of range in call to blob.slice()", n);
         n = min(n, blob->blob->count - start);
 
-        struct blob *b = value_blob_new(ty);
+        Blob *b = value_blob_new(ty);
         NOGC(b);
         vvPn(*b, blob->blob->items + start, n);
         OKGC(b);
@@ -573,7 +573,7 @@ blob_splice(Ty *ty, Value *blob, int argc, Value *kwargs)
                 zP("count %d out of range in call to blob.splice()", n);
         n = min(n, blob->blob->count - start);
 
-        struct blob *b = value_blob_new(ty);
+        Blob *b = value_blob_new(ty);
         NOGC(b);
         vvPn(*b, blob->blob->items + start, n);
         OKGC(b);

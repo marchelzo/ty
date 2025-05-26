@@ -178,12 +178,16 @@ scope_lookup(Ty *ty, Scope const *s, char const *id)
         }
 
         if (
-                sym->scope->function != s->function
+                (sym->scope->function != s->function)
              && !sym->global
              && !sym->namespace
              && !SymbolIsTypeVar(sym)
         ) {
-                if (EVAL_DEPTH > 0 && !ScopeCapturesVar(s, sym)) {
+                if (
+                        (EVAL_DEPTH > 0)
+                     && !ScopeCapturesVar(s->function, sym)
+                     && !SymbolIsImmortal(sym)
+                ) {
                         CompileError(
                                 ty,
                                 "attempted runtime access of non-captured variable `%s%s%s`",
@@ -523,6 +527,7 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
         for (Scope *s = scope; s->function != stop->function; s = s->parent) {
                 for (int i = 0; i < SYMBOL_TABLE_SIZE; ++i) {
                         for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+                                sym->flags |= SYM_IMMORTAL;
                                 LOG(
                                         "scope_capture_all(ty, scope=%s (%p)): capturing %s",
                                         scope_name(ty, scope),

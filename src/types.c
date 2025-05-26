@@ -2655,8 +2655,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
                                 a0 = type_resolve(ty, var->left);
                                 b0 = type_resolve(ty, var->right);
                                 c0 = type_resolve(ty, bound->bound);
-                                avP(t->constraints, CONSTRAINT(.type = TC_2OP, .t0 = a0, .t1 = c0, .t2 = c0, .op = op));
-                                //PutEnv(ty, ty->tenv, a0->id, l0);
+                                avP(t->constraints, CONSTRAINT(.type = TC_2OP, .t0 = a0, .t1 = b0, .t2 = c0, .op = op));
                                 break;
                         }
                 }
@@ -3941,7 +3940,7 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                         //        ShowType(t0),
                         //        ShowType(t1)
                         //);
-                } else {
+                } else if (!super || !IsAny(t1)) {
                         t0->bounded |= !super;
                         BindVar(t0, type_unfixed(ty, Relax(Reduce(ty, t1))));
                 }
@@ -3950,7 +3949,7 @@ TryBind(Ty *ty, Type *t0, Type *t1, bool super)
                 MaxBindDepth = max(MaxBindDepth, ud);
                 if (Occurs(ty, t0, t1->id, t1->level)) {
                         BindVar(t1, BOTTOM);
-                } else {
+                } else if (super || !IsAny(t0)) {
                         t1->bounded |= super;
                         BindVar(t1, type_unfixed(ty, Relax(Reduce(ty, t0))));
                 }
@@ -4132,6 +4131,10 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
                 goto Success;
         }
 
+        if (IsAny(t0) || IsAny(t1)) {
+                goto Fail;
+        }
+
         if (
                 IsTagged(t0)
              && IsTagged(t1)
@@ -4278,12 +4281,6 @@ UnifyXD(Ty *ty, Type *t0, Type *t1, bool super, bool check, bool soft)
 
         if (IsTagged(t0) || IsTagged(t1)) {
                 goto Fail;
-        }
-
-        if (IsOperand(t0)) {
-                // fn f[a, b](x: a) -> b where (a, Int -> b) > (+) {
-                //      5 + x
-                // }
         }
 
         if (IsRecordLike(t0) || IsRecordLike(t1)) {
@@ -4475,6 +4472,29 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
         t1 = Inst1(ty, ResolveVar(t1));
         t2 = Inst1(ty, ResolveVar(t2));
 
+        if (IsTVar(t0) || IsTVar(t1)) {
+                for (int i = 0; i < vN(FunStack); ++i) {
+                        Expr const *fun = v__(FunStack, i);
+                        Type const *f0 = fun->_type;
+
+                        if (TypeType(f0) != TYPE_FUNCTION) {
+                                continue;
+                        }
+
+                        for (int i = 0; i < vN(f0->constraints); ++i) {
+                                Constraint *c = v_(f0->constraints, i);
+                                if (
+                                        (c->type == TC_2OP)
+                                     && (c->op == op)
+                                     && type_check(ty, c->t0, t0)
+                                     && type_check(ty, c->t1, t1)
+                                ) {
+                                        return c->t2;
+                                }
+                        }
+                }
+        }
+
         TypeEnv env = {0};
         Type *op0 = op_type(op);
 
@@ -4485,7 +4505,7 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
         expression_vector kwargs = {0};
         StringVector kws = {0};
 
-        if (
+        if ( // TODO: Is this actually doing anything?
                 IsUnknown(t0)
              || IsUnknown(t1)
              || IsUnknown(t2)
@@ -4514,7 +4534,7 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                                 left._type = t0_i;
                                 right._type = t1_i;
                                 Type *c0_i = InferCall0(ty, &args, &kwargs, &kws, op0_i, false);
-                                XXTLOG("%sTrySolve2Op()%s: %s", TERM(92), intern_entry(&xD.b_ops, op)->name, TERM(0));
+                                XXTLOG("%sTrySolve2Op(%s%s%s)%s:", TERM(92), TERM(95), intern_entry(&xD.b_ops, op)->name, TERM(92), TERM(0));
                                 XXTLOG("    %s", ShowType(op0_i));
                                 XXTLOG("    %s", ShowType(c0_i));
                                 if (
@@ -4534,6 +4554,8 @@ TrySolve2Op(Ty *ty, int op, Type *t0, Type *t1, Type *t2)
                                 UnifyX(ty, t0, a0, false, false);
                                 UnifyX(ty, t1, b0, false, false);
                                 UnifyX(ty, t2, c0, true, false);
+                        } else {
+                                return NULL;
                         }
                 }
         }
@@ -6931,6 +6953,7 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
         case EXPRESSION_MATCH_NOT_NIL:
                 t0 = type_not_nil(ty, t0);
         case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_REST:
         case EXPRESSION_RESOURCE_BINDING:
                 if (!e->symbol->fixed) {
                         XXTLOG(
@@ -6980,13 +7003,23 @@ type_assign(Ty *ty, Expr *e, Type *t0, int flags)
                         break;
                 } else if (vN(e->elements) == 1) {
                         t1 = NewVar(ty);
-                        type_assign(ty, v__(e->elements, 0), t1, flags);
-                        UnifyX(ty, NewArray(t1), t0, true, strict);
+                        if (v__(e->elements, 0)->type == EXPRESSION_MATCH_REST) {
+                                type_assign(ty, v__(e->elements, 0), t1, flags);
+                                UnifyX(ty, t1, t0, true, strict);
+
+                        } else {
+                                type_assign(ty, v__(e->elements, 0), t1, flags);
+                                UnifyX(ty, NewArray(t1), t0, true, strict);
+                        }
                 } else {
                         t1 = NewType(ty, TYPE_UNION);
                         for (int i = 0; i < vN(e->elements); ++i) {
                                 Expr *elem = v__(e->elements, i);
-                                type_assign(ty, elem, (t2 = NewVar(ty)), flags);
+                                if (elem->type == EXPRESSION_MATCH_REST) {
+                                        type_assign(ty, elem, NewArray((t2 = NewVar(ty))), flags);
+                                } else {
+                                        type_assign(ty, elem, (t2 = NewVar(ty)), flags);
+                                }
                                 avP(t1->types, t2);
                         }
                         t1 = CoalescePatterns(ty, t1);
@@ -7112,9 +7145,18 @@ type_resolve(Ty *ty, Expr const *e)
         case EXPRESSION_MATCH_REST:
                 variadic = true;
         case EXPRESSION_IDENTIFIER:
-                if (e->symbol == NULL) {
+                if (
+                        (e->symbol == NULL)
+                     && (e->xscope == NULL)
+                     && !CompilerResolveExpr(ty, (Expr *)e)
+                ) {
                         return NULL;
-                } else if (e->symbol->class != -1) {
+                }
+                if (e->symbol == NULL) {
+                        CompilerPushContext(ty, e);
+                        TypeError("cannot resolve type name `%s%s%s`", TERM(93), e->identifier, TERM(0));
+                }
+                if (e->symbol->class != -1) {
                         t0 = NewType(ty, TYPE_OBJECT);
                         t0->class = class_get_class(ty, e->symbol->class);
                 } else if (e->symbol->tag != -1) {
@@ -8709,6 +8751,40 @@ type_iterable_type(Ty *ty, Type *t0, int n)
 }
 
 Type *
+type_special_str(Ty *ty, Expr const *e)
+{
+        if (e->lang == NULL) {
+                return TYPE_STRING;
+        }
+
+        Type *a0 = NewVar(ty);
+        Type *t0 = NewVar(ty);
+        Type *u0 = NewTuple(
+                a0,
+                Either(ty, TYPE_STRING, NIL_TYPE),
+                Either(ty, TYPE_INT, NIL_TYPE)
+        );
+        Type *f0 = NewFunction(
+                NewArray(
+                        Either(
+                                ty,
+                                TYPE_STRING,
+                                u0
+                        )
+                ),
+                t0
+        );
+
+        for (int i = 0; i < vN(e->expressions); ++i) {
+                Unify(ty, a0, v__(e->expressions, i)->_type, true);
+        }
+
+        Unify(ty, f0, e->lang->_type, true);
+
+        return t0;
+}
+
+Type *
 type_not_nil(Ty *ty, Type *t0)
 {
         Type *u0 = NewVar(ty);
@@ -8723,7 +8799,7 @@ type_without(Ty *ty, Type *t0, Type *t1)
 {
         Type *u0 = NewVar(ty);
 
-        UnifyX(ty, Either(ty, u0, t1), t0, true, true);
+        UnifyX(ty, Either(ty, u0, t1), t0, true, false);
 
         return u0;
 }
@@ -8769,13 +8845,23 @@ End:
 Type *
 type_instance_of(Ty *ty, Type *t0, int class)
 {
-        Type *t1 = NewType(ty, TYPE_OBJECT);
-        t1->class = class_get_class(ty, class);
-        avP(t1->args, ANY);
-
+        Type *t1 = NewObject(class);
         Type *t2 = BoundedBy(ty, t0, t1);
 
-        return (t2 != NULL) ? t2 : t1;
+        if (t2 != NULL) {
+                return t2;
+        }
+
+        if (TagOf(t1) != -1) {
+                avP(t1->args, NewVar(ty));
+                return t1;
+        }
+
+        for (int i = 0; i < vN(t1->class->type->bound); ++i) {
+                avP(t1->args, NewVar(ty));
+        }
+
+        return t1;
 }
 
 void

@@ -380,7 +380,7 @@ GetNamespace(Ty *ty, Namespace *ns);
 void
 CompilerBlackpill(Ty *ty, Stmt *s);
 
-void
+bool
 CompilerResolveExpr(Ty *ty, Expr *e);
 
 void *

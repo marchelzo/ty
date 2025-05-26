@@ -23,37 +23,49 @@ dict_new(Ty *ty)
 
         d->size = INITIAL_SIZE;
         d->hashes = mA(sizeof (unsigned long [INITIAL_SIZE]));
-        d->keys = mA(sizeof (Value [INITIAL_SIZE]));
+        d->keys = mA0(sizeof (Value [INITIAL_SIZE]));
         d->values = mA(sizeof (Value [INITIAL_SIZE]));
         d->count = 0;
         d->dflt = NONE;
-        memset(d->keys, 0, sizeof (Value [INITIAL_SIZE]));
 
         OKGC(d);
 
         return d;
 }
 
-inline static size_t
-find_spot(Ty *ty, size_t size, unsigned long const *hs, Value const *vs, unsigned long h, Value const *v)
-{
-        size_t mask = size - 1;
-        size_t i = h & mask;
+inline static usize
+find_spot(
+        Ty *ty,
+        usize size,
+        unsigned long const *hs,
+        Value const *vs,
+        unsigned long h,
+        Value const *v
+) {
+        usize mask = size - 1;
+        usize i = h & mask;
 
-        while (vs[i].type != 0 && (hs[i] != h || !value_test_equality(ty, &vs[i], v)))
+        while (
+                (vs[i].type != 0)
+             && (
+                        (hs[i] != h)
+                     || !value_test_equality(ty, &vs[i], v)
+                )
+        ) {
                 i = (i + 1) & mask;
+        }
 
         return i;
 }
 
-inline static size_t
-delete(Dict *d, size_t i)
+inline static usize
+delete(Dict *d, usize i)
 {
-        size_t mask = d->size - 1;
+        usize mask = d->size - 1;
         unsigned long h = d->hashes[i] & mask;
 
-        size_t j = i;
-        size_t k = (i + 1) & mask;
+        usize j = i;
+        usize k = (i + 1) & mask;
 
         while (d->keys[k].type != 0) {
                 if ((d->hashes[k] & mask) == h) {
@@ -79,7 +91,7 @@ delete(Dict *d, size_t i)
 inline static void
 grow(Ty *ty, Dict *d)
 {
-        size_t new_size = d->size << 1;
+        usize new_size = d->size << 1;
 
         unsigned long *hashes = mA(new_size * sizeof (unsigned long));
         Value *keys = mA(new_size * sizeof (Value));
@@ -87,10 +99,11 @@ grow(Ty *ty, Dict *d)
 
         memset(keys, 0, new_size * sizeof (Value));
 
-        for (size_t i = 0; i < d->size; ++i) {
-                if (d->keys[i].type == 0)
+        for (usize i = 0; i < d->size; ++i) {
+                if (d->keys[i].type == 0) {
                         continue;
-                size_t j = find_spot(ty, new_size, hashes, keys, d->hashes[i], &d->keys[i]);
+                }
+                usize j = find_spot(ty, new_size, hashes, keys, d->hashes[i], &d->keys[i]);
                 hashes[j] = d->hashes[i];
                 keys[j] = d->keys[i];
                 values[j] = d->values[i];
@@ -108,7 +121,7 @@ grow(Ty *ty, Dict *d)
 }
 
 inline static Value *
-put(Ty *ty, Dict *d, size_t i, unsigned long h, Value k, Value v)
+put(Ty *ty, Dict *d, usize i, unsigned long h, Value k, Value v)
 {
         if (9*d->count >= 4*d->size) {
                 grow(ty, d);
@@ -127,7 +140,7 @@ Value *
 dict_get_value(Ty *ty, Dict *d, Value *key)
 {
         unsigned long h = value_hash(ty, key);
-        size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
+        usize i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
 
         if (d->keys[i].type != 0)
                 return &d->values[i];
@@ -147,7 +160,7 @@ bool
 dict_has_value(Ty *ty, Dict *d, Value *key)
 {
         unsigned long h = value_hash(ty, key);
-        size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
+        usize i = find_spot(ty, d->size, d->hashes, d->keys, h, key);
 
         if (d->keys[i].type != 0)
                 return true;
@@ -159,7 +172,7 @@ void
 dict_put_value(Ty *ty, Dict *d, Value key, Value value)
 {
         unsigned long h = value_hash(ty, &key);
-        size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
+        usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0)
                 d->values[i] = value;
@@ -171,7 +184,7 @@ Value *
 dict_put_value_with(Ty *ty, Dict *d, Value key, Value v, Value const *f)
 {
         unsigned long h = value_hash(ty, &key);
-        size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
+        usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0) {
                 return put(ty, d, i, h, key, vm_eval_function(ty, f, &d->values[i], &v, NULL));
@@ -184,7 +197,7 @@ Value *
 dict_put_key_if_not_exists(Ty *ty, Dict *d, Value key)
 {
         unsigned long h = value_hash(ty, &key);
-        size_t i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
+        usize i = find_spot(ty, d->size, d->hashes, d->keys, h, &key);
 
         if (d->keys[i].type != 0) {
                 return &d->values[i];
@@ -225,7 +238,7 @@ dict_mark(Ty *ty, Dict *d)
         if (d->dflt.type != VALUE_NONE)
                 value_mark(ty, &d->dflt);
 
-        for (size_t i = 0; i < d->size; ++i) {
+        for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
                         value_mark(ty, &d->keys[i]);
                         value_mark(ty, &d->values[i]);
@@ -271,7 +284,7 @@ dict_contains(Ty *ty, Value *d, int argc, Value *kwargs)
 
         Value *key = &ARG(0);
         unsigned long h = value_hash(ty, key);
-        size_t i = find_spot(ty, d->dict->size, d->dict->hashes, d->dict->keys, h, key);
+        usize i = find_spot(ty, d->dict->size, d->dict->hashes, d->dict->keys, h, key);
 
         return BOOLEAN(d->dict->keys[i].type != 0);
 }
@@ -286,7 +299,7 @@ dict_keys(Ty *ty, Value *d, int argc, Value *kwargs)
 
         gP(&keys);
 
-        for (size_t i = 0; i < d->dict->size; ++i)
+        for (usize i = 0; i < d->dict->size; ++i)
                 if (d->dict->keys[i].type != 0)
                         vAp(keys.array, d->dict->keys[i]);
 
@@ -305,7 +318,7 @@ dict_values(Ty *ty, Value *d, int argc, Value *kwargs)
 
         gP(&values);
 
-        for (size_t i = 0; i < d->dict->size; ++i)
+        for (usize i = 0; i < d->dict->size; ++i)
                 if (d->dict->keys[i].type != 0)
                         vAp(values.array, d->dict->values[i]);
 
@@ -322,7 +335,7 @@ DictClone(Ty *ty, Dict const *d)
 
         NOGC(new);
 
-        for (size_t i = 0; i < d->size; ++i) {
+        for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type != 0) {
                         dict_put_value(ty, new, d->keys[i], d->values[i]);
                 }
@@ -348,12 +361,12 @@ dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
         if (d->count != u->count)
                 return false;
 
-        for (size_t i = 0; i < d->size;) {
+        for (usize i = 0; i < d->size;) {
                 if (d->keys[i].type == 0) {
                         i += 1;
                         continue;
                 }
-                size_t j = find_spot(
+                usize j = find_spot(
                         ty,
                         u->size,
                         u->hashes,
@@ -373,12 +386,12 @@ dict_same_keys(Ty *ty, Dict const *d, Dict const *u)
 inline static void
 copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
 {
-        for (size_t i = 0; i < d->size; ++i) {
+        for (usize i = 0; i < d->size; ++i) {
                 if (d->keys[i].type == 0) {
                         continue;
                 }
 
-                size_t j = find_spot(
+                usize j = find_spot(
                         ty,
                         u->size,
                         u->hashes,
@@ -388,7 +401,7 @@ copy_unique(Ty *ty, Dict *diff, Dict const *d, Dict const *u)
                 );
 
                 if (u->keys[j].type == 0) {
-                        size_t k = find_spot(
+                        usize k = find_spot(
                                 ty,
                                 diff->size,
                                 diff->hashes,
@@ -438,12 +451,12 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                 zP("the first argument to dict.intersect() must be a dict");
 
         if (argc == 1) {
-                for (size_t i = 0; i < d->dict->size;) {
+                for (usize i = 0; i < d->dict->size;) {
                         if (d->dict->keys[i].type == 0) {
                                 i += 1;
                                 continue;
                         }
-                        size_t j = find_spot(
+                        usize j = find_spot(
                                 ty,
                                 u.dict->size,
                                 u.dict->hashes,
@@ -462,12 +475,12 @@ dict_intersect(Ty *ty, Value *d, int argc, Value *kwargs)
                 if (!CALLABLE(f)) {
                         zP("the second argument to dict.intersect() must be callable");
                 }
-                for (size_t i = 0; i < d->dict->size;) {
+                for (usize i = 0; i < d->dict->size;) {
                         if (d->dict->keys[i].type == 0) {
                                 i += 1;
                                 continue;
                         }
-                        size_t j = find_spot(
+                        usize j = find_spot(
                                 ty,
                                 u.dict->size,
                                 u.dict->hashes,
@@ -504,7 +517,7 @@ dict_intersect_copy(Ty *ty, Value *d, int argc, Value *kwargs)
 Dict *
 DictUpdate(Ty *ty, Dict *d, Dict const *u)
 {
-        for (size_t i = 0; i < u->size; ++i) {
+        for (usize i = 0; i < u->size; ++i) {
                 if (u->keys[i].type != 0) {
                         dict_put_value(ty, d, u->keys[i], u->values[i]);
                 }
@@ -516,7 +529,7 @@ DictUpdate(Ty *ty, Dict *d, Dict const *u)
 Dict *
 DictUpdateWith(Ty *ty, Dict *d, Dict const *u, Value const *f)
 {
-        for (size_t i = 0; i < u->size; ++i) {
+        for (usize i = 0; i < u->size; ++i) {
                 if (u->keys[i].type != 0) {
                         dict_put_value_with(
                                 ty,
@@ -563,9 +576,9 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                 zP("the first argument to dict.subtract() must be a dict");
 
         if (argc == 1) {
-                for (size_t i = 0; i < u.dict->size; ++i) {
+                for (usize i = 0; i < u.dict->size; ++i) {
                         if (u.dict->keys[i].type != 0) {
-                                size_t j = find_spot(
+                                usize j = find_spot(
                                         ty,
                                         d->dict->size,
                                         d->dict->hashes,
@@ -583,9 +596,9 @@ dict_subtract(Ty *ty, Value *d, int argc, Value *kwargs)
                 if (!CALLABLE(f)) {
                         zP("the second argument to dict.subtract() must be callable");
                 }
-                for (size_t i = 0; i < u.dict->size; ++i) {
+                for (usize i = 0; i < u.dict->size; ++i) {
                         if (u.dict->keys[i].type != 0) {
-                                size_t j = find_spot(
+                                usize j = find_spot(
                                         ty,
                                         d->dict->size,
                                         d->dict->hashes,
@@ -633,7 +646,7 @@ dict_remove(Ty *ty, Value *d, int argc, Value *kwargs)
         Value k = ARG(0);
         unsigned long h = value_hash(ty, &k);
 
-        size_t i = find_spot(
+        usize i = find_spot(
                 ty,
                 d->dict->size,
                 d->dict->hashes,
