@@ -27,8 +27,8 @@ use Token = { type: String, start: TokenLocation, end: TokenLocation } & TokenDa
 
 use Subscript[T, U] = { __subscript__: T -> U };
 
-fn parse::expr(prec: ?Int, raw: Bool) -> (AST, _);
-fn parse::expr(prec: ?Int) -> AST;
+fn parse::expr(prec: ?Int, raw: Bool, resolve: ?Bool = false) -> (AST, _);
+fn parse::expr(prec: ?Int, resolve: ?Bool = false) -> AST;
 
 fn parse::stmt(prec: ?Int, raw: Bool) -> (AST, _);
 fn parse::stmt(prec: ?Int) -> AST;
@@ -271,7 +271,7 @@ class Array[T] : Iterable[T] {
     filter!(pred: T -> Any) -> Array[T];
     filter(pred: T -> Any) -> Array[T];
     groups-of(n: Int) -> Array[Array[T]];
-    join(sep: String) -> String;
+    join(sep: String = '') -> String;
     len() -> Int;
     map![U](fun: T -> U) -> Array[U];
     map[U](fun: T -> U) -> Array[U];
@@ -721,9 +721,10 @@ class String : Iterable[String] {
 
     int { ::int(self) }
 
-    matches(Regex) -> [String | RegexMatch];
-
-    match!(Regex) -> String | [String] | RegexMatch;
+    matches(pattern: Regex) -> [String | RegexMatch];
+    scan(pattern: Regex) -> [String | RegexMatch];
+    match!(pattern: Regex) -> String | [String] | RegexMatch;
+    match?(pattern: Regex) -> Bool;
 
     repeat(n: Int) -> String;
 
@@ -734,17 +735,16 @@ class String : Iterable[String] {
     str() -> String { self }
     str!() -> String { self }
 
-    center(n, c = ' ') {
-        let d = max(0, n - #self)
-        self.padLeft(n - d/2, c).padRight(n, c)
+    center(n: Int, ch: String = ' ') {
+        "{self:^{ch}{n}}"
     }
 
     reverse() {
-        return @chars().reverse!().sum() ?? ''
+        return chars().reverse!().sum() ?? ''
     }
 
     num?() {
-        return @match?(/^\d+(?:\.\d+)?$/)
+        return match?(/^\d+(?:\.\d+)?$/)
     }
 
     ends?(s) {
@@ -788,27 +788,27 @@ class String : Iterable[String] {
     }
 
     trim() {
-        return @comb(/^\s+|\s+$/)
+        comb(/^\s+|\s+$/)
     }
 
     trimRight() {
-        @comb(/\s+$/)
+        comb(/\s+$/)
     }
 
     trimLeft() {
-        @comb(/^\s+/)
+        comb(/^\s+/)
     }
 
     strip() {
-        return @comb(/^\s+|\s+$/)
+        comb(/^\s+|\s+$/)
     }
 
     stripRight() {
-        @comb(/\s+$/)
+        comb(/\s+$/)
     }
 
     stripLeft() {
-        @comb(/^\s+/)
+        comb(/^\s+/)
     }
 
     unhex() {
@@ -882,7 +882,7 @@ class String : Iterable[String] {
 
     __fmt__(spec, w, fun=id) {
         fun(
-            spec.match?(/[%[:alpha:]]/)
+            spec.match?(/[%[:alpha:]](?![<^>])/)
           ? fmt("%{spec}", w if '*' in spec, self)
           : fmt("%{spec}s", w if '*' in spec, self)
         )
@@ -894,7 +894,7 @@ class Int {
         int(x ?? 0)
     }
 
-    **(x) {
+    **(x: Float | Int) -> Float | Int {
         type(x)(math.pow(self, x))
     }
 
@@ -2606,7 +2606,7 @@ class Sync[T] {
         }
     }
 
-    *[A, B](y: A) -> B where T: { `*`: A -> B } {
+    *[A, B](y: A) -> B where (T * A): B {
         with __mtx.lock() {
             __x * y
         }
@@ -2620,7 +2620,7 @@ class Sync[T] {
 
     -[A, B](y: A) -> B where (T - A): B {
         with __mtx.lock() {
-            __x - y
+            //__x - y
         }
     }
 
@@ -2630,7 +2630,7 @@ class Sync[T] {
         }
     }
 
-    `/`[A, B](y) where (T / A): B {
+    `/`[A, B](y: A) -> B where (T / A): B {
         with __mtx.lock() {
             __x / y
         }
@@ -3066,7 +3066,7 @@ class SharedQueue[T] : Iterable[T] {
         }
     }
 
-    __n {
+    __n -> Int {
         if __xs {
             (__j - __i + #__xs) % #__xs
         } else {

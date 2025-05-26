@@ -747,18 +747,22 @@ array_sum(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_join(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 1)
-                zP("Array.join(): expected 1 argument but got %d", argc);
+        char const *_name__ = "Array.join()";
 
-        if (array->array->count == 0)
-                return NIL;
+        CHECK_ARGC(0, 1);
 
-        Value sep = ARG(0);
-        if (sep.type != VALUE_STRING) {
-                zP("Array.join(): expected String but got: %s", VSC(&sep));
+        if (vN(*array->array) == 0) {
+                return STRING_EMPTY;
         }
 
-        vmP(&array->array->items[0]);
+        Value sep;
+        if (argc == 0) {
+                sep = STRING_EMPTY;
+        } else {
+                sep = ARGx(0, VALUE_STRING);
+        }
+
+        vmP(v_(*array->array, 0));
         Value sum = builtin_str(ty, 1, NULL);
         vmX();
         Value v = NIL;
@@ -766,7 +770,7 @@ array_join(Ty *ty, Value *array, int argc, Value *kwargs)
         for (int i = 1; i < array->array->count; ++i) {
                 gP(&sum);
                 gP(&v);
-                vmP(&array->array->items[i]);
+                vmP(v_(*array->array, i));
                 v = builtin_str(ty, 1, NULL);
                 vmX();
                 gX();
@@ -793,11 +797,13 @@ array_consume_while(Ty *ty, Value *array, int argc, Value *kwargs)
         Value f = ARG(0);
         Value p = ARG(1);
 
-        if (!CALLABLE(f))
-                zP("invalid source passed to array.consumeWhile()");
+        if (!CALLABLE(f)) {
+                zP("Array.consumeWhile(): source is not callable: %s", VSC(&p));
+        }
 
-        if (!CALLABLE(p))
-                zP("invalid predicate passed to array.consumeWhile()");
+        if (!CALLABLE(p)) {
+                zP("Array.consumeWhile(): non-callable passed as predicate: %s", VSC(&p));
+        }
 
         Value v = NIL;
 
@@ -1040,22 +1046,26 @@ array_min_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_max(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc == 1)
+        char const *_name__ = "Array.max()";
+
+        if (argc == 1) {
                 return array_max_by(ty, array, argc, kwargs);
+        }
 
-        if (argc != 0)
-                zP("the max method on arrays expects no arguments but got %d", argc);
+        CHECK_ARGC(0);
 
-        if (array->array->count == 0)
+        if (vN(*array->array) == 0) {
                 return NIL;
+        }
 
         Value max, v;
-        max = array->array->items[0];
+        max = v__(*array->array, 0);
 
-        for (int i = 1; i < array->array->count; ++i) {
-                v = array->array->items[i];
-                if (value_compare(ty, &v, &max) > 0)
+        for (int i = 1; i < vN(*array->array); ++i) {
+                v = v__(*array->array, i);
+                if (value_compare(ty, &v, &max) > 0) {
                         max = v;
+                }
         }
 
         return max;
@@ -1064,6 +1074,7 @@ array_max(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_max_by(Ty *ty, Value *array, int argc, Value *kwargs)
 {
+        char const *_name__ = "Array.max()";
         if (argc != 1)
                 zP("the maxBy method on arrays expects 1 argument but got %d", argc);
 
@@ -2054,13 +2065,11 @@ array_sort_by(Ty *ty, Value *array, int argc, Value *kwargs)
 static Value
 array_clone(Ty *ty, Value *array, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("the clone method on arrays expects no arguments but got %d", argc);
+        char const *_name__ = "Array.clone()";
 
-        Value v = *array;
-        v.array = value_array_clone(ty, v.array);
+        CHECK_ARGC(0);
 
-        return v;
+        return ARRAY(ArrayClone(ty, array->array));
 }
 
 static Value

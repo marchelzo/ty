@@ -5,47 +5,71 @@ import ty.parse (expr, stmt, show as sourceOf)
 import argparse (opt, flag)
 import os
 
-function lispCase(s) {
+fn lisp(s) {
     s.matches(/(?:^[[:lower:]]+)|(?:[[:upper:]][[:lower:]]*)/)
      .join('-')
      .lower()
 }
 
-function camelCase(s) {
-    let [first, *rest] = s.split('-')
-    rest.map!(s -> s[0].upper() + s.slice(1).lower())
-    [first, *rest].sum()
+fn camel(name: String) -> String {
+    let [first, *rest] = name.split('-')
+    rest.map!(s -> s[0].upper() + name.slice(1).lower())
+    [first, *rest].str()
 }
 
 class Args {
-    static parse(argv = os.args) {
+    static parse(argv: [String] = os.args) {
         let opts = self.info()
         let cmds = self.cmds()
         let args = []
 
         let version = self.version()
 
-        let doc = if let (_, $d, _) = doc(self) {
-            let empty = &match?(/^\s*$/)
-            let lines = d.lines().dropWhile!(empty).popWhile(empty)
-            let leading = lines.filter(empty |> &not).map(&match!(/^\s*/) |> &len).min() ?? 0
-            lines.map(&slice(leading)).join('\n')
+        let doc = if let (_, $doc-string, _) = doc(self) {
+            let lines = doc-string.lines().dropWhile!(\!_).popWhile(\!_)
+            let leading = lines.filter(\_).map(`#` . /^\s*/).min() ?? 0
+            lines.map(&[leading;]).join('\n')
         }
 
-        for o in opts {
-            if o.constraint == Bool {
-                args.push(flag(short: o.short, long: o.long, help: o.help))
-            } else if let [c] = o.constraint {
-                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: c, multi: true, default: o.default))
+        for opt in opts {
+            if opt.constraint == Bool {
+                args.push(
+                    flag(
+                        short: opt.short,
+                        long: opt.long,
+                        help: opt.help
+                    )
+                )
+            } else if let [constraint] = opt.constraint {
+                args.push(
+                    opt(
+                        short: opt.short,
+                        long: opt.long,
+                        help: opt.help,
+                        convert: opt.?conv,
+                        post: constraint,
+                        multi: true,
+                        default: opt.default
+                    )
+                )
             } else {
-                args.push(opt(short: o.short, long: o.long, help: o.help, convert: o.?conv, post: o.constraint, default: o.default))
+                args.push(
+                    opt(
+                        short: opt.short,
+                        long: opt.long,
+                        help: opt.help,
+                        convert: opt.?conv,
+                        post: opt.constraint,
+                        default: opt.default
+                   )
+                )
             }
         }
 
         let result = argparse.make(*args, version: version, help: doc)(argv)
 
         if #argv > 0 {
-            let sub = camelCase(argv[0])
+            let sub = camel(argv[0])
             if let $cmd = cmds[sub] {
                 result[sub] = ty.eval(cmd).parse(argv)
                 opts.push({
@@ -130,10 +154,10 @@ pub macro clap! {
         // :
         next()
 
-        let constraint = ty.eval(expr(0))
+        let constraint = ty.eval(expr(2))
         let conv = constraint
         let short = name[0]
-        let long = lispCase(name)
+        let long = lisp(name)
         let default = nil
 
         while peek(0).type == ',' {
@@ -145,17 +169,17 @@ pub macro clap! {
             match attr.id {
                 'conv' => {
                     next()
-                    conv = ty.eval(expr(0))
+                    conv = ty.eval(expr(1))
                 },
 
                 'short' => {
                     next()
-                    short = match ty.eval(expr(0)) { None => nil, x => x }
+                    short = match ty.eval(expr(1)) { None => nil, x => x }
                 },
 
                 'long' => {
                     next()
-                    long = match ty.eval(expr(0)) { None => nil, x => x }
+                    long = match ty.eval(expr(1)) { None => nil, x => x }
                 },
 
                 'default' => {
@@ -164,11 +188,11 @@ pub macro clap! {
                         next()
                         next()
                         let (p, s) = stmt(0, raw: true)
-                        default = (val: ty.eval(s), show: sourceOf(p))
+                        default = {val: ty.eval(s), show: sourceOf(p)}
                         next()
                     } else {
-                        let e = ty.eval(expr(0))
-                        default = (val: e, show: "{e}")
+                        let e = ty.eval(expr(1))
+                        default = {val: e, show: "{e}"}
                     }
                 },
 
@@ -187,5 +211,5 @@ pub macro clap! {
 
     next()
 
-    ty.Class(name: name, methods: [info, getCmds, version], super: ty.Id(name: 'Args', module: 'clap'))
+   ty.Class(name: name, methods: [info, getCmds, version], `super`: ty.Id(name: 'Args', module: 'clap'))
 }

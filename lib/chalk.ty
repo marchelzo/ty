@@ -21,7 +21,6 @@ pub fn escape(text: String) -> String {
     text.sub(/\[|\\/, %{'[': '\\[', '\\': '\\\\'}[])
 }
 
-#|if 0
 fn enables-of(trans: _) -> String {
     trans.matches(/\[([^]\/]*)\]/).map(\_[1].words()).flat().unwords() ?? ''
 }
@@ -38,7 +37,6 @@ fn flip(trans: String) -> String {
 
     "{on}{off}"
 }
-#|]
 
 fn split(text: String, i: Int, greedy?: Bool = true) -> (String, String) {
     let off = 0
@@ -533,7 +531,7 @@ class Chalk {
         @styles[name]
     }
 
-    __call__(parts) {
+    __call__(parts: _) -> Text {
         Text(
             parts.map(match {
                 s: String   => s,
@@ -546,7 +544,7 @@ class Chalk {
         )
     }
 
-    __subscript__(style) {
+    __subscript__(style: Any) -> (Any -> Text) {
         return text -> self"[{style}]{text}[/]"
     }
 

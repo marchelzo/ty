@@ -513,14 +513,37 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v);
 char *
 value_show(Ty *ty, struct value const *v);
 
-char *
-value_string_alloc(Ty *ty, int n);
+inline static char *
+value_string_alloc(Ty *ty, u32 n)
+{
+        return mAo(n, GC_STRING);
+}
 
-char *
-value_string_clone(Ty *ty, char const *s, int n);
+inline static char *
+value_string_clone(Ty *ty, char const *src, u32 n)
+{
+        if (src == NULL) {
+                return NULL;
+        }
 
-char *
-value_string_clone_nul(Ty *ty, char const *src, int n);
+        char *str = mAo(n + 1, GC_STRING);
+
+        memcpy(str, src, n);
+        str[n] = '\0';
+
+        return str;
+}
+
+inline static char *
+value_string_clone_nul(Ty *ty, char const *src, u32 n)
+{
+        char *str = mAo(n + 1, GC_STRING);
+
+        memcpy(str, src, n);
+        str[n] = '\0';
+
+        return str;
+}
 
 
 struct array *
@@ -614,8 +637,9 @@ value_array_new_sized(Ty *ty, size_t n)
 {
         Array *a = mAo(sizeof (Array), GC_ARRAY);
 
-        if (n == 0)
+        if (n == 0) {
                 return memset(a, 0, sizeof *a);
+        }
 
         NOGC(a);
 
@@ -655,7 +679,7 @@ value_array_reserve(Ty *ty, Array *a, int count)
 }
 
 inline static Value
-STRING_CLONE(Ty *ty, char const *s, int n)
+STRING_CLONE(Ty *ty, char const *s, u32 n)
 {
         char *clone = value_string_clone(ty, s, n);
 
@@ -675,7 +699,7 @@ STRING_CLONE_C(Ty *ty, char const *s)
                 return NIL;
         }
 
-        int n = strlen(s);
+        u32 n = strlen(s);
         char *clone = value_string_clone(ty, s, n);
 
         return (Value) {
@@ -694,7 +718,7 @@ STRING_C_CLONE_C(Ty *ty, char const *s)
                 return NIL;
         }
 
-        int n = strlen(s);
+        u32 n = strlen(s);
         char *clone = value_string_clone_nul(ty, s, n);
 
         return (Value) {
@@ -707,7 +731,7 @@ STRING_C_CLONE_C(Ty *ty, char const *s)
 }
 
 inline static Value
-STRING_C_CLONE(Ty *ty, char const *s, int n)
+STRING_C_CLONE(Ty *ty, char const *s, u32 n)
 {
         char *clone = value_string_clone_nul(ty, s, n);
 
@@ -721,7 +745,7 @@ STRING_C_CLONE(Ty *ty, char const *s, int n)
 }
 
 inline static Value
-STRING(char *s, int n)
+STRING(char *s, u32 n)
 {
         return (Value) {
                 .type = VALUE_STRING,
@@ -733,7 +757,7 @@ STRING(char *s, int n)
 }
 
 inline static Value
-STRING_VIEW(Value s, int offset, int n)
+STRING_VIEW(Value s, isize offset, u32 n)
 {
         return (Value) {
                 .type = VALUE_STRING,

@@ -25,25 +25,35 @@ static char *value_showx(Ty *ty, Value const *v);
 static char *value_show_colorx(Ty *ty, Value const *v);
 
 static bool
-arrays_equal(Ty *ty, struct value const *v1, struct value const *v2)
+arrays_equal(Ty *ty, Value const *v1, Value const *v2)
 {
-        if (v1->array == v2->array)
+        if (v1->array == v2->array) {
                 return true;
+        }
 
-        if (v1->array->count != v2->array->count)
+        if (vN(*v1->array) != vN(*v2->array)) {
                 return false;
+        }
 
-        size_t n = v1->array->count;
+        usize n = vN(*v1->array);
 
-        for (size_t i = 0; i < n; ++i)
-                if (!value_test_equality(ty, &v1->array->items[i], &v2->array->items[i]))
+        for (usize i = 0; i < n; ++i) {
+                if (
+                        !value_test_equality(
+                                ty,
+                                v_(*v1->array, i),
+                                v_(*v2->array, i)
+                        )
+                )  {
                         return false;
+                }
+        }
 
         return true;
 }
 
 static bool
-tuples_equal(Ty *ty, struct value const *v1, struct value const *v2)
+tuples_equal(Ty *ty, Value const *v1, Value const *v2)
 {
         if (v1->items == v2->items)
                 return true;
@@ -51,11 +61,19 @@ tuples_equal(Ty *ty, struct value const *v1, struct value const *v2)
         if (v1->count != v2->count)
                 return false;
 
-        size_t n = v1->count;
+        usize n = v1->count;
 
-        for (size_t i = 0; i < n; ++i)
-                if (!value_test_equality(ty, &v1->items[i], &v2->items[i]))
+        for (usize i = 0; i < n; ++i) {
+                if (
+                        !value_test_equality(
+                                ty,
+                                &v1->items[i],
+                                &v2->items[i]
+                        )
+                ) {
                         return false;
+                }
+        }
 
         return true;
 }
@@ -117,7 +135,7 @@ flt_hash(Ty *ty, float flt)
 }
 
 inline static unsigned long
-ary_hash(Ty *ty, struct value const *a)
+ary_hash(Ty *ty, Value const *a)
 {
         unsigned long hash = 2166136261UL;
 
@@ -130,7 +148,7 @@ ary_hash(Ty *ty, struct value const *a)
 }
 
 inline static unsigned long
-tpl_hash(Ty *ty, struct value const *t)
+tpl_hash(Ty *ty, Value const *t)
 {
         unsigned long hash = 2166136261UL;
 
@@ -143,12 +161,12 @@ tpl_hash(Ty *ty, struct value const *t)
 }
 
 inline static unsigned long
-obj_hash(Ty *ty, struct value const *v)
+obj_hash(Ty *ty, Value const *v)
 {
-        struct value const *f = class_method(ty, v->class, "__hash__");
+        Value const *f = class_method(ty, v->class, "__hash__");
 
         if (f != NULL) {
-                struct value h = vm_eval_function(ty, f, v, NULL);
+                Value h = vm_eval_function(ty, f, v, NULL);
                 if (h.type != VALUE_INTEGER) {
                         zP("%s.__hash__ return non-integer: %s", class_name(ty, v->class), VSC(v));
                 }
@@ -159,7 +177,7 @@ obj_hash(Ty *ty, struct value const *v)
 }
 
 inline static unsigned long
-hash(Ty *ty, struct value const *val)
+hash(Ty *ty, Value const *val)
 {
         switch (val->type & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADBEEFULL;
@@ -184,13 +202,13 @@ hash(Ty *ty, struct value const *val)
 }
 
 unsigned long
-value_hash(Ty *ty, struct value const *val)
+value_hash(Ty *ty, Value const *val)
 {
         return (((unsigned long)val->tags) << 14) + hash(ty, val);
 }
 
 char *
-show_dict(Ty *ty, struct value const *d, bool color)
+show_dict(Ty *ty, Value const *d, bool color)
 {
         static _Thread_local vec(struct dict *) show_dicts;
 
@@ -280,9 +298,9 @@ show_array(Ty *ty, Value const *a, bool color)
 }
 
 char *
-show_tuple(Ty *ty, struct value const *v, bool color)
+show_tuple(Ty *ty, Value const *v, bool color)
 {
-        static _Thread_local vec(struct value *) show_tuples;
+        static _Thread_local vec(Value *) show_tuples;
 
         for (int i = 0; i < show_tuples.count; ++i)
                 if (show_tuples.items[i] == v->items)
@@ -525,12 +543,12 @@ value_showx(Ty *ty, Value const *v)
                 break;
         case VALUE_OBJECT:;
 #ifdef TY_NO_LOG
-                struct value *fp = class_method(ty, v->class, "__str__");
+                Value *fp = class_method(ty, v->class, "__str__");
 #else
-                struct value *fp = NULL;
+                Value *fp = NULL;
 #endif
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
-                        struct value str = vm_eval_function(ty, fp, v, NULL);
+                        Value str = vm_eval_function(ty, fp, v, NULL);
                         if (str.type != VALUE_STRING)
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
                         s = gc_resize_unchecked(ty, NULL, str.bytes + 1);
@@ -559,7 +577,7 @@ value_showx(Ty *ty, Value const *v)
 }
 
 static char *
-value_show_colorx(Ty *ty, struct value const *v)
+value_show_colorx(Ty *ty, Value const *v)
 {
         char buffer[4096];
         char *s = NULL;
@@ -796,7 +814,7 @@ value_show_colorx(Ty *ty, struct value const *v)
 #ifdef TY_NO_LOG
                 Value *fp = class_method(ty, v->class, "__str__");
 #else
-                struct value *fp = NULL;
+                Value *fp = NULL;
 #endif
 
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
@@ -942,7 +960,7 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
 }
 
 bool
-value_truthy(Ty *ty, struct value const *v)
+value_truthy(Ty *ty, Value const *v)
 {
         switch (v->type) {
         case VALUE_REAL:             return v->real != 0.0f;
@@ -968,7 +986,7 @@ value_truthy(Ty *ty, struct value const *v)
 }
 
 bool
-value_apply_predicate(Ty *ty, struct value *p, struct value *v)
+value_apply_predicate(Ty *ty, Value *p, Value *v)
 {
         Value b;
         char err[256];
@@ -1016,7 +1034,7 @@ value_apply_predicate(Ty *ty, struct value *p, struct value *v)
         }
 }
 
-struct value
+Value
 value_apply_callable(Ty *ty, Value *f, Value *v)
 {
         switch (f->type) {
@@ -1176,7 +1194,7 @@ value_array_mark(Ty *ty, struct array *a)
 }
 
 inline static void
-mark_tuple(Ty *ty, struct value const *v)
+mark_tuple(Ty *ty, Value const *v)
 {
         if (v->items == NULL || MARKED(v->items)) return;
 
@@ -1192,7 +1210,7 @@ mark_tuple(Ty *ty, struct value const *v)
 }
 
 inline static void
-mark_thread(Ty *ty, struct value const *v)
+mark_thread(Ty *ty, Value const *v)
 {
         if (MARKED(v->thread)) return;
         MARK(v->thread);
@@ -1200,7 +1218,7 @@ mark_thread(Ty *ty, struct value const *v)
 }
 
 inline static void
-mark_generator(Ty *ty, struct value const *v)
+mark_generator(Ty *ty, Value const *v)
 {
         if (MARKED(v->gen)) return;
 
@@ -1228,7 +1246,7 @@ mark_generator(Ty *ty, struct value const *v)
 }
 
 inline static void
-mark_function(Ty *ty, struct value const *v)
+mark_function(Ty *ty, Value const *v)
 {
         int n = v->info[FUN_INFO_CAPTURES];
 
@@ -1252,47 +1270,18 @@ mark_function(Ty *ty, struct value const *v)
 }
 
 inline static void
-mark_pointer(Ty *ty, struct value const *v)
+mark_pointer(Ty *ty, Value const *v)
 {
         if (v->gcptr != NULL) {
                 MARK(v->gcptr);
                 if (ALLOC_OF(v->gcptr)->type == GC_VALUE) {
-                        value_mark(ty, (const struct value *)v->gcptr);
+                        value_mark(ty, (const Value *)v->gcptr);
                 }
         }
 }
 
-char *
-value_string_clone_nul(Ty *ty, char const *src, int n)
-{
-        char *s = mAo(n + 1, GC_STRING);
-
-        memcpy(s, src, n);
-        s[n] = '\0';
-
-        return s;
-}
-
-char *
-value_string_clone(Ty *ty, char const *src, int n)
-{
-        if (n == 0) {
-                return NULL;
-        }
-
-        char *s = mAo(n, GC_STRING);
-        memcpy(s, src, n);
-        return s;
-}
-
-char *
-value_string_alloc(Ty *ty, int n)
-{
-        return mAo(n, GC_STRING);
-}
-
 void
-_value_mark(Ty *ty, struct value const *v)
+_value_mark(Ty *ty, Value const *v)
 {
         void **src = source_lookup(ty, v->src);
         if (src != NULL && *src != NULL) {
@@ -1332,18 +1321,18 @@ _value_mark(Ty *ty, struct value const *v)
 #endif
 }
 
-struct blob *
+Blob *
 value_blob_new(Ty *ty)
 {
-        struct blob *blob = mAo(sizeof *blob, GC_BLOB);
+        Blob *blob = mAo(sizeof *blob, GC_BLOB);
         vec_init(*blob);
         return blob;
 }
 
-struct value
+Value
 value_tuple(Ty *ty, int n)
 {
-        struct value *items = mAo(n * sizeof (Value), GC_TUPLE);
+        Value *items = mAo(n * sizeof (Value), GC_TUPLE);
 
         for (int i = 0; i < n; ++i) {
                 items[i] = NIL;
@@ -1428,21 +1417,18 @@ tuple_get(Value const *tuple, char const *name)
         return tuple_get_i(tuple, M_ID(name));
 }
 
-Array *
-value_array_clone(Ty *ty, Array const *a)
-{
-        return ArrayClone(ty, a);
-}
-
 void
 value_array_extend(Ty *ty, Array *a, Array const *other)
 {
-        int n = a->count + other->count;
+        isize n = vN(*a) + vN(*other);
 
-        if (n != 0)
-                vec_reserve(*a, n);
-        if (other->count != 0)
+        if (n != 0) {
+                vvR(*a, n);
+        }
+
+        if (other->count != 0) {
                 memcpy(a->items + a->count, other->items, other->count * sizeof (Value));
+        }
 
         a->count = n;
 }

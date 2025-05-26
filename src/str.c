@@ -16,14 +16,14 @@
 static _Thread_local struct stringpos limitpos;
 static _Thread_local struct stringpos outpos;
 
-inline static uint32_t
-codepoint_count(char const *s, size_t n)
+inline static usize
+codepoint_count(u8 const *s, usize n)
 {
-        uint32_t count = 0;
+        usize count = 0;
 
         while (n != 0) {
-                int codepoint;
-                int bytes = utf8proc_iterate(s, n, &codepoint);
+                i32 codepoint;
+                i32 bytes = utf8proc_iterate(s, n, &codepoint);
                 if (bytes <= 0) {
                         n -= 1;
                         s += 1;
@@ -35,6 +35,27 @@ codepoint_count(char const *s, size_t n)
         }
 
         return count;
+}
+
+inline static usize
+x_x_x(u8 const *s, usize sz, usize ncp)
+{
+        usize off = 0;
+        usize count = 0;
+
+
+        while (off < sz && count < ncp) {
+                i32 rune;
+                i32 bytes = utf8proc_iterate(s + off, sz - off, &rune);
+                if (bytes <= 0) {
+                        off += 1;
+                } else {
+                        off += bytes;
+                }
+                count += 1;
+        }
+
+        return off;
 }
 
 inline static void
@@ -134,7 +155,7 @@ string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         char *_name__ = "String.len()";
         CHECK_ARGC(0);
-        return INTEGER(codepoint_count(string->string, string->bytes));
+        return INTEGER(codepoint_count((u8 const *)string->string, string->bytes));
 }
 
 static Value
@@ -214,9 +235,6 @@ string_chars(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_size(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 0)
-                zP("str.size() expects no arguments but got %d", argc);
-
         return INTEGER(string->bytes);
 }
 
@@ -259,44 +277,36 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc == 0 || argc > 2)
-                zP("str.slice() expects 1 or 2 arguments but got %d", argc);
+        char const *_name__ = "String.slice()";
 
-        Value start = ARG(0);
+        CHECK_ARGC(1, 2);
 
-        if (start.type != VALUE_INTEGER)
-                zP("non-integer passed as first argument to str.slice()");
+        u8 const *str = (u8 const *)string->string;
+        u32 sz = string->bytes;
 
-        char const *s = string->string;
-        int i = start.integer;
-        int n;
+        isize ncp = codepoint_count(str, sz);
 
-        stringcount(s, string->bytes, -1);
-
-        if (argc == 2) {
-                Value len = ARG(1);
-                if (len.type != VALUE_INTEGER)
-                        zP("non-integer passed as second argument to str.slice()");
-                n = len.integer;
-        } else {
-                n = outpos.graphemes;
+        isize i = INT_ARG(0);
+        if (i < 0) {
+                i += ncp;
         }
+        i = min(max(0, i), ncp);
 
-        if (i < 0)
-                i += outpos.graphemes;
-        i = min(max(0, i), outpos.graphemes);
+        isize n;
+        if (argc == 2) {
+                n = INT_ARG(1);
+        } else {
+                n = string->bytes;
+        }
+        if (n < 0) {
+                n += ncp;
+        }
+        n = min(max(0, n), ncp - i);
 
-        if (n < 0)
-                n += outpos.graphemes;
-        n = min(max(0, n), outpos.graphemes - i);
+        u32 drop = x_x_x(str, sz, i);
+        u32 take = x_x_x(str + drop, sz - drop, n);
 
-        stringcount(s, string->bytes, i);
-
-        i = outpos.bytes;
-
-        stringcount(s + i, limitpos.bytes - outpos.bytes, n);
-
-        return STRING_VIEW(*string, i, outpos.bytes);
+        return STRING_VIEW(*string, drop, take);
 }
 
 static Value
@@ -671,7 +681,7 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 
         CHECK_ARGC(1, 2);
 
-        char const *s = string->string;
+        u8 const *s = (u8 const *)string->string;
         int len = string->bytes;
 
         Value pattern = ARGx(0, VALUE_INTEGER, VALUE_STRING, VALUE_REGEX);
@@ -1440,6 +1450,7 @@ DEFINE_METHOD_TABLE(
         { .name = "ptr",       .func = string_ptr              },
         { .name = "repeat",    .func = string_repeat           },
         { .name = "replace",   .func = string_replace          },
+        { .name = "scan",      .func = string_matches          },
         { .name = "search",    .func = string_search           },
         { .name = "searchAll", .func = string_search_all       },
         { .name = "size",      .func = string_size             },

@@ -8042,7 +8042,7 @@ BUILTIN_FUNCTION(tdb_state)
                    : (context->file == NULL) ? NIL
                    : xSz(context->file);
 
-        Value mod = xSz(GetExpressionModule(ty, context));
+        Value mod = (context == NULL) ? NIL : xSz(GetExpressionModule(ty, context));
 
         Value f = (TDB->host->st.frames.count > 0)
                 ? vvL(TDB->host->st.frames)->f

@@ -149,6 +149,7 @@ enum {
         VALUE_TAG              ,
         VALUE_ARRAY            ,
         VALUE_DICT             ,
+        VALUE_OBJECT           ,
         VALUE_OPERATOR         ,
         VALUE_TYPE             ,
         VALUE_REGEX            , // CALLABLE here and above
@@ -156,7 +157,6 @@ enum {
         VALUE_REAL             ,
         VALUE_BOOLEAN          ,
         VALUE_NIL              ,
-        VALUE_OBJECT           ,
         VALUE_STRING           ,
         VALUE_BLOB             ,
         VALUE_SENTINEL         ,
@@ -417,6 +417,7 @@ typedef vec(Param) ParamVector;
 #define X(s) TDB_STATE_ ## s ,
 enum {
         TY_TDB_STATES
+        TDB_MAX_STATE
 };
 #undef X
 
@@ -490,6 +491,7 @@ typedef struct ty {
         byte_vector err;
 
         TypeEnv *tenv;
+        TypeEnv *cenv;
 
         TY *ty;
         TyTDB *tdb;
@@ -852,6 +854,7 @@ enum {
 #define mRE(...)  resize(__VA_ARGS__)
 #define mREu(...) resize_unchecked(__VA_ARGS__)
 #define mA(...)   gc_alloc(ty, __VA_ARGS__)
+#define mA0(...)   gc_alloc0(ty, __VA_ARGS__)
 #define mAo(...)  gc_alloc_object(ty, __VA_ARGS__)
 #define mAo0(...) gc_alloc_object0(ty, __VA_ARGS__)
 #define mF(p)     gc_free(ty, p)
@@ -1190,6 +1193,8 @@ CompileError(Ty *ty, char const *fmt, ...);
 #define TDB_IS(x)     (TDB_STATE == (TDB_STATE_ ## x))
 #define TDB_IS_NOW(x) (TDB->state = TDB_STATE_ ## x)
 #endif
+
+#define TDB_SET_STATE(x) (TDB->state = (x))
 
 void
 tdb_start(Ty *ty);

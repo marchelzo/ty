@@ -202,6 +202,9 @@ Type *
 type_dict(Ty *ty, Expr const *e);
 
 Type *
+type_special_str(Ty *ty, Expr const *e);
+
+Type *
 type_match(Ty *ty, Expr const *e);
 
 Type *

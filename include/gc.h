@@ -50,10 +50,10 @@ void
 gc(Ty *ty);
 
 inline static void *
-mrealloc(void *p, size_t n);
+mrealloc(void *p, usize n);
 
 inline static void *
-gc_resize_unchecked(Ty *ty, void *p, size_t n) {
+gc_resize_unchecked(Ty *ty, void *p, usize n) {
         struct alloc *a;
 
         if (p != NULL) {
@@ -93,7 +93,7 @@ CheckUsed(Ty *ty)
 }
 
 inline static void *
-gc_alloc(Ty *ty, size_t n)
+gc_alloc(Ty *ty, usize n)
 {
         MemoryUsed += n;
         CheckUsed(ty);
@@ -112,7 +112,24 @@ gc_alloc(Ty *ty, size_t n)
 }
 
 inline static void *
-gc_alloc_object(Ty *ty, size_t n, char type)
+gc_alloc0(Ty *ty, usize n)
+{
+        MemoryUsed += n;
+        CheckUsed(ty);
+
+        struct alloc *a = calloc(1, sizeof *a + n);
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        a->size = n;
+        a->type = GC_ANY;
+
+        return a->data;
+}
+
+inline static void *
+gc_alloc_object(Ty *ty, usize n, char type)
 {
         if (n == 0) {
                 return NULL;
@@ -137,9 +154,26 @@ gc_alloc_object(Ty *ty, size_t n, char type)
 }
 
 inline static void *
-gc_alloc_object0(Ty *ty, size_t n, char type)
+gc_alloc_object0(Ty *ty, usize n, char type)
 {
-        return memset(gc_alloc_object(ty, n, type), 0, n);
+        if (n == 0) {
+                return NULL;
+        }
+
+        MemoryUsed += n;
+        CheckUsed(ty);
+
+        struct alloc *a = calloc(1, sizeof *a + n);
+        if (UNLIKELY(a == NULL)) {
+                panic("Out of memory!");
+        }
+
+        a->type = type;
+        a->size = n;
+
+        xvP(ty->allocs, a);
+
+        return a->data;
 }
 
 void
@@ -166,13 +200,13 @@ void
 gc_clear_root_set(Ty *ty);
 
 void
-gc_truncate_root_set(Ty *ty, size_t n);
+gc_truncate_root_set(Ty *ty, usize n);
 
-size_t
+usize
 gc_root_set_count(Ty *ty);
 
 void
-gc_notify(Ty *ty, size_t n);
+gc_notify(Ty *ty, usize n);
 
 inline static void
 gc_free(Ty *ty, void *p)
@@ -189,7 +223,7 @@ gc_free(Ty *ty, void *p)
 }
 
 inline static void *
-gc_resize(Ty *ty, void *p, size_t n) {
+gc_resize(Ty *ty, void *p, usize n) {
         struct alloc *a;
 
         if (p != NULL) {
@@ -218,7 +252,7 @@ gc_resize(Ty *ty, void *p, size_t n) {
 }
 
 inline static void *
-gc_alloc_unregistered(Ty *ty, size_t n, char type)
+gc_alloc_unregistered(Ty *ty, usize n, char type)
 {
         void *p = mA(n);
         ALLOC_OF(p)->type = type;
@@ -229,10 +263,10 @@ void
 GCMark(Ty *ty);
 
 void
-GCSweep(Ty *ty, AllocList *allocs, size_t *used);
+GCSweep(Ty *ty, AllocList *allocs, usize *used);
 
 void
-GCForget(Ty *ty, AllocList *allocs, size_t *used);
+GCForget(Ty *ty, AllocList *allocs, usize *used);
 
 void
 GCTakeOwnership(Ty *ty, AllocList *new);
