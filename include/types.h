@@ -170,6 +170,11 @@ extern Type *TYPE_CLASS_;
 enum { TY_T_FLAGS };
 #undef X
 
+inline static u32
+TypeType(Type const *t0)
+{
+        return (t0 == NULL) ? TYPE_BOTTOM : t0->type;
+}
 
 Type *
 type_integer(Ty *ty, intmax_t z);
@@ -286,9 +291,6 @@ Type *
 type_unfixed(Ty *ty, Type *t0);
 
 Type *
-type_really_unfixed(Ty *ty, Type *t0);
-
-Type *
 type_tagged(Ty *ty, int tag, Type *t0);
 
 Type *
@@ -359,6 +361,9 @@ type_is_concrete(Ty *ty, Type const *t0);
 
 bool
 type_is_tvar(Type const *t0);
+
+i32
+type_approx_class(Type const *t0);
 
 bool
 type_iter(Ty *ty);

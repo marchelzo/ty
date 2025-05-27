@@ -114,15 +114,19 @@ u64 NextThreadId() { return ++tid; }
 } else ((void)0)
 
 
-#define ASSERT_ARGC(func, ac) if (argc != (ac)) {       \
-        if (argc != (ac)) zP(                           \
-                func                                    \
-                " expects "                             \
-                #ac                                     \
-                " argument(s) but got %d",              \
-                argc                                    \
-        );                                              \
-} else ((void)0)
+#define ASSERT_ARGC(func, ...)      \
+        char const *_name__ = func; \
+        CHECK_ARGC(__VA_ARGS__)
+
+//#define ASSERT_ARGC(func, ac) if (argc != (ac)) {       \
+//        if (argc != (ac)) zP(                           \
+//                func                                    \
+//                " expects "                             \
+//                #ac                                     \
+//                " argument(s) but got %d",              \
+//                argc                                    \
+//        );                                              \
+//} else ((void)0)
 
 #define ASSERT_ARGC_2(func, ac1, ac2) \
         if (argc != (ac1) && argc != (ac2)) { \
@@ -6007,24 +6011,20 @@ BUILTIN_FUNCTION(stdio_write_double)
 
 BUILTIN_FUNCTION(stdio_fread)
 {
-        ASSERT_ARGC_2("stdio.fread()", 2, 3);
+        ASSERT_ARGC("stdio.fread()", 2, 3);
 
-        struct value f = ARG(0);
-        if (f.type != VALUE_PTR)
-                zP("the first argument to stdio.fread() must be a pointer");
+        Value f = ARGx(0, VALUE_PTR);
 
-        struct value n = ARG(1);
-        if (n.type != VALUE_INTEGER || n.integer < 0)
-                zP("the second argument to stdio.fread() must be a non-negative integer");
+        Value n = ARGx(1, VALUE_INTEGER);
+        if (n.integer < 0) {
+                bP("got negative count: %"PRIiMAX, n.integer);
+        }
 
-        struct blob *b;
+        Blob *b;
         bool existing_blob = (argc == 3) && ARG(2).type != VALUE_NIL;
 
         if (existing_blob) {
-                if (ARG(2).type != VALUE_BLOB) {
-                        zP("stdio.fread() expects a blob as the third argument but got: %s", VSC(&ARG(2)));
-                }
-                b = ARG(2).blob;
+                b = ARGx(2, VALUE_BLOB).blob;
         } else {
                 b = value_blob_new(ty);
         }

@@ -32,12 +32,14 @@ enum {
         CLASS_FLOAT,
         CLASS_BLOB,
         CLASS_BOOL,
+        CLASS_PTR,
         CLASS_REGEX,
         CLASS_GENERATOR,
         CLASS_TAG,
         CLASS_TUPLE,
         CLASS_PRIMITIVE,
         CLASS_RE_MATCH = CLASS_PRIMITIVE,
+        CLASS_INTO_PTR,
         CLASS_ITERABLE,
         CLASS_ITER,
         CLASS_REV_ITER,
@@ -53,7 +55,6 @@ enum {
         X(Expr)                 \
         X(Stmt)                 \
         X(Value)                \
-        X(Type)                 \
         X(Each)                 \
         X(Match)                \
         X(For)                  \
@@ -66,6 +67,7 @@ enum {
         X(Param)                \
         X(Arg)                  \
         X(Null)                 \
+        X(Type)                 \
         X(If)                   \
         X(IfNot)                \
         X(In)                   \
@@ -487,6 +489,8 @@ checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2,
 #define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean
 #define  ARRAY_ARG(i) ARGx(i, VALUE_ARRAY).array
 #define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
+
+#define bP(fmt, ...) zP("%s: ", _name__ __VA_OPT__(,) __VA_ARGS__)
 
 #if 0
   #define value_mark(ty, v) do { fprintf(stderr, "value_mark: %s:%d: %p\n", __FILE__, __LINE__, (v)); _value_mark(ty, v); } while (0)
@@ -970,6 +974,7 @@ ClassOf(Value const *v)
         case VALUE_BUILTIN_FUNCTION:  return CLASS_FUNCTION;
         case VALUE_BUILTIN_METHOD:    return CLASS_FUNCTION;
         case VALUE_OPERATOR:          return CLASS_FUNCTION;
+        case VALUE_NIL:               return CLASS_NIL;
         }
 
         return CLASS_TOP;

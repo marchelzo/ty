@@ -919,8 +919,8 @@ inline static Value
 inline static void
 (push)(Ty *ty, Value v)
 {
-        xvP(STACK, v);
         //LOG("PUSH: %s", VSC(&v));
+        xvP(STACK, v);
         print_stack(ty, 10);
 }
 
@@ -4885,7 +4885,7 @@ Yield:
 #ifdef _WIN32
                         __debugbreak();
 #else
-                        raise(SIGTRAP);
+                        *(char *)0 = 0;
 #endif
                         break;
                 CASE(TRAP_TY)
@@ -6651,10 +6651,8 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
                 return r;
 
         case VALUE_TAG:
-                r = pop();
-                r.tags = tags_push(ty, r.tags, f->tag);
-                r.type |= VALUE_TAGGED;
-                return r;
+                DoTag(ty, f->tag, argc, (Value *)kwargs);
+                return pop();
 
         case VALUE_CLASS:
                 init = class_lookup_method_i(ty, f->class, NAMES.init);
@@ -6705,7 +6703,7 @@ vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
 
         default:
         NotCallable:
-                zP("Non-callable value passed to vmC(): %s", VSC(f));
+                zP("Non-callable value passed to vm_call(): %s", VSC(f));
         }
 
 Collect:
@@ -6770,10 +6768,8 @@ vm_call(Ty *ty, Value const *f, int argc)
                 }
 
         case VALUE_TAG:
-                r = pop();
-                r.tags = tags_push(ty, r.tags, f->tag);
-                r.type |= VALUE_TAGGED;
-                return r;
+                DoTag(ty, f->tag, argc, NULL);
+                return pop();
 
         case VALUE_CLASS:
                 vp = class_lookup_method_i(ty, f->class, NAMES.init);
@@ -6816,7 +6812,7 @@ vm_call(Ty *ty, Value const *f, int argc)
 
         default:
         NotCallable:
-                zP("Non-callable value passed to vmC(): %s", VSC(f));
+                zP("Non-callable value passed to vm_call(): %s", VSC(f));
         }
 }
 
@@ -6868,8 +6864,8 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                 }
 
                 call(ty, v, f, argc, 0, true);
-
                 break;
+
         case VALUE_OPERATOR:
                 switch (argc) {
                 case 1:
@@ -6880,7 +6876,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
                         a = pop();
                         return vm_2op(ty, f->bop, &a, &b);
                 default:
-                        vm_throw(ty, &TAG(gettag(ty, NULL, "DispatchError")));
+                        vmE(&TAG(gettag(ty, NULL, "DispatchError")));
                 }
 
         case VALUE_TAG:
@@ -6894,6 +6890,8 @@ vm_eval_function(Ty *ty, Value const *f, ...)
         NotCallable:
                 zP("Non-callable value passed to vm_eval_function(): %s", VSC(f));
         }
+
+        UNREACHABLE();
 }
 
 Value

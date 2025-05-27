@@ -442,6 +442,8 @@ uninit(Ty *ty, Symbol const *s)
 static char *
 value_showx(Ty *ty, Value const *v)
 {
+        static _Thread_local vec(void const *) visiting;
+
         char buffer[1024];
         char *s = NULL;
 
@@ -542,6 +544,13 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "<index: (%d, %d, %d)>", (int)v->i, (int)v->off, (int)v->nt);
                 break;
         case VALUE_OBJECT:;
+                for (int i = 0; i < vN(visiting); ++i) {
+                        if (*v_(visiting, i) == v->object) {
+                                goto BasicObject;
+                        }
+                }
+
+                xvP(visiting, v->object);
 #ifdef TY_NO_LOG
                 Value *fp = class_method(ty, v->class, "__str__");
 #else
@@ -549,14 +558,19 @@ value_showx(Ty *ty, Value const *v)
 #endif
                 if (fp != NULL && fp != class_method(ty, CLASS_OBJECT, "__str__")) {
                         Value str = vm_eval_function(ty, fp, v, NULL);
-                        if (str.type != VALUE_STRING)
+                        if (str.type != VALUE_STRING) {
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
+                        }
                         s = gc_resize_unchecked(ty, NULL, str.bytes + 1);
                         memcpy(s, str.string, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
+BasicObject:
                         snprintf(buffer, 1024, "<%s object at %p>", class_name(ty, v->class), (void *)v->object);
                 }
+                
+                vvX(visiting);
+
                 break;
         case VALUE_UNINITIALIZED:
                 uninit(ty, v->sym);
@@ -579,12 +593,12 @@ value_showx(Ty *ty, Value const *v)
 static char *
 value_show_colorx(Ty *ty, Value const *v)
 {
+        static _Thread_local vec(void const *) visiting;
+
         char buffer[4096];
         char *s = NULL;
 
         Value val = *v;
-
-        static _Thread_local vec(void const *) visiting;
 
         switch (v->type & ~VALUE_TAGGED) {
         case VALUE_INTEGER:

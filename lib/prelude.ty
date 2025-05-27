@@ -43,7 +43,7 @@ fn ty::parse(source: String) -> Ok[AST] | Err[String];
 
 fn |>[a, b, c](f: a -> b, g: b -> c) -> (a -> c) { g@(f(*, **)) }
 
-fn !::(a: Any, b: Any) { !(a :: b) }
+fn !::(a: Any, b: Any) -> Bool { !(a :: b) }
 
 fn -(a: Int, b: Int) -> Int;
 fn +(a: Int, b: Int) -> Int;
@@ -71,7 +71,7 @@ fn %(a: Int, b: Float) -> Float;
 
 fn +(a: String, b: String) -> String;
 
-fn slurp(file: String | Int | nil = nil) -> String | nil;
+fn slurp(file: ?String | Int) -> String;
 fn rand[a](items: Array[a]) -> a;
 fn rand() -> Float;
 fn rand(n: Int, m: ?Int) -> Int;
@@ -699,7 +699,7 @@ class Dict[K, V] : Iterable[K, V] {
     }
 }
 
-class String : Iterable[String] {
+class String : Iterable[String], IntoPtr[Int] {
     init(x) {
         return ::str(x)
     }
@@ -1144,7 +1144,7 @@ class Float {
     %(x: Float) -> Float { self % x }
 }
 
-class Blob : Iterable[Int] {
+class Blob : Iterable[Int], IntoPtr {
     init(*args: Any) {
         let b = blob()
 
@@ -1215,6 +1215,13 @@ class Regex < Function {
     __match__(s) {
         (s :: String) && s.match?(self)
     }
+}
+
+trait IntoPtr[T] {
+    __ptr__() -> Ptr[T];
+}
+
+class Ptr[T] : IntoPtr[T] {
 }
 
 class RuntimeError {
@@ -1682,7 +1689,11 @@ trait Iter[T] < Iterable[T] {
         }
     }
 
-    fold[U](x: U, f: (U, T) -> U) -> U {
+    fold(f: (T, T) -> T) -> T | nil {
+        if not let Some(x) = __next__() {
+            return nil
+        }
+
         while let Some(y) = __next__() {
             x = f(x, y)
         }
@@ -1690,11 +1701,7 @@ trait Iter[T] < Iterable[T] {
         return x
     }
 
-    fold(f: (T, T) -> T) -> T | nil {
-        if not let Some(x) = __next__() {
-            return nil
-        }
-
+    fold[U](x: U, f: (U, T) -> U) -> U {
         while let Some(y) = __next__() {
             x = f(x, y)
         }
@@ -3555,10 +3562,13 @@ macro __desugar_partial__(call: _) {
     return go(args, mkcall, max(depth, 1))
 }
 
-function >>(x, f) { f(x) }
-function <<(f, x) { f(x) }
+fn >>(x, f) { f(x) }
+fn <<(f, x) { f(x) }
 
-function ?>(x, f) { (x == nil) ? x : f(x) }
+fn ?>[a, b](x: a, f: a -> b) -> b;
+fn ?>[a, b](x: nil | a, f: a -> b) -> nil | b;
+
+fn ?>(x: Any, f: Any) { (x == nil) ? nil : f(x) }
 
 macro =~(a, b) = do let [$0, ?$1, ?$2, ?$3, ?$4, ?$5, ?$6, ?$7, ?$8, ?$9] or ($0: String) = $$a.match!($$b)
 
@@ -3626,4 +3636,3 @@ macro print!(*xs) {
     let xs = ty.Array([ty.ArrayItem(item: x) for x in xs])
     ty.CompileTime($$[ do { print(*$$xs, sep=' '); nil } $$])
 }
-

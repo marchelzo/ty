@@ -141,6 +141,7 @@ static vec(ProgramAnnotation) annotations;
 static vec(location_vector) location_lists;
 static vec(void *) source_map;
 static Scope *global;
+static Symbol *AnyTypeSymbol;
 static Scope *ThreadLocals;
 static uint64_t t;
 static char const EmptyString[] = "\0";
@@ -717,7 +718,7 @@ CompileError(Ty *ty, char const *fmt, ...)
 
         ContextList = NULL;
 
-        //if (vN(ty->jbs) == 2) {
+        //if (vN(ty->jbs) < 2) {
         //        fputs(TyError(ty), stdout);
         //        *(char *)0 = 0;
         //}
@@ -859,10 +860,53 @@ WillReturn(void const *_e)
         return false;
 }
 
+static i32
+ResolveClassSpec(Ty *ty, Expr const *spec)
+{
+        i32 c;
+
+Restart:
+        switch (spec->type) {
+        case EXPRESSION_MATCH_ANY:
+                return CLASS_OBJECT;
+
+        case EXPRESSION_FUNCTION:
+        case EXPRESSION_FUNCTION_TYPE:
+                return CLASS_FUNCTION;
+
+        case EXPRESSION_IDENTIFIER:
+                if (spec->symbol == NULL) {
+                        goto Sorry;
+                }
+                if (
+                        (c = spec->symbol->class) < 0
+                     && (spec->symbol != AnyTypeSymbol)
+                     && !SymbolIsTypeVar(spec->symbol)
+                ) {
+                        goto Sorry;
+                }
+                break;
+
+        case EXPRESSION_SUBSCRIPT:
+                spec = spec->container;
+                goto Restart;
+
+        default:
+                c = type_approx_class(type_resolve(ty, spec));
+                if (c < 0) {
+Sorry:
+                        PushContext(ty, spec);
+                        fail("you\n%s\nreally\nare a psycpathic RAT!\n", getenv("USER"));
+                }
+        }
+
+        return c;
+}
+
 static Type *
 ResolveConstraint(Ty *ty, Expr *constraint)
 {
-        if (constraint == NULL) {
+        if (constraint == NULL || !CheckConstraints) {
                 return NULL;
         }
 
@@ -1461,6 +1505,10 @@ resolve_type_choices(Ty *ty, Type *t0, int_vector *cs)
                 avP(*cs, CLASS_TOP);
                 break;
 
+        case TYPE_NIL:
+                avP(*cs, CLASS_NIL);
+                break;
+
         default:
                 fail("bad operator signature: %s", type_show(ty, t0));
         }
@@ -1469,19 +1517,28 @@ resolve_type_choices(Ty *ty, Type *t0, int_vector *cs)
 static void
 resolve_class_choices(Ty *ty, Expr *e, int_vector *cs)
 {
-        if (e->type == EXPRESSION_IDENTIFIER && e->symbol->class != -1) {
-                avP(*cs, e->symbol->class);
-        } else if (e->type == EXPRESSION_TYPE) {
+        switch (e->type) {
+        case EXPRESSION_MATCH_ANY:
+                avP(*cs, CLASS_TOP);
+                break;
+
+        case EXPRESSION_TYPE:
                 resolve_type_choices(ty, e->_type, cs);
-        } else if (e->type == EXPRESSION_BIT_OR) {
+                break;
+
+        case EXPRESSION_BIT_OR:
                 resolve_class_choices(ty, e->left, cs);
                 resolve_class_choices(ty, e->right, cs);
-        } else if (e->type == EXPRESSION_TYPE_UNION) {
+                break;
+
+        case EXPRESSION_TYPE_UNION:
                 for (int i = 0; i < vN(e->es); ++i) {
                         resolve_class_choices(ty, v__(e->es, i), cs);
                 }
-        } else {
-                fail("bad operator signature: %s", ExpressionTypeName(e));
+                break;
+
+        default:
+                avP(*cs, ResolveClassSpec(ty, e));
         }
 }
 
@@ -3018,11 +3075,13 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 comptime(ty, scope, e);
                 break;
         case EXPRESSION_CAST:
-                symbolize_expression(ty, scope, e->right);
+                WITH_CTX(TYPE) {
+                        symbolize_expression(ty, scope, e->right);
+                }
                 WITH_TYPES_OFF {
                         symbolize_expression(ty, scope, e->left);
                 }
-                e->_type = type_resolve(ty, e->right);
+                e->_type = type_fixed(ty, type_resolve(ty, e->right));
                 break;
         case EXPRESSION_SPECIAL_STRING:
                 symbolize_expression(ty, scope, e->lang);
@@ -4227,7 +4286,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                 if (STATE.func->type == EXPRESSION_GENERATOR) {
                         s->type = STATEMENT_GENERATOR_RETURN;
-                } else {
+                } else if (CheckConstraints && STATE.func->_type != NULL) {
                         Type *t0 = (vN(s->returns) == 0) ? NIL_TYPE
                                  : (vN(s->returns) == 1) ? (*vvL(s->returns))->_type
                                  : type_list_from(ty, &s->returns);
@@ -4692,27 +4751,20 @@ fail_match_if_not(Ty *ty, Expr const *e)
 static void
 emit_constraint(Ty *ty, Expr const *c)
 {
-        JumpPlaceholder sc;
+        if (c->type == EXPRESSION_TYPE_UNION) {
+                vec(JumpPlaceholder) jumps = {0};
+                SCRATCH_SAVE();
+                for (int i = 0; i < vN(c->es); ++i) {
+                        if (i + 1 == vN(c->es)) {
+                                emit_constraint(ty, v__(c->es, i));
+                        } else {
+                                emit_instr(DUP);
+                                emit_constraint(ty, v__(c->es, i));
+                                svP(jumps, (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF));
+                        }
+                }
 
-        emit_expression(ty, c);
-        emit_instr(CHECK_MATCH);
-        return;
-        if (c->type == EXPRESSION_BIT_AND) {
-                emit_instr(DUP);
-                emit_constraint(ty, c->left);
-                emit_instr(DUP);
-                sc = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
-                emit_instr(POP);
-                emit_constraint(ty, c->right);
-                PATCH_JUMP(sc);
-        } else if (c->type == EXPRESSION_BIT_OR) {
-                emit_instr(DUP);
-                emit_constraint(ty, c->left);
-                emit_instr(DUP);
-                sc = (PLACEHOLDER_JUMP)(ty, INSTR_JUMP_IF_NOT);
-                emit_instr(POP);
-                emit_constraint(ty, c->right);
-                PATCH_JUMP(sc);
+                SCRATCH_RESTORE();
         } else {
                 emit_expression(ty, c);
                 emit_instr(CHECK_MATCH);
@@ -7267,6 +7319,14 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 emit_expression(ty, e->right);
                 emit_instr(BIT_AND);
                 break;
+        case EXPRESSION_TYPE_UNION:
+                for (int i = 0; i < vN(e->es); ++i) {
+                        emit_expression(ty, v__(e->es, i));
+                        if (i > 0) {
+                                emit_instr(BIT_OR);
+                        }
+                }
+                break;
         case EXPRESSION_IN:
         case EXPRESSION_NOT_IN:
                 emit_expression(ty, e->left);
@@ -7520,6 +7580,10 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 break;
         case EXPRESSION_CAST:
                 emit_expression(ty, e->left);
+                break;
+        case EXPRESSION_MATCH_ANY:
+                emit_instr(BOOLEAN);
+                emit_boolean(ty, true);
                 break;
         default:
                 fail("expression unexpected in this context: %s", ExpressionTypeName(e));
@@ -7954,8 +8018,8 @@ RedpillFun(Ty *ty, Scope *scope, Expr *f, Type *self0)
                         sym->file = STATE.module_path;
                         sym->loc = STATE.start;
                         if (
-                                (self0->type == TYPE_OBJECT)
-                             && (self0->class->type->type == TYPE_TAG)
+                                (TypeType(self0) == TYPE_OBJECT)
+                             && (TypeType(self0->class->type) == TYPE_TAG)
                         ) {
                                 sym->type = v__(self0->args, 0);
                         } else {
@@ -8130,32 +8194,20 @@ InjectRedpill(Ty *ty, Stmt *s)
                                 symbolize_expression(ty, def->scope, def->super);
                         }
 
-                        Type *t0 = type_resolve(ty, def->super);
+                        int super = ResolveClassSpec(ty, def->super);
 
-                        if (
-                                t0 == NULL
-                             || (
-                                        t0->type != TYPE_CLASS
-                                     && t0->type != TYPE_OBJECT
-                                )
-                        ) {
-                                fail("attempt to extend non-class");
-                        }
-
-                        Class *super = t0->class;
-
-                        class_set_super(ty, def->symbol, super->i);
+                        class_set_super(ty, def->symbol, super);
 
                         for (int i = 0; i < vN(def->methods); ++i) {
                                 Expr *m = v__(def->methods, i);
                                 if (m->return_type == NULL && m->type != EXPRESSION_MULTI_FUNCTION) {
-                                        Value *v = class_method(ty, super->i, m->name);
+                                        Value *v = class_method(ty, super, m->name);
                                         if (v != NULL && v->type == VALUE_PTR) {
                                                 m->return_type = ((Expr *)v->ptr)->return_type;
                                                 dont_printf(
                                                         "%s: inherited return type: %s.%s() -> %s\n",
                                                         class->name,
-                                                        super->name,
+                                                        class_name(ty, super),
                                                         m->name,
                                                         type_show(ty, type_resolve(ty, m->return_type))
                                                 );
@@ -8845,11 +8897,14 @@ compiler_init(Ty *ty)
         }
 
         class_set_super(ty, CLASS_ITER, CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_ARRAY, CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_DICT, CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_STRING, CLASS_ITERABLE);
-        class_implement_trait(ty, CLASS_BLOB, CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_ARRAY,     CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_BLOB,      CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_BLOB,      CLASS_INTO_PTR);
+        class_implement_trait(ty, CLASS_DICT,      CLASS_ITERABLE);
         class_implement_trait(ty, CLASS_GENERATOR, CLASS_ITER);
+        class_implement_trait(ty, CLASS_PTR,       CLASS_INTO_PTR);
+        class_implement_trait(ty, CLASS_STRING,    CLASS_ITERABLE);
+        class_implement_trait(ty, CLASS_STRING,    CLASS_INTO_PTR);
 
         static Class ANY_CLASS = { .i = CLASS_TOP, .name = "Any" };
         static Type  ANY_TYPE  = { .type = TYPE_OBJECT, .class = &ANY_CLASS, .concrete = true };
@@ -8865,9 +8920,12 @@ compiler_init(Ty *ty)
         TYPE_CLASS_ = class_get_class(ty, CLASS_CLASS )->object_type;
         TYPE_ANY    = &ANY_TYPE;
 
-        scope_add_type(ty, global, "Any")->type = TYPE_ANY;
-
-        types_init(ty);
+        if (CheckConstraints) {
+                types_init(ty);
+                scope_add_type(ty, global, "Any")->type = TYPE_ANY;
+        } else {
+                AnyTypeSymbol = scope_add_type_var(ty, global, "Any");
+        }
 }
 
 void
@@ -10278,22 +10336,25 @@ tyexpr(Ty *ty, Expr const *e)
                 );
                 break;
         case EXPRESSION_TEMPLATE_HOLE:
-                if (vN(ty->stack) > e->integer)
+                if (vN(ty->stack) > e->integer) {
                         v = *vm_get(ty, e->integer);
-                else
+                } else {
                         v = TAG(TyNil);
+                }
                 break;
         case EXPRESSION_TEMPLATE_VHOLE:
-                if (vN(ty->stack) > e->integer)
+                if (vN(ty->stack) > e->integer) {
                         v = tagged(ty, TyValue, *vm_get(ty, e->integer), NONE);
-                else
+                } else {
                         v = TAG(TyNil);
+                }
                 break;
         case EXPRESSION_TEMPLATE_THOLE:
-                if (vN(ty->stack) > e->integer)
+                if (vN(ty->stack) > e->integer) {
                         v = tagged(ty, TyType, *vm_get(ty, e->integer), NONE);
-                else
+                } else {
                         v = TAG(TyUnknownT);
+                }
                 break;
         case EXPRESSION_STATEMENT:
                 v = tystmt(ty, e->statement);
@@ -10906,12 +10967,21 @@ cexpr(Ty *ty, Value *v)
 
         switch (tag) {
         case 0:
-                e->type = EXPRESSION_LIST;
-                if (v->type != VALUE_ARRAY) {
+                switch (v->type) {
+                case VALUE_ARRAY:
+                        e->type = EXPRESSION_LIST;
+                        for (int i = 0; i < v->array->count; ++i) {
+                                avP(e->es, cexpr(ty, &v->array->items[i]));
+                        }
+                        break;
+
+                case VALUE_TYPE:
+                        e->type = EXPRESSION_TYPE;
+                        e->_type = v->ptr;
+                        break;
+
+                default:
                         goto Bad;
-                }
-                for (int i = 0; i < v->array->count; ++i) {
-                        avP(e->es, cexpr(ty, &v->array->items[i]));
                 }
                 break;
         case TyExpr:
@@ -11781,7 +11851,7 @@ cexpr(Ty *ty, Value *v)
                 break;
         default:
         Bad:
-                fail("invalid value passed to cexpr(): %s", value_show_color(ty, v));
+                fail("invalid value passed to cexpr(): %s", VSC(v));
         }
 
         Scope *scope = STATE.macro_scope == NULL
@@ -11994,23 +12064,12 @@ typarse(
         return e_;
 }
 
-
 static void
 AddClassTraits(Ty *ty, ClassDefinition const *def)
 {
         for (int i = 0; i < vN(def->traits); ++i) {
-                Expr *trait = v__(def->traits, i);
-                Type *trait0 = type_resolve(ty, trait);
-                if (
-                        (trait0 == NULL)
-                    ||  (trait0->type != TYPE_OBJECT)
-                    || !class_is_trait(ty, trait0->class->i)
-                ) {
-                        PushContext(ty, trait);
-                        fail("sorry, but I won't allow it!");
-                }
-
-                class_implement_trait(ty, def->symbol, trait0->class->i);
+                int t = ResolveClassSpec(ty, v__(def->traits, i));
+                class_implement_trait(ty, def->symbol, t);
         }
 }
 
@@ -12199,8 +12258,15 @@ define_class(Ty *ty, Stmt *s)
                 m->class = sym->class;
 
                 if (contains(OperatorCharset, *m->name) && vN(m->params) > 0) {
-                        Expr *this = NewExpr(ty, EXPRESSION_TYPE);
-                        this->_type = class->object_type;
+                        Expr *this;
+                        if (CheckConstraints) {
+                                this = NewExpr(ty, EXPRESSION_TYPE);
+                                this->_type = class->object_type;
+                        } else {
+                                this = NewExpr(ty, EXPRESSION_IDENTIFIER);
+                                this->identifier = cd->name;
+                                symbolize_expression(ty, cd->scope, this);
+                        }
 
                         Expr *copy = aclone(m);
                         avC(copy->params);
