@@ -28,6 +28,9 @@ pub ns defs {
     pub const xmlXPathFuncLookupFunc     = c.ptr
     pub const xmlStructuredErrorFunc     = c.ptr
 
+    pub const xmlSchemaValidityErrorFunc   = c.ptr
+    pub const xmlSchemaValidityWarningFunc = c.ptr
+
     pub const xmlDictPtr           = c.ptr
     pub const xmlDocPtr            = c.ptr
     pub const xmlNodePtr           = c.ptr
@@ -1857,6 +1860,27 @@ C! pub libxml fn {
     void xmlXPathFreeObject(xmlXPathObject *obj);
 
     xmlNode *xmlDocGetRootElement(xmlDoc *doc);
+
+    xmlSchemaParserCtxt   *xmlSchemaNewMemParserCtxt(const char *buffer, int size);
+    xmlSchema             *xmlSchemaParse(xmlSchemaParserCtxt *ctxt);
+    void                   xmlSchemaFreeParserCtxt(xmlSchemaParserCtxt *ctxt);
+    void                   xmlSchemaFree(xmlSchema *schema);
+    xmlSchemaValidCtxt    *xmlSchemaNewValidCtxt(xmlSchema *schema);
+    int                    xmlSchemaValidateDoc(xmlSchemaValidCtxt *vctxt, xmlDoc *doc);
+    void                   xmlSchemaFreeValidCtxt(xmlSchemaValidCtxt *vctxt);
+
+    void xmlSchemaSetValidErrors(
+        xmlSchemaValidCtxt *vctxt,
+        xmlSchemaValidityErrorFunc err,
+        xmlSchemaValidityWarningFunc warn,
+        void *ctx
+    );
+    void xmlSchemaSetParserErrors(
+        xmlSchemaParserCtxt *pctxt,
+        xmlSchemaValidityErrorFunc err,
+        xmlSchemaValidityWarningFunc warn,
+        void *ctx
+    );
 }
 
 pub xmlFree = c::wrap(libxml, 'xmlFree', c.void, c.ptr, func-ptr?=true)
@@ -1868,7 +1892,7 @@ class XMLAttrSet {
         __node = node
     }
 
-    __subscript__(key: String) -> String {
+    __subscript__(key: String) -> String | nil {
         if let $ptr = xmlGetProp(__node, key.cstr()) {
             defer c::free(ptr)
             c.str(ptr)
@@ -2057,6 +2081,10 @@ class Document {
         __doc.__ptr__()
     }
 
+    __ptr__() {
+        __doc.__ptr__()
+    }
+
     root {
         XMLNode(xmlDocGetRootElement(__doc))
     }
@@ -2119,6 +2147,46 @@ class Document {
         let ctx = xmlSaveToFd(1, nil, options)
         xmlSaveDoc(ctx, __doc)
         xmlSaveClose(ctx)
+    }
+}
+
+class Schema {
+    __schema: _
+    
+    init(schema: _) {
+        __schema = schema
+    }
+
+    static parse(schema: String | Blob) -> Schema {
+        let parser = xmlSchemaNewMemParserCtxt(schema, #schema)
+        defer xmlSchemaFreeParserCtxt(parser)
+        return Schema(xmlSchemaParse(parser))
+    }
+
+    validate(doc: Document) -> (Array[String], Array[String]) {
+        let ctx = xmlSchemaNewValidCtxt(__schema)
+        defer xmlSchemaFreeValidCtxt(ctx)
+
+        let errors = []
+        let warnings = []
+        
+        C! closure onWarn(ctx: c.ptr, msg: c.ptr) {
+            warnings.push(c.str(msg))
+        }
+
+        C! closure onError(ctx: c.ptr, msg: c.ptr) {
+            errors.push(c.str(msg))
+        }
+
+        defer c.freeClosure(onWarn)
+        defer c.freeClosure(onError)
+
+        xmlSchemaSetValidErrors(ctx, onError, onWarn)
+        xmlSchemaSetParserErrors(ctx, onError, onWarn)
+
+        xmlSchemaValidateDoc(ctx, doc)
+
+        return (errors, warnings)
     }
 }
 

@@ -765,9 +765,11 @@ main(int argc, char **argv)
         }
 #endif
 
-        if (!vm_init(ty, argc - nopt, argv + nopt)) {
-                fprintf(stderr, "%s\n", TyError(ty));
-                return -1;
+        WITH_TYPES_OFF {
+                if (!vm_init(ty, argc - nopt, argv + nopt)) {
+                        fprintf(stderr, "%s\n", TyError(ty));
+                        return -1;
+                }
         }
 
         argv += ProcessArgs(argv, false);

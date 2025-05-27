@@ -22,15 +22,15 @@ enum {
 };
 
 typedef struct {
-        uint32_t t1;
-        uint32_t t2;
-        int      ref;
-        Expr    *expr;
+        i32   t1;
+        i32   t2;
+        i32   ref;
+        Expr *expr;
 } OperatorSpec;
 
 typedef struct {
-        uint64_t key;
-        int      ref;
+        u64 key;
+        i32      ref;
 } CacheEntry;
 
 typedef vec(OperatorSpec) DispatchList;
@@ -50,22 +50,22 @@ static struct {
         .lock = TY_RWLOCK_INIT
 };
 
-inline static uint64_t
-forge_key(int t1, int t2)
+inline static u64
+forge_key(i32 t1, i32 t2)
 {
-        return (((uint64_t)t1) << 32) | ((uint32_t)t2);
+        return (((u64)t1) << 32) | ((u32)t2);
 }
 
-inline static int
-check_cache(DispatchCache const *c, uint64_t key)
+inline static i32
+check_cache(DispatchCache const *c, u64 key)
 {
-        _Static_assert(CHAR_BIT * sizeof (int) <= 32, "this isn't gonna work");
+        _Static_assert(CHAR_BIT * sizeof (i32) <= 32, "this isn't gonna work");
 
-        int lo = 0,
+        i32 lo = 0,
             hi = c->count - 1;
 
         while (lo <= hi) {
-                int m = (lo + hi) / 2;
+                i32 m = (lo + hi) / 2;
                 if      (key < c->items[m].key) hi = m - 1;
                 else if (key > c->items[m].key) lo = m + 1;
                 else                            return c->items[m].ref;
@@ -76,11 +76,11 @@ check_cache(DispatchCache const *c, uint64_t key)
 
 
 inline static void
-update_cache(DispatchCache *c, uint64_t key, int ref)
+update_cache(DispatchCache *c, u64 key, i32 ref)
 {
         xvP(*c, ((CacheEntry) { .key = key, .ref = ref }));
 
-        for (int i = c->count - 1; i > 0 && c->items[i - 1].key > key; --i) {
+        for (i32 i = c->count - 1; i > 0 && c->items[i - 1].key > key; --i) {
                 SWAP(CacheEntry, c->items[i], c->items[i - 1]);
         }
 }
@@ -98,12 +98,12 @@ are_ordered(OperatorSpec const *a, OperatorSpec const *b)
         );
 }
 
-inline static int
-check_slow(DispatchList const *list, int t1, int t2)
+inline static i32
+check_slow(DispatchList const *list, i32 t1, i32 t2)
 {
         OperatorSpec const *match = NULL;
 
-        for (int i = 0; i < list->count; ++i) {
+        for (i32 i = 0; i < list->count; ++i) {
                 OperatorSpec const *op = &list->items[i];
                 if (op->ref == -1) {
                         continue;
@@ -127,11 +127,11 @@ check_slow(DispatchList const *list, int t1, int t2)
 }
 
 inline static Expr *
-find_op_fun(DispatchList const *list, int t1, int t2)
+find_op_fun(DispatchList const *list, i32 t1, i32 t2)
 {
         OperatorSpec const *match = NULL;
 
-        for (int i = 0; i < list->count; ++i) {
+        for (i32 i = 0; i < list->count; ++i) {
                 OperatorSpec const *op = &list->items[i];
                 if (t1 == op->t1 && t2 == op->t2) {
                         return op->expr;
@@ -152,7 +152,7 @@ find_op_fun(DispatchList const *list, int t1, int t2)
 }
 
 void
-op_add(int op, int t1, int t2, int ref, Expr *expr)
+op_add(i32 op, i32 t1, i32 t2, i32 ref, Expr *expr)
 {
         dont_printf(
                 "op_add(): %20s %4s   %-20s\n",
@@ -193,10 +193,10 @@ op_add(int op, int t1, int t2, int ref, Expr *expr)
         TyRwLockWrUnlock(&group->lock);
 }
 
-int
-op_dispatch(int op, int t1, int t2)
+i32
+op_dispatch(i32 op, i32 t1, i32 t2)
 {
-        uint64_t key = forge_key(t1, t2);
+        u64 key = forge_key(t1, t2);
 
         TyRwLockRdLock(&_2.lock);
 
@@ -210,7 +210,7 @@ op_dispatch(int op, int t1, int t2)
         TyRwLockRdUnlock(&_2.lock);
         TyRwLockRdLock(&group->lock);
 
-        int ref = check_cache(&group->cache, key);
+        i32 ref = check_cache(&group->cache, key);
 
         TyRwLockRdUnlock(&group->lock);
 
@@ -227,7 +227,7 @@ op_dispatch(int op, int t1, int t2)
 }
 
 Expr *
-op_fun_info(int op, int t1, int t2)
+op_fun_info(i32 op, i32 t1, i32 t2)
 {
         TyRwLockRdLock(&_2.lock);
 
@@ -246,8 +246,8 @@ op_fun_info(int op, int t1, int t2)
         return expr;
 }
 
-int
-op_defs_for(int op, int c, bool left, expression_vector *defs)
+i32
+op_defs_for(i32 op, i32 c, bool left, expression_vector *defs)
 {
         TyRwLockRdLock(&_2.lock);
 
@@ -257,16 +257,16 @@ op_defs_for(int op, int c, bool left, expression_vector *defs)
                 return 0;
         }
 
-        int n = 0;
+        i32 n = 0;
 
         DispatchGroup *group = _2.ops.items[op];
         TyRwLockRdUnlock(&_2.lock);
 
         TyRwLockWrLock(&group->lock);
-        for (int i = 0; i < vN(group->defs); ++i) {
+        for (i32 i = 0; i < vN(group->defs); ++i) {
                 Expr *fun = v_(group->defs, i)->expr;
-                int t1 = v_(group->defs, i)->t1;
-                int t2 = v_(group->defs, i)->t2;
+                i32 t1 = v_(group->defs, i)->t1;
+                i32 t2 = v_(group->defs, i)->t2;
                 if (
                         fun->_type != NULL
                      && class_is_subclass(ty, c, (left ? t1 : t2))
@@ -280,20 +280,20 @@ op_defs_for(int op, int c, bool left, expression_vector *defs)
         return n;
 }
 
-int
-op_defs_for_l(int op, int c, expression_vector *defs)
+i32
+op_defs_for_l(i32 op, i32 c, expression_vector *defs)
 {
         return op_defs_for(op, c, true, defs);
 }
 
-int
-op_defs_for_r(int op, int c, expression_vector *defs)
+i32
+op_defs_for_r(i32 op, i32 c, expression_vector *defs)
 {
         return op_defs_for(op, c, false, defs);
 }
 
 Type *
-op_member_type(int op, int c, bool left)
+op_member_type(i32 op, i32 c, bool left)
 {
         TyRwLockRdLock(&_2.lock);
 
@@ -308,10 +308,10 @@ op_member_type(int op, int c, bool left)
         TyRwLockRdUnlock(&_2.lock);
 
         TyRwLockWrLock(&group->lock);
-        for (int i = 0; i < vN(group->defs); ++i) {
+        for (i32 i = 0; i < vN(group->defs); ++i) {
                 Expr const *fun = v_(group->defs, i)->expr;
-                int t1 = v_(group->defs, i)->t1;
-                int t2 = v_(group->defs, i)->t2;
+                i32 t1 = v_(group->defs, i)->t1;
+                i32 t2 = v_(group->defs, i)->t2;
                 if (
                         fun->_type != NULL
                      && (left ? t1 : t2) == c
@@ -325,19 +325,19 @@ op_member_type(int op, int c, bool left)
 }
 
 Type *
-op_member_type_l(int op, int c)
+op_member_type_l(i32 op, i32 c)
 {
         return op_member_type(op, c, true);
 }
 
 Type *
-op_member_type_r(int op, int c)
+op_member_type_r(i32 op, i32 c)
 {
         return op_member_type(op, c, false);
 }
 
 Type *
-op_type(int op)
+op_type(i32 op)
 {
         TyRwLockRdLock(&_2.lock);
 
@@ -352,9 +352,9 @@ op_type(int op)
         TyRwLockRdUnlock(&_2.lock);
 
         TyRwLockWrLock(&group->lock);
-        for (int i = 0; i < vN(group->defs); ++i) {
+        for (i32 i = 0; i < vN(group->defs); ++i) {
                 Expr const *fun = v_(group->defs, i)->expr;
-                if (fun->_type != NULL) {
+                if (fun->_type != NULL && fun->return_type != NULL) {
                         t0 = type_both(ty, t0, fun->_type);
                 }
         }
@@ -364,7 +364,7 @@ op_type(int op)
 }
 
 void
-op_dump(int op)
+op_dump(i32 op)
 {
         // TODO
 }

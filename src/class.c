@@ -42,6 +42,8 @@ static char const *BuiltinClassNames[] = {
         [CLASS_ITER]         = "Iter",
         [CLASS_ITERABLE]     = "Iterable",
         [CLASS_OBJECT]       = "Object",
+        [CLASS_PTR]          = "Ptr",
+        [CLASS_INTO_PTR]     = "IntoPtr",
         [CLASS_QUEUE]        = "Queue",
         [CLASS_RANGE]        = "Range",
         [CLASS_REGEX]        = "Regex",
@@ -96,6 +98,12 @@ class_new_empty(Ty *ty)
 
         if (c->i < CLASS_BUILTIN_END) {
                 c->name = BuiltinClassNames[c->i];
+                switch (c->i) {
+                case CLASS_ITERABLE:
+                case CLASS_ITER:
+                case CLASS_INTO_PTR:
+                        MakeTrait(ty, c);
+                }
         }
 
         c->type = type_class(ty, c);
@@ -108,9 +116,7 @@ int
 class_new(Ty *ty, Stmt *def)
 {
         Class *c = class_new_empty(ty);
-
         init(ty, c, def);
-
         return c->i;
 }
 
@@ -118,14 +124,7 @@ void
 class_builtin(Ty *ty, int class, Stmt *s)
 {
         Class *c = C(class);
-
         init(ty, c, s);
-
-        switch (class) {
-        case CLASS_ITERABLE:
-        case CLASS_ITER:
-                MakeTrait(ty, c);
-        }
 }
 
 int
@@ -181,7 +180,7 @@ finalize(Ty *ty, Class *c)
 
         for (int i = 0; i < vN(c->traits); ++i) {
                 Class *t = v__(c->traits, i);
-                itable_copy_weak(ty, &c->methods, &t->methods);
+                //itable_copy_weak(ty, &c->methods, &t->methods);
                 itable_copy_weak(ty, &c->getters, &t->getters);
         }
 
@@ -262,7 +261,7 @@ class_add_setter_i(Ty *ty, int class, int id, Value f)
 void
 class_copy_methods(Ty *ty, int dst, int src)
 {
-        itable_copy(ty, &C(dst)->methods, &C(src)->methods);
+        //itable_copy(ty, &C(dst)->methods, &C(src)->methods);
         itable_copy(ty, &C(dst)->getters, &C(src)->getters);
         itable_copy(ty, &C(dst)->setters, &C(src)->setters);
         itable_copy(ty, &C(dst)->fields, &C(src)->fields);
@@ -286,42 +285,10 @@ class_lookup_field_i(Ty *ty, int class, int id)
 }
 
 Value *
-class_lookup_getter_i(Ty *ty, int class, int id)
-{
-        Class *c = C(class);
-        Value *v;
-
-        do {
-                if ((v = itable_lookup(ty, &c->getters, id)) != NULL) {
-                        return v;
-                }
-                c = c->super;
-        } while (c != NULL);
-
-        return NULL;
-}
-
-Value *
 class_lookup_getter(Ty *ty, int class, char const *name, unsigned long h)
 {
         InternEntry *e = intern(&xD.members, name);
         return class_lookup_getter_i(ty, class, e->id);
-}
-
-Value *
-class_lookup_setter_i(Ty *ty, int class, int id)
-{
-        Class *c = C(class);
-        Value *v;
-
-        do {
-                if ((v = itable_lookup(ty, &c->setters, id)) != NULL) {
-                        return v;
-                }
-                c = c->super;
-        } while (c != NULL);
-
-        return NULL;
 }
 
 Value *
@@ -331,43 +298,90 @@ class_lookup_setter(Ty *ty, int class, char const *name, unsigned long h)
         return class_lookup_setter_i(ty, class, e->id);
 }
 
-Value *
-class_lookup_method_i(Ty *ty, int class, int id)
+static bool log = false;
+//#define pp(...)  log && printf(__VA_ARGS__)
+#define pp(...)  0
+
+inline static void
+qput(Ty *ty, ClassVector *cq, u32 i, u32 *j, Class *c)
 {
-        Class *c = C(class);
-        Value *v;
+        u32 n = vC(*cq);
+        u32 mask = n - 1;
+        u32 j0 = (*j + n) & mask;
 
-        do {
-                if ((v = itable_lookup(ty, &c->methods, id)) != NULL) {
-                        return v;
-                }
-                c = c->super;
-        } while (c != NULL);
+        pp("put pre:  i=%u j=%u n=%u j0=%u\n", i, *j, n, j0);
 
-        return NULL;
+        if (++*j == 1 || j0 + 1 == n) {
+                do svP(*cq, NULL); while (vN(*cq) != vC(*cq));
+        }
+
+        pp("put post: i=%u j=%u n=%zu j0=%u\n", i, *j, vC(*cq), j0);
+
+        *v_(*cq, j0) = c;
 }
+
+inline static Class *
+qget(Ty *ty, ClassVector *cq, u32 *i, u32 j)
+{
+        u32 n = vC(*cq);
+        u32 mask = n - 1;
+        u32 i0 = (*i + n) & mask;
+
+        pp("get pre:  i=%u j=%u n=%u i0=%u\n", *i, j, n, i0);
+
+        if (++*i > j) {
+                return NULL;
+        }
+
+        return v__(*cq, i0);
+}
+
+#define LOOKUP_IMPL_FOR(name, what)                                   \
+Value *                                                               \
+class_lookup_##name##_i(Ty *ty, int class, int id)                    \
+{                                                                     \
+        Class *c = C(class);                                          \
+        Value *v = NULL;                                              \
+                                                                      \
+        SCRATCH_SAVE();                                               \
+                                                                      \
+        u32 i = 0;                                                    \
+        u32 j = 0;                                                    \
+        ClassVector sq = {0};                                         \
+                                                                      \
+        do {                                                          \
+                if ((v = itable_lookup(ty, &c->what, id)) != NULL) {  \
+                        break;                                        \
+                }                                                     \
+                                                                      \
+                if (c->super != NULL) {                               \
+                        qput(ty, &sq, i, &j, c->super);               \
+                }                                                     \
+                                                                      \
+                for (u32 t = 0; t < vN(c->traits); ++t) {             \
+                        qput(ty, &sq, i, &j, v__(c->traits, t));      \
+                }                                                     \
+        } while ((c = qget(ty, &sq, &i, j)) != NULL);                 \
+                                                                      \
+        SCRATCH_RESTORE();                                            \
+                                                                      \
+        if (v != NULL && i > 0) {                                     \
+                itable_add(ty, &c->what, id, *v);                     \
+        }                                                             \
+                                                                      \
+        return v;                                                     \
+}                                                                     \
+
+LOOKUP_IMPL_FOR(method, methods);
+LOOKUP_IMPL_FOR(static, statics);
+LOOKUP_IMPL_FOR(getter, getters);
+LOOKUP_IMPL_FOR(setter, setters);
 
 Value *
 class_lookup_method(Ty *ty, int class, char const *name, unsigned long h)
 {
         InternEntry *e = intern(&xD.members, name);
         return class_lookup_method_i(ty, class, e->id);
-}
-
-Value *
-class_lookup_static_i(Ty *ty, int class, int id)
-{
-        Class *c = C(class);
-        Value *v;
-
-        do {
-                if ((v = itable_lookup(ty, &c->statics, id)) != NULL) {
-                        return v;
-                }
-                c = c->super;
-        } while (c != NULL);
-
-        return NULL;
 }
 
 Value *
@@ -408,16 +422,16 @@ class_implement_trait(Ty *ty, int class, int trait)
         Class * restrict c = C(class);
         Class * restrict t = C(trait);
 
-        xvP(c->traits, t);
-
         while (vN(c->impls) <= t->ti) {
                 xvP(c->impls, false);
         }
 
-        *v_(c->impls, t->ti) = true;
-
-        if (t->super != NULL && t->super->is_trait) {
-                class_implement_trait(ty, c->i, t->super->i);
+        if (!v__(c->impls, t->ti)) {
+                xvP(c->traits, t);
+                *v_(c->impls, t->ti) = true;
+                if (t->super != NULL && t->super->is_trait) {
+                        class_implement_trait(ty, c->i, t->super->i);
+                }
         }
 }
 

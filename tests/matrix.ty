@@ -24,52 +24,60 @@ pub class Matrix : Iterable {
     __fmt__() { self.__str__() }
 
     __str__() {
-        '\n' + [row.map(fmt@('% 6.2f', _)).unwords() for row in @m].unlines()
+        '\n' + [row.map(fmt@('% 6.2f', _)).unwords() for row in self].unlines()
+    }
+
+    __iter__*() {
+        for ..rows {
+            yield row(it)
+        }
     }
 }
 
-class Vec < Matrix {
-    __subscript__(i) { @v[i] }
-    __iter__() { @v.__iter__() }
+class Vec < Matrix : Iterable[Float] {
+    _v: Array[Float]
+    __subscript__(i: Int) { _v[i] }
+    __iter__() { _v.__iter__() }
+    __str__() { "Vec({_v.unwords()})" }
 }
 
-class RowVec(v) < Vec {
+class RowVec(_v) < Vec {
     rows {   1 }
-    cols { #@v }
+    cols { #@_v }
 
     row(i: i == 0) { self }
-    col(i)         { ColVec([@v[i]]) }
+    col(i)         { ColVec([@_v[i]]) }
 
     __call__(i, j) {
-        @v[j]
+        @_v[j]
     }
 }
 
-class ColVec(v) < Vec {
+class ColVec(_v) < Vec {
     cols { 1   }
-    rows { #@v }
+    rows { #@_v }
 
     col(i: i == 0) { self }
-    row(i)         { RowVec([@v[i]]) }
+    row(i)         { RowVec([@_v[i]]) }
 
     __call__(i, j) {
-        @v[i]
+        @_v[i]
     }
 }
 
 
 let dots = 0
 
-function .(u: Vec, v: Vec) {
+fn .(u: Vec, v: Vec) -> Float {
     dots += 1
     [x * y for (x, y) in u.zip(v)].sum()
 }
 
-function m(s) {
+fn m(s) {
     Matrix([row.words().map(float) for row in s.lines() if row :: /\d/])
 }
 
-function *(X: Matrix, Y: Matrix) {
+fn *(X: Matrix, Y: Matrix) -> Matrix {
     Matrix([
         [
             X.row(i) . Y.col(j)
@@ -79,8 +87,8 @@ function *(X: Matrix, Y: Matrix) {
     ])
 }
 
-function **(X: Matrix, n: Int) {
-    (X for ..n).fold(`*`)
+fn **(X: Matrix, n: Int) -> Matrix {
+    (X for ..n).fold(`*`) as Matrix
 }
 
 let P = m('
@@ -92,6 +100,7 @@ let P = m('
                                        
      0         0.14      0         1.0 
 ')
+
 
 let X = P ** 10
 

@@ -6,13 +6,6 @@ import ty.lex as lex
 import ptr (typed)
 
 tag CType;
-tag Ptr;
-
-fn c::size(type: _) -> Int;
-
-fn c::load[T](type: CType[T], address: _) -> T;
-
-fn ptr::typed(ptr: _, type: CType[_]) -> _;
 
 __set_type__ c::i8      CType[Int];
 __set_type__ c::i16     CType[Int];
@@ -26,6 +19,15 @@ __set_type__ c::u64     CType[Int];
 __set_type__ c::uint    CType[Int];
 __set_type__ c::float   CType[Float];
 __set_type__ c::double  CType[Float];
+
+fn c::str(ptr: IntoPtr[Any], len: ?Int) -> String;
+fn c::as_str(ptr: IntoPtr[Any], len: ?Int) -> String;
+fn c::load[T](type: CType[T], address: IntoPtr[T]) -> T;
+fn c::size[T](type: CType[T]) -> Int;
+fn c::free(ptr: IntoPtr[Any]) -> nil;
+fn c::new[T](type: CType[T], count: ?Int) -> Ptr[T];
+fn c::alloc[T](size: Int) -> Ptr[T];
+fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
 
 pub cifs = Sync(%{})
 
@@ -92,7 +94,7 @@ pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = fal
     }
 }
 
-pub function array(type, xs) {
+pub fn array[T](type: CType[T], xs: Iterable[T, Int]) {
     let buffer = typed(c.alloc(c.size(type) * #xs), type)
 
     for x, i in xs {
@@ -744,10 +746,11 @@ function clos() {
     // closure
     next()
 
-    let name = next().id
+    let name = if peek().type == 'id' {
+        next().id
+    }
 
-    // (
-    next()
+    next!('(')
 
     let params = []
 
@@ -762,13 +765,12 @@ function clos() {
         }
     }
 
-    // )
-    next()
+    next!(')')
 
-    // ->
-    next()
+    let rt = (peek().type == '->')
+           ? do { next(); expr(0) }
+           : ty.Value(c.void)
 
-    let rt = expr(0)
     let body = stmt(0)
 
     let args = [rt, *params.map(&.t)]
@@ -779,16 +781,18 @@ function clos() {
         body: body
     )
 
-    ty.Let(
-        ty.Id(name: name),
-        ty.Call(
-            func: ty.Value(c.closure),
-            args: [
-                *(ty.Arg(arg: t) for t in args),
-                ty.Arg(arg: f)
-            ]
-        )
+    let call = ty.Call(
+        func: ty.Value(c.closure),
+        args: [
+            *(ty.Arg(arg: t) for t in args),
+            ty.Arg(arg: f)
+        ]
     )
+    
+    match name {
+        nil => call,
+        _   => ty.Let(ty.Id({name}), call)
+    }
 }
 
 pub macro C! {

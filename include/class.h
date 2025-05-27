@@ -10,6 +10,8 @@
 typedef struct class Class;
 typedef struct type Type;
 
+typedef vec(Class *) ClassVector;
+
 struct class {
         int i;
         int ti;
