@@ -2324,10 +2324,10 @@ class Range : Iterable[Int] {
         k :: self
     }
 
-    clamp(a, b) {
+    clamp(lo, hi) {
         return Range(
-            max(a ?? low(), low()),
-            min(b ?? high(), high())
+            min(hi, max(a, lo)),
+            max(lo, min(b, hi))
         )
     }
 
@@ -2355,37 +2355,38 @@ class Range : Iterable[Int] {
 }
 
 class InclusiveRange < Range {
-    __str__() {
-        return "({@a} ... {@b})"
-    }
-
-    __iter__() -> Generator[Int] {
-        if a < b {
-            a.upto(b)
-        } else {
-            a.downto(b)
-        }
-    }
-
-    high() {
-        max(@a, @b)
+    init(a, b) {
+        self.a = min(a, b)
+        self.b = max(a, b) + 1
     }
 }
 
 fn +(n: Int, range: Range) {
-    (range.low() + n)...(range.high() + n)
+    type(range)(
+        range.a + n,
+        range.b + n
+    )
 }
 
 fn +(range: Range, n: Int) {
-    (range.low() + n)...(range.high() + n)
+    type(range)(
+        range.a + n,
+        range.b + n
+    )
 }
 
 fn -(n: Int, range: Range) {
-    (n - range.high())...(n - range.low())
+    type(range)(
+        n - range.a,
+        n - range.b
+    )
 }
 
 fn -(range: Range, n: Int) {
-    (range.low() - n)...(range.high() - n)
+    type(range)(
+        range.a - n,
+        range.b - n
+    )
 }
 
 use JSON = String

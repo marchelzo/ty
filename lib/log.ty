@@ -12,6 +12,11 @@ const WARN     = 2
 const INFO     = 3
 const DEBUG    = 4
 
+use LoggingConfig = {
+    level: ?Int,
+    path:  ?String
+}
+
 let levels = %{
     CRITICAL: 'critical',
     ERROR: 'error',
@@ -24,10 +29,10 @@ fn log-open(path: String) {
     open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
 }
 
-let global-log-fds = %{*: log-open(it)}
+let global-log-fds = %{nil: 2, *: log-open(it)}
 let global-log-lock = Mutex()
 
-let TY_LOG_PATH = getenv('TY_LOG')
+pub DEFAULT_LOG_PATH = getenv('TY_LOG')
 
 class Logger {
     __name:   String
@@ -72,13 +77,15 @@ class Logger {
         __chalk.time     = '#10ccb9'
         __chalk.name     = '#92e83c'
 
-        if path {
-            __path = path
-            with global-log-lock.lock() {
-                __color = isatty(global-log-fds[path])
-            }
-        } else {
-            __color = isatty(2)
+        setup({path})
+    }
+
+    setup(config: LoggingConfig) {
+        __path  = config.?path  ?? __path
+        __level = config.?level ?? __level
+
+        with global-log-lock.lock() {
+            __color = isatty(global-log-fds[__path])
         }
     }
 
@@ -105,8 +112,7 @@ class Logger {
             }
 
             with global-log-lock.lock() {
-                let path = __path ?? DEFAULT_LOG_PATH
-                let fd = path ? global-log-fds[path] : 2
+                let fd = global-log-fds[__path]
                 write(fd, "{out}")
             }
         }
@@ -155,10 +161,7 @@ fn _get(name: String, path: ?String) -> Logger {
 }
 
 fn _log(level, expr) $$[
-    $${_get}(
-        __module__,
-        $$(ty.IfDef({name: 'TY_LOG_PATH'})).or-else(nil)
-    ).log($${level}, $$expr)
+    $${_get}(__module__, $$::(DEFAULT_LOG_PATH)).log($${level}, $$expr)
 $$]
 
 pub macro    debug!(expr) { _log(DEBUG,    expr) }
@@ -167,9 +170,10 @@ pub macro     warn!(expr) { _log(WARN,     expr) }
 pub macro    error!(expr) { _log(ERROR,    expr) }
 pub macro critical!(expr) { _log(CRITICAL, expr) }
 
-pub macro logLevel!(n) {
-    $$[ $${_get}(__module__).setLevel($$n) $$]
-}
+pub macro logging(config) $$[
+    let logger = $${_get}(__module__, $$::(DEFAULT_LOG_PATH))
+    logger.setup($$config)
+$$]
 
 pub macro logCtx! {
     let name = parse.expr(50)
