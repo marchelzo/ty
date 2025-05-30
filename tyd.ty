@@ -1,14 +1,15 @@
-#!/usr/bin/env ty
+#!/usr/local/bin/ty -q
 
 import io (stdin)
 import json
 import sh (sh)
 import os (..)
 import help (pretty)
+import log (..)
 
-let log = io.open('tyd.log', 'w+')
+logLevel!(INFO)
+
 let i = 0
-
 let TY_CMD = 'ty'
 
 let init = {
@@ -25,6 +26,7 @@ let init = {
         },
         textDocumentSync: {
             openClose: true,
+            save: true,
             change: 1
         }
     },
@@ -35,64 +37,92 @@ let init = {
     }
 }
 
-log.print(pretty(init, width=72))
+info!(pretty(init, width=72))
 
-let store = %{}
+let store: Dict[String, String] = %{}
 
-//let sh = sh@(*, **, timeoutMs=1000)
-
-fn check-file(path: String) {
-    log.print("path = {path}")
-    log.flush()
-    let out, { status, * } = sh("{TY_CMD} -c -", combineOutput: true, input=store[path])
-    log.print("out = {out}")
-    log.print("status = {status}")
-    log.flush()
-    let diagnostics = if status != 0 and let [_, text, int ~> line, int ~> char] = out.match!(/^([^\n]+)(?:.|\n)*?at[^:]+:(\d+):(\d+)/) {
-        log.print("error at {{line, char}}")
-        [{
-            range: {
-                start: { line: line - 1, character: char - 1 },
-                end: {
-                    line: line - 1,
-                    character: char - 1 + (out.match!(/^\s*\^+$/m).?trim().?len() ?? 3)
-                }
-            },
-            message: text,
-            severity: 1
-        }]
-    } else {
-        []
-    }
-
-    let s = json.encode({
-        method: 'textDocument/publishDiagnostics',
-        params: {
-            uri: "file://{path}",
-            diagnostics
-        },
-    })
-
-    io.stdout.write("Content-Length: {#s}\r\n\r\n{s}")
+fn send(msg) {
+    info!("SEND {pretty(msg, width=72)}")
+    let encoded = json.encode(msg)
+    io.stdout.write("Content-Length: {#encoded}\r\n\r\n{encoded}")
     io.stdout.flush()
 }
 
+fn run(cmd, path: String) {
+    info!("RUN: {TY_CMD} {cmd} {path}")
 
-while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
+    if not let $out, $info = sh(
+        "{TY_CMD} {cmd} -:{path}",
+        combineOutput=true,
+        input=store[path],
+        timeoutMs=5000
+    ) {
+        return '', { status: -1 }
+    }
+
+    info!("CMD OUT: {out}")
+
+    return out, info
+}
+
+fn check-file(path: String) {
+    info!("path = {path}")
+    let out, info = run("-c", path)
+    let { status, * } = info
+    info!("out = {out}")
+    info!("status = {status}")
+    let file = path
+
+    try {
+        let diagnostics = (status == 0) ? [] : match json.parse(out) {
+            %{
+                message,
+                'trace': &0 ~> %{ start, end, 'file': >file }
+            } => [{
+                range: {
+                    start: { line: start['line'] - 1, character: start['col'] - 1 },
+                    end: { line: end['line'] - 1, character: end['col'] - 1 }
+                },
+                message,
+                severity: 1
+            }]
+        }
+
+        send({
+            method: 'textDocument/publishDiagnostics',
+            params: {
+                uri: "file://{file}",
+                diagnostics
+            }
+        })
+    } catch _ {
+        info!("Failed to parse diagnostics: {out}")
+    }
+}
+
+fn go() {
+    let $line = stdin.nextLine()
+
+    info!("line = {line}")
+    info!("line.words()[-1] = {line.words()[-1]}")
+
+    let &words $~> &[-1] ~> int ~> $n = line
+    info!("n = {n}")
+
     // Skip empty line
     stdin.nextLine()
 
-    let msg = json.parse(stdin.next(n).str())
+    let req = stdin.next(n).str()
+    info!(req)
+
+    let msg: _ = json.parse(req)
     let id = msg['id']
 
-    log.print(pretty(msg, width=72))
-    log.flush()
+    info!(pretty(msg, width=72))
 
     match msg['method'] {
         'initialize' => {
-            let response = json.encode({id, result: init})
-            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
-            io.stdout.flush()
+            send({id, result: init})
         },
 
         'textDocument/didChange' => {
@@ -105,8 +135,16 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                     %{'text': text}
                 ]
             } = msg['params'] {
-                log.print("Updating {path}.")
                 store[path] = text
+            }
+        },
+
+        'textDocument/didSave' => {
+            if let %{
+                'textDocument': %{
+                    'uri': &[7;] ~> $path,
+                }
+            } = msg['params'] {
                 check-file(path)
             }
         },
@@ -123,13 +161,11 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                 }
             } = msg['params']
 
-            log.print("path = {path}")
-            log.flush()
-            let out, { status, * } = sh("{TY_CMD} -t d{line + 1}:{col + 1} -", input: store[path] ?? '', combineOutput: true)
+            info!("path = {path}")
+            let out, { status, * } = run("-t d{line + 1}:{col + 1}", path)
 
-            log.print("out = {out}")
-            log.print("status = {status}")
-            log.flush()
+            info!("out = {out}")
+            info!("status = {status}")
 
             let result = match (status, out) {
                 (0, json.parse ~> %{file, line, col}) => {
@@ -143,13 +179,11 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                 _ => nil
             }
 
-            let response = json.encode({id, result})
+            let response = {id, result}
 
-            log.print(response)
-            log.flush()
+            info!(response)
 
-            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
-            io.stdout.flush()
+            send(response)
         },
 
         'textDocument/hover' as method => {
@@ -163,23 +197,21 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                 }
             } = msg['params']
 
-            log.print("path = {path}")
-            log.flush()
-            let out, { status, * } = sh("{TY_CMD} -t d{line + 1}:{col + 1} -", input=store[path] ?? '', combineOutput: true)
+            info!("path = {path}")
+            let out, { status, * } = run("-t d{line + 1}:{col + 1}", path)
 
-            log.print("out = {out}")
-            log.print("status = {status}")
-            log.flush()
+            info!("out = {out}")
+            info!("status = {status}")
 
             fn nice(doc) {
                 if doc == nil { return '' }
-                let lines = doc.comb(/^\n+|\n+$/).lines()
+                let lines: _ = doc.comb(/^\n+|\n+$/).lines()
                 let pre = lines.map(/^\s*/).map(`#`).min() ?? 0
                 lines.map(&[pre;]).unlines().strip()
             }
 
             let result = match (status, out) {
-                (0, json.parse ~> $info) => {
+                (0, json.parse ~> info) => {
                     contents: {
                         kind: 'plaintext',
                         value: "
@@ -199,19 +231,13 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                 _ => nil
             }
 
-            let response = json.encode({id, result})
-
-            log.print(response)
-            log.flush()
-
-            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
-            io.stdout.flush()
+            send({id, result})
         },
 
         'textDocument/signatureHelp' as method => {
             if not let %{
                 'textDocument': %{
-                    'uri': &[7;] ~> $path,
+                    'uri': &[7;] ~> path: String,
                 },
 
                 'position': %{
@@ -219,28 +245,23 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                     'character': int ~> col
                 }
             } = msg['params'] {
-                continue
+                return
             }
 
             if not let $source = store[path] {
-                continue
+                return
             }
 
-            log.print("col={col}")
-            log.print(source.lines()[line].chars().enumerate())
+            info!("col={col}")
+            info!(source.lines()[line].chars().enumerate())
 
             let result = if source.lines()[line][col - 1] == ')' {
                 nil
             } else {
-                let out, {status, *} = sh(
-                    "{TY_CMD} -t s{line + 1}:{col + 1} -",
-                    input: source,
-                    combineOutput: true
-                )
+                let out, {status, *} = run("-t s{line + 1}:{col + 1}", path)
 
-                log.print("out = {out}")
-                log.print("status = {status}")
-                log.flush()
+                info!("out = {out}")
+                info!("status = {status}")
 
                 match (status, out) {
                     (0, json.parse $~> %{signatures}) => ({
@@ -250,17 +271,12 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                             parameters: params
                         })
                     }),
-                    _ => nil
+
+                    _ => ()
                 }
             }
 
-            let response = json.encode({id, result})
-
-            log.print(response)
-            log.flush()
-
-            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
-            io.stdout.flush()
+            send({id, result})
         },
 
         'textDocument/completion' as method => {
@@ -274,22 +290,13 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                     'character': int ~> col
                 }
             } = msg['params'] {
-                continue
+                return
             }
 
-            if not let $source = store[path] {
-                continue
-            }
+            let out, {status, *} = run("-t c{line + 1}:{col}", path)
 
-            let out, {status, *} = sh(
-                "{TY_CMD} -t c{line + 1}:{col} -",
-                input: source,
-                combineOutput: true
-            )
-
-            log.print("out = {out}")
-            log.print("status = {status}")
-            log.flush()
+            info!("out = {out}")
+            info!("status = {status}")
 
             let result = match (status, out) {
                 (0, json.parse ~> %{source, type, completions}) => {
@@ -299,35 +306,29 @@ while let &words $~> &[-1] ~> int ~> $n = stdin.nextLine() {
                             label: c['name'],
                             detail: c['type'],
                             doc: c['doc'],
-                            kind: c['kind']
+                            kind: c['kind'],
+                            sortText: "{c['depth']:03} {c['name']}"
                         }
-                        for c in completions
+                        for c in completions if c['name'].match?(/[A-z]/)
                     ]
                 },
-                _ => nil
+
+                _ => ()
             }
 
-            let response = json.encode({id, result})
-
-            log.print(response)
-            log.flush()
-
-            io.stdout.write("Content-Length: {#response}\r\n\r\n{response}")
-            io.stdout.flush()
+            send({id, result})
         },
 
-        _ => { }
+        _ => ()
     }
 }
 
-fn f(x) {
-    let a = x.foo
-    let a = x.baz
-    let b = x.bar
-    let y = x
-    return x
+for (;;) {
+    try {
+        go()
+    } catch err {
+        error!(err)
+    }
 }
-
-let g = f
 
 /* vim: set sts=4 sw=4 expandtab ft=ty: */
