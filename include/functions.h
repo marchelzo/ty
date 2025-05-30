@@ -200,6 +200,7 @@ BUILTIN_FUNCTION(errno_get);
 BUILTIN_FUNCTION(errno_str);
 BUILTIN_FUNCTION(time_time);
 BUILTIN_FUNCTION(time_utime);
+BUILTIN_FUNCTION(time_now);
 BUILTIN_FUNCTION(time_gettime);
 BUILTIN_FUNCTION(time_localtime);
 BUILTIN_FUNCTION(time_gmtime);

@@ -592,53 +592,6 @@ lexrawstr(Ty *ty)
         return mkstring(ty, str.items);
 }
 
-static void
-skiptoken(Ty *ty)
-{
-        LexState save = state;
-
-        SAVE_(jmp_buf, jb);
-
-        static int d = -1;
-
-        d += 1;
-
-        if (setjmp(jb) != 0) {
-                state = save;
-                nextchar(ty);
-        } else {
-                Token t = dotoken(ty, LEX_PREFIX);
-        }
-
-        d -= 1;
-
-        RESTORE_(jb);
-}
-
-static char const *
-lexexpr(Ty *ty)
-{
-        for (int depth = 1; depth > 0;) {
-                switch (C(0)) {
-                case '\0':
-                        error(ty, "unterminated expression in interpolated string");
-
-                case '{': depth += 1; break;
-                case '}': depth -= 1; break;
-
-                case '/':
-                case '\'':
-                case '"':
-                case '`':
-                        skiptoken(ty);
-                        continue;
-                }
-                nextchar(ty);
-        }
-
-        return SRC - 1;
-}
-
 inline static bool
 readhex(Ty *ty, int ndigits, unsigned long long *k)
 {
@@ -663,167 +616,6 @@ readhex(Ty *ty, int ndigits, unsigned long long *k)
         }
 
         return true;
-}
-
-struct SDSLine {
-        vec(char *) strs;
-        vec(LexState) exprs;
-};
-
-static Token
-lexspecialdocstring(Ty *ty)
-{
-        vec(struct SDSLine) lines;
-        vec_init(lines);
-
-        vec(char) str;
-        vec_init(str);
-
-        avP(lines, ((struct SDSLine){0}));
-
-        int ndelim = 0;
-        while (C(0) == '"') {
-                nextchar(ty);
-                ndelim += 1;
-        }
-
-        eat_line_ending(ty);
-
-        Location start = Start;
-
-        while (!end_of_docstring(ty, '"', ndelim) && C(0) != '\0') {
-                if (eat_line_ending(ty)) {
-                        avP(str, '\n');
-                        avP(str, '\0');
-                        avP(vvL(lines)->strs, str.items);
-                        vec_init(str);
-                        avP(lines, (struct SDSLine){0});
-                } else if (C(0) == '{') {
-                        avP(str, '\0');
-                        avP(vvL(lines)->strs, str.items);
-                        vec_init(str);
-                        nextchar(ty);
-                        LexState st = state;
-                        st.end = lexexpr(ty);
-                        avP(vvL(lines)->exprs, st);
-                } else switch (C(0)) {
-                        case '\0': goto Unterminated;
-                        case '\\':
-                                nextchar(ty);
-                                switch (C(0)) {
-                                case '\0':
-                                        goto Unterminated;
-                                case 'n':
-                                        nextchar(ty);
-                                        avP(str, '\n');
-                                        continue;
-                                case 'r':
-                                        nextchar(ty);
-                                        avP(str, '\r');
-                                        continue;
-                                case 't':
-                                        nextchar(ty);
-                                        avP(str, '\t');
-                                        continue;
-                                case 'x':
-                                        {
-                                                unsigned long long b;
-
-                                                nextchar(ty);
-
-                                                if (!readhex(ty, 2, &b)) {
-                                                        error(ty, "invalid hexadecimal byte value in string: \\x%.2s", SRC);
-                                                }
-
-                                                avP(str, b);
-
-                                                continue;
-                                        }
-                                case 'u':
-                                case 'U':
-                                        {
-                                                int c = C(0);
-                                                int ndigits = (c == 'u') ? 4 : 8;
-                                                unsigned long long codepoint;
-
-                                                nextchar(ty);
-
-                                                if (!readhex(ty, ndigits, &codepoint)) {
-                                                        error(ty, "expected %d hexadecimal digits after \\%c in string", ndigits, c, SRC);
-                                                }
-
-                                                if (!utf8proc_codepoint_valid(codepoint)) {
-                                                        error(ty, "invalid Unicode codepoint in string: %u", codepoint);
-                                                }
-
-                                                unsigned char bytes[4];
-                                                int n = utf8proc_encode_char(codepoint, bytes);
-                                                avPn(str, (char *)bytes, n);
-
-                                                continue;
-                                        }
-                                }
-                        default:
-                                avP(str, nextchar(ty));
-                }
-        }
-
-        if (!end_of_docstring(ty, '"', ndelim)) {
-                error(ty, "unterminated docstring starting on line %d", Start.line + 1);
-        }
-
-        // The only characters on this line before the docstring terminator should be whitespace
-        for (int i = 0; i < str.count; ++i) {
-                if (!isspace(str.items[i])) {
-                        error(ty, "illegal docstring terminator on line %d", state.loc.line + 1);
-                }
-        }
-
-        while (ndelim --> 0) {
-                nextchar(ty);
-        }
-
-        int nstrip = str.count;
-
-        SpecialString *special = amA0(sizeof *special);
-
-        vvX(lines);
-
-        for (int i = 0; i < lines.count; ++i) {
-                int off = 0;
-                while (off < nstrip && strchr("\t ", (lines.items[i].strs.items[0][off])) != NULL) {
-                        off += 1;
-                }
-                if (i == 0) {
-                        avP(special->strings, lines.items[i].strs.items[0] + off);
-                } else {
-                        char *s = amA(strlen(*vvL(special->strings)) + strlen(lines.items[i].strs.items[0] + off) + 1);
-                        strcpy(s, *vvL(special->strings));
-                        strcat(s, lines.items[i].strs.items[0] + off);
-                        *vvL(special->strings) = s;
-                }
-                for (int j = 0; j < lines.items[i].exprs.count; ++j) {
-                        avP(special->expressions, lines.items[i].exprs.items[j]);
-                        avP(special->strings, lines.items[i].strs.items[j + 1]);
-                }
-        }
-
-        *strrchr(*vvL(special->strings), '\n') = '\0';
-
-        Token t = mktoken(ty, TOKEN_SPECIAL_STRING);
-        t.special = special;
-        t.start = start;
-
-        return t;
-
-Unterminated:
-        error(ty, "unterminated docstring literal starting on line %d", Start.line + 1);
-}
-
-Token
-lexspecialstr(Ty *ty)
-{
-        return (Token) {0};
 }
 
 static Token
@@ -1241,6 +1033,25 @@ lexcomment(Ty *ty)
 }
 
 static Token
+saferegex(Ty *ty)
+{
+        LexState save = state;
+        SAVE_(jmp_buf, jb);
+
+        Token t;
+        if (setjmp(jb) != 0) {
+                state = save;
+                t = mktoken(ty, nextchar(ty));
+        } else {
+                t = lexregex(ty);
+        }
+
+        RESTORE_(jb);
+
+        return t;
+}
+
+static Token
 dotoken(Ty *ty, int ctx)
 {
         Location start = Start = state.loc;
@@ -1288,6 +1099,8 @@ dotoken(Ty *ty, int ctx)
                 nextchar(ty);
                 state.need_nl = true;
                 return mktoken(ty, TOKEN_DIRECTIVE);
+        } else if (state.in_pp && C(0) == '/') {
+                return saferegex(ty);
         } else if (ctx == LEX_PREFIX && C(0) == '/') {
                 return lexregex(ty);
         } else if (haveid(ty)) {
@@ -1332,7 +1145,7 @@ dotoken(Ty *ty, int ctx)
                 nextchar(ty);
                 nextchar(ty);
                 return mktoken(ty, '$$');
-        } else if (C(0) == '?' && ctx == LEX_PREFIX) {
+        } else if (C(0) == '?' && (C(1) == ':' || ctx == LEX_PREFIX)) {
                 nextchar(ty);
                 return mktoken(ty, TOKEN_QUESTION);
         } else if (C(0) == '$' && ctx == LEX_PREFIX) {
@@ -1357,7 +1170,7 @@ dotoken(Ty *ty, int ctx)
         ) {
                 return lexop(ty);
         } else if (isdigit(C(0))) {
-                return lexnum(ty, ctx == LEX_PREFIX);
+                return lexnum(ty, ctx == LEX_PREFIX || state.in_pp);
         } else if (C(0) == '\'') {
                 if (C(1) == '\'' && C(2) == '\'') {
                         return lexdocstring(ty);
@@ -1399,9 +1212,7 @@ void
 lex_init(Ty *ty, char const *file, char const *src)
 {
         lxst = &state;
-
         filename = file;
-
         state = (LexState) {
                 .loc = (Location) {
                         .s = src,
@@ -1412,6 +1223,7 @@ lex_init(Ty *ty, char const *file, char const *src)
                 .start = src,
                 .end = src + strlen(src),
                 .need_nl = false,
+                .in_pp = false,
                 .keep_comments = true,
                 .ctx = LEX_PREFIX
         };
@@ -1450,6 +1262,12 @@ void
 lex_rewind(Ty *ty, Location const *where)
 {
         state.loc = *where;
+}
+
+void
+lex_in_pp(Ty *ty, bool pp)
+{
+        state.in_pp = pp;
 }
 
 void

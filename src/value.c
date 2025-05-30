@@ -182,7 +182,7 @@ hash(Ty *ty, Value const *val)
         switch (val->type & ~VALUE_TAGGED) {
         case VALUE_NIL:               return 0xDEADBEEFULL;
         case VALUE_BOOLEAN:           return val->boolean ? 0xABCULL : 0xDEFULL;
-        case VALUE_STRING:            return str_hash(val->string, val->bytes);
+        case VALUE_STRING:            return str_hash(val->str, val->bytes);
         case VALUE_INTEGER:           return int_hash(ty, val->integer);
         case VALUE_REAL:              return flt_hash(ty, val->real);
         case VALUE_ARRAY:             return ary_hash(ty, val);
@@ -428,7 +428,7 @@ uninit(Ty *ty, Symbol const *s)
                 s->identifier,
                 TERM(0),
                 TERM(34),
-                s->file,
+                s->mod->path,
                 TERM(0),
                 TERM(33),
                 s->loc.line + 1,
@@ -457,7 +457,7 @@ value_showx(Ty *ty, Value const *v)
                 snprintf(buffer, 1024, "%g", v->real);
                 break;
         case VALUE_STRING:
-                s = show_string(ty, v->string, v->bytes, false);
+                s = show_string(ty, v->str, v->bytes, false);
                 break;
         case VALUE_BOOLEAN:
                 snprintf(buffer, 1024, "%s", v->boolean ? "true" : "false");
@@ -562,7 +562,7 @@ value_showx(Ty *ty, Value const *v)
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
                         }
                         s = gc_resize_unchecked(ty, NULL, str.bytes + 1);
-                        memcpy(s, str.string, str.bytes);
+                        memcpy(s, str.str, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
 BasicObject:
@@ -608,7 +608,7 @@ value_show_colorx(Ty *ty, Value const *v)
                 snprintf(buffer, sizeof buffer, "%s%g%s", TERM(93), v->real, TERM(0));
                 break;
         case VALUE_STRING:
-                s = show_string(ty, v->string, v->bytes, true);
+                s = show_string(ty, v->str, v->bytes, true);
                 break;
         case VALUE_BOOLEAN:
                 snprintf(buffer, sizeof buffer, "%s%s%s", TERM(36), v->boolean ? "true" : "false", TERM(0));
@@ -838,7 +838,7 @@ value_show_colorx(Ty *ty, Value const *v)
                                 zP("%s.__str__() returned non-string", class_name(ty, v->class));
                         s = mA(str.bytes + 1);
                         gX();
-                        memcpy(s, str.string, str.bytes);
+                        memcpy(s, str.str, str.bytes);
                         s[str.bytes] = '\0';
                 } else {
 BasicObject:
@@ -944,7 +944,7 @@ value_compare(Ty *ty, Value const *v1, Value const *v2)
                 return (v1->integer < v2->real) ? -1 : (v1->integer != v2->real);
 
         case PAIR_OF(VALUE_STRING):
-                c = memcmp(v1->string, v2->string, min(v1->bytes, v2->bytes));
+                c = memcmp(v1->str, v2->str, min(v1->bytes, v2->bytes));
                 return (c != 0) ? c : ((int)v1->bytes - (int)v2->bytes);
 
         case PAIR_OF(VALUE_PTR):
@@ -1020,7 +1020,7 @@ value_apply_predicate(Ty *ty, Value *p, Value *v)
                 } else {
                         int rc = pcre2_match(
                                 p->regex->pcre2,
-                                (PCRE2_SPTR)v->string,
+                                (PCRE2_SPTR)v->str,
                                 v->bytes,
                                 0,
                                 0,
@@ -1071,7 +1071,7 @@ value_apply_callable(Ty *ty, Value *f, Value *v)
 
                 int rc = pcre2_match(
                         f->regex->pcre2,
-                        (PCRE2_SPTR)v->string,
+                        (PCRE2_SPTR)v->str,
                         v->bytes,
                         0,
                         0,
@@ -1130,7 +1130,7 @@ value_test_equality(Ty *ty, Value const *v1, Value const *v2)
 
         case PAIR_OF(VALUE_STRING):
                 return v1->bytes == v2->bytes
-                    && memcmp(v1->string, v2->string, v1->bytes) == 0;
+                    && memcmp(v1->str, v2->str, v1->bytes) == 0;
 
         case PAIR_OF(VALUE_BOOLEAN):
                 return v1->boolean == v2->boolean;
@@ -1288,8 +1288,14 @@ mark_pointer(Ty *ty, Value const *v)
 {
         if (v->gcptr != NULL) {
                 MARK(v->gcptr);
-                if (ALLOC_OF(v->gcptr)->type == GC_VALUE) {
+                switch (ALLOC_OF(v->gcptr)->type) {
+                case GC_VALUE:
                         value_mark(ty, (const Value *)v->gcptr);
+                        break;
+
+                case GC_FFI_AUTO:
+                        value_mark(ty, ((const Value *)v->gcptr));
+                        break;
                 }
         }
 }

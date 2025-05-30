@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "compiler.h"
 #include "scope.h"
 #include "alloc.h"
 #include "log.h"
@@ -241,6 +242,7 @@ xnew(Ty *ty, char const *id)
         sym->symbol = SYMBOL++;
         sym->identifier = id;
         sym->hash = h;
+        sym->mod = CompilerCurrentModule(ty);
 
         return sym;
 }
@@ -338,7 +340,7 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
         sym->hash = h;
         sym->next = s->table[i];
 
-        sym->file = NULL;
+        sym->mod = CompilerCurrentModule(ty);
 
         Scope *owner = s;
         while (owner->function != owner && owner->parent != NULL) {
@@ -507,7 +509,7 @@ scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport)
 }
 
 bool
-scope_is_subscope(Ty *ty, Scope const *sub, Scope const *scope)
+scope_is_subscope(Scope const *sub, Scope const *scope)
 {
         while (sub != NULL) {
                 if (sub->parent == scope)

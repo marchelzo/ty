@@ -160,7 +160,7 @@ string(Ty *ty)
         vec(char) str = {0};
 
         char b[8] = {0};
-        int32_t cp;
+        i32 cp;
         utf8proc_ssize_t n;
 
         while (peek() != '\0' && peek() != '"') {
@@ -203,7 +203,7 @@ string(Ty *ty)
                                 b[2] = isxdigit(peek()) ? next() : '\0';
                                 b[3] = isxdigit(peek()) ? next() : '\0';
                                 b[4] = '\0';
-                                if (sscanf(b, "%x", &lo) != 1) {
+                                if (sscanf(b, "%hx", &lo) != 1) {
                                         FAIL;
                                 }
                                 
@@ -356,7 +356,7 @@ encode(Ty *ty, Value const *v, str *out)
                 for (int i = 0; i < v->bytes; ++i) {
                         int n;
                         int32_t cp;
-                        switch (v->string[i]) {
+                        switch (v->str[i]) {
                         case '\t':
                                 xvP(*out, '\\');
                                 xvP(*out, 't');
@@ -369,10 +369,10 @@ encode(Ty *ty, Value const *v, str *out)
                         case '"':
                                 xvP(*out, '\\');
                         default:
-                                if (((uint8_t)v->string[i]) > 127) {
-                                        n = utf8proc_iterate((uint8_t *)&v->string[i], v->bytes - i, &cp);
+                                if (((uint8_t)v->str[i]) > 127) {
+                                        n = utf8proc_iterate((uint8_t *)&v->str[i], v->bytes - i, &cp);
                                         if (n <= 0) {
-                                                dump(out, "\\x%02hhx", v->string[i]);
+                                                dump(out, "\\x%02hhx", v->str[i]);
                                         } else {
                                                 if (cp <= 0xFFFF) {
                                                         dump(out, "\\u%04x", cp);
@@ -384,10 +384,10 @@ encode(Ty *ty, Value const *v, str *out)
                                                 }
                                         }
                                         i += n - 1;
-                                } else if (iscntrl(v->string[i])) {
-                                        dump(out, "\\x%02hhx", v->string[i]);
+                                } else if (iscntrl(v->str[i])) {
+                                        dump(out, "\\x%02hhx", v->str[i]);
                                 } else {
-                                        xvP(*out, v->string[i]);
+                                        xvP(*out, v->str[i]);
                                 }
                                 break;
                         }
@@ -455,7 +455,7 @@ encode(Ty *ty, Value const *v, str *out)
                         Value s = vm_eval_function(ty, NULL, &method, NULL);
                         if (s.type == VALUE_STRING) {
                                 gP(&s);
-                                xvPn(*out, s.string, s.bytes);
+                                xvPn(*out, s.str, s.bytes);
                                 gX();
                         } else {
                                 return encode(ty, &s, out);

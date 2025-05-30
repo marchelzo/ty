@@ -175,7 +175,12 @@ xsort(struct itable *t, int64_t i, int64_t n)
 }
 
 inline static void
-xmerge(struct itable * restrict t, int n0, int * restrict ids, Value * restrict vals)
+xmerge(
+        struct itable * restrict t,
+        int n0,
+        int * restrict ids,
+        Value * restrict vals
+)
 {
         int n;
         int i = 0;
@@ -203,7 +208,11 @@ xmerge(struct itable * restrict t, int n0, int * restrict ids, Value * restrict 
 }
 
 void
-itable_copy_weak(Ty *ty, struct itable * restrict dst, struct itable const * restrict src)
+itable_copy_weak(
+        Ty *ty,
+        struct itable * restrict dst,
+        struct itable const * restrict src
+)
 {
         for (int i = 0; i < vN(src->ids); ++i) {
                 Value *v = itable_get(ty, dst, v__(src->ids, i));

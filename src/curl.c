@@ -22,7 +22,7 @@ BufferCString(Value const *v)
 
         switch (v->type) {
         case VALUE_STRING:
-                xvPn(Buffer, v->string, v->bytes);
+                xvPn(Buffer, v->str, v->bytes);
                 xvP(Buffer, '\0');
                 break;
         case VALUE_BLOB:
@@ -84,7 +84,7 @@ builtin_curl_trace(Ty *ty, int argc, Value *kwargs)
 
         int n = min(sizeof buffer - 1, cfg.bytes);
 
-        memcpy(buffer, cfg.string, n);
+        memcpy(buffer, cfg.str, n);
         buffer[n] = '\0';
 
         return INTEGER(curl_global_trace(buffer));
@@ -169,7 +169,7 @@ builtin_curl_mime_data(Ty *ty, int argc, Value *kwargs)
         Value data = ARG(1);
         switch (data.type) {
         case VALUE_STRING:
-                curl_mime_data(part.ptr, data.string, data.bytes);
+                curl_mime_data(part.ptr, data.str, data.bytes);
                 break;
         case VALUE_BLOB:
                 curl_mime_data(part.ptr, data.blob->items, data.blob->count);
@@ -198,7 +198,7 @@ builtin_curl_mime_name(Ty *ty, int argc, Value *kwargs)
         Value name = ARG(1);
         switch (name.type) {
         case VALUE_STRING:
-                xvPn(Buffer, name.string, name.bytes);
+                xvPn(Buffer, name.str, name.bytes);
                 xvP(Buffer, '\0');
                 break;
         case VALUE_BLOB:
@@ -209,7 +209,7 @@ builtin_curl_mime_name(Ty *ty, int argc, Value *kwargs)
                 zP("invalid name argument passed to curl::mime::name()");
         }
 
-        curl_mime_name(part.ptr, name.string);
+        curl_mime_name(part.ptr, name.str);
 
         return NIL;
 }
@@ -336,7 +336,7 @@ builtin_curl_setopt(Ty *ty, int argc, Value *kwargs)
                         break;
                 case VALUE_STRING:
                         curl_easy_setopt(curl.ptr, CURLOPT_POSTFIELDSIZE, (long)s.bytes);
-                        curl_easy_setopt(curl.ptr, opt.integer, s.string);
+                        curl_easy_setopt(curl.ptr, opt.integer, s.str);
                         break;
                 case VALUE_PTR:
                         if (argc > 3 && ARG(3).type == VALUE_INTEGER) {
@@ -532,7 +532,7 @@ builtin_curl_url_set(Ty *ty, int argc, Value *kwargs)
         switch (ARG(2).type) {
         case VALUE_STRING:
                 Buffer.count = 0;
-                xvPn(Buffer, ARG(2).string, ARG(2).bytes);
+                xvPn(Buffer, ARG(2).str, ARG(2).bytes);
                 xvP(Buffer, '\0');
                 content = Buffer.items;
                 break;

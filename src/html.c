@@ -129,7 +129,7 @@ html_parse(Ty *ty, int argc, struct value *kwargs)
         vec(char) b = {0};
 
         if (s.type == VALUE_STRING) {
-                vvPn(b, s.string, s.bytes);
+                vvPn(b, s.str, s.bytes);
         } else if (s.type == VALUE_BLOB) {
                 vvPn(b, s.blob->items, s.blob->count);
         } else {

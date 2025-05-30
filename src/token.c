@@ -15,7 +15,7 @@ static struct {
         int kw_num;
 } keywords[] = {
         { "Next",         KEYWORD_NEXT      },
-        { "SeLf",         KEYWORD_SELF      },
+        { "Self",         KEYWORD_SELF      },
         { "__defined__",  KEYWORD_DEFINED   },
         { "__eval__",     KEYWORD_EVAL      },
         { "__set_type__", KEYWORD_SET_TYPE  },
@@ -87,6 +87,7 @@ static struct {
         { "&&",  TOKEN_AND            },
         { "||",  TOKEN_OR             },
         { "??",  TOKEN_WTF            },
+        { "?:",  TOKEN_ELVIS          },
         { "<=>", TOKEN_CMP            },
         { "<=",  TOKEN_LEQ            },
         { ">=",  TOKEN_GEQ            },
@@ -174,6 +175,7 @@ token_show_type(Ty *ty, int type)
         case TOKEN_EQ:                 return "token '='";
         case TOKEN_MAYBE_EQ:           return "token '?='";
         case TOKEN_WTF:                return "token '??'";
+        case TOKEN_ELVIS:              return "token '?:'";
         case TOKEN_CHECK_MATCH:        return "token '::'";
         case TOKEN_ARROW:              return "token '->'";
         case TOKEN_FAT_ARROW:          return "token '=>'";

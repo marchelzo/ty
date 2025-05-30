@@ -1,6 +1,7 @@
 #ifndef UTIL_H_INCLUDED
 #define UTIL_H_INCLUDED
 
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,7 +12,7 @@
 #include <utf8proc.h>
 
 #include "ty.h"
-#include "value.h"
+#include "alloc.h"
 #include "polyfill_unistd.h"
 
 #ifdef max
@@ -28,7 +29,7 @@
 
 #define ERR_SIZE 4096
 
-#define SWAP(t, a, b) do { t tmp = a; a = b; b = tmp; } while (0)
+#define SWAP(t, a, b) do { t _swap_tmp_ = a; a = b; b = _swap_tmp_; } while (0)
 
 #define SAVE_(t, x) t x##_; memcpy(&(x##_), &(x), sizeof (x))
 #define RESTORE_(x) memcpy(&(x), &(x##_), sizeof (x))
@@ -82,14 +83,26 @@ load_int(void const *p)
         return *(int const *)memcpy(&(int){0}, p, sizeof (int));
 }
 
-static inline intmax_t
-max(intmax_t a, intmax_t b)
+static inline umax
+zmaxu(umax a, umax b)
 {
         return (a > b) ? a : b;
 }
 
-static inline intmax_t
-min(intmax_t a, intmax_t b)
+static inline umax
+zminu(umax a, umax b)
+{
+        return (a < b) ? a : b;
+}
+
+static inline imax
+max(imax a, imax b)
+{
+        return (a > b) ? a : b;
+}
+
+static inline imax
+min(imax a, imax b)
 {
         return (a < b) ? a : b;
 }
@@ -302,6 +315,7 @@ ifmt(char const *fmt, ...)
         SCRATCH_SAVE();
         va_start(ap, fmt);
         scvdump(ty, &buf, fmt, ap);
+        va_end(ap);
         str = intern(&xD.members, vv(buf))->name;
         SCRATCH_RESTORE();
 
@@ -319,6 +333,7 @@ static char *
         va_start(ap, fmt);
         scvdump(ty, &buf, fmt, ap);
         str = sclone_malloc(vv(buf));
+        va_end(ap);
         SCRATCH_RESTORE();
 
         return str;
@@ -335,6 +350,7 @@ static char *
         va_start(ap, fmt);
         scvdump(ty, &buf, fmt, ap);
         str = sclonea(ty, v_(buf, 0));
+        va_end(ap);
         SCRATCH_RESTORE();
 
         return str;
@@ -367,9 +383,13 @@ term_width(char const *s, int n)
 
         return width;
 }
-
-Value
-this_executable(Ty *ty);
+inline static i32
+u8_rune_sz(u8 const *str)
+{
+	i32 cp;
+	i32 n = utf8proc_iterate(str, 8, &cp);
+        return n + !n;
+}
 
 bool
 get_directory_where_chad_looks_for_runtime_dependencies(char *buffer);

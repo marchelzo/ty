@@ -5,6 +5,28 @@
 #include <stdbool.h>
 #include <time.h>
 
+typedef uint64_t u64;
+
+#define TY_1e3 1000UL
+#define TY_1e6 1000000UL
+#define TY_1e9 1000000000ULL
+
+inline static u64
+TyThreadGetTime()
+{
+#ifdef _WIN32
+        LARGE_INTEGER counter;
+        LARGE_INTEGER frequency;
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        return (u64)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
+#else
+        struct timespec t;
+        clock_gettime(CLOCK_REALTIME, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+#endif
+}
+
 #ifdef _WIN32
 
 #include <windows.h>
@@ -340,15 +362,17 @@ TyCondVarWait(TyCondVar *cv, TyMutex *m)
 }
 
 inline static bool
-TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, uint64_t nMs)
+TyCondVarTimedWaitRelative(TyCondVar *cv, TyMutex *m, u64 nMs)
 {
-        struct timespec ts;
-        clock_gettime(CLOCK_REALTIME, &ts);
+        u64 t0 = TyThreadGetTime();
+        u64 end = t0 + (TY_1e6 * nMs);
 
-        ts.tv_sec += nMs / 1000;
-        ts.tv_nsec += (nMs % 1000) * 1000000UL;
+        struct timespec deadline = {
+                .tv_sec = end / TY_1e9,
+                .tv_nsec = end % TY_1e9
+        };
 
-        return pthread_cond_timedwait(cv, m, &ts) == 0;
+        return pthread_cond_timedwait(cv, m, &deadline) == 0;
 }
 
 inline static bool

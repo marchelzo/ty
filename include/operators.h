@@ -47,14 +47,14 @@ op_builtin_add(Ty *ty)
                 v = STRING(value_string_alloc(ty, n), n);
 
                 memcpy(
-                        (void *)v.string,
-                        left->string,
+                        (void *)v.str,
+                        left->str,
                         left->bytes
                 );
 
                 memcpy(
-                        (void *)(v.string + left->bytes),
-                        right->string,
+                        (void *)(v.str + left->bytes),
+                        right->str,
                         right->bytes
                 );
 

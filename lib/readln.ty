@@ -53,7 +53,7 @@ pub fn init(fd=0, prompt=nil, complete=nil, ctrl_c=false) {
     termFd = fd
     defaultPrompt = prompt
     defaultComplete = complete
-    tio = TermIO(fd)
+    tio = TermIO(fd, mouse=false)
     history = []
 }
 
@@ -113,7 +113,12 @@ fn fitItems(items: [String], W: Int) {
     result
 }
 
-pub fn readln(prompt=nil, complete=nil, erase=true) {
+pub fn readln(
+    prompt: ?String = nil,
+    complete: _ = nil,
+    erase: Bool = false,
+    keybinds: Dict[String, _] = %{}
+) -> String | nil {
     if tio == nil {
         init()
     }
@@ -166,6 +171,10 @@ pub fn readln(prompt=nil, complete=nil, erase=true) {
                 => "<{key.nice-name()}>",
             _
                 => do continue
+        }
+
+        if let $func = keybinds[key] {
+            func(*termDimensions())
         }
 
         let hiStart = hi

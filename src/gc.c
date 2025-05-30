@@ -23,9 +23,9 @@ collect(Ty *ty, struct alloc *a)
 {
         void *p = a->data;
 
-        struct value o;
-        struct value finalizer;
-        struct regex *re;
+        Value o;
+        Value finalizer;
+        Regex *re;
         Thread *t;
         Generator *gen;
 
@@ -34,8 +34,13 @@ collect(Ty *ty, struct alloc *a)
                 mF(((struct array *)p)->items);
                 break;
 
-        case GC_BLOB:      mF(((struct blob *)p)->items);  break;
-        case GC_DICT:      dict_free(ty, p);               break;
+        case GC_BLOB:
+                mF(((struct blob *)p)->items);
+                break;
+
+        case GC_DICT:
+                dict_free(ty, p);
+                break;
 
         case GC_GENERATOR:
                 gen = p;
@@ -59,8 +64,8 @@ collect(Ty *ty, struct alloc *a)
                 if (gen->co != ty->co_top) {
                         co_delete(gen->co);
                 }
-
                 break;
+
         case GC_THREAD:
                 t = p;
 
@@ -70,8 +75,8 @@ collect(Ty *ty, struct alloc *a)
 
                 TyMutexDestroy(&t->mutex);
                 TyCondVarDestroy(&t->cond);
-
                 break;
+
         case GC_OBJECT:
                 o = OBJECT((struct itable *)p, ((struct itable *)p)->class);
                 finalizer = class_get_finalizer(ty, o.class);
@@ -81,28 +86,42 @@ collect(Ty *ty, struct alloc *a)
                 }
                 itable_release(ty, p);
                 break;
+
         case GC_REGEX:
                 re = p;
                 pcre2_code_free(re->pcre2);
-                mF((char *)re->pattern);
+                free((char *)re->pattern);
                 break;
+
         case GC_ARENA:
                 source_forget_arena(p);
                 break;
+
         case GC_FUN_INFO:
                 mF(((FunUserInfo *)p)->doc);
                 mF(((FunUserInfo *)p)->proto);
                 mF(((FunUserInfo *)p)->name);
                 break;
+
+        case GC_FFI_AUTO:
+                finalizer = ((Value *)p)[0];
+                o = ((Value *)p)[1];
+                if (finalizer.type == VALUE_PTR) {
+                        ((void (*)(void *))finalizer.ptr)(o.ptr);
+                } else {
+                        vmP(&o);
+                        vmC(&finalizer, 1);
+                }
+                break;
         }
 }
 
 void
-GCForget(Ty *ty, AllocList *allocs, size_t *used)
+GCForget(Ty *ty, AllocList *allocs, usize *used)
 {
-        size_t n = 0;
+        usize n = 0;
 
-        for (size_t i = 0; i < allocs->count;) {
+        for (usize i = 0; i < allocs->count;) {
                 if (allocs->items[i] == NULL) {
                         abort();
                 }
@@ -110,16 +129,16 @@ GCForget(Ty *ty, AllocList *allocs, size_t *used)
                         allocs->items[n++] = allocs->items[i++];
                 } else {
                         *used -= min(allocs->items[i]->size, *used);
-                        SWAP(struct alloc *, allocs->items[i], allocs->items[allocs->count - 1]);
-                        allocs->count -= 1;
                 }
         }
 }
 
 void
-GCSweep(Ty *ty, AllocList *allocs, size_t *used)
+GCSweep(Ty *ty, AllocList *allocs, usize *used)
 {
-        size_t n = 0;
+        GC_STOP();
+
+        usize n = 0;
 
         for (int i = 0; i < allocs->count; ++i) {
                 if (!A_LOAD(&allocs->items[i]->mark) && A_LOAD(&allocs->items[i]->hard) == 0) {
@@ -133,12 +152,14 @@ GCSweep(Ty *ty, AllocList *allocs, size_t *used)
         }
 
         allocs->count = n;
+
+        GC_RESUME();
 }
 
 void
 GCTakeOwnership(Ty *ty, AllocList *new)
 {
-        for (size_t i = 0; i < new->count; ++i) {
+        for (usize i = 0; i < new->count; ++i) {
                 vec_nogc_push(ty->allocs, new->items[i]);
                 MemoryUsed += new->items[i]->size;
         }
@@ -180,12 +201,12 @@ gc_clear_root_set(Ty *ty)
 }
 
 void
-gc_truncate_root_set(Ty *ty, size_t n)
+gc_truncate_root_set(Ty *ty, usize n)
 {
         RootSet.count = n;
 }
 
-size_t
+usize
 gc_root_set_count(Ty *ty)
 {
         return RootSet.count;

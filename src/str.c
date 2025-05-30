@@ -4,26 +4,32 @@
 #include <utf8proc.h>
 #include <pcre2.h>
 
-#include "utf8.h"
-#include "value.h"
-#include "util.h"
-#include "gc.h"
-#include "vm.h"
-#include "token.h"
 #include "functions.h"
-#include "polyfill_memmem.h"
+#include "gc.h"
+#include "mmmm.h"
+#include "token.h"
+#include "util.h"
+#include "value.h"
+#include "vm.h"
 
-static _Thread_local struct stringpos limitpos;
-static _Thread_local struct stringpos outpos;
+#define ty_re_match(...) pcre2_match(__VA_ARGS__, ty->pcre2.match, ty->pcre2.ctx)
+#define ty_re_ovec()     pcre2_get_ovector_pointer(ty->pcre2.match)
 
-inline static usize
-codepoint_count(u8 const *s, usize n)
+#define ty_re_panic(e) do {                     \
+        void *msg = smA(4096);                  \
+        pcre2_get_error_message(e, msg, 4096);  \
+        bP("PCRE2 error: %s", msg);             \
+} while (0)
+        
+
+inline static isize
+rune_count(u8 const *s, isize n)
 {
-        usize count = 0;
+        isize count = 0;
 
         while (n != 0) {
-                i32 codepoint;
-                i32 bytes = utf8proc_iterate(s, n, &codepoint);
+                i32 rune;
+                isize bytes = utf8proc_iterate(s, n, &rune);
                 if (bytes <= 0) {
                         n -= 1;
                         s += 1;
@@ -37,16 +43,22 @@ codepoint_count(u8 const *s, usize n)
         return count;
 }
 
-inline static usize
-x_x_x(u8 const *s, usize sz, usize ncp)
+inline static isize
+TyStrLen(Value const *str)
 {
-        usize off = 0;
-        usize count = 0;
+        return rune_count(str->str, str->bytes);
+}
+
+inline static isize
+x_x_x(u8 const *s, isize sz, isize ncp)
+{
+        isize off = 0;
+        isize count = 0;
 
 
         while (off < sz && count < ncp) {
                 i32 rune;
-                i32 bytes = utf8proc_iterate(s + off, sz - off, &rune);
+                isize bytes = utf8proc_iterate(s + off, sz - off, &rune);
                 if (bytes <= 0) {
                         off += 1;
                 } else {
@@ -58,70 +70,23 @@ x_x_x(u8 const *s, usize sz, usize ncp)
         return off;
 }
 
-inline static void
-stringcount(char const *s, int byte_lim, int grapheme_lim)
-{
-        limitpos.bytes = byte_lim;
-        limitpos.graphemes = grapheme_lim;
-        utf8_stringcount(s, byte_lim, &outpos, &limitpos);
-}
-
-inline static int
-stringwidth(char const *s, int byte_lim)
-{
-        int width = 0;
-        limitpos.graphemes = -1;
-
-        while (byte_lim > 0) {
-                limitpos.bytes = byte_lim;
-                utf8_stringcount(s, byte_lim, &outpos, &limitpos);
-                int n = max(1, outpos.bytes);
-                byte_lim -= n;
-                s += n;
-                width += outpos.graphemes;
-        }
-
-        return width;
-}
-
 inline static bool
-is_prefix(char const *big, int blen, char const *little, int slen)
+is_prefix(void const *big, isize blen, void const *little, isize slen)
 {
         return (blen >= slen) && (memcmp(big, little, slen) == 0);
 }
 
-inline static char const *
-sfind(char const *big, int blen, char const *little, int slen)
-{
-        register int i;
 
-        while (blen >= slen) {
-                for (i = 0; i < slen; ++i) {
-                        if (big[i] != little[i]) {
-                                goto Next;
-                        }
-                }
-
-                return big;
-
-Next:
-                ++big;
-                --blen;
-        }
-
-        return NULL;
-
-}
 
 inline static Value
-mkmatch(Ty *ty, Value *s, size_t *ovec, int n, bool detailed)
+mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
 {
         if (detailed) {
                 Value groups = ARRAY(vAn(n));
 
                 gP(&groups);
 
-                for (int i = 0; i < n; ++i) {
+                for (isize i = 0; i < n; ++i) {
                         Value group = vT(2);
                         group.items[0] = INTEGER(ovec[2*i]);
                         group.items[1] = INTEGER(ovec[2*i + 1] - ovec[2*i]);
@@ -140,7 +105,7 @@ mkmatch(Ty *ty, Value *s, size_t *ovec, int n, bool detailed)
                 Value match = ARRAY(vA());
                 NOGC(match.array);
 
-                for (int i = 0, j = 0; i < n; ++i, j += 2) {
+                for (isize i = 0, j = 0; i < n; ++i, j += 2) {
                         vvP(*match.array, STRING_VIEW(*s, ovec[j], ovec[j + 1] - ovec[j]));
                 }
 
@@ -155,31 +120,31 @@ string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         char *_name__ = "String.len()";
         CHECK_ARGC(0);
-        return INTEGER(codepoint_count((u8 const *)string->string, string->bytes));
+        return INTEGER(rune_count((u8 const *)string->str, string->bytes));
 }
 
 static Value
 string_grapheme_count(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        uint8_t const *s = (uint8_t const *)string->string;
-        int size = string->bytes;
-        int offset = 0;
-        int state = 0;
-        int length = 0;
+        u8 const *s = (u8 const *)string->str;
+        isize size = string->bytes;
+        isize offset = 0;
+        isize length = 0;
+        i32 state = 0;
 
         while (size > 0) {
-                int codepoint;
-                int n = utf8proc_iterate(s + offset, size, &codepoint);
+                i32 rune;
+                isize n = utf8proc_iterate(s + offset, size, &rune);
                 if (n <= 0) {
                         size -= 1;
                         offset += 1;
                         continue;
                 } else while (n < size) {
-                        int next;
-                        int m = utf8proc_iterate(s + offset + n, size - n, &next);
+                        i32 next;
+                        isize m = utf8proc_iterate(s + offset + n, size - n, &next);
                         if (m < 0)
                                 break;
-                        if (utf8proc_grapheme_break_stateful(codepoint, next, &state))
+                        if (utf8proc_grapheme_break_stateful(rune, next, &state))
                                 break;
                         n += m;
                 }
@@ -194,31 +159,29 @@ string_grapheme_count(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_chars(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.chars()";
+        ASSERT_ARGC("String.chars()", 0);
 
-        CHECK_ARGC(0);
-
-        uint8_t const *s = (uint8_t *)string->string;
-        int size = string->bytes;
-        int offset = 0;
-        int state = 0;
+        u8 const *s = (u8 *)string->str;
+        isize size = string->bytes;
+        isize offset = 0;
+        i32 state = 0;
 
         struct array *r = vA();
         NOGC(r);
 
         while (size > 0) {
-                int codepoint;
-                int n = utf8proc_iterate(s + offset, size, &codepoint);
+                i32 rune;
+                isize n = utf8proc_iterate(s + offset, size, &rune);
                 if (n < 0) {
                         size -= 1;
                         offset += 1;
                         continue;
-                } else if (codepoint & 0xC0) while (n < size) {
-                        int next;
-                        int m = utf8proc_iterate(s + offset + n, size - n, &next);
+                } else if (rune & 0xC0) while (n < size) {
+                        i32 next;
+                        isize m = utf8proc_iterate(s + offset + n, size - n, &next);
                         if (m < 0)
                                 break;
-                        if (utf8proc_grapheme_break_stateful(codepoint, next, &state))
+                        if (utf8proc_grapheme_break_stateful(rune, next, &state))
                                 break;
                         n += m;
                 }
@@ -251,8 +214,8 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
                 zP("String.bslice(): expected Int but got: %s", VSC(&start));
         }
 
-        int i = start.integer;
-        int n;
+        isize i = start.integer;
+        isize n;
 
         if (i < 0) {
                 i += string->bytes;
@@ -265,7 +228,7 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
                 }
                 n = len.integer;
         } else {
-                n = (int)string->bytes - i;
+                n = (isize)string->bytes - i;
         }
 
         i = min(max(i, 0), string->bytes);
@@ -277,14 +240,12 @@ string_bslice(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.slice()";
+        ASSERT_ARGC("String.slice()", 1, 2);
 
-        CHECK_ARGC(1, 2);
+        u8 const *str = (u8 const *)string->str;
+        isize sz = string->bytes;
 
-        u8 const *str = (u8 const *)string->string;
-        u32 sz = string->bytes;
-
-        isize ncp = codepoint_count(str, sz);
+        isize ncp = rune_count(str, sz);
 
         isize i = INT_ARG(0);
         if (i < 0) {
@@ -303,8 +264,8 @@ string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
         }
         n = min(max(0, n), ncp - i);
 
-        u32 drop = x_x_x(str, sz, i);
-        u32 take = x_x_x(str + drop, sz - drop, n);
+        isize drop = x_x_x(str, sz, i);
+        isize take = x_x_x(str + drop, sz - drop, n);
 
         return STRING_VIEW(*string, drop, take);
 }
@@ -312,93 +273,86 @@ string_slice(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_search_all(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("str.searchAll() expects 1 or 2 arguments but got %d", argc);
+        ASSERT_ARGC("String.searchAll()", 1, 2);
 
-        Value pattern = ARG(0);
+        Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
 
-        if (pattern.type != VALUE_STRING && pattern.type != VALUE_REGEX)
-                zP("the pattern argument to str.searchAll() must be a string or a regex");
-
-        int offset;
-        if (argc == 1)
+        isize offset;
+        if (argc == 1) {
                 offset = 0;
-        else if (ARG(1).type == VALUE_INTEGER)
-                offset = ARG(1).integer;
-        else
-                zP("the second argument to str.searchAll() must be an integer");
-
-        if (offset < 0) {
-                stringcount(string->string, string->bytes, -1);
-                offset += outpos.graphemes;
+        } else {
+                offset = INT_ARG(1);
         }
 
-        if (offset < 0)
-                zP("invalid offset passed to str.searchAll()");
+        if (offset < 0) {
+                offset += TyStrLen(string);
+        }
 
-        stringcount(string->string, string->bytes, offset);
-        if (outpos.graphemes != offset)
-                return NIL;
-
-        char const *s = string->string + outpos.bytes;
-        int bytes = string->bytes - outpos.bytes;
-
-        int n;
-        int off = 0;
+        isize off = x_x_x(string->str, string->bytes, offset);
 
         Value result = ARRAY(vA());
+
+        if (off < 0 || off > string->bytes) {
+                return result;
+        }
+
+        u8 const *s = string->str;
+        isize bytes = string->bytes;
+
+        isize dist;
+        isize plen;
+        isize n;
+
         gP(&result);
 
         if (pattern.type == VALUE_STRING) {
+                plen = TyStrLen(&pattern);
                 while (off < bytes) {
-                        char const *match = memmem(s + off, bytes - off, pattern.string, pattern.bytes);
+                        u8 const *match = mmmm(s + off, bytes - off, pattern.str, pattern.bytes);
 
-                        if (match == NULL)
+                        if (match == NULL) {
                                 break;
+                        }
 
                         n = match - (s + off);
+                        dist = rune_count(match, n);
 
-                        stringcount(s + off, n, -1);
+                        vAp(result.array, INTEGER(offset + dist));
 
-                        vAp(result.array, INTEGER(offset + outpos.graphemes));
-
-                        stringcount(s + off, n + pattern.bytes, -1);
-
-                        offset += outpos.graphemes;
-                        off += n + pattern.bytes;
+                        offset += dist + plen;
+                        off += (n + pattern.bytes);
                 }
         } else {
                 pcre2_code *re = pattern.regex->pcre2;
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-                int rc;
-
+                usize *ovec = ty_re_ovec();
+                isize rc;
                 for (;;) {
-                        rc = pcre2_match(re, (PCRE2_SPTR)s, 3, off, 0, ty->pcre2.match, ty->pcre2.ctx);
-
-                        if (rc <= 0) {
+                        if ((rc = ty_re_match(re, s, bytes, off, 0)) <= 0) {
                                 break;
                         }
 
                         n = ovec[1] - ovec[0];
+                        dist = rune_count(s + off, ovec[0] - off);
+                        plen = rune_count(s + ovec[0], n);
 
-                        stringcount(s + off, n, -1);
+                        vAp(result.array, INTEGER(offset + dist));
 
-                        vAp(result.array, INTEGER(offset + outpos.graphemes));
+                        if (n <= 0) {
+                                i32 cp;
+                                n = max(1, utf8proc_iterate(s + ovec[1], bytes - ovec[1], &cp));
+                                plen = 1;
+                        }
 
-                        stringcount(s + off, ovec[1], -1);
-
-                        offset += outpos.graphemes;
-                        off = ovec[1];
+                        off = ovec[0] + n;
+                        offset += dist + plen;
                 }
 
                 switch (rc) {
-                        char err[256];
                 case PCRE2_ERROR_NOMATCH:
                 case PCRE2_ERROR_BADOFFSET:
                         break;
                 default:
-                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
-                        zP("String.searchAll(): PCRE2 error: %s", err);
+                        ty_re_panic(rc);
                 }
         }
 
@@ -411,9 +365,7 @@ string_search_all(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.bsearch()";
-
-        CHECK_ARGC(1, 2);
+        ASSERT_ARGC("String.bsearch()", 1, 2);
 
         Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
         int64_t offset = (argc == 1) ? 0 : INT_ARG(1);
@@ -430,38 +382,28 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
                 return NIL;
         }
 
-        char const *s = string->string + offset;
+        u8 const *s = string->str + offset;
         int64_t bytes = (int64_t)string->bytes - offset;
 
         int64_t n;
 
         if (pattern.type == VALUE_STRING) {
-                char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
+                u8 const *match = mmmm(s, bytes, pattern.str, pattern.bytes);
 
                 if (match == NULL)
                         return NIL;
 
                 n = match - s;
         } else if (pattern.type == VALUE_REGEX) {
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-                int rc = pcre2_match(
-                        pattern.regex->pcre2,
-                        (PCRE2_SPTR)s,
-                        bytes,
-                        0,
-                        0,
-                        ty->pcre2.match,
-                        ty->pcre2.ctx
-                );
+                usize *ovec = ty_re_ovec();
+                isize rc = ty_re_match(pattern.regex->pcre2, s, bytes, 0, 0);
 
                 if (rc == PCRE2_ERROR_NOMATCH) {
                         return NIL;
                 }
 
                 if (rc < 0) {
-                        char err[256];
-                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
-                        zP("String.search(): PCRE2 error: %s", err);
+                        ty_re_panic(rc);
                 }
 
                 n = ovec[0];
@@ -476,124 +418,69 @@ string_bsearch(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_search(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.search()";
-
-        CHECK_ARGC(1, 2);
+        ASSERT_ARGC("String.search()", 1, 2);
 
         Value pattern = ARGx(0, VALUE_STRING, VALUE_REGEX);
 
-        int64_t offset = (argc == 1) ? 0 : INT_ARG(1);
+        isize offset = (argc == 1) ? 0 : INT_ARG(1);
 
         if (offset < 0) {
-                stringcount(string->string, string->bytes, -1);
-                offset += outpos.graphemes;
+                offset += TyStrLen(string);
         }
 
         if (offset < 0) {
-                zP("String.search(): invalid offset: %"PRIi64, offset);
-        }
-
-        stringcount(string->string, string->bytes, offset);
-        if (outpos.graphemes != offset) {
                 return NIL;
         }
 
-        char const *s = string->string + outpos.bytes;
-        int64_t bytes = (int64_t)string->bytes - outpos.bytes;
+        isize off = x_x_x(string->str, string->bytes, offset);
 
-        int64_t n;
-
-        if (pattern.type == VALUE_STRING) {
-                char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
-
-                if (match == NULL)
-                        return NIL;
-
-                n = match - s;
-        } else {
-                pcre2_code *re = pattern.regex->pcre2;
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-
-                int rc = pcre2_match(re, (PCRE2_SPTR)s, bytes, 0, 0, ty->pcre2.match, ty->pcre2.ctx);
-
-                if (rc == PCRE2_ERROR_NOMATCH) {
-                        return NIL;
-                }
-
-                if (rc < -1) {
-                        char err[256];
-                        pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
-                        zP("String.search(): PCRE2 error: %s", err);
-                }
-
-                n = ovec[0];
+        if (off >= string->bytes) {
+                return NIL;
         }
 
-        stringcount(s, n, -1);
+        u8 const *s = string->str + off;
+        isize bytes = string->bytes - off;
 
-        return INTEGER(offset + outpos.graphemes);
+        isize n;
+
+        if (pattern.type == VALUE_STRING) {
+                u8 const *match = mmmm(s, bytes, pattern.str, pattern.bytes);
+                n = (match != NULL) ? (match - s) : -1;
+        } else {
+                pcre2_code *re = pattern.regex->pcre2;
+                usize *ovec = ty_re_ovec();
+
+                isize rc = ty_re_match(re, (PCRE2_SPTR)s, bytes, 0, 0);
+
+                if (rc < -1) {
+                        ty_re_panic(rc);
+                }
+
+                n = (rc != PCRE2_ERROR_NOMATCH) ? ovec[0] : -1;
+        }
+
+        return (n != -1) ? INTEGER(offset + rune_count(s, n)) : NIL;
 }
 
 static Value
 string_contains(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2)
-                zP("str.contains?() expects 1 or 2 arguments but got %d", argc);
-
-        Value pattern = ARG(0);
-
-        if (pattern.type != VALUE_STRING)
-                zP("the pattern argument to str.contains?() must be a string");
-
-        int offset;
-        if (argc == 1)
-                offset = 0;
-        else if (ARG(1).type == VALUE_INTEGER)
-                offset = ARG(1).integer;
-        else
-                zP("the second argument to str.contains?() must be an integer");
-
-        if (offset < 0) {
-                stringcount(string->string, string->bytes, -1);
-                offset += outpos.graphemes;
-        }
-
-        if (offset < 0)
-                zP("invalid offset passed to str.contains?()");
-
-        stringcount(string->string, string->bytes, offset);
-        if (outpos.graphemes != offset)
-                return BOOLEAN(false);
-
-        char const *s = string->string + outpos.bytes;
-        int bytes = string->bytes - outpos.bytes;
-
-        char const *match = memmem(s, bytes, pattern.string, pattern.bytes);
-
-        if (match == NULL)
-                return BOOLEAN(false);
-
-        stringcount(s, match - s, -1);
-
-        return BOOLEAN(true);
+        Value i = string_search(ty, string, argc, kwargs);
+        return BOOLEAN(i.type != VALUE_NIL);
 }
 
 static Value
 string_words(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.words()";
-
-        CHECK_ARGC(0);
-
-        gP(string);
+        ASSERT_ARGC("String.words()", 0);
 
         struct array *a = vA();
         NOGC(a);
 
-        int i = 0;
-        int len = string->bytes;
-        int n = 0;
-        char const *s = string->string;
+        isize i = 0;
+        isize len = string->bytes;
+        isize n = 0;
+        u8 const *s = string->str;
 
         if (len == 0) {
                 goto End;
@@ -605,8 +492,15 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
         while (i < len) {
                 utf8proc_iterate(s + i, len - i, &cp);
                 utf8proc_category_t c = utf8proc_category(cp);
-                while (i < len &&
-                        (isspace(s[i]) || c == UTF8PROC_CATEGORY_ZS || c == UTF8PROC_CATEGORY_ZL || c == UTF8PROC_CATEGORY_ZP)) {
+                while (
+                        (i < len) && (
+                                (cp == '\r')
+                             || (cp == '\n')
+                             || (c == UTF8PROC_CATEGORY_ZS)
+                             || (c == UTF8PROC_CATEGORY_ZL)
+                             || (c == UTF8PROC_CATEGORY_ZP)
+                        )
+                ) {
                         i += n;
                         n = utf8proc_iterate(s + i, len - i, &cp);
                         c = utf8proc_category(cp);
@@ -622,12 +516,18 @@ string_words(Ty *ty, Value *string, int argc, Value *kwargs)
                         i += n;
                         n = utf8proc_iterate(s + i, len - i, &cp);
                         c = utf8proc_category(cp);
-                } while (i < len && !isspace(s[i]) && c != UTF8PROC_CATEGORY_ZS && c != UTF8PROC_CATEGORY_ZL && c != UTF8PROC_CATEGORY_ZP);
+                } while (
+                        (i < len)
+                     && (cp != '\r')
+                     && (cp != '\n')
+                     && (c != UTF8PROC_CATEGORY_ZS)
+                     && (c != UTF8PROC_CATEGORY_ZL)
+                     && (c != UTF8PROC_CATEGORY_ZP)
+                );
 
                 vAp(a, str);
         }
 End:
-        gX();
         OKGC(a);
 
         return ARRAY(a);
@@ -636,18 +536,16 @@ End:
 static Value
 string_lines(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.lines()";
-
-        CHECK_ARGC(0);
+        ASSERT_ARGC("String.lines()", 0);
 
         gP(string);
 
         struct array *a = vA();
         NOGC(a);
 
-        int i = 0;
-        int len = string->bytes;
-        char const *s = string->string;
+        isize i = 0;
+        isize len = string->bytes;
+        u8 const *s = string->str;
 
         if (len == 0) {
                 vAp(a, *string);
@@ -657,15 +555,20 @@ string_lines(Ty *ty, Value *string, int argc, Value *kwargs)
         while (i < len) {
                 Value str = STRING_VIEW(*string, i, 0);
 
-                while (i < len && s[i] != '\n' && !is_prefix(s + i, len - i, "\r\n", 2)) {
-                        ++str.bytes;
-                        ++i;
+                while (
+                        (i < len)
+                     && (s[i] != '\n')
+                     && ((s[i] != '\r') || (s[i + 1] != '\n'))
+                ) {
+                        str.bytes += 1;
+                        i += 1;
                 }
 
                 vAp(a, str);
 
-                if (i < len)
+                if (i < len) {
                         i += 1 + (s[i] == '\r');
+                }
         }
 End:
         gX();
@@ -677,18 +580,16 @@ End:
 static Value
 string_split(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.split()";
+        ASSERT_ARGC("String.split()", 1, 2);
 
-        CHECK_ARGC(1, 2);
-
-        u8 const *s = (u8 const *)string->string;
-        int len = string->bytes;
+        u8 const *s = (u8 const *)string->str;
+        isize len = string->bytes;
 
         Value pattern = ARGx(0, VALUE_INTEGER, VALUE_STRING, VALUE_REGEX);
 
         if (pattern.type == VALUE_INTEGER) {
-                int i = pattern.integer;
-                int n = codepoint_count(s, len);
+                isize i = pattern.integer;
+                isize n = rune_count(s, len);
 
                 if (i < 0)
                         i += n;
@@ -697,10 +598,10 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 if (i > n)
                         i = n;
 
-                int off = 0;
+                isize off = 0;
                 while (i --> 0) {
                         i32 cp;
-                        int bytes = utf8proc_iterate((u8 const *)(s + off), len - off, &cp);
+                        isize bytes = utf8proc_iterate((u8 const *)(s + off), len - off, &cp);
                         off += min(bytes, 1);
                 }
                 Value left = STRING_VIEW(*string, 0, off);
@@ -709,21 +610,19 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 return PAIR(left, right);
         }
 
-        if (argc == 2) {
-                ARGx(1, VALUE_INTEGER);
-        }
+        usize limit = (argc == 2) ? INT_ARG(1) : SIZE_MAX;
 
         Value result = ARRAY(vA());
         gP(&result);
 
         if (pattern.type == VALUE_STRING) {
-                char const *p = pattern.string;
-                int n = pattern.bytes;
+                u8 const *p = pattern.str;
+                isize n = pattern.bytes;
 
                 if (n == 0)
                         goto End;
 
-                int i = 0;
+                isize i = 0;
                 while (i < len) {
                         Value str = STRING_VIEW(*string, i, 0);
 
@@ -732,8 +631,8 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                                 i = len;
                         } else {
                                 while (i < len && !is_prefix(s + i, len - i, p, n)) {
-                                        ++str.bytes;
-                                        ++i;
+                                        str.bytes += 1;
+                                        i += 1;
                                 }
                         }
 
@@ -747,15 +646,17 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                 }
         } else {
                 pcre2_code *re = pattern.regex->pcre2;
-                size_t len = string->bytes;
-                int start = 0;
-                int pstart = 0;
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+                isize len = string->bytes;
+                isize start = 0;
+                isize pstart = 0;
+                usize *ovec = ty_re_ovec();
 
                 while (start < len) {
-                        int n;
-                        if ((argc == 2 && result.array->count == ARG(1).integer) ||
-                            (n = pcre2_match(re, (PCRE2_SPTR)s, len, pstart, 0, ty->pcre2.match, ty->pcre2.ctx)) < 1) {
+                        isize n = 0;
+                        if (
+                                (vN(*result.array) == limit)
+                             || ((n = ty_re_match(re, s, len, pstart, 0)) <= 0)
+                        ) {
                                 ovec[0] = len;
                                 ovec[1] = len + 1;
                         }
@@ -765,9 +666,9 @@ string_split(Ty *ty, Value *string, int argc, Value *kwargs)
                         if (pattern.regex->detailed && n >= 1) {
                                 vAp(result.array, mkmatch(ty, string, ovec, n, true));
                         } else {
-                                for (int i = 1; i < n; ++i) {
-                                        int s = ovec[2 * i];
-                                        int e = ovec[2 * i + 1];
+                                for (isize i = 1; i < n; ++i) {
+                                        isize s = ovec[2 * i];
+                                        isize e = ovec[2 * i + 1];
                                         vAp(result.array, STRING_VIEW(*string, s, e - s));
                                 }
                         }
@@ -789,45 +690,38 @@ End:
 static Value
 string_count(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.count()";
-
-        CHECK_ARGC(1);
+        ASSERT_ARGC("String.count()", 1);
 
         Value pattern = ARG(0);
-        int count = 0;
+        isize count = 0;
 
-        char const *s = string->string;
-        size_t len = string->bytes;
+        u8 const *s = string->str;
+        isize len = string->bytes;
 
         if (s == NULL) {
                 return STRING_EMPTY;
         }
 
         if (pattern.type == VALUE_STRING) {
-                char const *m;
-                char const *p = pattern.string;
-                int plen = pattern.bytes;
+                u8 const *m;
+                u8 const *p = pattern.str;
+                isize plen = pattern.bytes;
 
-                if (plen > 0) while ((m = sfind(s, len, p, plen)) != NULL) {
+                if (plen > 0) while ((m = mmmm(s, len, p, plen)) != NULL) {
                         len -= (m - s + plen);
                         s = m + plen;
                         count += 1;
                 }
         } else if (pattern.type == VALUE_REGEX) {
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-                size_t off = 0;
-                int rc;
+                pcre2_code *re = pattern.regex->pcre2;
+                usize *ovec = ty_re_ovec();
+                isize off = 0;
+                isize rc;
 
                 for (;;) {
-                        rc = pcre2_match(
-                                pattern.regex->pcre2,
-                                (PCRE2_SPTR)s,
-                                len,
-                                off,
-                                0,
-                                ty->pcre2.match,
-                                ty->pcre2.ctx
-                        );
+                        if ((rc = ty_re_match(re, s, len, off, 0)) <= 0) {
+                                break;
+                        }
 
                         if (rc <= 0) { break; }
 
@@ -841,69 +735,64 @@ string_count(Ty *ty, Value *string, int argc, Value *kwargs)
         return INTEGER(count);
 }
 
-/* copy + paste of replace, can fix later */
 static Value
 string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.comb()";
+        ASSERT_ARGC("String.comb()", 1);
 
-        CHECK_ARGC(1);
-
-        vec(char) chars = {0};
         Value pattern = ARG(0);
+        u8 const *str = string->str;
 
-        char const *s = string->string;
-
-        if (s == NULL) {
+        if (str == NULL) {
                 return STRING_EMPTY;
         }
+
+        vec(u8) scratch = {0};
+
+        SCRATCH_SAVE();
 
         switch (pattern.type) {
         case VALUE_STRING:
         {
-                char const *p = pattern.string;
+                u8 const *p = (u8 const *)pattern.str;
 
-                int len = string->bytes;
-                int plen = pattern.bytes;
-                char const *m;
+                isize len = string->bytes;
+                isize plen = pattern.bytes;
+                u8 const *match;
 
-                while ((m = sfind(s, len, p, plen)) != NULL) {
-                        vvPn(chars, s, m - s);
-                        len -= (m - s + plen);
-                        s = m + plen;
+                while ((match = mmmm(str, len, p, plen)) != NULL) {
+                        svPn(scratch, str, match - str);
+                        len -= (match - str + plen);
+                        str = match + plen;
                 }
 
-                vvPn(chars, s, len);
+                if (vN(scratch) > 0) {
+                        svPn(scratch, str, len);
+                }
 
                 break;
         }
         case VALUE_REGEX:
         {
                 pcre2_code *re = pattern.regex->pcre2;
-                size_t len = string->bytes;
-                int start = 0;
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+                isize len = string->bytes;
+                isize start = 0;
+                usize *ovec = ty_re_ovec();
+                i32 rc;
 
-                for (;;) {
-                        int n = pcre2_match(
-                                re,
-                                (PCRE2_SPTR)s,
-                                len,
-                                start,
-                                0,
-                                ty->pcre2.match,
-                                ty->pcre2.ctx
-                        );
-
-                        if (n <= 0) {
-                                break;
-                        }
-
-                        vvPn(chars, s + start, ovec[0] - start);
+                while ((rc = ty_re_match(re, str, len, start, 0)) > 0) {
+                        svPn(scratch, str + start, ovec[0] - start);
                         start = ovec[1];
                 }
 
-                vvPn(chars, s + start, len - start);
+                if (rc != PCRE2_ERROR_NOMATCH) {
+                        SCRATCH_RESTORE();
+                        zP("");
+                }
+
+                if (vN(scratch) > 0) {
+                        svPn(scratch, str + start, len - start);
+                }
 
                 break;
         }
@@ -911,11 +800,20 @@ string_comb(Ty *ty, Value *string, int argc, Value *kwargs)
                 ARGx(0, VALUE_STRING, VALUE_REGEX);
         }
 
-        Value r = vSs(chars.items, chars.count);
+        Value ret = (vN(scratch) > 0)
+                  ? vSs(vv(scratch), vN(scratch))
+                  : *string;
 
-        mF(chars.items);
+        SCRATCH_RESTORE();
 
-        return r;
+        return ret;
+}
+
+static Value
+string_try_comb(Ty *ty, Value *string, int argc, Value *kwargs)
+{
+        Value str = string_comb(ty, string, argc, kwargs);
+        return (str.str != string->str) ? str : NIL;
 }
 
 static Value
@@ -933,10 +831,10 @@ string_repeat(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         char *s = value_string_alloc(ty, string->bytes * ARG(0).integer);
-        size_t off = 0;
+        isize off = 0;
 
-        for (int i = 0; i < ARG(0).integer; ++i) {
-                memcpy(s + off, string->string, string->bytes);
+        for (isize i = 0; i < ARG(0).integer; ++i) {
+                memcpy(s + off, string->str, string->bytes);
                 off += string->bytes;
         }
 
@@ -946,15 +844,13 @@ string_repeat(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.replace()";
+        ASSERT_ARGC("String.replace()", 2);
 
-        CHECK_ARGC(2);
-
-        vec(char) chars = {0};
+        vec(u8) chars = {0};
         Value pattern = ARGx(0, VALUE_REGEX, VALUE_STRING);
         Value replacement = ARG(1);
 
-        char const *s = string->string;
+        u8 const *s = string->str;
 
         if (pattern.type == VALUE_STRING) {
                 vmP(&replacement);
@@ -969,14 +865,14 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                         );
                 }
 
-                char const *p = pattern.string;
-                char const *r = replacement.string;
+                u8 const *p = pattern.str;
+                u8 const *r = replacement.str;
 
-                int len = string->bytes;
-                int plen = pattern.bytes;
-                char const *m;
+                isize len = string->bytes;
+                isize plen = pattern.bytes;
+                u8 const *m;
 
-                while ((m = sfind(s, len, p, plen)) != NULL) {
+                while ((m = mmmm(s, len, p, plen)) != NULL) {
                         vvPn(chars, s, m - s);
 
                         vvPn(chars, r, replacement.bytes);
@@ -988,12 +884,12 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 vvPn(chars, s, len);
         } else if (replacement.type == VALUE_STRING) {
                 pcre2_code *re = pattern.regex->pcre2;
-                size_t len = string->bytes;
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-                int start = 0;
+                isize len = string->bytes;
+                usize *ovec = ty_re_ovec();
+                isize start = 0;
 
                 for (;;) {
-                        int n = pcre2_match(
+                        isize n = pcre2_match(
                                 re,
                                 (PCRE2_SPTR)s,
                                 len,
@@ -1006,12 +902,12 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                                 break;
                         }
                         if (ovec[1] == start) {
-                                vvPn(chars, replacement.string, replacement.bytes);
+                                vvPn(chars, replacement.str, replacement.bytes);
                                 vvP(chars, s[start]);
                                 start = ovec[1] + 1;
                         } else {
                                 vvPn(chars, s + start, ovec[0] - start);
-                                vvPn(chars, replacement.string, replacement.bytes);
+                                vvPn(chars, replacement.str, replacement.bytes);
                                 start = ovec[1];
                         }
                 }
@@ -1021,12 +917,12 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                 }
         } else if (CALLABLE(replacement)) {
                 pcre2_code *re = pattern.regex->pcre2;
-                size_t len = string->bytes;
-                size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-                int start = 0;
-                int rc;
+                isize len = string->bytes;
+                usize *ovec = ty_re_ovec();
+                isize start = 0;
+                isize rc;
 
-                while ((rc = pcre2_match(re, (PCRE2_SPTR)s, len, start, 0, ty->pcre2.match, ty->pcre2.ctx)) > 0) {
+                while ((rc = ty_re_match(re, s, len, start, 0)) > 0) {
                         vvPn(chars, s + start, ovec[0] - start);
 
                         Value match;
@@ -1036,8 +932,8 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                                 match = ARRAY(vA());
                                 NOGC(match.array);
 
-                                int j = 0;
-                                for (int i = 0; i < rc; ++i, j += 2) {
+                                isize j = 0;
+                                for (isize i = 0; i < rc; ++i, j += 2) {
                                         vvP(
                                                 *match.array,
                                                 STRING_VIEW(
@@ -1060,7 +956,7 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
                                 OKGC(match.array);
                         }
 
-                        vvPn(chars, substitute.string, substitute.bytes);
+                        vvPn(chars, substitute.str, substitute.bytes);
                 }
 
                 vvPn(chars, s + start, len - start);
@@ -1078,15 +974,13 @@ string_replace(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.match?()";
-
-        CHECK_ARGC(1);
+        ASSERT_ARGC("String.match?()", 1);
 
         Value pattern = ARGx(0, VALUE_REGEX);
 
-        int rc = pcre2_match(
+        isize rc = pcre2_match(
                 pattern.regex->pcre2,
-                (PCRE2_SPTR)string->string,
+                (PCRE2_SPTR)string->str,
                 string->bytes,
                 0,
                 0,
@@ -1100,19 +994,17 @@ string_is_match(Ty *ty, Value *string, int argc, Value *kwargs)
         return BOOLEAN(rc > -1);
 }
 
-static Value
+Value
 string_match(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.match!()";
-
-        CHECK_ARGC(1);
+        ASSERT_ARGC("String.match!()", 1);
 
         Value pattern = ARGx(0, VALUE_REGEX);
-        size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
+        usize *ovec = ty_re_ovec();
 
-        int rc = pcre2_match(
+        isize rc = pcre2_match(
                 pattern.regex->pcre2,
-                (PCRE2_SPTR)string->string,
+                (PCRE2_SPTR)string->str,
                 string->bytes,
                 0,
                 0,
@@ -1132,23 +1024,21 @@ string_match(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.matches()";
-
-        CHECK_ARGC(1);
+        ASSERT_ARGC("String.matches()", 1);
 
         Value pattern = ARGx(0, VALUE_REGEX);
 
         Value result = ARRAY(vA());
         gP(&result);
 
-        size_t *ovec = pcre2_get_ovector_pointer(ty->pcre2.match);
-        size_t offset = 0;
-        int rc;
+        usize *ovec = ty_re_ovec();
+        isize offset = 0;
+        isize rc;
 
         for (;;) {
                 rc = pcre2_match(
                         pattern.regex->pcre2,
-                        (PCRE2_SPTR)string->string,
+                        (PCRE2_SPTR)string->str,
                         string->bytes,
                         offset,
                         0,
@@ -1165,13 +1055,11 @@ string_matches(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         switch (rc) {
-                char err[256];
         case PCRE2_ERROR_NOMATCH:
         case PCRE2_ERROR_BADOFFSET:
                 break;
         default:
-                pcre2_get_error_message(rc, (uint8_t *)err, sizeof err);
-                zP("String.matches(): PCRE2 error: %s", err);
+                ty_re_panic(rc);
         }
 
         gX();
@@ -1196,15 +1084,13 @@ string_byte(Ty *ty, Value *string, int argc, Value *kwargs)
         if (i.integer < 0 || i.integer >= string->bytes)
                 return NIL; /* TODO: maybe panic */
 
-        return INTEGER((unsigned char)string->string[i.integer]);
+        return INTEGER((unsigned char)string->str[i.integer]);
 }
 
-static Value
+Value
 string_char(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.char()";
-
-        CHECK_ARGC(1);
+        ASSERT_ARGC("String.char()", 1);
 
         int64_t i = INT_ARG(0);
 
@@ -1212,14 +1098,14 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
                 i += string_length(ty, string, 0, NULL).integer;
         }
 
-        int cp;
+        i32 cp;
         int64_t j = i;
         int64_t offset = 0;
-        int n = utf8proc_iterate((u8 const *)string->string, string->bytes, &cp);
+        isize n = utf8proc_iterate((u8 const *)string->str, string->bytes, &cp);
 
         while (offset < string->bytes && n > 0 && j --> 0) {
                 offset += max(1, n);
-                n = utf8proc_iterate((u8 const *)string->string + offset, string->bytes, &cp);
+                n = utf8proc_iterate((u8 const *)string->str + offset, string->bytes, &cp);
         }
 
         if (offset == string->bytes)
@@ -1231,15 +1117,13 @@ string_char(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_bytes(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.bytes()";
-
-        CHECK_ARGC(0);
+        ASSERT_ARGC("String.bytes()", 0);
 
         Value result = ARRAY(vA());
         NOGC(result.array);
 
-        for (int i = 0; i < string->bytes; ++i) {
-                vAp(result.array, INTEGER((unsigned char)string->string[i]));
+        for (isize i = 0; i < string->bytes; ++i) {
+                vAp(result.array, INTEGER((unsigned char)string->str[i]));
         }
 
         OKGC(result.array);
@@ -1250,23 +1134,21 @@ string_bytes(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_lower(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.lower()";
-
-        CHECK_ARGC(0);
+        ASSERT_ARGC("String.lower()", 0);
 
         utf8proc_int32_t c;
-        utf8proc_uint8_t *s = (utf8proc_uint8_t *) string->string;
-        size_t len = string->bytes;
+        u8 *s = (u8 *) string->str;
+        isize len = string->bytes;
 
-        size_t outlen = 0;
+        isize outlen = 0;
         char *result = value_string_alloc(ty, 4 * string->bytes);
 
         while (len > 0) {
-                int n = max(1, utf8proc_iterate(s, len, &c));
+                isize n = max(1, utf8proc_iterate(s, len, &c));
                 s += n;
                 len -= n;
                 c = utf8proc_tolower(c);
-                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result + outlen);
+                outlen += utf8proc_encode_char(c, (u8 *)result + outlen);
         }
 
         return STRING(result, outlen);
@@ -1275,23 +1157,21 @@ string_lower(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_upper(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.upper()";
-
-        CHECK_ARGC(0);
+        ASSERT_ARGC("String.upper()", 0);
 
         utf8proc_int32_t c;
-        utf8proc_uint8_t *s = (utf8proc_uint8_t *) string->string;
-        size_t len = string->bytes;
+        u8 *s = (u8 *) string->str;
+        isize len = string->bytes;
 
-        size_t outlen = 0;
-        char *result = value_string_alloc(ty, 4 * string->bytes);
+        isize outlen = 0;
+        u8 *result = value_string_alloc(ty, 4 * string->bytes);
 
         while (len > 0) {
-                int n = max(1, utf8proc_iterate(s, len, &c));
+                isize n = max(1, utf8proc_iterate(s, len, &c));
                 s += n;
                 len -= n;
                 c = utf8proc_toupper(c);
-                outlen += utf8proc_encode_char(c, (utf8proc_uint8_t *)result + outlen);
+                outlen += utf8proc_encode_char(c, (u8 *)result + outlen);
         }
 
         return STRING(result, outlen);
@@ -1300,37 +1180,34 @@ string_upper(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.padLeft()";
-
-        CHECK_ARGC(1, 2);
+        ASSERT_ARGC("String.lpad()", 1, 2);
 
         int64_t width = INT_ARG(0);
 
-        int string_len = stringwidth(string->string, string->bytes);
-        if (string_len >= width)
+        isize string_len = TyStrLen(string);
+        if (string_len >= width) {
                 return *string;
-
-        char const *pad;
-        int pad_bytes;
-        int pad_len;
-
-        if (argc == 1) {
-                pad = " ";
-                pad_bytes = pad_len = 1;
-        } else {
-                if (ARG(1).type != VALUE_STRING)
-                        zP("the second argument to str.padLeft() must be a string");
-                pad = ARG(1).string;
-                pad_bytes = ARG(1).bytes;
-                stringcount(pad, pad_bytes, -1);
-                pad_len = outpos.graphemes;
         }
 
-        int n = (width - string_len) / pad_len + 1;
-        char *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
+        u8 const *pad;
+        isize pad_bytes;
+        isize pad_len;
 
-        int current = 0;
-        int bytes = 0;
+        if (argc == 1) {
+                pad = (u8 const *)" ";
+                pad_bytes = pad_len = 1;
+        } else {
+                Value vPad = ARGx(1, VALUE_STRING);
+                pad = vPad.str;
+                pad_bytes = vPad.bytes;
+                pad_len = TyStrLen(&vPad);
+        }
+
+        isize n = (width - string_len) / pad_len + 1;
+        u8 *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
+
+        isize current = 0;
+        isize bytes = 0;
         while (current + pad_len <= width - string_len) {
                 memcpy(result + bytes, pad, pad_bytes);
                 current += pad_len;
@@ -1338,12 +1215,12 @@ string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         if (current != width - string_len) {
-                stringcount(pad, pad_bytes, width - string_len - current);
-                memcpy(result + bytes, pad, outpos.bytes);
-                bytes += outpos.bytes;
+                isize partial = x_x_x(pad, pad_bytes, width - string_len - current);
+                memcpy(result + bytes, pad, partial);
+                bytes += partial;
         }
 
-        memcpy(result + bytes, string->string, string->bytes);
+        memcpy(result + bytes, string->str, string->bytes);
         bytes += string->bytes;
 
         return STRING(result, bytes);
@@ -1352,36 +1229,33 @@ string_pad_left(Ty *ty, Value *string, int argc, Value *kwargs)
 static Value
 string_pad_right(Ty *ty, Value *string, int argc, Value *kwargs)
 {
-        char const *_name__ = "String.padRight()";
+        ASSERT_ARGC("String.rpad()", 1, 2);
 
-        CHECK_ARGC(1, 2);
+        isize width = INT_ARG(0);
+        isize current = TyStrLen(string);
 
-        int64_t width = INT_ARG(0);
-
-        int current = stringwidth(string->string, string->bytes);
-        if (current >= width)
+        if (current >= width) {
                 return *string;
-
-        char const *pad;
-        int pad_bytes;
-        int pad_len;
-
-        if (argc == 1) {
-                pad = " ";
-                pad_bytes = pad_len = 1;
-        } else {
-                if (ARG(1).type != VALUE_STRING)
-                        zP("the second argument to str.padRight() must be a string");
-                pad = ARG(1).string;
-                pad_bytes = ARG(1).bytes;
-                stringcount(pad, pad_bytes, -1);
-                pad_len = outpos.graphemes;
         }
 
-        int n = (width - current) / pad_len + 1;
-        char *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
-        int bytes = string->bytes;
-        memcpy(result, string->string, bytes);
+        u8 const *pad;
+        isize pad_bytes;
+        isize pad_len;
+
+        if (argc == 1) {
+                pad = (u8 const *)" ";
+                pad_bytes = pad_len = 1;
+        } else {
+                Value vPad = ARGx(1, VALUE_STRING);
+                pad = vPad.str;
+                pad_bytes = vPad.bytes;
+                pad_len = TyStrLen(&vPad);
+        }
+
+        isize n = (width - current) / pad_len + 1;
+        u8 *result = value_string_alloc(ty, string->bytes + pad_bytes * n);
+        isize bytes = string->bytes;
+        memcpy(result, string->str, bytes);
 
         while (current + pad_len <= width) {
                 memcpy(result + bytes, pad, pad_bytes);
@@ -1390,9 +1264,9 @@ string_pad_right(Ty *ty, Value *string, int argc, Value *kwargs)
         }
 
         if (current != width) {
-                stringcount(pad, pad_bytes, width - current);
-                memcpy(result + bytes, pad, outpos.bytes);
-                bytes += outpos.bytes;
+                isize partial = x_x_x(pad, pad_bytes, width - current);
+                memcpy(result + bytes, pad, partial);
+                bytes += partial;
         }
 
         return STRING(result, bytes);
@@ -1404,7 +1278,7 @@ string_cstr(Ty *ty, Value *string, int argc, Value *kwargs)
         if (argc != 0)
                 zP("String.cstr() expects 0 arguments but got %d", argc);
 
-        return vSzs(string->string, string->bytes);
+        return vSzs(string->str, string->bytes);
 }
 
 static Value
@@ -1413,7 +1287,7 @@ string_ptr(Ty *ty, Value *string, int argc, Value *kwargs)
         if (argc != 0)
                 zP("String.ptr() expects 0 arguments but got %d", argc);
 
-        return PTR((void *)string->string);
+        return PTR((void *)string->str);
 }
 
 static Value
@@ -1423,7 +1297,7 @@ string_clone(Ty *ty, Value *string, int argc, Value *kwargs)
                 zP("String.clone(): expected 0 arguments but got %d", argc);
         }
 
-        return vSs(string->string, string->bytes);
+        return vSs(string->str, string->bytes);
 }
 
 DEFINE_METHOD_TABLE(
@@ -1435,6 +1309,7 @@ DEFINE_METHOD_TABLE(
         { .name = "chars",     .func = string_chars            },
         { .name = "clone",     .func = string_clone            },
         { .name = "comb",      .func = string_comb             },
+        { .name = "comb?",     .func = string_try_comb         },
         { .name = "contains?", .func = string_contains         },
         { .name = "count",     .func = string_count            },
         { .name = "cstr",      .func = string_cstr             },
@@ -1445,8 +1320,9 @@ DEFINE_METHOD_TABLE(
         { .name = "match!",    .func = string_match            },
         { .name = "match?",    .func = string_is_match         },
         { .name = "matches",   .func = string_matches          },
-        { .name = "padLeft",   .func = string_pad_left         },
-        { .name = "padRight",  .func = string_pad_right        },
+        { .name = "lpad",      .func = string_pad_left         },
+        { .name = "rpad",      .func = string_pad_right        },
+        { .name = "pad",       .func = string_pad_right        },
         { .name = "ptr",       .func = string_ptr              },
         { .name = "repeat",    .func = string_repeat           },
         { .name = "replace",   .func = string_replace          },

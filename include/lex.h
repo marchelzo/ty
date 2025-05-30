@@ -25,6 +25,7 @@ typedef struct LexState {
         char const *start;
         char const *end;
 
+        bool in_pp;
         bool need_nl;
         bool keep_comments;
         bool blank_line;
@@ -63,6 +64,12 @@ lex_save(Ty *ty, LexState *state);
 
 void
 lex_restore(Ty *ty, LexState *state);
+
+void
+lex_seek_pp(Ty *ty);
+
+void
+lex_in_pp(Ty *ty, bool pp);
 
 void
 lex_need_nl(Ty *ty, bool);

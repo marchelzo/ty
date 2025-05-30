@@ -765,11 +765,10 @@ main(int argc, char **argv)
         }
 #endif
 
-        WITH_TYPES_OFF {
-                if (!vm_init(ty, argc - nopt, argv + nopt)) {
-                        fprintf(stderr, "%s\n", TyError(ty));
-                        return -1;
-                }
+
+        if (!vm_init(ty, argc - nopt, argv + nopt)) {
+                fprintf(stderr, "%s\n", TyError(ty));
+                return -1;
         }
 
         argv += ProcessArgs(argv, false);
@@ -789,7 +788,7 @@ main(int argc, char **argv)
         if (query & TOOL_DEFINITION) {
                 bool ok = (QueryResult != NULL) || vm_execute(ty, source, SourceFileName);
 
-                if (QueryResult == NULL || QueryResult->file == NULL) {
+                if (QueryResult == NULL || QueryResult->mod == NULL) {
                         return 2;
                 }
 
@@ -797,7 +796,7 @@ main(int argc, char **argv)
                         "name",  xSz(QueryResult->identifier),
                         "line",  INTEGER(QueryResult->loc.line + 1),
                         "col",   INTEGER(QueryResult->loc.col + 1),
-                        "file",  xSz(QueryResult->file),
+                        "file",  xSz(QueryResult->mod->path),
                         "type",  xSz(type_show(ty, QueryResult->type)),
                         "doc",   (QueryResult->doc == NULL) ? NIL : xSz(QueryResult->doc),
                         "error", ok ? NIL : xSz(TyError(ty))

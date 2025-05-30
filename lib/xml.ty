@@ -1829,6 +1829,7 @@ C! pub libxml fn {
     xmlChar *xmlGetProp(xmlNode *node, xmlChar const *key);
     xmlAttr *xmlSetProp(xmlNode *node, xmlChar const *key, xmlChar const *value);
     int xmlRemoveProp(xmlAttr *attr);
+    int xmlUnsetProp(xmlNode *node, xmlChar const *key);
 
     char *xmlNodeGetContent(xmlNode *node);
 
@@ -1899,8 +1900,16 @@ class XMLAttrSet {
         }
     }
 
-    __subscript__=(key: String, val: String) {
+    delete(key: String) {
+        if let $val = self[key] {
+            xmlUnsetProp(__node, key.cstr())
+            val
+        }
+    }
+
+    __subscript__=(key: String, val: String) -> String {
         xmlSetProp(__node, key.cstr(), val.cstr())
+        val
     }
 
     __missing__(name: String) {

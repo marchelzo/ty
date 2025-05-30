@@ -83,6 +83,7 @@ fn max[a](*xs: a) -> a;
 fn fmt(str: String, *args: _);
 fn cast[a](x: _) -> a { x }
 fn time::utime() -> Int;
+fn time::now() -> Float;
 fn tuple(*xs: _, %kws: _) -> (_,);
 fn abs(k: Int) -> Int;
 fn abs(x: Float) -> Float;
@@ -890,7 +891,7 @@ class String : Iterable[String], IntoPtr[Int] {
     }
 }
 
-class Int {
+class Int : IntoPtr[_] {
     init(x)  {
         int(x ?? 0)
     }
@@ -1222,6 +1223,12 @@ trait IntoPtr[T] {
 }
 
 class Ptr[T] : IntoPtr[T] {
+    __subscript__(i: Int) -> T;
+    __subscript__=(x: T, i: Int) -> T;
+
+    +(off: Int) -> T;
+    -(off: Int) -> T;
+    -(other: Ptr[T]) -> Int;
 }
 
 class RuntimeError {
@@ -1254,7 +1261,12 @@ class Generator[T] : Iter[T] {
     }
 }
 
-class __Tag {
+class Tag {
+    __subscript__(T) {
+         x -> (#x) :: T
+    }
+
+    cope() { dbg(self, super, self[Int]) }
 }
 
 class Tuple {
@@ -2334,8 +2346,6 @@ class Range : Iterable[Int] {
     }
 
     __iter__() -> Generator[Int] {
-        let a = a
-        let b = b
         return if a < b {
             a.upto(b - 1)
         } else {
@@ -2360,6 +2370,22 @@ class InclusiveRange < Range {
     high() {
         max(@a, @b)
     }
+}
+
+fn +(n: Int, range: Range) {
+    (range.low() + n)...(range.high() + n)
+}
+
+fn +(range: Range, n: Int) {
+    (range.low() + n)...(range.high() + n)
+}
+
+fn -(n: Int, range: Range) {
+    (n - range.high())...(n - range.low())
+}
+
+fn -(range: Range, n: Int) {
+    (range.low() - n)...(range.high() - n)
 }
 
 use JSON = String
@@ -2447,47 +2473,46 @@ class Mutex {
     mtx: _
 
     init() {
-        @mtx = thread.mutex()
+        mtx = thread.mutex()
     }
 
     inner() {
-        @mtx
+        mtx
     }
 
     lock() {
-        let start = time.utime()
-        thread.lock(@mtx)
-        return MutexLock(@mtx)
+        thread.lock(mtx)
+        return MutexLock(mtx)
     }
 
     tryLock() {
-        if thread.tryLock(@mtx) == 0 {
-            return MutexLock(@mtx)
+        if thread.tryLock(mtx) {
+            return MutexLock(mtx)
         }
     }
 
     unlock() {
-        thread.unlock(@mtx)
+        thread.unlock(mtx)
     }
 
     destroy() {
-        thread.destroyMutex(@mtx)
+        thread.destroyMutex(mtx)
     }
 
     __free__() {
-        @destroy()
+        thread.destroyMutex(mtx)
     }
 }
 
 class MutexLock {
-    mtx: _
+    __mtx: _
 
     init(mtx) {
-        @mtx = mtx
+        __mtx = mtx
     }
 
     __drop__() {
-        thread.unlock(@mtx)
+        thread.unlock(__mtx)
     }
 }
 
@@ -2709,8 +2734,12 @@ class Thread[T] {
         thread.setName(s)
     }
 
-    join(timeoutMs: ?Int) -> T | nil {
-        thread.join(@handle, timeoutMs)
+    join(timeoutMs: Int) -> Some[T] | None {
+        thread.join(handle, timeoutMs)
+    }
+
+    join() -> T | nil {
+        thread.join(@handle)
     }
 
     kill(sig) {
@@ -3111,21 +3140,18 @@ class SharedQueue[T] : Iterable[T] {
     }
 
     tryTake(timeoutMs: Int = 0) -> Some[T] | None {
+        let force = (timeoutMs == -1)
         let stop = time.utime() + timeoutMs * 1000
 
         __mutex.lock()
 
         while __n == 0 {
             let now = time.utime()
-
-            if timeoutMs != -1 && now >= stop {
+            let wait = (stop - now) / 1000
+            if !__cond.wait(__mutex, wait if !force) {
                 __mutex.unlock()
                 return None
             }
-
-            let condTimeout = (timeoutMs == -1) ? -1 : (stop - now) / 1000
-
-            __cond.wait(__mutex, condTimeout)
         }
 
         let x = __xs[__i]

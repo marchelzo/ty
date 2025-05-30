@@ -165,7 +165,7 @@ pub function help(x) {
         let leading = lines.map(&match!(/^\s*/) |> &len).min()
 
         for line in lines.map!(&slice(leading)) {
-            p(''.padLeft(indent), line, sep: '')
+            p(''.lpad(indent), line, sep: '')
         }
     }
 
@@ -213,6 +213,7 @@ pub function help(x) {
 
 class TooWideError {}
 class TooMuchError {}
+tag Stop;
 
 let defaultColors = {
     dict:  chalk['#e78a4e bold'],
@@ -242,72 +243,105 @@ pub function escapeString(s) {
     })
 }
 
+fn trunc(str, n) { str[;n].comb(/\x1b[[^m]+$/) }
+
 class Printer {
-    init(width=96, indent=2, colors=defaultColors, color=true) {
-        @width = width
-        @indent = indent
-        @out = Blob()
-        @col = 0
-        @depth = 0
-        @colors = colors
-        @color = color
-        @visiting = []
+    __width:    Int
+    __indent:   Int
+    __out:      Blob
+    __col:      Int
+    __depth:    Int
+    __colors:   _
+    __color:    Bool
+    __visiting: Array[Any]
+    __oneline:  Bool
+
+    init(
+        width:    Int  = 96,
+        indent:   Int  = 2,
+        colors:   Any  = defaultColors,
+        color:    Bool = true,
+        oneline:  Bool = false
+    ) {
+        __width    = width
+        __indent   = indent
+        __out      = Blob()
+        __col      = 0
+        __depth    = 0
+        __colors   = colors
+        __color    = color
+        __visiting = []
+        __oneline  = oneline
     }
 
     save() {
-        (@col, @depth, #@visiting, #@out)
+        (__col, __depth, #__visiting, #__out)
     }
 
     restore(state) {
         let (col, depth, num-visiting, i) = state
-        @out.splice(i)
-        @col = col
-        @depth = depth
-        @visiting.take!(num-visiting)
+        __out.splice(i)
+        __col = col
+        __depth = depth
+        __visiting.take!(num-visiting)
     }
 
     write(s: String, pen=id, force=false) {
-        @col += #s
-        if !force && @col > @width { throw TooWideError() }
-        @out.push(str(@color ? pen(s) : s))
+        let want = #s
+        let have = max(0, __width - __col)
+
+        let off = __color ? "\x1b[0m" : ''
+
+        fn put(x) {
+            __out.push(str(__color ? pen(x) : x)) 
+            __col += #x
+        }
+
+        match have {
+            0 and __oneline   => throw Stop,
+            _ and force       => put(s),
+            n and (n >= want) => put(s),
+            n and __oneline   => do { put(trunc(s, n)); __out.push(off) },
+            _                 => throw TooWideError()
+        }
     }
 
     nl(n=0) {
-        @depth += n
-        @out.push('\n')
-        @col = 0
-        self.write(' '.repeat(@indent * @depth))
+        __depth += n
+        __out.push('\n')
+        __col = 0
+        write(' '.repeat(__indent * __depth))
     }
 
     go(x: _, canPush: ?Bool = false, force: ?Bool = false) {
         let id-of-x = ident(x)
 
-        if id-of-x in @visiting {
-            self.write('...', @colors.more, force)
+        if id-of-x in __visiting {
+            write('...', __colors.more, force)
             return
         }
 
-        @visiting.push(id-of-x)
+        __visiting.push(id-of-x)
 
-        let state = self.save()
+        let state = save()
 
         function printList(xs, open, close, color) {
             try {
-                self.write(open, color, false)
-                for (f, x) in ((self.go, x) for x in xs).intersperse((self.write, ', ')) {
+                write(open, color, false)
+                for (f, x) in ((go, x) for x in xs).intersperse((write, ', ')) {
                     f(x)
                 }
-                self.write(close, color, false)
+                write(close, color, false)
             } catch (e: TooWideError) and canPush {
-                self.restore(state)
-                self.write(open, color, force)
-                self.nl(1)
+                restore(state)
+                write(open, color, force)
+                nl(1)
                 for x, i in xs {
-                    if i > 0 { self.write(',', id, force); self.nl() }
-                    self.go(x, true, force)
+                    if i > 0 { write(',', id, force); nl() }
+                    go(x, true, force)
                 }
-                self.nl(-1)
-                self.write(close, color, force)
+                nl(-1)
+                write(close, color, force)
             }
         }
 
@@ -316,46 +350,46 @@ class Printer {
             open: String,
             close: String,
             eq: String,
-            field-style=@colors.field,
-            delim-style=@colors.dict
+            field-style=__colors.field,
+            delim-style=__colors.dict
         ) {
             let write-key = match open {
-                '%{' => self.go,
-                _    => self.write@($1, field-style, $3)
+                '%{' => go,
+                _    => write@($1, field-style, $3)
             }
 
             try {
-                self.write(open, delim-style, force)
+                write(open, delim-style, force)
                 for match m.intersperse(', ') {
                     (k, v) => {
                         write-key(k, false, false)
-                        self.write(eq, delim-style, false)
-                        self.go(v, false, false)
+                        write(eq, delim-style, false)
+                        go(v, false, false)
                     },
 
                     s => {
-                        self.write(s, id, false)
+                        write(s, id, false)
                     }
                 }
-                self.write(close, delim-style, false)
+                write(close, delim-style, false)
             } catch (e: TooWideError) and canPush {
-                self.restore(state)
-                self.write(open, delim-style, force)
-                self.nl(1)
+                restore(state)
+                write(open, delim-style, force)
+                nl(1)
                 for (k, v), i in m {
-                    if i > 0 { self.write(',', id, force); self.nl() }
+                    if i > 0 { write(',', id, force); nl() }
                     write-key(k, true, force)
-                    self.write(eq, delim-style, force)
-                    self.go(v, true, force)
+                    write(eq, delim-style, force)
+                    go(v, true, force)
                 }
-                self.nl(-1)
-                self.write(close, delim-style, force)
+                nl(-1)
+                write(close, delim-style, force)
             }
         }
 
         match x {
             xs :: Array => {
-                printList(xs, '[', ']', @colors.array)
+                printList(xs, '[', ']', __colors.array)
             },
 
             d :: Dict => {
@@ -363,60 +397,64 @@ class Printer {
             },
 
             %t(x) => {
-                self.write("{t}(", @colors.t, force)
-                self.go(x, canPush, force)
-                self.write(")", @colors.t, force)
+                write("{t}(", __colors.t, force)
+                go(x, canPush, force)
+                write(")", __colors.t, force)
             },
 
             t :: Tuple => {
                 let items = members(t, list: true)
 
                 if items.map(&0) :: Array[Int] {
-                    printList(items.map(&1), '(', ')', @colors.array)
+                    printList(items.map(&1), '(', ')', __colors.array)
                 } else {
                     printMap(items, '{', '}', ': ')
                 }
             },
 
             nil => {
-                self.write('nil', @colors.null, force)
+                write('nil', __colors.null, force)
             },
 
             _ :: String => {
                 let s = escapeString(x)
-                self.write('"', @colors.quote, force)
-                self.write(s, @colors.str, force)
-                self.write('"', @colors.quote, force)
+                write('"', __colors.quote, force)
+                write(s, __colors.str, force)
+                write('"', __colors.quote, force)
             },
 
             _ :: Bool => {
-                self.write("{x}", @colors.bool, force)
+                write("{x}", __colors.bool, force)
             },
 
             _ :: Int => {
-                self.write("{x}", @colors.int, force)
+                write("{x}", __colors.int, force)
             },
 
             _ :: Float => {
-                self.write("{x}", @colors.float, force)
+                write("{x}", __colors.float, force)
             },
 
             members@(_, list=true) ~> $ms => {
-                printMap(ms, "{type(x).__name__}(", ')', '=', delim-style=@colors.c)
+                printMap(ms, "{type(x).__name__}(", ')', '=', delim-style=__colors.c)
             },
 
             _ => {
-                self.write(show(x), id, force)
+                write(show(x), id, force)
             }
         }
 
-        @visiting.pop()
+        __visiting.pop()
     }
 
     print(x: _) {
-        self.restore((0, 0, 0, 0))
-        self.go(x, true, true)
-        return @out.str()
+        try {
+            restore((0, 0, 0, 0))
+            go(x, true, true)
+        } catch Stop { // Truncated
+            __out.push('...')
+        }
+        __out.str()
     }
 }
 
@@ -427,45 +465,29 @@ C! struct WinSize {
     c.short ypix;
 }
 
-let winSize = WinSize()
+let __tls::winsz = nil
 
-pub function prettyPrint(x, %kwargs: Any) {
+fn term-cols() {
+    winsz = winsz ?? WinSize()
 #|if !__windows__
-    c.store(c.u64, winSize.get(), 0xFFFFFFFFFFFFFFFF)
-    if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {
-        winSize.cols = 108
+    if ioctl(1, TIOCGWINSZ, (c.ptr, winsz)) == -1 {
+        winsz.cols = 108
     }
 #|else
-    winSize.cols = 78
+    winsz.cols = 78
 #|]
-
-    kwargs['width'] ?= max(min(winSize.cols, 108), 36)
-
-    let WithKwargs = Printer@(**kwargs)
-
-    if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
-        print(Printer(colors=tuple(**json.parse(s))).print(x))
-    } else {
-        print(Printer(**kwargs).print(x))
-    }
+    winsz.cols
 }
 
-pub function pretty(x, %kwargs) {
-#|if !__windows__
-    if ioctl(1, TIOCGWINSZ, (c.ptr, winSize.get())) == -1 {
-        winSize.cols = 108
-    }
-#|else
-    winSize.cols = 78
-#|]
-
-    kwargs['width'] ?= max(min(winSize.cols, 108), 36)
-
-    let WithKwargs = Printer@(**kwargs)
-
+pub fn pretty(x, %kwargs) {
+    kwargs['width'] ?= max(min(term-cols(), 108), 36)
     if let $home = getenv('HOME') and let $s = slurp("{home}/.ty/colors.json") {
         Printer(colors=tuple(**json.parse(s))).print(x)
     } else {
         Printer(**kwargs).print(x)
     }
+}
+
+pub fn prettyPrint(x, %kwargs: Any) {
+    print(pretty(x, **kwargs))
 }

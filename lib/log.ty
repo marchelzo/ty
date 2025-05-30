@@ -4,178 +4,171 @@ import ty.token (next)
 import os (..)
 import time
 import chalk
-import thread
 import io
 
-let chalk = chalk.Chalk()
-
-enum! {
-    CRITICAL,
-    ERROR,
-    WARN,
-    INFO,
-    DEBUG
-}
+const CRITICAL = 0
+const ERROR    = 1
+const WARN     = 2
+const INFO     = 3
+const DEBUG    = 4
 
 let levels = %{
     CRITICAL: 'critical',
     ERROR: 'error',
-    WARN: 'warning',
+    WARN: 'warn',
     INFO: 'info',
     DEBUG: 'debug'
 }
 
-chalk.critical = 'bright red bold underline'
-chalk.error = 'bright red'
-chalk.warn = 'bright yellow'
-chalk.info = '#4989eb'
-chalk.debug = '#ff45be'
+fn log-open(path: String) {
+    open(path, O_RDWR | O_TRUNC | O_CREAT, 0644)
+}
 
-chalk.time = '#10ccb9'
-chalk.name = '#92e83c'
+let global-log-fds = %{*: log-open(it)}
+let global-log-lock = Mutex()
+
+let TY_LOG_PATH = getenv('TY_LOG')
 
 class Logger {
-    init(name) {
-        @name = name
-        @indent = 4
-        @level = WARN
-        @stack = []
-        @prefix = function (level, color) {
+    __name:   String
+    __chalk:  chalk.Chalk
+    __prefix: (Int, Bool) -> _
+    __stack:  Array[String]
+    __indent: Int
+    __level:  Int
+    __color:  Bool
+    __path:   String | nil
+
+    init(name: String, path: ?String, chalk: ?chalk.Chalk) {
+        __name = name
+        __indent = 4
+        __level = WARN
+        __stack = []
+        __chalk = chalk ?? chalk.Chalk()
+        __prefix = function (level, color) {
             let t = time.utime()
-            let tString = "{time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)}.{(t % 1000000) / 1000:03}"
-            let threadName = (Thread.getName() || 'main') + "({thread.id()})"
+
+            let whole = time.strftime('%Y-%m-%d %H:%M:%S', t / 1000000)
+            let frac  = "{(t % 1000000) / 1000:03}"
+            let time-str = "{whole}.{frac}"
+
+            let threadName = (Thread.getName() || 'main') + "({Thread.id()})"
             let levelName = "{"[{levels[level]}]":10}"
+
             if color {
-                //let threadString = chalk.padLeft(threadPen()("[{threadName}]"), 10)
-                chalk"[time]{tString}[/] [{levels[level]}]{levelName}[/] [thread{thread.id()}?]\\[{threadName}][/]"
+                __chalk"[time]{time-str}[/] "
+                    "[{levels[level]}]{levelName}[/] "
+                    "[thread{Thread.id()}?]\\[{threadName}][/]"
             } else {
-                let threadString = "[{threadName}]".padLeft(10)
-                "{tString} {levelName} {threadString}"
+                "{time-str} {levelName} {"[{threadName}]":-10}"
             }
         }
 
-        @fd = if let $path = getenv('TY_LOG') and
-                 let fd = open(path, O_RDWR | O_TRUNC | O_CREAT, 0644) and
-                 fd >= 0 {
-            fd
-        } else {
-            2
-        }
+        __chalk.critical = 'bright red bold underline'
+        __chalk.error    = 'bright red'
+        __chalk.warn     = 'bright yellow'
+        __chalk.info     = '#4989eb'
+        __chalk.debug    = '#ff45be'
+        __chalk.time     = '#10ccb9'
+        __chalk.name     = '#92e83c'
 
-        @color = isatty(@fd)
-        @file = io.open(@fd, 'w+')
+        if path {
+            __path = path
+            with global-log-lock.lock() {
+                __color = isatty(global-log-fds[path])
+            }
+        } else {
+            __color = isatty(2)
+        }
     }
 
     setLevel(level) {
-        @level = level
+        __level = level
     }
 
     setPrefix(f) {
-        @prefix = f
+        __prefix = f
     }
 
     log(level, msg) {
-        if @level >= level {
-            let name = if #@stack == 0 {
-                @name
+        if __level >= level {
+            let name = if #__stack == 0 {
+                __name
             } else {
-                "{@name}[{@stack.join('.')}]"
+                "{__name}[{__stack.join('.')}]"
             }
-            let out = if @color {
-                chalk"{(@prefix)(level, true)} [name]{name}[/]: {msg}\n"
+
+            let out = if __color {
+                __chalk"{(__prefix)(level, true)} [name]{name}[/]: {msg}\n"
             } else {
-                "{(@prefix)(level, false)} {name}: {msg}\n"
+                "{(__prefix)(level, false)} {name}: {msg}\n"
             }
-            @file.write("{out}")
-            @file.flush()
+
+            with global-log-lock.lock() {
+                let path = __path ?? DEFAULT_LOG_PATH
+                let fd = path ? global-log-fds[path] : 2
+                write(fd, "{out}")
+            }
         }
     }
 
     warn(msg) {
-        @log(WARN, msg)
+        log(WARN, msg)
     }
 
     error(msg) {
-        @log(ERROR, msg)
+        log(ERROR, msg)
     }
 
     info(msg) {
-        @log(INFO, msg)
+        log(INFO, msg)
     }
 
     critical(msg) {
-        @log(CRITICAL, msg)
+        log(CRITICAL, msg)
     }
 
     debug(msg) {
-        @log(DEBUG, msg)
+        log(DEBUG, msg)
     }
 
     push(name) {
-        @stack.push(name)
+        __stack.push(name)
     }
 
     pop() {
-        @stack.pop()
+        __stack.pop()
     }
 }
 
-pub function getLogger(name) {
-    let mtx = static!(Mutex())
-    let d = static!(%{})
-    with mtx.lock() {
-        if let $logger = d[name] {
-            logger
-        } else {
-            d[name] = Logger(name)
-        }
+let __tls::_loggers = nil
+let __tls::_chalk   = nil
+
+fn _get(name: String, path: ?String) -> Logger {
+    let loggers = _loggers ?? (_loggers = %{})
+    let chalk   = _chalk   ?? (_chalk = chalk.Chalk())
+    if let $logger = loggers[name] {
+        logger
+    } else {
+        loggers[name] = Logger(name, path, chalk)
     }
 }
 
-function logMacro(level) {
-    let e = parse.expr(50)
-    ty.Block([
-        ty.Let(
-            ty.Id(name: 'logger'),
-            ty.Call(
-                func: ty.Id(module: 'log', name: 'getLogger'),
-                args: [
-                    ty.Arg(arg: ty.Id(name: '__module__'))
-                ]
-            )
-        ),
-        ty.MethodCall(
-            object: ty.Id(name: 'logger'),
-            method: level,
-            args: [ty.Arg(arg: e)]
-        )
-    ])
-}
+fn _log(level, expr) $$[
+    $${_get}(
+        __module__,
+        $$(ty.IfDef({name: 'TY_LOG_PATH'})).or-else(nil)
+    ).log($${level}, $$expr)
+$$]
 
-pub macro debug!    { logMacro('debug') }
-pub macro info!     { logMacro('info') }
-pub macro warn!     { logMacro('warn') }
-pub macro error!    { logMacro('error') }
-pub macro critical! { logMacro('critical') }
+pub macro    debug!(expr) { _log(DEBUG,    expr) }
+pub macro     info!(expr) { _log(INFO,     expr) }
+pub macro     warn!(expr) { _log(WARN,     expr) }
+pub macro    error!(expr) { _log(ERROR,    expr) }
+pub macro critical!(expr) { _log(CRITICAL, expr) }
 
-pub macro logLevel! {
-    let e = parse.expr(50)
-    ty.Block([
-        ty.Let(
-            ty.Id(name: 'logger'),
-            ty.Call(
-                func: ty.Id(module: 'log', name: 'getLogger'),
-                args: [
-                    ty.Arg(arg: ty.Id(name: '__module__'))
-                ]
-            )
-        ),
-        ty.MethodCall(
-            object: ty.Id(name: 'logger'),
-            method: 'setLevel',
-            args: [ty.Arg(arg: e)]
-        )
-    ])
+pub macro logLevel!(n) {
+    $$[ $${_get}(__module__).setLevel($$n) $$]
 }
 
 pub macro logCtx! {

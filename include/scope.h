@@ -41,7 +41,7 @@ typedef struct symbol {
         int ci;
 
         Location loc;
-        char const *file;
+        Module *mod;
 
         Type *type;
         Expr *expr;
@@ -132,7 +132,7 @@ struct symbol *
 scope_insert_as(Ty *ty, struct scope *s, struct symbol *sym, char const *id);
 
 bool
-scope_is_subscope(Ty *ty, struct scope const *sub, struct scope const *scope);
+scope_is_subscope(Scope const *sub, Scope const *scope);
 
 char const *
 scope_copy_public(Ty *ty, struct scope *dst, struct scope const *src, bool reexport);
@@ -285,6 +285,13 @@ ScopeIsTop(Ty *ty, Scope const *scope)
         }
 
         return true;
+}
+
+
+inline static bool
+ScopeIsContainedBy(Scope const *sub, Scope const *scope)
+{
+        return (sub == scope) || scope_is_subscope(sub, scope);
 }
 
 int

@@ -85,7 +85,7 @@ blob_search(Ty *ty, Value *blob, int argc, Value *kwargs)
 
         switch (c.type) {
         case VALUE_STRING:
-                s = strstrn(haystack, n, c.string, c.bytes);
+                s = strstrn(haystack, n, c.str, c.bytes);
                 break;
         case VALUE_BLOB:
                 s = strstrn(haystack, n, (char *)c.blob->items, c.blob->count);
@@ -140,7 +140,7 @@ blob_push(Ty *ty, Value *blob, int argc, Value *kwargs)
                 vvIn(*blob->blob, arg.blob->items, arg.blob->count, index);
                 break;
         case VALUE_STRING:
-                vvIn(*blob->blob, arg.string, arg.bytes, index);
+                vvIn(*blob->blob, arg.str, arg.bytes, index);
                 break;
         case VALUE_PTR:
                 if (ARG(argc - 1).type != VALUE_INTEGER) {
@@ -161,7 +161,7 @@ blob_size(Ty *ty, Value *blob, int argc, Value *kwargs)
         return INTEGER(blob->blob->count);
 }
 
-static Value
+Value
 blob_get(Ty *ty, Value *blob, int argc, Value *kwargs)
 {
         if (argc != 1)
@@ -453,7 +453,7 @@ blob_pad(Ty *ty, Value *blob, int argc, Value *kwargs)
         case VALUE_STRING:
                 vvR(*blob->blob, goal + pad.bytes);
                 while (vN(*blob->blob) < goal) {
-                        vvPn(*blob->blob, pad.string, pad.bytes);
+                        vvPn(*blob->blob, pad.str, pad.bytes);
                 }
                 break;
         default:

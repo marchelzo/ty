@@ -17,6 +17,19 @@ use TermStyle = () | {
     bg-bright: ?Bool
 }
 
+// Some nice colors :)
+//
+// blue:   #1d55c6
+// green:  #6cad65
+// yellow: #e5b211
+// pink:   #e94db2
+// purple: #a571ce
+// red:    #dd203c
+// gray:   #726157
+// orange: #ed6d18
+// white:  #f1d2a5
+//
+
 pub fn escape(text: String) -> String {
     text.sub(/\[|\\/, %{'[': '\\[', '\\': '\\\\'}[])
 }

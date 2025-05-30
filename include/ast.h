@@ -168,6 +168,7 @@ typedef struct class_definition ClassDefinition;
         X(TEMPLATE),                                                                  \
         X(TEMPLATE_HOLE),                                                             \
         X(TEMPLATE_VHOLE),                                                            \
+        X(TEMPLATE_XHOLE),                                                            \
         X(TEMPLATE_THOLE),                                                            \
         X(SPREAD),                                                                    \
         X(SPLAT),                                                                     \
@@ -275,7 +276,7 @@ struct expression {
 
         Location start;
         Location end;
-        char const *file;
+        Module *mod;
         Expr *xfunc;
         Scope *xscope;
         Type *_type;
@@ -299,6 +300,7 @@ struct expression {
                 struct {
                         statement_vector stmts;
                         expression_vector exprs;
+                        expression_vector targets;
                 } template;
                 struct {
                         struct symbol *atmp;
@@ -379,6 +381,10 @@ struct expression {
                                 Symbol *tmp;
                         };
                 };
+                struct {
+                        int i;
+                        Expr *expr;
+                } hole;
                 struct {
                         struct expression *subject;
                         expression_vector patterns;
@@ -480,7 +486,7 @@ struct statement {
 #undef X
         Location start;
         Location end;
-        char const *file;
+        Module *mod;
         Expr *xfunc;
         Scope *xscope;
         Type *_type;
