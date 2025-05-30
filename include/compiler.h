@@ -132,9 +132,11 @@ typedef struct compiler_state {
 
         int ctx;
 
+        i64 scope_stop;
+        i64 scope_start;
+
         Scope *fscope;
         Scope *implicit_fscope;
-
         Scope *macro_scope;
 
         Expr *implicit_func;
@@ -161,6 +163,7 @@ typedef struct compiler_state {
         Scope *global;
         Scope *active;
         Scope *pscope;
+        ScopeVector scopes;
 
         Module *module;
 

@@ -61,6 +61,7 @@ typedef vec(Frame)          FrameStack;
 typedef vec(Value)          GCRootSet;
 typedef vec(jmp_buf *)      JmpBufVector;
 typedef vec(Refinement)     RefinementVector;
+typedef vec(Scope *)        ScopeVector;
 typedef vec(size_t)         SPStack;
 typedef vec(struct sigfn)   SigfnStack;
 typedef vec(char *)         StringVector;

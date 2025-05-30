@@ -21,7 +21,8 @@ enum {
         SYM_CONST        = 1 << 4,
         SYM_TYPE_VAR     = 1 << 5,
         SYM_VARIADIC     = 1 << 6,
-        SYM_IMMORTAL     = 1 << 7
+        SYM_IMMORTAL     = 1 << 7,
+        SYM_OMNIPRESENT  = 1 << 8,
 };
 
 typedef struct type Type;
@@ -46,10 +47,10 @@ typedef struct symbol {
         Type *type;
         Expr *expr;
 
-        struct scope *scope;
+        Scope *scope;
 
         uint64_t hash;
-        struct symbol *next;
+        Symbol *next;
 } Symbol;
 
 typedef struct scope {
@@ -59,14 +60,14 @@ typedef struct scope {
         bool active;
         bool is_function;
 
-        struct symbol *table[SYMBOL_TABLE_SIZE];
+        Symbol *table[SYMBOL_TABLE_SIZE];
 
-        vec(struct symbol *) owned;
-        vec(struct symbol *) captured;
+        vec(Symbol *) owned;
+        vec(Symbol *) captured;
         vec(int) cap_indices;
 
-        struct scope *parent;
-        struct scope *function;
+        Scope *parent;
+        Scope *function;
 
         RefinementVector refinements;
 
@@ -82,7 +83,7 @@ _scope_new(Ty *ty,
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
         char const *name,
 #endif
-        struct scope *parent,
+        Scope *parent,
         bool function
 );
 
@@ -111,37 +112,43 @@ Symbol *
 scope_new_namespace(Ty *ty, char const *name, Scope *parent);
 
 int
-scope_capture(Ty *ty, struct scope *s, struct symbol *sym, int parent_index);
+scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index);
 
 bool
-scope_locally_defined(Ty *ty, struct scope const *s, char const *id);
+scope_locally_defined(Ty *ty, Scope const *s, char const *id);
 
 Symbol *
 scope_find_symbol(Scope const *s, Symbol const *needle);
 
-struct symbol *
-scope_lookup(Ty *ty, struct scope const *s, char const *id);
+Symbol *
+scope_lookup(Ty *ty, Scope const *s, char const *id);
 
-struct symbol *
-scope_local_lookup(Ty *ty, struct scope const *s, char const *id);
+Symbol *
+scope_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start);
 
-struct symbol *
-scope_insert(Ty *ty, struct scope *s, struct symbol *sym);
+Symbol *
+scope_local_lookup(Ty *ty, Scope const *s, char const *id);
 
-struct symbol *
-scope_insert_as(Ty *ty, struct scope *s, struct symbol *sym, char const *id);
+Symbol *
+scope_local_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start);
+
+Symbol *
+scope_insert(Ty *ty, Scope *s, Symbol *sym);
+
+Symbol *
+scope_insert_as(Ty *ty, Scope *s, Symbol *sym, char const *id);
 
 bool
 scope_is_subscope(Scope const *sub, Scope const *scope);
 
 char const *
-scope_copy_public(Ty *ty, struct scope *dst, struct scope const *src, bool reexport);
+scope_copy_public(Ty *ty, Scope *dst, Scope const *src, bool reexport);
 
 char const *
-scope_copy_public_except(Ty *ty, struct scope *dst, struct scope const *src, char const **skip, int n, bool reexport);
+scope_copy_public_except(Ty *ty, Scope *dst, Scope const *src, char const **skip, int n, bool reexport);
 
 char const *
-scope_copy(Ty *ty, struct scope *dst, struct scope const *src);
+scope_copy(Ty *ty, Scope *dst, Scope const *src);
 
 inline static void
 scope_apply(Ty *ty, Scope *scope, SymbolTransform *f)
@@ -153,17 +160,14 @@ scope_apply(Ty *ty, Scope *scope, SymbolTransform *f)
         }
 }
 
-int
+i64
 scope_get_symbol(Ty *ty);
 
 void
-scope_set_symbol(Ty *ty, int s);
-
-char const *
-scope_symbol_name(Ty *ty, int s);
+scope_set_symbol(Ty *ty, i64 s);
 
 void
-scope_capture_all(Ty *ty, struct scope *scope, struct scope const *stop);
+scope_capture_all(Ty *ty, Scope *scope, Scope const *stop);
 
 Symbol *
 NewSymbol(Ty *ty, char const *name);
@@ -184,6 +188,12 @@ inline static bool
 SymbolIsImmortal(Symbol const *var)
 {
         return var->flags & SYM_IMMORTAL;
+}
+
+inline static bool
+SymbolIsOmnipresent(Symbol const *var)
+{
+        return var->flags & SYM_OMNIPRESENT;
 }
 
 inline static bool
@@ -306,7 +316,7 @@ scope_get_completions(
 
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
 char const *
-scope_name(Ty *ty, struct scope const *s);
+scope_name(Ty *ty, Scope const *s);
 #endif
 
 #endif

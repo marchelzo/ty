@@ -5596,16 +5596,21 @@ Subscript:
                         switch (EXPECT(peektarget()->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: ++peektarget()->integer; break;
                         case VALUE_REAL:    ++peektarget()->real;    break;
+                        case VALUE_PTR:
+                                vp = peektarget();
+                                vp->ptr = ((char *)vp->ptr)
+                                        + ((ffi_type *)(
+                                                (vp->extra == NULL)
+                                               ? &ffi_type_uint8
+                                               : vp->extra
+                                          ))->size;
+                                break;
                         case VALUE_OBJECT:
                                 vp = class_method(ty, peektarget()->class, "++");
                                 if (vp != NULL) {
                                         call(ty, vp, peektarget(), 0, 0, true);
                                         break;
                                 }
-                        case VALUE_PTR:
-                                vp = peektarget();
-                                vp->ptr = ((char *)vp->ptr) + ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
-                                break;
                         default:
                                 zP("pre-increment applied to invalid type: %s", VSC(peektarget()));
                         }
@@ -5634,16 +5639,21 @@ Subscript:
                         switch (EXPECT(peektarget()->type, VALUE_INTEGER)) {
                         case VALUE_INTEGER: --peektarget()->integer; break;
                         case VALUE_REAL:    --peektarget()->real;    break;
+                        case VALUE_PTR:
+                                vp = peektarget();
+                                vp->ptr = ((char *)vp->ptr)
+                                        - ((ffi_type *)(
+                                                (vp->extra == NULL)
+                                               ? &ffi_type_uint8
+                                               : vp->extra
+                                          ))->size;
+                                break;
                         case VALUE_OBJECT:
                                 vp = class_method(ty, peektarget()->class, "--");
                                 if (vp != NULL) {
                                         call(ty, vp, peektarget(), 0, 0, true);
                                         break;
                                 }
-                        case VALUE_PTR:
-                                vp = peektarget();
-                                vp->ptr = ((char *)vp->ptr) - ((ffi_type *)(vp->extra == NULL ? &ffi_type_uint8 : vp->extra))->size;
-                                break;
                         default:
                                 zP("pre-decrement applied to invalid type: %s", VSC(peektarget()));
                         }

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "location.h"
+#include "tags.h"
 #include "vec.h"
 #include "scope.h"
 
@@ -288,22 +289,22 @@ struct expression {
                 bool boolean;
                 char const *string;
                 double real;
-                struct statement *statement;
+                Stmt *statement;
                 struct value *v;
                 void *p;
                 Expr *throw;
                 struct {
                         char const *uop;
-                        struct expression *operand;
+                        Expr *operand;
                         struct scope *escope;
                 };
                 struct {
                         statement_vector stmts;
                         expression_vector exprs;
-                        expression_vector targets;
+                        expression_vector holes;
                 } template;
                 struct {
-                        struct symbol *atmp;
+                        Symbol *atmp;
                         expression_vector elements;
                         expression_vector aconds;
                         vec(bool) optional;
@@ -315,15 +316,15 @@ struct expression {
                         } compr;
                 };
                 struct {
-                    struct expression *m;
-                    struct expression *e;
+                    Expr *m;
+                    Expr *e;
                 } macro;
                 struct {
                         statement_vector defs;
-                        struct statement *block;
+                        Stmt *block;
                 } with;
                 struct {
-                        struct symbol *ltmp;
+                        Symbol *ltmp;
                         bool only_identifiers;
                         expression_vector es;
                         vec(char const *) names;
@@ -331,16 +332,16 @@ struct expression {
                         expression_vector tconds;
                 };
                 struct {
-                        struct expression *cond;
-                        struct expression *then;
-                        struct expression *otherwise;
+                        Expr *cond;
+                        Expr *then;
+                        Expr *otherwise;
                 };
                 struct {
-                        struct regex const *regex;
-                        struct symbol const *match_symbol;
+                        Regex const *regex;
+                        Symbol const *match_symbol;
                 };
                 struct {
-                        struct expression *lang;
+                        Expr *lang;
                         StringVector strings;
                         expression_vector fmts;
                         expression_vector fmtfs;
@@ -354,11 +355,11 @@ struct expression {
                 } op;
                 struct {
                         union {
-                                struct expression *tagged;
-                                struct expression *aliased;
+                                Expr *tagged;
+                                Expr *aliased;
                         };
-                        struct expression *constraint;
-                        struct symbol *symbol;
+                        Expr *constraint;
+                        Symbol *symbol;
                         char *module;
                         char *identifier;
                         Expr *namespace;
@@ -366,18 +367,18 @@ struct expression {
                 };
                 struct {
                         char const *op_name;
-                        struct expression *left;
+                        Expr *left;
                         union {
-                                struct expression *right;
+                                Expr *right;
                                 condpart_vector p_cond;
                         };
-                        struct expression *sc;
+                        Expr *sc;
                         bool not_nil;
                 };
                 struct {
-                        struct expression *target;
+                        Expr *target;
                         union {
-                                struct expression *value;
+                                Expr *value;
                                 Symbol *tmp;
                         };
                 };
@@ -386,9 +387,9 @@ struct expression {
                         Expr *expr;
                 } hole;
                 struct {
-                        struct expression *subject;
+                        Expr *subject;
                         expression_vector patterns;
-                        vec(struct expression *) thens;
+                        vec(Expr *) thens;
                 };
                 struct {
                         char *name;
@@ -444,8 +445,8 @@ struct expression {
                         Expr *dflt;
                 };
                 struct {
-                        struct expression *container;
-                        struct expression *subscript;
+                        Expr *container;
+                        Expr *subscript;
                 };
                 struct {
                         Expr *e;
@@ -454,7 +455,7 @@ struct expression {
                         Expr *k;
                 } slice;
                 struct {
-                        struct expression *object;
+                        Expr *object;
                         union {
                                 Expr *member;
                                 char *member_name;
@@ -496,7 +497,7 @@ struct statement {
 
         union {
                 struct {
-                        struct expression *expression;
+                        Expr *expression;
                         int depth;
                 };
                 vec(Stmt *) statements;
@@ -516,50 +517,51 @@ struct statement {
                         StringVector names;
                 } use;
                 union {
-                        struct class_definition tag;
-                        struct class_definition class;
+                        ClassDefinition tag;
+                        ClassDefinition class;
                 };
                 struct {
-                        struct statement *init;
-                        struct expression *cond;
-                        struct expression *next;
-                        struct statement *body;
+                        Stmt *init;
+                        Expr *cond;
+                        Expr *next;
+                        Stmt *body;
                 } for_loop;
                 struct {
-                        struct expression *target;
-                        struct expression *array;
-                        struct statement *body;
-                        struct expression *cond;
-                        struct expression *stop;
+                        Expr *target;
+                        Expr *array;
+                        Stmt *body;
+                        Expr *cond;
+                        Expr *stop;
                 } each;
                 struct {
-                        struct statement *s;
+                        Stmt *s;
                         expression_vector patterns;
-                        vec(struct statement *) handlers;
-                        struct statement *finally;
+                        vec(Stmt *) handlers;
+                        Stmt *finally;
                 } try;
                 struct {
-                        struct expression *e;
+                        Expr *e;
                         expression_vector patterns;
                         expression_vector conds;
-                        vec(struct statement *) statements;
+                        vec(Stmt *) statements;
                 } match;
                 struct {
                         condpart_vector parts;
-                        struct statement *block;
+                        Stmt *block;
                 } While;
                 struct {
                         condpart_vector parts;
-                        struct statement *then;
-                        struct statement *otherwise;
+                        Stmt *then;
+                        Stmt *otherwise;
                         bool neg;
                 } iff;
                 struct {
-                        struct expression *target;
-                        struct expression *value;
+                        Expr *target;
+                        Expr *value;
                         char const *doc;
                         bool pub;
                         bool cnst;
+                        i64 when;
                 };
         };
 };

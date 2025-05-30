@@ -4132,8 +4132,6 @@ BUILTIN_FUNCTION(os_poll)
         Array *fds_out;
         i64 timeout;
 
-        GC_STOP();
-
         switch (argc) {
         case 1:
                 fds_out = vA();
@@ -4198,6 +4196,7 @@ BUILTIN_FUNCTION(os_poll)
                 pfds[i] = pfd;
         }
 
+        NOGC(fds_out);
         lGv(true);
 #ifdef _WIN32
         int ret = WSAPoll(pfds, vN(*fds), timeout);
@@ -4205,10 +4204,12 @@ BUILTIN_FUNCTION(os_poll)
         int n = poll(pfds, vN(*fds), timeout);
 #endif
         lTk();
+        OKGC(fds_out);
 
         vN(*fds_out) = 0;
 
         if (n >= 0) {
+                GC_STOP();
                 for (int i = 0; i < vN(*fds) && vN(*fds_out) < n; ++i) {
                         if (pfds[i].revents != 0) {
                                 Value fd = INTEGER(pfds[i].fd);
@@ -4220,10 +4221,10 @@ BUILTIN_FUNCTION(os_poll)
                                 vAp(fds_out, out);
                         }
                 }
+                GC_RESUME();
         }
 
         SCRATCH_RESTORE();
-        GC_RESUME();
 
         return (argc == 3) ? INTEGER(n)
              : (n    >  0) ? Ok(ty, ARRAY(fds_out))
@@ -4632,7 +4633,7 @@ BUILTIN_FUNCTION(os_sleep)
 
         i64 nsec = NSEC_ARG(0);
 
-        struct timespec dur {
+        struct timespec dur = {
                 .tv_sec = nsec / TY_1e9,
                 .tv_nsec = nsec % TY_1e9
         };

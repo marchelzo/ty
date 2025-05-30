@@ -710,7 +710,7 @@ STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
         va_copy(_ap, ap);
         scvdump(ty, &buf, fmt, _ap);
         va_end(_ap);
-        str = mAo(vN(buf), GC_STRING);
+        str = mAo(vN(buf) + 1, GC_STRING);
         memcpy(str, vv(buf), vN(buf) + 1);
         SCRATCH_RESTORE();
 

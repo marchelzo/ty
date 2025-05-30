@@ -101,23 +101,49 @@
 
 enum {
         CTX_EXPR,
-        CTX_TYPE,
-        CTX_DECL
+        CTX_TYPE
 };
 
-#define WITH_CTX(c)                                                  \
-        for (                                                        \
-                int _ctx_save = STATE.ctx,                           \
-                    _ctx_cond = 1;                                   \
-                (                                                    \
-                        (_ctx_cond && (STATE.ctx = (CTX_ ## c), 1))  \
-                     || ((STATE.ctx = _ctx_save), 0)                 \
-                );                                                   \
-                --_ctx_cond                                          \
-        )
+#define SCOPE (*vvL(STATE.scopes))
+#define PushScope(scope) xvP(STATE.scopes, (scope))
+#define PopScope()       vvX(STATE.scopes)
 
-#define WHEN_CTX(c) if (STATE.ctx == (CTX_ ## c))
-#define WHEN_NOT_CTX(c) if (STATE.ctx != (CTX_ ## c))
+#define ScopeLookup(scope, name) \
+        scope_xlookup(ty, (scope), (name), STATE.scope_stop, STATE.scope_start)
+
+#define ScopeLookupLocal(scope, name) \
+        scope_local_xlookup(ty, (scope), (name), STATE.scope_stop, STATE.scope_start)
+
+#define WITH_STATE(prop, val) for (                     \
+        imax _val_save = STATE.prop,                    \
+            _ctx_cond = 1;                              \
+        (                                               \
+                (_ctx_cond && (STATE.prop = (val), 1))  \
+             || ((STATE.prop = _val_save), 0)           \
+        );                                              \
+        --_ctx_cond                                     \
+)
+#define WITH_STATE_2(p1, v1, p2, v2) for (              \
+        imax _val_save_1 = STATE.p1,                    \
+             _val_save_2 = STATE.p2,                    \
+            _ctx_cond = 1;                              \
+        (                                               \
+                ( \
+                        _ctx_cond \
+                    && (STATE.p1 = (v1), 1) \
+                    && (STATE.p2 = (v2), 1) \
+                )  \
+             || ( \
+                        (STATE.p1 = _val_save_1), \
+                        (STATE.p2 = _val_save_2), \
+                        0 \
+                )           \
+        );                                              \
+        --_ctx_cond                                     \
+)
+#define WITH_CTX(c) WITH_STATE(ctx, CTX_##c)
+#define WHEN_CTX(c) if (STATE.ctx == (CTX_##c))
+#define WHEN_NOT_CTX(c) if (STATE.ctx != (CTX_##c))
 
 bool SuggestCompletions = false;
 bool FindDefinition = false;
@@ -743,10 +769,10 @@ CompileError(Ty *ty, char const *fmt, ...)
 
         ContextList = NULL;
 
-        if (vN(ty->jbs) < 3) {
-                fputs(TyError(ty), stdout);
-                *(char *)0 = 0;
-        }
+        //if (vN(ty->jbs) < 3) {
+        //        fputs(TyError(ty), stdout);
+        //        *(char *)0 = 0;
+        //}
 
         TY_THROW_ERROR();
 }
@@ -1234,20 +1260,6 @@ is_call(Expr const *e)
 }
 
 inline static bool
-is_tag(Ty *ty, Expr const *e)
-{
-        assert(e->type == EXPRESSION_IDENTIFIER);
-
-        Scope const *scope = (e->module == NULL || *e->module == '\0')
-                           ? STATE.global
-                           : get_import_scope(ty, e->module);
-
-        Symbol *sym = scope_lookup(ty, scope, e->identifier);
-
-        return sym != NULL && sym->tag != -1;
-}
-
-inline static bool
 is_const(Ty *ty, Scope const *scope, char const *name)
 {
         Symbol const *s = scope_lookup(ty, scope, name);
@@ -1297,6 +1309,29 @@ is_variadic(Expr const *e)
         default:
                 return false;
         }
+}
+
+inline static Scope *
+IdentifierScope(Ty *ty, Expr const *expr)
+{
+        if (
+                (expr == NULL)
+             || (expr->module == NULL)
+             || (*expr->module == '\0')
+        ) {
+                return SCOPE;
+        }
+
+        Scope *scope = search_import_scope(expr->module);
+
+        return (scope != NULL) ? scope : SCOPE;
+}
+
+inline static Symbol *
+TryResolveIdentifier(Ty *ty, Expr *expr)
+{
+        Scope *scope = IdentifierScope(ty, expr);
+        return ScopeLookup(scope, expr->identifier);
 }
 
 inline static Symbol *
@@ -1358,7 +1393,7 @@ addsymbol(Ty *ty, Scope *scope, char const *name)
         return addsymbolx(ty, scope, name, false);
 }
 
-inline static Symbol *
+static Symbol *
 getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
 {
         if (strcmp(name, "_") == 0) {
@@ -1392,17 +1427,18 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
                 }
         }
 
-        Symbol *s = scope_lookup(ty, scope, name);
+        Symbol *s = ScopeLookup(scope, name);
         if (s == NULL) {
-                fail_or(
+                fail(
                         "reference to undefined variable: %s%s%s%s",
                         TERM(1),
                         TERM(93),
                         name,
                         TERM(0)
-                ) {
-                        s = &UndefinedSymbol;
-                        s->scope = GlobalScope;
+                );
+                {
+                        //s = &UndefinedSymbol;
+                        //s->scope = GlobalScope;
                 }
         }
 
@@ -1435,6 +1471,21 @@ getsymbol(Ty *ty, Scope const *scope, char const *name, bool *local)
 }
 
 inline static Symbol *
+ResolveIdentifier(Ty *ty, Expr const *expr)
+{
+        if (expr->symbol != NULL) {
+                return expr->symbol;
+        }
+
+        if (expr->module != NULL && *expr->module != '\0') {
+                Scope *mod_scope = get_import_scope(ty, expr->module);
+                return getsymbol(ty, mod_scope, expr->identifier, NULL);
+        }
+
+        return getsymbol(ty, SCOPE, expr->identifier, NULL);
+}
+
+inline static Symbol *
 tmpsymbol(Ty *ty, Scope *scope)
 {
         Symbol *sym = scope_add(ty, scope, gensym());
@@ -1457,7 +1508,7 @@ freshstate(Ty *ty, Module *mod)
 
         avP(st.imports, ((struct import) {
                 .mod  = GlobalModule,
-                .name = "core",
+                .name = "prelude",
                 .pub  = false
         }));
 
@@ -1774,7 +1825,7 @@ resolve_access(Ty *ty, Scope const *scope, char **parts, int n, Expr *e, bool st
                 if (!strict) return NULL;
                 STATE.end = e->end;
                 fail(
-                        "reference to undefined variable: %s%s%s%s",
+                        "reference to gay undefined variable: %s%s%s%s",
                         TERM(1),
                         TERM(93),
                         id,
@@ -2371,13 +2422,124 @@ try_symbolize_application(Ty *ty, Scope *scope, Expr *e)
              && (e->identifier != EmptyString)
              && (e->namespace == NULL)
         ) {
-                e->symbol = (e->xscope != NULL) ? e->symbol : getsymbol(
-                        ty,
-                        (e->module == NULL || *e->module == '\0') ? scope : get_import_scope(ty, e->module),
-                        e->identifier,
-                        NULL
-                );
+                e->symbol = ResolveIdentifier(ty, e);
         }
+}
+
+static void
+symbolize_var_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
+{
+        bool is_thread_local = false;
+
+        switch (target->type) {
+        case EXPRESSION_RESOURCE_BINDING:
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_TAG_PATTERN:
+        case EXPRESSION_MATCH_ANY:
+                if (target->type == EXPRESSION_SPREAD) {
+                        if (target->value->type != EXPRESSION_IDENTIFIER) {
+                                fail("spread expression used in lvalue context");
+                        }
+                        char *name = target->value->identifier;
+                        ZERO_EXPR(target);
+                        target->type = EXPRESSION_MATCH_REST;
+                        target->identifier = name;
+                        if (strcmp(target->identifier, "*") == 0) {
+                                target->identifier = "_";
+                        }
+                } else if (target->type == EXPRESSION_TAG_PATTERN) {
+                        symbolize_var_decl(ty, scope, target->tagged, pub);
+                }
+                if (
+                        ScopeIsTop(ty, scope)
+                     && (target->module != NULL)
+                     && (strcmp(target->module, "__tls") == 0)
+                ) {
+                        is_thread_local = true;
+                } else if (target->module != NULL && *target->module != '\0') {
+                        scope = get_import_scope(ty, target->module);
+                        pub = true;
+                }
+                if (target->symbol == NULL) {
+                        target->symbol = addsymbol(
+                                ty,
+                                is_thread_local ? ThreadLocals : scope,
+                                target->identifier
+                        );
+                }
+                target->local = true;
+                if (pub) {
+                        target->symbol->flags |= SYM_PUBLIC;
+                }
+                if (is_thread_local) {
+                        target->symbol = scope_insert(ty, scope, target->symbol);
+                        target->symbol->flags |= SYM_THREAD_LOCAL;
+                        scope = STATE.global;
+                }
+                break;
+        }
+}
+
+static void
+symbolize_decl(Ty *ty, Scope *scope, Expr *target, bool pub)
+{
+        if (target->mod == NULL) {
+                target->mod = STATE.module;
+        }
+
+        void *ctx = PushContext(ty, target);
+
+        PushScope(scope);
+
+        STATE.start = target->start;
+        STATE.end   = target->end;
+
+        fixup_access(ty, scope, target, true);
+        try_symbolize_application(ty, scope, target);
+
+        if (target->xscope != NULL) {
+                goto End;
+        }
+
+        switch (target->type) {
+        case EXPRESSION_RESOURCE_BINDING:
+        case EXPRESSION_SPREAD:
+        case EXPRESSION_IDENTIFIER:
+        case EXPRESSION_MATCH_NOT_NIL:
+        case EXPRESSION_MATCH_REST:
+        case EXPRESSION_TAG_PATTERN:
+        case EXPRESSION_MATCH_ANY:
+        case EXPRESSION_REF_PATTERN:
+        case EXPRESSION_VIEW_PATTERN:
+        case EXPRESSION_NOT_NIL_VIEW_PATTERN:
+                symbolize_var_decl(ty, scope, target, pub);
+                break;
+        case EXPRESSION_TAG_APPLICATION:
+                symbolize_decl(ty, scope, target->tagged, pub);
+                break;
+        case EXPRESSION_ARRAY:
+                for (size_t i = 0; i < vN(target->elements); ++i) {
+                        symbolize_decl(ty, scope, v__(target->elements, i), pub);
+                }
+                break;
+        case EXPRESSION_DICT:
+                for (int i = 0; i < vN(target->keys); ++i) {
+                        symbolize_decl(ty, scope, v__(target->values, i), pub);
+                }
+                break;
+        case EXPRESSION_TUPLE:
+        case EXPRESSION_LIST:
+                for (int i = 0; i < vN(target->es); ++i) {
+                        symbolize_decl(ty, scope, v__(target->es, i), pub);
+                }
+                break;
+        }
+End:
+        PopScope();
+        RestoreContext(ty, ctx);
 }
 
 static void
@@ -2391,13 +2553,9 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 return;
         }
 
-        WHEN_CTX(DECL) {
-                if (!decl) {
-                        return;
-                }
-        }
-
         void *ctx = PushContext(ty, target);
+
+        PushScope(scope);
 
         STATE.start = target->start;
         STATE.end = target->end;
@@ -2424,59 +2582,20 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_MATCH_ANY:
-                if (target->type == EXPRESSION_SPREAD) {
-                        if (target->value->type != EXPRESSION_IDENTIFIER) {
-                                fail("spread expression used in lvalue context");
-                        }
-                        char *name = target->value->identifier;
-                        ZERO_EXPR(target);
-                        target->type = EXPRESSION_MATCH_REST;
-                        target->identifier = name;
-                        if (strcmp(target->identifier, "*") == 0) {
-                                target->identifier = "_";
-                        }
-                } else if (target->type == EXPRESSION_TAG_PATTERN) {
-                        symbolize_lvalue_(ty, scope, target->tagged, decl, pub);
-                }
-                if (
-                        ScopeIsTop(ty, scope)
-                     && (target->module != NULL)
-                     && (strcmp(target->module, "__tls") == 0)
-                ) {
-                        is_thread_local = true;
-                } else if (target->module != NULL && *target->module != '\0') {
-                        scope = get_import_scope(ty, target->module);
-                        pub = true;
-                }
                 if (decl) {
                         if (target->symbol == NULL) {
-                                target->symbol = addsymbol(
-                                        ty,
-                                        is_thread_local ? ThreadLocals : scope,
-                                        target->identifier
-                                );
+                                symbolize_var_decl(ty, scope, target, pub);
                         }
-                        target->local = true;
-                        if (pub) {
-                                target->symbol->flags |= SYM_PUBLIC;
-                        }
-                        if (is_thread_local) {
-                                target->symbol = scope_insert(ty, scope, target->symbol);
-                                target->symbol->flags |= SYM_THREAD_LOCAL;
-                                scope = STATE.global;
-                        }
-                        WHEN_NOT_CTX(DECL) {
-                                if (target->constraint != NULL) {
-                                        WITH_CTX(TYPE) {
-                                                symbolize_expression(ty, scope, target->constraint);
-                                        }
-                                        Type *c0 = ResolveConstraint(ty, target->constraint);
-                                        if (c0 != NULL) {
-                                                c0->src = target;
-                                                target->_type = c0;
-                                                target->symbol->type = c0;
-                                                target->symbol->fixed = true;
-                                        }
+                        if (target->constraint != NULL) {
+                                WITH_CTX(TYPE) {
+                                        symbolize_expression(ty, scope, target->constraint);
+                                }
+                                Type *c0 = ResolveConstraint(ty, target->constraint);
+                                if (c0 != NULL) {
+                                        c0->src = target;
+                                        target->_type = c0;
+                                        target->symbol->type = c0;
+                                        target->symbol->fixed = true;
                                 }
                         }
                 } else {
@@ -2513,7 +2632,8 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                                 );
                         }
 
-                        target->symbol = getsymbol(ty, scope, target->identifier, &target->local);
+                        target->symbol = ResolveIdentifier(ty, target);
+                        target->local  = (target->symbol->scope->function == SCOPE->function);
 
                         // Try to patch built-in symbols with definition info when we can
                         if (target->symbol->mod == NULL) {
@@ -2558,16 +2678,7 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
         case EXPRESSION_TAG_APPLICATION:
                 symbolize_lvalue_(ty, scope, target->tagged, decl, pub);
                 if (target->identifier != EmptyString) {
-                        target->symbol = (target->symbol != NULL) ? target->symbol : getsymbol(
-                                ty,
-                                (
-                                        (target->module != NULL && *target->module != '\0')
-                                      ? get_import_scope(ty, target->module)
-                                      : STATE.global
-                                ),
-                                target->identifier,
-                                NULL
-                        );
+                        target->symbol = ResolveIdentifier(ty, target);
                 }
                 break;
         case EXPRESSION_ARRAY:
@@ -2610,11 +2721,10 @@ symbolize_lvalue_(Ty *ty, Scope *scope, Expr *target, bool decl, bool pub)
                 fail("unexpected %s in lvalue context", ExpressionTypeName(target));
         }
 
-        WHEN_NOT_CTX(DECL) {
-                target->xscope = scope;
-        }
+        target->xscope = scope;
 
 End:
+        PopScope();
         RestoreContext(ty, ctx);
 }
 
@@ -2645,11 +2755,10 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
         void *ctx = PushContext(ty, e);
 
+        PushScope(scope);
+
         fixup_access(ty, scope, e, true);
         try_symbolize_application(ty, scope, e);
-
-        if (e->type == EXPRESSION_IDENTIFIER && is_tag(ty, e))
-                goto Tag;
 
         STATE.start = e->start;
         STATE.end = e->end;
@@ -2663,16 +2772,16 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         e->identifier = gensym();
                 }
         case EXPRESSION_IDENTIFIER:
+                existing = TryResolveIdentifier(ty, e);
                 if (
                         strcmp(e->identifier, "_") != 0
                      && (
-                                is_const(ty, scope, e->identifier)
-                             || scope_locally_defined(ty, scope, e->identifier)
-                             || e->module != NULL
+                                (existing != NULL && SymbolIsConst(existing))
+                             || (existing != NULL && existing->scope == scope)
+                             || (e->module != NULL)
                         )
                 ) {
                         e->type = EXPRESSION_MUST_EQUAL;
-
                         // XXX: fixup_access() left us with an IDENTIFIER which is
                         //      already resolved to a symbol. Ideally we wouldn't
                         //      even need to be aware of that here--we should just
@@ -2681,28 +2790,21 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
                         //      hack  right now  so we  need to treat  this as a
                         //      special case.
                         if (e->namespace == NULL) {
-                                Scope *s = (e->module == NULL || *e->module == '\0')
-                                         ? scope
-                                         : get_import_scope(ty, e->module);
-
-                                e->symbol = getsymbol(ty, s, e->identifier, NULL);
+                                e->symbol = ResolveIdentifier(ty, e);
                         }
                 } else {
         case EXPRESSION_MATCH_NOT_NIL:
         case EXPRESSION_TAG_PATTERN:
         case EXPRESSION_ALIAS_PATTERN:
         case EXPRESSION_MATCH_ANY:
-                        if (
-                                reuse != NULL
-                             && e->module == NULL
-                             && (
-                                        existing = scope_local_lookup(
-                                                ty,
-                                                reuse,
-                                                e->identifier
-                                        )
-                                )
-                        ) {
+                        if (existing != NULL && existing->tag != -1) {
+                                goto Tag;
+                        } else if (reuse != NULL && e->module == NULL) {
+                                existing = ScopeLookupLocal(reuse, e->identifier);
+                        } else {
+                                existing = NULL;
+                        }
+                        if (existing != NULL) {
                                 e->symbol = existing;
                                 scope_insert(ty, scope, existing);
                         } else {
@@ -2837,6 +2939,7 @@ symbolize_pattern_(Ty *ty, Scope *scope, Expr *e, Scope *reuse, bool def)
 
         e->xscope = scope;
 
+        PopScope();
         RestoreContext(ty, ctx);
 }
 
@@ -3021,10 +3124,6 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
 {
         if (e == NULL || e->xscope != NULL) return;
 
-        WHEN_CTX(DECL) {
-                return;
-        }
-
         if (e->mod == NULL) {
                 e->mod = STATE.module;
         }
@@ -3046,6 +3145,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         Expr    *implicit_func = STATE.implicit_func;
         Scope *implicit_fscope = STATE.implicit_fscope;
         void              *ctx = PushContext(ty, e);
+
+        PushScope(scope);
 
         fixup_access(ty, scope, e, true);
 
@@ -3128,18 +3229,8 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                         }
                 }
 #endif
-                {
-                        Scope const *scp = (e->module != NULL && *e->module != '\0')
-                                           ? get_import_scope(ty, e->module)
-                                           : scope;
-                }
-
-                e->symbol = getsymbol(
-                        ty,
-                        ((e->module == NULL || *e->module == '\0') ? scope : get_import_scope(ty, e->module)),
-                        e->identifier,
-                        &e->local
-                );
+                e->symbol = ResolveIdentifier(ty, e);
+                e->local = (e->symbol->scope->function == SCOPE->function);
 
                 LOG("var %s local", e->local ? "is" : "is NOT");
 
@@ -3188,22 +3279,12 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = type_special_str(ty, e);
                 break;
         case EXPRESSION_TAG:
-                e->symbol = getsymbol(
-                        ty,
-                        ((e->module == NULL || *e->module == '\0') ? STATE.global : get_import_scope(ty, e->module)),
-                        e->identifier,
-                        NULL
-                );
+                e->symbol = ResolveIdentifier(ty, e);
                 e->_type = e->symbol->type;
                 break;
         case EXPRESSION_TAG_APPLICATION:
                 if (e->identifier != EmptyString) {
-                        e->symbol = getsymbol(
-                                ty,
-                                ((e->module == NULL || *e->module) ? STATE.global : get_import_scope(ty, e->module)),
-                                e->identifier,
-                                NULL
-                        );
+                        e->symbol = ResolveIdentifier(ty, e);
                 }
                 symbolize_expression(ty, scope, e->tagged);
                 e->_type = type_call(ty, e);
@@ -3371,6 +3452,9 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
                 e->_type = e->statement->_type;
                 break;
         case EXPRESSION_TEMPLATE:
+                for (size_t i = 0; i < vN(e->template.holes); ++i) {
+                        symbolize_expression(ty, scope, v__(e->template.holes, i));
+                }
                 for (size_t i = 0; i < vN(e->template.exprs); ++i) {
                         symbolize_expression(ty, scope, v__(e->template.exprs, i));
                 }
@@ -3794,6 +3878,7 @@ symbolize_expression(Ty *ty, Scope *scope, Expr *e)
         e->xscope = scope;
 End:
         RestoreContext(ty, ctx);
+        PopScope();
 
         dont_printf(">>> %s\n", ExpressionTypeName(e));
         dont_printf("::) %s\n", type_show(ty, e->_type));
@@ -4083,6 +4168,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         void *ctx = PushContext(ty, s);
 
+        PushScope(scope);
+
         switch (s->type) {
         case STATEMENT_IMPORT:
                 import_module(ty, s);
@@ -4204,14 +4291,8 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
                 break;
         case STATEMENT_TAG_DEFINITION:
                 cd = &s->tag;
-
-                if (!scope_locally_defined(ty, STATE.global, s->tag.name)) {
-                        //define_tag(ty, s);
-                }
-
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.methods, MT_INSTANCE);
                 symbolize_methods(ty, cd->scope, CLASS_TAG, &s->tag.statics, MT_STATIC);
-
                 break;
         case STATEMENT_BLOCK:
                 scope = scope_new(ty, "(block)", scope, false);
@@ -4411,12 +4492,17 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
                 break;
         case STATEMENT_DEFINITION:
-                if (s->value->type == EXPRESSION_LIST) {
-                        for (int i = 0; i < vN(s->value->es); ++i) {
-                                symbolize_expression(ty, scope, v__(s->value->es, i));
+                WITH_STATE_2(
+                        scope_stop,  s->when,
+                        scope_start, scope_get_symbol(ty)
+                ) {
+                        if (s->value->type == EXPRESSION_LIST) {
+                                for (int i = 0; i < vN(s->value->es); ++i) {
+                                        symbolize_expression(ty, scope, v__(s->value->es, i));
+                                }
+                        } else {
+                                symbolize_expression(ty, scope, s->value);
                         }
-                } else {
-                        symbolize_expression(ty, scope, s->value);
                 }
                 symbolize_lvalue(ty, scope, s->target, true, s->pub);
                 type_assign(ty, s->target, s->value->_type, T_FLAG_STRICT);
@@ -4460,6 +4546,7 @@ symbolize_statement(Ty *ty, Scope *scope, Stmt *s)
 
         s->xscope = scope;
 
+        PopScope();
         RestoreContext(ty, ctx);
 }
 
@@ -7694,15 +7781,11 @@ emit_expr(Ty *ty, Expr const *e, bool need_loc)
                 }
                 break;
         case EXPRESSION_TEMPLATE:
-                for (int i = vN(e->template.exprs) - 1; i >= 0; --i) {
-                        emit_expression(ty, v__(e->template.exprs, i));
+                for (int i = vN(e->template.holes) - 1; i >= 0; --i) {
+                        emit_expression(ty, v__(e->template.holes, i));
                 }
                 emit_instr(RENDER_TEMPLATE);
                 emit_symbol((uintptr_t)e);
-                break;
-        case EXPRESSION_TEMPLATE_XHOLE:
-                //emit_instr(EXPRESSION);
-                //emit_symbol((uintptr_t)e->hole.expr);
                 break;
         case EXPRESSION_NAMESPACE:
                 emit_instr(NAMESPACE);
@@ -9017,7 +9100,7 @@ compiler_init(Ty *ty)
         tags_init(ty);
         
         GlobalScope = scope_new(ty, "GLOBAL", NULL, false);
-        GlobalModule = NewModule(ty, "core", "(built-in)", NULL, GlobalScope);
+        GlobalModule = NewModule(ty, "prelude", "(built-in)", NULL, GlobalScope);
 
         STATE = freshstate(ty, GlobalModule);
         ThreadLocals = scope_new(ty, "(thread)", NULL, false);
@@ -9119,7 +9202,7 @@ compiler_load_prelude(Ty *ty)
 
         avP(STATE.imports, ((struct import) {
                 .mod  = GlobalModule,
-                .name = "core",
+                .name = "prelude",
                 .pub  = false
         }));
 
@@ -12231,7 +12314,7 @@ define_tag(Ty *ty, Stmt *s)
         }
 
         Symbol *sym = addsymbol(ty, scope, s->tag.name);
-        sym->flags |= SYM_CONST;
+        sym->flags |= (SYM_CONST | SYM_OMNIPRESENT);
         sym->tag = tags_new(ty, s->tag.name);
         sym->doc = s->tag.doc;
         s->tag.symbol = sym->tag;
@@ -12379,6 +12462,7 @@ define_class(Ty *ty, Stmt *s)
         Class *class = class_get(ty, sym->class);
         ClassDefinition *cd = &s->class;
 
+        sym->flags |= SYM_OMNIPRESENT;
         sym->doc = cd->doc;
         sym->loc = cd->loc;
         sym->mod = s->mod;
@@ -12509,15 +12593,17 @@ define_class(Ty *ty, Stmt *s)
 void
 DeclareDefinitionSymbols(Ty *ty, Stmt *stmt)
 {
-        WITH_CTX(DECL) {
-                symbolize_lvalue(
-                        ty,
-                        GetNamespace(ty, stmt->ns),
-                        stmt->target,
-                        true,
-                        stmt->pub
-                );
-        }
+        define_function(ty, NULL);
+
+        stmt->when = scope_get_symbol(ty);
+
+        symbolize_decl(
+                ty,
+                GetNamespace(ty, stmt->ns),
+                stmt->target,
+                stmt->pub
+        );
+
         if (stmt->target->type == EXPRESSION_IDENTIFIER) {
                 stmt->target->symbol->doc = stmt->doc;
         }
@@ -12543,6 +12629,8 @@ DefineFunc(Ty *ty, Stmt *stmt)
                 HasBody(stmt->value),
                 stmt->pub
         );
+
+        stmt->target->symbol->flags |= SYM_OMNIPRESENT;
 
         stmt->target->symbol->doc = stmt->doc;
 }
@@ -12710,7 +12798,7 @@ compiler_render_template(Ty *ty, Expr *e)
                 goto End;
         }
 
-        struct array *a = vA();
+        Array *a = vA();
 
         for (size_t i = 0; i < vN(e->template.stmts); ++i) {
                 vAp(a, tystmt(ty, v__(e->template.stmts, i)));
@@ -12719,7 +12807,7 @@ compiler_render_template(Ty *ty, Expr *e)
         v = tagged(ty, TyMulti, ARRAY(a), NONE);
 
 End:
-        for (size_t i = 0; i < vN(e->template.exprs); ++i) {
+        for (size_t i = 0; i < vN(e->template.holes); ++i) {
                 vmX();
         }
 

@@ -9,7 +9,7 @@
 #include "util.h"
 #include "types.h"
 
-static int SYMBOL;
+static i64 SYMBOL;
 
 #if !defined(TY_RELEASE) || defined(TY_DEBUG_NAMES)
 char const *
@@ -53,17 +53,39 @@ initsym(Symbol *s)
         s->ci    = -1;
 }
 
+inline static bool
+exists(Symbol const *var, i64 stop, i64 start)
+{
+        return (stop <= 0)
+            || (var->symbol <  stop)
+            || (var->symbol >= start)
+            || SymbolIsOmnipresent(var);
+
+}
+
+inline static Symbol *
+local_xlookup(Scope const *s, char const *id, i64 stop, i64 start)
+{
+        u64 h = strhash(id);
+        u32 i = h % SYMBOL_TABLE_SIZE;
+
+        for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
+                if (
+                        (sym->hash == h)
+                     && (strcmp(sym->identifier, id) == 0)
+                     && exists(sym, stop, start)
+                ) {
+                        return sym;
+                }
+        }
+
+        return NULL;
+}
+
 inline static Symbol *
 local_lookup(Scope const *s, char const *id)
 {
-        uint64_t h = strhash(id);
-        int i = h % SYMBOL_TABLE_SIZE;
-
-        for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next)
-                if (sym->hash == h && strcmp(sym->identifier, id) == 0)
-                        return sym;
-
-        return NULL;
+        return local_xlookup(s, id, 0, 0);
 }
 
 Symbol *
@@ -160,19 +182,19 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
 }
 
 Symbol *
-scope_lookup(Ty *ty, Scope const *s, char const *id)
+scope_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start)
 {
         if (s == NULL) {
                 return NULL;
         }
 
-        Symbol *sym = local_lookup(s, id);
+        Symbol *sym = local_xlookup(s, id, stop, start);
 
         if (sym != NULL) {
                 return sym;
         }
 
-        sym = scope_lookup(ty, s->parent, id);
+        sym = scope_xlookup(ty, s->parent, id, stop, start);
 
         if (sym == NULL) {
                 return NULL;
@@ -220,10 +242,22 @@ scope_lookup(Ty *ty, Scope const *s, char const *id)
         return sym;
 }
 
+Symbol *
+scope_lookup(Ty *ty, Scope const *s, char const *id)
+{
+        return scope_xlookup(ty, s, id, 0, 0);
+}
+
 bool
 scope_locally_defined(Ty *ty, Scope const *s, char const *id)
 {
         return local_lookup(s, id) != NULL;
+}
+
+Symbol *
+scope_local_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start)
+{
+        return local_xlookup(s, id, stop, start);
 }
 
 Symbol *
@@ -562,14 +596,14 @@ scope_capture_all(Ty *ty, Scope *scope, Scope const *stop)
         }
 }
 
-int
+i64
 scope_get_symbol(Ty *ty)
 {
         return SYMBOL;
 }
 
 void
-scope_set_symbol(Ty *ty, int s)
+scope_set_symbol(Ty *ty, i64 s)
 {
         SYMBOL = s;
 }
@@ -612,5 +646,3 @@ scope_get_completions(
 
         return n;
 }
-
-/* vim: set sts=8 sw=8 expandtab: */
