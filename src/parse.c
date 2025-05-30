@@ -266,7 +266,7 @@ typedef struct ParserState {
 
         Namespace *CurrentNamespace;
 
-        expression_vector TemplateExprs;
+        Expr *CurrentTemplate;
 
         jmp_buf jb;
         JmpBufVector SavePoints;
@@ -310,6 +310,7 @@ static Expr NullExpr = {
 
 #define CtxCheckpoint     (state.CtxCheckpoint)
 #define CurrentNamespace  (state.CurrentNamespace)
+#define CurrentTemplate   (state.CurrentTemplate)
 #define TEnd              (state.TEnd)
 #define EEnd              (state.EEnd)
 #define EStart            (state.EStart)
@@ -324,7 +325,6 @@ static Expr NullExpr = {
 #define ParseDepth        (state.depth)
 #define SavePoints        (state.SavePoints)
 #define SetJmpDepth       (state.SetJmpDepth)
-#define TemplateExprs     (state.TemplateExprs)
 #define TokenIndex        (state.TokenIndex)
 #define TypeContext       (state.TypeContext)
 #define LValueContext     (state.LValueContext)
@@ -1881,19 +1881,13 @@ prefix_defined(Ty *ty)
 static Expr *
 parse_expr_template(Ty *ty)
 {
-        Expr *e = mkxpr(TEMPLATE);
-
-        expression_vector TESave = TemplateExprs;
-        v00(TemplateExprs);
-
-        avP(e->template.stmts, to_stmt(parse_expr(ty, 0)));
-
-        e->end= TEnd;
-
-        e->template.exprs = TemplateExprs;
-        TemplateExprs = TESave;
-
-        return e;
+        Expr *template = mkxpr(TEMPLATE);
+        Expr *save = CurrentTemplate;
+        CurrentTemplate = template;
+        avP(template->template.stmts, to_stmt(parse_expr(ty, 0)));
+        template->end = TEnd;
+        CurrentTemplate = save;
+        return template;
 }
 
 static Expr *
@@ -3341,56 +3335,53 @@ End:
 static Expr *
 prefix_template(Ty *ty)
 {
-        Expr *e = mkxpr(TEMPLATE);
+        Expr *template = mkxpr(TEMPLATE);
+        Expr *save = CurrentTemplate;
 
         next();
 
-        expression_vector TESave = TemplateExprs;
-        vec_init(TemplateExprs);
-        vec_init(e->template.stmts);
-
+        CurrentTemplate = template;
         while (T0 != TOKEN_TEMPLATE_END) {
-                avP(e->template.stmts, parse_statement(ty, 0));
+                avP(template->template.stmts, parse_statement(ty, 0));
         }
-
         next();
+        template->end = TEnd;
+        CurrentTemplate = save;
 
-        e->end= TEnd;
-
-        e->template.exprs = TemplateExprs;
-        TemplateExprs = TESave;
-
-        return e;
+        return template;
 }
 
 static Expr *
 prefix_template_expr(Ty *ty)
 {
+        expression_vector *exprs = &CurrentTemplate->template.exprs;
+        expression_vector *holes = &CurrentTemplate->template.holes;
+
         Expr *e = mkxpr(TEMPLATE_HOLE);
-        e->hole.i = vN(TemplateExprs);
+        e->hole.i = vN(CurrentTemplate->template.holes);
 
         next();
 
         if (T0 == '(') {
                 next();
-                avP(TemplateExprs, parse_expr(ty, 0));
+                avP(*holes, parse_expr(ty, 0));
                 consume(')');
         } else if (T0 == '{') {
                 e->type = EXPRESSION_TEMPLATE_VHOLE;
                 next();
-                avP(TemplateExprs, parse_expr(ty, 0));
+                avP(*holes, parse_expr(ty, 0));
                 consume('}');
         } else if (T0 == ':') {
                 e->type = EXPRESSION_TEMPLATE_THOLE;
                 next();
-                avP(TemplateExprs, parse_expr(ty, 99));
+                avP(*holes, parse_expr(ty, 99));
         } else if (T0 == '\\' || T0 == TOKEN_CHECK_MATCH || T0 == '!') {
                 next();
                 e->type = EXPRESSION_TEMPLATE_XHOLE;
                 e->hole.expr = parse_expr(ty, 99);
-                avP(TemplateExprs, e);
+                avP(*exprs, e);
         } else {
-                avP(TemplateExprs, parse_expr(ty, 99));
+                avP(*holes, parse_expr(ty, 99));
         }
 
         e->end = TEnd;

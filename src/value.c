@@ -421,6 +421,7 @@ show_string(Ty *ty, char const *s, size_t n, bool color)
 static noreturn void
 uninit(Ty *ty, Symbol const *s)
 {
+        printf("uninit var: %s   mod=%s\n", s->identifier, s->mod->name);
         zP(
                 "use of uninitialized variable %s%s%s%s (defined at %s%s%s:%s%d%s:%s%d%s)",
                 TERM(1),
