@@ -95,18 +95,18 @@
 
 #if defined(TY_LOG_VERBOSE) && !defined(TY_NO_LOG)
   static _Thread_local Expr *expr;
-  #define CASE(i)                                    \
-        case INSTR_ ## i:                            \
-        expr = compiler_find_expr(ty, IP - 1);       \
-        LOG(                                         \
-                "%07ju:%s:%d:%d: " #i,               \
-                (uintptr_t)(IP - 1) & 0xFFFFFFFF,    \
-                expr ? expr->file : "(unknown)",     \
-                (expr ? expr->start.line : 0) + 1,   \
-                (expr ? expr->start.col : 0) + 1     \
+  #define CASE(i)                                        \
+        case INSTR_ ## i:                                \
+        expr = compiler_find_expr(ty, IP - 1);           \
+        LOG(                                             \
+                "%07ju:%s:%d:%d: " #i,                   \
+                (uintptr_t)(IP - 1) & 0xFFFFFFFF,        \
+                expr ? GetExpressionModule(expr),        \
+                (expr ? expr->start.line : 0) + 1,       \
+                (expr ? expr->start.col : 0) + 1         \
         );
 #else
-  #define XXCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); fprintf(stderr, "%s:%d:%d: " #i "\n", expr ? expr->file : "(unknown)", (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
+  #define XXCASE(i) case INSTR_ ## i: expr = compiler_find_expr(ty, IP); fprintf(stderr, "%s:%d:%d: " #i "\n", GetExpressionModule(expr), (expr ? expr->start.line : 0) + 1, (expr ? expr->start.col : 0) + 1);
   #define CASE(i) case INSTR_ ## i:
 #endif
 
@@ -353,9 +353,7 @@ InitializeTY(Ty *ty)
         TY_UNARY_OPERATORS;
 #undef X
 
-        srandom(time(NULL));
-
-        xD.compiler = alloc0(sizeof *xD.compiler);
+        srandom(TyThreadCPUTime() & 0xFFFFFFFF);
 
         xD.ty = ty;
 }
@@ -709,7 +707,7 @@ add_builtins(Ty *ty, int ac, char **av)
                 case CLASS_STRING:
                 case CLASS_BOOL:
                 case CLASS_FLOAT:
-                        sym->type = class_get_class(ty, ClassOf(v))->object_type;
+                        sym->type = class_get(ty, ClassOf(v))->object_type;
                         break;
                 }
         }
@@ -1121,11 +1119,11 @@ __attribute__((optnone, noinline))
 static void
 call(Ty *ty, Value const *f, Value const *pSelf, int n, int nkw, bool exec)
 {
-        int bound = f->info[3];
-        int np = f->info[4];
-        int irest = ((int16_t *)(f->info + 5))[0];
-        int ikwargs = ((int16_t *)(f->info + 5))[1];
-        int class = f->info[6];
+        int bound = f->info[FUN_INFO_BOUND];
+        int np = f->info[FUN_INFO_PARAM_COUNT];
+        int irest = *(i16 const *)info_of(f, FUN_REST_IDX);
+        int ikwargs = *(i16 const *)info_of(f, FUN_KWARGS_IDX);
+        int class = class_of(f);
         char *code = code_of(f);
         int argc = n;
 
@@ -1552,6 +1550,14 @@ vm_run_thread(void *p)
         return TY_THREAD_OK;
 }
 
+inline static void
+tdb_set_trap(DebugBreakpoint *breakpoint, char *ip)
+{
+        breakpoint->ip = ip;
+        breakpoint->op = *ip;
+        *ip = (char)INSTR_TRAP_TY;
+}
+
 static TyThreadReturnValue
 vm_run_tdb(void *ctx)
 {
@@ -1621,7 +1627,7 @@ vm_run_tdb(void *ctx)
                 TY_CATCH_END();
 
 KeepRunning:
-                TDB_SET_STATE(next);;
+                TDB_SET_STATE(next);
 
                 TyMutexUnlock(&TDB_MUTEX);
                 TyCondVarSignal(&TDB_CONDVAR);
@@ -1774,7 +1780,6 @@ GetCurrentTry(Ty *ty)
 
         for (int i = vN(TRY_STACK) - 1; i >= 0; --i) {
                 struct try *t = *v_(TRY_STACK, i);
-
                 if (!t->executing) {
                         return t;
                 }
@@ -1812,7 +1817,8 @@ DoThrow(Ty *ty)
                                 TARGETS.count = t->ts;
                                 CALLS.count = t->cs;
                                 IP = t->catch;
-                                EXEC_DEPTH = t->exec_depth;
+                                EXEC_DEPTH = t->ed;
+                                RestoreScratch(ty, t->ss);
 
                                 RootSet.count = min(vN(RootSet), t->gc);
 
@@ -1828,7 +1834,7 @@ DoThrow(Ty *ty)
                                 IP = t->finally;
                                 return false;
                         case TRY_THROW:
-                                zP(
+                                zPx(
                                         "an exception was thrown while handling another exception: %s%s%s",
                                         TERM(31), VSC(&ex), TERM(39)
                                 );
@@ -1841,7 +1847,7 @@ DoThrow(Ty *ty)
                         FRAMES.count = c.ctxs;
                         IP = (char *)c.ip;
 
-                        zP("uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
+                        zPx("uncaught exception: %s%s%s", TERM(31), VSC(&ex), TERM(39));
                 }
         }
 }
@@ -2124,6 +2130,9 @@ GetMember(Ty *ty, Value v, int member, bool b)
                 goto ClassLookup;
         case VALUE_FUNCTION:
         case VALUE_METHOD:
+                if (member == NAMES._name_) {
+                        return xSz(name_of(&v));
+                }
         case VALUE_BUILTIN_FUNCTION:
         case VALUE_BUILTIN_METHOD:
                 n = CLASS_FUNCTION;
@@ -2434,7 +2443,7 @@ DoCall(Ty *ty, Value const *f, int n, int nkw, bool AutoThis)
                 }
 
                 push(v);
-                v = get_string_method("match!")(ty, &value, 1, NULL);
+                v = string_match(ty, &value, 1, NULL);
                 pop();
                 *top() = v;
 
@@ -2498,7 +2507,7 @@ GetDynamicMemberId(Ty *ty, bool strict)
 
                         SCRATCH_SAVE();
 
-                        svPn(name, v.string, v.bytes);
+                        svPn(name, v.str, v.bytes);
                         svP(name, '\0');
 
                         member = intern_get(&xD.members, v_(name, 0));
@@ -3231,14 +3240,28 @@ DoMutAnd(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                x = pop();
-                if ((val = vm_try_2op(ty, OP_MUT_AND, vp, &x)).type != VALUE_NONE) {
-                        vp = &val;
-                } else {
-                        *vp = vm_2op(ty, OP_BIT_AND, vp, &x);
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer &= top()->integer;
+                        top()->integer = vp->integer;
+                        break;
+                case PAIR_OF(VALUE_BOOLEAN):
+                        vp->boolean &= top()->boolean;
+                        top()->boolean = vp->boolean;
+                        break;
+                default:
+                        x = pop();
+                        val = vm_try_2op(ty, OP_MUT_AND, vp, &x);
+                        if (val.type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_BIT_AND, vp, &x);
+                        }
+                        push(*vp);
+                        break;
                 }
-                push(*vp);
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to AND byte with non-integer");
@@ -3271,14 +3294,28 @@ DoMutOr(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                x = pop();
-                if ((val = vm_try_2op(ty, OP_MUT_OR, vp, &x)).type != VALUE_NONE) {
-                        vp = &val;
-                } else {
-                        *vp = vm_2op(ty, OP_BIT_OR, vp, &x);
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer |= top()->integer;
+                        top()->integer = vp->integer;
+                        break;
+                case PAIR_OF(VALUE_BOOLEAN):
+                        vp->boolean |= top()->boolean;
+                        top()->boolean = vp->boolean;
+                        break;
+                default:
+                        x = pop();
+                        val = vm_try_2op(ty, OP_MUT_OR, vp, &x);
+                        if (val.type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_BIT_OR, vp, &x);
+                        }
+                        push(*vp);
+                        break;
                 }
-                push(*vp);
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to OR byte with non-integer");
@@ -3286,6 +3323,7 @@ DoMutOr(Ty *ty)
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] |= pop().integer;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uintptr_t)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3295,6 +3333,7 @@ DoMutOr(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3311,13 +3350,26 @@ DoMutXor(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                x = pop();
-                if ((val = vm_try_2op(ty, OP_MUT_XOR, vp, &x)).type != VALUE_NONE) {
-                        vp = &val;
-                } else {
-                        *vp = vm_2op(ty, OP_BIT_XOR, vp, &x);
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer ^= top()->integer;
+                        top()->integer = vp->integer;
+                        break;
+                case PAIR_OF(VALUE_BOOLEAN):
+                        vp->boolean ^= top()->boolean;
+                        top()->boolean = vp->boolean;
+                        break;
+                default:
+                        x = pop();
+                        val = vm_try_2op(ty, OP_MUT_XOR, vp, &x);
+                        if (val.type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_BIT_XOR, vp, &x);
+                        }
+                        push(*vp);
+                        break;
                 }
-                push(*vp);
                 break;
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
@@ -3351,14 +3403,24 @@ DoMutShl(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                x = pop();
-                if ((val = vm_try_2op(ty, OP_MUT_SHL, vp, &x)).type != VALUE_NONE) {
-                        vp = &val;
-                } else {
-                        *vp = vm_2op(ty, OP_BIT_SHL, vp, &x);
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer <<= top()->integer;
+                        top()->integer = vp->integer;
+                        break;
+                default:
+                        x = pop();
+                        val = vm_try_2op(ty, OP_MUT_SHL, vp, &x);
+                        if (val.type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_BIT_SHL, vp, &x);
+                        }
+                        push(*vp);
+                        break;
                 }
-                push(*vp);
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to left-shift byte by non-integer");
@@ -3366,6 +3428,7 @@ DoMutShl(Ty *ty)
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] <<= pop().integer;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uintptr_t)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3375,6 +3438,7 @@ DoMutShl(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3391,14 +3455,24 @@ DoMutShr(Ty *ty)
 
         switch (p & PMASK3) {
         case 0:
-                x = pop();
-                if ((val = vm_try_2op(ty, OP_MUT_SHR, vp, &x)).type != VALUE_NONE) {
-                        vp = &val;
-                } else {
-                        *vp = vm_2op(ty, OP_BIT_SHR, vp, &x);
+                switch (PACK_TYPES(vp->type, top()->type)) {
+                case PAIR_OF(VALUE_INTEGER):
+                        vp->integer >>= top()->integer;
+                        top()->integer = vp->integer;
+                        break;
+                default:
+                        x = pop();
+                        val = vm_try_2op(ty, OP_MUT_SHR, vp, &x);
+                        if (val.type != VALUE_NONE) {
+                                vp = &val;
+                        } else {
+                                *vp = vm_2op(ty, OP_BIT_SHR, vp, &x);
+                        }
+                        push(*vp);
+                        break;
                 }
-                push(*vp);
                 break;
+
         case 1:
                 if (UNLIKELY(top()->type != VALUE_INTEGER)) {
                         zP("attempt to right-shift byte by non-integer");
@@ -3406,6 +3480,7 @@ DoMutShr(Ty *ty)
                 b = ((Blob *)TARGETS.items[TARGETS.count].gc)->items[((uintptr_t)vp) >> 3] >>= pop().integer;
                 push(INTEGER(b));
                 break;
+
         case 2:
                 c = (uintptr_t)poptarget();
                 o = TARGETS.items[TARGETS.count].gc;
@@ -3415,6 +3490,7 @@ DoMutShr(Ty *ty)
                 pop();
                 call(ty, v, &OBJECT(o, c), 1, 0, false);
                 break;
+
         default:
                 zP("bad target pointer :(");
         }
@@ -3715,7 +3791,7 @@ IterGetNext(Ty *ty)
         case VALUE_STRING:
                 vp = top() - 2;
                 if ((off = vp->off) < v.bytes) {
-                        vp->off += (n = utf8_char_len(v.string + off));
+                        vp->off += (n = u8_rune_sz(v.str + off));
                         push(STRING_VIEW(v, off, n));
                 } else {
                         push(NONE);
@@ -3768,7 +3844,10 @@ vm_try_exec(Ty *_ty, char *code)
         size_t volatile sp = vN(STACK);
         char * volatile save = IP;
 
+        SCRATCH_SAVE();
+
         if (TY_CATCH_ERROR()) {
+                SCRATCH_RESTORE();
                 FRAMES.count = nframes;
                 TRY_STACK = ts;
                 STACK.count = sp;
@@ -3819,6 +3898,10 @@ vm_exec(Ty *ty, char *code)
                 WaitGC(ty);
         }
 
+        //if (DEBUGGING && !I_AM_TDB && TY_IS_READY) {
+        //        tdb_go(ty);
+        //}
+
 #if 0
         static u64 iii = 0;
         if ((iii & 0xFF) == 0) {
@@ -3831,7 +3914,7 @@ vm_exec(Ty *ty, char *code)
                                 (I_AM_TDB ? "TDB" : "Ty"),
                                 TDB_STATE_NAME,
                                 GetInstructionName(*IP),
-                                e->file,
+                                GetExpressionModule(e),
                                 e->start.line + 1
                         );
                 } else {
@@ -4448,12 +4531,13 @@ AssignGlobal:
                         t->cs = CALLS.count;
                         t->ts = TARGETS.count;
                         t->ds = DROP_STACK.count;
-                        t->defer.count = 0;
                         t->ctxs = FRAMES.count;
                         t->nsp = SP_STACK.count;
                         t->executing = false;
                         t->state = TRY_TRY;
-                        t->exec_depth = EXEC_DEPTH;
+                        t->ed = EXEC_DEPTH;
+                        t->ss = SaveScratch(ty);
+                        v0(t->defer);
 
                         break;
                 }
@@ -4869,6 +4953,10 @@ Yield:
                         READVALUE(s);
                         push(*(Value *)s);
                         break;
+                CASE(EXPRESSION)
+                        READVALUE(s);
+                        push(tagged(ty, TyExpr, PTR((Expr *)s), NONE));
+                        break;
                 CASE(EVAL)
                         READVALUE(s);
                         push(PTR((void *)s));
@@ -4889,9 +4977,15 @@ Yield:
 #endif
                         break;
                 CASE(TRAP_TY)
-                        if (!I_AM_TDB) {
-                                IP -= 1;
+                        IP -= 1;
+                        if (DEBUGGING && !I_AM_TDB) {
                                 tdb_go(ty);
+                        } else if (DEBUGGING) {
+                                DebugBreakpoint *breakpoint = tdb_get_break(ty, IP);
+                                *IP = breakpoint->op;
+                                goto NextInstruction;
+                        } else {
+                                UNREACHABLE("hopefully");
                         }
                         break;
                 CASE(GET_NEXT)
@@ -5137,7 +5231,7 @@ Yield:
                         k = 0;
                         for (i = STACK.count - n; i < STACK.count; ++i) {
                                 if (STACK.items[i].bytes > 0) {
-                                        memcpy(str + k, STACK.items[i].string, STACK.items[i].bytes);
+                                        memcpy(str + k, STACK.items[i].str, STACK.items[i].bytes);
                                         k += STACK.items[i].bytes;
                                 }
                         }
@@ -5234,9 +5328,9 @@ BadTupleMember:
                         CallMethod(ty, NAMES.slice, 3, 0, false);
                         break;
                 CASE(SUBSCRIPT)
+Subscript:
                         subscript = top()[0];
                         container = top()[-1];
-
                         switch (container.type) {
                         case VALUE_ARRAY:
                                 v = ArraySubscript(ty, container, subscript, true);
@@ -5271,13 +5365,13 @@ BadTupleMember:
                                 }
                                 break;
                         case VALUE_STRING:
-                                v = get_string_method("char")(ty, &container, 1, NULL);
+                                v = string_char(ty, &container, 1, NULL);
                                 pop();
                                 pop();
                                 push(v);
                                 break;
                         case VALUE_BLOB:
-                                v = get_blob_method("get")(ty, &container, 1, NULL);
+                                v = blob_get(ty, &container, 1, NULL);
                                 pop();
                                 pop();
                                 push(v);
@@ -5314,6 +5408,7 @@ BadTupleMember:
                                 }
                                 break;
                         case VALUE_CLASS:
+                        case VALUE_TAG:
                                 swap();
                                 CallMethod(ty, NAMES.subscript, 1, 0, false);
                                 break;
@@ -5633,31 +5728,49 @@ BadTupleMember:
                 }
                 CASE(DEFINE_CLASS)
                 {
-                        int class, c, n, g, s;
-                        READVALUE(class);
+                        Class *class;
+                        int class_id, c, n, g, s;
+                        READVALUE(class_id);
                         READVALUE(c);
                         READVALUE(n);
                         READVALUE(g);
                         READVALUE(s);
+                        class = class_get(ty, class_id);
                         while (c --> 0) {
                                 v = pop();
                                 READVALUE(i);
-                                class_add_static_i(ty, class, i, v);
+                                vp = itable_get(ty, &class->statics, i);
+                                if (vp->type == VALUE_REF) {
+                                        *vp->ref = v;
+                                }
+                                *vp = v;
                         }
                         while (n --> 0) {
                                 v = pop();
                                 READVALUE(i);
-                                class_add_method_i(ty, class, i, v);
+                                vp = itable_get(ty, &class->methods, i);
+                                if (vp->type == VALUE_REF) {
+                                        *vp->ref = v;
+                                }
+                                *vp = v;
                         }
                         while (g --> 0) {
                                 v = pop();
                                 READVALUE(i);
-                                class_add_getter_i(ty, class, i, v);
+                                vp = itable_get(ty, &class->getters, i);
+                                if (vp->type == VALUE_REF) {
+                                        *vp->ref = v;
+                                }
+                                *vp = v;
                         }
                         while (s --> 0) {
                                 v = pop();
                                 READVALUE(i);
-                                class_add_setter_i(ty, class, i, v);
+                                vp = itable_get(ty, &class->setters, i);
+                                if (vp->type == VALUE_REF) {
+                                        *vp->ref = v;
+                                }
+                                *vp = v;
                         }
                         break;
                 }
@@ -5935,6 +6048,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.missing          = M_ID("__missing__");
         NAMES.method_missing   = M_ID("__method_missing__");
         NAMES._name_           = M_ID("__name__");
+        NAMES._argc_           = M_ID("__argc__");
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
         NAMES.question         = M_ID("__question__");
@@ -6048,6 +6162,21 @@ Next:
         XLOG("VM Error: %s", Error);
 
         TY_THROW_ERROR();
+}
+
+noreturn void
+vm_error(Ty *ty, char const *fmt, ...)
+{
+        Value msg;
+        va_list ap;
+
+        va_start(ap, fmt);
+        msg = STRING_VFORMAT(ty, fmt, ap);
+        va_end(ap);
+
+        vm_throw(ty, &msg);
+
+        UNREACHABLE();
 }
 
 void
@@ -6380,7 +6509,7 @@ ProfileReport(Ty *ty)
                         break;
                 }
 
-                char const *filename = strrchr(expr->filename, '/');
+                char const *filename = strrchr(expr->mod->path, '/');
                 Location start = expr->start;
                 Location end = expr->end;
 
@@ -6485,6 +6614,7 @@ vm_load_program(Ty *_ty, char const *source, char const *file)
         v0(SP_STACK);
         v0(TRY_STACK);
         v0(TARGETS);
+        SCRATCH_RESET();
 
         char * volatile code = NULL;
 
@@ -6888,7 +7018,7 @@ vm_eval_function(Ty *ty, Value const *f, ...)
 
         default:
         NotCallable:
-                zP("Non-callable value passed to vm_eval_function(): %s", VSC(f));
+                zP("non-callable value passed to vm_eval_function(): %s", VSC(f));
         }
 
         UNREACHABLE();
@@ -7286,6 +7416,9 @@ StepInstruction(char const *ip)
         CASE(VALUE)
                 SKIPVALUE(s);
                 break;
+        CASE(EXPRESSION)
+                SKIPVALUE(s);
+                break;
         CASE(EVAL)
                 SKIPVALUE(s);
                 break;
@@ -7512,7 +7645,6 @@ StepInstruction(char const *ip)
         CASE(RETURN_IF_NOT_NONE)
         CASE(RETURN)
         CASE(RETURN_PRESERVE_CTX)
-                break;
         CASE(HALT)
                 break;
         }
@@ -7662,15 +7794,25 @@ tdb_step_line(Ty *ty)
         return true;
 }
 
-bool
-tdb_step_over(Ty *ty)
+static bool
+tdb_step_over_x(Ty *ty, char *ip, i32 i)
 {
-        switch ((u8)*IP) {
+        if (
+                (ip == &halt)
+             || (ip == iter_fix)
+             || (ip == next_fix)
+        ) {
+                return true;
+        }
+
+        switch ((u8)*ip) {
         CASE(HALT)
                 return true;
+
         CASE(RETURN)
-                tdb_set_trap(&TDB->alt, *vvL(CALLS));
-                break;
+                return (i < vN(CALLS))
+                    && tdb_step_over_x(ty, vvL(CALLS)[-i], i + 1);
+
         CASE(ARRAY_REST)
         CASE(ENSURE_CONTAINS)
         CASE(ENSURE_DICT)
@@ -7705,12 +7847,24 @@ tdb_step_over(Ty *ty)
         CASE(TRY_TAG_POP)
         CASE(TRY_TUPLE_MEMBER)
         CASE(TUPLE_REST)
-                tdb_set_trap(&TDB->alt, IP + 1 + load_int(IP + 1) + sizeof (int));
+                tdb_set_trap(&TDB->alt, ip + 1 + load_int(ip + 1) + sizeof (int));
         }
 
-        tdb_set_trap(&TDB->next, StepInstruction(IP));
+        tdb_set_trap(&TDB->next, StepInstruction(ip));
 
         return true;
+}
+
+bool
+tdb_step_over(Ty *ty)
+{
+        bool ok = tdb_step_over_x(ty, IP, 0);
+
+        if (!ok) {
+                puts("no..");
+        }
+
+        return ok;
 }
 
 bool
@@ -7719,6 +7873,8 @@ tdb_step_into(Ty *ty)
         Value v = NONE;
         char *ip = IP;
         int i;
+
+        u64 t0 = TyThreadGetTime();
 
         ty = TDB->host;
 
@@ -7746,6 +7902,14 @@ tdb_step_into(Ty *ty)
         switch (v.type) {
         case VALUE_FUNCTION: ip = code_of(&v);        break;
         case VALUE_METHOD:   ip = code_of(v.method);  break;
+        }
+
+        u64 t1 = TyThreadGetTime();
+
+        double diff = (t1 - t0) / TY_1e9;
+
+        if (diff > 0.001) {
+                printf("Long step_into() for %s\n", VSC(&v));
         }
 
         if (ip == NULL) {

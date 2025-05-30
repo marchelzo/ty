@@ -7,207 +7,110 @@
 
 static _Thread_local int error;
 
-static struct value
-dbopen(Ty *ty, int argc, struct value *kwargs)
+static Value
+dbopen(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("sqlite3.open(): expected 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("sqlite3.open()", 1, 2);
 
-        struct value file = ARG(0);
-        if (file.type != VALUE_STRING) {
-                zP("sqlite3.open(): expected a string but got: %s", value_show(ty, &file));
-        }
+        char const *path = TY_TMP_C_STR(ARGx(0, VALUE_STRING));
 
-        int flags;
-        if (argc > 1) {
-                if (ARG(1).type != VALUE_INTEGER) {
-                        zP("sqlite3.open(): expected an integer but got: %s", value_show(ty, &ARG(1)));
-                }
-                flags = ARG(1).integer;
-        } else {
-                flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
-        }
-
-        vec(char) s;
-        vec_init(s);
-        vvPn(s, file.string, file.bytes);
-        vvP(s, '\0');
+        int flags = (argc == 2)
+                  ? INT_ARG(1)
+                  : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
 
         sqlite3 *db;
-        int r = sqlite3_open_v2(s.items, &db, flags, NULL);
+        int err = sqlite3_open_v2(path, &db, flags, NULL);
 
-        mF(s.items);
-
-        if (r == SQLITE_OK) {
+        if (err == SQLITE_OK) {
                 return PTR(db);
         } else {
                 sqlite3_close(db);
-                error = r;
+                error = err;
                 return NIL;
         }
 }
 
-static struct value
-dbclose(Ty *ty, int argc, struct value *kwargs)
+static Value
+dbclose(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.open() expects exactly 1 argument");
-        }
-
-        struct value db = ARG(0);
-
-        if (db.type != VALUE_PTR) {
-                zP("the argument to sqlite3.open() must be a pointer");
-        }
-
-        return INTEGER(sqlite3_close(db.ptr));
+        ASSERT_ARGC("sqlite3.close()", 1);
+        return INTEGER(sqlite3_close(PTR_ARG(0)));
 }
 
-static struct value
-prepare(Ty *ty, int argc, struct value *kwargs)
+static Value
+prepare(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 2) {
-                zP("sqlite3.prepare(ty) expects exactly 2 arguments");
-        }
+        ASSERT_ARGC("sqlite3.perpare()", 2);
 
-        struct value ptr = ARG(0);
+        sqlite3 *db = PTR_ARG(0);
+        Value sql = ARGx(1, VALUE_STRING);
 
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.prepare(ty) must be a pointer");
-        }
-
-        struct value sql = ARG(1);
-
-        if (sql.type != VALUE_STRING) {
-                zP("the second argument to sqlite3.prepare(ty) must be a string");
-        }
-
-        sqlite3 *db = ptr.ptr;
         sqlite3_stmt *stmt;
-        int r = sqlite3_prepare_v2(db, sql.string, sql.bytes, &stmt, NULL);
+        int err = sqlite3_prepare_v2(db, (char const *)sql.str, sql.bytes, &stmt, NULL);
 
-        if (r == SQLITE_OK) {
+        if (err == SQLITE_OK) {
                 return PTR(stmt);
         } else {
                 sqlite3_finalize(stmt);
-                error = r;
+                error = err;
                 return NIL;
         }
 }
 
-static struct value
-step(Ty *ty, int argc, struct value *kwargs)
+static Value
+step(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.step(ty) expects exactly 1 argument");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.step(ty) must be a pointer");
-        }
-
-        sqlite3_stmt *stmt = ptr.ptr;
-
-        return INTEGER(sqlite3_step(stmt));
+        ASSERT_ARGC("sqlite3.step()", 1);
+        return INTEGER(sqlite3_step(PTR_ARG(0)));
 }
 
-static struct value
-changes(Ty *ty, int argc, struct value *kwargs)
+static Value
+changes(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.changes(ty) expects exactly 1 argument");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.changes(ty) must be a pointer");
-        }
-
-        sqlite3 *db = ptr.ptr;
-
-        return INTEGER(sqlite3_changes(db));
+        ASSERT_ARGC("sqlite3.changes()", 1);
+        return INTEGER(sqlite3_changes(PTR_ARG(0)));
 }
 
-static struct value
-total_changes(Ty *ty, int argc, struct value *kwargs)
+static Value
+total_changes(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.totalChanges() expects exactly 1 argument");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.totalChanges() must be a pointer");
-        }
-
-        sqlite3 *db = ptr.ptr;
-
-        return INTEGER(sqlite3_total_changes(db));
+        ASSERT_ARGC("sqlite3.totalChanges()", 1);
+        return INTEGER(sqlite3_total_changes(PTR_ARG(0)));
 }
 
-static struct value
-column_count(Ty *ty, int argc, struct value *kwargs)
+static Value
+column_count(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.columnCount() expects exactly 1 argument");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.columnCount() must be a pointer");
-        }
-
-        sqlite3_stmt *stmt = ptr.ptr;
-
-        return INTEGER(sqlite3_column_count(stmt));
+        ASSERT_ARGC("sqlite3.columnCount()", 1);
+        return INTEGER(sqlite3_column_count(PTR_ARG(0)));
 }
 
-static struct value
-get_column(Ty *ty, int argc, struct value *kwargs)
+static Value
+get_column(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 2) {
-                zP("sqlite3.column() expects exactly 2 arguments");
-        }
+        ASSERT_ARGC("sqlite3.column()", 2);
 
-        struct value ptr = ARG(0);
+        sqlite3_stmt *stmt = PTR_ARG(0);
+        i64 i = INT_ARG(1);
 
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.column() must be a pointer");
-        }
-
-        struct value index = ARG(1);
-
-        if (index.type != VALUE_INTEGER) {
-                zP("the second argument to sqlite3.column() must be an integer");
-        }
-
-        int i = index.integer;
-        sqlite3_stmt *stmt = ptr.ptr;
         char *s;
         int sz;
-        struct blob *b;
+        Blob *b;
 
         switch (sqlite3_column_type(stmt, i)) {
         case SQLITE_FLOAT:
                 return REAL(sqlite3_column_double(stmt, i));
         case SQLITE_INTEGER:
                 return INTEGER(sqlite3_column_int64(stmt, i));
-        case SQLITE_TEXT:;
+        case SQLITE_TEXT:
                 s = (char *)sqlite3_column_text(stmt, i);
                 sz = sqlite3_column_bytes(stmt, i);
                 return vSs(s, sz);
         case SQLITE_BLOB:;
                 b = value_blob_new(ty);
-                NOGC(b);
                 s = (char *)sqlite3_column_blob(stmt, i);
                 sz = sqlite3_column_bytes(stmt, i);
-                vvPn(*b, s, sz);
+                uvPn(*b, s, sz);
                 return BLOB(b);
         case SQLITE_NULL:
         default:
@@ -215,25 +118,17 @@ get_column(Ty *ty, int argc, struct value *kwargs)
         }
 }
 
-static struct value
-fetch(Ty *ty, int argc, struct value *kwargs)
+static Value
+fetch(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.fetch(ty) expects exactly 1 argument");
-        }
+        ASSERT_ARGC("sqlite3.fetch()", 1);
 
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.fetch(ty) must be a pointer");
-        }
-
-        sqlite3_stmt *stmt = ptr.ptr;
+        sqlite3_stmt *stmt = PTR_ARG(0);
 
         char const *s;
         int sz;
-        struct blob *b;
-        struct value a = ARRAY(vA());
+        Blob *b;
+        Value a = ARRAY(vA());
         gP(&a);
 
         int n = sqlite3_column_count(stmt);
@@ -268,25 +163,18 @@ fetch(Ty *ty, int argc, struct value *kwargs)
         return a;
 }
 
-static struct value
-fetch_dict(Ty *ty, int argc, struct value *kwargs)
+static Value
+fetch_dict(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.fetch(ty) expects exactly 1 argument");
-        }
+        ASSERT_ARGC("sqlite3.fetch()", 1);
 
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.fetch(ty) must be a pointer");
-        }
-
-        sqlite3_stmt *stmt = ptr.ptr;
+        sqlite3_stmt *stmt = PTR_ARG(0);
 
         char const *s;
         int sz;
-        struct blob *b;
-        struct value d = DICT(dict_new(ty));
+        Blob *b;
+        Value d = DICT(dict_new(ty));
+
         gP(&d);
 
         int n = sqlite3_column_count(stmt);
@@ -313,7 +201,7 @@ fetch_dict(Ty *ty, int argc, struct value *kwargs)
                         s = sqlite3_column_blob(stmt, i);
                         sz = sqlite3_column_bytes(stmt, i);
                         dict_put_value(ty, d.dict, key, BLOB(b));
-                        vvPn(*b, s, sz);
+                        uvPn(*b, s, sz);
                         break;
                 }
         }
@@ -323,172 +211,124 @@ fetch_dict(Ty *ty, int argc, struct value *kwargs)
         return d;
 }
 
-static struct value
-finalize(Ty *ty, int argc, struct value *kwargs)
+static Value
+finalize(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.finalize(ty) expects exactly 1 argument");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.finalize(ty) must be a pointer");
-        }
-
-        sqlite3_stmt *stmt = ptr.ptr;
-
-        return INTEGER(sqlite3_finalize(stmt));
+        ASSERT_ARGC("sqlite3.finalize()", 1);
+        return INTEGER(sqlite3_finalize(PTR_ARG(0)));
 
 }
 
-static struct value
-reset(Ty *ty, int argc, struct value *kwargs)
+static Value
+reset(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.reset(ty) expects exactly 1 argument");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.reset(ty) must be a pointer");
-        }
-
-        sqlite3_stmt *stmt = ptr.ptr;
-
-        return INTEGER(sqlite3_reset(stmt));
+        ASSERT_ARGC("sqlite3.reset()", 1);
+        return INTEGER(sqlite3_reset(PTR_ARG(0)));
 }
 
-static struct value
-mbind(Ty *ty, int argc, struct value *kwargs)
+static Value
+mbind(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 3) {
-                zP("sqlite3.bind() expects exactly 3 arguments");
-        }
+        ASSERT_ARGC("sqlite3.bind()", 3);
 
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.bind() must be a pointer");
-        }
-
-        int i;
-        struct value index = ARG(1);
+        sqlite3_stmt *stmt = PTR_ARG(0);
+        Value index = ARGx(1, VALUE_STRING, VALUE_INTEGER);
+        i32 i;
 
         if (index.type == VALUE_STRING) {
-                vec(char) s;
-                vec_init(s);
-                vvPn(s, index.string, index.bytes);
-                vvP(s, '\0');
-                i = sqlite3_bind_parameter_index(ptr.ptr, s.items);
-                vec_empty(s);
+                i = sqlite3_bind_parameter_index(stmt, TY_TMP_C_STR(index));
         } else if (index.type == VALUE_INTEGER) {
                 i = index.integer;
         } else {
-                zP("the second argument to sqlite3.bind() must be an integer or string");
+                UNREACHABLE();
         }
 
-        struct value v = ARG(2);
-        sqlite3_stmt *stmt = ptr.ptr;
-        int r;
+        Value v = ARG(2);
+        int err;
 
         switch (v.type) {
         case VALUE_INTEGER:
-                r = sqlite3_bind_int64(stmt, i, v.integer);
+                err = sqlite3_bind_int64(stmt, i, v.integer);
                 break;
         case VALUE_REAL:
-                r = sqlite3_bind_double(stmt, i, v.real);
+                err = sqlite3_bind_double(stmt, i, v.real);
                 break;
         case VALUE_STRING:
-                r = sqlite3_bind_text(stmt, i, v.string, v.bytes, SQLITE_TRANSIENT);
+                err = sqlite3_bind_text(
+                        stmt,
+                        i,
+                        (char const *)v.str,
+                        v.bytes,
+                        SQLITE_TRANSIENT
+                );
                 break;
         case VALUE_BLOB:
-                r = sqlite3_bind_blob(stmt, i, v.blob->items, v.blob->count, SQLITE_TRANSIENT);
+                err = sqlite3_bind_blob(
+                        stmt,
+                        i,
+                        vv(*v.blob),
+                        vN(*v.blob),
+                        SQLITE_TRANSIENT
+                );
                 break;
         case VALUE_NIL:
-                r = sqlite3_bind_null(stmt, i);
+                err = sqlite3_bind_null(stmt, i);
                 break;
         default:
                 return NIL;
         }
 
-        return INTEGER(r);
+        return INTEGER(err);
 }
 
-static struct value
-column_name(Ty *ty, int argc, struct value *kwargs)
+static Value
+column_name(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 2) {
-                zP("sqlite3.columnName() expects exactly 2 arguments");
-        }
-
-        struct value ptr = ARG(0);
-
-        if (ptr.type != VALUE_PTR) {
-                zP("the first argument to sqlite3.bind() must be a pointer");
-        }
-
-        struct value index = ARG(1);
-
-        if (index.type != VALUE_INTEGER) {
-                zP("the second argument to sqlite3.bind() must be a integer");
-        }
-
-        char const *s = sqlite3_column_name(ptr.ptr, index.integer);
-        if (s == NULL) {
-                return NIL;
-        } else {
-                return vSsz(s);
-        }
+        ASSERT_ARGC("sqlite3.columnName()", 2);
+        sqlite3_stmt *stmt = PTR_ARG(0);
+        i32 i = INT_ARG(1);
+        char const *name = sqlite3_column_name(stmt, i);
+        return (name != NULL) ? vSsz(name) : NIL;
 }
 
-static struct value
-error_code(Ty *ty, int argc, struct value *kwargs)
+static Value
+error_code(Ty *ty, int argc, Value *kwargs)
 {
+        ASSERT_ARGC("sqlite3.error()", 0, 1);
+
         if (argc == 0) {
                 return INTEGER(error);
         }
 
-        struct value v = ARG(0);
-
-        if (v.type != VALUE_PTR) {
-                zP("the argument to sqlite3.error(ty) must be a pointer");
-        }
-
-        return INTEGER(sqlite3_errcode(v.ptr));
+        return INTEGER(sqlite3_errcode(PTR_ARG(0)));
 
 }
 
-static struct value
-error_msg(Ty *ty, int argc, struct value *kwargs)
+static Value
+error_msg(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("sqlite3.errorMessage() expects exactly 1 argument");
-        }
+        ASSERT_ARGC("sqlite3.errorMessage()", 1);
 
-        struct value v = ARG(0);
-
-        char const *s;
+        Value v = ARGx(0, VALUE_PTR, VALUE_INTEGER);
+        char const *msg;
 
         if (v.type == VALUE_PTR) {
-                s = sqlite3_errmsg(v.ptr);
+                msg = sqlite3_errmsg(v.ptr);
         } else if (v.type == VALUE_INTEGER) {
-                s = sqlite3_errstr(v.integer);
+                msg = sqlite3_errstr(v.integer);
         } else {
-                zP("the argument to sqlite3.errorMessage() must be a pointer or an integer");
+                UNREACHABLE();
         }
 
-        return vSsz(s);
+        return (msg != NULL) ? vSsz(msg) : NIL;
 }
-
 
 #define BUILTIN(f)    { .type = VALUE_BUILTIN_FUNCTION, .builtin_function = (f), .tags = 0 }
 #define INT(k)        { .type = VALUE_INTEGER,          .integer          = (k), .tags = 0 }
 
 static struct {
         char const *name;
-        struct value value;
+        Value value;
 } builtins[] = {
         { .name = "open",         .value = BUILTIN(dbopen)        },
         { .name = "close",        .value = BUILTIN(dbclose)       },

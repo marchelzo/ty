@@ -5,15 +5,19 @@ import help (pretty-print as pp, pretty)
 import unibilium as unibi
 import errno
 import ffi as c (C!)
-import atomic
 
 #|if getenv('TY_LOG') != nil
   import log (..)
+  logLevel!(INFO)
 #|else
-  macro warn!(msg) = do {}
+    macro warn!(msg) = do {}
+    macro error!(msg) = do {}
+    macro debug!(msg) = do {}
 #|]
 
 let ppp = pretty@(*, color=false)
+
+tag _TermStop;
 
 pub ns mod {
     pub SHIFT = 1 << 0
@@ -448,11 +452,29 @@ pub fn size(fd: Int) -> (Int, Int) {
 
 class TermIO {
     __fd: Int
+
     __ti-keys: Dict[String, Int]
+
     __saved-termios: _
+
     __ev-stream: Generator[event.Event]
     __ev-queue: SharedQueue[event.Event]
+
     __reader: Thread
+    __notif-r: Int
+    __notif-w: Int
+    __state: {
+        lock: Mutex,
+        cond: CondVar,
+        on: Bool,
+    }
+
+    __kitty: Bool
+    __mouse: Bool
+
+    __enter: String
+    __exit:  String
+
     __cursor: {
         lock: Mutex,
         cond: CondVar,
@@ -461,7 +483,11 @@ class TermIO {
         x: ?Int
     }
 
-    init(fd=0) {
+    init(
+        fd: Int = 0,
+        mouse: Bool = true,
+        kitty: Bool = true
+    ) {
         __fd = fd
         __ev-stream = __read-events()
 
@@ -475,8 +501,12 @@ class TermIO {
             }
         }
 
+        __mouse = mouse
+        __kitty = kitty
+
         __ev-queue = SharedQueue()
 
+        __mouse = mouse
         __cursor = {
             lock: Mutex(),
             cond: CondVar(),
@@ -485,39 +515,85 @@ class TermIO {
             x: nil
         }
 
+        __state = {
+            lock: Mutex(),
+            cond: CondVar(),
+            on: false
+        }
+
+        let enter = Blob()
+        if __kitty {
+            // kitty progressive enchancement for keyboard input
+            enter.push("\x1b[>{1|2|4|8|16}u")
+        }
+        if __mouse {
+            // turn on mouse event reporting
+            enter.push("\x1b[?1003h")
+            // ask for SGR-style mouse reporting instead of X10 compatibility mode
+            enter.push("\x1b[?1006h")
+        }
+
+        let exit = Blob()
+        if __kitty {
+            exit.push("\x1b[<1u")
+        }
+        if __mouse {
+            exit.push("\x1b[?1003l")
+            exit.push("\x1b[?1006l")
+        }
+    
+        __enter = enter.str!()
+        __exit  = exit.str!()
+
+
+        (__notif-r, __notif-w) = pipe()
         __reader = Thread(__run-reader)
     }
 
     start() {
-        warn!("Start: fd={__fd}")
+        write(__notif-w, 1)
+        with __state.lock.lock() {
+            while !__state.on {
+                __state.cond.wait(__state.lock)
+            }
+        }
+    }
+
+    stop() {
+        write(__notif-w, 0)
+        with __state.lock.lock() {
+            while __state.on {
+                __state.cond.wait(__state.lock)
+            }
+        }
+    }
+
+    __start() {
+        warn!("Reader thread starting!")
         if (__saved-termios = tcgetattr(__fd)) == nil {
-            warn!("Error: {errno.str()}")
+            error!("Error: {errno.str()}")
         }
         let copy = {*__saved-termios}
         copy.lflag &= ~ICANON
         copy.lflag &= ~ECHO
         copy.lflag &= ~ECHONL
         copy.iflag |= IGNBRK
-        let ret = tcsetattr(__fd, TCSAFLUSH, copy)
-        let n = write(
-            __fd,
-            "\x1b[>{1|2|4|8|16}u" // kitty progressive enchancement for keyboard input
-            "\x1b[?1003h"         // turn on mouse event reporting
-            "\x1b[?1006h"         // ask for SGR-style mouse reporting instead of X10 compatibility mode
-        )
-        warn!("Start: n={n} ret={ret}")
+        tcsetattr(__fd, TCSAFLUSH, copy)
+        write(__fd, __enter)
+        with __state.lock.lock() {
+            __state.on = true
+        }
+        __state.cond.broadcast()
     }
 
-    stop() {
-        warn!("Stop: fd={__fd}")
-        let n = write(
-            __fd,
-            "\x1b[<1u"     // restore initial keyboard input mode
-            "\x1b[?1003l"  // turn off all the private modes we turned on
-            "\x1b[?1006l"
-        )
-        let ret = tcsetattr(__fd, TCSAFLUSH, __saved-termios)
-        warn!("Stop: n={n} ret={ret}")
+    __stop() {
+        warn!("Reader thread stopping!")
+        write(__fd, __exit)
+        tcsetattr(__fd, TCSAFLUSH, __saved-termios)
+        with __state.lock.lock() {
+            __state.on = false
+        }
+        __state.cond.broadcast()
     }
 
     size() -> (Int, Int) {
@@ -528,13 +604,59 @@ class TermIO {
         let buf = Blob()
         let i = 0
 
+        fn wait-for-resume() {
+            while match poll([__notif-r], -1) {
+                Ok([(fd, ev)]) => {
+                    if (ev & POLLHUP) {
+                        throw _TermStop
+                    } else if let $msg = read(fd, 512) and msg[-1] == 1 {
+                        __start()
+                        return
+                    }
+                },
+
+                _ => ()
+            }
+        }
+
+        fn more() -> Bool {
+                let fds = match poll([__notif-r, __fd], -1) {
+                    Ok(fds) => fds,
+                    err     => throw err
+                }
+
+                for match fds {
+                    (self.__notif-r, ev) => {
+                        if ev & POLLHUP {
+                            throw _TermStop
+                        } else if let $msg = read(__notif-r, 512) and msg[-1] == 0 {
+                            __stop()
+                            wait-for-resume()
+                        }
+                    },
+
+                    (fd, ev) => {
+                        read(fd, buf, 8192)
+                        return true
+                    }
+                }
+
+                return false
+        }
+
+        // Initially off
+        wait-for-resume()
 
         while 1 {
+            let poll-fds = [__notif-r, __fd]
+
             if i == #buf {
                 i = 0
                 buf.clear()
-                read(__fd, buf, 8192)
-                warn!("Read: {ppp(buf.str!())}")
+                while !more() {
+                    ;
+                }
+                debug!("Read: {ppp(buf.str!())}")
             }
 
             let plain = Blob()
@@ -600,7 +722,7 @@ class TermIO {
 
     next-event() -> ?event.Event {
         let ev = __ev-queue.take()
-        warn!("event: {ppp(ev)}")
+        debug!("event: {ppp(ev)}")
         return ev
     }
 
@@ -611,17 +733,17 @@ class TermIO {
         write(__fd, "\x1b[6n")
 
         for (;;) {
-            __cursor.cond.wait(__cursor.lock)
             if let { $x, $y, (t: t != t_0), * } = __cursor {
                 return (x, y)
             }
+            __cursor.cond.wait(__cursor.lock)
         }
     }
 
     __run-reader() {
         while match (__ev-stream)() {
             Some(event.Cursor(y, x)) => {
-                with __cursor.lock {
+                with __cursor.lock.lock() {
                     __cursor.y = y
                     __cursor.x = x
                     __cursor.t += 1

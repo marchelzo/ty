@@ -217,7 +217,6 @@
 #define          unconsume(t)                 ((unconsume)(ty, (t)))
 #define    expect_one_of(...) ((expect_one_of)(ty, __VA_ARGS__, -1))
 
-
 #define with_fun_subscope(...)                                          \
         if (1) {                                                        \
                 Scope *_saved__scope = ty->pscope;                      \
@@ -361,8 +360,8 @@ static enum {
 #define LOAD_TC() TypeContext = TCSave;
 #define LOAD_LC() 0 // LValueContext = LCSave;
 
-noreturn static void
-error(Ty *ty, char const *fmt, ...);
+noreturn void
+ParseError(Ty *ty, char const *fmt, ...);
 
 char *
 show_expr(Expr const *e);
@@ -454,7 +453,7 @@ mkpartial(Ty *ty, Expr *sugared);
 char *
 gensym(void)
 {
-        static u32 sym = 0;
+        static u64 sym = 0;
         return (char *)ifmt("#%u", sym++);
 }
 
@@ -463,7 +462,20 @@ mkexpr(Ty *ty)
 {
         Expr *e = amA0(sizeof *e);
         e->arena = GetArenaAlloc(ty);
-        e->file = FileName;
+        e->mod = CompilerCurrentModule(ty);
+        e->start = tok()->start;
+        e->end = tok()->end;
+        return e;
+}
+
+#define mkxpr(t) (mkxpr)(ty, EXPRESSION_##t)
+inline static Expr *
+(mkxpr)(Ty *ty, int type)
+{
+        Expr *e = amA0(sizeof *e);
+        e->type = type;
+        e->arena = GetArenaAlloc(ty);
+        e->mod = CompilerCurrentModule(ty);
         e->start = tok()->start;
         e->end = tok()->end;
         return e;
@@ -473,8 +485,7 @@ mkexpr(Ty *ty)
 inline static Expr *
 (mkid)(Ty *ty, char *id)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_IDENTIFIER;
+        Expr *e = mkxpr(IDENTIFIER);
         e->identifier = id;
         return e;
 }
@@ -502,7 +513,7 @@ mkstmt(Ty *ty)
         Stmt *s = amA0(sizeof *s);
         s->ns = CurrentNamespace;
         s->arena = GetArenaAlloc(ty);
-        s->file = FileName;
+        s->mod = CompilerCurrentModule(ty);
         s->start = tok()->start;
         s->end = tok()->start;
         return s;
@@ -521,8 +532,7 @@ mkret(Ty *ty, Expr *value)
 inline static Stmt *
 mkdef(Ty *ty, Expr *lvalue, char *name)
 {
-        Expr *value = mkexpr(ty);
-        value->type = EXPRESSION_IDENTIFIER;
+        Expr *value = mkxpr(IDENTIFIER);
         value->identifier = name;
         value->module = NULL;
 
@@ -539,13 +549,10 @@ mkdef(Ty *ty, Expr *lvalue, char *name)
 inline static Expr *
 (to_expr)(Ty *ty, Stmt *s)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_STATEMENT;
+        Expr *e = mkxpr(STATEMENT);
         e->start = s->start;
         e->end = s->end;
-
         e->statement = s;
-
         return e;
 }
 
@@ -557,9 +564,7 @@ inline static Stmt *
         s->type = STATEMENT_EXPRESSION;
         s->start = e->start;
         s->end = e->end;
-
         s->expression = e;
-
         return s;
 }
 
@@ -919,8 +924,8 @@ inline static void
         tok()->ctx = LEX_FAKE;
 }
 
-noreturn static void
-error(Ty *ty, char const *fmt, ...)
+noreturn void
+ParseError(Ty *ty, char const *fmt, ...)
 {
         if (fmt == NULL) {
                 goto End;
@@ -928,7 +933,7 @@ error(Ty *ty, char const *fmt, ...)
 
         if (tokenx(0)->type == TOKEN_ERROR) {
                 /*
-                 * The lexer already wrote an error message into ErrorBuffer
+                 * The lexer already wrote us a nice error message :)
                  */
                 goto End;
         }
@@ -954,7 +959,7 @@ error(Ty *ty, char const *fmt, ...)
                 "%36s %s%s%s:%s%d%s:%s%d%s",
                 "at",
                 TERM(34),
-                TyCompilerState(ty)->module_name,
+                CompilerCurrentModule(ty)->name,
                 TERM(39),
                 TERM(33),
                 start.line + 1,
@@ -1047,11 +1052,12 @@ End:
         }
 }
 
+#define die(...) ParseError(ty, __VA_ARGS__)
 #define die_at(e, ...)                     \
         do {                               \
                 EStart = (e)->start;       \
                 EEnd   = (e)->end;         \
-                (error)(ty, __VA_ARGS__);  \
+                die(__VA_ARGS__);          \
         } while (0)
 
 inline static Namespace *
@@ -1138,8 +1144,7 @@ static bool
                 }
         }
 
-        error(
-                ty,
+        die(
                 "expected %s but found %s%s%s",
                 token_show_type(ty, type),
                 TERM(34),
@@ -1189,7 +1194,7 @@ static bool
 
         adump(&msg, " but found %s%s%s", TERM(34), token_show(ty, tok()), TERM(0));
 
-        error(ty, "%s", v_(msg, 0));
+        die("%s", v_(msg, 0));
 }
 
 
@@ -1197,8 +1202,7 @@ static void
 expect_keyword(Ty *ty, int type)
 {
         if (K0 != type) {
-                error(
-                        ty,
+                die(
                         "expected %s but found %s%s%s",
                         token_show(ty, &(struct token){ .type = TOKEN_KEYWORD, .keyword = type }),
                         TERM(34),
@@ -1246,8 +1250,7 @@ try_cond(Ty *ty)
 inline static void
 iter_sugar(Ty *ty, Expr **target, Expr **iterable)
 {
-        Expr *it = mkexpr(ty);
-        it->type = EXPRESSION_IDENTIFIER;
+        Expr *it = mkxpr(IDENTIFIER);
         it->identifier = "it";
 
         (*iterable) = mkexpr(ty);
@@ -1356,7 +1359,7 @@ parse_decorator_macro(Ty *ty)
         ) {
                 EStart = m->start;
                 EEnd = m->end;
-                error(ty, "expected function-like macro invocation inside @{...}");
+                die("expected function-like macro invocation inside @{...}");
         }
 
         return m;
@@ -1390,8 +1393,7 @@ parse_decorators(Ty *ty)
                                 f = call;
                         }
 
-                        Expr *hole = mkexpr(ty);
-                        hole->type = EXPRESSION_PLACEHOLDER;
+                        Expr *hole = mkxpr(PLACEHOLDER);
 
                         switch (f->type) {
                         case EXPRESSION_FUNCTION_CALL:
@@ -1463,8 +1465,7 @@ prefix_integer(Ty *ty)
 {
         expect(TOKEN_INTEGER);
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_INTEGER;
+        Expr *e = mkxpr(INTEGER);
         e->integer = tok()->integer;
 
         consume(TOKEN_INTEGER);
@@ -1477,8 +1478,7 @@ prefix_real(Ty *ty)
 {
         expect(TOKEN_REAL);
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_REAL;
+        Expr *e = mkxpr(REAL);
         e->real = tok()->real;
 
         consume(TOKEN_REAL);
@@ -1544,19 +1544,22 @@ Expr *
 extend_string(Ty *ty, Expr *s)
 {
         while (
-                T0 == TOKEN_STRING
-             || T0 == '"'
+                (T0 == TOKEN_STRING)
+             || (T0 == '"')
              || (
-                        T0 == TOKEN_IDENTIFIER &&
-                        is_macro(ty, tok()->module, tok()->identifier)
+                        (T0 == TOKEN_IDENTIFIER)
+                     && is_macro(ty, tok()->module, tok()->identifier)
                 )
         ) {
                 Expr *s2 = parse_expr(ty, 999);
 
-                if (s2->type != EXPRESSION_STRING && s2->type != EXPRESSION_SPECIAL_STRING) {
+                if (
+                        (s2->type != EXPRESSION_STRING)
+                     && (s2->type != EXPRESSION_SPECIAL_STRING)
+                ) {
                         EStart = s2->start;
                         EEnd = s2->end;
-                        error(ty, "string-adjacent macro expanded to non-string: %s", ExpressionTypeName(s2));
+                        die("string-adjacent macro expanded to non-string: %s", ExpressionTypeName(s2));
                 }
 
                 merge_strings(ty, s, s2);
@@ -1570,8 +1573,7 @@ prefix_string(Ty *ty)
 {
         expect(TOKEN_STRING);
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_STRING;
+        Expr *e = mkxpr(STRING);
         e->string = tok()->string;
 
         consume(TOKEN_STRING);
@@ -1630,8 +1632,7 @@ ss_skip_inner(Ty *ty, bool top)
 static Expr *
 ss_inner(Ty *ty, bool top)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_SPECIAL_STRING;
+        Expr *e = mkxpr(SPECIAL_STRING);
 
         avP(e->strings, ss_next_str(ty, top));
 
@@ -1740,8 +1741,7 @@ prefix_slash(Ty *ty)
 
         Expr *body = parse_expr(ty, 1);
 
-        Expr *nil = mkexpr(ty);
-        nil->type = EXPRESSION_NIL;
+        Expr *nil = mkxpr(NIL);
         nil->start = start;
 
         Expr *f = mkcall(ty, nil);
@@ -1772,7 +1772,7 @@ prefix_dollar(Ty *ty)
         e->module = tok()->module;
 
         if (e->module != NULL)
-                error(ty, "unpexpected module in lvalue");
+                die("unpexpected module in lvalue");
 
         consume(TOKEN_IDENTIFIER);
 
@@ -1843,8 +1843,7 @@ prefix_identifier(Ty *ty)
 static Expr *
 prefix_eval(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_EVAL;
+        Expr *e = mkxpr(EVAL);
         next();
         consume('(');
         e->operand = parse_expr(ty, 0);
@@ -1882,11 +1881,10 @@ prefix_defined(Ty *ty)
 static Expr *
 parse_expr_template(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_TEMPLATE;
+        Expr *e = mkxpr(TEMPLATE);
 
         expression_vector TESave = TemplateExprs;
-        vec_init(TemplateExprs);
+        v00(TemplateExprs);
 
         avP(e->template.stmts, to_stmt(parse_expr(ty, 0)));
 
@@ -2138,8 +2136,7 @@ prefix_at(Ty *ty)
 
                 consume('}');
 
-                Expr *stmt = mkexpr(ty);
-                stmt->type = EXPRESSION_STATEMENT;
+                Expr *stmt = mkxpr(STATEMENT);
                 stmt->statement = parse_statement(ty, -1);
 
                 avI(m->args, stmt, 0);
@@ -2185,7 +2182,7 @@ prefix_star(Ty *ty)
                         e->identifier = tok()->identifier;
 
                         if (tok()->module != NULL)
-                                error(ty, "unexpected module qualifier in lvalue");
+                                die("unexpected module qualifier in lvalue");
 
                         next();
                 } else {
@@ -2379,8 +2376,7 @@ make_with(Ty *ty, Expr *e, statement_vector defs, Stmt *body)
 static Expr *
 prefix_super(Ty *ty)
 {
-        Expr *super = mkexpr(ty);
-        super->type = EXPRESSION_SUPER;
+        Expr *super = mkxpr(SUPER);
 
         next();
 
@@ -2417,8 +2413,7 @@ prefix_with(Ty *ty)
                     def->target = definition_lvalue(ty, e);
                     def->value = parse_expr(ty, 0);
             } else {
-                    Expr *t = mkexpr(ty);
-                    t->type = EXPRESSION_IDENTIFIER;
+                    Expr *t = mkxpr(IDENTIFIER);
                     t->identifier = gensym();
                     t->module = NULL;
                     def->target = t;
@@ -2444,8 +2439,7 @@ prefix_with(Ty *ty)
 static Expr *
 prefix_throw(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_THROW;
+        Expr *e = mkxpr(THROW);
 
         consume_keyword(KEYWORD_THROW);
 
@@ -2462,8 +2456,7 @@ prefix_throw(Ty *ty)
 static Expr *
 prefix_typeof(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_TYPE_OF;
+        Expr *e = mkxpr(TYPE_OF);
 
         consume_keyword(KEYWORD_TYPEOF);
 
@@ -2479,8 +2472,7 @@ prefix_typeof(Ty *ty)
 static Expr *
 prefix_yield(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_YIELD;
+        Expr *e = mkxpr(YIELD);
         vec_init(e->es);
 
         consume_keyword(KEYWORD_YIELD);
@@ -2509,8 +2501,7 @@ prefix_match(Ty *ty)
                 putback(kw);
         }
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_MATCH;
+        Expr *e = mkxpr(MATCH);
 
         consume_keyword(KEYWORD_MATCH);
 
@@ -2641,8 +2632,7 @@ try_parse_flag(Ty *ty, expression_vector *kwargs, StringVector *kws, expression_
 
         expect(TOKEN_IDENTIFIER);
 
-        Expr *arg = mkexpr(ty);
-        arg->type = EXPRESSION_BOOLEAN;
+        Expr *arg = mkxpr(BOOLEAN);
         arg->boolean = flag;
 
         avP(*kwargs, arg);
@@ -2762,7 +2752,7 @@ parse_method_args(Ty *ty, Expr *e)
                 } else {
                         EStart = start;
                         EEnd = tok()->end;
-                        error(ty, "malformed generator comprehension argument");
+                        die("malformed generator comprehension argument");
                 }
         }
 
@@ -2811,8 +2801,7 @@ parse_method_call(Ty *ty, Expr *e)
         Expr *body = parse_expr(ty, 0);
         next();
 
-        Expr *nil = mkexpr(ty);
-        nil->type = EXPRESSION_NIL;
+        Expr *nil = mkxpr(NIL);
 
         Expr *f = mkcall(ty, nil);
         avP(f->args, body);
@@ -2877,8 +2866,7 @@ prefix_parenthesis(Ty *ty)
                 avP(e->dflts, NULL);
                 avP(e->constraints, NULL);
 
-                Expr *t = mkexpr(ty);
-                t->type = EXPRESSION_IDENTIFIER;
+                Expr *t = mkxpr(IDENTIFIER);
                 t->identifier = e->params.items[0];
                 t->module = NULL;
 
@@ -3051,8 +3039,7 @@ prefix_parenthesis(Ty *ty)
 static Expr *
 prefix_true(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_BOOLEAN;
+        Expr *e = mkxpr(BOOLEAN);
         e->boolean = true;
 
         consume_keyword(KEYWORD_TRUE);
@@ -3063,8 +3050,7 @@ prefix_true(Ty *ty)
 static Expr *
 prefix_false(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_BOOLEAN;
+        Expr *e = mkxpr(BOOLEAN);
         e->boolean = false;
 
         consume_keyword(KEYWORD_FALSE);
@@ -3076,8 +3062,7 @@ static Expr *
 prefix_self(Ty *ty)
 {
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_SELF;
+        Expr *e = mkxpr(SELF);
 
         consume_keyword(KEYWORD_SELF);
 
@@ -3088,8 +3073,7 @@ static Expr *
 prefix_nil(Ty *ty)
 {
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_NIL;
+        Expr *e = mkxpr(NIL);
 
         consume_keyword(KEYWORD_NIL);
 
@@ -3099,8 +3083,7 @@ prefix_nil(Ty *ty)
 static Expr *
 prefix_regex(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_REGEX;
+        Expr *e = mkxpr(REGEX);
         e->regex = tok()->regex;
 
         consume(TOKEN_REGEX);
@@ -3245,8 +3228,7 @@ prefix_array(Ty *ty)
                 break;
         }
 
-        e = mkexpr(ty);
-        e->type = EXPRESSION_ARRAY;
+        e = mkxpr(ARRAY);
         e->start = start;
 
         if (CatchError()) {
@@ -3359,8 +3341,7 @@ End:
 static Expr *
 prefix_template(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_TEMPLATE;
+        Expr *e = mkxpr(TEMPLATE);
 
         next();
 
@@ -3385,9 +3366,8 @@ prefix_template(Ty *ty)
 static Expr *
 prefix_template_expr(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_TEMPLATE_HOLE;
-        e->integer = TemplateExprs.count;
+        Expr *e = mkxpr(TEMPLATE_HOLE);
+        e->hole.i = vN(TemplateExprs);
 
         next();
 
@@ -3404,11 +3384,16 @@ prefix_template_expr(Ty *ty)
                 e->type = EXPRESSION_TEMPLATE_THOLE;
                 next();
                 avP(TemplateExprs, parse_expr(ty, 99));
+        } else if (T0 == '\\' || T0 == TOKEN_CHECK_MATCH || T0 == '!') {
+                next();
+                e->type = EXPRESSION_TEMPLATE_XHOLE;
+                e->hole.expr = parse_expr(ty, 99);
+                avP(TemplateExprs, e);
         } else {
                 avP(TemplateExprs, parse_expr(ty, 99));
         }
 
-        e->end= TEnd;
+        e->end = TEnd;
 
         return e;
 }
@@ -3416,8 +3401,7 @@ prefix_template_expr(Ty *ty)
 static Expr *
 prefix_greater(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_REF_PATTERN;
+        Expr *e = mkxpr(REF_PATTERN);
 
         consume('>');
 
@@ -3438,11 +3422,9 @@ prefix_carat(Ty *ty)
 static Expr *
 prefix_incrange(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_DOT_DOT_DOT;
+        Expr *e = mkxpr(DOT_DOT_DOT);
 
-        Expr *zero = mkexpr(ty);
-        zero->type = EXPRESSION_INTEGER;
+        Expr *zero = mkxpr(INTEGER);
         zero->integer = 0;
 
         consume(TOKEN_DOT_DOT_DOT);
@@ -3457,11 +3439,9 @@ prefix_incrange(Ty *ty)
 static Expr *
 prefix_range(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_DOT_DOT;
+        Expr *e = mkxpr(DOT_DOT);
 
-        Expr *zero = mkexpr(ty);
-        zero->type = EXPRESSION_INTEGER;
+        Expr *zero = mkxpr(INTEGER);
         zero->integer = 0;
 
         consume(TOKEN_DOT_DOT);
@@ -3507,8 +3487,7 @@ prefix_implicit_method(Ty *ty)
                 tok()->module = NULL;
         }
 
-        Expr *o = mkexpr(ty);
-        o->type = EXPRESSION_IDENTIFIER;
+        Expr *o = mkxpr(IDENTIFIER);
         o->identifier = gensym();
         o->module = NULL;
 
@@ -3598,8 +3577,7 @@ prefix_implicit_lambda(Ty *ty)
 static Expr *
 prefix_bit_or(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_LIST;
+        Expr *e = mkxpr(LIST);
         e->only_identifiers = true;
         vec_init(e->es);
 
@@ -3659,7 +3637,7 @@ prefix_percent(Ty *ty)
                         next();
                         EStart = e->start;
                         EEnd= TEnd;
-                        error(ty, "unexpected module qualifier in tag binding pattern");
+                        die("unexpected module qualifier in tag binding pattern");
                 }
                 if (T1 != '(') {
                         next();
@@ -3791,8 +3769,7 @@ mkcall(Ty *ty, Expr *func)
 static Expr *
 mkpartial(Ty *ty, Expr *sugared)
 {
-        Expr *fun = mkexpr(ty);
-        fun->type = EXPRESSION_IDENTIFIER;
+        Expr *fun = mkxpr(IDENTIFIER);
         fun->identifier = "__desugar_partial__";
         fun->module = NULL;
 
@@ -3843,7 +3820,7 @@ infix_function_call(Ty *ty, Expr *left)
                 } else {
                         EStart = start;
                         EEnd = tok()->end;
-                        error(ty, "malformed generator comprehension argument");
+                        die("malformed generator comprehension argument");
                 }
         }
 
@@ -3906,8 +3883,7 @@ infix_eq(Ty *ty, Expr *left)
 static Expr *
 prefix_complement(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_UNARY_OP;
+        Expr *e = mkxpr(UNARY_OP);
         e->uop = "~";
 
         next();
@@ -3921,8 +3897,7 @@ prefix_complement(Ty *ty)
 static Expr *
 prefix_user_op(Ty *ty)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_UNARY_OP;
+        Expr *e = mkxpr(UNARY_OP);
         e->uop = tok()->operator;
 
         next();
@@ -4028,8 +4003,7 @@ infix_count_from(Ty *ty, Expr *left)
 {
         next();
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_DOT_DOT;
+        Expr *e = mkxpr(DOT_DOT);
         e->start = left->start;
         e->left = left;
         e->right = NULL;
@@ -4135,7 +4109,7 @@ infix_as(Ty *ty, Expr *left)
                 if (alias->type != EXPRESSION_IDENTIFIER) {
                         EStart = alias->start;
                         EEnd = alias->end;
-                        error(ty, "pattern alias must be an identifier");
+                        die("pattern alias must be an identifier");
                 }
 
                 alias->type = EXPRESSION_ALIAS_PATTERN;
@@ -4143,8 +4117,7 @@ infix_as(Ty *ty, Expr *left)
 
                 return alias;
         } else {
-                Expr *cast = mkexpr(ty);
-                cast->type = EXPRESSION_CAST;
+                Expr *cast = mkxpr(CAST);
                 cast->left = left;
                 cast->right = parse_expr(ty, 1);
                 cast->start = left->start;
@@ -4156,8 +4129,7 @@ infix_as(Ty *ty, Expr *left)
 static Expr *
 infix_member_access(Ty *ty, Expr *left)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_MEMBER_ACCESS;
+        Expr *e = mkxpr(MEMBER_ACCESS);
 
         e->start = left->start;
         e->maybe = (T0 == TOKEN_DOT_MAYBE);
@@ -4202,8 +4174,7 @@ infix_member_access(Ty *ty, Expr *left)
                 }
 
                 if (is_macro(ty, tok()->module, id)) {
-                        Expr *macro = mkexpr(ty);
-                        macro->type = EXPRESSION_IDENTIFIER;
+                        Expr *macro = mkxpr(IDENTIFIER);
                         macro->identifier = id;
                         macro->module = tok()->module;
                         next();
@@ -4238,8 +4209,7 @@ infix_member_access(Ty *ty, Expr *left)
 static Expr *
 infix_squiggly_not_nil_arrow(Ty *ty, Expr *left)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_NOT_NIL_VIEW_PATTERN;
+        Expr *e = mkxpr(NOT_NIL_VIEW_PATTERN);
 
         consume('$~>');
 
@@ -4254,8 +4224,7 @@ infix_squiggly_not_nil_arrow(Ty *ty, Expr *left)
 static Expr *
 infix_squiggly_arrow(Ty *ty, Expr *left)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_VIEW_PATTERN;
+        Expr *e = mkxpr(VIEW_PATTERN);
 
         consume(TOKEN_SQUIGGLY_ARROW);
 
@@ -4275,8 +4244,7 @@ infix_arrow_function(Ty *ty, Expr *left)
         consume(TOKEN_ARROW);
 
         if (TypeContext) {
-                e = mkexpr(ty);
-                e->type = EXPRESSION_FUNCTION_TYPE;
+                e = mkxpr(FUNCTION_TYPE);
                 e->left = left;
                 e->right = parse_expr(ty, 0);
                 e->start = left->start;
@@ -4296,8 +4264,7 @@ infix_arrow_function(Ty *ty, Expr *left)
                      || !left->only_identifiers
                 )
             ) {
-                Expr *l = mkexpr(ty);
-                l->type = EXPRESSION_LIST;
+                Expr *l = mkxpr(LIST);
                 vec_init(l->es);
                 avP(l->es, left);
                 left = l;
@@ -4445,8 +4412,7 @@ infix_slash(Ty *ty, Expr *left)
 
         Expr *body = parse_expr(ty, 0);
 
-        Expr *nil = mkexpr(ty);
-        nil->type = EXPRESSION_NIL;
+        Expr *nil = mkxpr(NIL);
 
         Expr *f = mkcall(ty, nil);
         avP(f->args, body);
@@ -4464,20 +4430,23 @@ infix_slash(Ty *ty, Expr *left)
 static Expr *
 infix_conditional(Ty *ty, Expr *left)
 {
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_CONDITIONAL;
+        Expr *e = mkxpr(CONDITIONAL);
 
         e->cond = left;
 
         consume(TOKEN_QUESTION);
 
         SAVE_NC(true);
-        e->then = parse_expr(ty, 2);
+        if (T0 != ':') {
+                e->then = parse_expr(ty, 2);
+                consume(':');
+                e->otherwise = parse_expr(ty, 2);
+        } else {
+                consume(':');
+                e->then = parse_expr(ty, 2);
+                e->otherwise = mkxpr(NIL);
+        }
         LOAD_NC();
-
-        consume(':');
-
-        e->otherwise = parse_expr(ty, 2);
 
         return e;
 }
@@ -4705,6 +4674,8 @@ get_infix_parser(Ty *ty)
         case TOKEN_WTF:            return infix_wtf;
         case TOKEN_AND:            return infix_and;
         case TOKEN_USER_OP:        return infix_user_op;
+
+        case TOKEN_ELVIS:
         case TOKEN_QUESTION:       return infix_conditional;
 
         case '\\':     return next_without_nl(ty, '(') ? infix_slash  : NULL;
@@ -4797,6 +4768,7 @@ get_infix_prec(Ty *ty)
         case TOKEN_CHECK_MATCH:    return 3;
 
         case TOKEN_QUESTION:       return 3;
+        case TOKEN_ELVIS:          return 3;
 
 
         case TOKEN_MAYBE_EQ:
@@ -4858,6 +4830,7 @@ definition_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_MATCH_REST:
         case EXPRESSION_SPREAD:
         case EXPRESSION_TEMPLATE_HOLE:
+        case EXPRESSION_TEMPLATE_XHOLE:
         case EXPRESSION_KW_AND:
                 return e;
         case EXPRESSION_REF_PATTERN:
@@ -4904,7 +4877,7 @@ definition_lvalue(Ty *ty, Expr *e)
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
                                         EStart = e->keys.items[i]->start;
                                         EEnd = e->keys.items[i]->end;
-                                        error(ty, "shorthand target in dict lvalue must be an identifier");
+                                        die("shorthand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
                                 key->string = e->keys.items[i]->identifier;
@@ -4952,7 +4925,7 @@ patternize(Ty *ty, Expr *e)
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
                                         EStart = key->start;
                                         EEnd = key->end;
-                                        error(ty, "short-hand target in dict lvalue must be an identifier");
+                                        die("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
                                 key->string = e->keys.items[i]->identifier;
@@ -4996,6 +4969,7 @@ assignment_lvalue(Ty *ty, Expr *e)
         case EXPRESSION_NOT_NIL_VIEW_PATTERN:
         case EXPRESSION_SPREAD:
         case EXPRESSION_TEMPLATE_HOLE:
+        case EXPRESSION_TEMPLATE_XHOLE:
                 return e;
         case EXPRESSION_LIST:
         case EXPRESSION_TUPLE:
@@ -5014,7 +4988,7 @@ assignment_lvalue(Ty *ty, Expr *e)
                                 if (e->keys.items[i]->type != EXPRESSION_IDENTIFIER) {
                                         EStart = key->start;
                                         EEnd = key->end;
-                                        error(ty, "short-hand target in dict lvalue must be an identifier");
+                                        die("short-hand target in dict lvalue must be an identifier");
                                 }
                                 key->type = EXPRESSION_STRING;
                                 key->string = e->keys.items[i]->identifier;
@@ -5030,7 +5004,7 @@ assignment_lvalue(Ty *ty, Expr *e)
         default:
                 EStart = e->start;
                 EEnd = e->end;
-                error(ty, "expression is not a valid assignment lvalue: %s", ExpressionTypeName(e));
+                die("expression is not a valid assignment lvalue: %s", ExpressionTypeName(e));
         }
 }
 
@@ -5061,8 +5035,7 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
         e = definition_lvalue(ty, e);
 
         if (context == LV_LET && T0 == ',') {
-                Expr *l = mkexpr(ty);
-                l->type = EXPRESSION_LIST;
+                Expr *l = mkxpr(LIST);
                 l->start = e->start;
                 vec_init(l->es);
                 avP(l->es, e);
@@ -5070,7 +5043,7 @@ parse_definition_lvalue(Ty *ty, int context, Expr *e)
                         next();
                         Expr *e = parse_definition_lvalue(ty, LV_SUB, NULL);
                         if (e == NULL) {
-                                error(ty, "expected lvalue but found %s", token_show(ty, tok()));
+                                die("expected lvalue but found %s", token_show(ty, tok()));
                         }
                         avP(l->es, e);
                 }
@@ -5119,14 +5092,13 @@ parse_target_list(Ty *ty)
                 return target;
         }
 
-        Expr *e = mkexpr(ty);
-        e->type = EXPRESSION_LIST;
+        Expr *e = mkxpr(LIST);
 
         avP(e->es, parse_definition_lvalue(ty, LV_EACH, target));
 
         if (e->es.items[0] == NULL) {
         Error:
-                error(ty, "expected lvalue in for-each loop");
+                die("expected lvalue in for-each loop");
         }
 
         while (
@@ -5324,12 +5296,11 @@ parse_condparts(Ty *ty, bool neg)
                 struct condpart *part = parse_condpart(ty);
 
                 if (part->target != NULL && neg != not) {
-                        error(ty, "illegal condition used as controlling expression of if statement");
+                        die("illegal condition used as controlling expression of if statement");
                 }
 
                 if (not && part->target == NULL) {
-                        Expr *not = mkexpr(ty);
-                        not->type = EXPRESSION_PREFIX_BANG;
+                        Expr *not = mkxpr(PREFIX_BANG);
                         not->operand = part->e;
                         part->e = not;
                 }
@@ -5497,7 +5468,7 @@ parse_function_definition(Ty *ty)
 
         Expr *f = prefix_function(ty);
         if (f->name == NULL) {
-                error(ty, "anonymous function definition used in statement context");
+                die("anonymous function definition used in statement context");
         }
 
         if (s->type == STATEMENT_MACRO_DEFINITION) {
@@ -5517,8 +5488,7 @@ parse_function_definition(Ty *ty)
                 s->type = STATEMENT_OPERATOR_DEFINITION;
         }
 
-        Expr *target = mkexpr(ty);
-        target->type = EXPRESSION_IDENTIFIER;
+        Expr *target = mkxpr(IDENTIFIER);
         target->identifier = f->name;
         target->module = module;
         target->start = target_start;
@@ -5555,7 +5525,7 @@ parse_operator_directive(Ty *ty)
         } else if (strcmp(assoc, "right") == 0) {
                 table_put(ty, &uops, uop, INTEGER(-p));
         } else {
-                error(ty, "expected 'left' or 'right' in operator directive");
+                die("expected 'left' or 'right' in operator directive");
         }
 
         if (T0 != TOKEN_NEWLINE) {
@@ -5611,7 +5581,7 @@ parse_let_definition(Ty *ty)
         SAVE_LC(true);
         s->target = parse_definition_lvalue(ty, LV_LET, NULL);
         if (s->target == NULL) {
-                error(ty, "failed to parse lvalue in 'let' definition");
+                die("failed to parse lvalue in 'let' definition");
         }
         LOAD_LC();
 
@@ -5771,7 +5741,7 @@ parse_expr(Ty *ty, int prec)
         );
 
         if (++ParseDepth > 256)
-                error(ty, "exceeded maximum recursion depth of 256");
+                die("exceeded maximum recursion depth of 256");
 
         //if (AllowErrors && CatchError()) {
         //        next();
@@ -5781,8 +5751,7 @@ parse_expr(Ty *ty, int prec)
 
         prefix_parse_fn *f = get_prefix_parser(ty);
         if (f == NULL) {
-                error(
-                        ty,
+                die(
                         "expected expression but found %s%s%s",
                         TERM(34),
                         token_show(ty, tok()),
@@ -5795,7 +5764,7 @@ parse_expr(Ty *ty, int prec)
         while (!should_split(ty) && prec < get_infix_prec(ty)) {
                 infix_parse_fn *f = get_infix_parser(ty);
                 if (f == NULL) {
-                        error(ty, "unexpected token after expression: %s", token_show(ty, tok()));
+                        die("unexpected token after expression: %s", token_show(ty, tok()));
                 }
                 if (
                         (
@@ -5998,8 +5967,7 @@ parse_class_definition(Ty *ty)
                 field->constraint = param.constraint;
 
                 if (param.dflt != NULL) {
-                        Expr *eql = mkexpr(ty);
-                        eql->type = EXPRESSION_EQ;
+                        Expr *eql = mkxpr(EQ);
                         eql->target = field;
                         eql->value = param.dflt;
                         field = eql;
@@ -6114,7 +6082,7 @@ parse_class_definition(Ty *ty)
                                 if (field->type != EXPRESSION_IDENTIFIER && field->type != EXPRESSION_EQ) {
                                         EStart = field->start;
                                         EEnd = field->end;
-                                        error(ty, "expected a field definition");
+                                        die("expected a field definition");
                                 }
 
                                 avP(s->tag.fields, field);
@@ -6204,7 +6172,7 @@ parse_class_definition(Ty *ty)
                 if (init->body->type != STATEMENT_BLOCK) {
                         EStart = init->start;
                         EEnd = init->end;
-                        error(ty, "non-block init() body with implicit classs parameters");
+                        die("non-block init() body with implicit classs parameters");
                 }
 
                 for (int i = 0; i < vN(init_params); ++i) {
@@ -6214,17 +6182,11 @@ parse_class_definition(Ty *ty)
                         avI(init->constraints, param->constraint, i);
                         avI(init->dflts,       param->dflt,       i);
 
-                        Expr *assignment = mkexpr(ty);
-                        assignment->type = EXPRESSION_EQ;
-                        assignment->target = mkexpr(ty);
-                        assignment->target->type = EXPRESSION_MEMBER_ACCESS;
-                        assignment->target->object = mkexpr(ty);
-                        assignment->target->object->type = EXPRESSION_IDENTIFIER;
-                        assignment->target->object->identifier = "self";
+                        Expr *assignment = mkxpr(EQ);
+                        assignment->target = mkxpr(MEMBER_ACCESS);
+                        assignment->target->object = mkid("self");
                         assignment->target->member_name = param->name;
-                        assignment->value = mkexpr(ty);
-                        assignment->value->type = EXPRESSION_IDENTIFIER;
-                        assignment->value->identifier = param->name;
+                        assignment->value = mkid(param->name);
 
                         Stmt *stmt = mkstmt(ty);
                         stmt->type = STATEMENT_EXPRESSION;
@@ -6619,6 +6581,8 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 s->doc = doc;
                 if (s->cnst) {
                         define_const(ty, s);
+                } else {
+                        DeclareDefinitionSymbols(ty, s);
                 }
                 break;
         case STATEMENT_EXPRESSION:
@@ -6867,7 +6831,7 @@ parse_ex(
                         s->class.pub = true;
                         break;
                 default:
-                        error(ty, "`pub` applied to unexpected statement: %s", ExpressionTypeName((Expr *)s));
+                        die("`pub` applied to unexpected statement: %s", ExpressionTypeName((Expr *)s));
                 }
 
                 SetNamespace(s, CurrentNamespace);
@@ -7081,12 +7045,6 @@ parse_get_stmt(Ty *ty, int prec, bool want_raw)
         return v;
 }
 
-noreturn void
-parse_fail(Ty *ty, char const *s, size_t n)
-{
-        error(ty, "%.*s", (int)n, s);
-}
-
 static Value
 pp_eval(Ty *ty, Expr *expr)
 {
@@ -7119,11 +7077,19 @@ pp_if(Ty *ty)
 
         PLOG("%sPP_IF()%s: BEGIN", TERM(96;1), TERM(0));
 
+        lex_in_pp(ty, true);
+
         for (;;) {
                 if (tokenx(0)->type == TOKEN_END) {
                         EStart = it.start;
                         EEnd = it.end;
-                        error(ty, "unterminated conditional directive");
+                        die("unterminated conditional directive");
+                }
+
+                if (tokenx(0)->type == TOKEN_ERROR) {
+                        EStart = it.start;
+                        EEnd = it.end;
+                        die(NULL);
                 }
 
                 if (tokenx(0)->type == '"') {
@@ -7178,7 +7144,7 @@ pp_if(Ty *ty)
 
                         break;
                 default:
-                        error(ty, "encountered invalid directive while parsing conditional");
+                        die("encountered invalid directive while parsing conditional");
                 }
         }
 
@@ -7214,6 +7180,8 @@ pp_if(Ty *ty)
                         token_show(ty, v_(tokens, i))
                 );
         }
+
+        lex_in_pp(ty, false);
 
         xvF(conds);
         xvF(starts);

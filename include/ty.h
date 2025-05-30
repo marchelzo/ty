@@ -18,11 +18,15 @@
 #include "tthread.h"
 #include "vec.h"
 
+#define TY_TMP_BUF_COUNT 2
+
 typedef struct ty0        TY;
 typedef struct ty         Ty;
+typedef struct ty_save    TySavePoint;
 typedef struct value      Value;
 typedef struct expression Expr;
 typedef struct statement  Stmt;
+typedef struct module     Module;
 typedef struct symbol     Symbol;
 typedef struct scope      Scope;
 typedef struct frame      Frame;
@@ -31,6 +35,8 @@ typedef struct type       Type;
 typedef struct constraint Constraint;
 typedef struct refinement Refinement;
 typedef struct type_env   TypeEnv;
+typedef struct frame      Frame;
+typedef struct table      ValueTable;
 
 typedef uint8_t   u8;
 typedef uint16_t  u16;
@@ -43,7 +49,7 @@ typedef int8_t   i8;
 typedef int16_t  i16;
 typedef int32_t  i32;
 typedef int64_t  i64;
-typedef ssize_t  isize;
+typedef int64_t  isize;
 typedef intmax_t imax;
 
 typedef vec(struct alloc *) AllocList;
@@ -68,6 +74,7 @@ typedef ValueVector         ValueStack;
 typedef vec(char)           byte_vector;
 typedef vec(int)            int_vector;
 typedef vec(Symbol *)       symbol_vector;
+typedef vec(TySavePoint *)  TySavePointVector;
 
 
 struct alloc {
@@ -140,6 +147,7 @@ enum { FT_NONE, FT_FUNC, FT_GEN };
 enum { MT_NONE, MT_INSTANCE, MT_GET, MT_SET, MT_STATIC };
 
 enum {
+        VALUE_ZERO             ,
         VALUE_FUNCTION = 1     ,
         VALUE_METHOD           ,
         VALUE_BUILTIN_FUNCTION ,
@@ -217,7 +225,10 @@ struct value {
                 Thread *thread;
                 Symbol *sym;
                 struct {
-                        void *ptr;
+                        union {
+                                Value *ref;
+                                void *ptr;
+                        };
                         void *gcptr;
                         void *extra;
                 };
@@ -251,9 +262,9 @@ struct value {
                         int name;
                 };
                 struct {
-                        char const *string;
+                        u8 const *str;
                         uint32_t bytes;
-                        char *gcstr;
+                        u8 *gcstr;
                 };
                 struct {
                         intmax_t i;
@@ -308,7 +319,7 @@ struct thread {
         TyCondVar cond;
 
         Value v;
-        uint64_t i;
+        u64 i;
         bool alive;
 };
 
@@ -333,7 +344,6 @@ struct dict {
         struct value dflt;
 };
 
-
 typedef struct target {
         struct {
                 Value *t;
@@ -341,17 +351,17 @@ typedef struct target {
         };
 } Target;
 
-struct frame;
-typedef struct frame Frame;
-
-typedef struct table ValueTable;
+typedef struct {
+        int i;
+        void *beg;
+} ScratchSave;
 
 enum { TRY_TRY, TRY_THROW, TRY_CATCH, TRY_FINALLY };
+enum { TY_SAVE_INTERNAL, TY_SAVE_USER };
 
 struct try {
         jmp_buf jb;
-        bool executing;
-        uint8_t state;
+
         int sp;
         int gc;
         int cs;
@@ -359,11 +369,21 @@ struct try {
         int ds;
         int ctxs;
         int nsp;
-        int exec_depth;
+        int ed;
+
+        ScratchSave ss;
+
+        bool executing;
+        uint8_t state;
         char *catch;
         char *finally;
         char *end;
         ValueVector defer;
+};
+
+struct ty_save {
+        u8 type;
+        byte_vector msg;
 };
 
 typedef struct ThrowCtx {
@@ -381,11 +401,6 @@ typedef struct ty0 {
 } TY;
 
 typedef struct thread_group ThreadGroup;
-
-typedef struct {
-        int i;
-        void *beg;
-} ScratchSave;
 
 typedef struct {
         char *ip;
@@ -470,7 +485,7 @@ typedef struct ty {
 
         int eval_depth;
 
-        uint64_t prng[4];
+        u64 prng[4];
 
         struct {
                 pcre2_match_context *ctx;
@@ -480,21 +495,23 @@ typedef struct ty {
 
         Arena arena;
 
+        struct { void *p; usize n; } tmp[TY_TMP_BUF_COUNT];
+
+
         struct {
                 int i;
                 vec(Arena) arenas;
         } scratch;
 
+        byte_vector err;
+        JmpBufVector jbs;
+
         char *code;
 
-        JmpBufVector jbs;
-        byte_vector err;
+        TyTDB *tdb;
+        TY *ty;
 
         TypeEnv *tenv;
-        TypeEnv *cenv;
-
-        TY *ty;
-        TyTDB *tdb;
 } Ty;
 
 typedef struct {
@@ -513,6 +530,7 @@ typedef struct {
         int missing;
         int method_missing;
         int _name_;
+        int _argc_;
         int _next_;
         int ptr;
         int question;
@@ -708,6 +726,7 @@ extern u64 TypeCheckTime;
         X(CLEAR_EXTRA),           \
         X(FIX_EXTRA),             \
         X(PUSH_ALL),              \
+        X(EXPRESSION),            \
         X(VALUE),                 \
         X(EVAL),                  \
         X(SAVE_STACK_POS),        \
@@ -850,14 +869,16 @@ enum {
 
 #define m0(x) memset(&(x), 0, sizeof (x))
 
-#define zP(...)   vm_panic(ty, __VA_ARGS__)
-#define mRE(...)  resize(__VA_ARGS__)
-#define mREu(...) resize_unchecked(__VA_ARGS__)
-#define mA(...)   gc_alloc(ty, __VA_ARGS__)
+#define zP(...)    vm_error(ty, __VA_ARGS__)
+#define zPx(...)   vm_panic(ty, __VA_ARGS__)
+
+#define mRE(...)   resize(__VA_ARGS__)
+#define mREu(...)  resize_unchecked(__VA_ARGS__)
+#define mA(...)    gc_alloc(ty, __VA_ARGS__)
 #define mA0(...)   gc_alloc0(ty, __VA_ARGS__)
-#define mAo(...)  gc_alloc_object(ty, __VA_ARGS__)
-#define mAo0(...) gc_alloc_object0(ty, __VA_ARGS__)
-#define mF(p)     gc_free(ty, p)
+#define mAo(...)   gc_alloc_object(ty, __VA_ARGS__)
+#define mAo0(...)  gc_alloc_object0(ty, __VA_ARGS__)
+#define mF(p)      gc_free(ty, p)
 
 #define amA(n)  Allocate(ty, (n))
 #define amA0(n) Allocate0(ty, (n))
@@ -867,6 +888,7 @@ enum {
 #define aclone(x) memcpy(amA(sizeof *(x)), (x), sizeof *(x))
 
 #define smA(n) AllocateScratch(ty, (n))
+#define smA0(n) AllocateScratch0(ty, (n))
 
 #define vSs(s, n)  STRING_CLONE(ty, (s), (n))
 #define vSzs(s, n) STRING_C_CLONE(ty, (s), (n))
@@ -1082,8 +1104,9 @@ NewTySavePoint(Ty *ty)
 inline static void
 ExpandScratch(Ty *ty)
 {
-#define S(x) (ty->scratch . x)
-#define SS   (&S(arenas.items)[S(i) - 1])
+#define S(x)  (ty->scratch . x)
+#define SS(i) (&S(arenas.items)[i])
+#define SSS   SS(S(i) - 1)
         if (S(i) == S(arenas.count)) {
                 ptrdiff_t cap;
 
@@ -1112,17 +1135,23 @@ inline static void *
 AllocateScratch(Ty *ty, size_t n)
 {
         for (;;) {
-                ptrdiff_t avail = SS->end - SS->beg;
-                ptrdiff_t padding = -(intptr_t)SS->beg & ((alignof (void *)) - 1);
+                ptrdiff_t avail = SSS->end - SSS->beg;
+                ptrdiff_t padding = -(intptr_t)SSS->beg & ((alignof (void *)) - 1);
 
                 if (n > avail - padding) {
                         ExpandScratch(ty);
                 } else {
-                        char *new = SS->beg + padding;
-                        SS->beg += padding + n;
+                        char *new = SSS->beg + padding;
+                        SSS->beg += padding + n;
                         return new;
                 }
         }
+}
+
+inline static void *
+AllocateScratch0(Ty *ty, size_t n)
+{
+        return memset(AllocateScratch(ty, n), 0, n);
 }
 
 inline static ScratchSave
@@ -1130,7 +1159,7 @@ SaveScratch(Ty *ty)
 {
         return (ScratchSave) {
                 .i = S(i),
-                .beg = SS->beg
+                .beg = SSS->beg
         };
 }
 
@@ -1138,20 +1167,161 @@ inline static void
 RestoreScratch(Ty *ty, ScratchSave save)
 {
         while (S(i) > save.i) {
-                SS->beg = SS->base;
+                SSS->beg = SSS->base;
                 S(i) -= 1;
         }
+
+        SSS->beg = save.beg;
 }
+
+inline static void
+ResetScratch(Ty *ty)
+{
+        RestoreScratch(
+                ty,
+                ((ScratchSave) {
+                        .i = 1,
+                        .beg = SS(0)->base
+                })
+        );
 #undef S
 #undef SS
+}
 
 #define SCRATCH_SAVE()    ScratchSave _scratch_save = SaveScratch(ty);
 #define SCRATCH_RESTORE() RestoreScratch(ty, _scratch_save);
+#define SCRATCH_RESET()   ResetScratch(ty);
 
+inline static void *
+TyEnsureTmpBuffer(Ty *ty, u32 i, usize n)
+{
+        void **p = &ty->tmp[i].p;
+        usize *cap = &ty->tmp[i].n;
+
+        if (*cap < n) {
+                *p = mrealloc(*p, n);
+                *cap = n;
+        }
+
+        return *p;
+}
+
+inline static char *
+TyTmpCString(Ty *ty, u32 i, Value val)
+{
+        usize n;
+        void const *str;
+
+        switch (val.type) {
+        case VALUE_STRING:
+                n = val.bytes;
+                str = val.str;
+                break;
+
+        case VALUE_BLOB:
+                n = vN(*val.blob);
+                str = vv(*val.blob);
+                break;
+
+        default:
+                UNREACHABLE();
+        }
+
+        char *c_str = TyEnsureTmpBuffer(ty, i, n + 1);
+
+        memcpy(c_str, str, n);
+        c_str[n] = '\0';
+
+        return c_str;
+}
+
+inline static char *
+TyNewCString(Ty *ty, Value val, bool nul_before)
+{
+        usize n;
+        void const *str;
+
+        switch (val.type) {
+        case VALUE_STRING:
+                n = val.bytes;
+                str = val.str;
+                break;
+
+        case VALUE_BLOB:
+                n = vN(*val.blob);
+                str = vv(*val.blob);
+                break;
+
+        default:
+                UNREACHABLE();
+        }
+
+        char *c_str = alloc0(n + 1 + nul_before) + nul_before;
+
+        memcpy(c_str, str, n);
+        c_str[n] = '\0';
+
+        if (nul_before) {
+                c_str[-1] = '\0';
+        }
+
+        return c_str;
+}
+
+#define TY_BUF_i(i, n) (                                                          \
+        sizeof (                                                                  \
+                struct {                                                          \
+                        _Static_assert(                                           \
+                                (i) < TY_TMP_BUF_COUNT,                           \
+                                "we don't maintain that many temporary buffers!"  \
+                        );                                                        \
+                }                                                                 \
+        ),                                                                        \
+        TyEnsureTmpBuffer(ty, (i), (n))                                           \
+)
+#define TY_BUF_A(n) TY_BUF_i(0, (n))
+#define TY_BUF_B(n) TY_BUF_i(1, (n))
+#define TY_BUF_C(n) TY_BUF_i(2, (n))
+#define TY_BUF(n)   TY_BUF_A(n)
+
+#define KB_1   1024U
+#define KB_8   (8   * KB_1)
+#define KB_256 (256 * KB_1)
+#define KB_512 (512 * KB_1)
+
+#define MB_1 (KB_1 * KB_1)
+#define MB_2 (2 * MB_1)
+#define MB_4 (2 * MB_2)
+
+#define TY_TMP_N MB_2
+#define TY_TMP() TY_BUF(TY_TMP_N)
+
+#define TY_TMP_C_STR_i(i, n) (                                                    \
+        sizeof (                                                                  \
+                struct {                                                          \
+                        _Static_assert(                                           \
+                                (i) < TY_TMP_BUF_COUNT,                           \
+                                "we don't maintain that many temporary buffers!"  \
+                        );                                                        \
+                }                                                                 \
+        ),                                                                        \
+        TyTmpCString(ty, (i), (n))                                                \
+)
+#define TY_TMP_C_STR_A(s) TY_TMP_C_STR_i(0, (s))
+#define TY_TMP_C_STR_B(s) TY_TMP_C_STR_i(1, (s))
+#define TY_TMP_C_STR TY_TMP_C_STR_A
+
+#define TY_C_STR(s) TyNewCString(ty, (s), false)
+#define TY_0_C_STR(s) TyNewCString(ty, (s), true)
 
 noreturn void
 CompileError(Ty *ty, char const *fmt, ...);
 
+noreturn void
+vm_panic(Ty *ty, char const *fmt, ...);
+
+noreturn void
+vm_error(Ty *ty, char const *fmt, ...);
 
 #define I_AM_TDB       (ty == TDB_TY)
 #define TDB            (ty->tdb)
@@ -1201,14 +1371,6 @@ tdb_start(Ty *ty);
 
 char const *GetInstructionName(unsigned char inst);
 
-inline static void
-tdb_set_trap(DebugBreakpoint *breakpoint, char *ip)
-{
-        breakpoint->ip = ip;
-        breakpoint->op = *ip;
-        *ip = (char)INSTR_TRAP_TY;
-}
-
 void
 tdb_set_break(Ty *ty, char *ip);
 
@@ -1242,13 +1404,16 @@ tdb_backtrace(Ty *ty);
 inline static char const *
 TyError(Ty *ty)
 {
-        return ty->err.items;
+        return (vN(ty->err) > 0) ? vv(ty->err) : "(no error)";
 }
 
 Ty *
 get_my_ty(void);
 
-inline static uint64_t
+Value
+this_executable(Ty *ty);
+
+inline static u64
 TyThreadCPUTime(void)
 {
 #ifdef _WIN32
@@ -1258,6 +1423,22 @@ TyThreadCPUTime(void)
 #else
         struct timespec t;
         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &t);
+        return 1000000000ULL * t.tv_sec + t.tv_nsec;
+#endif
+}
+
+inline static u64
+TyRealTime()
+{
+#ifdef _WIN32
+        LARGE_INTEGER counter;
+        LARGE_INTEGER frequency;
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        return (u64)(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
+#else
+        struct timespec t;
+        clock_gettime(CLOCK_REALTIME, &t);
         return 1000000000ULL * t.tv_sec + t.tv_nsec;
 #endif
 }

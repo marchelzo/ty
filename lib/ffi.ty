@@ -29,7 +29,7 @@ fn c::new[T](type: CType[T], count: ?Int) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
 
-pub cifs = Sync(%{})
+pub __tls::_cif_cache = nil
 
 tag Union;
 tag Struct;
@@ -43,14 +43,11 @@ fn next!(t) {
 }
 
 pub fn getCif(rt, *aTypes, nFixed: ?Int) {
+    let cifs = _cif_cache ?? (_cif_cache = %{})
     let signature = (rt, aTypes, nFixed)
-
-    sync!(cifs) {
-        if let $cif = cifs[signature] {
-            return cif
-        } else {
-            return cifs[signature] = c.cif(rt, *aTypes, nFixed: nFixed)
-        }
+    match cifs[signature] {
+        $cif => cif,
+        _    => cifs[signature] = c.cif(rt, *aTypes, nFixed=nFixed)
     }
 }
 
@@ -63,9 +60,9 @@ pub fn wrap(lib, name: String, rType: _ = nil, *aTypes: _, func-ptr?: Bool = fal
         fp = ptr::typed(fp, c.ptr)
     }
 
-    aTypes.map!(t -> type(t) == ptr.null ? t : t.ctype())
+    aTypes.map!(t -> type(t) == ptr::null ? t : t.ctype())
 
-    if type(rType) != ptr.null {
+    if type(rType) != ptr::null {
         let interface = getCif(rType.ctype(), *aTypes)
         let argStorage = [c.new(t) for t in aTypes]
 
@@ -116,7 +113,7 @@ pub fn ffi-type(t0: _) -> _ {
     }
 }
 
-pub function wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
+pub fn wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
     if not let $fp = c.dlsym(name, lib) {
         throw Err("Failed to load symbol '{name}'")
     }
@@ -150,7 +147,7 @@ pub function wrapVar[a](lib, name, nFixed, rType, *aTypes) -> _ {
     }
 }
 
-pub function iter(type, p, n) {
+pub fn iter(type, p, n) {
     let size = c.size(type)
     for i in ..n {
         yield c.load(type, p + i*size)
@@ -167,16 +164,7 @@ pub strcpy = wrap(nil, 'strcpy', c.ptr, c.ptr, c.ptr)
 fn _syscall(nr: Int, *args: Any) -> Int { -1 }
 pub syscall: (typeof _syscall) = wrapVar(nil, 'syscall', 1, c.long, c.long)
 
-pub function cstr(s) {
-    let p = c.alloc(s.size() + 1)
-
-    memcpy(p, s, s.size())
-    c.store(c.char, p + s.size(), 0)
-
-    return p
-}
-
-function nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
+fn nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
     let parts = []
 
     let ignore = "
@@ -283,7 +271,7 @@ function nexttype(array-to-ptr? = true, has-name?: ?Bool = nil) {
     return t, parts(-1).or-else(nil)
 }
 
-function nextproto() {
+fn nextproto() {
         // (
         next()
 
@@ -310,18 +298,18 @@ use LexState = {
     }
 }
 
-function lspan(s1: LexState, s2: LexState = lex.state()) {
+fn lspan(s1: LexState, s2: LexState = lex.state()) {
     let b1 = s1.position.byte
     let b2 = s2.position.byte
     s1.source.bsplice(b1, b2)
 }
 
-function lstep(s1) {
+fn lstep(s1) {
     let s2 = lex.state()
     return (s2, lspan(s1, s2))
 }
 
-function fun() {
+fn fun() {
     let public = peek().type == 'pub'
     if public { next() }
 
@@ -536,9 +524,9 @@ fn strct() {
 
     let init = ty.Func(
         name: 'init',
-        params: [ty.Param(name: '<p>', default: ty.Nil), ty.Kwargs('kws')],
+        params: [ty.Param(name: '<p>', default: ty.Nil, constraint: ty.Any), ty.Kwargs('kws')],
         body: ty.Multi([
-            $$[self.`<p>` = `<p>` ?? c.new($$ctype) $$],
+            $$[self.`<p>` = cast(`<p>`) ?? c.new($$ctype) $$],
             *[
                 $$[
                     if $${name} in kws {
@@ -616,19 +604,19 @@ fn strct() {
             let pmem = (off == 0) ? $$[
                 $${c.pmember}($$ctype, self.`<p>`, $${i})
             $$] : $$[
-                $${ptr.typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off
+                $${ptr::typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off
             $$]
 
             let mem = (off == 0) ? $$[
                 $${c.member}($$ctype, self.`<p>`, $${i})
             $$] : $$[
-                $${c.load}($$t, $${ptr.typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off)
+                $${c.load}($$t, $${ptr::typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off)
             $$]
 
             let store = (off == 0) ? $$[
                 $${c.member}($$ctype, self.`<p>`, $${i}, `<member>`)
             $$] : $$[
-                $${c.store}($$t, $${ptr.typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off, `<member>`)
+                $${c.store}($$t, $${ptr::typed}($${c.pmember}($$ctype, self.`<p>`, $${i}), $${c.u8}) + $$off, `<member>`)
             $$]
 
             let getter-body = $$[
@@ -742,7 +730,7 @@ fn strct() {
     ])
 }
 
-function clos() {
+fn clos() {
     // closure
     next()
 
@@ -927,7 +915,7 @@ pub macro struct! {
                 )
             },
             _ => {
-                structArgs.push(ty.Arg(arg: $$[ do { let t = $$item; ($${type}(t) == ptr.null) ? t : t.ctype() } $$]))
+                structArgs.push(ty.Arg(arg: $$[ do { let t = $$item; ($${type}(t) == ptr::null) ? t : t.ctype() } $$]))
                 methods.push(
                     ty.Func(
                         name: name,

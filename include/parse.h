@@ -36,7 +36,7 @@ void
 parse_next(Ty *ty);
 
 noreturn void
-parse_fail(Ty *ty, char const *s, size_t n);
+ParseError(Ty *ty, char const *fmt, ...);
 
 void
 parse_sync_lex(Ty *ty);

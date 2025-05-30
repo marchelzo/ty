@@ -25,8 +25,8 @@ typedef struct {
 
 u32 TYPES_OFF = 0;
 
-#define ENFORCE (!AllowErrors && TYPES_OFF == 0)
-#define ENABLED (CheckConstraints && !TY_IS_READY)
+#define ENFORCE (!AllowErrors && TYPES_OFF == 0 && !DEBUGGING)
+#define ENABLED (CheckConstraints)
 
 #define xDDD() if (!ENABLED) { return NULL; }
 #define xDDDD() if (!ENABLED) { return true; }
@@ -92,9 +92,6 @@ static int ConvertUnbound = 0;
 
 static bool
 IsSolved(Type const *t0);
-
-static Expr *
-FindMethod(Class const *c, char const *name);
 
 static Type *
 TypeOf2Op(Ty *ty, int op, Type *t0, Type *t1);
@@ -297,7 +294,7 @@ mkcstr(Ty *ty, Value const *v)
         if (v != NULL && v->type == VALUE_STRING) {
                 char *s = amA(v->bytes + 1);
 
-                memcpy(s, v->string, v->bytes);
+                memcpy(s, v->str, v->bytes);
                 s[v->bytes] = '\0';
 
                 return s;
@@ -917,7 +914,7 @@ static Type *
         va_list ap;
         va_start(ap, class);
 
-        t0->class = class_get_class(ty, class);
+        t0->class = class_get(ty, class);
 
         while ((t1 = va_arg(ap, Type *)) != NULL) {
                 avP(t0->args, t1);
@@ -2046,27 +2043,6 @@ RecordElem(Type *t0, int i)
         return v__(t0->types, i);
 }
 
-static Expr *
-FieldIdentifier(Expr const *field)
-{
-        if (field == NULL) {
-                return NULL;
-        }
-
-        if (field->type == EXPRESSION_IDENTIFIER) {
-                return (Expr *)field;
-        }
-
-        if (
-                field->type == EXPRESSION_EQ
-             && field->target->type == EXPRESSION_IDENTIFIER
-        ) {
-                return field->target;
-        }
-
-        return NULL;
-}
-
 static bool
 IsConcrete_(Type *t0)
 {
@@ -2245,7 +2221,7 @@ UnionOf(Ty *ty, Type *t0)
                 break;
 
         case TYPE_OBJECT:
-                c = class_get_class(ty, ClassOfType(ty, t0));
+                c = class_get(ty, ClassOfType(ty, t0));
                 for (int i = 0; i < vN(c->fields.values); ++i) {
                         Value const *field = v_(c->fields.values, i);
                         unify2(
@@ -2681,7 +2657,7 @@ type_function(Ty *ty, Expr const *e, bool tmp)
         if (e->return_type != NULL) {
                 Type *rt = SeqToList(type_resolve(ty, e->return_type));
                 if (e->class > -1) {
-                        Class *class = class_get_class(ty, e->class);
+                        Class *class = class_get(ty, e->class);
                         rt = SolveMemberAccess(ty, class->object_type, rt);
                 }
                 rt = Inst(ty, rt, &bounded, &bounds);
@@ -3368,7 +3344,7 @@ xtrace(Ty *ty, Type const *t0, byte_vector *out, int depth)
                         depth * 4,
                         "",
                         TERM(95),
-                        expr->file != NULL ? expr->file : "(unknown)",
+                        GetExpressionModule(expr),
                         TERM(0),
                         TERM(92),
                         expr->start.line + 1,
@@ -4748,7 +4724,7 @@ TryProgress(Ty *ty)
                                 dont_printf(
                                         "%"PRIu64" %s:%d: %s%s%s\n",
                                         c->time,
-                                        c->src->file,
+                                        GetExpressionModule(c->src),
                                         c->src->start.line + 1,
                                         TERM(92),
                                         intern_entry(&xD.b_ops, c->op)->name,
@@ -4791,7 +4767,7 @@ ToRecordLikeType(Ty *ty, Type *t0)
                 break;
 
         case TYPE_TAG:
-                t1 = class_get_class(ty, CLASS_TAG)->object_type;
+                t1 = class_get(ty, CLASS_TAG)->object_type;
                 break;
 
         case TYPE_INTEGER:
@@ -4799,11 +4775,11 @@ ToRecordLikeType(Ty *ty, Type *t0)
                 break;
 
         case TYPE_FUNCTION:
-                t1 = class_get_class(ty, CLASS_FUNCTION)->object_type;
+                t1 = class_get(ty, CLASS_FUNCTION)->object_type;
                 break;
 
         default:
-                t1 = class_get_class(ty, CLASS_OBJECT)->object_type;
+                t1 = class_get(ty, CLASS_OBJECT)->object_type;
                 break;
         }
 
@@ -5459,131 +5435,6 @@ type_match_stmt(Ty *ty, Stmt const *stmt)
         return t0;
 }
 
-static Expr *
-FindMethod_(expression_vector const *ms, char const *name)
-{
-        for (int i = 0; i < vN(*ms); ++i) {
-                if (strcmp(name, v__(*ms, i)->name) == 0) {
-                        return v__(*ms, i);
-                }
-        }
-
-        return NULL;
-}
-
-static Expr *
-FindGetter(Class const *c, char const *name)
-{
-        while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethod_(&c->def->class.getters, name);
-                if (m != NULL) {
-                        return m;
-                }
-                for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindGetter(v__(c->traits, i), name);
-                        if (m != NULL) {
-                                return m;
-                        }
-                }
-                c = c->super;
-        }
-
-        return NULL;
-}
-
-static Expr *
-FindSetter(Class const *c, char const *name)
-{
-        while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethod_(&c->def->class.setters, name);
-                if (m != NULL) {
-                        return m;
-                }
-                for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindSetter(v__(c->traits, i), name);
-                        if (m != NULL) {
-                                return m;
-                        }
-                }
-                c = c->super;
-        }
-
-        return NULL;
-}
-
-static Expr *
-FindMethod(Class const *c, char const *name)
-{
-        while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethod_(&c->def->class.methods, name);
-                if (m != NULL) {
-                        return m;
-                }
-                for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindMethod(v__(c->traits, i), name);
-                        if (m != NULL) {
-                                return m;
-                        }
-                }
-                c = c->super;
-        }
-
-        return NULL;
-}
-
-static Expr *
-FindStatic(Class const *c, char const *name)
-{
-        while (c != NULL && c->def != NULL) {
-                Expr *m = FindMethod_(&c->def->class.statics, name);
-                if (m != NULL) {
-                        return m;
-                }
-                for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindStatic(v__(c->traits, i), name);
-                        if (m != NULL) {
-                                return m;
-                        }
-                }
-                c = c->super;
-        }
-
-        return NULL;
-}
-
-static Expr *
-FindField_(expression_vector const *fs, char const *name)
-{
-        for (int i = 0; i < vN(*fs); ++i) {
-                Expr *field = v__(*fs, i);
-                if (strcmp(FieldIdentifier(field)->identifier, name) == 0) {
-                        return field;
-                }
-        }
-
-        return NULL;
-}
-
-static Expr *
-FindField(Class const *c, char const *name)
-{
-        while (c != NULL && c->def != NULL) {
-                Expr *m = FindField_(&c->def->class.fields, name);
-                if (m != NULL) {
-                        return m;
-                }
-                for (int i = 0; i < vN(c->traits); ++i) {
-                        m = FindField(v__(c->traits, i), name);
-                        if (m != NULL) {
-                                return m;
-                        }
-                }
-                c = c->super;
-        }
-
-        return NULL;
-}
-
 static Type *
 Inst0(
         Ty *ty,
@@ -5848,9 +5699,9 @@ type_member_access_t_(Ty *ty, Type const *t0, char const *name, bool strict)
                 }
 
                 if (t0->type == TYPE_CLASS) {
-                        t0 = class_get_class(ty, CLASS_CLASS)->object_type;
+                        t0 = class_get(ty, CLASS_CLASS)->object_type;
                 } else {
-                        t0 = class_get_class(ty, CLASS_TAG)->object_type;
+                        t0 = class_get(ty, CLASS_TAG)->object_type;
                 }
                 /* fallthrough */
 
@@ -6059,7 +5910,7 @@ type_generator(Ty *ty, Expr const *e)
 
         Type *t0 = NewType(ty, TYPE_OBJECT);
 
-        t0->class = class_get_class(ty, CLASS_GENERATOR);
+        t0->class = class_get(ty, CLASS_GENERATOR);
         avP(t0->args, TypeArg(e->_type->rt, 0));
 
         return t0;
@@ -6846,7 +6697,7 @@ type_dict(Ty *ty, Expr const *e)
         }
 
         Type *t = NewType(ty,  TYPE_OBJECT);
-        t->class = class_get_class(ty, CLASS_DICT);
+        t->class = class_get(ty, CLASS_DICT);
         avP(t->args, Relax(t0));
         avP(t->args, Relax(t1));
 
@@ -7195,7 +7046,7 @@ type_resolve(Ty *ty, Expr const *e)
                 }
                 if (e->symbol->class != -1) {
                         t0 = NewType(ty, TYPE_OBJECT);
-                        t0->class = class_get_class(ty, e->symbol->class);
+                        t0->class = class_get(ty, e->symbol->class);
                 } else if (e->symbol->tag != -1) {
                         t0 = e->symbol->type;
                 } else if (!IsBottom(e->symbol->type) && !IsHole(e->symbol->type)) {
@@ -7391,7 +7242,7 @@ type_resolve(Ty *ty, Expr const *e)
 
         case EXPRESSION_ARRAY:
                 t0 = NewType(ty, TYPE_OBJECT);
-                t0->class = class_get_class(ty, CLASS_ARRAY);
+                t0->class = class_get(ty, CLASS_ARRAY);
                 avP(
                         t0->args,
                         vN(e->elements) == 0 ? NULL : type_resolve(
@@ -7591,22 +7442,32 @@ type_show(Ty *ty, Type const *t0)
 
         switch (TypeType(t0)) {
         case TYPE_OBJECT:
-                if (t0->concrete) {
-                        dump(&buf, "%s", TERM(92;1));
+                if (t0->class->i < CLASS_BUILTIN_END) {
+                        dump(
+                                &buf,
+                                "%s%s%s",
+                                TERM(92;1),
+                                t0->class->name,
+                                TERM(0)
+
+                        );
+                } else if (IsTagged(t0)) {
+                        dump(
+                                &buf,
+                                "%s%s%s",
+                                TERM(38:2:150:173:101),
+                                t0->class->name,
+                                TERM(0)
+                        );
+                } else {
+                        dump(
+                                &buf,
+                                "%s%s%s",
+                                TERM(38:2:205:96:137;1),
+                                t0->class->name,
+                                TERM(0)
+                        );
                 }
-                switch (t0->class->i) {
-                case CLASS_TOP:     dump(&buf, "%sAny%s",    TERM(93;1), TERM(0));                  break;
-                case CLASS_INT:     dump(&buf, "%sInt%s",    TERM(93;1), TERM(0));                  break;
-                case CLASS_FLOAT:   dump(&buf, "%sFloat%s",  TERM(93;1), TERM(0));                  break;
-                case CLASS_STRING:  dump(&buf, "%sString%s", TERM(93;1), TERM(0));                  break;
-                case CLASS_BOOL:    dump(&buf, "%sBool%s",   TERM(93;1), TERM(0));                  break;
-                case CLASS_BLOB:    dump(&buf, "%sBlob%s",   TERM(93;1), TERM(0));                  break;
-                case CLASS_ARRAY:   dump(&buf, "%sArray%s",  TERM(93;1), TERM(0));                  break;
-                case CLASS_DICT:    dump(&buf, "%sDict%s",   TERM(93;1), TERM(0));                  break;
-                case CLASS_NIL:     dump(&buf, "%snil%s",    TERM(93;1), TERM(0));                  break;
-                default:            dump(&buf, "%s%s%s",     TERM(96;1), t0->class->name, TERM(0)); break;
-                }
-                dump(&buf, "%s", TERM(0));
                 if (vN(t0->args) > 0) {
                         dump(&buf, "[");
                         for (int i = 0; i < vN(t0->args); ++i) {
@@ -8962,7 +8823,8 @@ TypeCheck(Ty *ty, Type *t0, Value const *v)
         }
 
         if (v->type == VALUE_NIL) {
-                return type_check_x(ty, t0, NIL_TYPE, false);
+                return (TypeType(t0) == TYPE_VARIABLE)
+                    || type_check_x(ty, t0, NIL_TYPE, false);
         }
 
         switch (t0->type) {
@@ -9289,7 +9151,7 @@ static Class *
 TyTypeClass(Ty *ty, Value const *v)
 {
         if (v->type == VALUE_CLASS) {
-                return class_get_class(ty, v->class);
+                return class_get(ty, v->class);
         } else if (
                 v->type == VALUE_TYPE
              && v->ptr != NULL
@@ -9355,7 +9217,7 @@ type_from_ty(Ty *ty, Value const *v)
         }
 
         if (v->type == VALUE_CLASS) {
-                return class_get_class(ty, v->class)->object_type;
+                return class_get(ty, v->class)->object_type;
         }
 
         Value inner = unwrap(ty, v);

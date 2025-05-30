@@ -28,6 +28,12 @@ T(int i)
         return v__(traits, i);
 }
 
+static void
+finalize(Ty *ty, Class *c);
+
+static void
+really_finalize(Ty *ty, Class *c);
+
 static char const *BuiltinClassNames[] = {
         [CLASS_ARRAY]        = "Array",
         [CLASS_BOOL]         = "Bool",
@@ -83,7 +89,7 @@ ClassImplementsTrait(Class const *c, int ti)
 }
 
 Class *
-class_get_class(Ty *ty, int class)
+class_get(Ty *ty, int class)
 {
         return C(class);
 }
@@ -168,23 +174,6 @@ class_add_field(Ty *ty, int class, char const *name, Expr *t, Expr *dflt)
                 name,
                 TPTR(t, dflt)
         );
-}
-
-static void
-finalize(Ty *ty, Class *c)
-{
-        Value *f = itable_lookup(ty, &c->methods, NAMES._free_);
-        if (f != NULL) {
-                c->finalizer = *f;
-        }
-
-        for (int i = 0; i < vN(c->traits); ++i) {
-                Class *t = v__(c->traits, i);
-                //itable_copy_weak(ty, &c->methods, &t->methods);
-                itable_copy_weak(ty, &c->getters, &t->getters);
-        }
-
-        c->final = true;
 }
 
 void
@@ -298,8 +287,8 @@ class_lookup_setter(Ty *ty, int class, char const *name, unsigned long h)
         return class_lookup_setter_i(ty, class, e->id);
 }
 
-static bool log = false;
-//#define pp(...)  log && printf(__VA_ARGS__)
+static bool log = true;
+//#define pp(...)  log && printf("  " __VA_ARGS__)
 #define pp(...)  0
 
 inline static void
@@ -336,46 +325,36 @@ qget(Ty *ty, ClassVector *cq, u32 *i, u32 j)
         return v__(*cq, i0);
 }
 
-#define LOOKUP_IMPL_FOR(name, what)                                   \
-Value *                                                               \
-class_lookup_##name##_i(Ty *ty, int class, int id)                    \
-{                                                                     \
-        Class *c = C(class);                                          \
-        Value *v = NULL;                                              \
-                                                                      \
-        SCRATCH_SAVE();                                               \
-                                                                      \
-        u32 i = 0;                                                    \
-        u32 j = 0;                                                    \
-        ClassVector sq = {0};                                         \
-                                                                      \
-        do {                                                          \
-                if ((v = itable_lookup(ty, &c->what, id)) != NULL) {  \
-                        break;                                        \
-                }                                                     \
-                                                                      \
-                if (c->super != NULL) {                               \
-                        qput(ty, &sq, i, &j, c->super);               \
-                }                                                     \
-                                                                      \
-                for (u32 t = 0; t < vN(c->traits); ++t) {             \
-                        qput(ty, &sq, i, &j, v__(c->traits, t));      \
-                }                                                     \
-        } while ((c = qget(ty, &sq, &i, j)) != NULL);                 \
-                                                                      \
-        SCRATCH_RESTORE();                                            \
-                                                                      \
-        if (v != NULL && i > 0) {                                     \
-                itable_add(ty, &c->what, id, *v);                     \
-        }                                                             \
-                                                                      \
-        return v;                                                     \
-}                                                                     \
+static void
+class_resolve_all(Ty *ty, int class)
+{
+        Class *c0 = C(class);
+        Class *c  = C(class);
 
-LOOKUP_IMPL_FOR(method, methods);
-LOOKUP_IMPL_FOR(static, statics);
-LOOKUP_IMPL_FOR(getter, getters);
-LOOKUP_IMPL_FOR(setter, setters);
+        SCRATCH_SAVE();
+
+        u32 i = 0;
+        u32 j = 0;
+        ClassVector sq = {0};
+
+        do {
+                if (c->super != NULL) {
+                        qput(ty, &sq, i, &j, c->super);
+                }
+                for (u32 t = 0; t < vN(c->traits); ++t) {
+                        qput(ty, &sq, i, &j, v__(c->traits, t));
+                }
+                if (c != c0) {
+                        finalize(ty, c);
+                        itable_copy_weak(ty, &c0->methods, &c->methods);
+                        itable_copy_weak(ty, &c0->getters, &c->getters);
+                        itable_copy_weak(ty, &c0->setters, &c->setters);
+                        itable_copy_weak(ty, &c0->statics, &c->statics);
+                }
+        } while ((c = qget(ty, &sq, &i, j)) != NULL);
+
+        SCRATCH_RESTORE();
+}
 
 Value *
 class_lookup_method(Ty *ty, int class, char const *name, unsigned long h)
@@ -612,10 +591,198 @@ class_finalize_all(Ty *ty)
 {
         for (int i = 0; i < vN(classes); ++i) {
                 Class *c = C(i);
+                if  (c->final && !c->really_final) {
+                        really_finalize(ty, c);
+                }
                 if (!c->final) {
                         finalize(ty, c);
                 }
         }
 }
+
+Expr *
+FieldIdentifier(Expr const *field)
+{
+        if (field == NULL) {
+                return NULL;
+        }
+
+        if (field->type == EXPRESSION_IDENTIFIER) {
+                return (Expr *)field;
+        }
+
+        if (
+                field->type == EXPRESSION_EQ
+             && field->target->type == EXPRESSION_IDENTIFIER
+        ) {
+                return field->target;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindMethodImmediate(expression_vector const *ms, char const *name)
+{
+        for (int i = 0; i < vN(*ms); ++i) {
+                if (strcmp(name, v__(*ms, i)->name) == 0) {
+                        return v__(*ms, i);
+                }
+        }
+
+        return NULL;
+}
+
+Expr *
+FindGetter(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.getters, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindGetter(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindSetter(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.setters, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindSetter(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindMethod(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.methods, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindMethod(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindStatic(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindMethodImmediate(&c->def->class.statics, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindStatic(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+Expr *
+FindFieldImmediate(expression_vector const *fs, char const *name)
+{
+        for (int i = 0; i < vN(*fs); ++i) {
+                Expr *field = v__(*fs, i);
+                if (strcmp(FieldIdentifier(field)->identifier, name) == 0) {
+                        return field;
+                }
+        }
+
+        return NULL;
+}
+
+Expr *
+FindField(Class const *c, char const *name)
+{
+        while (c != NULL && c->def != NULL) {
+                Expr *m = FindFieldImmediate(&c->def->class.fields, name);
+                if (m != NULL) {
+                        return m;
+                }
+                for (int i = 0; i < vN(c->traits); ++i) {
+                        m = FindField(v__(c->traits, i), name);
+                        if (m != NULL) {
+                                return m;
+                        }
+                }
+                c = c->super;
+        }
+
+        return NULL;
+}
+
+inline static void
+eliminate_refs(struct itable *t)
+{
+        for (u32 i = 0; i < vN(t->values); ++i) {
+                Value *v = v_(t->values, i);
+                if (v->type == VALUE_REF) {
+                        *v = *v->ref;
+                }
+        }
+}
+
+static void
+really_finalize(Ty *ty, Class *c)
+{
+        eliminate_refs(&c->statics);
+        eliminate_refs(&c->methods);
+        eliminate_refs(&c->getters);
+        eliminate_refs(&c->setters);
+        c->really_final = true;
+}
+
+static void
+finalize(Ty *ty, Class *c)
+{
+        if (c->final) {
+                return;
+        }
+
+        Value *f = itable_lookup(ty, &c->methods, NAMES._free_);
+        if (f != NULL) {
+                c->finalizer = *f;
+        }
+
+        class_resolve_all(ty, c->i);
+
+        c->final = true;
+}
+
 
 /* vim: set sts=8 sw=8 expandtab: */

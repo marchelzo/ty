@@ -15,4 +15,7 @@ get_blob_method_i(int);
 int
 blob_get_completions(Ty *ty, char const *prefix, char **out, int max);
 
+Value
+blob_get(Ty *ty, Value *blob, int argc, Value *kwargs);
+
 #endif

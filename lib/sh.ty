@@ -1,6 +1,6 @@
 import os
-import time (utime)
-import errno (ETIMEDOUT)
+import time (now)
+import errno (ETIMEDOUT, EINTR)
 
 #|if __defined__(os::SIGKILL)
 let KILL_SIG = os.SIGKILL
@@ -48,41 +48,46 @@ pub function sh(
 
     os.close(p.stdin)
 
-    let start = utime()
-    let remainingMs = timeoutMs ?? -1
+    let deadline = match timeoutMs {
+        -1 or nil => nil,
+        n         => now() + (n / 1.0e3)
+    }
 
     let timedOut = false
 
+    let pfds-in = [
+        (p.stdout, os::POLLIN, out),
+        (p.stderr, os::POLLIN, err) if p.stderr != p.stdout
+    ]
+
+    let pfds-out = []
+
 #|if __apple__ || __linux__
     while true {
-        if timeoutMs != nil && remainingMs < 0 {
+        let timeout = deadline && (deadline - now())
+
+        if timeout && timeout <= 1.0e-3 {
             os.kill(-p.pid, signal)
             timedOut = true
             break
         }
 
-        let pfds = [
-            {fd: p.stdout, events: os.POLLIN},
-            {fd: p.stderr, events: os.POLLIN} if p.stderr != p.stdout
-        ]
+        let n = os.poll(pfds-in, pfds-out, timeout)
 
-        let n = os.poll(pfds, remainingMs)
+        continue if (n == 0) || (n == EINTR)
 
-        if timeoutMs != nil {
-            remainingMs = timeoutMs - (utime() - start) / 1000
+        let stop = (n < 0)
+
+        for (fd, ev, buf) in pfds-out {
+            if ev & os.POLLIN {
+                os.read(fd, buf, 4096)
+            }
+            if ev & (os.POLLERR | os.POLLHUP) {
+                stop = true
+            }
         }
 
-        if pfds.len() > 1 && (pfds[1].revents & os.POLLIN) {
-            os.read(p.stderr, err, 4096)
-        }
-
-        if pfds[0].revents & os.POLLIN {
-            os.read(p.stdout, out, 4096)
-        }
-
-        if pfds[0].revents & (os.POLLERR | os.POLLHUP) {
-            break
-        }
+        break if stop
     }
 
     os.close(p.stdout)

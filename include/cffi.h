@@ -30,6 +30,9 @@ struct value
 cffi_free(Ty *ty, int argc, struct value *kwargs);
 
 struct value
+cffi_auto(Ty *ty, int argc, struct value *kwargs);
+
+struct value
 cffi_addr(Ty *ty, int argc, struct value *kwargs);
 
 struct value
@@ -70,6 +73,9 @@ cffi_blob(Ty *ty, int argc, struct value *kwargs);
 
 struct value
 cffi_store(Ty *ty, int argc, struct value *kwargs);
+
+struct value
+cffi_c_str(Ty *ty, int argc, struct value *kwargs);
 
 struct value
 cffi_str(Ty *ty, int argc, struct value *kwargs);

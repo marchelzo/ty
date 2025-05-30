@@ -4,6 +4,8 @@ import help (pretty-print, pretty)
 import readln (readln)
 import tdb
 import term
+import time (utime)
+import math (log10)
 import ty
 
 pub macro Source   = 1
@@ -46,7 +48,7 @@ let groups = %{
         match     else     with   import    break  pub
         continue  return   macro  where     not    throw
     ',
-    'yellow': 'class trait tag use',
+    'yellow': 'as class tag trait use',
     'green': 'fun string " f-string',
     'blue': 'type',
     'blue2': 'typeof',
@@ -65,7 +67,7 @@ function color-and-break(module: String) -> [(Int, String)] {
 
     let tokens = tokens.remove!(nil).map!(t -> match t {
         {id, end, *} and source[end.byte] == '(' => do { let x: _ = t; ({*x, type: 'fun'}) },
-        {id: /^[A-Z]\w*[a-z]\w*$/, *}          => do { let x: _ = t; ({*x, type: 'type'}) },
+        {id: /^[A-Z]\w*[a-z]\w*$/, *}            => do { let x: _ = t; ({*x, type: 'type'}) },
         _ => t
     })
 
@@ -110,76 +112,67 @@ let stop-cond = nil
 let step = nil
 let current-line = -1
 let current-mode = Source
+let current-range = 0..1
 let expr-span = nil
 let depth = 0
+let module: String = ''
+
+let keybinds = %{
+    '<C-u>': fn (h, w) {
+        if module {
+            current-range -= (h / 4)
+            print-source(module, current-range)
+        }
+    },
+    '<C-u>': fn (h, w) {
+        if module {
+            current-range += (h / 4)
+            print-source(module, current-range)
+        }
+    },
+}
+
+let readln = readln@(_, keybinds=keybinds, erase=false, **)
 
 tdb.hook = fn hook() {
     let state = tdb.state()
 
-    let (H, W) = term::size(1)
-
     let { mod, file, expr, prog
         , insn, ip, fp, sp, func } = state
 
-    if prog == nil {
-        tdb.over()
+    if not let ty.src $~> {start, end, *} = expr {
+        step()
         return
     }
+
+    if stop-cond != nil && !stop-cond({*state, start, end}) {
+        step()
+        return
+    }
+
+    expr-span    = (start.line == end.line) ? (start.col, end.col) : nil
+    current-line = start.line
+    stop-cond    = nil
+
+    let (H, W) = term::size(1)
 
     depth += 1
     defer depth -= 1
 
-    fn print-source(range: ?Range = nil) {
-        let lines = color-and-break(mod)
-
-        let range = (range ?? current-line.range(-(H/3), H/2)).clamp(0, #lines)
-         
-        print("\x1b[2J\x1b[H", :flush)
-        print(chalk"[yellow]File:[/] [blue]{file}[/]")
-
-        try {
-            for (i, chalk::Text@(_, chalk) ~> source-line) in lines[range] {
-                let highlight = text -> chalk"[bright yellow bold]{text}[/]"
-                let margin = (i == current-line)
-                           ? "     --> {i + 1:6} |" >> highlight
-                           : "         {i + 1:6} |"
-                if i == current-line {
-                    if expr-span != nil {
-                        source-line = source-line.style-span(expr-span, 'b u.-#7ead85')
-                    }
-                    source-line = chalk"[bg-#3c3836]{source-line:-100}[/]"
-                }
-                print(chalk"{margin} {source-line}")
+    match current-mode {
+        Source => {
+            if current-line not in current-range {
+                current-range = current-line.range(-(H/3), H/2)
             }
+            print-source(mod, current-range, state)
+        },
 
-            print(chalk"[yellow]Current instruction:[/] [blue]{insn}[/]")
-        } catch chalk::ChalkError(e) {
-            print(chalk"[bright red b]chalk error[/]: {pretty(e)}")
+        Bytecode => {
+            tdb.list()
         }
     }
 
-    if (expr != nil) and let {start, end, *} = ty.src(expr) {
-        if stop-cond != nil && !stop-cond({*state, start, end}) {
-            step()
-            return
-        }
-
-        expr-span = (start.line == end.line) ? (start.col, end.col) : nil
-        current-line = start.line
-        stop-cond = nil
-
-        match current-mode {
-            Source => {
-                print-source()
-            },
-
-            Bytecode => {
-                tdb.list()
-            }
-        }
-    }
-
-    while match readln("(tdb)[{depth}] ", !:erase) {
+    while match readln("(tdb)[{depth}] ") {
         /^p (.*)$/ => match tdb.eval($1) {
             Err(msg) => print(msg),
             Ok(val)  => pretty-print(val)
@@ -191,29 +184,22 @@ tdb.hook = fn hook() {
         },
 
         /^x(?:\/(\d+))?/ => {
-            let stack = tdb.stack()
-            let n = int($1) ?? min(32, #stack)
+            let max = int($1) ?? 32
+            let n = 0
 
-            if #stack == 0 {
-                print(chalk"[blue](empty stack)[/]")
-                continue
+            while let Some(x) = tdb.stack(n++) {
+                print("  {n:3}   {pretty(x, width=W - 8, oneline=true)}")
             }
 
-            print("Stack [{#stack}]: TOP")
-
-            for match (1...n).map(i -> stack(-i)) {
-                Some(x) => {
-                    print('        ', end='')
-                    print(x)
-                },
-
-                _ => break
+            if n == 0 {
+                print(chalk"[blue](empty stack)[/]")
+                continue
             }
         },
 
         'l' => {
             if prog != nil {
-                print-source()
+                print-source(mod, current-range, state)
                 current-mode = Source
             }
         },
@@ -222,7 +208,7 @@ tdb.hook = fn hook() {
             if prog != nil {
                 let lo = int($1) - 1
                 let hi = int($2 || (lo + 20)) - 1
-                print-source(lo...hi)
+                print-source(mod, lo...hi, state)
                 current-mode = Source
             }
         }
@@ -295,4 +281,43 @@ tdb.hook = fn hook() {
     }
 
     step()
+
+    return nil
 }
+
+fn print-source(module: String, range: Range, state: _) {
+    let lines = color-and-break(module)
+    let range = range.clamp(0, #lines)
+
+    let buf = Blob()
+    let put = fn (x) {
+        buf.push(str(x))
+        buf.push('\n')
+    }
+
+    print("\x1b[2J\x1b[H", :flush)
+    put(chalk"[yellow]File:[/] [blue]{state.file}[/]")
+
+    let ndigit = int(log10(range.high())) + 1
+
+    try {
+        for (i, chalk::Text@(_, chalk) ~> source-line) in lines[range] {
+            let highlight = text -> chalk"[bright yellow bold]{text}[/]"
+            let margin = (i == current-line)
+                       ? "     --> {i + 1:{ndigit}} |" >> highlight
+                       : "         {i + 1:{ndigit}} |"
+            if i == current-line {
+                if expr-span != nil {
+                    source-line = source-line.style-span(expr-span, 'b u.-#7ead85')
+                }
+                source-line = chalk"[bg-#3c3836]{source-line:-100}[/]"
+            }
+            put(chalk"{margin} {source-line}")
+        }
+        put(chalk"[yellow]Current instruction:[/] [blue]{state.insn}[/]")
+        print(buf.str!(), end='')
+    } catch chalk::ChalkError(e) {
+        print(chalk"[bright red b]chalk error[/]: {pretty(e)}")
+    }
+}
+

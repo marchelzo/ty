@@ -48,7 +48,7 @@ struct expr_list {
 struct import {
         bool pub;
         char const *name;
-        Scope *scope;
+        Module *mod;
 };
 
 typedef vec(struct import) import_vector;
@@ -162,8 +162,7 @@ typedef struct compiler_state {
         Scope *active;
         Scope *pscope;
 
-        char const *module_name;
-        char const *module_path;
+        Module *module;
 
         Location start;
         Location end;
@@ -252,6 +251,9 @@ compiler_render_template(Ty *ty, Expr *);
 
 bool
 compiler_import_module(Ty *ty, Stmt const *);
+
+void
+DeclareDefinitionSymbols(Ty *ty, Stmt *stmt);
 
 void
 define_macro(Ty *ty, Stmt *, bool fun);
@@ -387,13 +389,16 @@ void *
 CompilerPushContext(Ty *ty, void const *ctx);
 
 char const *
-GetExpressionModule(Ty *ty, Expr const *e);
+GetExpressionModule(Expr const *e);
 
 bool
 CompilerGetModuleTokens(Ty *ty, TokenVector *out, char const *mod);
 
 char const *
 CompilerGetModuleSource(Ty *ty, char const *mod);
+
+Module *
+CompilerCurrentModule(Ty *ty);
 
 int
 Expr2Op(Expr const *e);

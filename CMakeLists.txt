@@ -158,10 +158,14 @@ target_compile_options(${_tgt_ty_interface}
       -Wno-switch
       -Wno-unused-value
       -Wno-unused-function
+      -Wno-multichar
+      -Wno-trigraphs
     >
     $<$<C_COMPILER_ID:AppleClang>:
       -Weverything
       -Wno-string-plus-int
+      -Wno-multichar
+      -Wno-trigraphs
       -mcpu=native
       -flto
       -ferror-limit=3
@@ -169,6 +173,8 @@ target_compile_options(${_tgt_ty_interface}
     $<$<C_COMPILER_ID:Clang>:
       -Weverything
       -Wno-string-plus-int
+      -Wno-multichar
+      -Wno-trigraphs
       -mcpu=native
       -flto
     >

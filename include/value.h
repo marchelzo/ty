@@ -16,6 +16,7 @@ struct value;
 #include "tthread.h"
 #include "token.h"
 #include "scope.h"
+#include "util.h"
 
 #define V_ALIGN (_Alignof (Value))
 
@@ -347,6 +348,7 @@ value_show_color(Ty *ty, struct value const *v);
 
 #define ARG(i) (*vm_get(ty, argc - 1 - (i)))
 #define NAMED(s) ((kwargs != NULL) ? dict_get_member(ty, kwargs->dict, (s)) : NULL)
+#define ARG_T(i) ((argc > i) ? (vm_get(ty, argc - 1 - (i))->type) : VALUE_NONE)
 
 #define VA_COUNT_INNER( _1, _2, _3, _4, COUNT, ...) COUNT
 #define                               VA_COUNT(...) VA_COUNT_INNER( __VA_ARGS__, 4, 3, 2, 1, 0)
@@ -355,7 +357,7 @@ value_show_color(Ty *ty, struct value const *v);
 #define                           VA_SELECT(f, ...) VA_SELECT_INNER(f, VA_COUNT(__VA_ARGS__))(__VA_ARGS__)
 
 
-#define CHECK_ARGC_1(n0)                                 \
+#define CHECK_ARGC_1(n0) do {                            \
         if (argc != n0) {                                \
                 zP(                                      \
                         "%s: expected %s but got %d",    \
@@ -365,18 +367,20 @@ value_show_color(Ty *ty, struct value const *v);
                         :             #n0 " arguments",  \
                         argc                             \
                 );                                       \
-        } else if (0)
+        }                                                \
+} while (0)
 
-#define CHECK_ARGC_2(n0, n1)                                                        \
+#define CHECK_ARGC_2(n0, n1) do {                                                   \
         if (argc != n0 && argc != n1) {                                             \
                 zP(                                                                 \
                         "%s: expected " #n0 " or " #n1 " arguments but got %d",     \
                         _name__,                                                    \
                         argc                                                        \
                 );                                                                  \
-        } else if (0)
+        }                                                                           \
+} while (0)
 
-#define CHECK_ARGC_3(n0, n1, n2)                         \
+#define CHECK_ARGC_3(n0, n1, n2) do {                    \
         if (argc != n0 && argc != n1 && argc != n2) {    \
                 zP(                                      \
                         "%s: expected "                  \
@@ -385,9 +389,10 @@ value_show_color(Ty *ty, struct value const *v);
                         _name__,                         \
                         argc                             \
                 );                                       \
-        } else if (0)
+        }                                                \
+} while (0)
 
-#define CHECK_ARGC_4(n0, n1, n2, n3)                                 \
+#define CHECK_ARGC_4(n0, n1, n2, n3) do {                            \
         if (argc != n0 && argc != n1 && argc != n2 && argc != n3) {  \
                 zP(                                                  \
                         "%s: expected "                              \
@@ -396,9 +401,14 @@ value_show_color(Ty *ty, struct value const *v);
                         _name__,                                     \
                         argc                                         \
                 );                                                   \
-        } else if (0)
+        }                                                            \
+} while (0)
 
 #define CHECK_ARGC(...) VA_SELECT(CHECK_ARGC, __VA_ARGS__)
+
+#define ASSERT_ARGC(func, ...)      \
+        char const *_name__ = func; \
+        CHECK_ARGC(__VA_ARGS__)
 
 noreturn void vm_panic(Ty *, char const *, ...);
 
@@ -485,12 +495,13 @@ checked_arg_4(Ty *ty, char const *fun, int i, Value arg, int t0, int t1, int t2,
         )
 
 #define    INT_ARG(i) ARGx(i, VALUE_INTEGER).integer
+#define    PTR_ARG(i) ARGx(i, VALUE_PTR).ptr
 #define  FLOAT_ARG(i) ARGx(i, VALUE_REAL).real
 #define   BOOL_ARG(i) ARGx(i, VALUE_BOOLEAN).boolean
 #define  ARRAY_ARG(i) ARGx(i, VALUE_ARRAY).array
 #define   DICT_ARG(i) ARGx(i, VALUE_DICT).dict
 
-#define bP(fmt, ...) zP("%s: ", _name__ __VA_OPT__(,) __VA_ARGS__)
+#define bP(fmt, ...) zP("%s: " fmt, _name__ __VA_OPT__(,) __VA_ARGS__)
 
 #if 0
   #define value_mark(ty, v) do { fprintf(stderr, "value_mark: %s:%d: %p\n", __FILE__, __LINE__, (v)); _value_mark(ty, v); } while (0)
@@ -519,20 +530,20 @@ value_apply_callable(Ty *ty, struct value *f, struct value *v);
 char *
 value_show(Ty *ty, struct value const *v);
 
-inline static char *
+inline static void *
 value_string_alloc(Ty *ty, u32 n)
 {
         return mAo(n, GC_STRING);
 }
 
-inline static char *
-value_string_clone(Ty *ty, char const *src, u32 n)
+inline static void *
+value_string_clone(Ty *ty, void const *src, u32 n)
 {
         if (src == NULL) {
                 return NULL;
         }
 
-        char *str = mAo(n + 1, GC_STRING);
+        u8 *str = mAo(n + 1, GC_STRING);
 
         memcpy(str, src, n);
         str[n] = '\0';
@@ -540,10 +551,10 @@ value_string_clone(Ty *ty, char const *src, u32 n)
         return str;
 }
 
-inline static char *
-value_string_clone_nul(Ty *ty, char const *src, u32 n)
+inline static void *
+value_string_clone_nul(Ty *ty, void const *src, u32 n)
 {
-        char *str = mAo(n + 1, GC_STRING);
+        u8 *str = mAo(n + 1, GC_STRING);
 
         memcpy(str, src, n);
         str[n] = '\0';
@@ -579,6 +590,10 @@ tuple_get_i(Value const *tuple, int id);
 inline static Value *
 tget_or_null(Value const *tuple, uintptr_t k)
 {
+        if ((tuple->type & ~VALUE_TAGGED) != VALUE_TUPLE) {
+                return NULL;
+        }
+
         if (k < 16) {
                 return (k >= tuple->count) ? NULL : &tuple->items[k];
         }
@@ -685,78 +700,115 @@ value_array_reserve(Ty *ty, Array *a, int count)
 }
 
 inline static Value
-STRING_CLONE(Ty *ty, char const *s, u32 n)
+STRING_VFORMAT(Ty *ty, char const *fmt, va_list ap)
 {
-        char *clone = value_string_clone(ty, s, n);
+        va_list _ap;
+        u8 *str;
+        byte_vector buf = {0};
+
+        SCRATCH_SAVE();
+        va_copy(_ap, ap);
+        scvdump(ty, &buf, fmt, _ap);
+        va_end(_ap);
+        str = mAo(vN(buf), GC_STRING);
+        memcpy(str, vv(buf), vN(buf) + 1);
+        SCRATCH_RESTORE();
 
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = clone,
+                .str = str,
+                .bytes = vN(buf),
+                .gcstr = str,
+        };
+}
+
+inline static Value
+STRING_FORMAT(Ty *ty, char const *fmt, ...)
+{
+        va_list ap;
+        Value str;
+
+        va_start(ap, fmt);
+        str = STRING_VFORMAT(ty, fmt, ap);
+        va_end(ap);
+
+        return str;
+}
+
+inline static Value
+STRING_CLONE(Ty *ty, void const *s, u32 n)
+{
+        u8 *clone = value_string_clone(ty, s, n);
+
+        return (Value) {
+                .type = VALUE_STRING,
+                .tags = 0,
+                .str = clone,
                 .bytes = n,
                 .gcstr = clone,
         };
 }
 
 inline static Value
-STRING_CLONE_C(Ty *ty, char const *s)
+STRING_CLONE_C(Ty *ty, void const *s)
 {
         if (s == NULL) {
                 return NIL;
         }
 
         u32 n = strlen(s);
-        char *clone = value_string_clone(ty, s, n);
+        u8 *clone = value_string_clone(ty, s, n);
 
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = clone,
+                .str = clone,
                 .bytes = n,
                 .gcstr = clone,
         };
 }
 
 inline static Value
-STRING_C_CLONE_C(Ty *ty, char const *s)
+STRING_C_CLONE_C(Ty *ty, void const *s)
 {
         if (s == NULL) {
                 return NIL;
         }
 
         u32 n = strlen(s);
-        char *clone = value_string_clone_nul(ty, s, n);
+        u8 *clone = value_string_clone_nul(ty, s, n);
 
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = clone,
+                .str = clone,
                 .bytes = n,
                 .gcstr = clone,
         };
 }
 
 inline static Value
-STRING_C_CLONE(Ty *ty, char const *s, u32 n)
+STRING_C_CLONE(Ty *ty, void const *s, u32 n)
 {
-        char *clone = value_string_clone_nul(ty, s, n);
+        u8 *clone = value_string_clone_nul(ty, s, n);
 
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = clone,
+                .str = clone,
                 .bytes = n,
                 .gcstr = clone,
         };
 }
 
 inline static Value
-STRING(char *s, u32 n)
+STRING(void *s, u32 n)
 {
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = s,
+                .str = s,
                 .bytes = n,
                 .gcstr = s,
         };
@@ -768,31 +820,31 @@ STRING_VIEW(Value s, isize offset, u32 n)
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = s.string + offset,
+                .str = s.str + offset,
                 .bytes = n,
                 .gcstr = s.gcstr
         };
 }
 
 inline static Value
-STRING_NOGC(char const *s, int n)
+STRING_NOGC(void const *s, int n)
 {
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = s,
+                .str = s,
                 .bytes = n,
                 .gcstr = NULL
         };
 }
 
 inline static Value
-STRING_NOGC_C(char const *s)
+STRING_NOGC_C(void const *s)
 {
         return (Value) {
                 .type = VALUE_STRING,
                 .tags = 0,
-                .string = s,
+                .str = s,
                 .bytes = strlen(s),
                 .gcstr = NULL
         };
@@ -865,6 +917,12 @@ inline static ptrdiff_t
 code_size_of(Value const *v)
 {
         return v->info[FUN_INFO_CODE_SIZE];
+}
+
+inline static void const *
+info_of(Value const *f, int i)
+{
+        return ((char *)f->info) + i;
 }
 
 inline static char *

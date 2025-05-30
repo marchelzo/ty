@@ -1,6 +1,7 @@
 #include <ffi.h>
 #include <stdatomic.h>
 
+#include "gc.h"
 #include "ty.h"
 #include "polyfill_dlfcn.h"
 #include "value.h"
@@ -67,7 +68,7 @@ xstore(Ty *ty, ffi_type *t, void *p, Value const *v)
                         *(void * _Atomic *)p = (void *)v->integer;
                         break;
                 case VALUE_STRING:
-                        *(void * _Atomic *)p = (void *)v->string;
+                        *(void * _Atomic *)p = (void *)v->str;
                         break;
                 case VALUE_NIL:
                         *(void * _Atomic *)p = NULL;
@@ -136,7 +137,7 @@ store(Ty *ty, ffi_type *t, void *p, Value const *v)
                         *(void **)p = (void *)v->integer;
                         break;
                 case VALUE_STRING:
-                        *(void **)p = (void *)v->string;
+                        *(void **)p = (void *)v->str;
                         break;
                 case VALUE_NIL:
                         *(void **)p = NULL;
@@ -361,35 +362,16 @@ cffi_addr(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_free(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("ffi.free() expects exactly 1 argument but got %d", argc);
-        }
-
-        if (ARG(0).type != VALUE_PTR) {
-                zP("ffi.free() expects a pointer but got: %s", VSC(&ARG(0)));
-        }
-
-        free(ARG(0).ptr);
-
+        ASSERT_ARGC("ffi.free()", 1);
+        free(ARGx(0, VALUE_PTR).ptr);
         return NIL;
 }
 
 Value
 cffi_alloc(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1) {
-                zP("ffi.alloc() expects 1 argument but got %d", argc);
-        }
-
-        if (ARG(0).type != VALUE_INTEGER) {
-                zP("ffi.alloc() expects an integer but got: %s", VSC(&ARG(0)));
-        }
-
-        if (ARG(0).integer <= 0)
-                return NIL;
-
-        void *p = malloc(ARG(0).integer);
-
+        ASSERT_ARGC("ffi.alloc()", 1);
+        void *p = malloc(max(0, INT_ARG(0)));
         return (p == NULL) ? NIL : PTR(p);
 }
 
@@ -428,6 +410,25 @@ cffi_size(Ty *ty, int argc, Value *kwargs)
         }
 
         return INTEGER(((ffi_type *)ARG(0).ptr)->size);
+}
+
+Value
+cffi_auto(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.auto()", 1, 2);
+
+        Value ptr = ARGx(0, VALUE_PTR);
+        Value *dtor = mAo(sizeof (Value [2]), GC_FFI_AUTO);
+
+        if (argc == 1) {
+                dtor[0] = PTR(free);
+        } else {
+                dtor[0] = ARG(1);
+        }
+
+        dtor[1] = PTR(ptr.ptr);
+
+        return TGCPTR(ptr.ptr, ptr.extra, dtor);
 }
 
 Value
@@ -743,24 +744,13 @@ cffi_call(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_dlopen(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 1 && argc != 2) {
-                zP("ffi.dlopen() expects 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.dlopen()", 1, 2);
 
-        if (ARG(0).type != VALUE_STRING) {
-                zP("the first argument to ffi.dlopen() must be a string");
-        }
-
-        char b[512];
-        int n = min(ARG(0).bytes, sizeof b - 1);
-
-        memcpy(b, ARG(0).string, n);
-        b[n] = '\0';
-
+        Value lib = ARGx(0, VALUE_STRING);
 #ifdef _WIN32
         void *p = LoadLibraryA(b);
 #else
-        void *p = dlopen(b, RTLD_NOW);
+        void *p = dlopen(TY_TMP_C_STR(lib), RTLD_NOW);
 #endif
         return (p == NULL) ? NIL : PTR(p);
 }
@@ -768,25 +758,18 @@ cffi_dlopen(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_blob(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 2) {
-                zP("ffi.blob() expects 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.blob()", 2);
 
-        if (ARG(0).type != VALUE_PTR) {
-                zP("the first argument to ffi.blob() must be a pointer, instead got: %s", VSC(&ARG(0)));
-        }
-
-        if (ARG(1).type != VALUE_INTEGER) {
-                zP("the second argument to ffi.blob() must be an integer, instead got: %s", VSC(&ARG(1)));
-        }
+        void *mem = ARGx(0, VALUE_PTR).ptr;
+        usize n = INT_ARG(1);
 
         // TODO: should be a 'frozen' blob or something
         // cant realloc() this pointer and don't know
         // how long it's valid -- risky
-        struct blob *b = mA(sizeof *b);
-        b->items = ARG(0).ptr;
-        b->count = ARG(1).integer;
-        b->capacity = b->count;
+        Blob *b = mA(sizeof *b);
+        b->items = mem;
+        b->count = n;
+        b->capacity = n;
 
         return BLOB(b);
 }
@@ -794,24 +777,25 @@ cffi_blob(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_clone(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc != 2) {
-                zP("ffi.clone() expects 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.clone()", 2);
 
         void *p;
         store(ty, &ffi_type_pointer, &p, &ARG(0));
 
-        if (ARG(1).type != VALUE_INTEGER) {
-                zP("the second argument to ffi.clone() must be an integer");
-        }
-
-        size_t n = ARG(1).integer;
+        usize n = INT_ARG(1);
         void *clone = mAo(n, GC_ANY);
 
         memcpy(clone, p, n);
 
-
         return PTR(clone);
+}
+
+Value
+cffi_c_str(Ty *ty, int argc, Value *kwargs)
+{
+        ASSERT_ARGC("ffi.cstr()", 1);
+        Value str = ARGx(0, VALUE_STRING, VALUE_BLOB);
+        return PTR(TY_C_STR(str));
 }
 
 Value
@@ -883,26 +867,13 @@ cffi_dlerror(Ty *ty, int argc, Value *kwargs)
 Value
 cffi_dlsym(Ty *ty, int argc, Value *kwargs)
 {
-        if (argc == 0 || argc > 2) {
-                zP("ffi.dlsym() expects 1 or 2 arguments but got %d", argc);
-        }
+        ASSERT_ARGC("ffi.dlsym()", 1, 2);
 
-        if (ARG(0).type != VALUE_STRING) {
-                zP("the first argument to ffi.dlsym() must be a string");
-        }
-
-        char b[64];
-        int n = min(ARG(0).bytes, sizeof b - 1);
-
-        memcpy(b, ARG(0).string, n);
-        b[n] = '\0';
+        Value symbol = ARGx(0, VALUE_STRING);
 
         void *handle;
         if (argc == 2 && ARG(1).type != VALUE_NIL) {
-                if (ARG(1).type != VALUE_PTR) {
-                        zP("the second argument to ffi.dlsym() must be a pointer, instead got: %s", VSC(&ARG(1)));
-                }
-                handle = ARG(1).ptr;
+                handle = PTR_ARG(1);
         } else {
 #ifdef _WIN32
                 handle = GetModuleHandleA("ucrtbase.dll");
@@ -914,7 +885,7 @@ cffi_dlsym(Ty *ty, int argc, Value *kwargs)
 #ifdef _WIN32
         void *p = GetProcAddress(handle, b);
 #else
-        void *p = dlsym(handle, b);
+        void *p = dlsym(handle, TY_TMP_C_STR(symbol));
 #endif
 
         return (p == NULL) ? NIL : PTR(p);

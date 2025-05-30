@@ -79,6 +79,7 @@ typedef struct token {
                 TOKEN_USER_OP,
                 TOKEN_MAYBE_EQ,
                 TOKEN_WTF,
+                TOKEN_ELVIS,
                 TOKEN_CHECK_MATCH,
                 TOKEN_TEMPLATE_BEGIN,
                 TOKEN_TEMPLATE_END,

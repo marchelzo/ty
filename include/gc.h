@@ -43,6 +43,7 @@ enum {
         GC_REGEX,
         GC_ARENA,
         GC_FUN_INFO,
+        GC_FFI_AUTO,
         GC_ANY
 };
 
