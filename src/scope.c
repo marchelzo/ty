@@ -53,27 +53,21 @@ initsym(Symbol *s)
         s->ci    = -1;
 }
 
-inline static bool
-exists(Symbol const *var, i64 stop, i64 start)
-{
-        return (stop <= 0)
-            || (var->symbol <  stop)
-            || (var->symbol >= start)
-            || SymbolIsOmnipresent(var);
-
-}
-
 inline static Symbol *
-local_xlookup(Scope const *s, char const *id, i64 stop, i64 start)
+local_xlookup(Scope const *s, char const *id, u32 flags)
 {
         u64 h = strhash(id);
         u32 i = h % SYMBOL_TABLE_SIZE;
+
+        bool    member_ok = !(flags & SCOPE_EXPLICIT);
+        bool transient_ok =  (flags & SCOPE_PERMISSIVE);
 
         for (Symbol *sym = s->table[i]; sym != NULL; sym = sym->next) {
                 if (
                         (sym->hash == h)
                      && (strcmp(sym->identifier, id) == 0)
-                     && exists(sym, stop, start)
+                     && (member_ok    || !SymbolIsMember(sym))
+                     && (transient_ok || !SymbolIsTransient(sym))
                 ) {
                         return sym;
                 }
@@ -85,7 +79,7 @@ local_xlookup(Scope const *s, char const *id, i64 stop, i64 start)
 inline static Symbol *
 local_lookup(Scope const *s, char const *id)
 {
-        return local_xlookup(s, id, 0, 0);
+        return local_xlookup(s, id, 0);
 }
 
 Symbol *
@@ -165,7 +159,7 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
                         }
                 }
 
-                sym->captured = true;
+                sym->flags |= SYM_CAPTURED;
 
                 avP(s->captured, sym);
                 avP(s->cap_indices, parent_index);
@@ -182,29 +176,41 @@ scope_capture(Ty *ty, Scope *s, Symbol *sym, int parent_index)
 }
 
 Symbol *
-scope_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start)
+scope_xlookup(
+        Ty *ty,
+        Scope const *s,
+        char const *id,
+        u32 flags
+)
 {
         if (s == NULL) {
                 return NULL;
         }
 
-        Symbol *sym = local_xlookup(s, id, stop, start);
+        Symbol *sym = local_xlookup(s, id, flags);
 
-        if (sym != NULL) {
+        if (
+                (sym != NULL)
+             || (flags & SCOPE_LOCAL_ONLY)
+        ) {
                 return sym;
         }
 
-        sym = scope_xlookup(ty, s->parent, id, stop, start);
+        sym = scope_xlookup(ty, s->parent, id, flags);
 
         if (sym == NULL) {
                 return NULL;
         }
 
+        u32 const dont_capture = SYM_GLOBAL
+                               | SYM_NAMESPACE
+                               | SYM_CLASS_MEMBER
+                               | SYM_TYPE_VAR
+                               | SYM_THREAD_LOCAL;
+
         if (
                 (sym->scope->function != s->function)
-             && !sym->global
-             && !sym->namespace
-             && !SymbolIsTypeVar(sym)
+             && !(sym->flags & dont_capture)
         ) {
                 if (
                         (EVAL_DEPTH > 0)
@@ -245,7 +251,7 @@ scope_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start)
 Symbol *
 scope_lookup(Ty *ty, Scope const *s, char const *id)
 {
-        return scope_xlookup(ty, s, id, 0, 0);
+        return scope_xlookup(ty, s, id, 0);
 }
 
 bool
@@ -255,9 +261,14 @@ scope_locally_defined(Ty *ty, Scope const *s, char const *id)
 }
 
 Symbol *
-scope_local_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start)
+scope_local_xlookup(
+        Ty *ty,
+        Scope const *s,
+        char const *id,
+        u32 flags
+)
 {
-        return local_xlookup(s, id, stop, start);
+        return local_xlookup(s, id, flags);
 }
 
 Symbol *
@@ -326,7 +337,7 @@ scope_add_namespace(Ty *ty, Scope *s, char const *id, Scope *ns)
 {
         Symbol *sym = xadd(ty, s, id);
 
-        sym->namespace = true;
+        sym->flags |= SYM_NAMESPACE;
         sym->scope = ns;
 
         return sym;
@@ -368,8 +379,12 @@ scope_add_i(Ty *ty, Scope *s, char const *id, int idx)
         sym->symbol = SYMBOL++;
         sym->scope = s;
 
-        sym->global = s->function->parent == NULL
-                  || (s->function->parent->parent == NULL && s->function != s);
+        if (
+                (s->function->parent == NULL)
+            || (s->function->parent->parent == NULL && s->function != s)
+        ) {
+                sym->flags |= SYM_GLOBAL;
+        }
 
         sym->hash = h;
         sym->next = s->table[i];
@@ -433,7 +448,7 @@ scope_insert(Ty *ty, Scope *s, Symbol *sym)
         Symbol *new = amA(sizeof *new);
         *new = *sym;
 
-        if (!sym->namespace) {
+        if (!SymbolIsNamespace(sym)) {
                 new->scope = s;
                 new->flags &= ~SYM_PUBLIC;
         }

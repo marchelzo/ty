@@ -65,7 +65,7 @@ vm_pop(Ty *ty);
 struct value *
 vm_get(Ty *ty, int i);
 
-_Noreturn void
+noreturn void
 vm_throw(Ty *ty, struct value const *);
 
 struct value
@@ -78,7 +78,7 @@ Value
 vm_try_2op(Ty *ty, int op, Value const *a, Value const *b);
 
 Value
-vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect);
+vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect);
 
 uint64_t
 MyThreadId(Ty *ty);
@@ -103,9 +103,6 @@ vm_get_frames(Ty *ty);
 
 Value *
 vm_local(Ty *ty, int i);
-
-Value *
-vm_load(Ty *ty, Symbol const *var);
 
 Value
 GetMember(Ty *ty, Value v, int i, bool b);

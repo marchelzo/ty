@@ -399,6 +399,8 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
         case EXPRESSION_TEMPLATE:
                 for (size_t i = 0; i < e->template.exprs.count; ++i) {
                         V(e->template.exprs.items[i]);
+                        V(e->template.holes.items[i]);
+                        VS(e->template.stmts.items[i]);
                 }
                 break;
         case EXPRESSION_FUNCTION_CALL:
@@ -430,6 +432,7 @@ visit_expression(Ty *ty, Expr *e, Scope *scope, VisitorSet const *hooks)
                 V(e->object);
                 break;
         case EXPRESSION_METHOD_CALL:
+        case EXPRESSION_DYN_METHOD_CALL:
                 V(e->object);
                 for (size_t i = 0;  i < e->method_args.count; ++i)
                         V(e->method_args.items[i]);

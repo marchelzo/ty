@@ -101,7 +101,7 @@
         LOG(                                             \
                 "%07ju:%s:%d:%d: " #i,                   \
                 (uintptr_t)(IP - 1) & 0xFFFFFFFF,        \
-                expr ? GetExpressionModule(expr),        \
+                expr ? GetExpressionModule(expr) : "",   \
                 (expr ? expr->start.line : 0) + 1,       \
                 (expr ? expr->start.col : 0) + 1         \
         );
@@ -917,7 +917,7 @@ inline static Value
 inline static void
 (push)(Ty *ty, Value v)
 {
-        //LOG("PUSH: %s", VSC(&v));
+        LOG("PUSH: %s", VSC(&v));
         xvP(STACK, v);
         print_stack(ty, 10);
 }
@@ -2592,7 +2592,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
          */
         if (self == NULL && (self = &value)) switch (value.type & ~VALUE_TAGGED) {
         case VALUE_TAG:
-                vp = class_lookup_immediate_i(ty, CLASS_TAG, i);
+                vp = class_lookup_method_immediate_i(ty, CLASS_TAG, i);
                 if (vp == NULL) {
                         vp = tags_lookup_static(ty, value.tag, i);
                 }
@@ -2600,7 +2600,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                         vp = tags_lookup_method_i(ty, value.tag, i);
                 }
                 if (vp == NULL) {
-                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
+                        vp = class_lookup_method_immediate_i(ty, CLASS_OBJECT, i);
                 }
                 break;
         case VALUE_STRING:
@@ -2662,7 +2662,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 }
                 break;
         case VALUE_CLASS: /* lol */
-                vp = class_lookup_immediate_i(ty, CLASS_CLASS, i);
+                vp = class_lookup_method_immediate_i(ty, CLASS_CLASS, i);
                 if (vp == NULL) {
                         vp = class_lookup_static_i(ty, value.class, i);
                 }
@@ -2670,7 +2670,7 @@ CallMethod(Ty *ty, int i, int n, int nkw, bool b)
                 //        vp = class_lookup_method_i(ty, value.class, i);
                 //}
                 if (vp == NULL) {
-                        vp = class_lookup_immediate_i(ty, CLASS_OBJECT, i);
+                        vp = class_lookup_method_immediate_i(ty, CLASS_OBJECT, i);
                 }
                 break;
         case VALUE_OBJECT:
@@ -2869,7 +2869,7 @@ DoCount(Ty *ty, bool exec)
         case VALUE_DICT:   push(INTEGER(v.dict->count));  break;
         case VALUE_TUPLE:  push(INTEGER(v.count));        break;
         case VALUE_STRING:
-                push(get_string_method_i(NAMES.len)(ty, &v, 0, NULL));
+                push(string_length(ty, &v, 0, NULL));
                 break;
         case VALUE_OBJECT:
         case VALUE_CLASS:
@@ -5328,10 +5328,11 @@ BadTupleMember:
                         CallMethod(ty, NAMES.slice, 3, 0, false);
                         break;
                 CASE(SUBSCRIPT)
-Subscript:
                         subscript = top()[0];
                         container = top()[-1];
                         switch (container.type) {
+                        case VALUE_TYPE:
+                                break;
                         case VALUE_ARRAY:
                                 v = ArraySubscript(ty, container, subscript, true);
                                 pop();
@@ -5434,6 +5435,7 @@ Subscript:
                         default:
                         BadContainer:
                                 zP("invalid container in subscript expression: %s", VSC(&container));
+                                abort();
                         }
                         break;
                 CASE(NOT)
@@ -6052,7 +6054,7 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES.init             = M_ID("init");
         NAMES._iter_           = M_ID("__iter__");
         NAMES.json             = M_ID("__json__");
-        NAMES._len_            = M_ID("__len__");
+        NAMES._len_            = M_ID("#");
         NAMES.len              = M_ID("len");
         NAMES.match            = M_ID("__match__");
         NAMES.missing          = M_ID("__missing__");
@@ -6061,10 +6063,10 @@ vm_init(Ty *ty, int ac, char **av)
         NAMES._argc_           = M_ID("__argc__");
         NAMES._next_           = M_ID("__next__");
         NAMES.ptr              = M_ID("__ptr__");
-        NAMES.question         = M_ID("__question__");
-        NAMES.slice            = M_ID("__slice__");
+        NAMES.question         = M_ID("?");
+        NAMES.slice            = M_ID("[;;]");
         NAMES.str              = M_ID("__str__");
-        NAMES.subscript        = M_ID("__subscript__");
+        NAMES.subscript        = M_ID("[]");
 
         GC_STOP();
 
@@ -6756,7 +6758,7 @@ vm_call_method(Ty *ty, Value const *self, Value const *f, int argc)
 }
 
 Value
-vm_call_ex(Ty *ty, Value const *f, int argc, Value const *kwargs, bool collect)
+vm_call_ex(Ty *ty, Value const *f, int argc, Value *kwargs, bool collect)
 {
         Value r, *init, *vp;
         size_t n = STACK.count - argc;
@@ -7880,11 +7882,10 @@ tdb_step_over(Ty *ty)
 bool
 tdb_step_into(Ty *ty)
 {
+        Value *vp;
         Value v = NONE;
         char *ip = IP;
         int i;
-
-        u64 t0 = TyThreadGetTime();
 
         ty = TDB->host;
 
@@ -7910,25 +7911,25 @@ tdb_step_into(Ty *ty)
         ip = NULL;
 
         switch (v.type) {
-        case VALUE_FUNCTION: ip = code_of(&v);        break;
-        case VALUE_METHOD:   ip = code_of(v.method);  break;
+        case VALUE_FUNCTION:
+                ip = code_of(&v);
+                break;
+
+        case VALUE_METHOD:
+                ip = code_of(v.method);
+                break;
+
+        case VALUE_CLASS:
+                vp = class_lookup_method_i(ty, v.class, NAMES.init);
+                ip = (vp != NULL) ? code_of(vp) : NULL;
+                break;
+
+        case VALUE_GENERATOR:
+                ip = v.gen->ip;
+                break;
         }
 
-        u64 t1 = TyThreadGetTime();
-
-        double diff = (t1 - t0) / TY_1e9;
-
-        if (diff > 0.001) {
-                printf("Long step_into() for %s\n", VSC(&v));
-        }
-
-        if (ip == NULL) {
-                return false;
-        }
-
-        tdb_set_trap(&TDB->next, ip);
-
-        return true;
+        return (ip != NULL) && (tdb_set_trap(&TDB->next, ip), true);
 }
 
 void
@@ -8022,41 +8023,6 @@ vm_local(Ty *ty, int i)
 {
         xprint_stack(ty, 10);
         return local(ty, i);
-}
-
-Value *
-vm_load(Ty *ty, Symbol const *var)
-{
-        Scope *scope = (vN(FRAMES) > 0)
-                     ? expr_of(&vvL(FRAMES)->f)->scope
-                     : TyCompilerState(ty)->global;
-
-        bool is_local = !var->global
-                     && !SymbolIsTypeVar(var)
-                     && (var->scope->function == scope->function);
-
-        Value *v;
-
-        xprint_stack(ty, 8);
-
-        if (var->global) {
-                v = v_(Globals, var->i);
-        } else if (is_local && !var->captured) {
-                v = local(ty, var->i);
-        } else if (!is_local && var->captured) {
-                int i = 0;
-                while (scope->function->captured.items[i] != var) {
-                        i += 1;
-                }
-                v = vvL(FRAMES)->f.env[i];
-        } else {
-                v = local(ty, var->i);
-                if (v->type == VALUE_REF) {
-                        v = (Value *)v->ptr;
-                }
-        }
-
-        return v;
 }
 
 /* vim: set sts=8 sw=8 expandtab: */

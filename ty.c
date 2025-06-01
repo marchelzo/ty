@@ -282,7 +282,7 @@ sigint(int signal)
         longjmp(InterruptJB, 1);
 }
 
-#ifdef TY_PROFILE_TYPES
+#if defined(TY_PROFILE_TYPES)
 static void
 xxx(void)
 {
@@ -417,17 +417,13 @@ complete(char const *s, int start, int end)
         } else if (repl_exec(ty, before + 1)) {
                 n = AddCompletions(ty, vm_get(ty, -1), s);
         } else if (strstr(TyError(ty), "ParseError") != NULL) {
-                printf("E: %s\n", TyError(ty));
                 strcat(before + 1, " [");
                 repl_exec(ty, before + 1);
                 expr = LastParsedExpr;
-                printf(">>> %s\n", show_expr(expr));
                 v = tyeval(ty, expr);
-                printf("V: %s\n", VSC(&v));
                 if (v.type == VALUE_NONE) {
                         compiler_symbolize_expression(ty, expr, NULL);
                         t0 = expr->_type;
-                        printf("T: %s\n", type_show(ty, t0));
                         switch (t0 == NULL ? -1 : t0->type) {
                         case TYPE_OBJECT:
                                 v = OBJECT(&o, t0->class->i);

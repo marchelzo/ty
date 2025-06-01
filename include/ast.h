@@ -73,12 +73,13 @@ struct class_definition {
 
 struct condpart {
         bool def;
-        struct expression *e;
-        struct expression *target;
+        i32 when;
+        Expr *e;
+        Expr *target;
 };
 
 typedef vec(struct condpart *) condpart_vector;
-typedef vec(struct statement *) statement_vector;
+typedef vec(Stmt *) statement_vector;
 typedef struct class_definition ClassDefinition;
 
 #define TY_STATEMENT_TYPES        \
@@ -395,7 +396,8 @@ struct expression {
                         char *name;
                         char const *doc;
                         char const *proto;
-                        Symbol *function_symbol;
+                        Symbol *fn_symbol;
+                        Symbol *self;
                         Scope *scope;
                         expression_vector type_params;
                         StringVector params;
@@ -492,6 +494,7 @@ struct statement {
         Scope *xscope;
         Type *_type;
 
+        i32 when;
         bool will_return;
         Namespace *ns;
 
@@ -561,7 +564,6 @@ struct statement {
                         char const *doc;
                         bool pub;
                         bool cnst;
-                        i64 when;
                 };
         };
 };

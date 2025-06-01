@@ -246,6 +246,9 @@ Type *
 type_member_access_t(Ty *ty, Type const *t0, char const *name, bool strict);
 
 Type *
+type_op(Ty *ty, Expr const *e);
+
+Type *
 type_binary_op(Ty *ty, Expr const *e);
 
 Type *

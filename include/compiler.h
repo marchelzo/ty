@@ -115,8 +115,6 @@ typedef struct compiler_state {
 
         ProgramAnnotation annotation;
 
-        offset_vector selfs;
-
         JumpGroup match_fails;
         JumpGroup match_successes;
         expression_vector match_assignments;
@@ -132,9 +130,6 @@ typedef struct compiler_state {
 
         int ctx;
 
-        i64 scope_stop;
-        i64 scope_start;
-
         Scope *fscope;
         Scope *implicit_fscope;
         Scope *macro_scope;
@@ -144,12 +139,13 @@ typedef struct compiler_state {
         Expr *origin;
 
         statement_vector class_ops;
-
-        Stmt *last_func;
+        statement_vector pending;
+        bool based;
 
         Expr *func;
         Expr *meth;
-        int class;
+        Class *class;
+        Symbol *self;
 
         int function_depth;
 
@@ -256,16 +252,13 @@ bool
 compiler_import_module(Ty *ty, Stmt const *);
 
 void
-DeclareDefinitionSymbols(Ty *ty, Stmt *stmt);
+IntroduceDefinitions(Ty *ty, Stmt *stmt);
 
 void
 define_macro(Ty *ty, Stmt *, bool fun);
 
 void
 define_type(Ty *ty, Stmt *, Scope *);
-
-void
-define_const(Ty *ty, Stmt *);
 
 void
 define_class(Ty *ty, Stmt *);
