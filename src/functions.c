@@ -113,16 +113,6 @@ u64 NextThreadId() { return ++tid; }
 } else ((void)0)
 
 
-//#define ASSERT_ARGC(func, ac) if (argc != (ac)) {       \
-//        if (argc != (ac)) zP(                           \
-//                func                                    \
-//                " expects "                             \
-//                #ac                                     \
-//                " argument(s) but got %d",              \
-//                argc                                    \
-//        );                                              \
-//} else ((void)0)
-
 #define ASSERT_ARGC_2(func, ac1, ac2) \
         if (argc != (ac1) && argc != (ac2)) { \
                 zP(func " expects " #ac1 " or " #ac2 " argument(s) but got %d", argc); \
@@ -4128,7 +4118,7 @@ BUILTIN_FUNCTION(os_poll)
 {
         ASSERT_ARGC("os.poll()", 1, 2, 3);
 
-        Array *fds = ARGx(0, VALUE_ARRAY).array;
+        Array *fds = ARRAY_ARG(0);
         Array *fds_out;
         i64 timeout;
 
@@ -4144,7 +4134,7 @@ BUILTIN_FUNCTION(os_poll)
                 break;
 
         case 3:
-                fds_out = ARGx(1, VALUE_ARRAY).array;
+                fds_out = ARRAY_ARG(1);
                 timeout = MSEC_ARG(2);
                 break;
 

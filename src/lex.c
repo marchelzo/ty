@@ -454,6 +454,47 @@ lexword(Ty *ty)
         return mkid(ty, w, m, raw);
 }
 
+static Token
+lexname(Ty *ty)
+{
+        static char const *STOP = " \t\r\n({[";
+
+        vec(u8) name = {0};
+        avP(name, nextchar(ty));
+
+        bool special_ok = true;
+
+        for (u8 c; !contains(STOP, (c = C(0))); nextchar(ty)) {
+                if (c == ':') {
+                        if (C(1) == ':') {
+                                avP(name, c);
+                                avP(name, nextchar(ty));
+                                continue;
+                        } else if (!contains(OperatorCharset, C(1))) {
+                                break;
+                        }
+                }
+
+                if ((c == '*' || c == '=') && !special_ok) {
+                        break;
+                }
+                special_ok &= contains(OperatorCharset, c);
+
+                if (
+                        (c >= 'a' && c <= 'z')
+                     && (v_L(name) == '-')
+                ) {
+                        v_L(name) = c + ('A' - 'a');
+                } else {
+                        avP(name, c);
+                }
+        }
+
+        avP(name, '\0');
+
+        return mkid(ty, (char *)vv(name), NULL, false);
+}
+
 static bool
 end_of_docstring(Ty *ty, char c, int ndelim)
 {
@@ -1099,6 +1140,8 @@ dotoken(Ty *ty, int ctx)
                 nextchar(ty);
                 state.need_nl = true;
                 return mktoken(ty, TOKEN_DIRECTIVE);
+        } else if (ctx == LEX_NAME) {
+                return lexname(ty);
         } else if (state.in_pp && C(0) == '/') {
                 return saferegex(ty);
         } else if (ctx == LEX_PREFIX && C(0) == '/') {

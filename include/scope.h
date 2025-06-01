@@ -13,43 +13,64 @@ enum {
         SYMBOL_TABLE_SIZE = 16
 };
 
-enum {
-        SYM_PUBLIC       = 1 << 0,
-        SYM_THREAD_LOCAL = 1 << 1,
-        SYM_MACRO        = 1 << 2,
-        SYM_FUN_MACRO    = 1 << 3,
-        SYM_CONST        = 1 << 4,
-        SYM_TYPE_VAR     = 1 << 5,
-        SYM_VARIADIC     = 1 << 6,
-        SYM_IMMORTAL     = 1 << 7,
-        SYM_OMNIPRESENT  = 1 << 8,
-};
+#define TY_SCOPE_FLAGS                 \
+        X(LOCAL_ONLY,  LocalOnly,  0)  \
+        X(EXPLICIT,    Explicit,   1)  \
+        X(PERMISSIVE,  Permissive, 2)
+
+
+#define X(f, _, i) SCOPE_##f = 1 << i,
+enum { TY_SCOPE_FLAGS };
+#undef X
+
+
+#define TY_SYM_FLAGS                      \
+        X(PUBLIC,       Public,       0)  \
+        X(THREAD_LOCAL, ThreadLocal,  1)  \
+        X(MACRO,        Macro,        2)  \
+        X(FUN_MACRO,    FunMacro,     3)  \
+        X(PROPERTY,     Property,     4)  \
+        X(CONST,        Const,        5)  \
+        X(TYPE_VAR,     TypeVar,      6)  \
+        X(VARIADIC,     Variadic,     7)  \
+        X(IMMORTAL,     Immortal,     8)  \
+        X(TRANSIENT,    Transient,    9)  \
+        X(CLASS_MEMBER, Member,      10)  \
+        X(GLOBAL,       Global,      11)  \
+        X(CAPTURED,     Captured,    13)  \
+        X(FIXED,        FixedType,   14)  \
+        X(NAMESPACE,    Namespace,   15)
+
+
+#define X(f, _, i) SYM_##f = 1 << i,
+enum { TY_SYM_FLAGS };
+#undef X
+
 
 typedef struct type Type;
 
 typedef struct symbol {
         char const *identifier;
         char const *doc;
-        int symbol;
-        int tag;
-        int class;
+
         u32 flags;
-        bool captured;
-        bool global;
-        bool namespace;
-        bool fixed;
-        int i;
-        int ci;
+
+        i32 symbol;
+        i32 tag;
+        i32 class;
+        i32 member;
+
+        i32 i;
+        i32 ci;
 
         Location loc;
         Module *mod;
 
         Type *type;
         Expr *expr;
-
         Scope *scope;
 
-        uint64_t hash;
+        u64 hash;
         Symbol *next;
 } Symbol;
 
@@ -62,9 +83,9 @@ typedef struct scope {
 
         Symbol *table[SYMBOL_TABLE_SIZE];
 
-        vec(Symbol *) owned;
-        vec(Symbol *) captured;
-        vec(int) cap_indices;
+        symbol_vector owned;
+        symbol_vector captured;
+        int_vector cap_indices;
 
         Scope *parent;
         Scope *function;
@@ -124,13 +145,27 @@ Symbol *
 scope_lookup(Ty *ty, Scope const *s, char const *id);
 
 Symbol *
-scope_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start);
+scope_xlookup(
+        Ty *ty,
+        Scope const *s,
+        char const *id,
+        u32 flags
+);
 
 Symbol *
-scope_local_lookup(Ty *ty, Scope const *s, char const *id);
+scope_local_lookup(
+        Ty *ty,
+        Scope const *s,
+        char const *id
+);
 
 Symbol *
-scope_local_xlookup(Ty *ty, Scope const *s, char const *id, i64 stop, i64 start);
+scope_local_xlookup(
+        Ty *ty,
+        Scope const *s,
+        char const *id,
+        u32 flags
+);
 
 Symbol *
 scope_insert(Ty *ty, Scope *s, Symbol *sym);
@@ -178,59 +213,16 @@ NewTypeVar(Ty *ty, char const *name);
 Symbol *
 NewScopedTypeVar(Ty *ty, Scope *s, char const *name);
 
-inline static bool
-SymbolIsTypeVar(Symbol const *var)
-{
-        return var->flags & SYM_TYPE_VAR;
-}
 
-inline static bool
-SymbolIsImmortal(Symbol const *var)
-{
-        return var->flags & SYM_IMMORTAL;
-}
-
-inline static bool
-SymbolIsOmnipresent(Symbol const *var)
-{
-        return var->flags & SYM_OMNIPRESENT;
-}
-
-inline static bool
-SymbolIsThreadLocal(Symbol const *var)
-{
-        return var->flags & SYM_THREAD_LOCAL;
-}
-
-inline static bool
-SymbolIsPublic(Symbol const *var)
-{
-        return var->flags & SYM_PUBLIC;
-}
-
-inline static bool
-SymbolIsConst(Symbol const *var)
-{
-        return var->flags & SYM_CONST;
-}
-
-inline static bool
-SymbolIsMacro(Symbol const *var)
-{
-        return var->flags & SYM_MACRO;
-}
-
-inline static bool
-SymbolIsFunMacro(Symbol const *var)
-{
-        return var->flags & SYM_FUN_MACRO;
-}
-
-inline static bool
-SymbolIsVariadic(Symbol const *var)
-{
-        return var->flags & SYM_VARIADIC;
-}
+#define X(f, n, _)                              \
+        inline static bool                      \
+        SymbolIs##n(Symbol const *var)          \
+        {                                       \
+                return (var != NULL)            \
+                    && (var->flags & SYM_##f);  \
+        }
+TY_SYM_FLAGS
+#undef X
 
 inline static bool
 ScopeIsShared(Scope const *scope)
@@ -285,7 +277,7 @@ ScopeRefineVar(Ty *ty, Scope *scope, Symbol *var, Type *t0)
 }
 
 inline static bool
-ScopeIsTop(Ty *ty, Scope const *scope)
+ScopeIsTop(Scope const *scope)
 {
         while (scope != NULL) {
                 if (scope->is_function) {

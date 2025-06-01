@@ -228,7 +228,7 @@
 #define with_subscope(...)                                              \
         if (1) {                                                        \
                 Scope *_saved__scope = ty->pscope;                      \
-                ty->pscope = scope_new(ty, "(p)", ty->pscope, false)    \
+                ty->pscope = scope_new(ty, "(p)", ty->pscope, false);   \
                 __VA_ARGS__                                             \
                 ty->pscope = _saved__scope;                             \
         } else if (0)                                                   \
@@ -1302,6 +1302,24 @@ op_fixup(Ty *ty, int i)
         case '#':               token(i)->identifier = "#";    break;
         case '.':               token(i)->identifier = ".";    break;
         case TOKEN_USER_OP:                                    break;
+
+        case '[':
+                if (token(i + 1)->type == ']') {
+                        token(i)->identifier = "[]";
+                        token(i + 1)->ctx = LEX_HIDDEN;
+                } else if (
+                        (token(i + 1)->type == ';')
+                     && (token(i + 2)->type == ';')
+                     && (token(i + 3)->type == ';')
+                ) {
+                        token(i)->identifier = "[;;]";
+                        token(i + 1)->ctx = LEX_HIDDEN;
+                        token(i + 2)->ctx = LEX_HIDDEN;
+                        token(i + 3)->ctx = LEX_HIDDEN;
+                } else {
+                        return false;
+                }
+                break;
 
         case TOKEN_KEYWORD:
                 switch (token(i)->keyword) {
@@ -5843,7 +5861,13 @@ mktagdef(Ty *ty, char *name)
 }
 
 static Expr *
-parse_method(Ty *ty, Location start, Expr *decorator_macro, char const *doc, expression_vector decorators)
+parse_method(
+        Ty *ty,
+        Location start,
+        Expr *decorator_macro,
+        char const *doc,
+        expression_vector decorators
+)
 {
         unconsume(TOKEN_KEYWORD);
         tok()->keyword = KEYWORD_FUNCTION;
@@ -6002,7 +6026,6 @@ parse_class_definition(Ty *ty)
                 next();
         } else {
                 consume('{');
-                setctx(LEX_INFIX);
                 while (T0 != '}') {
                         parse_sync_lex(ty);
 
@@ -6017,133 +6040,94 @@ parse_class_definition(Ty *ty)
                         /*
                          * Lol.
                          */
-                        op_fixup(ty, 0);
+                        op_fixup(ty, K0 == KEYWORD_STATIC);
 
                         Expr *decorator_macro = NULL;
-                        if (T0 == TOKEN_AT && T1 == '{') {
+                        if (T0 == '@' && T1 == '{') {
                                 next();
                                 next();
                                 decorator_macro = parse_decorator_macro(ty);
                                 consume('}');
                         }
+
                         expression_vector decorators = {0};
                         if (T0 == TOKEN_AT) {
                                 decorators = parse_decorators(ty);
                         }
-                        if (!have_keyword(KEYWORD_STATIC)) {
-                                expect(TOKEN_IDENTIFIER);
+
+                        bool _static = try_consume(KEYWORD_STATIC);
+
+                        // ================/ :) /===
+                        setctx(LEX_NAME);
+                        char *name = tok()->identifier;
+                        Location start = tok()->start;
+                        next();
+                        setctx(LEX_PREFIX);
+                        // =========================
+
+                        if (name == NULL) {
+                                die(
+                                        "%s\n%s\n%s\n",
+                                        token_show(ty, token(-1)),
+                                        token_show(ty, token(0)),
+                                        token_show(ty, token(1))
+                                );
                         }
 
-                        Location start = tok()->start;
-
-                        /*
-                         * This is pretty ugly but we use whitespace to differentiate between a setter:
-                         *
-                         *      onClick= {
-                         *              ...
-                         *      }
-                         *
-                         * and a field assignment:
-                         *
-                         *      onClick = foo
-                         */
+                        Expr *meth;
                         if (
-                                T0 == TOKEN_IDENTIFIER
-                             && (
-                                        (
-                                                T1 == TOKEN_EQ
-                                             && (
-                                                        token(1)->start.col > tok()->end.col
-                                                     || token(1)->start.line != tok()->end.line
-                                                )
-                                        )
-                                     || T1 == ':'
-                                )
+                                (T0 == ':')
+                             || (T0 == '=' && tok()->start.s[-1] == ' ')
                         ) {
-                                SAVE_NE(true);
-                                SAVE_NC(false);
-                                Expr *field = parse_expr(ty, 0);
-                                LOAD_NC();
-                                LOAD_NE();
-
+                                Expr *field = mkid(name);
+                                if (T0 == ':') {
+                                        next();
+                                        SAVE_NE(true);
+                                        field->constraint = parse_type(ty, 1);
+                                        LOAD_NE();
+                                }
                                 if (T0 == TOKEN_EQ) {
                                         field = infix_eq(ty, field);
                                 }
-
-                                if (field->type != EXPRESSION_IDENTIFIER && field->type != EXPRESSION_EQ) {
+                                if (
+                                        (field->type != EXPRESSION_IDENTIFIER)
+                                     && (field->type != EXPRESSION_EQ)
+                                ) {
                                         EStart = field->start;
                                         EEnd = field->end;
-                                        die("expected a field definition");
+                                        die("expected a field declarator");
                                 }
-
                                 avP(s->tag.fields, field);
-                        } else if (have_keyword(KEYWORD_STATIC)) {
-                                next();
-                                expect(TOKEN_IDENTIFIER);
-                                avP(
-                                        s->tag.statics,
-                                        parse_method(
-                                                ty,
-                                                start,
-                                                decorator_macro,
-                                                doc,
-                                                decorators
-                                        )
-                                );
-                        } else if (T1 == TOKEN_EQ) {
-                                struct token t = *tok();
-                                skip(2);
-                                putback(t);
-                                avP(
-                                        s->tag.setters,
-                                        parse_method(
-                                                ty,
-                                                start,
-                                                decorator_macro,
-                                                doc,
-                                                decorators
-                                        )
-                                );
-                        } else if (T1 == '{' || T1 == TOKEN_ARROW) {
-                                Expr *rt;
-                                struct token t = *tok();
-                                next();
-                                if (T0 == TOKEN_ARROW) {
-                                        next();
-                                        rt = parse_type(ty, -1);
-                                } else {
-                                        rt = NULL;
-                                }
-                                unconsume(')');
-                                unconsume('(');
-                                putback(t);
-                                avP(
-                                        s->tag.getters,
-                                        parse_method(
-                                                ty,
-                                                start,
-                                                decorator_macro,
-                                                doc,
-                                                decorators
-                                        )
-                                );
-                                if (rt != NULL) {
-                                        vvL(s->tag.getters)[0]->return_type = rt;
-                                }
+                                try_consume(';');
                         } else {
-                                avP(
-                                        s->tag.methods,
-                                        parse_method(
-                                                ty,
-                                                start,
-                                                decorator_macro,
-                                                doc,
-                                                decorators
-                                        )
+                                bool getter = (T0 == TOKEN_ARROW || T0 == '{');
+                                bool setter = try_consume('=');
+
+                                if (getter) {
+                                        unconsume(')');
+                                        unconsume('(');
+                                }
+
+                                meth = parse_method(
+                                        ty,
+                                        start,
+                                        decorator_macro,
+                                        doc,
+                                        decorators
                                 );
 
-                                if (strcmp(vvL(s->tag.methods)[0]->name, "init") == 0) {
-                                        init = vvL(s->tag.methods)[0];
+                                meth->name = name;
+
+                                if      (_static) { avP(s->tag.statics, meth); }
+                                else if (getter)  { avP(s->tag.getters, meth); }
+                                else if (setter)  { avP(s->tag.setters, meth); }
+                                else              { avP(s->tag.methods, meth); }
+
+                                if (
+                                        !(getter | setter | _static)
+                                     && (strcmp(name, "init") == 0)
+                                ) {
+                                        init = *vvL(s->tag.methods);
                                 }
                         }
                 }
@@ -6269,15 +6253,57 @@ parse_set_type(Ty *ty)
 }
 
 static Stmt *
+parse_catch(Ty *ty)
+{
+        Stmt *try = mkstmt(ty);
+        try->type = STATEMENT_TRY;
+
+        while (have_keyword(KEYWORD_CATCH)) {
+                next();
+                if (T0 == '{') {
+                        next();
+                        while (T0 != '}') {
+                                SAVE_NE(true);
+                                avP(try->try.patterns, parse_expr(ty, 0));
+                                LOAD_NE();
+                                consume(TOKEN_FAT_ARROW);
+                                avP(try->try.handlers, parse_statement(ty, -1));
+                                try_consume(',');
+                        }
+                        next();
+                } else {
+                        SAVE_NE(true);
+                        avP(try->try.patterns, parse_expr(ty, 0));
+                        LOAD_NE();
+                        avP(try->try.handlers, parse_statement(ty, -1));
+                }
+        }
+
+        Stmt *body = parse_statement(ty, 0);
+        Stmt *multi = NULL;
+
+        while (get_prefix_parser(ty) != NULL) {
+                if (multi == NULL) {
+                        multi = mkstmt(ty);
+                        multi->type = STATEMENT_MULTI;
+                        avP(multi->statements, body);
+                }
+                avP(multi->statements, parse_statement(ty, 0));
+        }
+
+        try->try.s = (multi != NULL) ? multi : body;
+        try->end = TEnd;
+
+        return try;
+}
+
+static Stmt *
 parse_try(Ty *ty)
 {
         Stmt *s = mkstmt(ty);
         s->type = STATEMENT_TRY;
 
         consume_keyword(KEYWORD_TRY);
-
-        vec_init(s->try.patterns);
-        vec_init(s->try.handlers);
 
         if (T0 != '{') {
                 s->try.s = mkstmt(ty);
@@ -6464,6 +6490,7 @@ Keyword:
         case KEYWORD_BREAK:    return parse_break_statement(ty);
         case KEYWORD_CONTINUE: return parse_continue_statement(ty);
         case KEYWORD_TRY:      return parse_try(ty);
+        case KEYWORD_CATCH:    return parse_catch(ty);
         case KEYWORD_SET_TYPE: return parse_set_type(ty);
 
         case KEYWORD_USE:
@@ -6538,44 +6565,50 @@ define_top(Ty *ty, Stmt *s, char const *doc)
                 s->doc = doc;
                 define_macro(ty, s, s->type == STATEMENT_FUN_MACRO_DEFINITION);
                 break;
+
         case STATEMENT_FUNCTION_DEFINITION:
                 s->doc = doc;
                 s->value->doc = doc;
-                define_function(ty, s);
+                IntroduceDefinitions(ty, s);
                 break;
+
         case STATEMENT_OPERATOR_DEFINITION:
                 s->doc = doc;
                 s->value->doc = doc;
                 define_operator(ty, NULL, s);
                 break;
+
         case STATEMENT_CLASS_DEFINITION:
                 s->class.doc = doc;
                 define_class(ty, s);
                 break;
+
         case STATEMENT_TAG_DEFINITION:
                 s->tag.doc = doc;
                 define_tag(ty, s);
                 break;
+
         case STATEMENT_TYPE_DEFINITION:
                 s->class.doc = doc;
                 define_type(ty, s, NULL);
                 break;
+
         case STATEMENT_SET_TYPE:
                 compiler_set_type_of(ty, s);
                 break;
+
         case STATEMENT_MULTI:
                 for (int i = 0; i < s->statements.count; ++i) {
                         define_top(ty, s->statements.items[i], doc);
                 }
                 break;
+
         case STATEMENT_DEFINITION:
                 s->doc = doc;
-                if (s->cnst) {
-                        define_const(ty, s);
-                } else {
-                        DeclareDefinitionSymbols(ty, s);
-                }
+        case STATEMENT_IF:
+                IntroduceDefinitions(ty, s);
                 break;
+
         case STATEMENT_EXPRESSION:
                 if (s->expression->type == EXPRESSION_STATEMENT) {
                         define_top(ty, s->expression->statement, doc);

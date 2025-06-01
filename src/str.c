@@ -115,7 +115,7 @@ mkmatch(Ty *ty, Value *s, usize *ovec, isize n, bool detailed)
         }
 }
 
-static Value
+Value
 string_length(Ty *ty, Value *string, int argc, Value *kwargs)
 {
         char *_name__ = "String.len()";

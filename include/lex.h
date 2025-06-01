@@ -11,6 +11,7 @@ typedef struct token Token;
 typedef enum LexContext {
         LEX_PREFIX = 1,
         LEX_INFIX,
+        LEX_NAME,
         LEX_FMT,
         LEX_XFMT,
         LEX_FAKE,
@@ -34,6 +35,7 @@ typedef struct LexState {
 extern LexState *lxst;
 
 #define OperatorCharset "/=<~|!@%^&*-+>?.$"
+#define MethodNameChars (OperatorCharset ":#[]")
 
 void
 lex_init(Ty *ty, char const *file, char const *src);

@@ -6,7 +6,7 @@ import tp (ThreadPool)
 import ty
 import ffi as c (C!)
 
-let start = time.utime()
+let start = time.now()
 
 let passed = Sync(0)
 let failed = Sync(0)
@@ -21,16 +21,16 @@ let TY_PATH = getenv('TY_PATH') ?? ty.executable
 
 function getTyCommand(test) {
 #|if __windows__
-        "{TY_PATH} -q tests\\{test}"
+        "{TY_PATH} tests\\{test}"
 #|else
-        "{TY_PATH} -q tests/{test}"
+        "{TY_PATH} tests/{test}"
 #|]
 }
 
 C! function strsignal(c.int) -> c.ptr;
 
 function doTest(name: String) {
-    let testStart = time.utime()
+    let testStart = time.now()
 
     let _, result = sh(getTyCommand(name), timeoutMs=2000)
 
@@ -43,10 +43,10 @@ function doTest(name: String) {
         {stdout: 'PASS\n', stderr: '', status: 0, signal: nil} => do {
             passed += 1
 
-            let elapsedMs = (time.utime() - testStart) / 1000.0
-            let elapsed = match elapsedMs <=> 100.0 {
-                1 => "({elapsedMs / 1000.0:.2g}s)",
-                _ => "({elapsedMs:d}ms)",
+            let elapsed = (time.now() - testStart)
+            let elapsed = match elapsed <=> 0.1 {
+                1 => "({elapsed:.2g}s)",
+                _ => "({1000 * elapsed:d}ms)",
             }
 
            chalk"[bright green bold]PASS[/] [bright yellow]{elapsed}[/]"
@@ -83,7 +83,7 @@ for test in listdir('tests') if test.match?(/\.ty$/) {
 fs.map(&wait)
 print()
 
-let elapsedSec = (time.utime() - start) / (1000.0 * 1000.0)
+let elapsedSec = (time.now() - start)
 
 if passed > 0 {
     print("{g('Passed')}: {g(passed)}")
