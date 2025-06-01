@@ -29,7 +29,7 @@ fn c::new[T](type: CType[T], count: ?Int) -> Ptr[T];
 fn c::alloc[T](size: Int) -> Ptr[T];
 fn ptr::typed[T](ptr: Ptr[Any], type: CType[T]) -> Ptr[T];
 
-pub __tls::_cif_cache = nil
+pub __tls::_cif_cache: _ = nil
 
 tag Union;
 tag Struct;
