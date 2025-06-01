@@ -643,7 +643,7 @@ class Term {
         }
     }
 
-    __subscript__(cap) {
+    [](cap: Int) -> Bool | String | Int | nil {
         if cap :: bools {
             return get_bool(@term, cap) != 0
         }

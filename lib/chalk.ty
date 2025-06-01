@@ -557,7 +557,7 @@ class Chalk {
         )
     }
 
-    __subscript__(style: Any) -> (Any -> Text) {
+    [](style: Any) -> (Any -> Text) {
         return text -> self"[{style}]{text}[/]"
     }
 

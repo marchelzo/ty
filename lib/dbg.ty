@@ -7,9 +7,17 @@ import term
 import time (utime)
 import math (log10)
 import ty
+import log (..)
 
 pub macro Source   = 1
 pub macro Bytecode = 2
+
+DEFAULT_LOG_PATH = './tdb.log'
+
+logging({
+    level: INFO,
+    path: './tdb.log'
+})
 
 class TDBError < RuntimeError {
     init(msg: String) {
@@ -115,19 +123,19 @@ let current-mode = Source
 let current-range = 0..1
 let expr-span = nil
 let depth = 0
-let module: String = ''
+let state: _ = nil
 
 let keybinds = %{
     '<C-u>': fn (h, w) {
-        if module {
+        if state {
             current-range -= (h / 4)
-            print-source(module, current-range)
+            print-source(state.mod, current-range, state)
         }
     },
-    '<C-u>': fn (h, w) {
-        if module {
+    '<C-d>': fn (h, w) {
+        if state {
             current-range += (h / 4)
-            print-source(module, current-range)
+            print-source(state.mod, current-range, state)
         }
     },
 }
@@ -135,7 +143,7 @@ let keybinds = %{
 let readln = readln@(_, keybinds=keybinds, erase=false, **)
 
 tdb.hook = fn hook() {
-    let state = tdb.state()
+    state = tdb.state()
 
     let { mod, file, expr, prog
         , insn, ip, fp, sp, func } = state
@@ -286,8 +294,12 @@ tdb.hook = fn hook() {
 }
 
 fn print-source(module: String, range: Range, state: _) {
+    warn!(range)
     let lines = color-and-break(module)
+    error!(range)
+    error!("#lines = {#lines}")
     let range = range.clamp(0, #lines)
+    critical!(range)
 
     let buf = Blob()
     let put = fn (x) {
